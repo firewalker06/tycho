@@ -1,0 +1,57 @@
+{
+  "status": "input_required",
+  "summary": "Presenting 5 inquiry questions with a mix of Yes/No and multiple choice formats.",
+  "inquiry": {
+    "message": "Please answer the following questions to help me assist you better:",
+    "requested_schema": {
+      "type": "object",
+      "properties": {
+        "new_feature": {
+          "type": "boolean",
+          "title": "Are you looking to add a new feature?",
+          "description": "Whether this request involves building something new"
+        },
+        "area": {
+          "type": "string",
+          "title": "Which area of the application does this concern?",
+          "description": "Select the part of the codebase you want to work on",
+          "enum": [
+            "Meetup Scheduling",
+            "Admin Panel",
+            "Discord Notifications",
+            "Typefully Webhook",
+            "Deployment / Infrastructure",
+            "Other"
+          ]
+        },
+        "has_tests": {
+          "type": "boolean",
+          "title": "Should this include tests?",
+          "description": "Whether you want test coverage for the changes"
+        },
+        "priority": {
+          "type": "string",
+          "title": "What is the priority level?",
+          "description": "How urgent is this task",
+          "enum": [
+            "Low - no rush",
+            "Medium - within a few days",
+            "High - needed today",
+            "Critical - blocking other work"
+          ]
+        },
+        "additional_context": {
+          "type": "string",
+          "title": "Any additional context?",
+          "description": "Optional: provide extra details about what you need"
+        }
+      },
+      "required": [
+        "new_feature",
+        "area",
+        "has_tests",
+        "priority"
+      ]
+    }
+  }
+}

@@ -1,0 +1,304 @@
+# frozen_string_literal: true
+
+require "time"
+require "yaml"
+
+require_relative "constants"
+
+module HQ
+  class CronExpression
+    Field = Struct.new(:values, :wildcard, keyword_init: true)
+
+    FIELD_RANGES = [
+      [0, 59],
+      [0, 23],
+      [1, 31],
+      [1, 12],
+      [0, 7]
+    ].freeze
+
+    attr_reader :source
+
+    def initialize(source)
+      @source = source.to_s.strip
+      parts = @source.split(/\s+/)
+      raise ArgumentError, "expected 5 fields" unless parts.length == 5
+
+      @fields = parts.each_with_index.map do |part, index|
+        parse_field(part, *FIELD_RANGES.fetch(index), day_of_week: index == 4)
+      end
+    end
+
+    def next_after(time)
+      candidate = minute_after(time)
+      (366 * 24 * 60).times do
+        return candidate if match?(candidate)
+
+        candidate += 60
+      end
+      raise ArgumentError, "no matching time found within 366 days"
+    end
+
+    def match?(time)
+      minute, hour, day, month, wday = @fields
+      return false unless minute.values.include?(time.min)
+      return false unless hour.values.include?(time.hour)
+      return false unless month.values.include?(time.month)
+
+      dom_match = day.values.include?(time.day)
+      dow_match = wday.values.include?(time.wday)
+      if !day.wildcard && !wday.wildcard
+        dom_match || dow_match
+      else
+        dom_match && dow_match
+      end
+    end
+
+    private
+
+    def minute_after(time)
+      base = Time.new(time.year, time.month, time.day, time.hour, time.min, 0, time.utc_offset)
+      base <= time ? base + 60 : base
+    end
+
+    def parse_field(source, min, max, day_of_week: false)
+      text = source.to_s.strip
+      raise ArgumentError, "empty field" if text.empty?
+
+      wildcard = text == "*" || text.start_with?("*/")
+      values = text.split(",").flat_map do |part|
+        expand_part(part, min, max, day_of_week:)
+      end.uniq.sort
+      values.map! { |value| day_of_week && value == 7 ? 0 : value }
+      values.uniq!
+      Field.new(values:, wildcard:)
+    end
+
+    def expand_part(part, min, max, day_of_week:)
+      base, step_text = part.split("/", 2)
+      step = step_text ? integer!(step_text, min: 1, max:) : 1
+      range = if base == "*"
+                (min..max)
+              elsif base.include?("-")
+                first, last = base.split("-", 2).map { |value| integer!(value, min:, max:) }
+                raise ArgumentError, "invalid range #{base.inspect}" if first > last
+
+                (first..last)
+              else
+                value = integer!(base, min:, max:)
+                (value..value)
+              end
+
+      range.step(step).to_a
+    end
+
+    def integer!(value, min:, max:)
+      text = value.to_s
+      raise ArgumentError, "unsupported token #{text.inspect}" unless text.match?(/\A\d+\z/)
+
+      number = text.to_i
+      raise ArgumentError, "#{number} outside #{min}-#{max}" if number < min || number > max
+
+      number
+    end
+  end
+
+  ScheduleDefinition = Struct.new(
+    :key, :name, :enabled, :cron, :timezone, :project_key, :agent_name,
+    :message_source, :message, :message_file, :message_path, :policy,
+    keyword_init: true
+  ) do
+    def cron_expression
+      @cron_expression ||= CronExpression.new(cron)
+    end
+
+    def enabled?
+      enabled != false
+    end
+
+    def local_time(time)
+      timezone.to_s == "UTC" ? time.getutc : time.getlocal
+    end
+
+    def next_due_after(time)
+      cron_expression.next_after(local_time(time))
+    end
+
+    def message_text
+      return message.to_s if message_source == "inline"
+
+      File.read(message_path)
+    end
+
+    def overlap_policy
+      policy.fetch("overlap", "skip").to_s
+    end
+
+    def missed_policy
+      policy.fetch("missed", "run_once_on_start").to_s
+    end
+
+    def archive_previous_agent?
+      policy.fetch("archive_previous_agent", true) != false
+    end
+  end
+
+  class ScheduleRegistry
+    Error = Class.new(StandardError)
+
+    attr_reader :path, :projects, :schedules_root
+
+    def initialize(path: SCHEDULES_FILE, projects:, schedules_root: nil)
+      @path = File.expand_path(path)
+      @projects = projects
+      @schedules_root = File.expand_path(schedules_root || USER_SCHEDULES_DIR)
+    end
+
+    def schedules
+      @schedules ||= load_schedules
+    end
+
+    def find(key)
+      schedules.find { |schedule| schedule.key == key.to_s }
+    end
+
+    private
+
+    def load_schedules
+      data = load_yaml
+      entries = Array(data["schedules"])
+      seen = {}
+      entries.each_with_index.map do |entry, index|
+        schedule = build_schedule(entry || {}, index:)
+        raise Error, "Duplicate schedule key #{schedule.key.inspect}" if seen[schedule.key]
+
+        seen[schedule.key] = true
+        schedule
+      end
+    end
+
+    def load_yaml
+      return { "schedules" => [] } unless File.exist?(@path)
+
+      parsed = YAML.safe_load_file(@path, aliases: true) || {}
+      raise Error, "#{@path} must contain a YAML mapping" unless parsed.is_a?(Hash)
+
+      parsed
+    rescue Psych::SyntaxError => e
+      raise Error, "Invalid schedules YAML: #{e.message}"
+    end
+
+    def build_schedule(entry, index:)
+      raise Error, "Schedule ##{index + 1} must be a mapping" unless entry.is_a?(Hash)
+
+      key = required_string(entry, "key", label: "schedule ##{index + 1}")
+      target = entry["target"]
+      raise Error, "Schedule #{key.inspect} target must be a mapping" unless target.is_a?(Hash)
+      type = target["type"].to_s
+      raise Error, "Schedule #{key.inspect} only supports target.type agent" unless type == "agent"
+
+      cron = required_string(entry, "cron", label: "schedule #{key.inspect}")
+      validate_cron!(key, cron)
+      timezone = entry.fetch("timezone", "local").to_s
+      validate_timezone!(key, timezone)
+
+      project_key = required_string(target, "project_key", label: "schedule #{key.inspect} target")
+      project_for!(key, project_key)
+      source, message, message_file, message_path = message_fields!(key, target)
+      policy = normalize_policy!(key, entry["policy"])
+
+      ScheduleDefinition.new(
+        key: key,
+        name: optional_string(entry["name"], fallback: key),
+        enabled: entry.key?("enabled") ? entry["enabled"] != false : true,
+        cron: cron,
+        timezone: timezone,
+        project_key: project_key,
+        agent_name: optional_string(target["name"], fallback: entry["name"] || key),
+        message_source: source,
+        message: message,
+        message_file: message_file,
+        message_path: message_path,
+        policy: policy
+      )
+    end
+
+    def validate_cron!(key, cron)
+      CronExpression.new(cron)
+    rescue ArgumentError => e
+      raise Error, "Schedule #{key.inspect} has invalid cron: #{e.message}"
+    end
+
+    def validate_timezone!(key, timezone)
+      return if %w[local UTC].include?(timezone)
+
+      raise Error, "Schedule #{key.inspect} timezone must be local or UTC"
+    end
+
+    def project_for!(schedule_key, project_key)
+      project = @projects.find { |candidate| candidate.key == project_key }
+      return project if project
+
+      raise Error, "Schedule #{schedule_key.inspect} references unknown project #{project_key.inspect}"
+    end
+
+    def message_fields!(key, target)
+      source = target["message_source"].to_s.strip
+      raise Error, "Schedule #{key.inspect} message_source must be inline or file" unless source.empty? || %w[inline file].include?(source)
+
+      if source == "file" || target.key?("message_file")
+        message_file = required_string(target, "message_file", label: "schedule #{key.inspect} target")
+        path = resolve_message_path!(key, message_file)
+        return ["file", nil, message_file, path]
+      end
+
+      message = required_string(target, "message", label: "schedule #{key.inspect} target")
+      ["inline", message, nil, nil]
+    end
+
+    def resolve_message_path!(key, message_file)
+      value = message_file.to_s
+      if value.start_with?("/") || value.split("/").include?("..") || !value.start_with?("schedules/")
+        raise Error, "Schedule #{key.inspect} message_file must be a relative path under schedules/"
+      end
+
+      path = File.expand_path(value.delete_prefix("schedules/"), @schedules_root)
+      root = File.join(@schedules_root, "")
+      unless path.start_with?(root)
+        raise Error, "Schedule #{key.inspect} message_file must stay inside schedules/"
+      end
+      raise Error, "Schedule #{key.inspect} message_file does not exist: #{message_file}" unless File.file?(path)
+
+      path
+    end
+
+    def normalize_policy!(key, value)
+      policy = value.is_a?(Hash) ? value.transform_keys(&:to_s) : {}
+      validate_choice!(key, policy, "overlap", %w[skip queue parallel], default: "skip")
+      validate_choice!(key, policy, "missed", %w[skip_missed run_once_on_start run_all_missed],
+                       default: "run_once_on_start")
+      policy["archive_previous_agent"] = true unless policy.key?("archive_previous_agent")
+      policy
+    end
+
+    def validate_choice!(key, policy, field, allowed, default:)
+      value = policy.fetch(field, default).to_s
+      raise Error, "Schedule #{key.inspect} policy.#{field} must be one of #{allowed.join(", ")}" unless allowed.include?(value)
+
+      policy[field] = value
+    end
+
+    def required_string(hash, field, label:)
+      value = hash[field].to_s.strip
+      raise Error, "#{label} requires #{field}" if value.empty?
+
+      value
+    end
+
+    def optional_string(value, fallback:)
+      text = value.to_s.strip
+      text.empty? ? fallback.to_s : text
+    end
+
+  end
+end

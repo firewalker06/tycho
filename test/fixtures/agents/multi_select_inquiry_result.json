@@ -1,0 +1,43 @@
+{
+  "status": "input_required",
+  "summary": "Waiting on banter selections before revising the beat sheet.",
+  "inquiry": {
+    "message": "Pick the banter variants you want to apply.",
+    "fields": [
+      {
+        "key": "banter_selection",
+        "label": "Banter picks",
+        "description": "Pick one or more banter variants to apply.",
+        "input_type": "multi_select",
+        "required": true,
+        "options": [
+          "Use recommendation",
+          "A",
+          "B",
+          "C",
+          "D"
+        ]
+      },
+      {
+        "key": "hedge_count",
+        "label": "Civil engineering hedge",
+        "description": "How many times to invoke the hedge line.",
+        "input_type": "select",
+        "required": true,
+        "options": [
+          "Once",
+          "Twice",
+          "Custom"
+        ]
+      },
+      {
+        "key": "notes",
+        "label": "Other changes or notes",
+        "description": "Optional notes for the rewrite.",
+        "input_type": "text",
+        "required": false,
+        "options": null
+      }
+    ]
+  }
+}

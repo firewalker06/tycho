@@ -1,0 +1,17 @@
+logs/
+.env
+.env.*
+!.env.sample
+.DS_Store
+.ruby-lsp/
+config/hq.yml
+config/hq.archived.yml
+config/system_prompts.yml
+config/hooks.yml
+config/schedules.yml
+schedules/*
+!schedules/.gitkeep
+tmp/
+coverage/
+pkg/
+*ts.net*

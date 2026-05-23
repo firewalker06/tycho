@@ -1,0 +1,112 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Generic worker invoked by the HQ TUI out-of-process.
+#
+# Protocol:
+#   argv:   --type glamour
+#   stdin:  one line with the width (integer), then the markdown body until EOF.
+#   stdout: the ANSI-styled rendered markdown.
+#
+# Kept intentionally minimal. For Glamour, no shared runtime with Bubbletea means it
+# renders at its normal speed (a few ms) instead of stalling for seconds.
+
+require "bundler/setup"
+require "glamour"
+require "optparse"
+
+options = {}
+parser = OptionParser.new do |opts|
+  opts.banner = "Usage: bin/worker --type TYPE"
+  opts.on("--type TYPE", "Worker type to run") { |type| options[:type] = type }
+end
+parser.parse!
+
+unless options[:type] == "glamour"
+  $stderr.puts parser
+  exit 64
+end
+
+def tycho_env(name, default = nil)
+  suffix = name.to_s.sub(/\ATYCHO_/, "").sub(/\AHQ_/, "")
+  key = "TYCHO_#{suffix}"
+  return ENV[key] if ENV.key?(key)
+
+  default
+end
+
+def run_glamour_worker
+  width_line = $stdin.gets
+  width = width_line.to_i
+  width = 72 if width <= 0
+  style = tycho_env("GLAMOUR_STYLE", "dark")
+  markdown = $stdin.read.to_s
+
+  rendered = Glamour.render(markdown, style: style, width: width)
+
+  # Glamour wraps output in its document-block style: a leading blank line,
+  # trailing blank line(s), and a uniform 2-column left indent on every line.
+  # The HQ chat bubble already provides padding, so strip Glamour's so the
+  # rendered markdown sits flush against the bubble edge.
+  ansi = /\e\[[0-9;]*m/
+  lines = rendered.lines.map { |line| line.sub(/\n\z/, "") }
+  lines.shift while lines.first && lines.first.gsub(ansi, "").strip.empty?
+  lines.pop while lines.last && lines.last.gsub(ansi, "").strip.empty?
+
+  indent = lines.map do |line|
+    stripped = line.gsub(ansi, "")
+    next if stripped.strip.empty?
+
+    stripped[/\A */].length
+  end.compact.min || 0
+
+  if indent.positive?
+    lines = lines.map do |line|
+      if line.gsub(ansi, "").strip.empty?
+        ""
+      else
+        remaining = indent
+        out = +""
+        i = 0
+        while i < line.length && remaining.positive?
+          if line[i] == "\e" && (match = line[i..].match(/\A\e\[[0-9;]*m/))
+            out << match[0]
+            i += match[0].length
+          elsif line[i] == " "
+            remaining -= 1
+            i += 1
+          else
+            break
+          end
+        end
+        out + line[i..].to_s
+      end
+    end
+  end
+
+  # Glamour's dark style renders list items with the bullet at column 0 and
+  # wrapped continuation lines also at column 0, so wrapped text aligns with
+  # the bullet instead of with the item text. Indent continuation lines by 2
+  # so they sit under the item text: proper hanging indent.
+  bullet = /\A(?:#{ansi.source})*[•\-\*]\s/
+  in_list = false
+  lines = lines.map do |line|
+    stripped = line.gsub(ansi, "")
+    if stripped.strip.empty?
+      in_list = false
+      line
+    elsif stripped.match?(/\A[•\-\*]\s/) || line.match?(bullet)
+      in_list = true
+      line
+    elsif in_list
+      "  #{line}"
+    else
+      line
+    end
+  end
+
+  $stdout.write(lines.join("\n"))
+  $stdout.flush
+end
+
+run_glamour_worker

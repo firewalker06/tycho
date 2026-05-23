@@ -1,0 +1,406 @@
+# frozen_string_literal: true
+
+require "time"
+
+require_relative "agent_memory"
+require_relative "../parser"
+
+module HQ
+  class AgentChatLog
+    def initialize(agent)
+      @agent = agent
+    end
+
+    def chat_blocks
+      memory = memory_chat_blocks
+      live = live_run_chat_blocks
+      memory + live
+    rescue StandardError
+      []
+    end
+
+    def chat_text
+      conversation, chat_system, = projection_entries
+      Parser.compose_chat(conversation, chat_system)
+    rescue StandardError
+      ""
+    end
+
+    def ensure_generated
+      conversation, chat_system, system_log = projection_entries
+      File.write(@agent.conversation_log_path, Parser.format_conversation(conversation))
+      File.write(@agent.system_log_path, Parser.format_system(system_log))
+    rescue StandardError
+      nil
+    end
+
+    # Rebuild memory.jsonl from raw.log by re-parsing every
+    # `=== [...] start ===` segment with the current per-tool formatters.
+    # Returns the number of events written (or nil on failure).
+    def rebuild_memory_from_raw_log!
+      raw_path = @agent.raw_log_path
+      return nil unless File.exist?(raw_path)
+
+      runs = split_raw_log_into_runs(raw_path)
+      return nil if runs.empty?
+
+      events = build_events_from_runs(runs)
+      memory = AgentMemory.new(@agent)
+      existing_attachments = memory.attachments
+      memory.write_events!(events)
+      existing_attachments.each do |attachment|
+        memory.append_attachment!(
+          attachment,
+          created_at: parse_time(attachment["created_at"]) || Time.now
+        )
+      end
+      events.length
+    rescue StandardError => e
+      HQ.logger.error("AgentChatLog") { "Rebuild failed for #{@agent.key}: #{e.message}" } if defined?(HQ.logger)
+      nil
+    end
+
+    def memory_missing_with_raw_log?
+      !AgentMemory.new(@agent).exists? && File.exist?(@agent.raw_log_path)
+    end
+
+    private
+
+    def memory_chat_blocks
+      conversation, chat_system, = projection_entries_from_memory
+      Parser.compose_chat_blocks(conversation, chat_system)
+    rescue StandardError
+      []
+    end
+
+    def live_run_chat_blocks
+      return [] unless @agent.pid && !@agent.finished_at
+
+      raw_path = @agent.raw_log_path
+      return [] unless File.exist?(raw_path)
+
+      run_lines = current_run_lines(raw_path)
+      return [] if run_lines.empty?
+
+      conversation, system = Parser.parse_stream(run_lines, agent_type: @agent.agent)
+      Parser.compose_chat_blocks(conversation, system)
+    rescue StandardError
+      []
+    end
+
+    def projection_entries
+      memory = AgentMemory.new(@agent)
+      if memory.exists?
+        return projection_entries_from_memory
+      end
+
+      raw_path = @agent.raw_log_path
+      return [[], [], []] unless File.exist?(raw_path)
+
+      projection_entries_from_raw(raw_path)
+    end
+
+    def projection_entries_from_memory
+      memory = AgentMemory.new(@agent)
+      events = memory.events
+
+      conversation = []
+      chat_system = []
+      system_log = []
+      inquiry_responses = inquiry_response_metadata_by_signature(events)
+
+      events.each do |event|
+        timestamp = parse_time(event["created_at"])
+
+        case event["type"]
+        when "system_prompt"
+          conversation << Parser::ConversationEntry.new(
+            role: "system",
+            content: event["content"].to_s,
+            timestamp:
+          )
+        when "user_message"
+          metadata = message_metadata_for(event)
+          if (response_metadata = inquiry_responses[inquiry_response_signature(event)]&.shift)
+            metadata = (metadata || {}).merge(response_metadata)
+          end
+          conversation << Parser::ConversationEntry.new(
+            role: "user",
+            content: event["content"].to_s,
+            timestamp:,
+            metadata:
+          )
+        when "assistant_message"
+          conversation << Parser::ConversationEntry.new(
+            role: "assistant",
+            content: event["content"].to_s,
+            timestamp:,
+            metadata: message_metadata_for(event)
+          )
+        when "tool_summary"
+          entry = Parser::SystemEntry.new(
+            type: :tool_call,
+            content: event["content"].to_s,
+            timestamp:,
+            tool_name: tool_name_for(event),
+            metadata: system_metadata_for(event)
+          )
+          chat_system << entry
+          system_log << entry
+        when "token_usage"
+          entry = Parser::SystemEntry.new(
+            type: :usage,
+            content: event["content"].to_s,
+            timestamp:,
+            tool_name: nil,
+            metadata: event["metadata"].is_a?(Hash) ? event["metadata"] : nil
+          )
+          chat_system << entry
+          system_log << entry
+        when "run_summary"
+          entry = Parser::SystemEntry.new(
+            type: :run_summary,
+            content: event["content"].to_s,
+            timestamp:,
+            tool_name: nil,
+            metadata: run_summary_metadata_for(event)
+          )
+          chat_system << entry
+          system_log << entry
+        when "inquiry_request"
+          system_log << Parser::SystemEntry.new(
+            type: :inquiry,
+            content: event["content"].to_s,
+            timestamp:,
+            tool_name: nil,
+            metadata: inquiry_metadata_for(event)
+          )
+        when "inquiry_response"
+          system_log << Parser::SystemEntry.new(
+            type: :inquiry_response,
+            content: event["content"].to_s,
+            timestamp:,
+            tool_name: nil,
+            metadata: response_metadata_for(event)
+          )
+        end
+      end
+
+      [conversation, chat_system, system_log]
+    end
+
+    def projection_entries_from_raw(raw_path)
+      run_lines = current_run_lines(raw_path)
+      conversation, system = Parser.parse_run(run_lines, agent_type: @agent.agent)
+      [conversation, system, system]
+    end
+
+    def current_run_lines(raw_path)
+      lines = File.readlines(raw_path, chomp: true)
+      start_index = lines.rindex { |line| line.start_with?("=== [") }
+      return lines unless start_index
+
+      lines[(start_index + 1)..] || []
+    end
+
+    def tool_name_for(event)
+      metadata = event["metadata"]
+      return nil unless metadata.is_a?(Hash)
+
+      metadata["tool_name"].to_s.empty? ? metadata.dig("details", "tool_name") : metadata["tool_name"]
+    end
+
+    def system_metadata_for(event)
+      metadata = event["metadata"]
+      return nil unless metadata.is_a?(Hash)
+
+      details = metadata["details"]
+      details.is_a?(Hash) && !details.empty? ? details : metadata
+    end
+
+    def inquiry_metadata_for(event)
+      metadata = event["metadata"]
+      inquiry = metadata.is_a?(Hash) ? metadata["inquiry"] : nil
+      return nil unless inquiry.is_a?(Hash)
+
+      fields = inquiry.dig("requested_schema", "properties")
+      field_names = fields.is_a?(Hash) ? fields.keys : nil
+      field_names&.any? ? { "fields" => field_names } : nil
+    end
+
+    def response_metadata_for(event)
+      metadata = event["metadata"]
+      response = metadata.is_a?(Hash) ? metadata["response"] : nil
+      return nil unless response.is_a?(Hash)
+
+      result = { "inquiry_response" => true, "fields" => response.keys }
+      id = inquiry_id_for_event(event)
+      result["inquiry_id"] = id if id
+      result
+    end
+
+    def inquiry_response_metadata_by_signature(events)
+      events.each_with_object({}) do |event, result|
+        next unless event["type"] == "inquiry_response"
+
+        metadata = response_metadata_for(event)
+        next unless metadata
+
+        key = inquiry_response_signature(event)
+        result[key] ||= []
+        result[key] << metadata
+      end
+    end
+
+    def inquiry_response_signature(event)
+      [event["created_at"].to_s, event["content"].to_s]
+    end
+
+    def inquiry_id_for_event(event)
+      metadata = event["metadata"]
+      return nil unless metadata.is_a?(Hash)
+
+      id = metadata["inquiry_id"].to_s.strip
+      id.empty? ? nil : id
+    end
+
+    def run_summary_metadata_for(event)
+      status = event["status"].to_s.strip
+      status.empty? ? nil : { "status" => status }
+    end
+
+    def message_metadata_for(event)
+      metadata = event["metadata"]
+      return nil unless metadata.is_a?(Hash) && !metadata.empty?
+
+      metadata
+    end
+
+    def parse_time(value)
+      return nil if value.to_s.empty?
+
+      Time.parse(value.to_s)
+    rescue StandardError
+      nil
+    end
+
+    REBUILD_START_RE = /\A=== \[(?<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] start ===/
+
+    def split_raw_log_into_runs(raw_path)
+      runs = []
+      current = nil
+      File.foreach(raw_path) do |line|
+        if (match = line.match(REBUILD_START_RE))
+          runs << current if current
+          current = { started_at: Time.parse(match[:ts]), lines: [] }
+        elsif current
+          current[:lines] << line
+        end
+      end
+      runs << current if current
+      runs
+    end
+
+    def build_events_from_runs(runs)
+      events = []
+      seen_system_prompts = {}
+
+      runs.each_with_index do |run, run_index|
+        cursor = run[:started_at]
+        conversation, system = Parser.parse_run(run[:lines], agent_type: @agent.agent)
+
+        conversation.each do |entry|
+          cursor += 1
+          case entry.role.to_s
+          when "system"
+            next if seen_system_prompts[entry.content]
+
+            seen_system_prompts[entry.content] = true
+            events << {
+              "type" => "system_prompt",
+              "content" => entry.content.to_s,
+              "created_at" => cursor.iso8601,
+              "pinned" => true
+            }
+          when "user"
+            events << {
+              "type" => "user_message",
+              "content" => entry.content.to_s,
+              "created_at" => cursor.iso8601
+            }
+          when "assistant"
+            events << {
+              "type" => "assistant_message",
+              "content" => entry.content.to_s,
+              "created_at" => cursor.iso8601
+            }
+          end
+        end
+
+        system.each do |entry|
+          cursor += 1
+          if entry.type == :usage
+            events << {
+              "type" => "token_usage",
+              "content" => entry.content.to_s,
+              "created_at" => cursor.iso8601,
+              "metadata" => entry.metadata.is_a?(Hash) ? entry.metadata : nil
+            }.compact
+            next
+          end
+
+          summary = compact_rebuild_summary(entry)
+          next if summary.nil?
+
+          metadata = if entry.metadata.is_a?(Hash)
+                       entry.metadata.merge("type" => entry.type.to_s)
+                     else
+                       { "type" => entry.type.to_s }
+                     end
+
+          events << {
+            "type" => "tool_summary",
+            "content" => summary,
+            "created_at" => cursor.iso8601,
+            "metadata" => { "tool_name" => entry.tool_name.to_s, "details" => metadata }
+          }
+        end
+
+        events << {
+          "type" => "run_summary",
+          "content" => "(rebuilt from raw.log run ##{run_index + 1})",
+          "status" => "success",
+          "created_at" => (cursor + 1).iso8601
+        }
+      end
+
+      events
+    end
+
+    def compact_rebuild_summary(entry)
+      case entry.type
+      when :tool_call
+        first_line = entry.content.to_s.lines.map(&:strip).find { |line| !line.empty? }
+        label = entry.tool_name.to_s.strip
+        summary = if label.empty?
+                    first_line
+                  elsif first_line && first_line != label
+                    "#{label}: #{first_line}"
+                  else
+                    label
+                  end
+        truncate_rebuild_text(summary)
+      when :tool_result
+        first_line = entry.content.to_s.lines.map(&:strip).find { |line| !line.empty? }
+        truncate_rebuild_text(first_line ? "tool result: #{first_line}" : nil)
+      end
+    end
+
+    def truncate_rebuild_text(text, limit = 200)
+      value = text.to_s.strip
+      return nil if value.empty?
+
+      value.length > limit ? "#{value[0, limit - 3]}..." : value
+    end
+  end
+end

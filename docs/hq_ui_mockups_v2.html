@@ -1,0 +1,2501 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HQ Remote UI Mockups V2</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --page: #edf1f5;
+        --ink: #151922;
+        --muted: #5f6876;
+        --soft: #f7f9fc;
+        --card: #ffffff;
+        --line: #d8dee8;
+        --line-strong: #bcc7d5;
+        --nav: #121923;
+        --nav-ink: #f8fafc;
+        --teal: #06756f;
+        --teal-soft: #def3ef;
+        --blue: #255f9f;
+        --blue-soft: #e5f0fb;
+        --green: #23764a;
+        --green-soft: #e6f5ec;
+        --amber: #9a5b00;
+        --amber-soft: #fff1d7;
+        --red: #b42318;
+        --red-soft: #fee7e4;
+        --violet: #6950a8;
+        --violet-soft: #eee8fb;
+        --shadow: 0 18px 36px rgba(24, 33, 47, 0.14);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--page);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.4;
+      }
+
+      button,
+      input,
+      textarea,
+      select {
+        font: inherit;
+      }
+
+      button,
+      input,
+      textarea,
+      select {
+        border-radius: 8px;
+      }
+
+      button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        min-width: 0;
+        min-height: 42px;
+        border: 1px solid var(--line);
+        background: var(--card);
+        color: var(--ink);
+        padding: 0 12px;
+        font-weight: 700;
+      }
+
+      input,
+      textarea,
+      select {
+        width: 100%;
+        border: 1px solid var(--line);
+        background: var(--card);
+        color: var(--ink);
+        padding: 11px 12px;
+      }
+
+      textarea {
+        resize: none;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      .page-head {
+        display: grid;
+        gap: 8px;
+        padding: 24px 16px 12px;
+      }
+
+      .page-head h1 {
+        font-size: 24px;
+        line-height: 1.15;
+      }
+
+      .page-head p {
+        max-width: 760px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .board {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 28px;
+        padding: 12px 12px 40px;
+      }
+
+      .mockup {
+        display: grid;
+        width: 100%;
+        min-width: 0;
+        justify-items: center;
+        gap: 10px;
+      }
+
+      .mockup-title {
+        width: min(390px, calc(100vw - 24px));
+        max-width: 390px;
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .mockup-title h2 {
+        font-size: 15px;
+      }
+
+      .mockup-title span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .phone {
+        width: min(390px, calc(100vw - 24px));
+        max-width: 390px;
+        min-height: 760px;
+        border: 1px solid #c7d0dc;
+        border-radius: 30px;
+        background: #0b1119;
+        padding: 10px;
+        box-shadow: var(--shadow);
+      }
+
+      .screen {
+        position: relative;
+        height: 740px;
+        overflow: hidden;
+        border-radius: 22px;
+        background: var(--soft);
+      }
+
+      .status-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 30px;
+        padding: 0 16px;
+        background: var(--nav);
+        color: var(--nav-ink);
+        font-size: 12px;
+      }
+
+      .status-icons {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .signal,
+      .battery {
+        display: inline-block;
+        border: 1px solid currentColor;
+      }
+
+      .signal {
+        width: 16px;
+        height: 9px;
+        border-radius: 2px;
+      }
+
+      .battery {
+        position: relative;
+        width: 20px;
+        height: 10px;
+        border-radius: 2px;
+      }
+
+      .battery::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        bottom: 2px;
+        width: 11px;
+        background: currentColor;
+      }
+
+      .app {
+        height: 710px;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        background: var(--soft);
+      }
+
+      .top {
+        display: grid;
+        gap: 12px;
+        padding: 14px;
+        border-bottom: 1px solid var(--line);
+        background: var(--card);
+      }
+
+      .top.compact {
+        gap: 8px;
+      }
+
+      .top-row,
+      .identity,
+      .row,
+      .chip-row,
+      .nav,
+      .button-row,
+      .split {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .chip-row {
+        flex-wrap: wrap;
+      }
+
+      .top-row,
+      .split {
+        justify-content: space-between;
+        min-width: 0;
+      }
+
+      .identity {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .top-row > .pill,
+      .top-row > button,
+      .split > .pill,
+      .split > button {
+        flex: 0 0 auto;
+      }
+
+      .logo {
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        background: var(--nav);
+        color: var(--nav-ink);
+        font-weight: 850;
+      }
+
+      .title {
+        min-width: 0;
+      }
+
+      .title h3 {
+        overflow: hidden;
+        font-size: 18px;
+        line-height: 1.15;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .title p {
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .back {
+        flex: 0 0 auto;
+        width: 36px;
+        min-height: 36px;
+        padding: 0;
+      }
+
+      .icon-button {
+        display: grid;
+        place-items: center;
+        width: 42px;
+        padding: 0;
+      }
+
+      .icon {
+        width: 16px;
+        height: 16px;
+        flex: 0 0 auto;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        fill: none;
+      }
+
+      .icon.small {
+        width: 14px;
+        height: 14px;
+      }
+
+      .icon.large {
+        width: 20px;
+        height: 20px;
+      }
+
+      .icon-sprite {
+        position: absolute;
+        width: 0;
+        height: 0;
+        overflow: hidden;
+      }
+
+      .primary {
+        border-color: var(--teal);
+        background: var(--teal);
+        color: #ffffff;
+      }
+
+      .danger {
+        border-color: var(--red);
+        background: var(--red);
+        color: #ffffff;
+      }
+
+      .plain {
+        background: var(--soft);
+      }
+
+      .quiet {
+        color: var(--muted);
+      }
+
+      .content {
+        flex: 1;
+        min-height: 0;
+        display: grid;
+        align-content: start;
+        gap: 12px;
+        overflow-y: auto;
+        padding: 12px 12px 82px;
+      }
+
+      .content.no-nav {
+        padding-bottom: 14px;
+      }
+
+      .section-label {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .section-label strong {
+        color: var(--ink);
+        font-size: 13px;
+      }
+
+      .summary-card,
+      .card,
+      .notice,
+      .field-card,
+      .log-card,
+      .project-card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--card);
+      }
+
+      .summary-card {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+      }
+
+      .summary-card.attention {
+        border-color: #e0a94d;
+        background: #fffaf0;
+      }
+
+      .big-number {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+      }
+
+      .big-number strong {
+        font-size: 34px;
+        line-height: 1;
+      }
+
+      .big-number span {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .summary-text {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .pill,
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 24px;
+        border: 1px solid transparent;
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 11px;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+
+      .pill.need,
+      .chip.need {
+        border-color: #e8bd77;
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .pill.running,
+      .chip.running {
+        border-color: #9cd7d1;
+        background: var(--teal-soft);
+        color: var(--teal);
+      }
+
+      .pill.fail,
+      .chip.fail {
+        border-color: #f3b9b3;
+        background: var(--red-soft);
+        color: var(--red);
+      }
+
+      .pill.done,
+      .chip.done {
+        border-color: #abd9ba;
+        background: var(--green-soft);
+        color: var(--green);
+      }
+
+      .pill.info,
+      .chip.info {
+        border-color: #adc9e8;
+        background: var(--blue-soft);
+        color: var(--blue);
+      }
+
+      .pill.detail,
+      .chip.detail {
+        border-color: #c8bae9;
+        background: var(--violet-soft);
+        color: var(--violet);
+      }
+
+      .list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .card {
+        display: grid;
+        gap: 9px;
+        padding: 12px;
+      }
+
+      .card.primary-card {
+        border-color: #e0a94d;
+        box-shadow: inset 3px 0 0 var(--amber);
+      }
+
+      .card.running-card {
+        border-color: #95d2cc;
+        box-shadow: inset 3px 0 0 var(--teal);
+      }
+
+      .card.fail-card {
+        border-color: #eba8a2;
+        box-shadow: inset 3px 0 0 var(--red);
+      }
+
+      .card-title {
+        min-width: 0;
+      }
+
+      .card-title strong {
+        display: block;
+        overflow: hidden;
+        font-size: 15px;
+        line-height: 1.2;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .card-title span {
+        display: block;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .card-copy {
+        color: var(--ink);
+        font-size: 13px;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .notice {
+        display: grid;
+        gap: 6px;
+        padding: 12px;
+      }
+
+      .notice strong {
+        font-size: 13px;
+      }
+
+      .notice p {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .search {
+        position: relative;
+      }
+
+      .search input {
+        padding-left: 36px;
+      }
+
+      .search .icon {
+        position: absolute;
+        left: 14px;
+        top: 50%;
+        color: var(--muted);
+        transform: translateY(-50%);
+      }
+
+      .result-list,
+      .detail-list,
+      .agent-group,
+      .sheet {
+        display: grid;
+        gap: 8px;
+      }
+
+      .result-row,
+      .agent-row,
+      .detail-row {
+        display: grid;
+        grid-template-columns: 30px minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
+        min-height: 52px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--card);
+        padding: 9px;
+      }
+
+      .detail-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+        min-height: 44px;
+      }
+
+      .type-mark,
+      .status-mark {
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 8px;
+        background: var(--soft);
+        color: var(--muted);
+      }
+
+      .type-mark.need,
+      .status-mark.need {
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .type-mark.running,
+      .status-mark.running {
+        background: var(--teal-soft);
+        color: var(--teal);
+      }
+
+      .type-mark.done,
+      .status-mark.done {
+        background: var(--green-soft);
+        color: var(--green);
+      }
+
+      .type-mark.fail,
+      .status-mark.fail {
+        background: var(--red-soft);
+        color: var(--red);
+      }
+
+      .type-mark.detail,
+      .status-mark.detail {
+        background: var(--violet-soft);
+        color: var(--violet);
+      }
+
+      .row-title {
+        min-width: 0;
+      }
+
+      .row-title strong,
+      .detail-row strong {
+        display: block;
+        overflow: hidden;
+        font-size: 13px;
+        line-height: 1.2;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .row-title span,
+      .detail-row span {
+        display: block;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .unread-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--amber);
+      }
+
+      .group-title {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .empty-state {
+        display: grid;
+        justify-items: start;
+        gap: 8px;
+        border: 1px dashed var(--line-strong);
+        border-radius: 8px;
+        background: #fbfcfe;
+        padding: 12px;
+      }
+
+      .empty-state strong {
+        font-size: 14px;
+      }
+
+      .empty-state p {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .detail-card {
+        display: grid;
+        gap: 9px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--card);
+        padding: 12px;
+      }
+
+      .detail-card summary {
+        cursor: default;
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .detail-card[open] {
+        background: #fbfcfe;
+      }
+
+      .detail-card p,
+      .form-hint,
+      .error-text {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .readonly input {
+        border-color: var(--line);
+        background: var(--soft);
+        color: var(--muted);
+      }
+
+      .error-text {
+        color: var(--red);
+        font-weight: 700;
+      }
+
+      .sheet {
+        border: 1px solid var(--line-strong);
+        border-radius: 14px 14px 8px 8px;
+        background: var(--card);
+        padding: 12px;
+        box-shadow: 0 -10px 24px rgba(24, 33, 47, 0.1);
+      }
+
+      .nav {
+        position: absolute;
+        right: 10px;
+        bottom: 10px;
+        left: 10px;
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 4px;
+        border-top: 1px solid var(--line);
+        border-radius: 0 0 22px 22px;
+        background: rgba(255, 255, 255, 0.96);
+        padding: 8px 6px;
+        backdrop-filter: blur(10px);
+      }
+
+      .nav-item {
+        display: grid;
+        justify-items: center;
+        gap: 2px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 800;
+      }
+
+      .nav-mark {
+        display: grid;
+        place-items: center;
+        width: 24px;
+        height: 20px;
+        border-radius: 999px;
+        color: inherit;
+      }
+
+      .nav-item.active {
+        color: var(--teal);
+      }
+
+      .nav-item.active .nav-mark {
+        background: var(--teal-soft);
+      }
+
+      .decision-banner {
+        display: grid;
+        gap: 8px;
+        border: 1px solid #e6bb72;
+        border-radius: 8px;
+        background: var(--amber-soft);
+        padding: 12px;
+      }
+
+      .decision-banner strong {
+        font-size: 16px;
+      }
+
+      .decision-banner p {
+        color: #6f4400;
+        font-size: 13px;
+      }
+
+      .field-card {
+        display: grid;
+        gap: 8px;
+        padding: 12px;
+      }
+
+      .field-card label {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .choice-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .choice {
+        display: grid;
+        grid-template-columns: 22px minmax(0, 1fr);
+        gap: 9px;
+        align-items: start;
+        min-height: 46px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--soft);
+        padding: 10px;
+      }
+
+      .choice.selected {
+        border-color: var(--teal);
+        background: var(--teal-soft);
+      }
+
+      .check {
+        display: grid;
+        place-items: center;
+        width: 22px;
+        height: 22px;
+        border: 1px solid var(--line-strong);
+        border-radius: 6px;
+        background: var(--card);
+        color: transparent;
+      }
+
+      .check .icon {
+        width: 13px;
+        height: 13px;
+      }
+
+      .choice.selected .check {
+        border-color: var(--teal);
+        background: var(--teal);
+        color: #ffffff;
+      }
+
+      .choice strong {
+        display: block;
+        font-size: 13px;
+      }
+
+      .choice span {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .review-box {
+        display: grid;
+        gap: 8px;
+        border: 1px solid #c8bae9;
+        border-radius: 8px;
+        background: var(--violet-soft);
+        padding: 12px;
+      }
+
+      .review-box p {
+        color: #4d3b7d;
+        font-size: 13px;
+      }
+
+      .button-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 8px;
+      }
+
+      .message-list {
+        display: grid;
+        gap: 10px;
+        padding-bottom: 154px;
+      }
+
+      .message {
+        display: grid;
+        gap: 6px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--card);
+        padding: 10px;
+      }
+
+      .message.user {
+        margin-left: 42px;
+        border-color: #a9c8e8;
+        background: #f4f9ff;
+      }
+
+      .message.agent {
+        margin-right: 22px;
+      }
+
+      .message.tool {
+        border-style: dashed;
+        background: #fbfcfe;
+      }
+
+      .message-label {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 850;
+      }
+
+      .message p,
+      .message pre {
+        margin: 0;
+        font-size: 13px;
+      }
+
+      .message pre,
+      .log-card pre {
+        overflow: hidden;
+        color: #283344;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      .composer {
+        position: absolute;
+        right: 10px;
+        bottom: 10px;
+        left: 10px;
+        display: grid;
+        gap: 8px;
+        border-top: 1px solid var(--line);
+        border-radius: 0 0 22px 22px;
+        background: rgba(255, 255, 255, 0.97);
+        padding: 10px 12px;
+        backdrop-filter: blur(10px);
+      }
+
+      .composer textarea {
+        min-height: 70px;
+      }
+
+      .send-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .send-options {
+        display: flex;
+        gap: 6px;
+        min-width: 0;
+        overflow: hidden;
+      }
+
+      .activity-strip {
+        display: grid;
+        gap: 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--card);
+        padding: 10px;
+      }
+
+      .activity-row {
+        display: grid;
+        grid-template-columns: 20px minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: start;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .activity-dot {
+        display: grid;
+        place-items: center;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: var(--teal-soft);
+        color: var(--teal);
+        font-size: 11px;
+        font-weight: 900;
+      }
+
+      .activity-row strong {
+        display: block;
+        color: var(--ink);
+        font-size: 13px;
+      }
+
+      .tabs {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 3px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--soft);
+        padding: 3px;
+      }
+
+      .tab {
+        display: grid;
+        place-items: center;
+        min-height: 34px;
+        border-radius: 6px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .tab.active {
+        background: var(--card);
+        color: var(--ink);
+      }
+
+      .log-card {
+        display: grid;
+        gap: 8px;
+        padding: 10px;
+      }
+
+      .log-line {
+        display: grid;
+        grid-template-columns: 48px minmax(0, 1fr);
+        gap: 8px;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11px;
+      }
+
+      .log-line strong {
+        color: var(--ink);
+        font-weight: 700;
+      }
+
+      .project-card {
+        display: grid;
+        gap: 10px;
+        padding: 12px;
+      }
+
+      .health-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: start;
+      }
+
+      .health-meter {
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        gap: 4px;
+      }
+
+      .bar {
+        height: 22px;
+        border-radius: 5px;
+        background: var(--green-soft);
+      }
+
+      .bar.warn {
+        background: var(--amber-soft);
+      }
+
+      .bar.fail {
+        background: var(--red-soft);
+      }
+
+      .kv-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .kv {
+        display: grid;
+        gap: 2px;
+        min-height: 52px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--soft);
+        padding: 8px;
+      }
+
+      .kv span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .kv strong {
+        overflow: hidden;
+        font-size: 13px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .confirm-panel {
+        display: grid;
+        gap: 12px;
+        border: 1px solid #e8bd77;
+        border-radius: 8px;
+        background: #fffaf0;
+        padding: 12px;
+      }
+
+      .confirm-panel h3 {
+        font-size: 17px;
+      }
+
+      .confirm-panel p {
+        color: #6f4400;
+        font-size: 13px;
+      }
+
+      .checklist {
+        display: grid;
+        gap: 7px;
+      }
+
+      .checkline {
+        display: grid;
+        grid-template-columns: 22px minmax(0, 1fr);
+        gap: 8px;
+        align-items: start;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .checkline strong {
+        display: block;
+        color: var(--ink);
+        font-size: 13px;
+      }
+
+      .checkline .check {
+        border-color: var(--teal);
+        background: var(--teal);
+        color: #ffffff;
+      }
+
+      .step-card {
+        display: grid;
+        gap: 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--card);
+        padding: 12px;
+      }
+
+      .qr-panel {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 64px;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .mini-qr {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        grid-template-rows: repeat(7, 1fr);
+        gap: 2px;
+        width: 64px;
+        height: 64px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--card);
+        padding: 7px;
+      }
+
+      .mini-qr span {
+        display: block;
+        min-width: 0;
+        min-height: 0;
+        border-radius: 2px;
+        background: var(--nav);
+      }
+
+      .mini-qr .empty {
+        background: var(--soft);
+      }
+
+      .mini-qr .finder {
+        outline: 2px solid var(--nav);
+        outline-offset: -2px;
+        background: var(--card);
+      }
+
+      .toggle-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--soft);
+        padding: 9px;
+      }
+
+      .toggle-row strong {
+        display: block;
+        overflow: hidden;
+        font-size: 13px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .toggle-row span {
+        display: block;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      @media (max-width: 430px) {
+        .board {
+          padding-right: 8px;
+          padding-left: 8px;
+        }
+
+        .phone {
+          width: min(390px, calc(100vw - 16px));
+          border-radius: 24px;
+          padding: 8px;
+        }
+
+        .mockup-title {
+          width: min(390px, calc(100vw - 16px));
+        }
+
+        .screen {
+          border-radius: 18px;
+        }
+
+        .top {
+          padding: 12px;
+        }
+
+        .button-row {
+          gap: 6px;
+        }
+      }
+
+      @media (min-width: 860px) {
+        .page-head {
+          padding: 32px 32px 14px;
+        }
+
+        .board {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          align-items: start;
+          padding: 16px 32px 48px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <svg class="icon-sprite" aria-hidden="true">
+      <symbol id="i-alert-circle" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="8" x2="12" y2="12"></line>
+        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+      </symbol>
+      <symbol id="i-bot" viewBox="0 0 24 24">
+        <path d="M12 8V4H8"></path>
+        <rect x="4" y="8" width="16" height="12" rx="2"></rect>
+        <path d="M2 14h2"></path>
+        <path d="M20 14h2"></path>
+        <path d="M9 13v2"></path>
+        <path d="M15 13v2"></path>
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="M20 6 9 17l-5-5"></path>
+      </symbol>
+      <symbol id="i-chevron-left" viewBox="0 0 24 24">
+        <path d="m15 18-6-6 6-6"></path>
+      </symbol>
+      <symbol id="i-circle-check" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10"></circle>
+        <path d="m9 12 2 2 4-4"></path>
+      </symbol>
+      <symbol id="i-circle-x" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10"></circle>
+        <path d="m15 9-6 6"></path>
+        <path d="m9 9 6 6"></path>
+      </symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10"></circle>
+        <path d="M12 6v6l4 2"></path>
+      </symbol>
+      <symbol id="i-file-text" viewBox="0 0 24 24">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+        <path d="M14 2v6h6"></path>
+        <path d="M16 13H8"></path>
+        <path d="M16 17H8"></path>
+        <path d="M10 9H8"></path>
+      </symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24">
+        <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"></path>
+      </symbol>
+      <symbol id="i-git-branch" viewBox="0 0 24 24">
+        <line x1="6" y1="3" x2="6" y2="15"></line>
+        <circle cx="18" cy="6" r="3"></circle>
+        <circle cx="6" cy="18" r="3"></circle>
+        <path d="M18 9a9 9 0 0 1-9 9"></path>
+      </symbol>
+      <symbol id="i-list-checks" viewBox="0 0 24 24">
+        <path d="m3 17 2 2 4-4"></path>
+        <path d="m3 7 2 2 4-4"></path>
+        <path d="M13 6h8"></path>
+        <path d="M13 12h8"></path>
+        <path d="M13 18h8"></path>
+      </symbol>
+      <symbol id="i-message-circle" viewBox="0 0 24 24">
+        <path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8Z"></path>
+      </symbol>
+      <symbol id="i-play" viewBox="0 0 24 24">
+        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+      </symbol>
+      <symbol id="i-refresh-cw" viewBox="0 0 24 24">
+        <path d="M21 2v6h-6"></path>
+        <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+        <path d="M3 22v-6h6"></path>
+        <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+      </symbol>
+      <symbol id="i-rocket" viewBox="0 0 24 24">
+        <path d="M4.5 16.5c-1.5 1.3-2 3.2-2 5 1.8 0 3.7-.5 5-2"></path>
+        <path d="M9 15 4 10l2-4 6 2"></path>
+        <path d="m14 10 2 6-4 2-5-5"></path>
+        <path d="M15 9 9 15"></path>
+        <path d="M22 2c-1.5 4.8-4.2 8.5-8 11-2.4 1.6-4.8 2.1-7 2 0-2.2.4-4.6 2-7 2.5-3.8 6.2-6.5 11-8Z"></path>
+        <circle cx="15" cy="9" r="1"></circle>
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="8"></circle>
+        <path d="m21 21-4.3-4.3"></path>
+      </symbol>
+      <symbol id="i-send" viewBox="0 0 24 24">
+        <path d="m22 2-7 20-4-9-9-4Z"></path>
+        <path d="M22 2 11 13"></path>
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path d="M12.2 2h-.4l-1 2.5a7.7 7.7 0 0 0-1.8.8L6.4 4.2l-.3.3L4.2 6.4 5.3 9a7.7 7.7 0 0 0-.8 1.8L2 11.8v.4l2.5 1a7.7 7.7 0 0 0 .8 1.8l-1.1 2.6.3.3 1.9 1.9L9 18.7a7.7 7.7 0 0 0 1.8.8l1 2.5h.4l1-2.5a7.7 7.7 0 0 0 1.8-.8l2.6 1.1.3-.3 1.9-1.9-1.1-2.6a7.7 7.7 0 0 0 .8-1.8l2.5-1v-.4l-2.5-1a7.7 7.7 0 0 0-.8-1.8l1.1-2.6-.3-.3-1.9-1.9L15 5.3a7.7 7.7 0 0 0-1.8-.8Z"></path>
+        <circle cx="12" cy="12" r="3"></circle>
+      </symbol>
+      <symbol id="i-shield-alert" viewBox="0 0 24 24">
+        <path d="M20 13c0 5-3.5 7.5-7.7 8.9a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.5a1.3 1.3 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1Z"></path>
+        <path d="M12 8v4"></path>
+        <path d="M12 16h.01"></path>
+      </symbol>
+      <symbol id="i-square" viewBox="0 0 24 24">
+        <rect x="6" y="6" width="12" height="12" rx="1"></rect>
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <polyline points="4 17 10 11 4 5"></polyline>
+        <line x1="12" y1="19" x2="20" y2="19"></line>
+      </symbol>
+    </svg>
+
+    <header class="page-head">
+      <h1>HQ Remote UI Mockups V2</h1>
+      <p>Mobile-first redesign focused on attention, decisions, conversation, project health, and guarded operations instead of mirroring the full TUI hierarchy.</p>
+    </header>
+
+    <main class="board">
+      <section class="mockup" aria-labelledby="attention-title">
+        <div class="mockup-title">
+          <h2 id="attention-title">01 Attention</h2>
+          <span>start here</span>
+        </div>
+        <div class="phone">
+          <div class="screen">
+            <div class="status-bar">
+              <span>09:41</span>
+              <span class="status-icons"><span class="signal" aria-hidden="true">&nbsp;</span><span>5G</span><span class="battery" aria-hidden="true">&nbsp;</span></span>
+            </div>
+            <div class="app">
+              <header class="top">
+                <div class="top-row">
+                  <div class="identity">
+                    <div class="logo"><svg class="icon large" aria-hidden="true"><use href="#i-terminal"></use></svg></div>
+                    <div class="title">
+                      <h3>Needs attention</h3>
+                      <p>Connected / refreshed 18s ago</p>
+                    </div>
+                  </div>
+                  <button class="icon-button plain" type="button" aria-label="Refresh"><svg class="icon" aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>
+                </div>
+              </header>
+
+              <div class="content">
+                <section class="summary-card attention">
+                  <div class="big-number">
+                    <strong>2</strong>
+                    <span>items waiting on you</span>
+                  </div>
+                  <p class="summary-text">Answer paused agents first. Running work and project health stay visible below.</p>
+                  <button class="primary" type="button"><svg class="icon small" aria-hidden="true"><use href="#i-alert-circle"></use></svg> Review first item</button>
+                </section>
+
+                <div class="section-label"><strong>Now</strong><span>highest priority</span></div>
+                <div class="list">
+                  <article class="card primary-card">
+                    <div class="split">
+                      <div class="card-title">
+                        <strong>Kamal deploy audit</strong>
+                        <span>hq / claude reviewer</span>
+                      </div>
+                      <span class="pill need"><svg class="icon small" aria-hidden="true"><use href="#i-message-circle"></use></svg> Answer</span>
+                    </div>
+                    <p class="card-copy">Agent is paused until you choose verification scope for production deploy.</p>
+                    <div class="meta">
+                      <span>Started 12m ago</span>
+                      <span>Release decision</span>
+                    </div>
+                  </article>
+
+                  <article class="card primary-card">
+                    <div class="split">
+                      <div class="card-title">
+                        <strong>Parser triage</strong>
+                        <span>agents / claude-wrapper debugger</span>
+                      </div>
+                      <span class="pill fail"><svg class="icon small" aria-hidden="true"><use href="#i-circle-x"></use></svg> Blocked</span>
+                    </div>
+                    <p class="card-copy">Last run failed after parser fixture verification. Raw log has one error group.</p>
+                  </article>
+                </div>
+
+                <div class="section-label"><strong>Running</strong><span>background</span></div>
+                <article class="card running-card">
+                  <div class="split">
+                    <div class="card-title">
+                      <strong>Checkout guardrails</strong>
+                      <span>web / codex implementer</span>
+                    </div>
+                    <span class="pill running"><svg class="icon small" aria-hidden="true"><use href="#i-clock"></use></svg> Running</span>
+                  </div>
+                  <p class="card-copy">Tests are running. Latest activity: rendering regression check.</p>
+                </article>
+
+                <div class="search">
+                  <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
+                  <input type="search" placeholder="Search agents, projects, logs" aria-label="Search agents, projects, logs">
+                </div>
+              </div>
+
+              <nav class="nav" aria-label="Primary navigation">
+                <div class="nav-item active"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-alert-circle"></use></svg></span><span>Now</span></div>
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-bot"></use></svg></span><span>Agents</span></div>
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-search"></use></svg></span><span>Search</span></div>
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-folder"></use></svg></span><span>Projects</span></div>
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-settings"></use></svg></span><span>Setup</span></div>
+              </nav>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mockup" aria-labelledby="search-title">
+        <div class="mockup-title">
+          <h2 id="search-title">02 Omnisearch</h2>
+          <span>typed results</span>
+        </div>
+        <div class="phone">
+          <div class="screen">
+            <div class="status-bar">
+              <span>09:42</span>
+              <span class="status-icons"><span class="signal" aria-hidden="true">&nbsp;</span><span>5G</span><span class="battery" aria-hidden="true">&nbsp;</span></span>
+            </div>
+            <div class="app">
+              <header class="top compact">
+                <div class="top-row">
+                  <div class="identity">
+                    <div class="logo"><svg class="icon large" aria-hidden="true"><use href="#i-terminal"></use></svg></div>
+                    <div class="title">
+                      <h3>Search HQ</h3>
+                      <p>Unread agents first when the query is empty</p>
+                    </div>
+                  </div>
+                  <button class="icon-button plain" type="button" aria-label="Close search"><svg class="icon" aria-hidden="true"><use href="#i-circle-x"></use></svg></button>
+                </div>
+                <div class="search">
+                  <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
+                  <input type="search" value="" aria-label="Search agents and projects">
+                </div>
+              </header>
+
+              <div class="content">
+                <div class="section-label"><strong>Suggested</strong><span>2 unread first</span></div>
+                <div class="result-list">
+                  <article class="result-row">
+                    <span class="type-mark need"><svg class="icon small" aria-hidden="true"><use href="#i-bot"></use></svg></span>
+                    <div class="row-title">
+                      <strong>Kamal deploy audit</strong>
+                      <span>Agent / hq / claude reviewer / paused</span>
+                    </div>
+                    <span class="unread-dot" aria-label="Unread">&nbsp;</span>
+                  </article>
+                  <article class="result-row">
+                    <span class="type-mark fail"><svg class="icon small" aria-hidden="true"><use href="#i-bot"></use></svg></span>
+                    <div class="row-title">
+                      <strong>Parser triage</strong>
+                      <span>Agent / agents / claude-wrapper / blocked</span>
+                    </div>
+                    <span class="unread-dot" aria-label="Unread">&nbsp;</span>
+                  </article>
+                  <article class="result-row">
+                    <span class="type-mark running"><svg class="icon small" aria-hidden="true"><use href="#i-folder"></use></svg></span>
+                    <div class="row-title">
+                      <strong>Storefront</strong>
+                      <span>Project / maintenance / root returned 503</span>
+                    </div>
+                    <span class="pill need">Open</span>
+                  </article>
+                </div>
+
+                <div class="section-label"><strong>Query: hq</strong><span>direct navigation</span></div>
+                <div class="result-list">
+                  <article class="result-row">
+                    <span class="type-mark done"><svg class="icon small" aria-hidden="true"><use href="#i-folder"></use></svg></span>
+                    <div class="row-title">
+                      <strong>HQ</strong>
+                      <span>Project / healthy / main / clean</span>
+                    </div>
+                    <span class="pill done">Project</span>
+                  </article>
+                  <article class="result-row">
+                    <span class="type-mark running"><svg class="icon small" aria-hidden="true"><use href="#i-bot"></use></svg></span>
+                    <div class="row-title">
+                      <strong>Remote UI polish</strong>
+                      <span>Agent / hq / codex / running 8m</span>
+                    </div>
+                    <span class="pill running">Agent</span>
+                  </article>
+                </div>
+              </div>
+
+              <nav class="nav" aria-label="Primary navigation">
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-alert-circle"></use></svg></span><span>Now</span></div>
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-bot"></use></svg></span><span>Agents</span></div>
+                <div class="nav-item active"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-search"></use></svg></span><span>Search</span></div>
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-folder"></use></svg></span><span>Projects</span></div>
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-settings"></use></svg></span><span>Setup</span></div>
+              </nav>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mockup" aria-labelledby="decision-title">
+        <div class="mockup-title">
+          <h2 id="decision-title">03 Decision</h2>
+          <span>agent paused</span>
+        </div>
+        <div class="phone">
+          <div class="screen">
+            <div class="status-bar">
+              <span>09:44</span>
+              <span class="status-icons"><span class="signal" aria-hidden="true">&nbsp;</span><span>5G</span><span class="battery" aria-hidden="true">&nbsp;</span></span>
+            </div>
+            <div class="app">
+              <header class="top compact">
+                <div class="top-row">
+                  <div class="identity">
+                    <button class="back plain" type="button" aria-label="Back"><svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg></button>
+                    <div class="title">
+                      <h3>Release decision</h3>
+                      <p>Kamal deploy audit / paused</p>
+                    </div>
+                  </div>
+                  <span class="pill need"><svg class="icon small" aria-hidden="true"><use href="#i-message-circle"></use></svg> Answer</span>
+                </div>
+              </header>
+
+              <div class="content no-nav">
+                <section class="decision-banner">
+                  <strong>Agent is waiting for your decision</strong>
+                  <p>Your answer will be sent to the agent. It will not run the deploy command until you submit.</p>
+                </section>
+
+                <section class="field-card">
+                  <label for="target">Target branch</label>
+                  <select id="target">
+                    <option>main</option>
+                  </select>
+                </section>
+
+                <section class="field-card">
+                  <label>Verification scope</label>
+                  <div class="choice-list">
+                    <div class="choice selected">
+                      <span class="check"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg></span>
+                      <div><strong>Automated tests</strong><span>Syntax, registry, rendering, remote server</span></div>
+                    </div>
+                    <div class="choice selected">
+                      <span class="check"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg></span>
+                      <div><strong>Manual remote UI smoke</strong><span>Open mobile view and check interaction paths</span></div>
+                    </div>
+                    <div class="choice">
+                      <span class="check"><svg class="icon" aria-hidden="true"><use href="#i-circle-x"></use></svg></span>
+                      <div><strong>Deploy after checks</strong><span>Requires one more confirmation before command runs</span></div>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="field-card">
+                  <label for="note">Instruction for agent</label>
+                  <textarea id="note" rows="4">Proceed with verification only. Ask again before running deploy.</textarea>
+                </section>
+
+                <section class="review-box">
+                  <strong>Review before sending</strong>
+                  <p>This keeps the agent moving, but the deploy action remains gated behind a separate confirmation.</p>
+                </section>
+
+                <div class="button-row">
+                  <button class="plain" type="button">Save draft</button>
+                  <button class="primary" type="button"><svg class="icon small" aria-hidden="true"><use href="#i-send"></use></svg> Send answer</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mockup" aria-labelledby="conversation-title">
+        <div class="mockup-title">
+          <h2 id="conversation-title">04 Conversation</h2>
+          <span>agent room</span>
+        </div>
+        <div class="phone">
+          <div class="screen">
+            <div class="status-bar">
+              <span>09:47</span>
+              <span class="status-icons"><span class="signal" aria-hidden="true">&nbsp;</span><span>5G</span><span class="battery" aria-hidden="true">&nbsp;</span></span>
+            </div>
+            <div class="app">
+              <header class="top compact">
+                <div class="top-row">
+                  <div class="identity">
+                    <button class="back plain" type="button" aria-label="Back"><svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg></button>
+                    <div class="title">
+                      <h3>Checkout guardrails</h3>
+                      <p>web / codex / running 8m</p>
+                    </div>
+                  </div>
+                  <button class="danger" type="button"><svg class="icon small" aria-hidden="true"><use href="#i-square"></use></svg> Stop</button>
+                </div>
+                <div class="chip-row">
+                  <span class="chip running"><svg class="icon small" aria-hidden="true"><use href="#i-clock"></use></svg> Running</span>
+                  <span class="chip info"><svg class="icon small" aria-hidden="true"><use href="#i-list-checks"></use></svg> Latest: tests</span>
+                  <span class="chip detail"><svg class="icon small" aria-hidden="true"><use href="#i-file-text"></use></svg> Activity</span>
+                </div>
+              </header>
+
+              <div class="content">
+                <section class="activity-strip">
+                  <div class="activity-row">
+                    <span class="activity-dot">1</span>
+                    <div><strong>Current activity</strong><span>Running rendering regression tests</span></div>
+                    <span>now</span>
+                  </div>
+                </section>
+
+                <div class="message-list">
+                  <article class="message agent">
+                    <div class="message-label"><span>Summary</span><span>updated now</span></div>
+                    <p>The checkout validation path is isolated to the payment form and one server-side guard.</p>
+                  </article>
+
+                  <article class="message tool">
+                    <div class="message-label"><span>Activity summary</span><span>open</span></div>
+                    <p>4 shell commands, 2 test files, no failures yet.</p>
+                  </article>
+
+                  <article class="message user">
+                    <div class="message-label"><span>You</span><span>09:33</span></div>
+                    <p>Keep the fix focused and include the regression test.</p>
+                  </article>
+
+                  <article class="message agent">
+                    <div class="message-label"><span>Assistant</span><span>streaming</span></div>
+                    <p>I found the edge case in the amount parser. I am adding a narrow guard and checking the UI flow next.</p>
+                  </article>
+                </div>
+              </div>
+
+              <form class="composer">
+                <textarea aria-label="Prompt">Run the targeted tests and summarize any risk before you stop.</textarea>
+                <div class="send-row">
+                  <div class="send-options">
+                    <span class="chip detail"><svg class="icon small" aria-hidden="true"><use href="#i-settings"></use></svg> Options</span>
+                    <span class="chip info"><svg class="icon small" aria-hidden="true"><use href="#i-bot"></use></svg> Skill</span>
+                  </div>
+                  <button class="primary" type="button"><svg class="icon small" aria-hidden="true"><use href="#i-send"></use></svg> Send</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mockup" aria-labelledby="activity-title">
+        <div class="mockup-title">
+          <h2 id="activity-title">05 Activity Detail</h2>
+          <span>logs on demand</span>
+        </div>
+        <div class="phone">
+          <div class="screen">
+            <div class="status-bar">
+              <span>09:50</span>
+              <span class="status-icons"><span class="signal" aria-hidden="true">&nbsp;</span><span>5G</span><span class="battery" aria-hidden="true">&nbsp;</span></span>
+            </div>
+            <div class="app">
+              <header class="top compact">
+                <div class="top-row">
+                  <div class="identity">
+                    <button class="back plain" type="button" aria-label="Back"><svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg></button>
+                    <div class="title">
+                      <h3>Run activity</h3>
+                      <p>Checkout guardrails / raw log available</p>
+                    </div>
+                  </div>
+                  <span class="pill running"><svg class="icon small" aria-hidden="true"><use href="#i-clock"></use></svg> Live</span>
+                </div>
+                <div class="tabs" aria-label="Activity tabs">
+                  <div class="tab active">Summary</div>
+                  <div class="tab">Tools</div>
+                  <div class="tab">Raw</div>
+                </div>
+              </header>
+
+              <div class="content no-nav">
+                <section class="activity-strip">
+                  <div class="activity-row">
+                    <span class="activity-dot">1</span>
+                    <div><strong>Read code</strong><span>3 files inspected</span></div>
+                    <span>done</span>
+                  </div>
+                  <div class="activity-row">
+                    <span class="activity-dot">2</span>
+                    <div><strong>Edit guard</strong><span>Amount parser updated</span></div>
+                    <span>done</span>
+                  </div>
+                  <div class="activity-row">
+                    <span class="activity-dot">3</span>
+                    <div><strong>Run tests</strong><span>rendering_test.rb still running</span></div>
+                    <span>now</span>
+                  </div>
+                </section>
+
+                <section class="log-card">
+                  <div class="split">
+                    <div class="card-title">
+                      <strong>Important lines</strong>
+                      <span>Filtered from raw log</span>
+                    </div>
+                    <button class="plain" type="button">Raw</button>
+                  </div>
+                  <div class="log-line"><span>09:48</span><strong>bundle exec ruby test/rendering_test.rb</strong></div>
+                  <div class="log-line"><span>09:48</span><strong>32 assertions started</strong></div>
+                  <div class="log-line"><span>09:49</span><strong>checking chat composer paste regression</strong></div>
+                  <div class="log-line"><span>09:50</span><strong>no failures reported so far</strong></div>
+                </section>
+
+                <section class="field-card">
+                  <label for="filter">Find in log</label>
+                  <input id="filter" type="search" placeholder="error, warning, test name">
+                </section>
+
+                <div class="button-row">
+                  <button class="plain" type="button">Copy path</button>
+                  <button class="primary" type="button"><svg class="icon small" aria-hidden="true"><use href="#i-message-circle"></use></svg> Back to chat</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mockup" aria-labelledby="projects-title">
+        <div class="mockup-title">
+          <h2 id="projects-title">06 Project Health</h2>
+          <span>operations</span>
+        </div>
+        <div class="phone">
+          <div class="screen">
+            <div class="status-bar">
+              <span>09:53</span>
+              <span class="status-icons"><span class="signal" aria-hidden="true">&nbsp;</span><span>5G</span><span class="battery" aria-hidden="true">&nbsp;</span></span>
+            </div>
+            <div class="app">
+              <header class="top">
+                <div class="top-row">
+                  <div class="identity">
+                    <div class="logo"><svg class="icon large" aria-hidden="true"><use href="#i-folder"></use></svg></div>
+                    <div class="title">
+                      <h3>Project health</h3>
+                      <p>12 projects / refreshed 17s ago</p>
+                    </div>
+                  </div>
+                  <button class="icon-button plain" type="button" aria-label="Refresh"><svg class="icon" aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>
+                </div>
+              </header>
+
+              <div class="content">
+                <section class="summary-card">
+                  <div class="big-number">
+                    <strong>1</strong>
+                    <span>project needs attention</span>
+                  </div>
+                  <p class="summary-text">Storefront is in maintenance. Payments timed out once but recovered.</p>
+                </section>
+
+                <div class="search">
+                  <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
+                  <input type="search" placeholder="Search projects" aria-label="Search projects">
+                </div>
+
+                <div class="section-label"><strong>Health</strong><span>tap for actions</span></div>
+                <div class="list">
+                  <article class="project-card">
+                    <div class="health-row">
+                      <div class="card-title">
+                        <strong>Storefront</strong>
+                        <span>maintenance / root returned 503</span>
+                      </div>
+                      <span class="pill need"><svg class="icon small" aria-hidden="true"><use href="#i-alert-circle"></use></svg> Review</span>
+                    </div>
+                    <div class="health-meter" aria-label="Recent health">
+                      <span class="bar" aria-hidden="true">&nbsp;</span><span class="bar" aria-hidden="true">&nbsp;</span><span class="bar warn" aria-hidden="true">&nbsp;</span><span class="bar warn" aria-hidden="true">&nbsp;</span><span class="bar warn" aria-hidden="true">&nbsp;</span><span class="bar warn" aria-hidden="true">&nbsp;</span><span class="bar warn" aria-hidden="true">&nbsp;</span><span class="bar warn" aria-hidden="true">&nbsp;</span>
+                    </div>
+                    <div class="meta">
+                      <span>Health endpoint ok</span>
+                      <span>maintenance mode detected</span>
+                    </div>
+                  </article>
+
+                  <article class="project-card">
+                    <div class="health-row">
+                      <div class="card-title">
+                        <strong>HQ</strong>
+                        <span>healthy / 184ms / branch main</span>
+                      </div>
+                      <span class="pill done"><svg class="icon small" aria-hidden="true"><use href="#i-circle-check"></use></svg> Healthy</span>
+                    </div>
+                    <div class="health-meter" aria-label="Recent health">
+                      <span class="bar" aria-hidden="true">&nbsp;</span><span class="bar" aria-hidden="true">&nbsp;</span><span class="bar" aria-hidden="true">&nbsp;</span><span class="bar" aria-hidden="true">&nbsp;</span><span class="bar" aria-hidden="true">&nbsp;</span><span class="bar" aria-hidden="true">&nbsp;</span><span class="bar" aria-hidden="true">&nbsp;</span><span class="bar" aria-hidden="true">&nbsp;</span>
+                    </div>
+                  </article>
+
+                  <article class="project-card">
+                    <div class="health-row">
+                      <div class="card-title">
+                        <strong>Payments API</strong>
+                        <span>healthy now / one timeout 1h ago</span>
+                      </div>
+                      <span class="pill info"><svg class="icon small" aria-hidden="true"><use href="#i-clock"></use></svg> Watch</span>
+                    </div>
+                    <div class="health-meter" aria-label="Recent health">
+                      <span class="bar" aria-hidden="true">&nbsp;</span><span class="bar" aria-hidden="true">&nbsp;</span><span class="bar fail" aria-hidden="true">&nbsp;</span><span class="bar" aria-hidden="true">&nbsp;</span><span class="bar" aria-hidden="true">&nbsp;</span><span class="bar" aria-hidden="true">&nbsp;</span><span class="bar" aria-hidden="true">&nbsp;</span><span class="bar" aria-hidden="true">&nbsp;</span>
+                    </div>
+                  </article>
+                </div>
+
+                <div class="section-label"><strong>Empty state pattern</strong><span>setup remains terminal-first</span></div>
+                <section class="empty-state">
+                  <strong>When no projects are configured</strong>
+                  <p>Point to the TUI because project setup still needs local file-system selection.</p>
+                  <button class="plain" type="button"><svg class="icon small" aria-hidden="true"><use href="#i-terminal"></use></svg> Open TUI</button>
+                </section>
+              </div>
+
+              <nav class="nav" aria-label="Primary navigation">
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-alert-circle"></use></svg></span><span>Now</span></div>
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-bot"></use></svg></span><span>Agents</span></div>
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-search"></use></svg></span><span>Search</span></div>
+                <div class="nav-item active"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-folder"></use></svg></span><span>Projects</span></div>
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-settings"></use></svg></span><span>Setup</span></div>
+              </nav>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mockup" aria-labelledby="project-detail-title">
+        <div class="mockup-title">
+          <h2 id="project-detail-title">07 Project Detail</h2>
+          <span>status plus context</span>
+        </div>
+        <div class="phone">
+          <div class="screen">
+            <div class="status-bar">
+              <span>09:54</span>
+              <span class="status-icons"><span class="signal" aria-hidden="true">&nbsp;</span><span>5G</span><span class="battery" aria-hidden="true">&nbsp;</span></span>
+            </div>
+            <div class="app">
+              <header class="top compact">
+                <div class="top-row">
+                  <div class="identity">
+                    <button class="back plain" type="button" aria-label="Back"><svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg></button>
+                    <div class="title">
+                      <h3>Storefront</h3>
+                      <p>public apps / key storefront</p>
+                    </div>
+                  </div>
+                  <span class="pill need"><svg class="icon small" aria-hidden="true"><use href="#i-alert-circle"></use></svg> Maintenance</span>
+                </div>
+                <div class="chip-row">
+                  <span class="chip info"><svg class="icon small" aria-hidden="true"><use href="#i-git-branch"></use></svg> PR #481</span>
+                  <span class="chip done"><svg class="icon small" aria-hidden="true"><use href="#i-git-branch"></use></svg> main</span>
+                  <span class="chip need">dirty</span>
+                </div>
+              </header>
+
+              <div class="content no-nav">
+                <section class="summary-card attention">
+                  <div class="split">
+                    <div class="card-title">
+                      <strong>Root returned 503</strong>
+                      <span>Health path /up is green in 212ms</span>
+                    </div>
+                    <span class="pill need">Review</span>
+                  </div>
+                  <p class="summary-text">Root 503 means kamal-proxy maintenance is active even though the health endpoint is healthy.</p>
+                </section>
+
+                <section class="detail-card">
+                  <div class="detail-row">
+                    <div><strong>Managed agents</strong><span>3 active or recent on this project</span></div>
+                    <span class="pill running">3</span>
+                  </div>
+                  <div class="detail-row">
+                    <div><strong>Current action</strong><span>maintenance enable completed / action log available</span></div>
+                    <span class="pill done">Done</span>
+                  </div>
+                  <div class="detail-row">
+                    <div><strong>Revision</strong><span>Short commit a18f4c2 on main</span></div>
+                    <span class="pill detail">Copy</span>
+                  </div>
+                  <div class="detail-row">
+                    <div><strong>Latest agent summary</strong><span>Deploy audit recommends switching live after dirty files are reviewed.</span></div>
+                    <span class="pill need">Open</span>
+                  </div>
+                </section>
+
+                <details class="detail-card">
+                  <summary>Deploy details</summary>
+                  <div class="kv-grid">
+                    <div class="kv"><span>Service</span><strong>storefront-web</strong></div>
+                    <div class="kv"><span>Image</span><strong>ghcr.io/acme/storefront</strong></div>
+                    <div class="kv"><span>Hosts</span><strong>web-1, web-2</strong></div>
+                    <div class="kv"><span>Proxy</span><strong>kamal-proxy</strong></div>
+                    <div class="kv"><span>Action log</span><strong>logs/projects/storefront/action.log</strong></div>
+                  </div>
+                </details>
+
+                <details class="detail-card">
+                  <summary>Health and versions</summary>
+                  <div class="kv-grid">
+                    <div class="kv"><span>Path</span><strong>/up</strong></div>
+                    <div class="kv"><span>Kamal</span><strong>2.6.1</strong></div>
+                    <div class="kv"><span>Rails</span><strong>7.2.2</strong></div>
+                    <div class="kv"><span>Latency</span><strong>212ms</strong></div>
+                  </div>
+                </details>
+
+                <section class="field-card">
+                  <label>Automation templates</label>
+                  <div class="chip-row">
+                    <span class="chip info">codex implementer</span>
+                    <span class="chip detail">claude reviewer</span>
+                    <span class="chip running">claude-wrapper debug</span>
+                  </div>
+                </section>
+
+                <section class="notice">
+                  <strong>Project editing opens in the TUI</strong>
+                  <p>Shown only after tapping Modify, because setup still needs terminal directory access.</p>
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mockup" aria-labelledby="agents-title">
+        <div class="mockup-title">
+          <h2 id="agents-title">08 Agent List</h2>
+          <span>grouped by project</span>
+        </div>
+        <div class="phone">
+          <div class="screen">
+            <div class="status-bar">
+              <span>09:57</span>
+              <span class="status-icons"><span class="signal" aria-hidden="true">&nbsp;</span><span>5G</span><span class="battery" aria-hidden="true">&nbsp;</span></span>
+            </div>
+            <div class="app">
+              <header class="top">
+                <div class="top-row">
+                  <div class="identity">
+                    <div class="logo"><svg class="icon large" aria-hidden="true"><use href="#i-bot"></use></svg></div>
+                    <div class="title">
+                      <h3>Agents</h3>
+                      <p>Grouped by project / 2 unread</p>
+                    </div>
+                  </div>
+                  <button class="primary icon-button" type="button" aria-label="Create agent"><svg class="icon" aria-hidden="true"><use href="#i-play"></use></svg></button>
+                </div>
+                <div class="search">
+                  <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
+                  <input type="search" placeholder="Filter agents" aria-label="Filter agents">
+                </div>
+              </header>
+
+              <div class="content">
+                <section class="agent-group">
+                  <div class="group-title"><span>hq</span><span>2 agents</span></div>
+                  <article class="agent-row">
+                    <span class="status-mark need"><svg class="icon small" aria-hidden="true"><use href="#i-message-circle"></use></svg></span>
+                    <div class="row-title">
+                      <strong>Kamal deploy audit</strong>
+                      <span>Paused / claude reviewer / answer needed</span>
+                    </div>
+                    <span class="unread-dot" aria-label="Unread">&nbsp;</span>
+                  </article>
+                  <article class="agent-row">
+                    <span class="status-mark running"><svg class="icon small" aria-hidden="true"><use href="#i-clock"></use></svg></span>
+                    <div class="row-title">
+                      <strong>Remote UI polish</strong>
+                      <span>Running / codex implementer / 8m elapsed</span>
+                    </div>
+                    <span class="pill running">Open</span>
+                  </article>
+                </section>
+
+                <section class="agent-group">
+                  <div class="group-title"><span>agents</span><span>collapsed</span></div>
+                  <article class="agent-row">
+                    <span class="status-mark fail"><svg class="icon small" aria-hidden="true"><use href="#i-circle-x"></use></svg></span>
+                    <div class="row-title">
+                      <strong>Parser triage</strong>
+                      <span>Blocked / claude-wrapper debugger / latest failed</span>
+                    </div>
+                    <span class="unread-dot" aria-label="Unread">&nbsp;</span>
+                  </article>
+                </section>
+
+                <div class="section-label"><strong>Empty state pattern</strong><span>project has no agents</span></div>
+                <section class="empty-state">
+                  <strong>No agents yet</strong>
+                  <p>Shown for an empty project. Create one from project context, or use the TUI/API if mobile creation is disabled.</p>
+                  <button class="primary" type="button"><svg class="icon small" aria-hidden="true"><use href="#i-bot"></use></svg> New agent</button>
+                </section>
+              </div>
+
+              <nav class="nav" aria-label="Primary navigation">
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-alert-circle"></use></svg></span><span>Now</span></div>
+                <div class="nav-item active"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-bot"></use></svg></span><span>Agents</span></div>
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-search"></use></svg></span><span>Search</span></div>
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-folder"></use></svg></span><span>Projects</span></div>
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-settings"></use></svg></span><span>Setup</span></div>
+              </nav>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mockup" aria-labelledby="setup-title">
+        <div class="mockup-title">
+          <h2 id="setup-title">09 Setup</h2>
+          <span>readiness</span>
+        </div>
+        <div class="phone">
+          <div class="screen">
+            <div class="status-bar">
+              <span>10:00</span>
+              <span class="status-icons"><span class="signal" aria-hidden="true">&nbsp;</span><span>5G</span><span class="battery" aria-hidden="true">&nbsp;</span></span>
+            </div>
+            <div class="app">
+              <header class="top">
+                <div class="top-row">
+                  <div class="identity">
+                    <div class="logo"><svg class="icon large" aria-hidden="true"><use href="#i-settings"></use></svg></div>
+                    <div class="title">
+                      <h3>Setup</h3>
+                      <p>Remote access / refreshed 12s ago</p>
+                    </div>
+                  </div>
+                  <button class="icon-button plain" type="button" aria-label="Refresh setup"><svg class="icon" aria-hidden="true"><use href="#i-refresh-cw"></use></svg></button>
+                </div>
+              </header>
+
+              <div class="content">
+                <section class="summary-card">
+                  <div class="qr-panel">
+                    <div class="card-title">
+                      <strong>Remote UI connected</strong>
+                      <span>https://hq-device.tailnet-name.ts.net:7373</span>
+                    </div>
+                    <div class="mini-qr" aria-label="Remote UI QR preview">
+                      <span class="finder">&nbsp;</span><span>&nbsp;</span><span class="finder">&nbsp;</span><span class="empty">&nbsp;</span><span>&nbsp;</span><span class="empty">&nbsp;</span><span>&nbsp;</span>
+                      <span>&nbsp;</span><span class="empty">&nbsp;</span><span>&nbsp;</span><span>&nbsp;</span><span class="empty">&nbsp;</span><span>&nbsp;</span><span class="empty">&nbsp;</span>
+                      <span class="finder">&nbsp;</span><span>&nbsp;</span><span class="finder">&nbsp;</span><span class="empty">&nbsp;</span><span>&nbsp;</span><span>&nbsp;</span><span>&nbsp;</span>
+                      <span class="empty">&nbsp;</span><span>&nbsp;</span><span class="empty">&nbsp;</span><span>&nbsp;</span><span class="empty">&nbsp;</span><span>&nbsp;</span><span class="empty">&nbsp;</span>
+                      <span>&nbsp;</span><span class="empty">&nbsp;</span><span>&nbsp;</span><span class="empty">&nbsp;</span><span>&nbsp;</span><span>&nbsp;</span><span>&nbsp;</span>
+                      <span class="empty">&nbsp;</span><span>&nbsp;</span><span>&nbsp;</span><span>&nbsp;</span><span class="empty">&nbsp;</span><span>&nbsp;</span><span class="empty">&nbsp;</span>
+                      <span>&nbsp;</span><span class="empty">&nbsp;</span><span>&nbsp;</span><span class="empty">&nbsp;</span><span>&nbsp;</span><span class="empty">&nbsp;</span><span>&nbsp;</span>
+                    </div>
+                  </div>
+                  <div class="chip-row">
+                    <span class="chip done"><svg class="icon small" aria-hidden="true"><use href="#i-circle-check"></use></svg> API ok</span>
+                    <span class="chip info">Tailscale</span>
+                    <span class="chip detail">MagicDNS</span>
+                  </div>
+                  <div class="button-row">
+                    <button class="plain" type="button">Copy URL</button>
+                    <button class="primary" type="button"><svg class="icon small" aria-hidden="true"><use href="#i-refresh-cw"></use></svg> Recheck</button>
+                  </div>
+                </section>
+
+                <section class="detail-card">
+                  <div class="section-label"><strong>Automation readiness</strong><span>3 harnesses</span></div>
+                  <div class="detail-row">
+                    <div><strong>Codex</strong><span>Signed in / default for code changes</span></div>
+                    <span class="pill done">Ready</span>
+                  </div>
+                  <div class="detail-row">
+                    <div><strong>Claude</strong><span>Session resume available</span></div>
+                    <span class="pill done">Ready</span>
+                  </div>
+                  <div class="detail-row">
+                    <div><strong>claude-wrapper</strong><span>Custom harness configured</span></div>
+                    <span class="pill info">Ready</span>
+                  </div>
+                  <div class="detail-row">
+                    <div><strong>Result schema</strong><span>config/schemas/agent_result.json</span></div>
+                    <span class="pill done">Valid</span>
+                  </div>
+                </section>
+
+                <section class="detail-card">
+                  <div class="section-label"><strong>Configuration</strong><span>local files</span></div>
+                  <div class="kv-grid">
+                    <div class="kv"><span>Projects</span><strong>12 active</strong></div>
+                    <div class="kv"><span>Archived</span><strong>4 hidden</strong></div>
+                    <div class="kv"><span>Config</span><strong>hq.yml loaded</strong></div>
+                    <div class="kv"><span>Prompts</span><strong>8 templates</strong></div>
+                  </div>
+                  <button class="plain" type="button"><svg class="icon small" aria-hidden="true"><use href="#i-terminal"></use></svg> Open TUI setup</button>
+                </section>
+
+                <section class="notice">
+                  <strong>Safety defaults</strong>
+                  <p>Deploy and maintenance actions require confirmation. Running agents lock edit fields, and existing workspaces stay read-only.</p>
+                </section>
+
+                <details class="detail-card">
+                  <summary>Logs and storage</summary>
+                  <div class="kv-grid">
+                    <div class="kv"><span>Root</span><strong>logs/</strong></div>
+                    <div class="kv"><span>Agents</span><strong>18 runs</strong></div>
+                    <div class="kv"><span>Projects</span><strong>7 action logs</strong></div>
+                    <div class="kv"><span>Archive</span><strong>projects/archived</strong></div>
+                  </div>
+                </details>
+
+                <details class="detail-card">
+                  <summary>Notifications and preferences</summary>
+                  <div class="toggle-row">
+                    <div><strong>Paused agent alerts</strong><span>Notify when an agent needs input</span></div>
+                    <span class="pill done">On</span>
+                  </div>
+                  <div class="toggle-row">
+                    <div><strong>Action completion</strong><span>Notify after deploy or maintenance command</span></div>
+                    <span class="pill done">On</span>
+                  </div>
+                  <div class="toggle-row">
+                    <div><strong>Auto-refresh</strong><span>Every 30 seconds</span></div>
+                    <span class="pill info">30s</span>
+                  </div>
+                </details>
+              </div>
+
+              <nav class="nav" aria-label="Primary navigation">
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-alert-circle"></use></svg></span><span>Now</span></div>
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-bot"></use></svg></span><span>Agents</span></div>
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-search"></use></svg></span><span>Search</span></div>
+                <div class="nav-item"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-folder"></use></svg></span><span>Projects</span></div>
+                <div class="nav-item active"><span class="nav-mark"><svg class="icon small" aria-hidden="true"><use href="#i-settings"></use></svg></span><span>Setup</span></div>
+              </nav>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mockup" aria-labelledby="agent-detail-title">
+        <div class="mockup-title">
+          <h2 id="agent-detail-title">10 Agent Detail</h2>
+          <span>summary first</span>
+        </div>
+        <div class="phone">
+          <div class="screen">
+            <div class="status-bar">
+              <span>10:01</span>
+              <span class="status-icons"><span class="signal" aria-hidden="true">&nbsp;</span><span>5G</span><span class="battery" aria-hidden="true">&nbsp;</span></span>
+            </div>
+            <div class="app">
+              <header class="top compact">
+                <div class="top-row">
+                  <div class="identity">
+                    <button class="back plain" type="button" aria-label="Back"><svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg></button>
+                    <div class="title">
+                      <h3>Remote UI polish</h3>
+                      <p>hq / codex implementer / idle</p>
+                    </div>
+                  </div>
+                  <span class="pill done"><svg class="icon small" aria-hidden="true"><use href="#i-circle-check"></use></svg> Succeeded</span>
+                </div>
+                <div class="chip-row">
+                  <span class="chip info">template polish</span>
+                  <span class="chip detail">codex</span>
+                  <span class="chip info">PR #481</span>
+                  <span class="chip done">main</span>
+                  <span class="chip done">clean</span>
+                </div>
+              </header>
+
+              <div class="content no-nav">
+                <section class="summary-card">
+                  <div class="split">
+                    <div class="card-title">
+                      <strong>Latest summary</strong>
+                      <span>completed 4m ago / elapsed 16m</span>
+                    </div>
+                    <span class="pill done">Run 3</span>
+                  </div>
+                  <p class="summary-text">Implemented the mobile mockup pass, verified compact states, and left deploy work behind confirmation.</p>
+                </section>
+
+                <section class="detail-card">
+                  <div class="detail-row">
+                    <div><strong>Run metadata</strong><span>Started 09:41 / finished 09:57 / 16m elapsed</span></div>
+                    <span class="pill done">0</span>
+                  </div>
+                  <div class="detail-row">
+                    <div><strong>Result</strong><span>exit 0 / latest label success / 3 total runs</span></div>
+                    <span class="pill done">ok</span>
+                  </div>
+                  <div class="detail-row">
+                    <div><strong>Project revision</strong><span>PR #481 / main / commit a18f4c2</span></div>
+                    <span class="pill detail">Copy</span>
+                  </div>
+                  <div class="detail-row">
+                    <div><strong>Current prompt</strong><span>Apply the UI mockup checklist and keep mobile controls compact...</span></div>
+                    <span class="pill info">Edit</span>
+                  </div>
+                  <div class="detail-row">
+                    <div><strong>Workspace</strong><span>/Users/example/Code/hq</span></div>
+                    <span class="pill detail">Copy</span>
+                  </div>
+                </section>
+
+                <details class="detail-card">
+                  <summary>Diagnostics</summary>
+                  <div class="kv-grid">
+                    <div class="kv"><span>Sandbox</span><strong>danger-full-access</strong></div>
+                    <div class="kv"><span>Created</span><strong>May 9, 09:21</strong></div>
+                    <div class="kv"><span>Session</span><strong>claude-a7f...</strong></div>
+                    <div class="kv"><span>Raw log</span><strong>logs/agents/ui.log</strong></div>
+                  </div>
+                </details>
+
+                <section class="notice">
+                  <strong>Run again creates run 4</strong>
+                  <p>Previous summaries and logs stay available, so the action is clear before starting another run.</p>
+                </section>
+
+                <div class="button-row">
+                  <button class="plain" type="button"><svg class="icon small" aria-hidden="true"><use href="#i-play"></use></svg> Start</button>
+                  <button class="primary" type="button"><svg class="icon small" aria-hidden="true"><use href="#i-refresh-cw"></use></svg> Run again</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mockup" aria-labelledby="agent-form-title">
+        <div class="mockup-title">
+          <h2 id="agent-form-title">11 Agent Setup</h2>
+          <span>create or edit</span>
+        </div>
+        <div class="phone">
+          <div class="screen">
+            <div class="status-bar">
+              <span>10:04</span>
+              <span class="status-icons"><span class="signal" aria-hidden="true">&nbsp;</span><span>5G</span><span class="battery" aria-hidden="true">&nbsp;</span></span>
+            </div>
+            <div class="app">
+              <header class="top compact">
+                <div class="top-row">
+                  <div class="identity">
+                    <button class="back plain" type="button" aria-label="Back"><svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg></button>
+                    <div class="title">
+                      <h3>New HQ agent</h3>
+                      <p>Created from selected project</p>
+                    </div>
+                  </div>
+                  <span class="pill info">Draft</span>
+                </div>
+              </header>
+
+              <div class="content no-nav">
+                <section class="notice">
+                  <strong>Idle agents can be edited</strong>
+                  <p>Name, template, harness, and prompt are editable here; running agents show these fields locked.</p>
+                </section>
+
+                <section class="field-card">
+                  <label for="agent-name">Name</label>
+                  <input id="agent-name" type="text" value="Remote UI polish">
+                </section>
+
+                <section class="field-card">
+                  <label for="template">Prompt template</label>
+                  <select id="template">
+                    <option>codex implementer</option>
+                    <option>claude reviewer</option>
+                    <option>claude-wrapper debugger</option>
+                  </select>
+                </section>
+
+                <section class="field-card">
+                  <label>Harness</label>
+                  <div class="choice-list">
+                    <div class="choice selected">
+                      <span class="check"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg></span>
+                      <div><strong>Codex</strong><span>Recommended for code changes</span></div>
+                    </div>
+                    <div class="choice">
+                      <span class="check">&nbsp;</span>
+                      <div><strong>Claude</strong><span>Review and analysis</span></div>
+                    </div>
+                    <div class="choice">
+                      <span class="check">&nbsp;</span>
+                      <div><strong>claude-wrapper</strong><span>Debugging runs</span></div>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="field-card">
+                  <label for="agent-prompt">Prompt</label>
+                  <textarea id="agent-prompt" rows="3">Apply the UI mockup checklist. Keep mobile details behind disclosure.</textarea>
+                  <span class="form-hint">Name, prompt, and workspace are required.</span>
+                  <span class="error-text">Workspace is required before creating an agent.</span>
+                </section>
+
+                <section class="field-card readonly">
+                  <label for="workspace">Workspace</label>
+                  <input id="workspace" type="text" value="/Users/example/Code/hq" readonly>
+                  <span class="form-hint">Read-only when editing an existing agent.</span>
+                </section>
+
+                <div class="button-row">
+                  <button class="plain" type="button">Create only</button>
+                  <button class="primary" type="button"><svg class="icon small" aria-hidden="true"><use href="#i-play"></use></svg> Create + run</button>
+                </div>
+
+                <section class="sheet">
+                  <div class="section-label"><strong>Insert skill</strong><span>opens on demand</span></div>
+                  <div class="search">
+                    <svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg>
+                    <input type="search" value="git" aria-label="Filter skills">
+                  </div>
+                  <div class="result-list">
+                    <article class="result-row">
+                      <span class="type-mark detail"><svg class="icon small" aria-hidden="true"><use href="#i-settings"></use></svg></span>
+                      <div class="row-title"><strong>github:gh-address-comments</strong><span>Address PR review threads</span></div>
+                      <span class="pill info">Add</span>
+                    </article>
+                  </div>
+                  <p class="form-hint">Skill discovery runs after creation and appears here passively.</p>
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mockup" aria-labelledby="deploy-title">
+        <div class="mockup-title">
+          <h2 id="deploy-title">12 Guarded Action</h2>
+          <span>confirm flow</span>
+        </div>
+        <div class="phone">
+          <div class="screen">
+            <div class="status-bar">
+              <span>09:56</span>
+              <span class="status-icons"><span class="signal" aria-hidden="true">&nbsp;</span><span>5G</span><span class="battery" aria-hidden="true">&nbsp;</span></span>
+            </div>
+            <div class="app">
+              <header class="top compact">
+                <div class="top-row">
+                  <div class="identity">
+                    <button class="back plain" type="button" aria-label="Back"><svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg></button>
+                    <div class="title">
+                      <h3>Switch Storefront live</h3>
+                      <p>Maintenance mode / local command</p>
+                    </div>
+                  </div>
+                  <span class="pill need"><svg class="icon small" aria-hidden="true"><use href="#i-shield-alert"></use></svg> Confirm</span>
+                </div>
+              </header>
+
+              <div class="content no-nav">
+                <section class="confirm-panel">
+                  <h3>Confirm before switching live</h3>
+                  <p>Storefront is currently in maintenance. This action restores production traffic through kamal-proxy and starts a detached local command.</p>
+                  <div class="chip-row">
+                    <span class="chip need"><svg class="icon small" aria-hidden="true"><use href="#i-shield-alert"></use></svg> Now maintenance</span>
+                    <span class="chip info"><svg class="icon small" aria-hidden="true"><use href="#i-terminal"></use></svg> bin/kamal app boot</span>
+                    <span class="chip detail"><svg class="icon small" aria-hidden="true"><use href="#i-file-text"></use></svg> logs/action.log</span>
+                  </div>
+                </section>
+
+                <section class="field-card">
+                  <label>Preflight</label>
+                  <div class="checklist">
+                    <div class="checkline"><span class="check"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg></span><div><strong>No project action running</strong><span>Safe to start a new action</span></div></div>
+                    <div class="checkline"><span class="check"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg></span><div><strong>Health endpoint is green</strong><span>Last HEAD /up returned 200 in 212ms</span></div></div>
+                    <div class="checkline"><span class="check"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg></span><div><strong>Dirty files reviewed</strong><span>Git status is understood before restoring traffic</span></div></div>
+                  </div>
+                </section>
+
+                <section class="step-card">
+                  <div class="split">
+                    <div class="card-title">
+                      <strong>After confirmation</strong>
+                      <span>Expected maintenance flow</span>
+                    </div>
+                    <span class="pill info"><svg class="icon small" aria-hidden="true"><use href="#i-list-checks"></use></svg> 4 steps</span>
+                  </div>
+                  <div class="activity-row">
+                    <span class="activity-dot">1</span>
+                    <div><strong>Start command</strong><span>mise exec / bin/kamal app boot</span></div>
+                    <span aria-hidden="true">&nbsp;</span>
+                  </div>
+                  <div class="activity-row">
+                    <span class="activity-dot">2</span>
+                    <div><strong>Stream action log</strong><span>Tail important output first</span></div>
+                    <span aria-hidden="true">&nbsp;</span>
+                  </div>
+                  <div class="activity-row">
+                    <span class="activity-dot">3</span>
+                    <div><strong>Refresh health</strong><span>HEAD /up and root URL should both pass</span></div>
+                    <span aria-hidden="true">&nbsp;</span>
+                  </div>
+                </section>
+
+                <div class="button-row">
+                  <button class="plain" type="button">Keep paused</button>
+                  <button class="danger" type="button"><svg class="icon small" aria-hidden="true"><use href="#i-rocket"></use></svg> Switch live</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

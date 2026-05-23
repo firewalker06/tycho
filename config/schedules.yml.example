@@ -1,0 +1,20 @@
+# Example schedule definitions. Copy to config/schedules.yml for local use.
+#
+# schedules:
+#   - key: weekday-maintenance
+#     name: Weekday maintenance
+#     enabled: true
+#     cron: "0 9 * * 1-5"
+#     timezone: local
+#     target:
+#       type: agent
+#       project_key: tycho
+#       name: Tycho scheduled maintenance
+#       message_source: file
+#       message_file: schedules/weekday-maintenance.md
+#     policy:
+#       overlap: skip
+#       missed: run_once_on_start
+#       archive_previous_agent: true
+
+schedules: []

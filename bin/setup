@@ -1,0 +1,538 @@
+#!/usr/bin/env bash
+
+set -u
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CHECK_ONLY=0
+SKIP_BUNDLE=0
+REMOTE_CHECK=0
+PUSH_CHECK=0
+PROFILES=()
+HARD_FAILURES=0
+SOFT_WARNINGS=0
+
+usage() {
+  cat <<'USAGE'
+Usage: bin/setup [options]
+
+Options:
+  --check              Run dependency checks only; do not install gems or copy config files.
+  --skip-bundle        Skip bundle install.
+  --profile NAME       Escalate optional dependencies for a feature profile.
+                       Supported: app, codex, claude, all. May be repeated.
+  --remote             Check Remote UI readiness hints.
+  --push               Check browser push notification readiness hints.
+  -h, --help           Show this help.
+
+Examples:
+  bin/setup
+  bin/setup --check
+  bin/setup --profile app --profile codex
+USAGE
+}
+
+while (($#)); do
+  case "$1" in
+    --check)
+      CHECK_ONLY=1
+      ;;
+    --skip-bundle)
+      SKIP_BUNDLE=1
+      ;;
+    --profile)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "FAIL: --profile requires a value" >&2
+        exit 2
+      fi
+      case "$1" in
+        app|codex|claude|all)
+          PROFILES+=("$1")
+          ;;
+        *)
+          echo "FAIL: unsupported profile '$1'" >&2
+          exit 2
+          ;;
+      esac
+      ;;
+    --remote)
+      REMOTE_CHECK=1
+      ;;
+    --push)
+      PUSH_CHECK=1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "FAIL: unknown option '$1'" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+ok() {
+  printf 'OK: %s\n' "$1"
+}
+
+warn() {
+  SOFT_WARNINGS=$((SOFT_WARNINGS + 1))
+  printf 'WARN: %s\n' "$1"
+}
+
+fail() {
+  HARD_FAILURES=$((HARD_FAILURES + 1))
+  printf 'FAIL: %s\n' "$1" >&2
+}
+
+info() {
+  printf 'INFO: %s\n' "$1"
+}
+
+profile_enabled() {
+  local profile="$1"
+  local selected
+  for selected in "${PROFILES[@]}"; do
+    if [[ "$selected" == "$profile" || "$selected" == "all" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+has_command() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+env_value() {
+  local suffix="$1"
+  suffix="${suffix#TYCHO_}"
+  suffix="${suffix#HQ_}"
+
+  local key="TYCHO_${suffix}"
+  if [[ -n "${!key+x}" ]]; then
+    printf '%s\n' "${!key}"
+  fi
+}
+
+tycho_home_dir() {
+  local configured
+  configured="$(env_value HOME)"
+  printf '%s\n' "${configured:-$HOME/.tycho}"
+}
+
+tycho_config_dir() {
+  local configured
+  configured="$(env_value CONFIG_DIR)"
+  printf '%s\n' "${configured:-$(tycho_home_dir)/config}"
+}
+
+tycho_config_path() {
+  local configured
+  configured="$(env_value CONFIG_PATH)"
+  printf '%s\n' "${configured:-$(tycho_config_dir)/hq.yml}"
+}
+
+tycho_system_prompts_path() {
+  local configured
+  configured="$(env_value SYSTEM_PROMPTS_PATH)"
+  printf '%s\n' "${configured:-$(dirname "$(tycho_config_path)")/system_prompts.yml}"
+}
+
+tycho_schedules_path() {
+  local configured
+  configured="$(env_value SCHEDULES_PATH)"
+  printf '%s\n' "${configured:-$(tycho_config_dir)/schedules.yml}"
+}
+
+tycho_hooks_path() {
+  local configured
+  configured="$(env_value HOOKS_PATH)"
+  printf '%s\n' "${configured:-$(tycho_config_dir)/hooks.yml}"
+}
+
+tycho_logs_dir() {
+  local configured
+  configured="$(env_value LOGS_ROOT)"
+  printf '%s\n' "${configured:-$(tycho_home_dir)/logs}"
+}
+
+tycho_schedules_dir() {
+  local configured
+  configured="$(env_value SCHEDULES_ROOT)"
+  printf '%s\n' "${configured:-$(tycho_home_dir)/schedules}"
+}
+
+is_executable() {
+  local command_name="$1"
+  if [[ -z "$command_name" ]]; then
+    return 1
+  fi
+
+  if [[ "$command_name" == */* ]]; then
+    [[ -f "$command_name" && -x "$command_name" ]]
+  else
+    has_command "$command_name"
+  fi
+}
+
+resolve_tool() {
+  local env_name="$1"
+  local fallback="$2"
+  shift 2
+
+  local configured
+  configured="$(env_value "$env_name")"
+  if [[ -n "$configured" ]]; then
+    printf '%s\n' "$configured"
+    return 0
+  fi
+
+  local candidate
+  for candidate in "$@"; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  printf '%s\n' "$fallback"
+}
+
+check_optional_tool() {
+  local label="$1"
+  local command_name="$2"
+  local profile="$3"
+  local hint="$4"
+
+  if is_executable "$command_name"; then
+    ok "$label found: $command_name"
+  elif [[ -n "$profile" ]] && profile_enabled "$profile"; then
+    fail "$label not found for requested '$profile' profile: $command_name. $hint"
+  else
+    warn "$label not found: $command_name. $hint"
+  fi
+}
+
+check_ruby() {
+  if ! has_command ruby; then
+    fail "Ruby not found. Install Ruby 3.2 or newer."
+    return
+  fi
+
+  local version
+  version="$(ruby -e 'print RUBY_VERSION' 2>/dev/null || true)"
+  if ruby -e 'exit(Gem::Version.new(RUBY_VERSION) >= Gem::Version.new("3.2.0") ? 0 : 1)' >/dev/null 2>&1; then
+    ok "Ruby $version found"
+  else
+    fail "Ruby $version found, but HQ requires Ruby 3.2 or newer."
+  fi
+}
+
+check_bundler() {
+  if has_command bundle; then
+    ok "Bundler found: $(bundle --version 2>/dev/null || printf 'unknown version')"
+  else
+    fail "Bundler not found. Install it with: gem install bundler"
+  fi
+}
+
+check_go() {
+  if has_command go; then
+    ok "Go found: $(go version 2>/dev/null || printf 'unknown version')"
+  else
+    fail "Go not found. Install Go before compiling Charm Ruby native gems."
+  fi
+}
+
+check_native_build_tools() {
+  local os_name
+  os_name="$(uname -s 2>/dev/null || printf 'unknown')"
+
+  if [[ "$os_name" == "Darwin" ]]; then
+    if has_command xcode-select && xcode-select -p >/dev/null 2>&1; then
+      ok "Xcode Command Line Tools found"
+    else
+      fail "Xcode Command Line Tools not found. Install them with: xcode-select --install"
+    fi
+  fi
+
+  if has_command make; then
+    ok "make found"
+  else
+    fail "make not found. Install native build tools for your platform."
+  fi
+
+  if has_command cc || has_command gcc || has_command clang; then
+    ok "C compiler found"
+  else
+    fail "C compiler not found. Install native build tools for your platform."
+  fi
+}
+
+ensure_config_file() {
+  local target="$1"
+  local source="$2"
+
+  if [[ -f "$target" ]]; then
+    ok "$(basename "$target") already exists"
+    return
+  fi
+
+  if [[ ! -f "$source" ]]; then
+    fail "Sample config missing: $source"
+    return
+  fi
+
+  if [[ "$CHECK_ONLY" -eq 1 ]]; then
+    warn "$(basename "$target") is missing; setup would copy $(basename "$source")"
+    return
+  fi
+
+  mkdir -p "$(dirname "$target")"
+  cp "$source" "$target"
+  ok "Created ${target#$ROOT_DIR/} from ${source#$ROOT_DIR/}"
+}
+
+run_bundle_install() {
+  if [[ "$CHECK_ONLY" -eq 1 ]]; then
+    info "Skipping bundle install in --check mode"
+    return
+  fi
+
+  if [[ "$SKIP_BUNDLE" -eq 1 ]]; then
+    info "Skipping bundle install because --skip-bundle was passed"
+    return
+  fi
+
+  if [[ "$HARD_FAILURES" -gt 0 ]]; then
+    info "Skipping bundle install until hard failures are fixed"
+    return
+  fi
+
+  info "Running bundle install"
+  if (cd "$ROOT_DIR" && bundle install); then
+    ok "bundle install completed"
+  else
+    fail "bundle install failed"
+  fi
+}
+
+check_custom_harnesses() {
+  local config_path
+  config_path="$(tycho_config_path)"
+  if [[ ! -f "$config_path" || ! -x "$(command -v ruby 2>/dev/null || true)" ]]; then
+    return
+  fi
+
+  local output
+  output="$(
+    TYCHO_SETUP_CONFIG_PATH="$config_path" ruby -ryaml -rshellwords -e '
+      def executable_for(command)
+        parts = Array(command)
+        parts = Shellwords.split(command.to_s) if command.is_a?(String)
+        parts = parts.map(&:to_s).reject(&:empty?)
+        return nil if parts.empty?
+        first = parts.first
+        return first unless File.basename(first) == "env"
+        parts.drop(1).find { |part| !part.include?("=") } || first
+      end
+
+      def available?(command)
+        return false if command.to_s.empty?
+        if command.include?(File::SEPARATOR)
+          File.file?(command) && File.executable?(command)
+        else
+          ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).any? do |dir|
+            path = File.join(dir, command)
+            File.file?(path) && File.executable?(path)
+          end
+        end
+      end
+
+      data = YAML.load_file(ENV.fetch("TYCHO_SETUP_CONFIG_PATH")) || {}
+      Array(data["custom_harnesses"]).each do |harness|
+        key = harness.fetch("key", "unknown").to_s
+        executable = executable_for(harness["execution_command"])
+        status = available?(executable.to_s) ? "ok" : "missing"
+        puts [key, executable, status].join("\t")
+      end
+    ' 2>/dev/null
+  )"
+
+  [[ -n "$output" ]] || return
+
+  local key executable status
+  while IFS=$'\t' read -r key executable status; do
+    [[ -n "$key" ]] || continue
+    if [[ "$status" == "ok" ]]; then
+      ok "Custom harness '$key' executable found: $executable"
+    elif profile_enabled claude; then
+      fail "Custom harness '$key' executable not found: ${executable:-execution command}"
+    else
+      warn "Custom harness '$key' executable not found: ${executable:-execution command}"
+    fi
+  done <<< "$output"
+}
+
+check_kamal_readiness() {
+  if is_executable kamal; then
+    ok "Kamal CLI found: kamal"
+    return
+  fi
+
+  local count="0"
+  local config_path
+  config_path="$(tycho_config_path)"
+  if [[ -f "$config_path" ]] && has_command ruby; then
+    count="$(
+      TYCHO_SETUP_CONFIG_PATH="$config_path" ruby -ryaml -e '
+        data = YAML.load_file(ENV.fetch("TYCHO_SETUP_CONFIG_PATH")) || {}
+        projects = Array(data["projects"]).select { |project| project["apps"] }
+        ready = projects.count do |project|
+          path = File.expand_path(project["path"].to_s)
+          binstub = File.join(path, "bin", "kamal")
+          lockfile = File.join(path, "Gemfile.lock")
+          gemfile = File.join(path, "Gemfile")
+          File.executable?(binstub) ||
+            (File.file?(lockfile) && File.read(lockfile).match?(/^    kamal \(/)) ||
+            (File.file?(gemfile) && File.read(gemfile).match?(/gem ["'"'"']kamal["'"'"']/))
+        end
+        puts ready
+      ' 2>/dev/null || printf '0'
+    )"
+  fi
+
+  if [[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]]; then
+    ok "Project Kamal dependency found for $count app project(s)"
+  elif profile_enabled app; then
+    fail "Kamal command not found for requested 'app' profile. Install Kamal globally or configure app projects with bin/kamal or a Kamal gem dependency."
+  else
+    warn "Kamal command not found. Deploy, maintenance, and live actions need global kamal or project Kamal dependencies."
+  fi
+}
+
+check_tailscale() {
+  local tailscale_bin
+  tailscale_bin="$(resolve_tool TAILSCALE_BIN tailscale)"
+  if is_executable "$tailscale_bin"; then
+    ok "Tailscale CLI found: $tailscale_bin"
+    if "$tailscale_bin" status --self --json >/dev/null 2>&1; then
+      ok "Tailscale self status is available"
+    else
+      warn "Tailscale CLI is installed but self status is unavailable or Tailscale is stopped"
+    fi
+  elif [[ "$REMOTE_CHECK" -eq 1 || "$PUSH_CHECK" -eq 1 ]]; then
+    warn "Tailscale CLI not found. Remote UI will use localhost unless a host is supplied."
+  else
+    warn "Tailscale CLI not found. MagicDNS and HTTPS Serve detection will be unavailable."
+  fi
+}
+
+check_macos_terminal_tools() {
+  local os_name term_program
+  os_name="$(uname -s 2>/dev/null || printf 'unknown')"
+  [[ "$os_name" == "Darwin" ]] || return
+
+  if has_command osascript; then
+    ok "osascript found"
+  else
+    warn "osascript not found. Ghostty, iTerm, and Apple Terminal automation will be unavailable."
+  fi
+
+  if has_command open; then
+    ok "open found"
+  else
+    warn "open not found. macOS terminal app fallback will be unavailable."
+  fi
+
+  term_program="${TERM_PROGRAM:-}"
+  if [[ "$term_program" == "WezTerm" || "$term_program" == "wezterm" ]]; then
+    check_optional_tool "WezTerm CLI" "wezterm" "" "Install WezTerm or use another terminal launch path."
+  fi
+}
+
+check_remote_hints() {
+  [[ "$REMOTE_CHECK" -eq 1 ]] || return
+
+  if [[ -n "$(env_value REMOTE_TOKEN)" ]]; then
+    ok "TYCHO_REMOTE_TOKEN is set"
+  else
+    warn "TYCHO_REMOTE_TOKEN is not set. Set it before binding Remote UI outside localhost."
+  fi
+}
+
+check_push_hints() {
+  [[ "$PUSH_CHECK" -eq 1 ]] || return
+
+  if [[ -n "$(env_value WEB_PUSH_VAPID_PUBLIC_KEY)" && -n "$(env_value WEB_PUSH_VAPID_PRIVATE_KEY)" ]]; then
+    ok "Web Push VAPID keys are set in the environment"
+  else
+    warn "Web Push VAPID keys are not set. Tycho can generate persisted keys, but setup did not provision them."
+  fi
+}
+
+main() {
+  info "Checking baseline requirements"
+  check_ruby
+  check_bundler
+  check_go
+  check_native_build_tools
+
+  info "Checking config files"
+  local logs_dir schedules_dir
+  logs_dir="$(tycho_logs_dir)"
+  schedules_dir="$(tycho_schedules_dir)"
+  if [[ "$CHECK_ONLY" -eq 1 ]]; then
+    [[ -d "$logs_dir" ]] || warn "Runtime logs directory is missing; setup would create $logs_dir"
+    [[ -d "$schedules_dir" ]] || warn "Schedule prompt directory is missing; setup would create $schedules_dir"
+  else
+    mkdir -p "$logs_dir" "$schedules_dir"
+    ok "Runtime logs directory ready: $logs_dir"
+    ok "Schedule prompt directory ready: $schedules_dir"
+  fi
+  ensure_config_file "$(tycho_config_path)" "$ROOT_DIR/config/hq.yml.example"
+  ensure_config_file "$(tycho_system_prompts_path)" "$ROOT_DIR/config/system_prompts.yml.example"
+  ensure_config_file "$(tycho_schedules_path)" "$ROOT_DIR/config/schedules.yml.example"
+  ensure_config_file "$(tycho_hooks_path)" "$ROOT_DIR/config/hooks.example.yml"
+
+  info "Checking optional runtime integrations"
+  check_optional_tool "Git CLI" "git" "" "Project git metadata will render as n/a."
+
+  local mise_bin codex_bin claude_bin
+  mise_bin="$(resolve_tool MISE_BIN mise "$HOME/.local/bin/mise" /opt/homebrew/bin/mise /usr/local/bin/mise)"
+  codex_bin="$(resolve_tool CODEX_BIN codex "$HOME/.local/bin/codex" /opt/homebrew/bin/codex /usr/local/bin/codex)"
+  claude_bin="$(resolve_tool CLAUDE_BIN claude "$HOME/.local/bin/claude" /opt/homebrew/bin/claude /usr/local/bin/claude)"
+
+  check_optional_tool "mise" "$mise_bin" "app" "Deploy, maintenance, and live actions require mise."
+  check_kamal_readiness
+  check_optional_tool "Codex CLI" "$codex_bin" "codex" "Set TYCHO_CODEX_BIN or install codex."
+  check_optional_tool "Claude CLI" "$claude_bin" "claude" "Set TYCHO_CLAUDE_BIN or install claude."
+  check_custom_harnesses
+  check_tailscale
+  check_macos_terminal_tools
+  check_remote_hints
+  check_push_hints
+
+  run_bundle_install
+
+  printf '\n'
+  if [[ "$HARD_FAILURES" -gt 0 ]]; then
+    printf 'Setup failed: %d hard requirement(s) need attention.\n' "$HARD_FAILURES" >&2
+    if [[ "$SOFT_WARNINGS" -gt 0 ]]; then
+      printf 'Soft warnings also found: %d.\n' "$SOFT_WARNINGS" >&2
+    fi
+    exit 1
+  fi
+
+  if [[ "$SOFT_WARNINGS" -gt 0 ]]; then
+    printf 'Setup completed with %d soft warning(s).\n' "$SOFT_WARNINGS"
+  else
+    printf 'Setup completed with no soft warnings.\n'
+  fi
+}
+
+main

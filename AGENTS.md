@@ -1,0 +1,87 @@
+# Repository Guidelines
+
+## Project Structure & Module Organization
+
+`bin/tycho` is the executable and boots through `HQ::CLI` in `lib/hq/cli.rb`. Keep the main Bubbletea model and screen-level update flow in `lib/hq/app.rb`, config loading in `lib/hq/registry.rb`, terminal input shims in `lib/hq/bubbletea_input.rb`, domain and process-management logic under `lib/hq/domain/`, form/composer components under `lib/hq/ui/components/`, and rendering split between the aggregator in `lib/hq/ui/rendering.rb` and focused modules under `lib/hq/ui/rendering/`.
+
+Domain files are intentionally small: `constants.rb` owns log/schema paths, `version_lookup.rb` handles RubyGems lookups, `kamal_action.rb` manages detached Kamal commands, `app_project.rb` handles project metadata and health checks, `managed_agent.rb` manages Codex/Claude-compatible execution and structured results, and `agent_store.rb` persists managed agents.
+
+Project definitions live in `~/.tycho/config/hq.yml`, system prompt templates live in `~/.tycho/config/system_prompts.yml`, and structured managed-agent output is described by `~/.tycho/config/schemas/agent_result.json`. Project status, key decisions, and roadmap live in `docs/PROJECT_STATUS.md`; update it when durable priorities, milestones, or architectural decisions change. Research and workflow notes live under `docs/`, including `docs/GOTCHAS.md`, `docs/REMOTE_SERVER.md`, `docs/research/charm-ruby.md`, `docs/research/codex-json-schema-research.md`, and `docs/research/claude-json-schema-research.md`.
+
+Runtime artifacts are written to `~/.tycho/logs/`, including app state files such as `actions.json` and `managed_agents.json`, application logs in `hq.log`, project logs under `~/.tycho/logs/projects/{project}/`, archived project logs under `~/.tycho/logs/projects/archived/`, and per-agent logs/status/result files under `~/.tycho/logs/agents/`. Keep automated checks under `test/`; the existing rendering regression coverage lives in `test/rendering_test.rb`.
+
+## Build, Test, and Development Commands
+
+- `bundle install`: install Ruby gems declared for Ruby 3.2+.
+- `bin/tycho`: start the TUI locally.
+- `bundle exec bin/tycho`: run through Bundler when debugging gem resolution issues.
+- `bundle exec bin/tycho serve [--host 127.0.0.1] [--port 7373]`: start the local Remote Sessions JSON API and web UI for managed-agent control.
+- `bundle exec bin/tycho schedule [list|daemon --once|daemon --dry-run]`: list schedules, run the scheduled-agent daemon, or run a single scheduler tick.
+- `bin/test`: run the public CI-equivalent Ruby syntax and regression suite.
+- `bundle exec ruby -c bin/tycho`: syntax-check the main executable before opening a PR.
+- `bundle exec ruby test/registry_test.rb`: verify registry loading for split config and system prompt interpolation.
+- `bundle exec ruby test/parser_test.rb`: verify synthetic Claude parser fixture shapes.
+- `bundle exec ruby test/managed_agent_test.rb`: verify managed-agent execution, memory, and structured result behavior.
+- `bundle exec ruby test/remote_server_test.rb`: verify Remote Sessions agent create/edit/chat/archive service behavior.
+- `bundle exec ruby test/tailscale_test.rb`: verify Tailscale self-status parsing and MagicDNS URL derivation.
+- `bundle exec ruby test/terminal_qr_test.rb`: verify compact terminal QR rendering for the Remote UI URL.
+- `bundle exec ruby test/rendering_test.rb`: run the rendering and interaction regression checks for the TUI.
+- Project status, key decisions, and roadmap are documented in `docs/PROJECT_STATUS.md`.
+- Codex and Claude structured output research notes are documented in `docs/research/codex-json-schema-research.md` and `docs/research/claude-json-schema-research.md`.
+- Logs, detail views, chat, and agent forms now render in-app, including sidebar views for log inspection.
+
+If you introduce new tooling, document the command here and keep it runnable from the repo root.
+
+## Coding Style & Naming Conventions
+
+Follow the existing Ruby style across `bin/tycho` and `lib/hq/**/*.rb`: two-space indentation, snake_case for methods and variables, SCREAMING_SNAKE_CASE for constants, and short guard clauses where they simplify flow. Keep classes and modules focused, and prefer small helper methods over deeply nested conditionals.
+
+Preserve the current separation of concerns: registry/config parsing stays out of the TUI layer, managed-agent and Kamal behavior belongs in domain objects, and screen/layout code should stay in the UI modules.
+
+Preserve the current file-level conventions: `# frozen_string_literal: true`, double-quoted strings, and concise comments only where the code is not obvious.
+
+The repo ships a `.rubocop.yml` that pins double-quoted string style and Ruby 3.4. `bundle exec rubocop` is not part of the bundle; if you run RuboCop locally, use the available executable and keep changes scoped to the requested files.
+
+## Runtime Behavior & External Integrations
+
+Health checks run concurrently via Ruby threads. `AppProject#check_health!` uses HEAD requests against the configured healthcheck path and root URL; keep HEAD semantics because kamal-proxy maintenance detection depends on them. A root URL 503 means the app is in maintenance mode even if the health endpoint looks healthy.
+
+Kamal actions run as detached background processes through `mise exec`, using `TYCHO_MISE_BIN` first, then common local install paths, then `mise` on `PATH`. Prefer a project's `bin/kamal` binstub and fall back to `bundle exec kamal`. Logs go to `~/.tycho/logs/projects/{project}/action.log`, action state is persisted to `~/.tycho/logs/actions.json`, and actions are restored and checked for liveness on startup. Archiving a project moves its config entry from `~/.tycho/config/hq.yml` to `~/.tycho/config/hq.archived.yml`, moves `~/.tycho/logs/projects/{project}/` to `~/.tycho/logs/projects/archived/YYYY-MM-DD_project-name/`, and archives related managed-agent logs.
+
+The app auto-refreshes every 30 seconds. Action and agent status is polled every 10 seconds. Multiple projects can have concurrent actions running, and completed actions trigger a health refresh.
+
+Managed agents are configured from project settings in `~/.tycho/config/hq.yml`, with prompt templates loaded from `~/.tycho/config/system_prompts.yml`. Codex agents use JSON output and `~/.tycho/config/schemas/agent_result.json`; Claude and custom Claude-compatible harnesses use `--output-format stream-json` so logs stream incrementally. Use `TYCHO_CODEX_BIN` and `TYCHO_CLAUDE_BIN` to override built-in agent executables. Custom Claude-compatible wrappers belong in `custom_harnesses` with `adapter: claude` and an `execution_command`; provider-specific details should live in that wrapper or command configuration, not in HQ. Native Claude/Codex `session_id` values are persisted on managed agents and reused with `--resume` after the first run; HQ still treats `memory.jsonl` as the canonical transcript and only replays the bounded memory prompt when no native session is known. Preserve structured inquiry submission and focus-aware chat behavior when changing agent flows.
+
+Remote Sessions run through `bin/tycho serve` and expose a local JSON API plus lightweight web UI for managed-agent operations. When Tailscale is available, `bin/tycho serve` auto-binds to the machine's Tailscale IPv4 address, prints the MagicDNS URL, and emits a compact terminal QR code for the UI. Keep it local-first, reuse `AgentStore`/`ManagedAgent` behavior instead of duplicating agent state transitions, and keep active-agent state persisted through `~/.tycho/logs/managed_agents.json`.
+
+When working on `/ui` Remote UI behavior, verify browser-visible behavior in an actual browser engine, especially polling, sticky/fixed panels, form preservation, toggles, and mobile viewport layout. Prefer the Browser plugin when it is available. If the Browser plugin's control tool is unavailable, use a local Playwright + Google Chrome fallback against a throwaway `bin/tycho serve` instance with temp `TYCHO_CONFIG_PATH`, `TYCHO_SYSTEM_PROMPTS_PATH`, and `TYCHO_LOGS_ROOT` so verification does not touch real HQ agents, logs, or project config.
+
+`HQ::CLI` enables Bubbletea bracketed paste, and `lib/hq/bubbletea_input.rb` patches `Bubbletea::Program#poll_event` with a Ruby-side input queue so multi-byte terminal reads are not truncated. Text inputs and text areas normalize multi-rune paste through `lib/hq/ui/components/text_paste.rb`. Preserve this path when changing Bubbletea startup, chat composer, inquiry forms, or agent editor input handling; pasted paths such as `lib/hq/ui/components/chat_composer.rb` should arrive intact.
+
+## Working with Charm Ruby
+
+Follows guidance in `docs/research/charm-ruby.md`. Use Bubbletea for TUI structure, Lipgloss for styling, and Bubbles for components like the Spinner. Keep the Elm Architecture in mind: `init` sets up initial state and commands, `update(message)` handles events and returns new state + commands, and `view` renders the current state.
+
+When adding new UI elements, consider how they fit into the existing layout and style. Reuse the shared color/style helpers in `lib/hq/ui/rendering/styles.rb`, keep table columns aligned across Agents and Projects screens, and preserve the compact path rendering and focus-aware chat/inquiry flows that the rendering tests cover.
+
+For input components, keep paste handling compatible with Bubbles `TextInput` and `TextArea`. Multi-character paste should insert as text, not trigger global shortcuts one character at a time.
+
+## Testing Guidelines
+
+This repository now has lightweight automated coverage under `test/`. Every change should at minimum pass `bin/test` and a manual run of `bin/tycho` when TUI behavior is affected.
+
+Validate the affected key paths in the UI, especially grouped project rows, table alignment, detail views, sidebar log inspection, agent create/edit flows, agent chat and structured inquiry submission, refresh, deploy, maintenance toggle, and the `g` shortcut that opens the selected project in a terminal.
+
+For Remote UI `/ui` changes, run `bundle exec ruby test/remote_server_test.rb` and do browser verification for user-visible behavior. A safe fallback pattern is to start `bin/tycho serve` on a spare localhost port with temp env vars (`TYCHO_CONFIG_PATH`, `TYCHO_SYSTEM_PROMPTS_PATH`, `TYCHO_LOGS_ROOT`), create fixture data through the JSON API, then drive `http://127.0.0.1:{port}/ui` with Playwright + local Google Chrome. Check concrete browser facts such as focused form values surviving `refresh({ force: true })`, details toggles preserving state across polling, mutually exclusive panels closing as expected, and sticky/fixed docks staying pinned inside the viewport.
+
+When touching terminal input or text components, include paste regression coverage in `test/rendering_test.rb`; the existing tests cover both raw and bracketed paste for `lib/hq/ui/components/chat_composer.rb`.
+
+When adding tests, keep using simple Ruby test files under `test/` with `*_test.rb` names unless the repo adopts a broader framework later.
+
+## Commit & Pull Request Guidelines
+
+Recent commits use short, imperative subjects such as `Fix table column alignment across screens` and `Add custom Claude harness support`. Keep commit messages in that style and scope each commit to one logical change.
+
+Pull requests should include a brief summary, manual verification steps, and screenshots or terminal captures for visible TUI changes. Link related issues when applicable and note any changes to `~/.tycho/config/hq.yml`, `~/.tycho/config/system_prompts.yml`, structured agent schemas, hardcoded project paths, logs, or external dependencies such as `mise`, RubyGems API access, Codex, Claude, or Bedrock-backed Claude execution.
+
+Also call out changes to Bubbletea input handling, bracketed paste behavior, or Bubbles text components because they affect chat, inquiry, and agent editor typing flows.

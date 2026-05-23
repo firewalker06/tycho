@@ -1,0 +1,85 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "partial", "failed", "blocked", "input_required"]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "inquiry": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "type": ["string", "null"]
+        },
+        "fields": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "description": {
+                "type": ["string", "null"]
+              },
+              "input_type": {
+                "type": "string",
+                "enum": ["text", "multiline", "number", "integer", "boolean", "select", "multi_select"]
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "options": {
+                "type": ["array", "null"],
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": ["key", "label", "description", "input_type", "required", "options"]
+          }
+        }
+      },
+      "required": ["message", "fields"]
+    },
+    "attachments": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["file", "link"]
+          },
+          "title": {
+            "type": "string"
+          },
+          "path": {
+            "type": ["string", "null"]
+          },
+          "url": {
+            "type": ["string", "null"]
+          },
+          "description": {
+            "type": ["string", "null"]
+          },
+          "mime_type": {
+            "type": ["string", "null"]
+          }
+        },
+        "required": ["type", "title", "path", "url", "description", "mime_type"]
+      }
+    }
+  },
+  "required": ["status", "summary", "inquiry", "attachments"]
+}

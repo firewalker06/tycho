@@ -1,0 +1,74 @@
+# Tycho hooks configuration - example
+#
+# Copy this file to ~/.tycho/config/hooks.yml to enable.
+# See docs/HOOKS.md for the full event inventory and schema.
+#
+# Payload reaches hooks via:
+#   - stdin: JSON-encoded payload (one line)
+#   - env:   TYCHO_EVENT, TYCHO_PROJECT_KEY, TYCHO_AGENT_KEY + any `env:` keys below
+# The `command` is never interpolated with payload data — use stdin/env instead.
+
+hooks:
+  # --- Async shell hooks (fire-and-forget) ---
+
+  # Desktop notification when an agent run finishes.
+  agent.run.finalized:
+    - command: |
+        jq -r '"\(.agent_key): \(.status) — \(.summary)"' \
+          | xargs -I{} osascript -e 'display notification "{}" with title "HQ"'
+
+  # Append every user message to a local audit log.
+  agent.message.user_added:
+    - command: "tee -a ~/hq-user-messages.jsonl >/dev/null"
+
+  # Wildcard: log every agent event to a file.
+  agent.*:
+    - command: "cat >> /tmp/hq-agent-events.jsonl"
+      env:
+        LOG_SOURCE: "hq-hooks"
+
+  # --- Blocking hook (v1 only supports agent.inquiry.available) ---
+  #
+  # The hook's stdout is parsed as JSON. Return {"answer": "..."} to auto-reply
+  # to the agent's inquiry. A non-JSON or empty response falls through to the TUI.
+  agent.inquiry.available:
+    - command: "~/bin/hq-auto-answer.rb"
+      blocking: true
+      timeout: 30
+
+  # --- Config change events ---
+
+  project.archived:
+    - command: "echo \"[$(date -Iseconds)] project.archived $TYCHO_PROJECT_KEY\" >> ~/hq-config.log"
+
+  # --- GitHub PR indicator (dogfooding the hook system) ---
+  #
+  # Refreshes the `pr_url` field for each project by looking up the current
+  # branch's open PR via `gh`. HQ renders a clickable PR link next to the
+  # project name in the sidebar.
+  #
+  # Requires: `gh` on PATH, authenticated.
+  # Reads payload from stdin (jq) to get project_path; writes back via `$TYCHO_BIN`.
+  # Fires on: project.loaded (boot), project.added, agent.run.finished.
+
+  project.loaded:
+    - command: |
+        path=$(jq -r '.project_path // empty')
+        [ -d "$path" ] || exit 0
+        url=$(cd "$path" && gh pr view --json url -q '.url' 2>/dev/null || true)
+        "$TYCHO_BIN" project update "$TYCHO_PROJECT_KEY" --pr-url "${url:-}"
+
+  project.added:
+    - command: "echo \"[$(date -Iseconds)] project.added $TYCHO_PROJECT_KEY\" >> ~/hq-config.log"
+    - command: |
+        path=$(jq -r '.project_path // empty')
+        [ -d "$path" ] || exit 0
+        url=$(cd "$path" && gh pr view --json url -q '.url' 2>/dev/null || true)
+        "$TYCHO_BIN" project update "$TYCHO_PROJECT_KEY" --pr-url "${url:-}"
+
+  agent.run.finished:
+    - command: |
+        path=$(jq -r '.project_path // empty')
+        [ -d "$path" ] || exit 0
+        url=$(cd "$path" && gh pr view --json url -q '.url' 2>/dev/null || true)
+        "$TYCHO_BIN" project update "$TYCHO_PROJECT_KEY" --pr-url "${url:-}"

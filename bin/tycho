@@ -1,0 +1,41 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "rbconfig"
+
+bootstrapped = ENV["TYCHO_PROCESS_NAME_BOOTSTRAPPED"] == "1"
+if RUBY_PLATFORM.include?("darwin") && !bootstrapped
+  runtime = File.expand_path("../tmp/tycho-runtime/tycho", __dir__)
+  ruby = RbConfig.ruby
+  ruby_stat = File.stat(ruby)
+  runtime_stat = File.stat(runtime) if File.exist?(runtime)
+  refresh_runtime = !runtime_stat ||
+                    runtime_stat.size != ruby_stat.size ||
+                    runtime_stat.mtime.to_i != ruby_stat.mtime.to_i
+
+  if refresh_runtime
+    FileUtils.mkdir_p(File.dirname(runtime))
+    FileUtils.rm_f(runtime)
+
+    begin
+      File.link(ruby, runtime)
+    rescue SystemCallError
+      FileUtils.cp(ruby, runtime, preserve: true)
+    end
+
+    FileUtils.chmod(0o755, runtime)
+  end
+
+  exec({ "TYCHO_PROCESS_NAME_BOOTSTRAPPED" => "1" }, runtime, File.expand_path(__FILE__), *ARGV)
+end
+
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+
+require "hq/dotenv_loader"
+
+HQ::DotenvLoader.load(File.expand_path("../.env", __dir__))
+
+require "hq/cli"
+
+HQ::CLI.run(ARGV, executable: File.expand_path("tycho", __dir__))

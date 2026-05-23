@@ -1,0 +1,5 @@
+[allowlist]
+description = "Project documentation false positives"
+regexes = [
+  '''append APIs'''
+]
