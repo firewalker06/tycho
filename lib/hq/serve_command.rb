@@ -23,7 +23,7 @@ module HQ
       original_argv = args.dup
 
       parser = OptionParser.new do |opts|
-        opts.banner = "Usage: bin/tycho serve [--host 127.0.0.1] [--port 7373]"
+        opts.banner = "Usage: tycho serve [--host 127.0.0.1] [--port 7373]"
         opts.on("--host HOST", "Bind host") do |host|
           explicit_host = true
           options[:host] = host

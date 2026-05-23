@@ -4,9 +4,20 @@
 require "fileutils"
 require "rbconfig"
 
+def tycho_process_runtime
+  logs_root = ENV["TYCHO_LOGS_ROOT"].to_s
+  unless logs_root.empty?
+    return File.expand_path(File.join(logs_root, "runtime", "tycho"))
+  end
+
+  home = ENV["TYCHO_HOME"].to_s
+  home = File.join(Dir.home, ".tycho") if home.empty?
+  File.expand_path(File.join(home, "logs", "runtime", "tycho"))
+end
+
 bootstrapped = ENV["TYCHO_PROCESS_NAME_BOOTSTRAPPED"] == "1"
 if RUBY_PLATFORM.include?("darwin") && !bootstrapped
-  runtime = File.expand_path("../tmp/tycho-runtime/tycho", __dir__)
+  runtime = tycho_process_runtime
   ruby = RbConfig.ruby
   ruby_stat = File.stat(ruby)
   runtime_stat = File.stat(runtime) if File.exist?(runtime)

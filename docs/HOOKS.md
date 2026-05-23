@@ -15,11 +15,13 @@ Tycho fires events at key points in its runtime. External code can subscribe to 
 
 ### Global — `~/.tycho/config/hooks.yml`
 
+Override the global hooks file with `TYCHO_HOOKS_PATH`.
+
 ```yaml
 hooks:
   agent.run.started:
     - command: "~/bin/notify.sh"
-    - command: "echo started >> /tmp/hq.log"
+    - command: "echo started >> /tmp/tycho.log"
       env:
         FOO: bar
   agent.inquiry.available:
@@ -60,7 +62,7 @@ Drop `.rb` files into `~/.claude/hq-hooks/` (global) or `<project_path>/.hq/hook
 ```ruby
 # ~/.claude/hq-hooks/log_agent_runs.rb
 HQ::Hooks.on("agent.run.finalized") do |payload|
-  File.open("/tmp/hq-agent-runs.log", "a") do |f|
+  File.open("/tmp/tycho-agent-runs.log", "a") do |f|
     f.puts("#{Time.now} #{payload["agent_key"]} => #{payload["status"]}")
   end
 end

@@ -1,4 +1,5 @@
-# Example schedule definitions. Copy to config/schedules.yml for local use.
+# Example schedule definitions. Tycho copies this to
+# ~/.tycho/config/schedules.yml on first setup.
 #
 # schedules:
 #   - key: weekday-maintenance

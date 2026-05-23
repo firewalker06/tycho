@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-05-20
+2026-05-23
 
 ## Strategic Direction
 
@@ -26,7 +26,7 @@ Key references:
 - [research/a2a-protocol-research.md](./research/a2a-protocol-research.md), [research/agent-communication-protocol-research.md](./research/agent-communication-protocol-research.md), [research/hq-a2a-vs-acp-recommendation.md](./research/hq-a2a-vs-acp-recommendation.md) — agent protocol exploration.
 - [REMOTE_SERVER.md](./REMOTE_SERVER.md) — Remote Sessions server architecture, runtime behavior, and API endpoint reference.
 - [WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.md) — planned browser push notifications for Remote UI, including the hard HTTPS-over-Tailscale requirement.
-- [SCHEDULED_RUNS.md](./SCHEDULED_RUNS.md) — planned cron-like scheduled runs, `bin/tycho schedule daemon`, command targets, and prompt/message tradeoffs.
+- [SCHEDULED_RUNS.md](./SCHEDULED_RUNS.md) — planned cron-like scheduled runs, `tycho schedule daemon`, command targets, and prompt/message tradeoffs.
 
 ## Key Decisions
 
@@ -51,9 +51,9 @@ Key references:
 | Logging | Centralized `HQ.logger` (stdlib `Logger`), daily rotation, 7-day retention | Single sink for lifecycle, config, process, and silently-rescued errors |
 | Skill discovery | Enumerate SKILL.md from `~/.claude/skills` + workspace `.claude/skills` (Claude-compatible harnesses) and `~/.codex/skills` + `.agents/skills` (Codex) | Per-agent trigger character (`/` vs `$`) surfaced in the chat composer |
 | Refresh cadence | App auto-refresh 30s; action/agent polling 10s | Balances responsiveness against Kamal/healthcheck cost |
-| Remote Sessions | Local JSON API and web UI via `bin/tycho serve`; Tailscale auto-bind; terminal QR startup URL | Remote clients can inspect and control managed agents through the same `AgentStore` / `ManagedAgent` paths as the TUI |
-| Scheduled runs | Dedicated `bin/tycho schedule daemon`, definitions in `~/.tycho/config/schedules.yml`, runtime state in `~/.tycho/logs/schedules.json`, validated standard cron syntax | Scheduled work should continue independently from the TUI and Remote UI while still reusing existing agent execution paths |
-| Schedule daemon freshness | `bin/tycho schedule daemon` writes heartbeat state to `~/.tycho/logs/scheduler_daemon.json`; UI surfaces derive running/stale/stopped from heartbeat age and process liveness, and report untracked running daemons without heartbeat state | Users need to know whether cron work is actually ticking, not only whether definitions are valid |
+| Remote Sessions | Local JSON API and web UI via `tycho serve`; Tailscale auto-bind; terminal QR startup URL | Remote clients can inspect and control managed agents through the same `AgentStore` / `ManagedAgent` paths as the TUI |
+| Scheduled runs | Dedicated `tycho schedule daemon`, definitions in `~/.tycho/config/schedules.yml`, runtime state in `~/.tycho/logs/schedules.json`, validated standard cron syntax | Scheduled work should continue independently from the TUI and Remote UI while still reusing existing agent execution paths |
+| Schedule daemon freshness | `tycho schedule daemon` writes heartbeat state to `~/.tycho/logs/scheduler_daemon.json`; UI surfaces derive running/stale/stopped from heartbeat age and process liveness, and report untracked running daemons without heartbeat state | Users need to know whether cron work is actually ticking, not only whether definitions are valid |
 | Schedule command scope | Agent-only schedules; each run creates a fresh managed agent, archives the previous schedule-created agent, and accepts only inline messages or files under `schedules/` | Avoid stale sessions, arbitrary shell execution, and first-class scheduled project actions while keeping recurring automation reviewable |
 | Schedule interactive protection | A due run skips with reason `interactive` instead of archiving when the previous scheduled agent has later user messages | User conversations in scheduled sessions must not disappear under the next cron tick |
 | Schedule management | Expose schedule list/detail/run/pause/resume/reload in both TUI and Remote UI | Interfaces should manage and observe schedules, but the daemon owns ticking, locks, missed-run policy, and dispatch |
@@ -61,7 +61,10 @@ Key references:
 
 ## Current Focus
 
-**Open-source readiness**: Prepare HQ for public release with MIT licensing, public documentation, CI, synthetic fixtures, generic custom harness configuration, and Remote UI safety guidance. Agent UX and continuity remain active maintenance areas.
+**Public release hardening**: Tycho is public, and the immediate focus is the
+`v0.1.0` Homebrew release contract: public tag, release notes, user-scoped
+runtime paths, Homebrew install verification, and first-user documentation.
+Agent UX and continuity remain active maintenance areas.
 
 ## Roadmap
 
@@ -130,13 +133,14 @@ Key references:
 - [x] Replace provider-specific Claude wrapper code with `custom_harnesses` configuration
 - [x] Add Remote UI warning for unauthenticated non-loopback binds
 - [x] Run gitleaks history secret scan with documented false-positive allowlist
-- [ ] Publish from a clean public repository or explicitly rewrite history because old commits contain private paths/names
+- [x] Publish from a clean public repository instead of exposing private history
+- [ ] Publish `v0.1.0` GitHub release and public Homebrew tap formula
 
 ## Features Candidates
 
 ### Scheduled Runs
 
-- [x] Decide scheduler owner: dedicated `bin/tycho schedule daemon`
+- [x] Decide scheduler owner: dedicated `tycho schedule daemon`
 - [x] Decide config source: `~/.tycho/config/schedules.yml` with cron syntax validation
 - [x] Decide management surfaces: TUI and Remote UI
 - [x] Decide command scope: fresh agent only; no project actions, health checks, shell, templates, existing-agent resumes, or clones
@@ -144,7 +148,7 @@ Key references:
 - [x] Decide failure/success notifications: stop and web-push on failure; notify only first success and first success after failure
 - [x] Add `ScheduleRegistry` / `ScheduleStore` and persisted runtime state in `~/.tycho/logs/schedules.json`
 - [x] Persist scheduler daemon heartbeat state in `~/.tycho/logs/scheduler_daemon.json`
-- [x] Add `bin/tycho schedule daemon` with `--once`, `--dry-run`, and long-running daemon modes
+- [x] Add `tycho schedule daemon` with `--once`, `--dry-run`, and long-running daemon modes
 - [x] Support fresh scheduled-agent creation with previous-agent archiving
 - [x] Skip due runs instead of archiving when the previous scheduled agent has user conversation
 - [x] Support schedule messages from inline text and `schedules/` files
@@ -219,7 +223,7 @@ Key references:
 
 ### Remote session
 
-- [x] Ability to start webserver (`bin/tycho serve`)
+- [x] Ability to start webserver (`tycho serve`)
 - [x] Tailscale auto-bind, MagicDNS URL display, HTTPS Serve detection, and compact terminal QR for phone setup
 - [x] Mobile Remote UI shell at `/` with `Now`, `Agents`, `Search`, `Projects`, and `Setup` tabs
 - [x] Footer navigation sticks to the viewport, hides on downward scroll, and reappears on upward scroll

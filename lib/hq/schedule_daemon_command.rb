@@ -26,7 +26,7 @@ module HQ
       command = args.shift if args.first && !args.first.start_with?("-")
 
       parser = OptionParser.new do |opts|
-        opts.banner = "Usage: bin/tycho schedule daemon [--once] [--dry-run] [--interval SECONDS]"
+        opts.banner = "Usage: tycho schedule daemon [--once] [--dry-run] [--interval SECONDS]"
         opts.on("--once", "Run one scheduler tick and exit") { options[:once] = true }
         opts.on("--dry-run", "Validate and report due work without starting agents") { options[:dry_run] = true }
         opts.on("--interval SECONDS", Integer, "Polling interval for daemon mode") do |value|

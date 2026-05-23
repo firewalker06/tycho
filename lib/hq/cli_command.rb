@@ -230,18 +230,19 @@ module HQ
       Commands::ScheduleResume,
       Commands::ScheduleReload
     ].freeze
+    COMMAND_NAME = "tycho"
     RUNTIME_COMMANDS = [
-      "  bin/tycho serve [--host 127.0.0.1] [--port 7373]",
-      "  bin/tycho schedule daemon [--once] [--dry-run] [--interval SECONDS]"
+      "  #{COMMAND_NAME} serve [--host 127.0.0.1] [--port 7373]",
+      "  #{COMMAND_NAME} schedule daemon [--once] [--dry-run] [--interval SECONDS]"
     ].freeze
     ACTIONS = APP_COMMANDS.filter_map { |command| command.action_name if command.respond_to?(:action_name) }.freeze
     USAGE = [
       "Usage:",
-      "  bin/tycho --help",
+      "  #{COMMAND_NAME} --help",
       *RUNTIME_COMMANDS,
-      *APP_COMMANDS.map { |command| "  bin/tycho #{format(command.usage_template, project_key: "<project-key>")}" },
-      *PROJECT_COMMANDS.map { |command| "  bin/tycho #{format(command.usage_template, project_key: "<project-key>")}" },
-      *SCHEDULE_COMMANDS.map { |command| "  bin/tycho #{format(command.usage_template, schedule_key: "<schedule-key>")}" },
+      *APP_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, project_key: "<project-key>")}" },
+      *PROJECT_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, project_key: "<project-key>")}" },
+      *SCHEDULE_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, schedule_key: "<schedule-key>")}" },
       "",
       "Run without a command to open the interactive Tycho TUI."
     ].join("\n").freeze

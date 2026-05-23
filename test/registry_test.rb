@@ -130,6 +130,8 @@ module RegistryTest
         registry = HQ::Registry.new
         puts registry.path
         puts HQ::LOGS_DIR
+        puts HQ::SCHEDULES_FILE
+        puts HQ.default_hooks_path
         puts registry.projects.map(&:key).join(",")
       RUBY
       env = {
@@ -140,7 +142,17 @@ module RegistryTest
       lines = out.lines.map(&:chomp)
       assert(lines[0] == File.join(config_dir, "hq.yml"), "expected user config path, got #{lines[0].inspect}")
       assert(lines[1] == logs_dir, "expected user logs path, got #{lines[1].inspect}")
-      assert(lines[2] == "user", "expected user-scoped project, got #{lines[2].inspect}")
+      assert(lines[2] == File.join(config_dir, "schedules.yml"),
+             "expected user schedule config path, got #{lines[2].inspect}")
+      assert(lines[3] == File.join(config_dir, "hooks.yml"),
+             "expected user hooks config path, got #{lines[3].inspect}")
+      assert(File.exist?(File.join(config_dir, "schedules.yml")),
+             "expected first run to create schedules.yml from example")
+      assert(File.exist?(File.join(config_dir, "hooks.yml")),
+             "expected first run to create hooks.yml from example")
+      assert(File.read(File.join(config_dir, "hooks.yml")).include?("hooks: {}"),
+             "expected copied hooks example to be inert by default")
+      assert(lines[4] == "user", "expected user-scoped project, got #{lines[4].inspect}")
     end
   end
 

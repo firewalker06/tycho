@@ -21,14 +21,15 @@ same Ruby and CLI dependencies are available.
 - Managed Codex, Claude, and custom Claude-compatible agents with persistent chat memory.
 - Scheduled managed-agent runs from cron-style local config.
 - In-app log views, agent detail views, project detail views, and omnisearch.
-- Local JSON API and mobile Remote UI through `bin/tycho serve`.
+- Local JSON API and mobile Remote UI through `tycho serve`.
 - Optional Tailscale MagicDNS URL and terminal QR code for Remote UI access.
 - Optional browser push notifications for agent completions and inquiries.
 
 ## Requirements
 
-- Ruby 3.2 or newer.
-- Bundler.
+- Homebrew for the packaged macOS install.
+- Ruby 3.2 or newer for source installs.
+- Bundler for source installs.
 - Go, when Charm Ruby native gems need to be compiled during install.
 - Optional: `mise`, `kamal`, `tailscale`, `codex`, and `claude`.
 
@@ -38,7 +39,35 @@ will show as unavailable.
 See [docs/SETUP_REQUIREMENTS.md](docs/SETUP_REQUIREMENTS.md) for the
 dependency checklist and hard/soft failure policy used by `bin/setup`.
 
-## One-Line Setup
+## Installation
+
+### Homebrew
+
+Homebrew is the primary install path for users:
+
+```bash
+brew tap firewalker06/tycho
+brew install tycho
+tycho
+```
+
+The formula installs one executable, `tycho`. Remote Sessions and scheduled
+agents run through subcommands:
+
+```bash
+tycho serve
+tycho schedule daemon
+```
+
+Optional integrations are intentionally not installed by the formula. Install
+and configure `mise`, `kamal`, `tailscale`, `codex`, `claude`, or custom
+Claude-compatible harnesses only for the features you use.
+
+### Source Checkout
+
+Use a source checkout when contributing or when Homebrew is not suitable.
+
+One-line setup:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/firewalker06/tycho/main/setup.sh | bash
@@ -55,7 +84,7 @@ curl -fsSL https://raw.githubusercontent.com/firewalker06/tycho/main/setup.sh | 
 Set `TYCHO_DIR` to clone into a different directory, or `TYCHO_REPO_URL` to use
 another Git remote.
 
-## Installation From Source
+Manual source setup:
 
 ```bash
 git clone https://github.com/firewalker06/tycho.git tycho
@@ -64,17 +93,26 @@ bin/setup
 bin/tycho
 ```
 
-`bin/setup` installs gems, creates missing user config files from examples, and
-prints hard failures plus soft feature warnings for optional tools. Use
-`bin/setup --check` to inspect readiness without changing files, or pass feature
-profiles such as `bin/setup --profile app`, `bin/setup --profile codex`, or
-`bin/setup --profile claude` to make those optional tools mandatory.
+`bin/setup` installs gems, creates missing user config files from examples
+under `~/.tycho`, and prints hard failures plus soft feature warnings for
+optional tools. Use `bin/setup --check` to inspect readiness without changing
+files, or pass feature profiles such as `bin/setup --profile app`,
+`bin/setup --profile codex`, or `bin/setup --profile claude` to make those
+optional tools mandatory.
 
 Run through Bundler if your shell has conflicting gem versions:
 
 ```bash
 bundle exec bin/tycho
 ```
+
+Command mapping for source users:
+
+| Homebrew command | Source checkout command |
+|------------------|-------------------------|
+| `tycho` | `bin/tycho` |
+| `tycho serve` | `bin/tycho serve` |
+| `tycho schedule daemon` | `bin/tycho schedule daemon` |
 
 ## Configuration
 
@@ -96,6 +134,26 @@ System prompt templates live beside the project registry as
 Real config files, `.env`, runtime logs, and generated agent artifacts are
 gitignored. Keep secrets and machine-specific paths out of committed files.
 Runtime state and logs default to `~/.tycho/logs`.
+
+### Where Tycho Writes Files
+
+Homebrew and source installs use the same user-scoped defaults:
+
+| Purpose | Default |
+|---------|---------|
+| Project registry | `~/.tycho/config/hq.yml` |
+| System prompts | `~/.tycho/config/system_prompts.yml` |
+| Schedules | `~/.tycho/config/schedules.yml` |
+| Schedule prompt files | `~/.tycho/schedules/` |
+| Hooks | `~/.tycho/config/hooks.yml` |
+| Runtime state and logs | `~/.tycho/logs/` |
+| Project logs | `~/.tycho/logs/projects/` |
+| Agent logs and artifacts | `~/.tycho/logs/agents/` |
+| Browser push state | `~/.tycho/logs/push_*.json` and `~/.tycho/logs/web_push_vapid.json` |
+
+Tycho does not write runtime files under the Homebrew Cellar. Set the
+`TYCHO_*` environment variables below to move config or state for tests,
+temporary runs, or multi-profile setups.
 
 ### Environment Variables
 
@@ -125,51 +183,54 @@ Web Push can also use `TYCHO_WEB_PUSH_VAPID_PUBLIC_KEY`,
 
 ## Commands
 
+Homebrew users run `tycho`. Source checkout users can replace `tycho` with
+`bin/tycho` in the examples below.
+
 Open the TUI:
 
 ```bash
-bin/tycho
+tycho
 ```
 
 Run app commands:
 
 ```bash
-bin/tycho app list
-bin/tycho app status <project-key>
-bin/tycho app deploy <project-key>
-bin/tycho app maintenance <project-key>
-bin/tycho app live <project-key>
+tycho app list
+tycho app status <project-key>
+tycho app deploy <project-key>
+tycho app maintenance <project-key>
+tycho app live <project-key>
 ```
 
 Start the Remote Sessions server:
 
 ```bash
-bin/tycho serve
+tycho serve
 ```
 
 Bind explicitly to localhost:
 
 ```bash
-bin/tycho serve --host 127.0.0.1 --port 7373
+tycho serve --host 127.0.0.1 --port 7373
 ```
 
 Run scheduled agents:
 
 ```bash
-bin/tycho schedule list
-bin/tycho schedule daemon --once --dry-run
-bin/tycho schedule daemon
+tycho schedule list
+tycho schedule daemon --once --dry-run
+tycho schedule daemon
 ```
 
 Manage schedules without opening the TUI:
 
 ```bash
-bin/tycho schedule validate
-bin/tycho schedule list
-bin/tycho schedule run <schedule-key>
-bin/tycho schedule pause <schedule-key>
-bin/tycho schedule resume <schedule-key>
-bin/tycho schedule reload
+tycho schedule validate
+tycho schedule list
+tycho schedule run <schedule-key>
+tycho schedule pause <schedule-key>
+tycho schedule resume <schedule-key>
+tycho schedule reload
 ```
 
 The TUI includes a Schedules screen, and the Remote UI `Now` view shows
@@ -243,17 +304,17 @@ due run skips with reason `interactive` instead of archiving the user-touched
 agent. Archive that agent manually when you want the recurring schedule to
 continue with a fresh session.
 
-`bin/tycho schedule daemon` writes daemon heartbeat state to `~/.tycho/logs/scheduler_daemon.json`.
+`tycho schedule daemon` writes daemon heartbeat state to `~/.tycho/logs/scheduler_daemon.json`.
 The schedule UI treats a missing or stale heartbeat as daemon attention. If it
 finds a running scheduler process without heartbeat state, it reports the
-daemon as `untracked`; restart `bin/tycho schedule daemon` to restore tick freshness.
+daemon as `untracked`; restart `tycho schedule daemon` to restore tick freshness.
 
 ## TUI Tutorial
 
-Start the TUI from the repository root:
+Start the TUI:
 
 ```bash
-bin/tycho
+tycho
 ```
 
 ### Create A Project
@@ -299,13 +360,13 @@ and `ctrl+t` opens an interactive terminal session for the selected agent.
 
 ## Remote UI Security
 
-`bin/tycho serve` is local-first. If `TYCHO_REMOTE_TOKEN` is unset, API requests are
+`tycho serve` is local-first. If `TYCHO_REMOTE_TOKEN` is unset, API requests are
 accepted without authentication. This is intended only for localhost.
 
 Set a token before binding to Tailscale or any non-loopback address:
 
 ```bash
-TYCHO_REMOTE_TOKEN="$(ruby -rsecurerandom -e 'puts SecureRandom.hex(24)')" bin/tycho serve
+TYCHO_REMOTE_TOKEN="$(ruby -rsecurerandom -e 'puts SecureRandom.hex(24)')" tycho serve
 ```
 
 When Tailscale HTTPS Serve is available, Tycho can print an HTTPS MagicDNS
@@ -353,6 +414,18 @@ Run an individual test:
 ```bash
 bundle exec ruby test/rendering_test.rb
 ```
+
+## Known Limitations
+
+- Tycho is macOS-first for the initial Homebrew release.
+- Linux is expected to work where Ruby, native build tools, and optional CLIs
+  are available, but it is not the primary packaged target yet.
+- Remote UI is local-first. Set `TYCHO_REMOTE_TOKEN` before binding to a
+  non-loopback interface.
+- Tycho does not install `mise`, `kamal`, `codex`, `claude`, `tailscale`, or
+  custom harness dependencies.
+- Managed agents can run powerful local tools. Review prompts, project paths,
+  and sandbox settings before starting agents.
 
 ## Documentation
 

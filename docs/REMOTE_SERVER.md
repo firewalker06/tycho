@@ -16,10 +16,10 @@ No Rack, Rails, Puma, WEBrick, or external webserver gem is used.
 
 ## Running
 
-Start the server from the repo root:
+Start the server:
 
 ```bash
-bin/tycho serve
+tycho serve
 ```
 
 When Tailscale is not available, the default bind is:
@@ -28,7 +28,7 @@ When Tailscale is not available, the default bind is:
 http://127.0.0.1:7373
 ```
 
-If the `tailscale` CLI is available and Tailscale is running, `bin/tycho serve`
+If the `tailscale` CLI is available and Tailscale is running, `tycho serve`
 automatically binds to this machine's Tailscale IPv4 address and prints
 the MagicDNS UI URL:
 
@@ -46,7 +46,7 @@ the startup output compact while remaining scanner-friendly.
 
 When Tailscale HTTPS is enabled for the machine, HQ also checks
 `tailscale serve status --json`. If that status shows an HTTPS Serve
-proxy forwarding to the current `bin/tycho serve` port, HQ binds locally for
+proxy forwarding to the current `tycho serve` port, HQ binds locally for
 the Serve proxy and uses the `https://{magicdns}/` URL for the Remote
 UI line and QR code. If HTTPS is available but Serve is not configured
 for the current port, HQ keeps the working HTTP MagicDNS URL and prints
@@ -63,7 +63,7 @@ tailnet-facing port:
 
 ```bash
 tailscale serve --bg 7373
-bin/tycho serve --port 7373
+tycho serve --port 7373
 ```
 
 That setup exposes the Remote UI as:
@@ -78,7 +78,7 @@ port `7373`:
 
 ```bash
 tailscale serve --bg --https=7373 7373
-bin/tycho serve --port 7373
+tycho serve --port 7373
 ```
 
 Running HQ directly on port `80` is discouraged. On macOS and Linux it
@@ -89,7 +89,7 @@ and push notifications.
 Custom bind:
 
 ```bash
-bin/tycho serve --host 127.0.0.1 --port 7374
+tycho serve --host 127.0.0.1 --port 7374
 ```
 
 Passing `--host` disables Tailscale auto-binding, so use it when you
@@ -99,12 +99,12 @@ The server handles `INT` and `TERM` by closing the listener and unwinding cleanl
 
 ## Restart Lifecycle
 
-The Remote UI can restart the Remote server process through `POST /server/restart`. This restarts the `bin/tycho serve` process; it does not restart a separate TUI process.
+The Remote UI can restart the Remote server process through `POST /server/restart`. This restarts the `tycho serve` process; it does not restart a separate TUI process.
 
 The restart flow is intentionally ordered so the browser gets a clean acknowledgement before the process image is replaced:
 
-1. `bin/tycho serve` captures its original command-line arguments before option parsing.
-2. `bin/tycho serve` constructs `HQ::RemoteServer` with a restart command using the current executable and the original arguments.
+1. `tycho serve` captures its original command-line arguments before option parsing.
+2. `tycho serve` constructs `HQ::RemoteServer` with a restart command using the current executable and the original arguments.
 3. An authenticated `POST /server/restart` request marks restart requested, asks the accept loop to shut down, and closes the listening socket.
 4. The current HTTP response is written as `202 Accepted` with `{ "restarting": true }`.
 5. After the response is flushed and the client socket is closed, the server loop exits.
@@ -131,7 +131,7 @@ Browser push notification work is tracked in [WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.
 
 The Remote server polls managed-agent state while it is running and sends one push notification when an agent requires response or finishes. Agent notification clicks open `/#agent/{key}`.
 
-Use `.env.sample` as the template for local runtime environment values such as `TYCHO_WEB_PUSH_VAPID_SUBJECT`. Real `.env` files are gitignored, and `bin/tycho serve` loads `.env` automatically on startup. Values already set in the process environment take precedence over `.env`; public runtime overrides use the `TYCHO_*` prefix.
+Use `.env.sample` as the template for local runtime environment values such as `TYCHO_WEB_PUSH_VAPID_SUBJECT`. Real `.env` files are gitignored, and `tycho serve` loads `.env` automatically on startup. Values already set in the process environment take precedence over `.env`; public runtime overrides use the `TYCHO_*` prefix.
 
 Auto-refresh uses polling with backoff:
 
@@ -161,14 +161,14 @@ http://100.x.y.z:7373/
 
 Authentication is optional for localhost. If `TYCHO_REMOTE_TOKEN` is unset or blank, requests are accepted without auth.
 
-When `bin/tycho serve` binds to a non-loopback host without a token, startup logs print a warning. The Setup screen also marks public Remote UI URLs as `token recommended`.
+When `tycho serve` binds to a non-loopback host without a token, startup logs print a warning. The Setup screen also marks public Remote UI URLs as `token recommended`.
 
 Set `TYCHO_REMOTE_TOKEN` before using a Tailscale MagicDNS URL or another non-local interface:
 
 When `TYCHO_REMOTE_TOKEN` is set, clients must send a bearer token:
 
 ```bash
-TYCHO_REMOTE_TOKEN="$(ruby -rsecurerandom -e 'puts SecureRandom.hex(24)')" bin/tycho serve
+TYCHO_REMOTE_TOKEN="$(ruby -rsecurerandom -e 'puts SecureRandom.hex(24)')" tycho serve
 ```
 
 ```bash
@@ -267,7 +267,7 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `POST` | `/push/subscriptions` | Save or refresh one browser push subscription. |
 | `DELETE` | `/push/subscriptions` | Disable one browser push subscription. |
 | `POST` | `/push/test` | Send a test notification to an enabled subscription. |
-| `POST` | `/server/restart` | Restart the `bin/tycho serve` Remote server process when restart is available. |
+| `POST` | `/server/restart` | Restart the `tycho serve` Remote server process when restart is available. |
 | `GET` | `/projects` | List active projects with health, latency, agent counts, and action state. |
 | `GET` | `/projects/{key}` | Read one project detail payload. |
 | `GET` | `/projects/{key}/actions` | List guarded action preflights for deploy, maintenance, and live. |

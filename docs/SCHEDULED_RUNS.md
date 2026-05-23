@@ -8,7 +8,7 @@ type: planning
 
 ## Summary
 
-Tycho scheduled runs are driven by `bin/tycho schedule daemon`. Definitions live in `~/.tycho/config/schedules.yml`, mutable runtime state lives in `~/.tycho/logs/schedules.json`, daemon heartbeat state lives in `~/.tycho/logs/scheduler_daemon.json`, and cron syntax is validated before any long-running scheduler loop starts. The TUI and Remote UI are management surfaces, but neither owns the clock.
+Tycho scheduled runs are driven by `tycho schedule daemon`. Definitions live in `~/.tycho/config/schedules.yml`, mutable runtime state lives in `~/.tycho/logs/schedules.json`, daemon heartbeat state lives in `~/.tycho/logs/scheduler_daemon.json`, and cron syntax is validated before any long-running scheduler loop starts. The TUI and Remote UI are management surfaces, but neither owns the clock.
 
 The current scope is intentionally narrow: schedules create fresh managed agents only. There are no first-class scheduled project actions, health checks, shell commands, agent-template selections, existing-agent resumes, or agent clones. Each due run creates a brand-new agent with fresh context, starts it through the existing `ManagedAgent` path, and archives the previous schedule-created agent for that schedule before the next repetitive run.
 
@@ -16,12 +16,12 @@ Prompt input is limited to inline text in `~/.tycho/config/schedules.yml` or a f
 
 ## Current Decisions
 
-- Scheduler owner: dedicated `bin/tycho schedule daemon`, not the TUI and not the Remote server.
+- Scheduler owner: dedicated `tycho schedule daemon`, not the TUI and not the Remote server.
 - Management surfaces: both TUI and Remote UI show schedules and allow safe operations.
 - Config source: `~/.tycho/config/schedules.yml`.
 - Validation: fail fast on invalid cron syntax, invalid project references, and invalid prompt file paths.
 - Runtime state: persist mutable schedule state separately from config under `~/.tycho/logs/schedules.json`.
-- Daemon state: persist `bin/tycho schedule daemon` heartbeat and last tick metadata under `~/.tycho/logs/scheduler_daemon.json`.
+- Daemon state: persist `tycho schedule daemon` heartbeat and last tick metadata under `~/.tycho/logs/scheduler_daemon.json`.
 - Target scope: agent-only. Each run creates a brand-new managed agent with fresh context.
 - Unsupported commands: `project_action`, `health_check`, `shell`, `agent_template`, `agent_existing`, and `agent_clone`.
 - Prompt sources: only inline text or files under `~/.tycho/schedules/`.
@@ -100,7 +100,7 @@ Cron validation:
 
 - Start with standard five-field cron syntax: minute, hour, day-of-month, month, day-of-week.
 - Reject unsupported Quartz-style fields such as seconds, year, `?`, `L`, and `#` unless Tycho intentionally adopts them.
-- Validate all definitions in `~/.tycho/config/schedules.yml` before `bin/tycho schedule daemon` starts the long-running loop.
+- Validate all definitions in `~/.tycho/config/schedules.yml` before `tycho schedule daemon` starts the long-running loop.
 - Include the schedule key and cron field in error messages so TUI/Remote UI can render useful validation failures.
 
 Failure:
@@ -203,21 +203,21 @@ The UI derives daemon status as `running`, `stale`, or `stopped` from this heart
 CLI:
 
 ```bash
-bin/tycho schedule validate
-bin/tycho schedule list
-bin/tycho schedule run weekday-maintenance
-bin/tycho schedule pause weekday-maintenance
-bin/tycho schedule resume weekday-maintenance
-bin/tycho schedule reload
+tycho schedule validate
+tycho schedule list
+tycho schedule run weekday-maintenance
+tycho schedule pause weekday-maintenance
+tycho schedule resume weekday-maintenance
+tycho schedule reload
 ```
 
 Daemon:
 
 ```bash
-bin/tycho schedule daemon
-bin/tycho schedule list
-bin/tycho schedule daemon --once
-bin/tycho schedule daemon --dry-run
+tycho schedule daemon
+tycho schedule list
+tycho schedule daemon --once
+tycho schedule daemon --dry-run
 ```
 
 Remote API:
@@ -267,7 +267,7 @@ Phase 2: Dispatch primitives
 - Archive the previous schedule-created agent for the same schedule before creating a new repetitive run.
 - Add tests for inline message starts, file message starts, path validation, and previous-agent archiving.
 
-Phase 3: `bin/tycho schedule daemon`
+Phase 3: `tycho schedule daemon`
 
 - Add `ScheduledRun` and `ScheduleStore`.
 - Persist runtime state under `~/.tycho/logs/schedules.json`.

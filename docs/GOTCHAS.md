@@ -1,5 +1,43 @@
 # Gotchas
 
+## Where Tycho writes files
+
+Both Homebrew and source installs use `~/.tycho` by default:
+
+- Config: `~/.tycho/config/hq.yml`, `system_prompts.yml`, `schedules.yml`, and `hooks.yml`.
+- Schedule prompt files: `~/.tycho/schedules/`.
+- Runtime state and logs: `~/.tycho/logs/`.
+- Project logs: `~/.tycho/logs/projects/`.
+- Agent logs and artifacts: `~/.tycho/logs/agents/`.
+
+Use `TYCHO_HOME`, `TYCHO_CONFIG_PATH`, `TYCHO_SYSTEM_PROMPTS_PATH`,
+`TYCHO_SCHEDULES_PATH`, `TYCHO_HOOKS_PATH`, and `TYCHO_LOGS_ROOT` for temporary
+or test runs. Packaged installs should never write runtime files under the
+Homebrew Cellar.
+
+## Homebrew install troubleshooting
+
+If `brew install tycho` fails while compiling Charm Ruby gems, make sure Ruby,
+Go, and macOS Command Line Tools are available:
+
+```bash
+xcode-select --install
+brew install ruby go
+```
+
+If optional features show as unavailable, install the corresponding CLI
+yourself. Tycho does not install `mise`, `kamal`, `codex`, `claude`,
+`tailscale`, terminal apps, or custom harness dependencies.
+
+If an install appears stale, reinstall from a clean tap:
+
+```bash
+brew uninstall tycho
+brew untap firewalker06/tycho
+brew tap firewalker06/tycho
+brew install tycho
+```
+
 ## Charm Ruby textarea cursor
 
 `Bubbles::TextArea` uses a `Bubbles::Cursor` internally.

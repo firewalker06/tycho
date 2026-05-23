@@ -5,11 +5,17 @@ require_relative "lib/hq/version"
 Gem::Specification.new do |spec|
   spec.name = "hq"
   spec.version = HQ::VERSION
-  spec.authors = ["HQ contributors"]
+  spec.authors = ["Tycho contributors"]
   spec.summary = "Local-first dashboard for Kamal projects and managed coding agents."
-  spec.description = "HQ provides a Ruby TUI and local Remote UI for monitoring Kamal projects and supervising managed coding agents."
+  spec.description = "Tycho provides a Ruby TUI and local Remote UI for monitoring Kamal projects and supervising managed coding agents."
+  spec.homepage = "https://github.com/firewalker06/tycho"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.2.0"
+  spec.metadata = {
+    "bug_tracker_uri" => "https://github.com/firewalker06/tycho/issues",
+    "changelog_uri" => "https://github.com/firewalker06/tycho/blob/main/CHANGELOG.md",
+    "source_code_uri" => "https://github.com/firewalker06/tycho"
+  }
 
   spec.bindir = "bin"
   spec.executables = %w[tycho]
@@ -26,6 +32,7 @@ Gem::Specification.new do |spec|
                  SECURITY.md
                  config/hooks.example.yml
                  config/hq.yml.example
+                 config/schedules.yml.example
                  config/schemas/agent_result.json
                  config/system_prompts.yml.example
                ]

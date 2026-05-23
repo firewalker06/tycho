@@ -43,11 +43,11 @@ module HQ
   end
 
   def self.default_schedules_path
-    File.join(USER_CONFIG_DIR, "schedules.yml")
+    ensure_user_config_file("schedules.yml", "schedules.yml.example")
   end
 
   def self.default_hooks_path
-    File.join(USER_CONFIG_DIR, "hooks.yml")
+    ensure_user_config_file("hooks.yml", "hooks.example.yml")
   end
 
   def self.ensure_user_config_file(name, example_name)
