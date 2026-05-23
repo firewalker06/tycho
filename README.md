@@ -3,6 +3,10 @@
 Tycho is a local-first terminal dashboard for monitoring Kamal-deployed
 projects and supervising managed coding agents.
 
+<p align="center">
+  <img src="docs/assets/tycho-hero.jpg" alt="Tycho terminal dashboard and remote agent control interface" width="100%">
+</p>
+
 It combines a Bubbletea/Lipgloss TUI, detached Kamal actions, persistent agent
 logs, and an optional lightweight Remote UI for checking agent state from a
 browser on your local network or tailnet.
