@@ -1,40 +1,50 @@
 ---
-# Copy this file to config/hq.yml and edit the entries below for your machine.
-# Each project entry describes a Kamal-deployed Rails app or a managed-agent target.
+# Tycho copies this file to ~/.tycho/config/hq.yml on first setup.
+# Add entries for your local projects when you are ready.
+#
+# Each project entry describes a Kamal-deployed app or a managed-agent target.
 #
 # Fields:
 #   key     (required) unique identifier used for logs, agent files, and UI keys
 #   name    (required) display name in the TUI
-#   group   (required) group header projects are bucketed under
+#   group   (optional) group header projects are bucketed under
 #   path    (required) absolute path to the project checkout on this machine
 #   apps    (required) true if the project is Kamal-deployed and should show app/health columns
 #   agent   (optional) managed-agent backend: "codex", "claude", or a custom_harnesses key
 
-# Custom harnesses let HQ run a Claude-compatible wrapper without hardcoding
+# Custom harnesses let Tycho run a Claude-compatible wrapper without hardcoding
 # provider-specific behavior. The execution command must accept Claude CLI flags
-# because HQ appends --print, --output-format stream-json, --json-schema, and
+# because Tycho appends --print, --output-format stream-json, --json-schema, and
 # session flags around the prompt.
-custom_harnesses:
-- key: claude-wrapper
-  adapter: claude
-  execution_command: "/Users/you/bin/claude-wrapper"
 
-projects:
-- key: my-app
-  name: My App
-  group: Personal
-  path: "/Users/you/Code/my-app"
-  apps: true
+custom_harnesses: []
+projects: []
 
-- key: notes
-  name: Notes
-  group: Personal
-  path: "/Users/you/Documents/Notes"
-  apps: false
+# Example custom harness:
+#
+# custom_harnesses:
+# - key: claude-wrapper
+#   adapter: claude
+#   execution_command: "/Users/you/bin/claude-wrapper"
 
-- key: work-web
-  name: Work Web
-  group: Work
-  path: "/Users/you/Code/work/web"
-  apps: true
-  agent: claude-wrapper
+# Example projects:
+#
+# projects:
+# - key: my-app
+#   name: My App
+#   group: Personal
+#   path: "/Users/you/Code/my-app"
+#   apps: true
+#
+# - key: notes
+#   name: Notes
+#   group: Personal
+#   path: "/Users/you/Documents/Notes"
+#   apps: false
+#
+# - key: work-web
+#   name: Work Web
+#   group: Work
+#   path: "/Users/you/Code/work/web"
+#   apps: true
+#   agent: claude-wrapper
