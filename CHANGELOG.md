@@ -4,6 +4,13 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.1.1 - 2026-05-24
+
+- Add release maintainer runbook.
+- Add README hero image.
+- Make Remote UI prompt submission use Enter while preserving Shift+Enter
+  newlines and IME composition.
+
 ## 0.1.0 - 2026-05-23
 
 - Add MIT license and public contribution/security/code-of-conduct documentation.
