@@ -1150,6 +1150,16 @@ module RemoteServerTest
            "expected Agent detail composer action to switch by running state")
     assert(js[:body].include?('class="danger" type="button" data-agent-action="stop" data-agent-key="${escapeAttr(agent.key)}">Stop agent'),
            "expected running agents to replace Send prompt with Stop agent")
+    assert(js[:body].include?('enterkeyhint="send"'),
+           "expected Agent composer textarea to hint send-capable keyboards")
+    assert(js[:body].include?('event.target?.id === "prompt-input"'),
+           "expected Agent composer textarea to handle Enter submissions")
+    assert(js[:body].include?("event.shiftKey || event.isComposing"),
+           "expected Agent composer Enter handling to preserve newlines and IME input")
+    assert(js[:body].include?("form.requestSubmit(submitButton)"),
+           "expected Agent composer Enter handling to submit through the form")
+    assert(js[:body].include?("button?.dataset.agentKey || form.dataset.agentKey"),
+           "expected keyboard prompt submits to resolve the agent key from the form")
     assert(js[:body].include?("iconSvg(\"squareSlash\")"), "expected Insert Skill to render a square slash SVG icon")
     assert(js[:body].include?("iconSvg(\"robot\")"), "expected Agent marks to render a robot SVG icon")
     assert(js[:body].include?("iconSvg(\"search\")"), "expected search controls to render an SVG icon")
