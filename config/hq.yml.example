@@ -11,6 +11,10 @@
 #   path    (required) absolute path to the project checkout on this machine
 #   apps    (required) true if the project is Kamal-deployed and should show app/health columns
 #   agent   (optional) managed-agent backend: "codex", "claude", or a custom_harnesses key
+#   hidden  (optional) true hides the project and its agents; false overrides a hidden group
+#
+# Groups can define shared metadata by display name. Missing hidden settings are
+# visible by default; project-level hidden values override group-level values.
 
 # Custom harnesses let Tycho run a Claude-compatible wrapper without hardcoding
 # provider-specific behavior. The execution command must accept Claude CLI flags
@@ -18,6 +22,7 @@
 # session flags around the prompt.
 
 custom_harnesses: []
+groups: {}
 projects: []
 
 # Example custom harness:
@@ -28,6 +33,10 @@ projects: []
 #   execution_command: "/Users/you/bin/claude-wrapper"
 
 # Example projects:
+#
+# groups:
+#   Personal:
+#     hidden: false
 #
 # projects:
 # - key: my-app

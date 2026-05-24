@@ -28,6 +28,25 @@ module HQ
       @config.apps
     end
 
+    def hidden?
+      @config.hidden == true
+    end
+
+    def hidden_config
+      @config.hidden_config
+    end
+
+    def group_hidden
+      @config.group_hidden
+    end
+
+    def visibility_source
+      return "project" unless @config.hidden_config.nil?
+      return "group" unless @config.group_hidden.nil?
+
+      "default"
+    end
+
     def agent_templates
       @config.agent_templates
     end

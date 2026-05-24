@@ -17,6 +17,7 @@ module AppAgentPersistenceTest
   def run!
     assert_tui_refresh_preserves_agent_created_from_remote_ui
     assert_tui_refresh_does_not_resurrect_agent_archived_from_remote_ui
+    assert_tui_hides_configured_projects_without_dropping_persisted_agents
     puts "app_agent_persistence_test: ok"
   ensure
     FileUtils.rm_rf(TEST_LOGS_ROOT)
@@ -88,6 +89,74 @@ module AppAgentPersistenceTest
              "expected TUI refresh to drop agent archived from Remote UI")
       assert(!persisted_keys.include?(target.key),
              "expected TUI save to avoid resurrecting Remote-archived agent")
+    ensure
+      ENV["TYCHO_CONFIG_PATH"] = old_config_path if defined?(old_config_path)
+      if defined?(old_system_prompts_path) && old_system_prompts_path
+        ENV["TYCHO_SYSTEM_PROMPTS_PATH"] = old_system_prompts_path
+      else
+        ENV.delete("TYCHO_SYSTEM_PROMPTS_PATH")
+      end
+    end
+  end
+
+  def assert_tui_hides_configured_projects_without_dropping_persisted_agents
+    with_temp_agent_store do |dir|
+      old_config_path = ENV["TYCHO_CONFIG_PATH"]
+      old_system_prompts_path = ENV["TYCHO_SYSTEM_PROMPTS_PATH"]
+      visible_workspace = File.join(dir, "visible")
+      hidden_workspace = File.join(dir, "hidden")
+      FileUtils.mkdir_p(visible_workspace)
+      FileUtils.mkdir_p(hidden_workspace)
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      File.write(config_path, <<~YAML)
+        groups:
+          Hidden:
+            hidden: true
+        projects:
+          - key: web
+            name: Web
+            path: #{visible_workspace}
+            apps: false
+          - key: secret
+            name: Secret
+            group: Hidden
+            path: #{hidden_workspace}
+            apps: false
+      YAML
+      File.write(prompts_path, <<~YAML)
+        custom: Default prompt for %{project_key}.
+      YAML
+      ENV["TYCHO_CONFIG_PATH"] = config_path
+      ENV["TYCHO_SYSTEM_PROMPTS_PATH"] = prompts_path
+      registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
+      hidden_agent = HQ::ManagedAgent.new(
+        key: "secret-agent-1",
+        name: "Secret Agent",
+        project_key: "secret",
+        template_key: "custom",
+        workspace: hidden_workspace,
+        prompt: "Stay hidden.",
+        agent: "codex"
+      )
+      HQ::AgentStore.new(registry.projects).save([hidden_agent])
+
+      app = HQ::App.new
+      assert(app.instance_variable_get(:@projects).map(&:key) == ["web"],
+             "expected TUI project list to omit hidden projects")
+      assert(app.instance_variable_get(:@agents).empty?,
+             "expected TUI agent list to omit agents for hidden projects")
+
+      create_tui_agent(app, name: "Visible Agent", prompt: "Created in the TUI.")
+      finish_tui_refresh(app)
+
+      persisted_names = HQ::AgentStore.new(registry.projects).load.map(&:name)
+      assert(persisted_names.include?("Secret Agent"),
+             "expected TUI save to preserve hidden project agents")
+      assert(persisted_names.include?("Visible Agent"),
+             "expected TUI save to persist visible project agents")
+      assert(!app.instance_variable_get(:@agents).map(&:name).include?("Secret Agent"),
+             "expected hidden agent to stay out of the TUI after refresh")
     ensure
       ENV["TYCHO_CONFIG_PATH"] = old_config_path if defined?(old_config_path)
       if defined?(old_system_prompts_path) && old_system_prompts_path

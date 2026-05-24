@@ -354,6 +354,80 @@ h3 {
   gap: 8px;
 }
 
+.compact-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.compact-actions button {
+  padding: 7px 9px;
+}
+
+.hidden-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: max-content;
+  align-items: stretch;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 78%, #000);
+}
+
+.detail-row > .hidden-toggle {
+  display: inline-flex;
+  min-width: max-content;
+  gap: 0;
+}
+
+.hidden-toggle-button {
+  display: inline-grid;
+  flex: 0 0 40px;
+  width: 40px;
+  min-width: 40px;
+  min-height: 36px;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+}
+
+.hidden-toggle-button + .hidden-toggle-button {
+  border-left: 1px solid var(--border);
+}
+
+.hidden-toggle-button .ui-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.hidden-toggle-button:hover,
+.hidden-toggle-button:focus-visible {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+.hidden-toggle-button.active {
+  border-color: transparent;
+  color: var(--text);
+}
+
+.hidden-toggle-button.active.hidden-state {
+  background: color-mix(in srgb, var(--danger) 74%, #8a1d2d);
+}
+
+.hidden-toggle-button.active.inherit-state {
+  background: color-mix(in srgb, var(--panel-soft) 76%, var(--border));
+}
+
+.hidden-toggle-button.active.visible-state {
+  background: color-mix(in srgb, var(--ok) 68%, #008a4a);
+}
+
 .token-row input,
 .search-box input,
 select,

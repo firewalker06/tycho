@@ -19,6 +19,7 @@ require_relative "domain/push_notification_store"
 require_relative "domain/push_subscription_store"
 require_relative "domain/scheduler"
 require_relative "domain/skill_discovery"
+require_relative "domain/visibility"
 require_relative "domain/web_push_notifier"
 
 module HQ
@@ -183,6 +184,8 @@ module HQ
       return ok(schedules: service.schedules, daemon: service.schedule_daemon) if method == "GET" && parts == ["schedules"]
       return ok(service.reload_schedules) if method == "POST" && parts == ["schedules", "reload"]
       return ok(projects: service.projects) if method == "GET" && parts == ["projects"]
+      return ok(hidden: service.hidden_settings) if method == "GET" && parts == ["settings", "hidden"]
+      return ok(hidden: service.update_hidden_setting(body)) if %w[PATCH PUT].include?(method) && parts == ["settings", "hidden"]
       return ok(setup: service.setup) if method == "GET" && parts == ["setup"]
       return ok(service.search_index) if method == "GET" && parts == ["search"]
       return accepted(schedule_restart!, headers: RESTART_CACHE_RESET_HEADERS) if method == "POST" && parts == ["server", "restart"]
@@ -463,7 +466,7 @@ module HQ
     end
 
     def health
-      { status: "ok", agents: load_agents.length, projects: @projects.length }
+      { status: "ok", agents: load_agents.length, projects: visible_projects.length }
     end
 
     def agents
@@ -569,10 +572,10 @@ module HQ
     end
 
     def projects
-      refresh_projects!
+      refresh_projects!(visible_projects)
       agents_by_project = load_agents.group_by(&:project_key)
       actions = active_actions
-      @projects.map do |project|
+      visible_projects.map do |project|
         project_list_payload(project, agents: agents_by_project.fetch(project.key, []), active_action: actions[project.key])
       end
     end
@@ -592,7 +595,10 @@ module HQ
     end
 
     def setup
-      agents = load_agents
+      all_agents = load_all_agents
+      agents = visible_agents(all_agents)
+      hidden_projects = HQ::Visibility.hidden_projects(@projects)
+      hidden_agent_count = HQ::Visibility.hidden_agents(all_agents, @projects).length
       {
         server_url: empty_to_nil(@server_url),
         ui_url: empty_to_nil(ui_url(@server_url)),
@@ -607,9 +613,11 @@ module HQ
           restartable: @restartable
         },
         counts: {
-          projects: @projects.length,
+          projects: visible_projects.length,
+          hidden_projects: hidden_projects.length,
           archived_projects: archived_project_count,
           agents: agents.length,
+          hidden_agents: hidden_agent_count,
           running_agents: agents.count(&:running?),
           unread_agents: agents.count(&:unread?)
         },
@@ -627,6 +635,48 @@ module HQ
         },
         safety: safety_guidance
       }
+    end
+
+    def hidden_settings
+      agents = load_all_agents
+      agents_by_project = agents.group_by(&:project_key)
+      group_names = (@registry.groups.keys + @projects.map(&:group)).map(&:to_s).reject(&:empty?).uniq.sort
+      project_payloads = @projects.sort_by { |project| [project.group.to_s.downcase, project.name.to_s.downcase, project.key] }.map do |project|
+        project_visibility_payload(project, agents_by_project.fetch(project.key, []))
+      end
+      group_payloads = group_names.map { |group_name| group_visibility_payload(group_name, project_payloads) }
+
+      {
+        groups: group_payloads,
+        projects: project_payloads,
+        counts: {
+          groups: group_payloads.length,
+          hidden_groups: group_payloads.count { |group| group[:hidden] },
+          projects: project_payloads.length,
+          hidden_projects: project_payloads.count { |project| project[:hidden] },
+          agents: agents.length,
+          hidden_agents: HQ::Visibility.hidden_agents(agents, @projects).length
+        }
+      }
+    end
+
+    def update_hidden_setting(attrs)
+      scope = attrs["scope"].to_s
+      key = attrs["key"].to_s
+      hidden = hidden_setting_value(attrs)
+
+      case scope
+      when "group"
+        @registry.update_group_hidden!(key, hidden)
+      when "project"
+        updated = @registry.update_project_hidden!(key, hidden)
+        raise Error.new("Unknown project: #{key}", status: 404) unless updated
+      else
+        raise Error.new("Unsupported hidden setting scope: #{scope.inspect}")
+      end
+
+      reload_projects_from_registry!
+      hidden_settings
     end
 
     def push_config
@@ -667,7 +717,9 @@ module HQ
 
     def dispatch_agent_push_notifications!
       agents, events = load_agents_with_events
-      dispatch_agent_push_events(events, agents:)
+      visible = visible_agents(agents)
+      visible_keys = visible.map(&:key)
+      dispatch_agent_push_events(events.select { |event| visible_keys.include?(event.agent_key) }, agents: visible)
     end
 
     def skills(project_key, agent_kind)
@@ -824,7 +876,7 @@ module HQ
       @agent_store.ensure_project_context_prompt!(target, project)
       target.start! if truthy?(attrs["start"])
 
-      current = load_agents
+      current = load_all_agents
       current.unshift(target)
       save_agents(sort_agents(current))
       agent_payload(target)
@@ -842,9 +894,9 @@ module HQ
     end
 
     def clone_agent(key, attrs)
-      current = load_agents
-      source = current.find { |agent| agent.key == key.to_s } ||
-               raise(Error.new("Unknown agent: #{key}", status: 404))
+      source = find_agent!(key)
+      current = load_all_agents
+      source = current.find { |agent| agent.key == key.to_s } || source
       archive_source = truthy?(attrs["archive_source"])
       raise Error.new("Agent is running", status: 409) if archive_source && source.running?
 
@@ -877,7 +929,7 @@ module HQ
       raise Error.new("Agent is running", status: 409) if target.running?
 
       archive_path = target.archive_logs!
-      remaining = load_agents.reject { |agent| agent.key == target.key }
+      remaining = load_all_agents.reject { |agent| agent.key == target.key }
       save_agents(remaining)
       {
         archived: true,
@@ -888,6 +940,63 @@ module HQ
 
     private
 
+    def visible_projects
+      HQ::Visibility.visible_projects(@projects)
+    end
+
+    def visible_agents(agents)
+      HQ::Visibility.visible_agents(agents, @projects)
+    end
+
+    def hidden_setting_value(attrs)
+      raise Error.new("Missing hidden value") unless attrs.key?("hidden")
+
+      value = attrs["hidden"]
+      return nil if value.nil?
+      return value if [true, false].include?(value)
+
+      normalized = value.to_s.strip.downcase
+      return true if %w[true yes on 1].include?(normalized)
+      return false if %w[false no off 0].include?(normalized)
+      return nil if %w[inherit default visible].include?(normalized)
+
+      raise Error.new("Invalid hidden value: #{value.inspect}")
+    end
+
+    def group_visibility_payload(group_name, project_payloads)
+      config = @registry.groups[group_name]
+      projects = project_payloads.select { |project| project[:group].to_s == group_name.to_s }
+      hidden_config = config&.hidden
+      hidden = hidden_config == true
+      {
+        name: group_name,
+        hidden: hidden,
+        hidden_config: hidden_config,
+        visibility_source: hidden_config.nil? ? "default" : "group",
+        project_count: projects.length,
+        hidden_project_count: projects.count { |project| project[:hidden] },
+        visible_project_count: projects.count { |project| !project[:hidden] },
+        agent_count: projects.sum { |project| project[:agent_count].to_i },
+        hidden_agent_count: projects.select { |project| project[:hidden] }.sum { |project| project[:agent_count].to_i }
+      }
+    end
+
+    def project_visibility_payload(project, agents)
+      {
+        key: project.key,
+        name: project.name,
+        group: empty_to_nil(project.group),
+        path: project.path,
+        hidden: project.hidden?,
+        hidden_config: project.hidden_config,
+        group_hidden: project.group_hidden,
+        visibility_source: project.visibility_source,
+        agent_count: agents.length,
+        running_agent_count: agents.count(&:running?),
+        unread_agent_count: agents.count(&:unread?)
+      }
+    end
+
     def scheduler
       Scheduler.new(
         registry: @registry,
@@ -896,8 +1005,13 @@ module HQ
       )
     end
 
-    def refresh_projects!
-      threads = @projects.map do |project|
+    def reload_projects_from_registry!
+      @projects = @registry.projects.map { |config| AppProject.new(config) }
+      @agent_store = AgentStore.new(@projects)
+    end
+
+    def refresh_projects!(projects = @projects)
+      threads = projects.map do |project|
         Thread.new { refresh_project!(project) }
       end
       threads.each(&:join)
@@ -913,8 +1027,14 @@ module HQ
     end
 
     def load_agents
+      visible_agents(load_all_agents)
+    end
+
+    def load_all_agents
       agents, events = load_agents_with_events
-      dispatch_agent_push_events(events, agents:)
+      visible = visible_agents(agents)
+      visible_keys = visible.map(&:key)
+      dispatch_agent_push_events(events.select { |event| visible_keys.include?(event.agent_key) }, agents: visible)
       agents
     end
 
@@ -923,7 +1043,7 @@ module HQ
     end
 
     def save_agent(target)
-      agents = load_agents
+      agents = load_all_agents
       index = agents.index { |agent| agent.key == target.key }
       raise Error.new("Unknown agent: #{target.key}", status: 404) unless index
 
@@ -945,7 +1065,7 @@ module HQ
     end
 
     def find_project!(key)
-      @projects.find { |project| project.key == key.to_s } ||
+      visible_projects.find { |project| project.key == key.to_s } ||
         raise(Error.new("Unknown project: #{key}", status: 404))
     end
 

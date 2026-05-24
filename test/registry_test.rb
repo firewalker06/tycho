@@ -19,6 +19,7 @@ module RegistryTest
     assert_registry_ignores_hq_env_aliases
     assert_registry_uses_tycho_home_defaults
     assert_registry_preserves_false_apps_flags
+    assert_registry_resolves_hidden_groups_and_project_overrides
     assert_registry_loads_custom_claude_harnesses
     assert_custom_harness_resolves_executable_after_env_assignments
     assert_registry_rejects_unsupported_custom_harness_adapters
@@ -177,6 +178,45 @@ module RegistryTest
 
       assert(web.apps == true, "expected apps: true to stay true")
       assert(docs.apps == false, "expected apps: false to stay false")
+    end
+  end
+
+  def assert_registry_resolves_hidden_groups_and_project_overrides
+    Dir.mktmpdir("hq-registry-hidden-test") do |dir|
+      config_path = File.join(dir, "hq.yml")
+
+      File.write(config_path, <<~YAML)
+        groups:
+          Cookpad:
+            hidden: true
+        projects:
+          - key: web
+            name: Web
+            group: Cookpad
+            path: #{File.join(dir, "web")}
+          - key: web-charlie
+            name: Web Charlie
+            group: Cookpad
+            path: #{File.join(dir, "web-charlie")}
+            hidden: false
+          - key: lab
+            name: Lab
+            group: Research
+            path: #{File.join(dir, "lab")}
+            hidden: true
+      YAML
+
+      registry = HQ::Registry.new(path: config_path)
+      projects = registry.projects.each_with_object({}) { |project, by_key| by_key[project.key] = project }
+
+      assert(registry.groups["Cookpad"].hidden == true, "expected group hidden config to load")
+      assert(projects["web"].hidden == true, "expected project to inherit hidden group")
+      assert(projects["web"].hidden_config.nil?, "expected inherited project hidden config to stay unset")
+      assert(projects["web"].group_hidden == true, "expected inherited group hidden value")
+      assert(projects["web-charlie"].hidden == false, "expected project hidden false to override group")
+      assert(projects["web-charlie"].hidden_config == false, "expected explicit project visibility override")
+      assert(projects["lab"].hidden == true, "expected project-level hidden to hide project")
+      assert(projects["lab"].group_hidden.nil?, "expected missing group config to stay nil")
     end
   end
 

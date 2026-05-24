@@ -21,6 +21,7 @@ module RemoteServerTest
     assert_remote_prompt_start_accepts_dash_prefixed_message
     assert_remote_agent_conversation_keeps_run_summary
     assert_remote_project_payloads_include_status_and_detail
+    assert_remote_hidden_settings_filter_projects_and_agents
     assert_remote_schedule_routes
     assert_remote_setup_payload_includes_readiness
     assert_remote_setup_warns_when_public_url_has_no_token
@@ -607,6 +608,91 @@ module RemoteServerTest
     end
   end
 
+  def assert_remote_hidden_settings_filter_projects_and_agents
+    with_remote_temp_store do |dir|
+      prompts_path = File.join(dir, "system_prompts.yml")
+      config_path = File.join(dir, "hq.yml")
+      workspaces = %w[web-charlie worker docs].to_h do |key|
+        path = File.join(dir, key)
+        FileUtils.mkdir_p(path)
+        [key, path]
+      end
+      File.write(config_path, <<~YAML)
+        groups:
+          Cookpad:
+            hidden: true
+        projects:
+          - key: web-charlie
+            name: Web Charlie
+            group: Cookpad
+            path: #{workspaces["web-charlie"]}
+            apps: false
+            hidden: false
+          - key: worker
+            name: Worker
+            group: Cookpad
+            path: #{workspaces["worker"]}
+            apps: false
+          - key: docs
+            name: Docs
+            group: Personal
+            path: #{workspaces["docs"]}
+            apps: false
+      YAML
+      File.write(prompts_path, <<~YAML)
+        custom: Default prompt for %{project_key}.
+      YAML
+      registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
+      agents = [
+        hidden_test_agent("web-charlie-agent-1", "web-charlie", workspaces["web-charlie"]),
+        hidden_test_agent("worker-agent-1", "worker", workspaces["worker"]),
+        hidden_test_agent("docs-agent-1", "docs", workspaces["docs"])
+      ]
+      HQ::AgentStore.new(registry.projects).save(agents)
+      service = HQ::RemoteService.new(registry: registry)
+
+      assert(service.projects.map { |project| project[:key] }.include?("web-charlie"),
+             "expected explicit project hidden false to stay visible")
+      assert(!service.projects.map { |project| project[:key] }.include?("worker"),
+             "expected group-hidden project to be omitted from normal project list")
+      visible_agent_keys = service.agents.map { |agent| agent[:key] }
+      assert(visible_agent_keys.include?("web-charlie-agent-1") && visible_agent_keys.include?("docs-agent-1"),
+             "expected normal agent list to include visible project agents")
+      assert(!visible_agent_keys.include?("worker-agent-1"),
+             "expected normal agent list to omit agents for hidden projects")
+      begin
+        service.project("worker")
+        raise "expected hidden project detail to be hidden"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 404, "expected hidden project detail to return 404")
+      end
+
+      settings = service.hidden_settings
+      worker = settings[:projects].find { |project| project[:key] == "worker" }
+      assert(worker[:hidden] == true && worker[:visibility_source] == "group",
+             "expected hidden settings to expose group-inherited hidden project")
+
+      updated = service.update_hidden_setting("scope" => "group", "key" => "Cookpad", "hidden" => false)
+      assert(updated[:groups].find { |group| group[:name] == "Cookpad" }[:hidden_config] == false,
+             "expected Remote hidden settings to update group hidden config")
+      assert(service.projects.map { |project| project[:key] }.include?("worker"),
+             "expected group visibility change to reveal inherited projects")
+      assert(service.agents.map { |agent| agent[:key] }.include?("worker-agent-1"),
+             "expected group visibility change to reveal inherited project agents")
+
+      service.update_hidden_setting("scope" => "project", "key" => "docs", "hidden" => true)
+      assert(!service.projects.map { |project| project[:key] }.include?("docs"),
+             "expected project hidden setting to remove project from normal list")
+      assert(!service.agents.map { |agent| agent[:key] }.include?("docs-agent-1"),
+             "expected project hidden setting to remove its agents from normal list")
+      persisted = YAML.safe_load(File.read(config_path), permitted_classes: [Symbol], aliases: true)
+      assert(persisted.dig("groups", "Cookpad", "hidden") == false,
+             "expected group hidden setting to persist to hq.yml")
+      assert(persisted["projects"].find { |project| project["key"] == "docs" }["hidden"] == true,
+             "expected project hidden setting to persist to hq.yml")
+    end
+  end
+
   def assert_remote_schedule_routes
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
@@ -1058,6 +1144,12 @@ module RemoteServerTest
            "expected Setup restart lifecycle card to have distinct styling")
     assert(css[:body].include?(".restart-server-button"),
            "expected Setup restart action to have distinct button styling")
+    assert(css[:body].include?(".compact-actions"),
+           "expected Hidden settings rows to support compact action buttons")
+    assert(css[:body].include?(".hidden-toggle-button.active.visible-state"),
+           "expected Hidden settings rows to style the visible segment in the triple toggle")
+    assert(css[:body].include?("flex-wrap: nowrap"),
+           "expected Hidden settings toggle segments to stay horizontal")
     js = server.send(:route_ui, "/ui.js")
     assert(js[:content_type].include?("javascript"), "expected /ui.js to return JavaScript")
     assert(js[:body].include?("DEFAULT_REFRESH_INTERVALS"), "expected UI JavaScript to define refresh defaults")
@@ -1093,6 +1185,16 @@ module RemoteServerTest
            "expected Remote UI to normalize inquiry field input types")
     assert(js[:body].include?("function setAgentSettings"), "expected Agent metadata to move into header settings")
     assert(js[:body].include?("Push notifications"), "expected Setup screen to expose push readiness")
+    assert(js[:body].include?("function renderHiddenSettings"),
+           "expected Setup screen to expose a dedicated Hidden settings page")
+    assert(js[:body].include?('apiGet("/settings/hidden")'),
+           "expected Hidden settings page to load hidden configuration")
+    assert(js[:body].include?('apiPatch("/settings/hidden"'),
+           "expected Hidden settings page to update hidden configuration")
+    assert(js[:body].include?("data-open-hidden-settings"),
+           "expected Setup screen to link to Hidden settings")
+    assert(js[:body].include?('"eyeOff"') && js[:body].include?('"slash"') && js[:body].include?('"eye"'),
+           "expected Hidden settings to use hidden/inherit/visible icon toggle buttons")
     assert(js[:body].include?("data-restart-server"), "expected Setup screen to expose Remote restart action")
     assert(js[:body].include?('class="danger inline-icon-button restart-server-button" type="button" data-restart-server'),
            "expected Remote restart action to use danger button styling")
@@ -1553,6 +1655,18 @@ module RemoteServerTest
           log_path: log_path
         )
       ]
+    )
+  end
+
+  def hidden_test_agent(key, project_key, workspace)
+    HQ::ManagedAgent.new(
+      key: key,
+      name: key,
+      project_key: project_key,
+      template_key: "custom",
+      workspace: workspace,
+      prompt: "Work on #{project_key}.",
+      agent: "codex"
     )
   end
 

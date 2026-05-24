@@ -16,6 +16,7 @@ require_relative "domain/kamal_action"
 require_relative "domain/app_project"
 require_relative "domain/managed_agent"
 require_relative "domain/agent_store"
+require_relative "domain/visibility"
 require_relative "domain/scheduler"
 require_relative "domain/skill_discovery"
 require_relative "ui/components/chat_composer"
@@ -82,7 +83,9 @@ module HQ
       @confirming = nil
       @actions = {}
       @action_results = {}
+      @all_projects = []
       @projects = []
+      @all_agents = []
       @agents = []
       @schedules = []
       @schedule_daemon = {}
@@ -108,7 +111,7 @@ module HQ
       HQ.log_boot_step("hooks reloaded with projects")
       refresh_boot_metadata!
       HQ.log_boot_step("boot metadata loaded")
-      @agent_store = AgentStore.new(@projects)
+      @agent_store = AgentStore.new(@all_projects)
       load_agents!
       HQ.log_boot_step("agents loaded (#{@agents.length} agents)")
       load_actions!
@@ -282,7 +285,8 @@ module HQ
       retried_missing_config = false
       begin
         @registry = Registry.new
-        @projects = @registry.projects.map { |config| AppProject.new(config) }
+        @all_projects = @registry.projects.map { |config| AppProject.new(config) }
+        apply_project_visibility!
         @registry_mtime = File.mtime(@registry.path) if File.exist?(@registry.path)
         @config_error = nil
       rescue ConfigError => e
@@ -294,7 +298,9 @@ module HQ
 
         HQ.logger.error("Config") { e.message }
         @config_error = e.message
+        @all_projects = []
         @projects = []
+        @all_agents = []
         @agents = []
       end
     end
@@ -324,7 +330,7 @@ module HQ
 
     def open_empty_project_onboarding!
       return if @config_error
-      return unless @projects.empty?
+      return unless @all_projects.empty?
       return if @empty_project_onboarding_opened
 
       @empty_project_onboarding_opened = true
@@ -340,10 +346,10 @@ module HQ
       return if @registry_mtime && current <= @registry_mtime
 
       HQ.logger.info("Config") { "Detected change in #{@registry.path}, reloading" }
-      previous = @projects.each_with_object({}) { |p, h| h[p.key] = p }
+      previous = @all_projects.each_with_object({}) { |p, h| h[p.key] = p }
       @registry = Registry.new
       @registry_mtime = current
-      @projects = @registry.projects.map do |config|
+      @all_projects = @registry.projects.map do |config|
         prior = previous[config.key]
         project = AppProject.new(config)
         if prior
@@ -356,6 +362,9 @@ module HQ
         end
         project
       end
+      apply_project_visibility!
+      @agent_store = AgentStore.new(@all_projects) if @agent_store
+      apply_agent_visibility!
       rebuild_agent_index!
       load_schedules!
       reload_hooks!
@@ -550,7 +559,8 @@ module HQ
     end
 
     def load_agents!
-      @agents = sort_agents(@agent_store.load)
+      @all_agents = sort_agents(@agent_store.load)
+      apply_agent_visibility!
       remember_known_agent_keys!
       rebuild_agent_index!
       sync_agent_chat_workspace!
@@ -572,12 +582,28 @@ module HQ
     end
 
     def save_agents!
-      agents = agents_with_external_additions(@agents)
+      agents = agents_with_external_additions(agents_with_hidden_projects(@agents))
       @agent_store.save(agents)
-      @agents = agents
+      @all_agents = sort_agents(agents)
+      apply_agent_visibility!
       remember_known_agent_keys!
     rescue StandardError => e
       HQ.logger.error("AgentStore") { "Failed to save agents: #{e.message}" }
+    end
+
+    def apply_project_visibility!
+      @projects = HQ::Visibility.visible_projects(@all_projects)
+      clamp_selections!
+    end
+
+    def apply_agent_visibility!
+      @agents = HQ::Visibility.visible_agents(@all_agents, @all_projects)
+      clamp_selections!
+    end
+
+    def agents_with_hidden_projects(visible_agents)
+      hidden_agents = @all_agents.reject { |agent| HQ::Visibility.agent_visible?(agent, @all_projects) }
+      visible_agents + hidden_agents
     end
 
     def agents_with_external_additions(agents)
@@ -608,7 +634,19 @@ module HQ
     end
 
     def remember_known_agent_keys!
-      @known_agent_keys = @agents.map(&:key)
+      @known_agent_keys = @all_agents.map(&:key)
+    end
+
+    def clamp_selections!
+      @selected[:agents] = clamp_selection(@selected[:agents], @agents.length)
+      @selected[:projects] = clamp_selection(@selected[:projects], @projects.length)
+      @selected[:schedules] = clamp_selection(@selected[:schedules], @schedules.length)
+    end
+
+    def clamp_selection(value, length)
+      return 0 if length.to_i <= 0
+
+      [[value.to_i, 0].max, length - 1].min
     end
 
     def poll_agents!
@@ -891,7 +929,7 @@ def selected_screen_items
       return [self, nil] unless old_agent
 
       close_sidebar!
-      new_agent = @agent_store.clone_agent(old_agent, existing_agents: @agents)
+      new_agent = @agent_store.clone_agent(old_agent, existing_agents: @all_agents)
       @agents.unshift(new_agent)
       @agents = sort_agents(@agents)
       @selected[:agents] = @agents.index(new_agent) || 0
@@ -1093,7 +1131,7 @@ def selected_screen_items
       @agents.reject! { |agent| agent.project_key == project.key }
       save_agents!
       load_registry!
-      @agent_store = AgentStore.new(@projects)
+      @agent_store = AgentStore.new(@all_projects)
       rebuild_agent_index!
       @actions.delete(project.key)
       @action_results.delete(project.key)
@@ -1304,7 +1342,7 @@ def selected_screen_items
 
       @registry.add_project!(attrs)
       load_registry!
-      @agent_store = AgentStore.new(@projects)
+      @agent_store = AgentStore.new(@all_projects)
       load_agents!
       @selected[:projects] = @projects.index { |p| p.key == attrs[:key] } || (@projects.length - 1)
       close_sidebar!

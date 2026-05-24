@@ -8,13 +8,28 @@ module HQ
   class ConfigError < StandardError; end
 
   AgentTemplateConfig = Struct.new(:key, :name, :prompt, :sandbox_mode, :agent, keyword_init: true)
-  ProjectConfig = Struct.new(:key, :name, :group, :path, :apps, :agent, :agent_templates, :hooks, :pr_url, keyword_init: true)
+  GroupConfig = Struct.new(:name, :hidden, keyword_init: true)
+  ProjectConfig = Struct.new(
+    :key,
+    :name,
+    :group,
+    :path,
+    :apps,
+    :agent,
+    :agent_templates,
+    :hooks,
+    :pr_url,
+    :hidden,
+    :hidden_config,
+    :group_hidden,
+    keyword_init: true
+  )
 
   class Registry
     DEFAULT_PATH = HQ.default_config_path
     DEFAULT_ARCHIVED_BASENAME = "hq.archived.yml"
 
-    attr_reader :path, :projects, :system_prompts_path, :custom_harnesses
+    attr_reader :path, :projects, :groups, :system_prompts_path, :custom_harnesses
 
     def initialize(path: HQ.env_present("CONFIG_PATH", DEFAULT_PATH), system_prompts_path: nil)
       @path = File.expand_path(path)
@@ -25,6 +40,7 @@ module HQ
                              end
       @system_prompts_path = File.expand_path(system_prompts_path || HQ.env_present("SYSTEM_PROMPTS_PATH", default_prompts_path))
       @projects = []
+      @groups = {}
       @system_prompts = {}
       load!
     end
@@ -33,6 +49,7 @@ module HQ
       data = load_yaml(@path)
       @system_prompts = load_yaml(@system_prompts_path, optional: true)
       @custom_harnesses = build_custom_harnesses(data["custom_harnesses"])
+      @groups = build_groups(data["groups"])
       HQ.custom_harnesses = @custom_harnesses
       remove_instance_variable(:@normalized_system_prompts) if instance_variable_defined?(:@normalized_system_prompts)
       write_yaml(@path, data) if persist_detected_apps!(data)
@@ -81,6 +98,53 @@ module HQ
       added = @projects.find { |p| p.key == key }
       HQ.hooks.publish("project.added", project_key: key, project_path: added&.path.to_s)
       key
+    end
+
+    def update_group_hidden!(group_name, hidden)
+      name = group_name.to_s.strip
+      raise ConfigError, "Missing group name" if name.empty?
+
+      data = load_yaml(@path)
+      groups = data["groups"].is_a?(Hash) ? data["groups"] : {}
+      entry = groups[name]
+      entry = {} unless entry.is_a?(Hash)
+
+      if hidden.nil?
+        entry.delete("hidden")
+      else
+        entry["hidden"] = hidden ? true : false
+      end
+
+      if entry.empty?
+        groups.delete(name)
+      else
+        groups[name] = entry
+      end
+      data["groups"] = groups unless groups.empty?
+      data.delete("groups") if groups.empty?
+
+      write_yaml(@path, data)
+      load!
+      HQ.hooks.publish("group.updated", group: name, fields: ["hidden"])
+      groups[name]
+    end
+
+    def update_project_hidden!(project_key, hidden)
+      data = load_yaml(@path)
+      projects = Array(data["projects"])
+      project = projects.find { |item| item["key"].to_s == project_key.to_s }
+      return nil unless project
+
+      if hidden.nil?
+        project.delete("hidden")
+      else
+        project["hidden"] = hidden ? true : false
+      end
+
+      write_yaml(@path, data)
+      load!
+      HQ.hooks.publish("project.updated", project_key: project_key.to_s, fields: ["hidden"])
+      project
     end
 
     def update_project!(project_key, attrs)
@@ -132,6 +196,22 @@ module HQ
 
     private
 
+    def build_groups(raw_groups)
+      return {} unless raw_groups.is_a?(Hash)
+
+      raw_groups.each_with_object({}) do |(name, attrs), groups|
+        group_name = name.to_s.strip
+        next if group_name.empty?
+
+        hidden = if attrs.is_a?(Hash)
+                   hidden_value(attrs, "group #{group_name}")
+                 else
+                   normalize_hidden(attrs, "group #{group_name}")
+                 end
+        groups[group_name] = GroupConfig.new(name: group_name, hidden: hidden)
+      end
+    end
+
     def build_custom_harnesses(raw_harnesses)
       Array(raw_harnesses).map do |harness|
         key = fetch_key(harness, "custom harness").downcase
@@ -164,10 +244,14 @@ module HQ
         path = expand_path(project["path"])
         name = (project["name"] || File.basename(path)).to_s
         apps_enabled = apps_enabled_for(project)
+        group_name = project["group"].to_s.strip
+        hidden_config = hidden_value(project, "project #{key}")
+        group_hidden = @groups[group_name]&.hidden
+        hidden = hidden_config.nil? ? group_hidden == true : hidden_config == true
         ProjectConfig.new(
           key: key,
           name: name,
-          group: project["group"].to_s.strip,
+          group: group_name,
           path: path,
           apps: apps_enabled,
           agent: normalize_agent(project["agent"]),
@@ -178,9 +262,30 @@ module HQ
             project_path: path
           ),
           hooks: project["hooks"].is_a?(Hash) ? project["hooks"] : nil,
-          pr_url: project["pr_url"].to_s.strip.empty? ? nil : project["pr_url"].to_s.strip
+          pr_url: project["pr_url"].to_s.strip.empty? ? nil : project["pr_url"].to_s.strip,
+          hidden: hidden,
+          hidden_config: hidden_config,
+          group_hidden: group_hidden
         )
       end
+    end
+
+    def hidden_value(hash, label)
+      return nil unless hash.is_a?(Hash) && hash.key?("hidden")
+
+      normalize_hidden(hash["hidden"], label)
+    end
+
+    def normalize_hidden(value, label)
+      return nil if value.nil?
+      return value if [true, false].include?(value)
+
+      normalized = value.to_s.strip.downcase
+      return true if %w[true yes on 1].include?(normalized)
+      return false if %w[false no off 0].include?(normalized)
+      return nil if %w[inherit default nil null].include?(normalized)
+
+      raise ConfigError, "Invalid hidden value for #{label}: #{value.inspect}"
     end
 
     def apps_enabled_for(project)
