@@ -62,9 +62,9 @@ Key references:
 ## Current Focus
 
 **Public release hardening**: Tycho is public, and the immediate focus is the
-`v0.1.0` Homebrew release contract: public tag, release notes, user-scoped
-runtime paths, Homebrew install verification, and first-user documentation.
-Agent UX and continuity remain active maintenance areas.
+`v0.1.x` Homebrew release contract: release notes, user-scoped runtime paths,
+Homebrew install verification, first-user documentation, and repeatable release
+operations. Agent UX and continuity remain active maintenance areas.
 
 ## Roadmap
 
@@ -134,7 +134,9 @@ Agent UX and continuity remain active maintenance areas.
 - [x] Add Remote UI warning for unauthenticated non-loopback binds
 - [x] Run gitleaks history secret scan with documented false-positive allowlist
 - [x] Publish from a clean public repository instead of exposing private history
-- [ ] Publish `v0.1.0` GitHub release and public Homebrew tap formula
+- [x] Publish `v0.1.0` GitHub release
+- [x] Add release maintainer runbook
+- [x] Publish public Homebrew tap formula
 
 ## Features Candidates
 
