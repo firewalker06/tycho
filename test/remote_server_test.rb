@@ -1252,10 +1252,16 @@ module RemoteServerTest
            "expected Agent detail composer action to switch by running state")
     assert(js[:body].include?('class="danger" type="button" data-agent-action="stop" data-agent-key="${escapeAttr(agent.key)}">Stop agent'),
            "expected running agents to replace Send prompt with Stop agent")
-    assert(js[:body].include?('enterkeyhint="send"'),
-           "expected Agent composer textarea to hint send-capable keyboards")
+    assert(js[:body].include?('enterkeyhint="enter"'),
+           "expected Agent composer textarea to hint newline-capable keyboards")
     assert(js[:body].include?('event.target?.id === "prompt-input"'),
            "expected Agent composer textarea to handle Enter submissions")
+    assert(js[:body].include?("function touchKeyboardLikely"),
+           "expected Agent composer Enter handling to detect touch keyboards")
+    assert(js[:body].include?("event.metaKey || event.ctrlKey"),
+           "expected Agent composer Enter handling to support explicit keyboard submits")
+    assert(js[:body].include?("if (touchKeyboardLikely()) return;"),
+           "expected Agent composer Enter handling to preserve mobile newlines")
     assert(js[:body].include?("event.shiftKey || event.isComposing"),
            "expected Agent composer Enter handling to preserve newlines and IME input")
     assert(js[:body].include?("form.requestSubmit(submitButton)"),
