@@ -1159,6 +1159,12 @@ module RemoteServerTest
            "expected Remote UI restart to clear browser Cache Storage")
     assert(js[:body].include?('url.searchParams.set("hq_restart"'),
            "expected Remote UI restart to reload with a cache-busting query")
+    assert(js[:body].include?("function activateNavTab"),
+           "expected Remote UI nav clicks to route through top-tab activation")
+    assert(js[:body].include?("function scrollPageToTop"),
+           "expected selected Remote UI nav clicks to scroll the current tab to the top")
+    assert(js[:body].include?('route.type === "tab" && route.tab === tab'),
+           "expected selected Remote UI nav detection to require the current top-level tab")
     assert(js[:body].include?("Copied to clipboard"), "expected UI JavaScript to include copy feedback")
     assert(js[:body].include?("data-agent-dock"), "expected Agent detail composer to live in a dock")
     assert(js[:body].include?("function renderInquiryForm"),
