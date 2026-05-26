@@ -7,6 +7,7 @@ require "rbconfig"
 require "time"
 require "tmpdir"
 
+require_relative "../lib/hq/domain/schedule_daemon_supervisor"
 require_relative "../lib/hq/domain/scheduler"
 
 ROOT = File.expand_path("..", __dir__)
@@ -21,6 +22,7 @@ module SchedulerTest
       assert_scheduler_run_creates_fresh_agent_and_archives_previous
       assert_scheduler_skips_interactive_scheduled_agent_without_archiving
     end
+    assert_schedule_daemon_supervisor_spawns_external_daemon
     assert_bin_schedule_list_lists_configured_schedules
     assert_bin_hq_schedule_daemon_runs_once
     assert_bin_hq_schedule_resume_updates_next_run
@@ -323,6 +325,44 @@ module SchedulerTest
       assert(state.last_status == "failed", "expected schedule state to record failed status")
       assert(notifier.payloads.any? { |payload| payload[:title] == "Schedule failed" },
              "expected failure to send a web push payload")
+    end
+  end
+
+  def assert_schedule_daemon_supervisor_spawns_external_daemon
+    with_temp_runtime do |dir|
+      spawned = []
+      detached = []
+      killed = []
+      alive = true
+      supervisor = HQ::ScheduleDaemonSupervisor.new(
+        log_path: File.join(dir, "scheduler_daemon.log"),
+        spawner: lambda do |*args, **opts|
+          spawned << [args, opts]
+          12_345
+        end,
+        detacher: ->(pid) { detached << pid },
+        killer: ->(signal, pid) { killed << [signal, pid]; alive = false },
+        liveness: ->(_pid) { alive },
+        sleeper: ->(_seconds) {}
+      )
+
+      started = supervisor.start!(interval: 17, dry_run: true)
+      command = spawned.fetch(0).fetch(0)
+      opts = spawned.fetch(0).fetch(1)
+      assert(started.fetch(:pid) == 12_345, "expected supervisor to report spawned daemon pid")
+      assert(command.include?("schedule") && command.include?("daemon"),
+             "expected supervisor to spawn the scheduler daemon command, got #{command.inspect}")
+      assert(command.include?("--interval") && command.include?("17") && command.include?("--dry-run"),
+             "expected supervisor to pass daemon options, got #{command.inspect}")
+      assert(opts[:pgroup] == true, "expected scheduler daemon to run in its own process group")
+      assert(detached == [12_345], "expected supervisor to detach the daemon")
+      assert(File.exist?(File.join(dir, "scheduler_daemon.log")), "expected daemon log file to be created")
+
+      store = HQ::ScheduleStore.new
+      store.record_daemon_start!(pid: 12_345, mode: "daemon", interval: 17, dry_run: true)
+      stopped = supervisor.stop!
+      assert(stopped.fetch(:stopped), "expected supervisor stop to observe exited daemon")
+      assert(killed == [["TERM", 12_345]], "expected supervisor to terminate the daemon pid")
     end
   end
 

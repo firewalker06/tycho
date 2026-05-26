@@ -734,7 +734,8 @@ module RemoteServerTest
               project_key: web
               message: "Run maintenance."
       YAML
-      service = HQ::RemoteService.new(registry: registry)
+      daemon_supervisor = FakeScheduleDaemonSupervisor.new
+      service = HQ::RemoteService.new(registry: registry, schedule_daemon_supervisor: daemon_supervisor)
       server = HQ::RemoteServer.new
 
       listed = server.send(:route, service, "GET", "/schedules", {}, nil)
@@ -749,6 +750,20 @@ module RemoteServerTest
 
       reloaded = server.send(:route, service, "POST", "/schedules/reload", {}, nil)
       assert(reloaded.dig(:body, :ok), "expected schedule reload route")
+
+      started = server.send(:route, service, "POST", "/schedules/daemon/start", { "interval" => 17 }, nil)
+      assert(started[:status] == 202, "expected schedule daemon start route to be accepted")
+      assert(started.dig(:body, :started), "expected schedule daemon start payload")
+      assert(daemon_supervisor.calls.include?([:start, 17, false]), "expected start route to use separate daemon supervisor")
+
+      stopped = server.send(:route, service, "POST", "/schedules/daemon/stop", {}, nil)
+      assert(stopped[:status] == 202, "expected schedule daemon stop route to be accepted")
+      assert(stopped.dig(:body, :stopped), "expected schedule daemon stop payload")
+
+      restarted = server.send(:route, service, "POST", "/schedules/daemon/restart", { "dry_run" => true }, nil)
+      assert(restarted[:status] == 202, "expected schedule daemon restart route to be accepted")
+      assert(restarted.dig(:body, :restarted), "expected schedule daemon restart payload")
+      assert(daemon_supervisor.calls.include?([:restart, nil, true]), "expected restart route to use separate daemon supervisor")
     end
   end
 
@@ -1176,6 +1191,12 @@ module RemoteServerTest
            "expected Setup restart action to have distinct button styling")
     assert(css[:body].include?(".compact-actions"),
            "expected Hidden settings rows to support compact action buttons")
+    assert(css[:body].include?(".schedule-card-body") && css[:body].include?("padding: 0;"),
+           "expected Schedule block body to remove extra card padding")
+    assert(css[:body].include?(".schedule-details") && css[:body].include?("margin: 12px 0 0;"),
+           "expected Schedule details wrapper to preserve compact top breathing room")
+    assert(css[:body].include?(".schedule-disclosure") && css[:body].include?("position: absolute"),
+           "expected Schedule block to pin a visible collapsible disclosure control")
     assert(css[:body].include?(".hidden-toggle-button.active.visible-state"),
            "expected Hidden settings rows to style the visible segment in the triple toggle")
     assert(css[:body].include?("flex-wrap: nowrap"),
@@ -1241,6 +1262,18 @@ module RemoteServerTest
            "expected Remote UI restart action to call the restart endpoint")
     assert(js[:body].include?("function waitForRemoteRestart"),
            "expected Remote UI to poll until restart comes back online")
+    assert(js[:body].include?("data-scheduler-action"),
+           "expected Remote UI to expose scheduler daemon controls")
+    assert(js[:body].include?("calendarCheck2"),
+           "expected Remote UI schedule surfaces to use the calendar-check-2 icon")
+    assert(js[:body].include?('class="schedule-details" data-state-key="schedule-now-details"'),
+           "expected Remote UI schedule rows to be collapsed by default")
+    assert(js[:body].include?("schedule-disclosure"),
+           "expected collapsed schedule block to show a disclosure indicator")
+    assert(js[:body].include?('/schedules/daemon/${action}'),
+           "expected Remote UI scheduler controls to call daemon endpoints")
+    assert(js[:body].include?("data-schedule-action"),
+           "expected Remote UI to expose schedule run/pause/resume controls")
     assert(js[:body].include?("MagicDNS push requires Tailscale HTTPS"),
            "expected Remote UI to warn when MagicDNS is not HTTPS")
     assert(js[:body].include?("navigator.serviceWorker.register"),
@@ -1886,6 +1919,48 @@ module RemoteServerTest
     assert(line.include?("[Remote]"), "expected console log to include Remote prefix")
     assert(line.include?("GET /health 200"), "expected console log to include request method, path, and status")
     assert(line.include?("ms"), "expected console log to include duration")
+  end
+
+  class FakeScheduleDaemonSupervisor
+    attr_reader :calls
+
+    def initialize
+      @calls = []
+    end
+
+    def start!(interval:, dry_run:)
+      @calls << [:start, interval, dry_run]
+      {
+        started: true,
+        daemon: {
+          status: "starting",
+          interval: interval,
+          dry_run: dry_run
+        }
+      }
+    end
+
+    def stop!
+      @calls << [:stop]
+      {
+        stopped: true,
+        daemon: {
+          status: "stopped"
+        }
+      }
+    end
+
+    def restart!(interval:, dry_run:)
+      @calls << [:restart, interval, dry_run]
+      {
+        restarted: true,
+        daemon: {
+          status: "starting",
+          interval: interval,
+          dry_run: dry_run
+        }
+      }
+    end
   end
 
   def assert(condition, message)

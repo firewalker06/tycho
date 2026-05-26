@@ -18,6 +18,7 @@ Prompt input is limited to inline text in `~/.tycho/config/schedules.yml` or a f
 
 - Scheduler owner: dedicated `tycho schedule daemon`, not the TUI and not the Remote server.
 - Management surfaces: both TUI and Remote UI show schedules and allow safe operations.
+- Remote UI daemon control: Remote UI may start, stop, or restart the dedicated scheduler daemon through a supervisor, but `tycho serve` must not run scheduler ticks itself.
 - Config source: `~/.tycho/config/schedules.yml`.
 - Validation: fail fast on invalid cron syntax, invalid project references, and invalid prompt file paths.
 - Runtime state: persist mutable schedule state separately from config under `~/.tycho/logs/schedules.json`.
@@ -229,6 +230,9 @@ POST /schedules/:key/run
 POST /schedules/:key/pause
 POST /schedules/:key/resume
 POST /schedules/reload
+POST /schedules/daemon/start
+POST /schedules/daemon/stop
+POST /schedules/daemon/restart
 ```
 
 TUI:
@@ -243,7 +247,8 @@ Remote UI:
 - Show a compact Schedules card in the Now view, not only a Setup diagnostic.
 - Show daemon status, PID, and last tick in the card header.
 - Show configured schedules with next run, linked project, status, and a dependency-free humanized cron cadence.
-- Support pause/resume/manual run/reload through the JSON API; full Remote UI controls can layer on those endpoints.
+- Support pause/resume/manual run/reload through the JSON API and Remote UI controls.
+- Support daemon start/stop/restart through a Remote UI supervisor that launches the existing `tycho schedule daemon` process separately from `tycho serve`.
 - Preserve mobile ergonomics: schedule details should be readable without requiring terminal access.
 
 Hooks:
@@ -277,6 +282,7 @@ Phase 3: `tycho schedule daemon`
 Phase 4: TUI and Remote UI management
 
 - Add Remote API schedule endpoints. Done.
-- Show schedule list/detail/manage flows in Remote UI and TUI. Partially done: TUI has list/detail, Remote UI has a compact Now card, management controls are still pending.
+- Show schedule list/detail/manage flows in Remote UI and TUI. Done for TUI list/detail and Remote UI compact Now controls.
+- Add separate Remote UI daemon lifecycle controls without making `tycho serve` the scheduler loop. Done.
 - Add daemon freshness, validation failures, and linked target navigation.
 - Add push notifications for failures, first success, and first success after failure.

@@ -602,6 +602,145 @@ select {
   padding: 2px 7px;
 }
 
+.schedule-card-body {
+  gap: 0;
+  padding: 0;
+}
+
+.schedule-details {
+  display: grid;
+  margin: 12px 0 0;
+  min-width: 0;
+  width: 100%;
+}
+
+.schedule-details > summary {
+  list-style: none;
+}
+
+.schedule-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.schedule-summary-row {
+  display: block;
+  position: relative;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 42px;
+  padding: 8px 56px 8px 10px;
+  cursor: pointer;
+}
+
+.schedule-summary-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+}
+
+.schedule-disclosure {
+  display: inline-grid;
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 7px;
+  background: var(--panel-soft);
+  place-items: center;
+  color: var(--text);
+  transform: translateY(-50%);
+  transition: transform 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.schedule-disclosure .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.schedule-details[open] .schedule-disclosure {
+  color: var(--text);
+  transform: translateY(-50%) rotate(180deg);
+}
+
+.schedule-summary-row:hover,
+.schedule-summary-row:focus-visible {
+  background: var(--panel-soft);
+}
+
+.schedule-details[open] .schedule-summary-row,
+.schedule-details[open] .schedule-summary-row:hover,
+.schedule-details[open] .schedule-summary-row:focus-visible {
+  background: transparent;
+}
+
+.schedule-summary-copy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.schedule-summary-copy strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.schedule-summary-copy span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.schedule-details-body {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px 10px;
+}
+
+.schedule-daemon-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  padding: 2px 0;
+}
+
+.schedule-daemon-actions button {
+  min-height: 34px;
+}
+
+.schedule-row {
+  align-items: flex-start;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.schedule-row-end {
+  grid-column: 2;
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+}
+
+.schedule-row-actions {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.schedule-row-actions button {
+  min-height: 34px;
+}
+
 .list,
 .message-list {
   display: grid;

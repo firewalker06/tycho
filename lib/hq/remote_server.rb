@@ -18,6 +18,7 @@ require_relative "domain/agent_store"
 require_relative "domain/kamal_action"
 require_relative "domain/push_notification_store"
 require_relative "domain/push_subscription_store"
+require_relative "domain/schedule_daemon_supervisor"
 require_relative "domain/scheduler"
 require_relative "domain/skill_discovery"
 require_relative "domain/visibility"
@@ -184,6 +185,9 @@ module HQ
       return created(agent: service.create_agent(body)) if method == "POST" && parts == ["agents"]
       return ok(schedules: service.schedules, daemon: service.schedule_daemon) if method == "GET" && parts == ["schedules"]
       return ok(service.reload_schedules) if method == "POST" && parts == ["schedules", "reload"]
+      return accepted(service.start_schedule_daemon(body)) if method == "POST" && parts == ["schedules", "daemon", "start"]
+      return accepted(service.stop_schedule_daemon) if method == "POST" && parts == ["schedules", "daemon", "stop"]
+      return accepted(service.restart_schedule_daemon(body)) if method == "POST" && parts == ["schedules", "daemon", "restart"]
       return ok(projects: service.projects) if method == "GET" && parts == ["projects"]
       return ok(hidden: service.hidden_settings) if method == "GET" && parts == ["settings", "hidden"]
       return ok(hidden: service.update_hidden_setting(body)) if %w[PATCH PUT].include?(method) && parts == ["settings", "hidden"]
@@ -454,6 +458,7 @@ module HQ
                    push_subscription_store: PushSubscriptionStore.new,
                    push_notification_store: PushNotificationStore.new,
                    web_push_notifier: nil,
+                   schedule_daemon_supervisor: nil,
                    restartable: false)
       @registry = registry
       @projects = registry.projects.map { |config| AppProject.new(config) }
@@ -461,6 +466,7 @@ module HQ
       @push_subscription_store = push_subscription_store
       @push_notification_store = push_notification_store
       @web_push_notifier = web_push_notifier || WebPushNotifier.new(subscription_store: @push_subscription_store)
+      @schedule_daemon_supervisor = schedule_daemon_supervisor
       @server_url = server_url.to_s
       @public_url = public_url.to_s
       @auth_required = auth_required ? true : false
@@ -530,6 +536,36 @@ module HQ
       { ok: true }
     rescue ScheduleRegistry::Error => e
       raise Error.new(e.message, status: 400)
+    end
+
+    def start_schedule_daemon(attrs = {})
+      scheduler.validate!
+      schedule_daemon_supervisor.start!(
+        interval: attrs["interval"],
+        dry_run: truthy?(attrs["dry_run"])
+      )
+    rescue ScheduleRegistry::Error => e
+      raise Error.new(e.message, status: 400)
+    rescue ScheduleDaemonSupervisor::Error => e
+      raise Error.new(e.message, status: 409)
+    end
+
+    def stop_schedule_daemon
+      schedule_daemon_supervisor.stop!
+    rescue ScheduleDaemonSupervisor::Error => e
+      raise Error.new(e.message, status: 409)
+    end
+
+    def restart_schedule_daemon(attrs = {})
+      scheduler.validate!
+      schedule_daemon_supervisor.restart!(
+        interval: attrs["interval"],
+        dry_run: truthy?(attrs["dry_run"])
+      )
+    rescue ScheduleRegistry::Error => e
+      raise Error.new(e.message, status: 400)
+    rescue ScheduleDaemonSupervisor::Error => e
+      raise Error.new(e.message, status: 409)
     end
 
     def attachment(id)
@@ -1030,6 +1066,10 @@ module HQ
         push_notification_store: @push_notification_store,
         web_push_notifier: @web_push_notifier
       )
+    end
+
+    def schedule_daemon_supervisor
+      @schedule_daemon_supervisor ||= ScheduleDaemonSupervisor.new
     end
 
     def reload_projects_from_registry!
