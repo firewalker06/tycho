@@ -1319,6 +1319,10 @@ module RemoteServerTest
     assert(js[:body].include?("data-preserve-scroll"),
            "expected Agent summary scroll position to survive polling renders")
     assert(js[:body].include?("function toggleAgentSummary"), "expected Summary to be toggleable")
+    assert(js[:body].include?("function renderAgentSummaryToggle"),
+           "expected Summary toggle markup to be shared across agent views")
+    assert(js[:body].include?("function renderAgentFloatingActions"),
+           "expected Agent detail floating actions to be reusable")
     assert(js[:body].include?("function closeAgentSummary"), "expected Summary to close from outside interactions")
     assert(!js[:body].include?("Current activity"), "expected Current activity copy to move into Summary naming")
     assert(js[:body].include?("data-preserve-open"), "expected floating controls to preserve open state")
@@ -1434,6 +1438,10 @@ module RemoteServerTest
            "expected Remote UI to render attachment detail routes")
     assert(js[:body].include?("function renderAgentAttachmentView"),
            "expected Agent detail to render attachment views without losing the composer")
+    assert(js[:body].include?("${renderAgentFloatingActions()}"),
+           "expected Agent detail attachment view to expose the Summary toggle")
+    assert(js[:body].include?("renderAgentFloatingActions({ recent: true })"),
+           "expected Agent conversation view to keep the Go to recent shortcut")
     assert(js[:body].include?("function attachmentViewerHtml"),
            "expected Attachment viewer markup to be reusable inside Agent detail")
     assert(js[:body].include?('return { type: "agentAttachment", key: parts[1], attachmentId: parts[3] };'),
