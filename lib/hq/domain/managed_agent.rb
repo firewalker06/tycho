@@ -581,6 +581,11 @@ module HQ
       dedupe_attachments(memory_store.attachments + current_structured_attachments)
     end
 
+    def delete_attachment!(attachment)
+      deleted = memory_store.delete_attachment!(attachment)
+      delete_structured_attachment!(attachment) || deleted
+    end
+
     def effective_status
       cached = @structured_result&.dig("status").to_s.strip
       return cached unless cached.empty?
@@ -992,6 +997,21 @@ module HQ
       normalize_attachments(@structured_result&.dig("attachments")) || []
     end
 
+    def delete_structured_attachment!(attachment)
+      return false unless @structured_result.is_a?(Hash)
+
+      target_key = attachment_dedupe_key(attachment)
+      return false unless target_key
+
+      attachments = current_structured_attachments
+      filtered = attachments.reject { |item| attachment_dedupe_key(item) == target_key }
+      return false if filtered.length == attachments.length
+
+      @structured_result = @structured_result.dup
+      filtered.empty? ? @structured_result.delete("attachments") : @structured_result["attachments"] = filtered
+      true
+    end
+
     def awaiting_input?
       effective_status == "input_required"
     end
@@ -1063,6 +1083,17 @@ module HQ
 
     def dedupe_attachments(attachments)
       AttachmentNormalizer.normalize(attachments, workspace: @workspace)
+    end
+
+    def attachment_dedupe_key(attachment)
+      normalized = normalize_attachments([attachment])&.first
+      return nil unless normalized.is_a?(Hash)
+
+      [
+        normalized["type"],
+        normalized["type"] == "link" ? normalized["url"] : normalized["path"],
+        normalized["title"]
+      ].map(&:to_s)
     end
 
     def normalize_inquiry_fields(fields)

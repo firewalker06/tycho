@@ -341,6 +341,29 @@ module HQ
       append_event!(event)
     end
 
+    def delete_attachment!(attachment)
+      target_key = attachment_dedupe_key(attachment)
+      return false unless target_key
+
+      changed = delete_attachment_records!(target_key)
+      events = read_events
+      next_events = []
+      events_changed = false
+
+      events.each do |event|
+        next_event = delete_attachment_from_event(event, target_key)
+        events_changed = true unless next_event == event
+        next_events << next_event if next_event
+      end
+
+      if events_changed
+        write_events!(next_events)
+        changed = true
+      end
+
+      changed
+    end
+
     def write_events!(events)
       FileUtils.mkdir_p(File.dirname(path))
       File.open(path, "w") do |file|
@@ -411,6 +434,22 @@ module HQ
       nil
     end
 
+    def delete_attachment_records!(target_key)
+      records = read_attachment_records
+      filtered = records.reject { |attachment| attachment_dedupe_key(attachment) == target_key }
+      return false if filtered.length == records.length
+
+      if filtered.empty?
+        FileUtils.rm_f(attachments_path)
+      else
+        FileUtils.mkdir_p(File.dirname(attachments_path))
+        File.write(attachments_path, "#{JSON.pretty_generate("attachments" => filtered)}\n")
+      end
+      true
+    rescue StandardError
+      false
+    end
+
     def system_prompt_events(events)
       events.select { |event| event["type"] == "system_prompt" && !event["content"].to_s.empty? }
     end
@@ -440,12 +479,53 @@ module HQ
       end
     end
 
+    def delete_attachment_from_event(event, target_key)
+      case event["type"]
+      when "attachment"
+        metadata = event["metadata"]
+        attachment = metadata.is_a?(Hash) ? metadata["attachment"] : nil
+        attachment_dedupe_key(attachment) == target_key ? nil : event
+      when "user_message", "assistant_message", "run_summary"
+        delete_attachment_from_metadata_event(event, target_key)
+      else
+        event
+      end
+    end
+
+    def delete_attachment_from_metadata_event(event, target_key)
+      metadata = event["metadata"]
+      return event unless metadata.is_a?(Hash)
+
+      attachments = Array(metadata["attachments"]).select { |attachment| attachment.is_a?(Hash) }
+      return event if attachments.empty?
+
+      filtered = attachments.reject { |attachment| attachment_dedupe_key(attachment) == target_key }
+      return event if filtered.length == attachments.length
+
+      next_metadata = metadata.dup
+      filtered.empty? ? next_metadata.delete("attachments") : next_metadata["attachments"] = filtered
+      next_event = event.dup
+      next_event["metadata"] = next_metadata.empty? ? nil : next_metadata
+      next_event.compact
+    end
+
     def dedupe_attachments(attachments)
       normalize_attachments(attachments)
     end
 
     def normalize_attachments(attachments)
       AttachmentNormalizer.normalize(attachments, workspace: attachment_workspace)
+    end
+
+    def attachment_dedupe_key(attachment)
+      normalized = normalize_attachments([attachment]).first
+      return nil unless normalized.is_a?(Hash)
+
+      [
+        normalized["type"],
+        normalized["type"] == "link" ? normalized["url"] : normalized["path"],
+        normalized["title"]
+      ].map(&:to_s)
     end
 
     def attachment_metadata(attachments)

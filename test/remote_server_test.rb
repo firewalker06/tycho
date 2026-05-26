@@ -251,7 +251,8 @@ module RemoteServerTest
       agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
       memory = HQ::AgentMemory.new(agent)
       FileUtils.mkdir_p(File.join(workspace, "docs"))
-      File.write(File.join(workspace, "docs/release.txt"), "Plain release checklist\n")
+      release_path = File.join(workspace, "docs/release.txt")
+      File.write(release_path, "Plain release checklist\n")
       File.write(File.join(workspace, "docs/notes.md"), "# Notes\n\n- Check attachment viewer\n")
       file_uri_notes_path = File.join(workspace, "docs/file-uri-notes.md")
       File.write(file_uri_notes_path, "# File URI Notes\n\n- Render this from a file URL\n")
@@ -326,6 +327,12 @@ module RemoteServerTest
       assert(plain_attachment["format"] == "text", "expected txt documents to render as plain text")
       assert(plain_attachment["content"].include?("Plain release checklist"),
              "expected plain text attachment viewer content")
+      assert(!plain_attachment["content_mtime"].to_s.empty?,
+             "expected file attachments to expose source freshness metadata")
+      FileUtils.touch(release_path, mtime: Time.now + 120)
+      newer_plain = service.agent(created[:key])[:attachments].find { |item| item["id"] == plain_attachment["id"] }
+      assert(newer_plain["content_mtime"] != plain_attachment["content_mtime"],
+             "expected agent attachment payloads to show when source files are newer than cached previews")
       markdown_attachment = service.attachment(attachments.find { |item| item["title"] == "Markdown notes" }["id"])
       assert(markdown_attachment["format"] == "markdown", "expected markdown documents to be marked for markdown rendering")
       assert(markdown_attachment["content"].include?("# Notes"), "expected markdown attachment content")
@@ -357,6 +364,17 @@ module RemoteServerTest
       revision_after = service.agent(created[:key])[:revision].to_s
       assert(revision_after != revision_before,
              "expected Remote agent revision to track attachment sidecar changes")
+      deleted = server.send(:route, service, "DELETE", "/attachments/#{plain_attachment["id"]}", {}, nil)
+      assert(deleted.dig(:body, :deleted), "expected attachment delete route to report deletion")
+      remaining_titles = deleted.dig(:body, :agent, :attachments).map { |attachment| attachment["title"] }
+      assert(!remaining_titles.include?("Release checklist"),
+             "expected deleted attachments to disappear from the agent payload")
+      begin
+        service.attachment(plain_attachment["id"])
+        raise "expected deleted attachment to be unavailable"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 404, "expected deleted attachment lookup to return not found")
+      end
     end
   end
 
@@ -443,6 +461,15 @@ module RemoteServerTest
       assert(upload_only_message, "expected attachment-only submissions to create a user message")
       assert(upload_only_message[:content] == "Please review the attached files.",
              "expected attachment-only submissions to use the upload review prompt")
+
+      uploaded_document_path = document["path"]
+      delete_upload = service.delete_attachment(document["id"])
+      assert(delete_upload[:deleted], "expected uploaded attachment deletion to succeed")
+      assert(!File.exist?(uploaded_document_path),
+             "expected deleting a remote-upload attachment to remove its cached asset file")
+      remaining_upload_titles = delete_upload.dig(:agent, :attachments).map { |attachment| attachment["title"] }
+      assert(!remaining_upload_titles.include?("prompt-notes.md"),
+             "expected deleted uploaded attachments to disappear from the agent payload")
 
       begin
         service.submit_prompt(
@@ -1097,6 +1124,9 @@ module RemoteServerTest
            "expected collapsed chat groups to expose a summary row")
     assert(css[:body].include?(".attachment-flyout"), "expected Agent detail to style attachment flyouts")
     assert(css[:body].include?(".attachment-item"), "expected Agent detail attachments to render as rows")
+    assert(css[:body].include?(".attachment-main"), "expected Agent detail attachment rows to separate links from actions")
+    assert(css[:body].include?(".attachment-actions"), "expected Agent detail attachment rows to expose row actions")
+    assert(css[:body].include?(".attachment-viewer-actions"), "expected Attachment detail to style refresh/delete actions")
     assert(css[:body].include?(".pending-attachments"), "expected Agent detail to style pending prompt attachments")
     assert(css[:body].include?(".attachment-upload-button"), "expected Agent detail to style upload attachment controls")
     assert(css[:body].include?(".message-attachments"), "expected chat messages to style attached prompt files")
@@ -1348,6 +1378,24 @@ module RemoteServerTest
            "expected Agent detail to group internal conversation blocks before rendering")
     assert(js[:body].include?("function renderAgentAttachments"),
            "expected Agent detail to render saved attachments")
+    assert(js[:body].include?("function refreshAttachment"),
+           "expected Attachment detail to support refreshing cached preview data")
+    assert(js[:body].include?("function deleteAttachment"),
+           "expected Attachment rows and detail to support deleting attachments")
+    assert(js[:body].include?("function attachmentRefreshAvailable"),
+           "expected Attachment detail to show refresh only when runtime content is newer")
+    assert(js[:body].include?("content_mtime"),
+           "expected Attachment refresh detection to compare source freshness metadata")
+    assert(js[:body].include?("data-refresh-attachment"),
+           "expected Attachment detail to expose a refresh action")
+    assert(js[:body].include?("data-delete-attachment"),
+           "expected Attachment list and detail to expose delete actions")
+    assert(js[:body].include?('data-copy="${escapeAttr(target)}"'),
+           "expected Attachment detail to expose a copy path/link action")
+    assert(js[:body].include?('${iconSvg("copy")}<span>${copyLabel}</span>'),
+           "expected Attachment detail copy action to use the plain copy icon")
+    assert(js[:body].include?('attachmentKind(attachment) === "link" ? "Copy link" : "Copy path"'),
+           "expected Attachment detail copy action to label links and files clearly")
     assert(js[:body].include?("function renderAttachmentToggle"),
            "expected Agent detail to expose attachments from a composer toggle")
     assert(js[:body].include?("function renderPendingAttachments"),
@@ -1412,7 +1460,7 @@ module RemoteServerTest
            "expected Remote UI to render fetched image blobs through object URLs")
     assert(js[:body].include?('class="attachment-image-viewer"'),
            "expected Remote UI to render image attachments as images")
-    assert(js[:body].include?('return `/attachments/${encodeURIComponent(id)}/blob`;'),
+    assert(js[:body].include?('const path = `/attachments/${encodeURIComponent(id)}/blob`;'),
            "expected Remote UI to load images from the attachment blob route")
     assert(js[:body].include?('return { type: "attachment", id: parts[1] };'),
            "expected Remote UI to support #attachment/:id routes")

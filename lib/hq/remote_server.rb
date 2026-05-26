@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "digest"
+require "fileutils"
 require "json"
 require "socket"
 require "uri"
@@ -191,6 +192,7 @@ module HQ
       return accepted(schedule_restart!, headers: RESTART_CACHE_RESET_HEADERS) if method == "POST" && parts == ["server", "restart"]
       return ok(service.push_config) if method == "GET" && parts == ["push", "config"]
       return service.attachment_blob(parts[1]) if method == "GET" && parts.length == 3 && parts.first == "attachments" && parts[2] == "blob"
+      return ok(service.delete_attachment(parts[1])) if method == "DELETE" && parts.length == 2 && parts.first == "attachments"
       return ok(attachment: service.attachment(parts[1])) if method == "GET" && parts.length == 2 && parts.first == "attachments"
       if parts == ["push", "subscriptions"]
         return created(service.save_push_subscription(body, user_agent: request&.[]("User-Agent"))) if method == "POST"
@@ -569,6 +571,31 @@ module HQ
       }
     rescue SystemCallError => e
       raise Error.new(e.message, status: 404)
+    end
+
+    def delete_attachment(id)
+      agents = load_all_agents
+      target_agent = nil
+      target_attachment = nil
+
+      agents.each do |agent|
+        attachment = agent.attachments.find { |item| attachment_id(agent, item) == id.to_s }
+        next unless attachment
+
+        target_agent = agent
+        target_attachment = attachment
+        break
+      end
+      raise Error.new("Attachment not found", status: 404) unless target_agent && target_attachment
+
+      deleted = target_agent.delete_attachment!(target_attachment)
+      cleanup_uploaded_attachment_file(target_agent, target_attachment) if deleted
+      save_agents(sort_agents(agents))
+      {
+        deleted: deleted,
+        attachment_id: id.to_s,
+        agent: agent_payload(target_agent)
+      }
     end
 
     def projects
@@ -1608,8 +1635,22 @@ module HQ
       payload["agent_key"] = agent.key
       payload["type"] = AttachmentNormalizer.link_attachment?(payload) ? "link" : "file"
       payload["format"] = attachment_format(payload)
-      payload["blob_path"] = "/attachments/#{payload["id"]}/blob" if payload["type"] == "file"
+      if payload["type"] == "file"
+        payload["blob_path"] = "/attachments/#{payload["id"]}/blob"
+        attach_file_version_metadata!(payload, agent)
+      end
       payload
+    end
+
+    def attach_file_version_metadata!(payload, agent)
+      path = attachment_file_path(payload, agent.workspace)
+      return unless path && File.file?(path)
+
+      stat = File.stat(path)
+      payload["content_mtime"] = stat.mtime.iso8601
+      payload["size_bytes"] = stat.size
+    rescue SystemCallError
+      nil
     end
 
     def attachment_id(agent, attachment)
@@ -1682,6 +1723,23 @@ module HQ
 
     def attachment_content_type(attachment, path)
       attachment["mime_type"].to_s.strip.empty? ? AttachmentNormalizer.mime_type_for_path(path) : attachment["mime_type"].to_s
+    end
+
+    def cleanup_uploaded_attachment_file(agent, attachment)
+      return unless attachment["source"].to_s == "remote_upload"
+
+      path = attachment_file_path(attachment, agent.workspace)
+      return unless path
+
+      asset_root = File.expand_path(File.join(AGENT_LOGS_DIR, "assets", agent.key.to_s))
+      expanded = File.expand_path(path)
+      return unless expanded.start_with?("#{asset_root}#{File::SEPARATOR}")
+
+      FileUtils.rm_f(expanded)
+      dir = File.dirname(expanded)
+      FileUtils.rm_rf(dir) if dir.start_with?("#{asset_root}#{File::SEPARATOR}") && Dir.exist?(dir) && Dir.empty?(dir)
+    rescue SystemCallError
+      nil
     end
 
     def auth_status
