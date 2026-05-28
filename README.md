@@ -259,6 +259,12 @@ tycho schedule resume <schedule-key>
 tycho schedule reload
 ```
 
+Run a non-interactive runtime smoke check:
+
+```bash
+tycho doctor
+```
+
 The TUI includes a Schedules screen, and the Remote UI `Now` view shows
 scheduler daemon freshness plus schedules that are paused, failed, stale, due,
 or skipped because of an interactive user conversation. The Remote UI keeps the

@@ -32,7 +32,7 @@ Key references:
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| TUI framework | Bubbletea + Lipgloss + Bubbles (Charm Ruby) | Elm Architecture fits the dashboard's event-driven model; shared styling via Lipgloss |
+| TUI framework | Bubbletea + Lipgloss-compatible styling + Bubbles (Charm Ruby) | Elm Architecture fits the dashboard's event-driven model; Tycho uses native Lipgloss except on Intel macOS, where a Ruby compatibility backend avoids Go cgo callback crashes from multiple Charm native runtimes |
 | Default data root | `~/.tycho` for config, schedule prompts, runtime state, and logs | Source and packaged installs should never write runtime data into the repository or Homebrew Cellar by default |
 | Process model | Detached background processes via `mise exec` | Kamal actions outlive the TUI; state is restored on startup from `~/.tycho/logs/actions.json` |
 | Kamal invocation | Prefer project `bin/kamal` binstub, fall back to `bundle exec kamal` | Matches per-project Ruby/gem versions |
