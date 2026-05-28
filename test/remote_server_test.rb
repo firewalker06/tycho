@@ -1142,6 +1142,8 @@ module RemoteServerTest
     assert(css[:body].include?(".attachment-main"), "expected Agent detail attachment rows to separate links from actions")
     assert(css[:body].include?(".attachment-actions"), "expected Agent detail attachment rows to expose row actions")
     assert(css[:body].include?(".attachment-viewer-actions"), "expected Attachment detail to style refresh/delete actions")
+    assert(css[:body].include?(".attachment-nav-drawer"), "expected Attachment detail to style the navigation drawer")
+    assert(css[:body].include?(".attachment-nav-item.active"), "expected Attachment detail navigation to highlight the current item")
     assert(css[:body].include?(".pending-attachments"), "expected Agent detail to style pending prompt attachments")
     assert(css[:body].include?(".attachment-upload-button"), "expected Agent detail to style upload attachment controls")
     assert(css[:body].include?(".message-attachments"), "expected chat messages to style attached prompt files")
@@ -1477,6 +1479,12 @@ module RemoteServerTest
            "expected Agent detail attachment view to expose the Summary toggle")
     assert(js[:body].include?("renderAgentFloatingActions({ recent: true })"),
            "expected Agent conversation view to keep the Go to recent shortcut")
+    assert(js[:body].include?("function renderAttachmentNavigationDrawer"),
+           "expected Agent detail attachment view to render a navigation drawer")
+    assert(js[:body].include?('data-state-key="attachment-nav"'),
+           "expected Attachment navigation drawer state to be restorable")
+    assert(js[:body].include?('aria-current="page"'),
+           "expected Attachment navigation to mark the current attachment")
     assert(js[:body].include?("function attachmentViewerHtml"),
            "expected Attachment viewer markup to be reusable inside Agent detail")
     assert(js[:body].include?('return { type: "agentAttachment", key: parts[1], attachmentId: parts[3] };'),
