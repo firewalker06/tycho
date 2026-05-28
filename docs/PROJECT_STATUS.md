@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-05-23
+2026-05-28
 
 ## Strategic Direction
 
@@ -61,10 +61,11 @@ Key references:
 
 ## Current Focus
 
-**Public release hardening**: Tycho is public, and the immediate focus is the
-`v0.1.x` Homebrew release contract: release notes, user-scoped runtime paths,
-Homebrew install verification, first-user documentation, and repeatable release
-operations. Agent UX and continuity remain active maintenance areas.
+**v0.2.0 release**: Tycho's current release focus is packaging the Remote UI
+schedule controls, hidden project visibility, attachment management, README
+screenshots, and Tycho-branded CLI/TUI loading screen. After release, the next
+focus is stabilizing these public workflows through Homebrew install checks and
+browser/TUI smoke verification.
 
 ## Roadmap
 
@@ -118,8 +119,8 @@ operations. Agent UX and continuity remain active maintenance areas.
 
 - [x] Project git info surfaced in agent detail
 - [x] Managed-agent unread-state fixes
-- [x] HQ logotype on loading screen
-- [x] Run HQ through `bin/tycho` as its own executable
+- [x] Tycho logotype on loading screen
+- [x] Run Tycho through `bin/tycho` as its own executable
 - [x] Project’s icon statuses, similar to Agent’s icon statuses
 - [x] Omnisearch floating fuzzy finder for agents and projects
 - [x] Agent chat attachments from structured output (`ctrl+a` floating panel)
@@ -137,6 +138,7 @@ operations. Agent UX and continuity remain active maintenance areas.
 - [x] Publish `v0.1.0` GitHub release
 - [x] Add release maintainer runbook
 - [x] Publish public Homebrew tap formula
+- [x] Add README screenshots for TUI and Remote UI workflows
 
 ## Features Candidates
 

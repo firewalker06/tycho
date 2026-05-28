@@ -739,6 +739,7 @@ select {
 
 .schedule-row-actions button {
   min-height: 34px;
+  min-width: 98px;
 }
 
 .list,

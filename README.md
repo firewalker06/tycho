@@ -29,6 +29,28 @@ same Ruby and CLI dependencies are available.
 - Optional Tailscale MagicDNS URL and terminal QR code for Remote UI access.
 - Optional browser push notifications for agent completions and inquiries.
 
+## Screenshots
+
+### TUI
+
+| Agents dashboard | New project |
+|------------------|-------------|
+| <img src="docs/assets/readme/tui-agents-list.png" alt="Tycho TUI agents dashboard with selected agent details" width="420"> | <img src="docs/assets/readme/tui-new-project.png" alt="Tycho TUI new project form with project metadata and agent selection" width="420"> |
+
+| Chat composer | Attachment picker |
+|---------------|-------------------|
+| <img src="docs/assets/readme/tui-chat-compose.png" alt="Tycho TUI agent chat composer with conversation history" width="420"> | <img src="docs/assets/readme/tui-chat-attachments.png" alt="Tycho TUI attachment picker inside an agent conversation" width="420"> |
+
+### Remote UI
+
+| Needs attention | Agents |
+|-----------------|--------|
+| <img src="docs/assets/readme/web-now.png" alt="Tycho Remote UI Now view showing schedules and unread agent attention" width="420"> | <img src="docs/assets/readme/web-agents-list.png" alt="Tycho Remote UI agents list grouped by project" width="420"> |
+
+| Chat composer | Attachment preview |
+|---------------|--------------------|
+| <img src="docs/assets/readme/web-chat-compose.png" alt="Tycho Remote UI agent chat composer with a selected agent conversation" width="420"> | <img src="docs/assets/readme/web-chat-attachment.png" alt="Tycho Remote UI Markdown attachment preview with copy and delete actions" width="420"> |
+
 ## Requirements
 
 - Homebrew for the packaged macOS install.

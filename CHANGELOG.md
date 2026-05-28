@@ -4,6 +4,24 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.2.0 - 2026-05-28
+
+- Add hidden project and group visibility settings for TUI and Remote UI
+  project/agent filtering.
+- Add Remote UI schedule controls for manual runs, pause/resume, and scheduler
+  daemon start/stop/restart.
+- Add Remote UI attachment management, including uploads, previews, copy,
+  refresh, and delete flows.
+- Make Remote UI attachment summaries toggleable and preserve relevant state
+  across polling renders.
+- Preserve mobile newlines in the Remote UI composer while keeping explicit
+  keyboard Enter submission.
+- Scroll the active Remote UI tab to the top when its selected nav item is
+  clicked again.
+- Replace the old HQ loading logotype with the Tycho wide banner and update
+  visible TUI product copy.
+- Add README screenshots for TUI and Remote UI workflows.
+
 ## 0.1.1 - 2026-05-24
 
 - Add release maintainer runbook.

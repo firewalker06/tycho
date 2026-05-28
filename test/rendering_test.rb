@@ -36,7 +36,7 @@ module RenderingTest
     HQ::AgentStore.define_method(:save) { |_agents| nil }
 
     assert_main_screen_keeps_header_visible
-    assert_loading_screen_renders_hq_logotype
+    assert_loading_screen_renders_tycho_logotype
     assert_app_boot_refreshes_project_metadata
     assert_missing_config_opens_new_project_form
     assert_concurrent_project_metadata_uses_each_dotenv
@@ -180,7 +180,7 @@ module RenderingTest
     lines = output.lines.map(&:chomp)
 
     assert(lines.length <= 30, "expected output to fit within 30 lines, got #{lines.length}")
-    assert(lines[0].include?("HQ - Ops Cockpit"), "expected title on first line")
+    assert(lines[0].include?("Tycho - Ops Cockpit"), "expected title on first line")
     assert(lines[1].include?("1. Agents"), "expected agents tab on second line")
     assert(lines[1].include?("2. Projects"), "expected projects tab on second line")
     assert(lines[1].include?("Latest:"), "expected latest versions on second line")
@@ -188,7 +188,7 @@ module RenderingTest
     assert(lines[1].include?("8.1.3"), "expected rails version text on second line")
   end
 
-  def assert_loading_screen_renders_hq_logotype
+  def assert_loading_screen_renders_tycho_logotype
     app = app_with_default_agent(width: 120, height: 30)
     app.instance_variable_set(:@loading, true)
     app.instance_variable_set(:@last_refresh, nil)
@@ -198,9 +198,10 @@ module RenderingTest
 
     plain = Bubbles::ANSI.strip(app.view)
 
-    assert(plain.include?("██╗  ██╗ ██████╗"), "expected loading screen to render the HQ logotype")
-    assert(!plain.include?("Mission Grid"), "expected loading screen to omit logo option labels")
-    assert(!plain.include?("+---+---+"), "expected loading screen to omit the mission grid icon")
+    assert(plain.include?("████████╗██╗   ██╗ ██████╗██╗  ██╗ ██████╗"),
+           "expected loading screen to render the wide Tycho logotype")
+    assert(plain.include?("Tycho is starting up"), "expected loading screen to use Tycho startup copy")
+    assert(!plain.include?("██║▄▄ ██║"), "expected loading screen to omit the old HQ logotype")
   end
 
   def assert_app_boot_refreshes_project_metadata

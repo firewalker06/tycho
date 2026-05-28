@@ -4,19 +4,19 @@ module HQ
   module UI
     module Rendering
       module Views
-        HQ_LOGOTYPE_LINES = [
-          "\e[38;5;199m██╗  ██╗ ██████╗ \e[0m",
-          "\e[38;5;205m██║  ██║██╔═══██╗\e[0m",
-          "\e[38;5;213m███████║██║   ██║\e[0m",
-          "\e[38;5;221m██╔══██║██║▄▄ ██║\e[0m",
-          "\e[38;5;215m██║  ██║╚██████╔╝\e[0m",
-          "\e[38;5;231m╚═╝  ╚═╝ ╚══▀▀═╝ \e[0m"
+        TYCHO_LOGOTYPE_LINES = [
+          "\e[38;5;199m████████╗██╗   ██╗ ██████╗██╗  ██╗ ██████╗\e[0m",
+          "\e[38;5;205m╚══██╔══╝╚██╗ ██╔╝██╔════╝██║  ██║██╔═══██╗\e[0m",
+          "\e[38;5;213m   ██║    ╚████╔╝ ██║     ███████║██║   ██║\e[0m",
+          "\e[38;5;221m   ██║     ╚██╔╝  ██║     ██╔══██║██║   ██║\e[0m",
+          "\e[38;5;215m   ██║      ██║   ╚██████╗██║  ██║╚██████╔╝\e[0m",
+          "\e[38;5;231m   ╚═╝      ╚═╝    ╚═════╝╚═╝  ╚═╝ ╚═════╝\e[0m"
         ].freeze
 
         private
 
         def loading_screen_view
-          dialog_width = [[@window_width - 10, 72].min, 40].max
+          dialog_width = [[@window_width - 10, 72].min, 47].max
           inner_width = [dialog_width - 4, 20].max
 
           done, total = progress_counts
@@ -40,7 +40,7 @@ module HQ
           body_parts = [
             loading_logotype,
             "",
-            fancy_list_title_style.render("HQ is starting up"),
+            fancy_list_title_style.render("Tycho is starting up"),
             "",
             bar,
             dim_style.render(count_line),
@@ -58,12 +58,12 @@ module HQ
         end
 
         def loading_logotype
-          HQ_LOGOTYPE_LINES.map { |line| pad_visible(line, 18) }.join("\n")
+          TYCHO_LOGOTYPE_LINES.map { |line| pad_visible(line, 43) }.join("\n")
         end
 
         def config_error_view
           [
-            title_style.render("HQ - Ops Cockpit"),
+            title_style.render("Tycho - Ops Cockpit"),
             "",
             fail_style.render("  Configuration error"),
             "  #{@config_error}",
@@ -279,7 +279,7 @@ module HQ
           inner_width = [dialog_width - 4, 10].max
 
           title = delete_dialog_title_style.render("Archive project?")
-          question = "Archive #{project.name} and remove it from HQ?"
+          question = "Archive #{project.name} and remove it from Tycho?"
           summary_lines = @project_archive_confirm.summary.lines.map(&:chomp).map do |line|
             Bubbles::ANSI.cut_string(line, 0, inner_width)
           end
@@ -423,7 +423,7 @@ module HQ
                                                           @latest_kamal || "?")}  #{Styles::MARKERS[:bullet_sep]}  #{icon_label(:rails,
                                                                                                   @latest_rails || "?")}")
           [
-            title_style.render("HQ - Ops Cockpit"),
+            title_style.render("Tycho - Ops Cockpit"),
             join_left_right(nav, latest)
           ].join("\n")
         end
@@ -761,11 +761,11 @@ module HQ
         def footer
           if @confirming
             if @confirming == :restart
-              return footer_confirm_style.render(truncate("Restart HQ? (y/n)", footer_content_width))
+              return footer_confirm_style.render(truncate("Restart Tycho? (y/n)", footer_content_width))
             end
 
             if @confirming == :quit
-              return footer_confirm_style.render(truncate("Quit HQ? (y/n)", footer_content_width))
+              return footer_confirm_style.render(truncate("Quit Tycho? (y/n)", footer_content_width))
             end
 
             if @confirming == :rebuild_memory

@@ -1274,6 +1274,8 @@ module RemoteServerTest
            "expected Remote UI scheduler controls to call daemon endpoints")
     assert(js[:body].include?("data-schedule-action"),
            "expected Remote UI to expose schedule run/pause/resume controls")
+    assert(js[:body].include?("Run now") && js[:body].include?("schedule-toggle-button"),
+           "expected Remote UI schedule rows to distinguish manual runs from pause/resume toggles")
     assert(js[:body].include?("MagicDNS push requires Tailscale HTTPS"),
            "expected Remote UI to warn when MagicDNS is not HTTPS")
     assert(js[:body].include?("navigator.serviceWorker.register"),
