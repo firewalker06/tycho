@@ -4,6 +4,14 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.2.1 - 2026-05-29
+
+- Add a Remote UI attachment navigation drawer.
+- Add a Remote UI unread agents panel on the header logo and keep detail
+  headers visible while scrolling or focusing footer controls.
+- Add an Intel macOS Lipgloss compatibility backend, `tycho doctor`, and
+  install/release smoke checks for the Charm Ruby native extension path.
+
 ## 0.2.0 - 2026-05-28
 
 - Add hidden project and group visibility settings for TUI and Remote UI
