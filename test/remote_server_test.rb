@@ -1041,6 +1041,10 @@ module RemoteServerTest
            "expected root shell to expose an Apple touch icon")
     assert(response[:body].match?(%r{src="/remote-logo\.png\?v=[0-9a-f]{12}"}),
            "expected root shell to render the Remote UI logo")
+    assert(response[:body].include?('aria-controls="unread-agents-panel"'),
+           "expected root shell logo to control the unread agents panel")
+    assert(response[:body].include?('id="unread-agents-panel"'),
+           "expected root shell to expose the unread agents popup")
     assert(response[:body].include?("pull-refresh-spinner ui-icon"),
            "expected root shell to render the pull refresh hourglass icon")
     assert(response[:body].match?(%r{href="/ui\.css\?v=[0-9a-f]{12}"}),
@@ -1173,10 +1177,18 @@ module RemoteServerTest
            "expected running agents to show an animated composer status icon")
     assert(css[:body].include?(".ui-icon"), "expected shared SVG icon styling")
     assert(css[:body].include?(".header-mark .brand-logo"), "expected Remote UI logo image styling")
-    assert(css[:body].include?(".header-mark {\n  display: inline-grid;"),
+    assert(css[:body].include?(".logo-alert-badge"), "expected Remote UI logo to style an unread count badge")
+    assert(css[:body].include?(".header-mark.unread-panel-open"),
+           "expected Remote UI logo to highlight while the unread popup is open")
+    assert(css[:body].include?(".unread-agents-panel"), "expected Remote UI to style the unread agents popup")
+    assert(css[:body].include?("border: 1px solid color-mix(in srgb, var(--pink) 62%, transparent);"),
+           "expected unread popup to use the open logo border color")
+    assert(css[:body].include?("0 0 0 4px color-mix(in srgb, var(--pink) 18%, transparent),"),
+           "expected unread popup to use the open logo highlight ring")
+    assert(css[:body].include?(".header-mark {\n  position: relative;"),
            "expected Remote UI header logo to have dedicated borderless styling")
-    assert(css[:body].include?(".app-header.header-hidden"),
-           "expected detail headers to hide on scroll or footer focus")
+    assert(!css[:body].include?(".app-header.header-hidden"),
+           "expected detail headers to stay visible instead of using a hide class")
     assert(css[:body].include?(".app-header.detail-header"),
            "expected detail headers to be fixed to the top")
     assert(css[:body].include?(".content.detail-page"),
@@ -1347,8 +1359,22 @@ module RemoteServerTest
     assert(js[:body].include?("iconSvg(\"scanText\")"), "expected Summary to render a scan-text SVG icon")
     assert(js[:body].include?("iconSvg(\"folder\")"), "expected Project marks to render a folder SVG icon")
     assert(js[:body].include?("function brandLogoHtml"), "expected HQ header mark to render the Remote UI logo")
-    assert(js[:body].include?("els.mark.innerHTML = brandLogoHtml();"),
-           "expected the Remote UI header mark to stay on the brand logo across routes")
+    assert(js[:body].include?("function unreadAgents"),
+           "expected the Remote UI to compute unread agents for the logo popup")
+    assert(js[:body].include?("function toggleUnreadPanel"),
+           "expected the Remote UI logo to toggle an unread agents popup")
+    assert(js[:body].include?("function renderUnreadAgentsPanel"),
+           "expected unread agents to render in a header popup")
+    assert(js[:body].include?('classList.toggle("unread-panel-open"'),
+           "expected the Remote UI logo to track the open unread popup state")
+    assert(js[:body].include?("els.mark.addEventListener(\"click\", toggleUnreadPanel)"),
+           "expected the Remote UI header logo to open the unread agents popup")
+    assert(js[:body].include?("function eventPathIncludes"),
+           "expected the unread popup outside-click guard to survive logo re-rendering during clicks")
+    assert(js[:body].include?("eventPathIncludes(event, els.mark)"),
+           "expected the unread popup click guard to use the original event path for the logo")
+    assert(js[:body].include?("els.mark.innerHTML = brandLogoHtml(count);"),
+           "expected the Remote UI header mark to stay on the brand logo with unread state")
     assert(!js[:body].include?("function markHtml"),
            "expected page-specific icons to stay out of the header brand mark")
     assert(js[:body].include?("function statusIcon"), "expected readiness marks to use SVG status icons")
@@ -1376,12 +1402,14 @@ module RemoteServerTest
     assert(!js[:body].include?("Start run"), "expected Agent detail to omit redundant Start run")
     assert(js[:body].include?("function syncAgentDockLayout"),
            "expected Agent detail dock height to update page padding")
-    assert(js[:body].include?("function updateDetailHeaderVisibility"),
-           "expected detail header visibility to respond to scroll and footer focus")
+    assert(js[:body].include?('els.header.classList.remove("header-hidden")'),
+           "expected detail header rendering to clear stale hidden state")
     assert(js[:body].include?("function syncDetailHeaderLayout"),
            "expected detail content padding to track header height")
-    assert(js[:body].include?("detailFooterFocused"),
-           "expected detail header to hide while the footer is focused")
+    assert(!js[:body].include?("function updateDetailHeaderVisibility"),
+           "expected detail header visibility to stay fixed instead of responding to scroll")
+    assert(!js[:body].include?("detailFooterFocused"),
+           "expected detail header to stay visible while the footer is focused")
     assert(js[:body].include?("data-go-recent"), "expected Agent detail to show a Go to recent action")
     assert(js[:body].include?("function updateGoRecentVisibility"),
            "expected Agent detail to hide Go to recent at the bottom")

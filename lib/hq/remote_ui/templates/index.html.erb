@@ -34,9 +34,9 @@
             <span class="sr-only">Back</span>
           </button>
           <div class="identity">
-            <span id="header-mark" class="header-mark" aria-hidden="true">
+            <button id="header-mark" class="header-mark" type="button" aria-label="No unread agents" title="No unread agents" aria-expanded="false" aria-controls="unread-agents-panel">
               <img class="brand-logo" src="/remote-logo.png?v=<%= HQ::RemoteUI.asset_version %>" alt="">
-            </span>
+            </button>
             <div class="title-block">
               <h1 id="screen-title">Tycho - its Factorio for agents</h1>
               <p id="screen-subtitle">Connecting</p>
@@ -66,6 +66,7 @@
             <button id="save-token-button" type="button">Save</button>
           </div>
         </form>
+        <section id="unread-agents-panel" class="unread-agents-panel hidden" aria-label="Unread agents"></section>
         <section id="agent-settings-panel" class="agent-settings-panel hidden" aria-label="Agent settings"></section>
       </header>
 
