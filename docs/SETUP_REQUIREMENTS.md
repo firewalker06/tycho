@@ -107,6 +107,9 @@ bin/setup --profile all
 6. For Remote UI setup, check `TYCHO_REMOTE_TOKEN` when binding outside loopback and
    check Tailscale/HTTPS readiness when phone or push-notification use is requested.
 7. Run `bundle install` only when hard requirements and requested profiles pass.
+8. Run `tycho doctor` as a post-install smoke check so native extension
+   compatibility issues, including the Intel macOS Lipgloss backend, fail
+   during setup instead of at first TUI launch.
 
 ## Hard-Fail Policy
 

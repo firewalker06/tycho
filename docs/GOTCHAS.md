@@ -101,6 +101,22 @@ over a pipe, document padding, list-continuation indent) are documented
 in `docs/research/glamour_bubbletea.md`. Don't switch back to in-process
 rendering without re-measuring latency under a live Bubbletea loop.
 
+## Native Lipgloss on Intel macOS
+
+Intel macOS can crash in Go's cgo callback path when Ruby loads multiple
+Charm Ruby native extensions in the same process. The symptom looks like
+`runtime: g 17: unexpected return pc for runtime.cgocallback` with a
+`lipgloss_style_render` frame.
+
+Tycho avoids this on `darwin/amd64` by loading `lib/hq/lipgloss_compat.rb`,
+a small Ruby implementation of the Lipgloss subset the app uses, instead of
+the native Lipgloss extension. Other platforms keep the upstream extension by
+default. Use `TYCHO_LIPGLOSS_BACKEND=ruby` to force the compatibility backend
+or `TYCHO_LIPGLOSS_BACKEND=native` to force the upstream native extension while
+debugging. `bin/setup` runs `tycho doctor` after `bundle install` so source
+installs catch a bad backend before first TUI launch; Homebrew formula tests
+should run `tycho doctor` for the same reason.
+
 ## Claude `--json-schema` is not reliably reapplied on `--resume`
 
 HQ passes `--json-schema` on every Claude-compatible invocation (both

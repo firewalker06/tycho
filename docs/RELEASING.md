@@ -108,6 +108,10 @@ After the GitHub release exists:
    brew test tycho
    ```
 
+   The formula test should include `tycho doctor`. On Intel macOS bottles this
+   confirms the Ruby Lipgloss compatibility backend is selected and the native
+   Lipgloss extension is not loaded into the Bubbletea process.
+
 4. Push or merge the tap update.
 
 ## Post-Release Verification
@@ -120,6 +124,7 @@ After publishing:
 
    ```sh
    bin/tycho --help
+   bin/tycho doctor
    bin/tycho app list
    bin/tycho schedule list
    ```
@@ -130,6 +135,7 @@ After publishing:
    brew update
    brew install firewalker06/tycho/tycho
    tycho --help
+   tycho doctor
    ```
 
 ## Corrections

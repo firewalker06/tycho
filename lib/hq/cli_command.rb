@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "rbconfig"
 
 require "dry/cli"
 require "lipgloss"
@@ -233,7 +234,8 @@ module HQ
     COMMAND_NAME = "tycho"
     RUNTIME_COMMANDS = [
       "  #{COMMAND_NAME} serve [--host 127.0.0.1] [--port 7373]",
-      "  #{COMMAND_NAME} schedule daemon [--once] [--dry-run] [--interval SECONDS]"
+      "  #{COMMAND_NAME} schedule daemon [--once] [--dry-run] [--interval SECONDS]",
+      "  #{COMMAND_NAME} doctor"
     ].freeze
     ACTIONS = APP_COMMANDS.filter_map { |command| command.action_name if command.respond_to?(:action_name) }.freeze
     USAGE = [
@@ -253,6 +255,7 @@ module HQ
       argv = Array(argv)
       return usage if argv.empty? || %w[--help -h].include?(argv.first)
       return serve(argv.drop(1), executable:) if argv.first == "serve"
+      return doctor(argv.drop(1)) if argv.first == "doctor"
       return schedule_daemon(argv.drop(2)) if argv[0] == "schedule" && argv[1] == "daemon"
 
       Dry::CLI.new(Commands).call(arguments: argv)
@@ -270,6 +273,34 @@ module HQ
       require_relative "schedule_daemon_command"
 
       ScheduleDaemonCommand.run(argv)
+    end
+
+    def doctor(argv, out: $stdout, err: $stderr)
+      return usage("Unexpected doctor arguments: #{argv.join(" ")}", err:) unless Array(argv).empty?
+
+      require "bubbletea"
+      require "bubbles"
+
+      box = Lipgloss::Style.new.border(:rounded).padding(0, 1).width(8).render("ok")
+      progress = Bubbles::Progress.new(width: 10, gradient: %w[#000000 #FFFFFF]).view_as(0.5)
+      native_lipgloss = native_lipgloss_features
+      backend = lipgloss_backend_label
+
+      if darwin_amd64? && native_lipgloss.any?
+        err.puts "Tycho runtime check failed: native Lipgloss loaded on Intel macOS."
+        err.puts "Loaded native feature(s): #{native_lipgloss.join(", ")}"
+        err.puts "Expected the Ruby compatibility backend. Try reinstalling Tycho or unset TYCHO_LIPGLOSS_BACKEND=native."
+        return 1
+      end
+
+      out.puts "Tycho doctor: ok"
+      out.puts "Lipgloss backend: #{backend}"
+      out.puts "Native Lipgloss loaded: #{native_lipgloss.empty? ? "no" : "yes"}"
+      out.puts "Render smoke: #{Bubbles::ANSI.strip(box).lines.first&.chomp} / #{Bubbles::ANSI.strip(progress)}"
+      0
+    rescue StandardError => e
+      err.puts "Tycho runtime check failed: #{e.class}: #{e.message}"
+      1
     end
 
     def list_kamal_actions(out: $stdout)
@@ -552,6 +583,20 @@ module HQ
 
     def scheduler
       Scheduler.new
+    end
+
+    def darwin_amd64?
+      cpu = RbConfig::CONFIG["host_cpu"].to_s
+      os = RbConfig::CONFIG["host_os"].to_s
+      os.include?("darwin") && cpu.match?(/\A(?:x86_64|amd64)\z/)
+    end
+
+    def lipgloss_backend_label
+      defined?(Lipgloss::BACKEND) ? Lipgloss::BACKEND.to_s : "native"
+    end
+
+    def native_lipgloss_features
+      $LOADED_FEATURES.grep(%r{/lipgloss/\d+\.\d+/lipgloss\.(?:bundle|so)\z})
     end
 
     def find_app_project(project_key)

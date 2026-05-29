@@ -321,6 +321,37 @@ run_bundle_install() {
   fi
 }
 
+check_tycho_runtime_compatibility() {
+  if [[ "$CHECK_ONLY" -eq 1 ]]; then
+    info "Skipping Tycho runtime compatibility smoke in --check mode"
+    return
+  fi
+
+  if [[ "$SKIP_BUNDLE" -eq 1 ]]; then
+    warn "Skipping Tycho runtime compatibility smoke because --skip-bundle was passed"
+    return
+  fi
+
+  if [[ "$HARD_FAILURES" -gt 0 ]]; then
+    info "Skipping Tycho runtime compatibility smoke until hard failures are fixed"
+    return
+  fi
+
+  info "Checking Tycho runtime compatibility"
+  local output
+  if output="$(cd "$ROOT_DIR" && bundle exec bin/tycho doctor 2>&1)"; then
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && info "$line"
+    done <<< "$output"
+    ok "Tycho runtime compatibility check passed"
+  else
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && printf 'FAIL: %s\n' "$line" >&2
+    done <<< "$output"
+    fail "Tycho runtime compatibility check failed"
+  fi
+}
+
 check_custom_harnesses() {
   local config_path
   config_path="$(tycho_config_path)"
@@ -518,6 +549,7 @@ main() {
   check_push_hints
 
   run_bundle_install
+  check_tycho_runtime_compatibility
 
   printf '\n'
   if [[ "$HARD_FAILURES" -gt 0 ]]; then
