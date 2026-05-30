@@ -1162,8 +1162,8 @@ module RemoteServerTest
            "expected Remote UI to default iPad standalone control spacing off")
     assert(css[:body].include?("html.ipad-standalone"),
            "expected Remote UI to reserve space for iPad standalone window controls")
-    assert(css[:body].include?("calc(482px - 50vw)"),
-           "expected iPad standalone header spacing to shrink as the centered shell clears the control")
+    assert(css[:body].include?("--ipad-header-control-space: 36px;"),
+           "expected Remote UI to reserve compact iPad standalone window control spacing")
     assert(css[:body].include?("padding: 10px 12px 10px calc(12px + var(--ipad-header-control-space));"),
            "expected header rows to keep content clear of iPad left-side controls")
     assert(css[:body].include?("top: var(--safe-area-top);"),
