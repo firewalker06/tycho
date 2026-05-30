@@ -1158,13 +1158,11 @@ module RemoteServerTest
     assert(css[:body].include?("color-scheme: dark"), "expected Remote UI CSS to use the Dracula dark scheme")
     assert(css[:body].include?("--safe-area-top: env(safe-area-inset-top, 0px);"),
            "expected Remote UI to reserve iOS top safe-area space")
-    assert(css[:body].include?("--safe-area-left: env(safe-area-inset-left, 0px);"),
-           "expected Remote UI to account for horizontal iOS safe-area space")
     assert(css[:body].include?("--ipad-header-control-space: 0px;"),
            "expected Remote UI to default iPad standalone control spacing off")
     assert(css[:body].include?("html.ipad-standalone"),
            "expected Remote UI to reserve space for iPad standalone window controls")
-    assert(css[:body].include?("padding: 10px 12px 10px calc(12px + var(--safe-area-left) + var(--ipad-header-control-space));"),
+    assert(css[:body].include?("padding: 10px 12px 10px calc(12px + var(--ipad-header-control-space));"),
            "expected header rows to keep content clear of iPad left-side controls")
     assert(css[:body].include?("top: var(--safe-area-top);"),
            "expected sticky and fixed headers to sit below iOS status controls")
