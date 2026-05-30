@@ -125,7 +125,7 @@ The UI is plain server-served HTML/CSS/JavaScript, with no frontend build step o
 
 Home-screen launches are treated as normal browser sessions, but mobile browsers can be more aggressive about reusing an old app shell. The root UI references `/ui.css` and `/ui.js` with a content digest query string, and `POST /server/restart` is the explicit cache-reset path: the restart response sends cache-reset headers, the browser clears Cache Storage when available, and the UI reloads itself with a restart query string after the replacement server is healthy.
 
-The top-level mobile tabs are `Now`, `Agents`, `Search`, `Projects`, and `Setup`. Detail routes use hash navigation such as `#agent/{key}`, `#project/{key}`, and `#project/{key}/action/{action}`. The footer nav is fixed on top-level routes, hides while scrolling down, shows again while scrolling up, and is hidden on detail subpages.
+The top-level mobile tabs are `Now`, `Agents`, and `Settings`. Agents is the canonical project-and-agent workspace: it filters agents and project metadata, keeps zero-agent projects reachable for first-agent creation, and links to project detail routes. Legacy `#search`, `#projects`, and `#setup` hashes are redirected to the closest surviving tab. Detail routes use hash navigation such as `#agent/{key}`, `#project/{key}`, and `#project/{key}/action/{action}`. The footer nav is fixed on top-level routes, hides while scrolling down, shows again while scrolling up, and is hidden on detail subpages.
 
 Browser push notification work is tracked in [WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.md). Push can use a Tailscale MagicDNS domain when it is served over HTTPS, preferably with Tailscale Serve or Tailscale Funnel. Plain HTTP MagicDNS URLs show a soft warning, but the UI still lets the user try enabling notifications when the browser exposes the required push APIs.
 
@@ -161,7 +161,7 @@ http://100.x.y.z:7373/
 
 Authentication is optional for localhost. If `TYCHO_REMOTE_TOKEN` is unset or blank, requests are accepted without auth.
 
-When `tycho serve` binds to a non-loopback host without a token, startup logs print a warning. The Setup screen also marks public Remote UI URLs as `token recommended`.
+When `tycho serve` binds to a non-loopback host without a token, startup logs print a warning. The Settings screen also marks public Remote UI URLs as `token recommended`.
 
 Set `TYCHO_REMOTE_TOKEN` before using a Tailscale MagicDNS URL or another non-local interface:
 
@@ -255,6 +255,7 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `GET` | `/agents/{key}` | Read one managed agent. |
 | `PATCH` / `PUT` | `/agents/{key}` | Edit one idle managed agent. |
 | `DELETE` | `/agents/{key}` | Archive one idle managed agent. |
+| `POST` | `/agents/archive` | Archive multiple idle managed agents from a `keys` array, returning archived, skipped, and failed keys. |
 | `GET` | `/agents/{key}/conversation` | Read the rendered conversation blocks for one agent. |
 | `PUT` | `/agents/{key}/reading` | Mark one agent as read after the user opens its conversation. |
 | `POST` | `/agents/{key}/messages` | Append a user prompt to one agent. |
@@ -278,7 +279,7 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `GET` | `/attachments/{id}` | Read normalized attachment metadata and inline preview content when available. |
 | `GET` | `/attachments/{id}/blob` | Stream the attachment file bytes for image and binary previews. |
 | `GET` | `/setup` | Read Remote UI readiness, auth, Tailscale, config, log, and refresh metadata. |
-| `GET` | `/search` | Return agent and project payloads for client-side search. |
+| `GET` | `/search` | Return agent and project payloads for compatibility with older client-side search flows. |
 | `GET` | `/`, `/ui`, `/ui.css`, `/ui.js` | Serve the Remote UI. `/ui` remains a compatibility alias. |
 | `GET` | `/favicon.svg`, `/favicon.ico` | Serve the Remote UI favicon. |
 
@@ -545,6 +546,37 @@ Response:
 }
 ```
 
+### `POST /agents/archive`
+
+Archives multiple idle agents from a `keys` array. Running agents are skipped and missing keys are reported without blocking idle agents in the same request.
+
+```bash
+curl -X POST http://127.0.0.1:7373/agents/archive \
+  -H "Content-Type: application/json" \
+  -d '{"keys":["web-charlie-agent-8","web-delta-agent-3"]}'
+```
+
+Response:
+
+```json
+{
+  "archived": [
+    {
+      "agent_key": "web-charlie-agent-8",
+      "archive_path": "/Users/example/.tycho/logs/agents/archive/20260508-001431-web-charlie-agent-8"
+    }
+  ],
+  "skipped": [
+    {
+      "agent_key": "web-delta-agent-3",
+      "reason": "running"
+    }
+  ],
+  "failed": [],
+  "archive_count": 1
+}
+```
+
 ### `POST /agents/{key}/clone`
 
 Creates a fresh managed agent from an existing one with a new key, empty logs, no runs, and no native session id. Form fields such as `name`, `template_key`, `agent`, `workspace`, `prompt`, and `sandbox_mode` may be supplied to edit the clone before it is saved. Set `archive_source: true` to archive the source agent after the clone is created.
@@ -571,7 +603,7 @@ Response:
 
 ### `GET /push/config`
 
-Returns browser push readiness for the Remote UI Setup screen. The public VAPID key is safe for the browser; the private key remains server-side.
+Returns browser push readiness for the Remote UI Settings screen. The public VAPID key is safe for the browser; the private key remains server-side.
 
 ```json
 {

@@ -13,6 +13,7 @@ module RemoteServerTest
 
   def run!
     assert_remote_agent_lifecycle
+    assert_remote_agent_bulk_archive
     assert_remote_agent_clone_archives_source_with_editable_name
     assert_remote_agent_payload_has_revision
     assert_remote_inquiry_payload_has_stable_id_and_guarded_answer
@@ -80,6 +81,79 @@ module RemoteServerTest
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
       replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+    end
+  end
+
+  def assert_remote_agent_bulk_archive
+    running_pid = nil
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      registry = registry_for(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      server = HQ::RemoteServer.new
+
+      archive_one = service.create_agent(
+        "project_key" => "web",
+        "template_key" => "custom",
+        "name" => "Archive One",
+        "prompt" => "Archive this.",
+        "agent" => "codex"
+      )
+      archive_two = service.create_agent(
+        "project_key" => "web",
+        "template_key" => "custom",
+        "name" => "Archive Two",
+        "prompt" => "Archive this too.",
+        "agent" => "codex"
+      )
+      running = service.create_agent(
+        "project_key" => "web",
+        "template_key" => "custom",
+        "name" => "Running Agent",
+        "prompt" => "Keep running.",
+        "agent" => "codex"
+      )
+      [archive_one, archive_two, running].each { |agent| File.write(agent[:log_path], "#{agent[:name]}\n") }
+
+      running_pid = Process.spawn(RbConfig.ruby, "-e", "sleep 30", pgroup: true, out: File::NULL, err: File::NULL)
+      stored = JSON.parse(File.read(HQ::AGENTS_FILE))
+      stored.each do |agent|
+        next unless agent["key"] == running[:key]
+
+        agent["pid"] = running_pid
+        agent["started_at"] = Time.now.iso8601
+      end
+      File.write(HQ::AGENTS_FILE, JSON.pretty_generate(stored))
+
+      response = server.send(
+        :route,
+        service,
+        "POST",
+        "/agents/archive",
+        { "keys" => [archive_one[:key], running[:key], "missing-agent", archive_two[:key], archive_one[:key]] },
+        nil
+      )
+
+      archived_keys = response.dig(:body, :archived).map { |item| item[:agent_key] }
+      assert(archived_keys == [archive_one[:key], archive_two[:key]], "expected bulk archive to archive unique idle agents")
+      assert(response.dig(:body, :skipped).map { |item| item[:agent_key] } == [running[:key]],
+             "expected bulk archive to skip running agents")
+      assert(response.dig(:body, :failed).map { |item| item[:agent_key] } == ["missing-agent"],
+             "expected bulk archive to report missing agents")
+      assert(service.agents.map { |agent| agent[:key] } == [running[:key]],
+             "expected only running agent to remain active")
+      assert(response.dig(:body, :archived).all? { |item| item[:archive_path].nil? || Dir.exist?(item[:archive_path]) },
+             "expected archived agents to report archive destinations when logs existed")
+    ensure
+      if running_pid
+        begin
+          Process.kill("TERM", -running_pid)
+          Process.wait(running_pid)
+        rescue Errno::ESRCH, Errno::ECHILD
+          nil
+        end
+      end
     end
   end
 
@@ -1033,6 +1107,8 @@ module RemoteServerTest
     assert(legacy_response[:content_type].include?("text/html"), "expected /ui compatibility route to return HTML")
     assert(response[:body].include?('name="theme-color" content="#282a36"'),
            "expected root shell to expose a PWA theme color")
+    assert(response[:body].include?('content="width=device-width, initial-scale=1, viewport-fit=cover"'),
+           "expected root shell viewport to expose iOS safe-area insets")
     assert(response[:body].match?(%r{href="/manifest\.webmanifest\?v=[0-9a-f]{12}"}),
            "expected root shell to link a versioned web app manifest")
     assert(response[:body].match?(%r{href="/favicon\.png\?v=[0-9a-f]{12}"}),
@@ -1052,6 +1128,10 @@ module RemoteServerTest
     assert(response[:body].match?(%r{src="/ui\.js\?v=[0-9a-f]{12}"}),
            "expected root JavaScript reference to be asset-versioned")
     assert(response[:body].include?("agent-settings-button"), "expected root shell to expose Agent settings")
+    assert(response[:body].include?('data-tab="settings"'), "expected root shell to expose Settings navigation")
+    assert(response[:body].include?("<span>Settings</span>"), "expected root shell to label setup navigation as Settings")
+    assert(!response[:body].include?('data-tab="search"'), "expected root shell to remove Search navigation")
+    assert(!response[:body].include?('data-tab="projects"'), "expected root shell to remove Projects navigation")
     assert(response[:body].include?("<svg class=\"ui-icon\""), "expected root shell controls to use SVG icons")
     %w[‹ ● ⌕ ▦ ⚙].each do |glyph|
       assert(!response[:body].include?(glyph), "expected root shell to avoid text icon glyph #{glyph.inspect}")
@@ -1076,6 +1156,20 @@ module RemoteServerTest
       assert(css[:body].include?(color), "expected Remote UI CSS to include Dracula color #{color}")
     end
     assert(css[:body].include?("color-scheme: dark"), "expected Remote UI CSS to use the Dracula dark scheme")
+    assert(css[:body].include?("--safe-area-top: env(safe-area-inset-top, 0px);"),
+           "expected Remote UI to reserve iOS top safe-area space")
+    assert(css[:body].include?("--ipad-header-control-space: 0px;"),
+           "expected Remote UI to default iPad standalone control spacing off")
+    assert(css[:body].include?("html.ipad-standalone"),
+           "expected Remote UI to reserve space for iPad standalone window controls")
+    assert(css[:body].include?("--ipad-header-control-space: 60px;"),
+           "expected Remote UI to reserve compact iPad standalone window control spacing")
+    assert(css[:body].include?("padding: 10px 12px 10px calc(12px + var(--ipad-header-control-space));"),
+           "expected header rows to keep content clear of iPad left-side controls")
+    assert(css[:body].include?("top: var(--safe-area-top);"),
+           "expected sticky and fixed headers to sit below iOS status controls")
+    assert(css[:body].include?("padding-top: var(--safe-area-top);"),
+           "expected the app shell to start below the iOS safe area")
     assert(css[:body].include?(".agent-dock"), "expected Agent detail to have a bottom dock")
     assert(css[:body].include?("position: fixed"), "expected Agent detail dock to stay pinned to the viewport")
     assert(css[:body].include?(".agent-floating-actions"),
@@ -1125,6 +1219,10 @@ module RemoteServerTest
            "expected refresh indicators to use the hourglass animation")
     assert(css[:body].include?("transform: rotate(.5turn)"),
            "expected refresh hourglass animation to rotate by half a turn")
+    assert(css[:body].include?(".subtitle-status"),
+           "expected header subtitles to reserve a persistent icon slot")
+    assert(css[:body].include?("grid-template-columns: 14px minmax(0, 1fr)"),
+           "expected header subtitle text to keep its position during refresh")
     assert(css[:body].include?("margin-left: 28px"),
            "expected user chat messages to be offset from the left")
     assert(css[:body].include?("margin-right: 28px"),
@@ -1135,6 +1233,14 @@ module RemoteServerTest
            "expected user chat message content to have dedicated alignment")
     assert(css[:body].include?(".message.user .message-content {\n  text-align: left;"),
            "expected user chat message text to stay readable with left alignment")
+    assert(css[:body].include?(".message-content.markdown-message-content"),
+           "expected assistant and summary chat messages to render markdown with message-scoped layout")
+    assert(css[:body].include?(".message-content {\n  min-width: 0;"),
+           "expected chat message content to allow markdown blocks to shrink inside the viewport")
+    assert(css[:body].include?(".message-markdown-viewer"),
+           "expected assistant and summary chat markdown to have compact message styling")
+    assert(css[:body].include?(".summary-markdown-viewer"),
+           "expected Agent summary markdown to have compact dock styling")
     assert(css[:body].include?("font-weight: 700"),
            "expected chat labels to render bold")
     assert(css[:body].include?(".message-group"),
@@ -1170,6 +1276,8 @@ module RemoteServerTest
            "expected rendered markdown links to have readable underline spacing")
     assert(css[:body].include?("white-space: pre"),
            "expected rendered markdown code blocks to preserve whitespace")
+    assert(css[:body].include?("overflow-wrap: anywhere"),
+           "expected rendered markdown inline code to avoid horizontal page overflow")
     assert(css[:body].include?(".skill-flyout"), "expected skills to use a floating picker")
     assert(css[:body].include?("min-height: min(180px, 42dvh)"),
            "expected the skill picker to show multiple skills before scrolling")
@@ -1200,9 +1308,21 @@ module RemoteServerTest
     assert(css[:body].include?(".agent-dock:has(.attachment-flyout:not(.hidden))"),
            "expected the attachment flyout to stack above the skill flyout")
     assert(css[:body].include?(".server-lifecycle-card"),
-           "expected Setup restart lifecycle card to have distinct styling")
+           "expected Settings restart lifecycle card to have distinct styling")
     assert(css[:body].include?(".restart-server-button"),
-           "expected Setup restart action to have distinct button styling")
+           "expected Settings restart action to have distinct button styling")
+    assert(css[:body].include?("grid-template-columns: repeat(3, minmax(0, 1fr));"),
+           "expected bottom navigation to use the simplified three-tab layout")
+    assert(css[:body].include?(".bulk-action-bar"),
+           "expected Agents tab to style bulk archive controls")
+    assert(css[:body].include?(".top-actions .search-box"),
+           "expected Agents tab search to flex inside the action row")
+    assert(css[:body].include?(".top-actions > button"),
+           "expected Agents tab actions to align independently from the search width")
+    assert(css[:body].include?("margin-left: auto;"),
+           "expected Agents tab action button to stay right aligned")
+    assert(css[:body].include?(".selectable-agent-row"),
+           "expected Agents tab to style selectable bulk archive rows")
     assert(css[:body].include?(".compact-actions"),
            "expected Hidden settings rows to support compact action buttons")
     assert(css[:body].include?(".schedule-card-body") && css[:body].include?("padding: 0;"),
@@ -1255,22 +1375,22 @@ module RemoteServerTest
     assert(js[:body].include?("normalizeInquiryInputType"),
            "expected Remote UI to normalize inquiry field input types")
     assert(js[:body].include?("function setAgentSettings"), "expected Agent metadata to move into header settings")
-    assert(js[:body].include?("Push notifications"), "expected Setup screen to expose push readiness")
+    assert(js[:body].include?("Push notifications"), "expected Settings screen to expose push readiness")
     assert(js[:body].include?("function renderHiddenSettings"),
-           "expected Setup screen to expose a dedicated Hidden settings page")
+           "expected Settings screen to expose a dedicated Hidden settings page")
     assert(js[:body].include?('apiGet("/settings/hidden")'),
            "expected Hidden settings page to load hidden configuration")
     assert(js[:body].include?('apiPatch("/settings/hidden"'),
            "expected Hidden settings page to update hidden configuration")
     assert(js[:body].include?("data-open-hidden-settings"),
-           "expected Setup screen to link to Hidden settings")
+           "expected Settings screen to link to Hidden settings")
     assert(js[:body].include?('"eyeOff"') && js[:body].include?('"slash"') && js[:body].include?('"eye"'),
            "expected Hidden settings to use hidden/inherit/visible icon toggle buttons")
-    assert(js[:body].include?("data-restart-server"), "expected Setup screen to expose Remote restart action")
+    assert(js[:body].include?("data-restart-server"), "expected Settings screen to expose Remote restart action")
     assert(js[:body].include?('class="danger inline-icon-button restart-server-button" type="button" data-restart-server'),
            "expected Remote restart action to use danger button styling")
     assert(js[:body].index("Refresh and preferences") < js[:body].index("data-restart-server"),
-           "expected Remote restart action to stay at the bottom of the Setup screen")
+           "expected Remote restart action to stay at the bottom of the Settings screen")
     assert(js[:body].include?("function restartRemoteServer"), "expected Remote UI to handle Remote restarts")
     assert(js[:body].include?('apiPost("/server/restart"'),
            "expected Remote UI restart action to call the restart endpoint")
@@ -1361,6 +1481,12 @@ module RemoteServerTest
     assert(js[:body].include?("function brandLogoHtml"), "expected HQ header mark to render the Remote UI logo")
     assert(js[:body].include?("function unreadAgents"),
            "expected the Remote UI to compute unread agents for the logo popup")
+    assert(js[:body].include?("function syncPlatformClasses"),
+           "expected the Remote UI to detect platform display mode classes")
+    assert(js[:body].include?("navigator.standalone === true"),
+           "expected iPad standalone detection to cover Apple home-screen apps")
+    assert(js[:body].include?("ipad-standalone"),
+           "expected iPad standalone detection to toggle the header spacing class")
     assert(js[:body].include?("function toggleUnreadPanel"),
            "expected the Remote UI logo to toggle an unread agents popup")
     assert(js[:body].include?("function renderUnreadAgentsPanel"),
@@ -1377,6 +1503,12 @@ module RemoteServerTest
            "expected the Remote UI header mark to stay on the brand logo with unread state")
     assert(!js[:body].include?("function markHtml"),
            "expected page-specific icons to stay out of the header brand mark")
+    assert(js[:body].include?("headerSubtitleIcon"),
+           "expected header subtitle icon state to stay separate from the brand mark")
+    assert(js[:body].include?("function headerSubtitleIconName"),
+           "expected header subtitle icons to normalize legacy header mark aliases")
+    assert(js[:body].include?('state.refreshing ? iconSvg("hourglass") : iconSvg(state.headerSubtitleIcon)'),
+           "expected refresh to swap the subtitle icon without shifting the text")
     assert(js[:body].include?("function statusIcon"), "expected readiness marks to use SVG status icons")
     assert(js[:body].include?("data-agent-summary"), "expected Agent detail to expose a docked Summary panel")
     assert(js[:body].include?("data-preserve-scroll"),
@@ -1439,8 +1571,8 @@ module RemoteServerTest
            "expected Agent detail read state to use the reading endpoint")
     assert(js[:body].include?('if (agent.unread) return "unread";'),
            "expected unread agents to show unread as the visible status before final run status")
-    assert(js[:body].scan('<span class="pill need">Unread</span>').length >= 2,
-           "expected agent and search lists to render explicit Unread pills")
+    assert(js[:body].scan('<span class="pill need">Unread</span>').length >= 1,
+           "expected agent list surfaces to render explicit Unread pills")
     assert(js[:body].include?("function shouldAutoScrollAgentConversation"),
            "expected Agent detail to auto-scroll only when conversation content changes")
     assert(js[:body].include?("function renderConversationBlocks"),
@@ -1545,6 +1677,20 @@ module RemoteServerTest
            "expected Remote UI to support #attachment/:id routes")
     assert(js[:body].include?("function renderMarkdown"),
            "expected markdown attachments to render as markdown")
+    assert(js[:body].include?("function markdownMessageBlock"),
+           "expected assistant messages and run summaries to opt into markdown rendering")
+    assert(js[:body].include?('block?.kind === "run_summary"'),
+           "expected run summary messages to render as markdown")
+    assert(js[:body].include?('block.role === "assistant"'),
+           "expected assistant messages to render as markdown")
+    assert(js[:body].include?("function renderAgentSummaryContent"),
+           "expected Agent summary text to render as markdown")
+    assert(js[:body].include?('viewerClassName: "markdown-viewer message-markdown-viewer"'),
+           "expected chat markdown to use message-scoped markdown styling")
+    assert(js[:body].include?('viewerClassName: "markdown-viewer summary-markdown-viewer"'),
+           "expected Agent summary markdown to use dock-scoped markdown styling")
+    assert(js[:body].include?("function renderMarkdownRoute"),
+           "expected markdown parser load completion to re-render active markdown routes")
     assert(!js[:body].include?("CODE_LANGUAGE_BY_EXTENSION"),
            "expected syntax metadata inference to remain out of the attachment viewer")
     assert(js[:body].include?("https://cdn.jsdelivr.net/npm/marked@"),
@@ -1610,13 +1756,32 @@ module RemoteServerTest
            "expected Remote UI to scope in-document hash link handling to Markdown viewers")
     assert(js[:body].include?("history.replaceState(null, \"\", routeHash(route))"),
            "expected Markdown hash links to preserve the attachment route")
-    assert(js[:body].include?("function focusSearchInput"), "expected Search tab to focus the search input after render")
-    assert(js[:body].include?("sortedAgentGroups(filtered)"),
+    assert(js[:body].include?('const TOP_TABS = ["now", "agents", "settings"];'),
+           "expected Remote UI to simplify top-level tabs")
+    assert(js[:body].include?('if (parts[0] === "search" || parts[0] === "projects") return { type: "tab", tab: "agents" };'),
+           "expected legacy Search and Projects hashes to land on Agents")
+    assert(js[:body].include?('return "#settings/hidden";'),
+           "expected Hidden settings to use the Settings route")
+    assert(js[:body].include?('setHeader("Settings"'),
+           "expected Setup screen to be labeled Settings")
+    assert(js[:body].include?("function agentProjectGroups"),
            "expected Agents tab to render project groups in sorted order")
     assert(js[:body].include?("function compareAgentProjectKeys"),
            "expected Agents tab group sorting to compare project display names")
     assert(js[:body].include?("function compareAgentsByName"),
            "expected Agents tab to sort agents alphabetically within each project group")
+    assert(js[:body].include?("projectMatches(project, query)"),
+           "expected Agents tab filtering to match project fields")
+    assert(js[:body].include?("renderProjectAgentEmpty()"),
+           "expected Agents tab to keep zero-agent projects reachable")
+    assert(js[:body].include?("data-toggle-bulk-archive"),
+           "expected Agents tab to expose bulk archive selection mode")
+    assert(js[:body].include?("data-run-bulk-archive"),
+           "expected Agents tab to expose bulk archive submission")
+    assert(js[:body].include?('apiPost("/agents/archive", { keys })'),
+           "expected Remote UI to call the bulk archive endpoint")
+    assert(js[:body].include?("function agentArchiveable"),
+           "expected Remote UI to guard running agents from bulk archives")
     assert(js[:body].include?("function relativeTimeShort"),
            "expected Remote UI list metadata to use compact relative times")
     assert(js[:body].include?("function relativeTimeBucket"),
@@ -1625,26 +1790,18 @@ module RemoteServerTest
            "expected Remote UI list metadata to color only relative time tokens")
     assert(js[:body].include?("function agentListSubtextHtml"),
            "expected Agents tab rows to build dedicated list subtitles")
-    assert(js[:body].include?("function agentSearchSubtextHtml"),
-           "expected Search agent rows to put relative time first")
-    assert(js[:body].include?("function projectSearchSubtext"),
-           "expected Search project rows to build dedicated subtitles")
     assert(js[:body].include?('class="relative-time ${escapeAttr(bucket)}"'),
            "expected Remote UI agent subtitles to render colorable relative time spans")
-    assert(!js[:body].include?("Agent / ${agentMeta(agent)}"),
-           "expected Search agent rows to omit redundant Agent prefix")
-    assert(!js[:body].include?("Project / ${project.status"),
-           "expected Search project rows to omit redundant Project prefix")
+    assert(!js[:body].include?("function renderSearch"),
+           "expected Search tab rendering to be removed")
+    assert(!js[:body].include?("function renderProjects"),
+           "expected Projects tab rendering to be removed")
     assert(!js[:body].include?("${statusLabel(agent)} / ${agentMeta(agent)}"),
            "expected Agents tab rows to omit status from subtext")
     assert(!js[:body].include?("agent.project_key, agent.agent, agent.template_key"),
            "expected Remote UI list metadata to omit agent template keys")
     assert(!js[:body].include?('agent.template_key || "template"'),
            "expected Remote UI agent cards to omit agent template keys")
-    assert(js[:body].include?("sortedProjects(state.projects)"),
-           "expected Projects tab to render projects in sorted order")
-    assert(js[:body].include?("function compareProjectsByName"),
-           "expected Projects tab sorting to use a stable comparator")
     direct_view_writes = js[:body].scan(/els\.view\.innerHTML\s*=\s*(?!\s*html\b)/)
     assert(direct_view_writes.empty?, "expected page renderers to use replaceView so polling preserves form state")
     assert(!js[:body].include?("detail.open === detail.hasAttribute"),
