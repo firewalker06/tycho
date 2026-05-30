@@ -1603,6 +1603,16 @@ module RemoteServerTest
            "expected Agent detail to render pending prompt attachments before sending")
     assert(js[:body].include?("function pendingAttachmentPayloads"),
            "expected Remote UI to serialize prompt attachments into API payloads")
+    assert(js[:body].include?('els.view.addEventListener("paste"'),
+           "expected Agent detail composer to listen for pasted attachment files")
+    assert(js[:body].include?("function handleClipboardAttachmentPaste"),
+           "expected Remote UI to route pasted clipboard files into pending attachments")
+    assert(js[:body].include?("function clipboardAttachmentFiles"),
+           "expected Remote UI to extract files from clipboard data")
+    assert(js[:body].include?("function clipboardAttachmentFilename"),
+           "expected Remote UI to synthesize filenames for nameless clipboard blobs")
+    assert(js[:body].include?("new File([file], filename"),
+           "expected Remote UI to wrap nameless clipboard blobs with safe filenames")
     assert(js[:body].include?("data-add-prompt-attachment"),
            "expected Agent detail composer to expose a file picker trigger")
     assert(js[:body].include?("data-prompt-attachment-input"),
