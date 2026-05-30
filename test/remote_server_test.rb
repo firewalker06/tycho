@@ -1313,6 +1313,12 @@ module RemoteServerTest
            "expected bottom navigation to use the simplified three-tab layout")
     assert(css[:body].include?(".bulk-action-bar"),
            "expected Agents tab to style bulk archive controls")
+    assert(css[:body].include?(".top-actions .search-box"),
+           "expected Agents tab search to flex inside the action row")
+    assert(css[:body].include?(".top-actions > button"),
+           "expected Agents tab actions to align independently from the search width")
+    assert(css[:body].include?("margin-left: auto;"),
+           "expected Agents tab action button to stay right aligned")
     assert(css[:body].include?(".selectable-agent-row"),
            "expected Agents tab to style selectable bulk archive rows")
     assert(css[:body].include?(".compact-actions"),
