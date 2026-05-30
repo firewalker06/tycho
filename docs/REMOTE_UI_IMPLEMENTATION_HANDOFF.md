@@ -23,19 +23,18 @@ Current implementation files:
 - JavaScript: `lib/hq/remote_ui/assets/app.js`
 - Static asset helper: `lib/hq/remote_ui.rb`
 
-The old phase checklist has been retired because the shell, top-level screens, main detail routes, project payloads, setup/readiness payloads, skill discovery, client-side search, guarded project actions, audit fixes, and mobile nav polish are now implemented.
+The old phase checklist has been retired because the shell, simplified top-level screens, main detail routes, project payloads, setup/readiness payloads, skill discovery, client-side filtering, guarded project actions, audit fixes, and mobile nav polish are now implemented.
 
 ## Implemented
 
-- Five top-level destinations: `Now`, `Agents`, `Search`, `Projects`, `Setup`.
+- Three top-level destinations: `Now`, `Agents`, `Settings`.
 - Fixed bottom nav on top-level screens; it hides on downward scroll and reappears on upward scroll, focus, route changes, or near page top.
 - Bottom nav is hidden on subpages with a back button.
 - Deep links show loading states instead of transient not-found screens while initial data loads.
 - Now screen shows attention count, paused/blocked agents, running agents, and search affordance.
-- Agents screen filters and groups managed agents by project.
-- Search screen searches agents and projects client-side, prioritizing unread agents on empty query.
-- Projects screen lists health, latency, group, and maintenance/action state.
-- Setup screen shows URL, Tailscale/MagicDNS state, auth state, harness readiness, schema/config readiness, logs/storage, refresh intervals, and safety defaults.
+- Agents screen filters and groups managed agents by project, matches project metadata, keeps zero-agent projects reachable, and supports bulk archiving idle agents.
+- Project detail routes remain reachable from Agents project headers.
+- Settings screen shows URL, Tailscale/MagicDNS state, auth state, harness readiness, schema/config readiness, logs/storage, refresh intervals, and safety defaults.
 - Agent detail supports conversation viewing, current activity, run metadata, skill insertion, prompt submission, start run, and stop confirmation.
 - Project detail shows health, revision, deploy details, versions/templates, recent agent summary, and guarded project actions.
 - Guarded deploy/maintenance/live action screens show consequences and preflight checks before starting a detached Kamal action.
@@ -84,7 +83,7 @@ Manual smoke:
 
 - Start `bin/tycho serve`.
 - Open `/` at mobile width.
-- Check `Now`, `Agents`, `Search`, `Projects`, and `Setup`.
+- Check `Now`, `Agents`, and `Settings`.
 - Confirm the footer nav hides while scrolling down and shows while scrolling up.
 - Deep-link to an agent and project detail route.
 - Open a guarded project action preflight.

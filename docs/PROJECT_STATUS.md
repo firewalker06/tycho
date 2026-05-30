@@ -229,17 +229,17 @@ browser/TUI smoke verification.
 
 - [x] Ability to start webserver (`tycho serve`)
 - [x] Tailscale auto-bind, MagicDNS URL display, HTTPS Serve detection, and compact terminal QR for phone setup
-- [x] Mobile Remote UI shell at `/` with `Now`, `Agents`, `Search`, `Projects`, and `Setup` tabs
+- [x] Mobile Remote UI shell at `/` with simplified `Now`, `Agents`, and `Settings` tabs
 - [x] Footer navigation sticks to the viewport, hides on downward scroll, and reappears on upward scroll
 - [x] Read agent conversation (`GET /agents/{key}/conversation`)
 - [x] Submit prompt to agent (`POST /agents/{key}/messages`)
 - [x] Start / Stop an agent (`POST /agents/{key}/start`, `POST /agents/{key}/stop`)
 - [x] Creates / Edit an agent (`POST /agents`, `PATCH /agents/{key}`)
-- [x] Archive an agent (`DELETE /agents/{key}` or `POST /agents/{key}/archive`)
+- [x] Archive one agent (`DELETE /agents/{key}` or `POST /agents/{key}/archive`) or bulk archive idle agents (`POST /agents/archive`)
 - [x] Project list/detail endpoints and mobile project health/detail screens
 - [x] Guarded deploy/maintenance/live preflight and start endpoints
-- [x] Remote setup/readiness endpoint and Setup screen
-- [x] Client-side Remote UI search across agents and projects
+- [x] Remote setup/readiness endpoint and Settings screen
+- [x] Client-side Remote UI filtering across agents and projects
 - [x] Remote UI skill discovery for chat insertion
 - [x] Browser push subscription/test-notification foundation, with HTTPS MagicDNS support and HTTP MagicDNS warnings ([WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.md))
 - [x] Automatic browser push notifications when agents require response or finish

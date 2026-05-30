@@ -188,6 +188,7 @@ module HQ
       return accepted(service.start_schedule_daemon(body)) if method == "POST" && parts == ["schedules", "daemon", "start"]
       return accepted(service.stop_schedule_daemon) if method == "POST" && parts == ["schedules", "daemon", "stop"]
       return accepted(service.restart_schedule_daemon(body)) if method == "POST" && parts == ["schedules", "daemon", "restart"]
+      return ok(service.archive_agents(body)) if method == "POST" && parts == ["agents", "archive"]
       return ok(projects: service.projects) if method == "GET" && parts == ["projects"]
       return ok(hidden: service.hidden_settings) if method == "GET" && parts == ["settings", "hidden"]
       return ok(hidden: service.update_hidden_setting(body)) if %w[PATCH PUT].include?(method) && parts == ["settings", "hidden"]
@@ -998,6 +999,45 @@ module HQ
         archived: true,
         agent_key: target.key,
         archive_path: archive_path
+      }
+    end
+
+    def archive_agents(attrs)
+      payload = attrs || {}
+      keys = Array(payload["keys"]).map { |key| key.to_s.strip }.reject(&:empty?).uniq
+      raise Error.new("Missing agent keys") if keys.empty?
+
+      current = load_all_agents
+      agents_by_key = current.to_h { |agent| [agent.key, agent] }
+      archived = []
+      skipped = []
+      failed = []
+
+      keys.each do |key|
+        target = agents_by_key[key]
+        unless target
+          failed << { agent_key: key, error: "Agent not found" }
+          next
+        end
+
+        if target.running?
+          skipped << { agent_key: key, reason: "running" }
+          next
+        end
+
+        archived << { agent_key: target.key, archive_path: target.archive_logs! }
+      rescue StandardError => e
+        failed << { agent_key: key, error: e.message }
+      end
+
+      archived_keys = archived.map { |item| item.fetch(:agent_key) }
+      save_agents(current.reject { |agent| archived_keys.include?(agent.key) }) if archived_keys.any?
+
+      {
+        archived: archived,
+        skipped: skipped,
+        failed: failed,
+        archive_count: archived.length
       }
     end
 
