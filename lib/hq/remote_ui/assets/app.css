@@ -16,6 +16,13 @@
   --yellow: #f1fa8c;
   --accent-contrast: #282a36;
   --shadow: 0 14px 32px rgba(0, 0, 0, 0.32);
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-left: env(safe-area-inset-left, 0px);
+  --ipad-header-control-space: 0px;
+}
+
+html.ipad-standalone {
+  --ipad-header-control-space: 112px;
 }
 
 * {
@@ -120,13 +127,15 @@ h3 {
   width: 100%;
   max-width: 820px;
   min-height: 100vh;
+  min-height: 100dvh;
   margin: 0 auto;
+  padding-top: var(--safe-area-top);
 }
 
 .app-header {
   --header-offset-y: 0;
   position: sticky;
-  top: 0;
+  top: var(--safe-area-top);
   z-index: 7;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--panel) 95%, transparent);
@@ -150,7 +159,7 @@ h3 {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 10px 12px 10px calc(12px + var(--safe-area-left) + var(--ipad-header-control-space));
 }
 
 .header-row > #back-button {
@@ -306,15 +315,28 @@ h3 {
   font-size: 13px;
 }
 
-.subtitle-refresh {
-  display: inline-flex;
+.subtitle-status {
+  display: inline-grid;
+  grid-template-columns: 14px minmax(0, 1fr);
   align-items: center;
   gap: 6px;
+  max-width: 100%;
+}
+
+.subtitle-status .ui-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+}
+
+.subtitle-status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .subtitle-refresh .ui-icon {
-  width: 14px;
-  height: 14px;
   color: var(--accent);
   animation: poll-refresh-hourglass 1s infinite;
 }
@@ -1155,7 +1177,9 @@ button.restart-server-button {
 .message {
   display: grid;
   gap: 5px;
+  min-width: 0;
   width: calc(100% - 28px);
+  max-width: 100%;
   margin-right: 28px;
   padding: 10px 12px;
 }
@@ -1265,8 +1289,56 @@ button.restart-server-button {
 }
 
 .message-content {
+  min-width: 0;
+  max-width: 100%;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.message-content.markdown-message-content {
+  text-align: left;
+  white-space: normal;
+}
+
+.message-markdown-viewer {
+  min-width: 0;
+  max-width: 100%;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.message-markdown-viewer h1,
+.message-markdown-viewer h2 {
+  margin: 0 0 9px;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.message-markdown-viewer h3,
+.message-markdown-viewer h4,
+.message-markdown-viewer h5,
+.message-markdown-viewer h6 {
+  margin: 14px 0 7px;
+  font-size: 14px;
+}
+
+.message-markdown-viewer p,
+.message-markdown-viewer ul,
+.message-markdown-viewer ol,
+.message-markdown-viewer blockquote,
+.message-markdown-viewer pre,
+.message-markdown-viewer table,
+.message-markdown-viewer hr {
+  margin-bottom: 10px;
+}
+
+.message-markdown-fallback,
+.summary-markdown-fallback {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  color: var(--text);
+  font: inherit;
 }
 
 .parsed-json-message {
@@ -1725,6 +1797,7 @@ button.restart-server-button {
   font-size: 14px;
   line-height: 1.65;
   overflow-wrap: break-word;
+  white-space: normal;
 }
 
 .markdown-viewer > :first-child {
@@ -1808,15 +1881,19 @@ button.restart-server-button {
 }
 
 .markdown-viewer code {
+  max-width: 100%;
   border-radius: 4px;
   background: color-mix(in srgb, var(--panel-soft) 72%, var(--bg));
   padding: 2px 5px;
   color: var(--yellow);
   font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 0.92em;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .markdown-viewer pre {
+  min-width: 0;
   max-width: 100%;
   overflow-x: auto;
   border: 1px solid color-mix(in srgb, var(--border) 78%, var(--panel-soft));
@@ -1829,15 +1906,19 @@ button.restart-server-button {
 }
 
 .markdown-viewer pre code {
+  max-width: none;
   border-radius: 0;
   background: transparent;
   padding: 0;
   color: inherit;
   font-size: inherit;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .markdown-viewer table {
   display: block;
+  min-width: 0;
   width: 100%;
   max-width: 100%;
   overflow-x: auto;
@@ -1984,13 +2065,42 @@ button.restart-server-button {
   background: var(--panel-soft);
 }
 
-.agent-summary-panel p {
+.agent-summary-panel > p,
+.agent-summary-panel .summary-markdown-fallback {
   margin: 0;
   overflow-wrap: anywhere;
   color: var(--text);
   font-size: 13px;
   line-height: 1.4;
   white-space: pre-wrap;
+}
+
+.summary-markdown-viewer {
+  min-width: 0;
+  max-width: 100%;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.summary-markdown-viewer h1,
+.summary-markdown-viewer h2,
+.summary-markdown-viewer h3,
+.summary-markdown-viewer h4,
+.summary-markdown-viewer h5,
+.summary-markdown-viewer h6 {
+  margin: 0 0 7px;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.summary-markdown-viewer p,
+.summary-markdown-viewer ul,
+.summary-markdown-viewer ol,
+.summary-markdown-viewer blockquote,
+.summary-markdown-viewer pre,
+.summary-markdown-viewer table,
+.summary-markdown-viewer hr {
+  margin-bottom: 8px;
 }
 
 .go-recent-fab {

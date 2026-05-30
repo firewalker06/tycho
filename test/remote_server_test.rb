@@ -1107,6 +1107,8 @@ module RemoteServerTest
     assert(legacy_response[:content_type].include?("text/html"), "expected /ui compatibility route to return HTML")
     assert(response[:body].include?('name="theme-color" content="#282a36"'),
            "expected root shell to expose a PWA theme color")
+    assert(response[:body].include?('content="width=device-width, initial-scale=1, viewport-fit=cover"'),
+           "expected root shell viewport to expose iOS safe-area insets")
     assert(response[:body].match?(%r{href="/manifest\.webmanifest\?v=[0-9a-f]{12}"}),
            "expected root shell to link a versioned web app manifest")
     assert(response[:body].match?(%r{href="/favicon\.png\?v=[0-9a-f]{12}"}),
@@ -1154,6 +1156,20 @@ module RemoteServerTest
       assert(css[:body].include?(color), "expected Remote UI CSS to include Dracula color #{color}")
     end
     assert(css[:body].include?("color-scheme: dark"), "expected Remote UI CSS to use the Dracula dark scheme")
+    assert(css[:body].include?("--safe-area-top: env(safe-area-inset-top, 0px);"),
+           "expected Remote UI to reserve iOS top safe-area space")
+    assert(css[:body].include?("--safe-area-left: env(safe-area-inset-left, 0px);"),
+           "expected Remote UI to account for horizontal iOS safe-area space")
+    assert(css[:body].include?("--ipad-header-control-space: 0px;"),
+           "expected Remote UI to default iPad standalone control spacing off")
+    assert(css[:body].include?("html.ipad-standalone"),
+           "expected Remote UI to reserve space for iPad standalone window controls")
+    assert(css[:body].include?("padding: 10px 12px 10px calc(12px + var(--safe-area-left) + var(--ipad-header-control-space));"),
+           "expected header rows to keep content clear of iPad left-side controls")
+    assert(css[:body].include?("top: var(--safe-area-top);"),
+           "expected sticky and fixed headers to sit below iOS status controls")
+    assert(css[:body].include?("padding-top: var(--safe-area-top);"),
+           "expected the app shell to start below the iOS safe area")
     assert(css[:body].include?(".agent-dock"), "expected Agent detail to have a bottom dock")
     assert(css[:body].include?("position: fixed"), "expected Agent detail dock to stay pinned to the viewport")
     assert(css[:body].include?(".agent-floating-actions"),
@@ -1203,6 +1219,10 @@ module RemoteServerTest
            "expected refresh indicators to use the hourglass animation")
     assert(css[:body].include?("transform: rotate(.5turn)"),
            "expected refresh hourglass animation to rotate by half a turn")
+    assert(css[:body].include?(".subtitle-status"),
+           "expected header subtitles to reserve a persistent icon slot")
+    assert(css[:body].include?("grid-template-columns: 14px minmax(0, 1fr)"),
+           "expected header subtitle text to keep its position during refresh")
     assert(css[:body].include?("margin-left: 28px"),
            "expected user chat messages to be offset from the left")
     assert(css[:body].include?("margin-right: 28px"),
@@ -1213,6 +1233,14 @@ module RemoteServerTest
            "expected user chat message content to have dedicated alignment")
     assert(css[:body].include?(".message.user .message-content {\n  text-align: left;"),
            "expected user chat message text to stay readable with left alignment")
+    assert(css[:body].include?(".message-content.markdown-message-content"),
+           "expected assistant and summary chat messages to render markdown with message-scoped layout")
+    assert(css[:body].include?(".message-content {\n  min-width: 0;"),
+           "expected chat message content to allow markdown blocks to shrink inside the viewport")
+    assert(css[:body].include?(".message-markdown-viewer"),
+           "expected assistant and summary chat markdown to have compact message styling")
+    assert(css[:body].include?(".summary-markdown-viewer"),
+           "expected Agent summary markdown to have compact dock styling")
     assert(css[:body].include?("font-weight: 700"),
            "expected chat labels to render bold")
     assert(css[:body].include?(".message-group"),
@@ -1248,6 +1276,8 @@ module RemoteServerTest
            "expected rendered markdown links to have readable underline spacing")
     assert(css[:body].include?("white-space: pre"),
            "expected rendered markdown code blocks to preserve whitespace")
+    assert(css[:body].include?("overflow-wrap: anywhere"),
+           "expected rendered markdown inline code to avoid horizontal page overflow")
     assert(css[:body].include?(".skill-flyout"), "expected skills to use a floating picker")
     assert(css[:body].include?("min-height: min(180px, 42dvh)"),
            "expected the skill picker to show multiple skills before scrolling")
@@ -1445,6 +1475,12 @@ module RemoteServerTest
     assert(js[:body].include?("function brandLogoHtml"), "expected HQ header mark to render the Remote UI logo")
     assert(js[:body].include?("function unreadAgents"),
            "expected the Remote UI to compute unread agents for the logo popup")
+    assert(js[:body].include?("function syncPlatformClasses"),
+           "expected the Remote UI to detect platform display mode classes")
+    assert(js[:body].include?("navigator.standalone === true"),
+           "expected iPad standalone detection to cover Apple home-screen apps")
+    assert(js[:body].include?("ipad-standalone"),
+           "expected iPad standalone detection to toggle the header spacing class")
     assert(js[:body].include?("function toggleUnreadPanel"),
            "expected the Remote UI logo to toggle an unread agents popup")
     assert(js[:body].include?("function renderUnreadAgentsPanel"),
@@ -1461,6 +1497,12 @@ module RemoteServerTest
            "expected the Remote UI header mark to stay on the brand logo with unread state")
     assert(!js[:body].include?("function markHtml"),
            "expected page-specific icons to stay out of the header brand mark")
+    assert(js[:body].include?("headerSubtitleIcon"),
+           "expected header subtitle icon state to stay separate from the brand mark")
+    assert(js[:body].include?("function headerSubtitleIconName"),
+           "expected header subtitle icons to normalize legacy header mark aliases")
+    assert(js[:body].include?('state.refreshing ? iconSvg("hourglass") : iconSvg(state.headerSubtitleIcon)'),
+           "expected refresh to swap the subtitle icon without shifting the text")
     assert(js[:body].include?("function statusIcon"), "expected readiness marks to use SVG status icons")
     assert(js[:body].include?("data-agent-summary"), "expected Agent detail to expose a docked Summary panel")
     assert(js[:body].include?("data-preserve-scroll"),
@@ -1629,6 +1671,20 @@ module RemoteServerTest
            "expected Remote UI to support #attachment/:id routes")
     assert(js[:body].include?("function renderMarkdown"),
            "expected markdown attachments to render as markdown")
+    assert(js[:body].include?("function markdownMessageBlock"),
+           "expected assistant messages and run summaries to opt into markdown rendering")
+    assert(js[:body].include?('block?.kind === "run_summary"'),
+           "expected run summary messages to render as markdown")
+    assert(js[:body].include?('block.role === "assistant"'),
+           "expected assistant messages to render as markdown")
+    assert(js[:body].include?("function renderAgentSummaryContent"),
+           "expected Agent summary text to render as markdown")
+    assert(js[:body].include?('viewerClassName: "markdown-viewer message-markdown-viewer"'),
+           "expected chat markdown to use message-scoped markdown styling")
+    assert(js[:body].include?('viewerClassName: "markdown-viewer summary-markdown-viewer"'),
+           "expected Agent summary markdown to use dock-scoped markdown styling")
+    assert(js[:body].include?("function renderMarkdownRoute"),
+           "expected markdown parser load completion to re-render active markdown routes")
     assert(!js[:body].include?("CODE_LANGUAGE_BY_EXTENSION"),
            "expected syntax metadata inference to remain out of the attachment viewer")
     assert(js[:body].include?("https://cdn.jsdelivr.net/npm/marked@"),
