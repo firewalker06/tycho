@@ -21,7 +21,7 @@
 }
 
 html.ipad-standalone {
-  --ipad-header-control-space: 36px;
+  --ipad-header-control-space: 60px;
 }
 
 * {
