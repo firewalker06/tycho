@@ -381,7 +381,14 @@ module RemoteServerTest
 
       payload = service.agent(created[:key])
       attachments = payload[:attachments]
-      assert(attachments.map { |item| item["type"] } == %w[link file file file file],
+      assert(attachments.map { |item| item["title"] } == [
+        "UI screenshot",
+        "File URI notes",
+        "Markdown notes",
+        "Release checklist",
+        "Implementation PR"
+      ], "expected Remote agent payload to expose newest attachments first")
+      assert(attachments.map { |item| item["type"] } == %w[file file file file link],
              "expected Remote agent payload to expose normalized file/link attachments")
       assert(attachments.all? { |item| item["id"].to_s.length == 20 },
              "expected Remote agent payload to expose stable attachment IDs")
@@ -1611,6 +1618,10 @@ module RemoteServerTest
            "expected Agent detail to group internal conversation blocks before rendering")
     assert(js[:body].include?("function renderAgentAttachments"),
            "expected Agent detail to render saved attachments")
+    assert(js[:body].include?("function dedupeAgentAttachments"),
+           "expected Agent detail to dedupe saved attachments before rendering")
+    assert(js[:body].include?("function attachmentDedupeKey"),
+           "expected Agent detail to dedupe saved attachments by target")
     assert(js[:body].include?("function refreshAttachment"),
            "expected Attachment detail to support refreshing cached preview data")
     assert(js[:body].include?("function deleteAttachment"),
@@ -1635,6 +1646,10 @@ module RemoteServerTest
            "expected Agent detail to render pending prompt attachments before sending")
     assert(js[:body].include?("function pendingAttachmentPayloads"),
            "expected Remote UI to serialize prompt attachments into API payloads")
+    assert(js[:body].include?("function pendingAttachmentDedupeKey"),
+           "expected Remote UI pending attachments to dedupe repeated browser files")
+    assert(js[:body].include?("state.pendingPromptAttachments[agentKey] = accepted.concat(pending);"),
+           "expected Remote UI pending attachments to prepend newly added files")
     assert(js[:body].include?('els.view.addEventListener("paste"'),
            "expected Agent detail composer to listen for pasted attachment files")
     assert(js[:body].include?("function handleClipboardAttachmentPaste"),

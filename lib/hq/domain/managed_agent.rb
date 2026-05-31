@@ -1091,8 +1091,7 @@ module HQ
 
       [
         normalized["type"],
-        normalized["type"] == "link" ? normalized["url"] : normalized["path"],
-        normalized["title"]
+        normalized["type"] == "link" ? normalized["url"] : normalized["path"]
       ].map(&:to_s)
     end
 

@@ -427,7 +427,7 @@ module HQ
       end
       return if records_to_append.empty?
 
-      records = dedupe_attachments(read_attachment_records + records_to_append)
+      records = dedupe_attachments(records_to_append + read_attachment_records)
       FileUtils.mkdir_p(File.dirname(attachments_path))
       File.write(attachments_path, "#{JSON.pretty_generate("attachments" => records)}\n")
     rescue StandardError
@@ -523,8 +523,7 @@ module HQ
 
       [
         normalized["type"],
-        normalized["type"] == "link" ? normalized["url"] : normalized["path"],
-        normalized["title"]
+        normalized["type"] == "link" ? normalized["url"] : normalized["path"]
       ].map(&:to_s)
     end
 
