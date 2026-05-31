@@ -257,7 +257,8 @@ module RenderingTest
       assert(app.instance_variable_get(:@onboarding), "expected empty config boot to enter onboarding")
       plain = Bubbles::ANSI.strip(app.view)
       assert(plain.include?("Coding agent orchestrations using your own harness"), "expected onboarding panel title")
-      assert(plain.include?("Each session with coding agent lives inside"), "expected onboarding panel subtitle")
+      assert(plain.include?("Each session with coding agent lives inside a project workspace."),
+             "expected onboarding panel subtitle")
       assert(plain.include?("Create Welcome Sandbox"), "expected onboarding panel to offer welcome sandbox")
     end
   ensure

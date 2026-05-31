@@ -64,7 +64,7 @@ module HQ
         def onboarding_view
           dialog_width = [[@window_width - 10, 76].min, 50].max
           inner_width = [dialog_width - 4, 20].max
-          subtitle = "Each session with coding agent lives inside a project workspace. Let's start by creating one"
+          subtitle = "Each session with coding agent lives inside a project workspace."
 
           option_lines = @onboarding_options.map.with_index do |option, index|
             selected = index == @onboarding_selected
