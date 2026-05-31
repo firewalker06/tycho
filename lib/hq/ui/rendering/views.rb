@@ -64,6 +64,7 @@ module HQ
         def onboarding_view
           dialog_width = [[@window_width - 10, 76].min, 50].max
           inner_width = [dialog_width - 4, 20].max
+          subtitle = "Each session with coding agent lives inside a project workspace. Let's start by creating one"
 
           option_lines = @onboarding_options.map.with_index do |option, index|
             selected = index == @onboarding_selected
@@ -78,8 +79,8 @@ module HQ
           body_parts = [
             loading_logotype,
             "",
-            fancy_list_title_style.render("Start Tycho"),
-            dim_style.render("No projects are configured yet."),
+            fancy_list_title_style.render("Coding agent orchestrations using your own harness"),
+            dim_style.width(inner_width).render(subtitle),
             "",
             *option_lines
           ]
