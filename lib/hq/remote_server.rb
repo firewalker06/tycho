@@ -21,6 +21,7 @@ require_relative "domain/push_subscription_store"
 require_relative "domain/schedule_daemon_supervisor"
 require_relative "domain/scheduler"
 require_relative "domain/skill_discovery"
+require_relative "domain/onboarding"
 require_relative "domain/visibility"
 require_relative "domain/web_push_notifier"
 
@@ -190,6 +191,7 @@ module HQ
       return accepted(service.restart_schedule_daemon(body)) if method == "POST" && parts == ["schedules", "daemon", "restart"]
       return ok(service.archive_agents(body)) if method == "POST" && parts == ["agents", "archive"]
       return ok(projects: service.projects) if method == "GET" && parts == ["projects"]
+      return created(project: service.create_welcome_project) if method == "POST" && parts == ["setup", "welcome"]
       return ok(hidden: service.hidden_settings) if method == "GET" && parts == ["settings", "hidden"]
       return ok(hidden: service.update_hidden_setting(body)) if %w[PATCH PUT].include?(method) && parts == ["settings", "hidden"]
       return ok(setup: service.setup) if method == "GET" && parts == ["setup"]
@@ -689,6 +691,7 @@ module HQ
         tools: tool_readiness,
         schema: schema_readiness,
         config: config_readiness,
+        onboarding: onboarding_payload,
         logs: log_summary(agents),
         push: push_config,
         refresh_intervals: {
@@ -699,6 +702,26 @@ module HQ
         },
         safety: safety_guidance
       }
+    end
+
+    def create_welcome_project
+      existing = @projects.find { |project| project.key == Onboarding::WELCOME_PROJECT_KEY }
+      if existing
+        refresh_project!(existing)
+        return project_detail_payload(existing,
+                                      agents: load_agents.select { |agent| agent.project_key == existing.key },
+                                      active_action: active_actions[existing.key])
+      end
+
+      unless @projects.empty?
+        raise Error.new("Welcome sandbox can only be created before projects are configured")
+      end
+
+      @registry.add_project!(Onboarding.welcome_project_attrs(agent: HQ.harness_keys.first))
+      reload_projects_from_registry!
+      project(Onboarding::WELCOME_PROJECT_KEY)
+    rescue ConfigError => e
+      raise Error.new(e.message)
     end
 
     def hidden_settings
@@ -1557,6 +1580,14 @@ module HQ
         prompt_template_count: prompt_template_count,
         active_projects: @projects.length,
         archived_projects: archived_project_count
+      }
+    end
+
+    def onboarding_payload
+      {
+        active: @projects.empty?,
+        welcome_project_key: Onboarding::WELCOME_PROJECT_KEY,
+        welcome_workspace_path: Onboarding.welcome_workspace_path
       }
     end
 

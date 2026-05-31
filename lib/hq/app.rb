@@ -19,6 +19,7 @@ require_relative "domain/agent_store"
 require_relative "domain/visibility"
 require_relative "domain/scheduler"
 require_relative "domain/skill_discovery"
+require_relative "domain/onboarding"
 require_relative "ui/components/chat_composer"
 require_relative "ui/components/inquiry_form"
 require_relative "ui/components/agent_chat_form"
@@ -95,7 +96,10 @@ module HQ
       @agent_editor = nil
       @agent_chat_form = nil
       @project_editor = nil
-      @empty_project_onboarding_opened = false
+      @onboarding = false
+      @onboarding_options = []
+      @onboarding_selected = 0
+      @onboarding_error = nil
       @omnisearch = nil
       @delete_confirm = nil
       @clone_confirm = nil
@@ -119,7 +123,7 @@ module HQ
       load_schedules!
       HQ.log_boot_step("schedules loaded (#{@schedules.length} schedules)")
       sync_agent_chat_workspace!
-      open_empty_project_onboarding!
+      start_empty_config_onboarding!
       HQ.log_boot_step("App#initialize exit")
     end
 
@@ -156,6 +160,7 @@ module HQ
 
       return handle_omnisearch(message) if omnisearch_open? && message.is_a?(Bubbletea::KeyMessage)
       return open_terminal_for_selected if message.is_a?(Bubbletea::KeyMessage) && message.to_s == "ctrl+g"
+      return handle_onboarding(message) if @onboarding && message.is_a?(Bubbletea::KeyMessage)
 
       return handle_delete_confirm(message) if @delete_confirm
       return handle_clone_confirm(message) if @clone_confirm
@@ -197,6 +202,7 @@ module HQ
       return clone_confirm_view if @clone_confirm
       return project_archive_confirm_view if @project_archive_confirm
       return config_error_view if @config_error
+      return onboarding_view if @onboarding
       return loading_screen_view if @loading && @last_refresh.nil?
       return detail_full_view if @viewing_detail
 
@@ -281,6 +287,98 @@ module HQ
       [self, nil]
     end
 
+    def handle_onboarding(message)
+      case message.to_s
+      when "ctrl+c"
+        [self, Bubbletea.quit]
+      when "q"
+        [self, Bubbletea.quit]
+      when "j", "down", "tab", "right"
+        move_onboarding_selection(1)
+      when "k", "up", "shift+tab", "left"
+        move_onboarding_selection(-1)
+      when "enter", " "
+        run_onboarding_option
+      when "w"
+        run_onboarding_option(:welcome)
+      when "c"
+        run_onboarding_option(:current_directory)
+      when "a", "n"
+        run_onboarding_option(:add_project)
+      else
+        [self, nil]
+      end
+    end
+
+    def move_onboarding_selection(delta)
+      return [self, nil] if @onboarding_options.empty?
+
+      @onboarding_selected = (@onboarding_selected + delta) % @onboarding_options.length
+      [self, nil]
+    end
+
+    def run_onboarding_option(key = nil)
+      option = if key
+                 @onboarding_options.find { |item| item[:key] == key }
+               else
+                 @onboarding_options[@onboarding_selected]
+               end
+      return [self, nil] unless option
+
+      case option[:key]
+      when :welcome
+        create_onboarding_welcome_project
+      when :current_directory
+        create_onboarding_current_directory_project(option[:candidate])
+      when :add_project
+        @onboarding = false
+        @screen = :projects
+        open_project_editor(force: true)
+      else
+        [self, nil]
+      end
+    end
+
+    def create_onboarding_welcome_project
+      attrs = Onboarding.welcome_project_attrs(agent: HQ.harness_keys.first)
+      create_onboarding_project(attrs, success_message: "Created welcome sandbox")
+    end
+
+    def create_onboarding_current_directory_project(candidate)
+      return [self, nil] unless candidate
+
+      attrs = {
+        key: candidate[:key],
+        name: candidate[:name],
+        path: candidate[:path],
+        apps: candidate[:apps],
+        agent: HQ.harness_keys.first
+      }
+      create_onboarding_project(attrs, success_message: "Created project from current directory")
+    end
+
+    def create_onboarding_project(attrs, success_message:)
+      @registry.add_project!(attrs)
+      load_registry!
+      reload_hooks!
+      @agent_store = AgentStore.new(@all_projects)
+      load_agents!
+      @selected[:projects] = @projects.index { |project| project.key == attrs[:key] } || 0
+      @screen = :projects
+      @onboarding = false
+      @onboarding_error = nil
+      close_sidebar!
+      HQ.logger.info("Project") { "#{success_message}: #{attrs[:key]}" }
+      refresh_project_async!(attrs[:key])
+      [self, nil]
+    rescue ConfigError => e
+      @onboarding_error = e.message
+      [self, nil]
+    rescue StandardError => e
+      @onboarding_error = "Could not create project: #{e.message}"
+      [self, nil]
+    end
+
     def load_registry!
       retried_missing_config = false
       begin
@@ -328,14 +426,43 @@ module HQ
       false
     end
 
-    def open_empty_project_onboarding!
+    def start_empty_config_onboarding!
       return if @config_error
       return unless @all_projects.empty?
-      return if @empty_project_onboarding_opened
 
-      @empty_project_onboarding_opened = true
+      close_sidebar!
+      @onboarding = true
+      @onboarding_error = nil
+      @onboarding_selected = 0
+      refresh_onboarding_options!
       @screen = :projects
-      open_project_editor(force: true)
+    end
+
+    def refresh_onboarding_options!
+      options = [
+        {
+          key: :welcome,
+          title: "Create Welcome Sandbox",
+          detail: "Safe local workspace at #{Onboarding.welcome_workspace_path}"
+        }
+      ]
+
+      if (candidate = Onboarding.current_directory_candidate)
+        options << {
+          key: :current_directory,
+          title: "Use Current Directory",
+          detail: "#{candidate[:kind]} at #{candidate[:path]}",
+          candidate: candidate
+        }
+      end
+
+      options << {
+        key: :add_project,
+        title: "Add Local Project",
+        detail: "Choose a project folder and let Tycho detect app support"
+      }
+      @onboarding_options = options
+      @onboarding_selected = clamp_selection(@onboarding_selected, @onboarding_options.length)
     end
 
     def reload_registry_if_changed!

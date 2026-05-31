@@ -83,6 +83,7 @@ module HQ
       entry = { "key" => key, "name" => attrs[:name].to_s }
       entry["group"] = attrs[:group].to_s unless attrs[:group].to_s.strip.empty?
       entry["path"] = attrs[:path].to_s
+      entry["apps"] = attrs[:apps] == true unless attrs[:apps].nil?
       entry["agent"] = attrs[:agent].to_s unless attrs[:agent].to_s.strip.empty?
 
       group = entry["group"].to_s

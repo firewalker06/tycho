@@ -32,6 +32,8 @@ module HQ
   USER_CONFIG_DIR = File.expand_path(env_present("CONFIG_DIR", File.join(TYCHO_HOME, "config")))
   USER_SCHEDULES_DIR = File.expand_path(env_present("SCHEDULES_ROOT", File.join(TYCHO_HOME, "schedules")))
   USER_LOGS_DIR = File.expand_path(env_present("LOGS_ROOT", File.join(TYCHO_HOME, "logs")))
+  USER_WORKSPACES_DIR = File.join(TYCHO_HOME, "workspaces")
+  WELCOME_WORKSPACE_DIR = File.join(USER_WORKSPACES_DIR, "welcome")
   BUNDLED_CONFIG_DIR = File.join(ROOT_DIR, "config")
 
   def self.default_config_path
@@ -84,6 +86,7 @@ module HQ
 
   FileUtils.mkdir_p(LOGS_DIR)
   FileUtils.mkdir_p(USER_SCHEDULES_DIR)
+  FileUtils.mkdir_p(USER_WORKSPACES_DIR)
   FileUtils.mkdir_p(PROJECT_LOGS_DIR)
   FileUtils.mkdir_p(PROJECT_ARCHIVE_DIR)
   FileUtils.mkdir_p(AGENT_LOGS_DIR)
