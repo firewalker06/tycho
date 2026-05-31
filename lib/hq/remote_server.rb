@@ -264,6 +264,8 @@ module HQ
         ui_asset("application/manifest+json; charset=utf-8", RemoteUI.manifest_json)
       when "/remote-logo.png", "/favicon.png", "/favicon.ico"
         ui_asset("image/png", RemoteUI.png_asset("remote-logo"))
+      when "/remote-logo-horizontal.png"
+        ui_asset("image/png", RemoteUI.png_asset("remote-logo-horizontal"))
       when "/apple-touch-icon.png"
         ui_asset("image/png", RemoteUI.png_asset("apple-touch-icon"))
       when "/pwa-icon-192.png"
@@ -293,6 +295,7 @@ module HQ
         "/service-worker.js",
         "/manifest.webmanifest",
         "/remote-logo.png",
+        "/remote-logo-horizontal.png",
         "/apple-touch-icon.png",
         "/pwa-icon-192.png",
         "/pwa-icon-512.png",

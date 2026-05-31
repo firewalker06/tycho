@@ -1864,6 +1864,10 @@ module RemoteServerTest
     assert(logo[:content_type].include?("image/png"), "expected Remote UI logo route to return PNG")
     assert(logo[:body].bytesize.positive?, "expected Remote UI logo route to return image bytes")
 
+    horizontal_logo = server.send(:route_ui, "/remote-logo-horizontal.png")
+    assert(horizontal_logo[:content_type].include?("image/png"), "expected Remote UI horizontal logo route to return PNG")
+    assert(horizontal_logo[:body].bytesize.positive?, "expected Remote UI horizontal logo route to return image bytes")
+
     manifest_request = HQ::RemoteServer.const_get(:Request).new(
       method: "GET",
       path: "/manifest.webmanifest",

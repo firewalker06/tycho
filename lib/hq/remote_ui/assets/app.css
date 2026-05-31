@@ -687,8 +687,8 @@ select {
 
 .onboarding-panel {
   display: grid;
-  width: min(100%, 440px);
-  gap: 12px;
+  width: min(100%, 520px);
+  gap: 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel);
@@ -697,9 +697,16 @@ select {
 }
 
 .onboarding-logo {
+  justify-self: center;
   width: 48px;
   height: 48px;
   border-radius: 8px;
+}
+
+.onboarding-logo-horizontal {
+  width: min(100%, 304px);
+  height: auto;
+  border-radius: 0;
 }
 
 .eyebrow {
@@ -721,15 +728,53 @@ select {
   color: var(--accent);
 }
 
-.onboarding-actions,
-.onboarding-facts {
+.onboarding-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  justify-content: center;
 }
 
 .onboarding-actions {
   margin-top: 4px;
+}
+
+.onboarding-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--info) 38%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--info) 7%, transparent);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 10px 12px;
+}
+
+.onboarding-info .ui-icon,
+.onboarding-hint .ui-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--info);
+}
+
+.onboarding-info code {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.onboarding-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: color-mix(in srgb, var(--muted) 82%, transparent);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .summary-card.attention {

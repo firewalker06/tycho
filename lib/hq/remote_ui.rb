@@ -11,6 +11,7 @@ module HQ
     CSS_PATH = File.join(ROOT, "assets", "app.css")
     JS_PATH = File.join(ROOT, "assets", "app.js")
     LOGO_PATH = File.join(ROOT, "assets", "tycho-logo.png")
+    HORIZONTAL_LOGO_PATH = File.join(ROOT, "assets", "tycho-logo-horizontal.png")
     APPLE_TOUCH_ICON_PATH = File.join(ROOT, "assets", "apple-touch-icon.png")
     PWA_ICON_192_PATH = File.join(ROOT, "assets", "pwa-icon-192.png")
     PWA_ICON_512_PATH = File.join(ROOT, "assets", "pwa-icon-512.png")
@@ -18,6 +19,7 @@ module HQ
     SERVICE_WORKER_PATH = File.join(ROOT, "assets", "service-worker.js")
     PNG_ASSETS = {
       "remote-logo" => LOGO_PATH,
+      "remote-logo-horizontal" => HORIZONTAL_LOGO_PATH,
       "apple-touch-icon" => APPLE_TOUCH_ICON_PATH,
       "pwa-icon-192" => PWA_ICON_192_PATH,
       "pwa-icon-512" => PWA_ICON_512_PATH,
