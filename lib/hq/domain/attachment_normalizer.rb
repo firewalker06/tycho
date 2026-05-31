@@ -272,16 +272,19 @@ module HQ
       end
 
       def dedupe(attachments)
-        by_key = {}
+        seen = {}
+        deduped = []
         attachments.each do |attachment|
           key = [
             attachment["type"],
-            attachment["type"] == "link" ? attachment["url"] : attachment["path"],
-            attachment["title"]
+            attachment["type"] == "link" ? attachment["url"] : attachment["path"]
           ]
-          by_key[key] = attachment
+          next if seen[key]
+
+          seen[key] = true
+          deduped << attachment
         end
-        by_key.values
+        deduped
       end
     end
   end

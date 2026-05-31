@@ -2,6 +2,7 @@
 
 require "tmpdir"
 require "fileutils"
+require "time"
 
 require_relative "../lib/hq/domain/managed_agent"
 
@@ -10,6 +11,8 @@ module AttachmentNormalizationTest
 
   def run!
     assert_file_and_link_attachments_are_normalized
+    assert_duplicate_attachment_targets_are_deduped
+    assert_new_attachment_records_are_prepended
     assert_legacy_kind_attachments_remain_supported
     assert_invalid_attachments_are_dropped
     puts "attachment_normalization_test: ok"
@@ -61,6 +64,106 @@ module AttachmentNormalizationTest
       assert(attachments[2]["path"] == File.join(dir, "tmp-export.jsonl"),
              "expected file:// targets to normalize to absolute paths")
       assert(!attachments[2].key?("url"), "expected file attachments not to keep file:// URLs")
+    end
+  end
+
+  def assert_duplicate_attachment_targets_are_deduped
+    Dir.mktmpdir("hq-attachment-normalization-test") do |dir|
+      FileUtils.mkdir_p(File.join(dir, "docs"))
+      notes_path = File.join(dir, "docs/project-notes.md")
+      File.write(notes_path, "# Project notes\n")
+      agent = HQ::ManagedAgent.new(
+        key: "attachment-dedup",
+        name: "Attachment Dedup",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "Test attachment deduplication",
+        agent: "claude",
+        log_path: File.join(dir, "agent.raw.log")
+      )
+
+      attachments = agent.send(
+        :normalize_attachments,
+        [
+          {
+            "type" => "file",
+            "title" => "Project notes",
+            "path" => "docs/project-notes.md"
+          },
+          {
+            "type" => "file",
+            "title" => "Renamed project notes",
+            "path" => notes_path
+          },
+          {
+            "type" => "link",
+            "title" => "Implementation PR",
+            "url" => "https://github.com/example/web/pull/123"
+          },
+          {
+            "type" => "link",
+            "title" => "Renamed implementation PR",
+            "url" => "https://github.com/example/web/pull/123"
+          }
+        ]
+      )
+
+      assert(attachments.map { |item| item["title"] } == ["Project notes", "Implementation PR"],
+             "expected identical file paths and URLs to dedupe regardless of title")
+    end
+  end
+
+  def assert_new_attachment_records_are_prepended
+    Dir.mktmpdir("hq-attachment-normalization-test") do |dir|
+      FileUtils.mkdir_p(File.join(dir, "docs"))
+      older_path = File.join(dir, "docs/older.md")
+      newer_path = File.join(dir, "docs/newer.md")
+      File.write(older_path, "# Older\n")
+      File.write(newer_path, "# Newer\n")
+      agent = HQ::ManagedAgent.new(
+        key: "attachment-prepend",
+        name: "Attachment Prepend",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "Test attachment ordering",
+        agent: "claude",
+        log_path: File.join(dir, "agent.raw.log")
+      )
+      memory = agent.send(:memory_store)
+
+      memory.append_attachment!(
+        {
+          "type" => "file",
+          "title" => "Older notes",
+          "path" => older_path
+        },
+        created_at: Time.parse("2026-05-01 10:00:00")
+      )
+      memory.append_attachment!(
+        {
+          "type" => "file",
+          "title" => "Newer notes",
+          "path" => newer_path
+        },
+        created_at: Time.parse("2026-05-01 11:00:00")
+      )
+
+      assert(agent.attachments.map { |item| item["title"] } == ["Newer notes", "Older notes"],
+             "expected newly added attachment records to appear first")
+
+      memory.append_attachment!(
+        {
+          "type" => "file",
+          "title" => "Renamed older notes",
+          "path" => older_path
+        },
+        created_at: Time.parse("2026-05-01 12:00:00")
+      )
+
+      assert(agent.attachments.map { |item| item["title"] } == ["Renamed older notes", "Newer notes"],
+             "expected duplicate targets to be replaced at the front")
     end
   end
 

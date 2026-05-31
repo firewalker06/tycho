@@ -1607,10 +1607,15 @@ module RenderingTest
       agent.send(:finalize_latest_run!)
 
       attachments = agent.attachments
-      assert(attachments.map { |item| item["type"] } == %w[link file file],
+      assert(attachments.map { |item| item["type"] } == %w[file file link],
              "expected attachment types to normalize for compact rendering, got #{attachments.inspect}")
-      assert(attachments.map { |item| item["kind"] } == %w[link document image],
+      assert(attachments.map { |item| item["kind"] } == %w[image document link],
              "expected attachment kinds to normalize for compact rendering, got #{attachments.inspect}")
+      assert(attachments.map { |item| item["title"] } == [
+        "Infographic for a plan",
+        "Plan for attachment feature",
+        "PR #1234: bugfixing some log"
+      ], "expected compact attachments to render newest first")
       assert(attachments.map { |item| item["title"] }.include?("PR #1234: bugfixing some log"),
              "expected PR attachment title to persist")
       assert(File.exist?(agent.attachments_path), "expected attachments to persist outside rebuildable memory")
