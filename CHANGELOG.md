@@ -4,6 +4,20 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.3.0 - 2026-05-31
+
+- Add first-run onboarding for pristine installs, including TUI and Remote UI
+  welcome sandbox creation under `~/.tycho/workspaces/welcome`.
+- Simplify the Remote UI around `Now`, `Agents`, and `Settings`, with project
+  and agent filtering consolidated into the Agents workspace.
+- Add Remote UI bulk archive for idle agents and keep zero-agent projects
+  reachable for first-agent creation.
+- Improve Remote UI agent messages and summaries with markdown rendering,
+  better iPad/PWA header spacing, and safe-area handling.
+- Add clipboard paste uploads for Remote UI prompt attachments.
+- Dedupe attachments by normalized URL or file path and show newly added
+  attachments first.
+
 ## 0.2.1 - 2026-05-29
 
 - Add a Remote UI attachment navigation drawer.

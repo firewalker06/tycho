@@ -61,11 +61,11 @@ Key references:
 
 ## Current Focus
 
-**v0.2.0 release**: Tycho's current release focus is packaging the Remote UI
-schedule controls, hidden project visibility, attachment management, README
-screenshots, and Tycho-branded CLI/TUI loading screen. After release, the next
-focus is stabilizing these public workflows through Homebrew install checks and
-browser/TUI smoke verification.
+**v0.3.0 release**: Tycho's current release focus is packaging first-run
+onboarding, the simplified Remote UI agent workspace, clipboard attachment
+uploads, and attachment dedupe/prepend behavior. After release, the next focus is
+stabilizing install/update paths through Homebrew checks and browser/TUI smoke
+verification.
 
 ## Roadmap
 
