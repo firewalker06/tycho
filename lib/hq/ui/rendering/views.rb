@@ -61,6 +61,50 @@ module HQ
           TYCHO_LOGOTYPE_LINES.map { |line| pad_visible(line, 43) }.join("\n")
         end
 
+        def onboarding_view
+          dialog_width = [[@window_width - 10, 76].min, 50].max
+          inner_width = [dialog_width - 4, 20].max
+          subtitle = "Each session with coding agent lives inside a project workspace."
+
+          option_lines = @onboarding_options.map.with_index do |option, index|
+            selected = index == @onboarding_selected
+            marker = selected ? Styles::MARKERS[:cursor] : " "
+            shortcut = onboarding_option_shortcut(option[:key])
+            title = "#{marker} #{shortcut} #{option[:title]}"
+            detail = Bubbles::ANSI.cut_string(option[:detail].to_s, 0, [inner_width - 4, 12].max)
+            line = "#{title}\n    #{dim_style.render(detail)}"
+            selected ? selected_style.render(line) : line
+          end
+
+          body_parts = [
+            loading_logotype,
+            "",
+            fancy_list_title_style.render("Coding agent orchestrations using your own harness"),
+            dim_style.width(inner_width).render(subtitle),
+            "",
+            *option_lines
+          ]
+          if @onboarding_error
+            body_parts << ""
+            body_parts << fail_style.render(Bubbles::ANSI.cut_string(@onboarding_error, 0, inner_width))
+          end
+          body_parts << ""
+          body_parts << dim_style.render("j/k: move  #{Styles::MARKERS[:bullet_sep]}  enter: choose  #{Styles::MARKERS[:bullet_sep]}  q: quit")
+
+          body = Lipgloss.join_vertical(:left, *body_parts)
+          dialog = loading_dialog_style(dialog_width).render(body)
+          Lipgloss.place(@window_width, @window_height, :center, :center, dialog)
+        end
+
+        def onboarding_option_shortcut(key)
+          case key
+          when :welcome then "[w]"
+          when :current_directory then "[c]"
+          when :add_project then "[a]"
+          else "[ ]"
+          end
+        end
+
         def config_error_view
           [
             title_style.render("Tycho - Ops Cockpit"),

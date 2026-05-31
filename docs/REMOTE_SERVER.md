@@ -279,6 +279,7 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `GET` | `/attachments/{id}` | Read normalized attachment metadata and inline preview content when available. |
 | `GET` | `/attachments/{id}/blob` | Stream the attachment file bytes for image and binary previews. |
 | `GET` | `/setup` | Read Remote UI readiness, auth, Tailscale, config, log, and refresh metadata. |
+| `POST` | `/setup/welcome` | Create the first-run welcome sandbox project under `~/.tycho/workspaces/welcome`. |
 | `GET` | `/search` | Return agent and project payloads for compatibility with older client-side search flows. |
 | `GET` | `/`, `/ui`, `/ui.css`, `/ui.js` | Serve the Remote UI. `/ui` remains a compatibility alias. |
 | `GET` | `/favicon.svg`, `/favicon.ico` | Serve the Remote UI favicon. |
@@ -721,6 +722,15 @@ Discovers skills for the project workspace and agent harness, reusing `HQ::Skill
 ### `GET /setup`
 
 Returns Remote UI readiness metadata: local URL, public Tailscale/MagicDNS URL, auth state, counts, harness readiness, schema/config readiness, log/storage summary, refresh intervals, and safety defaults.
+
+When no projects are configured, the payload includes onboarding metadata so the
+Remote UI can render a first-run screen without the normal header or footer.
+
+### `POST /setup/welcome`
+
+Creates the first-run welcome sandbox at `~/.tycho/workspaces/welcome`, appends a
+`welcome` project to `hq.yml`, and returns the project detail payload. This route
+is only available before any project is configured.
 
 ### `GET /search`
 

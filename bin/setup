@@ -166,6 +166,10 @@ tycho_schedules_dir() {
   printf '%s\n' "${configured:-$(tycho_home_dir)/schedules}"
 }
 
+tycho_workspaces_dir() {
+  printf '%s\n' "$(tycho_home_dir)/workspaces"
+}
+
 is_executable() {
   local command_name="$1"
   if [[ -z "$command_name" ]]; then
@@ -514,16 +518,19 @@ main() {
   check_native_build_tools
 
   info "Checking config files"
-  local logs_dir schedules_dir
+  local logs_dir schedules_dir workspaces_dir
   logs_dir="$(tycho_logs_dir)"
   schedules_dir="$(tycho_schedules_dir)"
+  workspaces_dir="$(tycho_workspaces_dir)"
   if [[ "$CHECK_ONLY" -eq 1 ]]; then
     [[ -d "$logs_dir" ]] || warn "Runtime logs directory is missing; setup would create $logs_dir"
     [[ -d "$schedules_dir" ]] || warn "Schedule prompt directory is missing; setup would create $schedules_dir"
+    [[ -d "$workspaces_dir" ]] || warn "Sandbox workspaces directory is missing; setup would create $workspaces_dir"
   else
-    mkdir -p "$logs_dir" "$schedules_dir"
+    mkdir -p "$logs_dir" "$schedules_dir" "$workspaces_dir"
     ok "Runtime logs directory ready: $logs_dir"
     ok "Schedule prompt directory ready: $schedules_dir"
+    ok "Sandbox workspaces directory ready: $workspaces_dir"
   fi
   ensure_config_file "$(tycho_config_path)" "$ROOT_DIR/config/hq.yml.example"
   ensure_config_file "$(tycho_system_prompts_path)" "$ROOT_DIR/config/system_prompts.yml.example"

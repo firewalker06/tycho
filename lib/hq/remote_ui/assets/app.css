@@ -580,6 +580,14 @@ select {
   padding-bottom: 16px;
 }
 
+.content.onboarding-content {
+  display: grid;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 18px;
+  place-items: center;
+}
+
 .content.detail-page {
   padding-top: calc(var(--detail-header-height, 64px) + 12px);
 }
@@ -669,6 +677,109 @@ select {
   display: grid;
   gap: 10px;
   padding: 12px;
+}
+
+.onboarding-page {
+  display: grid;
+  width: 100%;
+  place-items: center;
+}
+
+.onboarding-panel {
+  display: grid;
+  width: min(100%, 520px);
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 30px;
+}
+
+.onboarding-logo {
+  justify-self: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+}
+
+.onboarding-logo-horizontal {
+  width: min(100%, 304px);
+  height: auto;
+  border-radius: 0;
+  margin-bottom: 32px;
+}
+
+.eyebrow {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.onboarding-panel h1 {
+  font-size: 28px;
+  line-height: 1.16;
+  margin: 0;
+}
+
+.onboarding-panel > p:not(.onboarding-hint) {
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.5;
+  margin: 18px 0 0;
+}
+
+.onboarding-panel > p.eyebrow {
+  color: var(--accent);
+}
+
+.onboarding-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.onboarding-actions {
+  margin-top: 28px;
+}
+
+.onboarding-workspace {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  margin-top: 30px;
+}
+
+.onboarding-hint .ui-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--info);
+}
+
+.onboarding-workspace code {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.onboarding-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 32px 0 0;
+  color: color-mix(in srgb, var(--muted) 82%, transparent);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .summary-card.attention {

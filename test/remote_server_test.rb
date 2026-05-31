@@ -25,6 +25,7 @@ module RemoteServerTest
     assert_remote_hidden_settings_filter_projects_and_agents
     assert_remote_schedule_routes
     assert_remote_setup_payload_includes_readiness
+    assert_remote_welcome_onboarding_creates_project
     assert_remote_setup_warns_when_public_url_has_no_token
     assert_remote_server_restart_route_schedules_restart
     assert_server_detects_unauthenticated_non_loopback_bind
@@ -893,6 +894,37 @@ module RemoteServerTest
              "expected setup auth warning to mention TYCHO_REMOTE_TOKEN")
       assert(setup[:safety].any? { |line| line.include?("TYCHO_REMOTE_TOKEN") },
              "expected setup safety guidance to mention TYCHO_REMOTE_TOKEN")
+    end
+  end
+
+  def assert_remote_welcome_onboarding_creates_project
+    with_remote_temp_store do |dir|
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      welcome_path = File.join(dir, "workspaces", "welcome")
+      old_welcome_path = replace_constant(HQ, :WELCOME_WORKSPACE_DIR, welcome_path)
+      File.write(config_path, "projects: []\n")
+      File.write(prompts_path, "custom: Default prompt.\n")
+      registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
+      service = HQ::RemoteService.new(registry: registry)
+
+      setup = service.setup
+      assert(setup.dig(:onboarding, :active) == true, "expected setup payload to mark onboarding active")
+      assert(setup.dig(:onboarding, :welcome_workspace_path) == welcome_path,
+             "expected setup payload to expose welcome workspace path")
+
+      project = service.create_welcome_project
+      persisted = YAML.safe_load(File.read(config_path), permitted_classes: [Symbol], aliases: true)
+      entry = persisted["projects"].first
+
+      assert(project[:key] == "welcome", "expected welcome project payload")
+      assert(entry["key"] == "welcome", "expected welcome project to persist")
+      assert(entry["path"] == welcome_path, "expected persisted welcome workspace path")
+      assert(entry["apps"] == false, "expected welcome project to disable app checks")
+      assert(File.exist?(File.join(welcome_path, "README.md")), "expected welcome README")
+      assert(service.setup.dig(:onboarding, :active) == false, "expected onboarding to finish after project creation")
+    ensure
+      replace_constant(HQ, :WELCOME_WORKSPACE_DIR, old_welcome_path) if old_welcome_path
     end
   end
 
@@ -1831,6 +1863,10 @@ module RemoteServerTest
     logo = server.send(:route_ui, "/remote-logo.png")
     assert(logo[:content_type].include?("image/png"), "expected Remote UI logo route to return PNG")
     assert(logo[:body].bytesize.positive?, "expected Remote UI logo route to return image bytes")
+
+    horizontal_logo = server.send(:route_ui, "/remote-logo-horizontal.png")
+    assert(horizontal_logo[:content_type].include?("image/png"), "expected Remote UI horizontal logo route to return PNG")
+    assert(horizontal_logo[:body].bytesize.positive?, "expected Remote UI horizontal logo route to return image bytes")
 
     manifest_request = HQ::RemoteServer.const_get(:Request).new(
       method: "GET",

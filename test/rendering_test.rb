@@ -38,7 +38,8 @@ module RenderingTest
     assert_main_screen_keeps_header_visible
     assert_loading_screen_renders_tycho_logotype
     assert_app_boot_refreshes_project_metadata
-    assert_missing_config_opens_new_project_form
+    assert_missing_config_opens_onboarding_panel
+    assert_onboarding_welcome_creates_sandbox_project
     assert_concurrent_project_metadata_uses_each_dotenv
     assert_project_without_proxy_host_is_not_healthchecked
     assert_main_screen_shows_detail_panel_and_footer
@@ -237,7 +238,7 @@ module RenderingTest
     ENV["TYCHO_CONFIG_PATH"] = old_config_path
   end
 
-  def assert_missing_config_opens_new_project_form
+  def assert_missing_config_opens_onboarding_panel
     old_config_path = ENV["TYCHO_CONFIG_PATH"]
     old_system_prompts_path = ENV["TYCHO_SYSTEM_PROMPTS_PATH"]
 
@@ -253,9 +254,47 @@ module RenderingTest
       assert(config["projects"] == [], "expected created project config to contain an empty projects list")
       assert(app.instance_variable_get(:@projects).empty?, "expected no projects to load from empty config")
       assert(app.instance_variable_get(:@screen) == :projects, "expected empty config boot to select Projects")
-      assert(app.instance_variable_get(:@sidebar)&.fetch(:kind) == :project_editor,
-             "expected empty config boot to open the project editor")
-      assert(app.instance_variable_get(:@project_editor), "expected project editor instance to be initialized")
+      assert(app.instance_variable_get(:@onboarding), "expected empty config boot to enter onboarding")
+      plain = Bubbles::ANSI.strip(app.view)
+      assert(plain.include?("Coding agent orchestrations using your own harness"), "expected onboarding panel title")
+      assert(plain.include?("Each session with coding agent lives inside a project workspace."),
+             "expected onboarding panel subtitle")
+      assert(plain.include?("Create Welcome Sandbox"), "expected onboarding panel to offer welcome sandbox")
+    end
+  ensure
+    ENV["TYCHO_CONFIG_PATH"] = old_config_path
+    if old_system_prompts_path
+      ENV["TYCHO_SYSTEM_PROMPTS_PATH"] = old_system_prompts_path
+    else
+      ENV.delete("TYCHO_SYSTEM_PROMPTS_PATH")
+    end
+  end
+
+  def assert_onboarding_welcome_creates_sandbox_project
+    old_config_path = ENV["TYCHO_CONFIG_PATH"]
+    old_system_prompts_path = ENV["TYCHO_SYSTEM_PROMPTS_PATH"]
+
+    Dir.mktmpdir("hq-welcome-onboarding-test") do |dir|
+      config_path = File.join(dir, "config", "hq.yml")
+      welcome_path = File.join(dir, "workspaces", "welcome")
+      old_welcome_path = replace_constant(HQ, :WELCOME_WORKSPACE_DIR, welcome_path)
+      ENV["TYCHO_CONFIG_PATH"] = config_path
+      ENV["TYCHO_SYSTEM_PROMPTS_PATH"] = File.join(dir, "config", "system_prompts.yml")
+
+      app = HQ::App.new
+      app.update(enter_message)
+      config = YAML.load_file(config_path)
+      project = config["projects"].first
+
+      assert(project["key"] == "welcome", "expected welcome project to be persisted")
+      assert(project["path"] == welcome_path, "expected welcome project to use sandbox workspace")
+      assert(project["apps"] == false, "expected welcome project to disable app checks")
+      assert(File.exist?(File.join(welcome_path, "README.md")), "expected welcome workspace README")
+      assert(!app.instance_variable_get(:@onboarding), "expected onboarding to close after sandbox creation")
+      assert(app.instance_variable_get(:@projects).map(&:key).include?("welcome"),
+             "expected welcome project to load into the TUI")
+    ensure
+      replace_constant(HQ, :WELCOME_WORKSPACE_DIR, old_welcome_path) if old_welcome_path
     end
   ensure
     ENV["TYCHO_CONFIG_PATH"] = old_config_path
@@ -3378,6 +3417,13 @@ module RenderingTest
 
   def visible_width(text)
     Bubbles::ANSI.strip(text.to_s).gsub(/\e\]8;[^\e]*\e\\/, "").length
+  end
+
+  def replace_constant(mod, name, value)
+    old = mod.const_get(name)
+    mod.send(:remove_const, name)
+    mod.const_set(name, value)
+    old
   end
 end
 
