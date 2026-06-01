@@ -1238,9 +1238,10 @@ module HQ
 
     def dispatch_agent_push_events(events, agents:)
       totals = { events: 0, sent: 0, failed: 0, attempted: 0 }
+      unread_count = agents.count(&:unread?)
       Array(events).each do |event|
         agent = agents.find { |candidate| candidate.key == event.agent_key }
-        payload = agent && agent_push_payload(agent)
+        payload = agent && agent_push_payload(agent, unread_count: unread_count)
         next unless payload
 
         notification_id = agent_push_notification_id(agent, payload.fetch(:event))
@@ -1266,7 +1267,7 @@ module HQ
       totals
     end
 
-    def agent_push_payload(agent)
+    def agent_push_payload(agent, unread_count:)
       status = agent.status
       if status == "awaiting-input"
         event = "input_required"
@@ -1278,12 +1279,19 @@ module HQ
         return nil
       end
 
+      group_count = [unread_count.to_i, 1].max
+      body = "#{agent.name}: #{truncate(agent.last_summary, 120)}"
+      body = "#{body} (#{group_count} unread agents)" if group_count > 1
+
       {
         event: event,
         payload: {
           title: title,
-          body: "#{agent.name}: #{truncate(agent.last_summary, 120)}",
-          tag: "hq:agent:#{agent.key}:#{event}",
+          body: body,
+          tag: "hq:agents",
+          renotify: event == "input_required",
+          silent: event != "input_required",
+          badge_count: group_count,
           url: "/#agent/#{agent.key}"
         }
       }

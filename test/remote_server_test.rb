@@ -1048,6 +1048,14 @@ module RemoteServerTest
              "expected finished notification")
       assert(notifier.payloads.all? { |payload| payload[:url].start_with?("/#agent/") },
              "expected notification click URLs to target agent detail")
+      assert(notifier.payloads.all? { |payload| payload[:tag] == "hq:agents" },
+             "expected agent notifications to share a group tag")
+      assert(notifier.payloads.any? { |payload| payload[:renotify] == true && payload[:silent] == false },
+             "expected input-required notifications to renotify audibly")
+      assert(notifier.payloads.any? { |payload| payload[:silent] == true },
+             "expected finished notifications to be silent")
+      assert(notifier.payloads.all? { |payload| payload[:badge_count] == 2 },
+             "expected agent notifications to carry the unread app badge count")
       agents = service.agents
       assert(agents.find { |agent| agent[:key] == "web-agent-1" }[:unread],
              "expected finalized input-required agent to be marked unread")
@@ -1188,6 +1196,14 @@ module RemoteServerTest
            "expected service worker push fallback body to use Tycho")
     assert(service_worker[:body].include?('icon: "/pwa-icon-192.png"'),
            "expected service worker notifications to use the PWA logo icon")
+    assert(service_worker[:body].include?("payload.silent === true"),
+           "expected service worker notifications to support silent pushes")
+    assert(service_worker[:body].include?("Boolean(payload.renotify && payload.tag)"),
+           "expected service worker notifications to support grouped renotify")
+    assert(service_worker[:body].include?("syncAppBadge(payload.badge_count)"),
+           "expected service worker pushes to sync the app badge count")
+    assert(service_worker[:body].include?("setAppBadge"),
+           "expected service worker to use the Badging API when available")
 
     css = server.send(:route_ui, "/ui.css")
     assert(css[:content_type].include?("text/css"), "expected /ui.css to return CSS")
@@ -1520,6 +1536,12 @@ module RemoteServerTest
     assert(js[:body].include?("function brandLogoHtml"), "expected HQ header mark to render the Remote UI logo")
     assert(js[:body].include?("function unreadAgents"),
            "expected the Remote UI to compute unread agents for the logo popup")
+    assert(js[:body].include?("function syncAppBadge"),
+           "expected the Remote UI to sync unread agents to the PWA app badge")
+    assert(js[:body].include?("navigator.setAppBadge"),
+           "expected the Remote UI to use the Badging API when available")
+    assert(js[:body].include?("navigator.clearAppBadge"),
+           "expected the Remote UI to clear the PWA app badge when unread agents clear")
     assert(js[:body].include?("function syncPlatformClasses"),
            "expected the Remote UI to detect platform display mode classes")
     assert(js[:body].include?("navigator.standalone === true"),

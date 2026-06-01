@@ -127,9 +127,9 @@ Home-screen launches are treated as normal browser sessions, but mobile browsers
 
 The top-level mobile tabs are `Now`, `Agents`, and `Settings`. Agents is the canonical project-and-agent workspace: it filters agents and project metadata, keeps zero-agent projects reachable for first-agent creation, and links to project detail routes. Legacy `#search`, `#projects`, and `#setup` hashes are redirected to the closest surviving tab. Detail routes use hash navigation such as `#agent/{key}`, `#project/{key}`, and `#project/{key}/action/{action}`. The footer nav is fixed on top-level routes, hides while scrolling down, shows again while scrolling up, and is hidden on detail subpages.
 
-Browser push notification work is tracked in [WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.md). Push can use a Tailscale MagicDNS domain when it is served over HTTPS, preferably with Tailscale Serve or Tailscale Funnel. Plain HTTP MagicDNS URLs show a soft warning, but the UI still lets the user try enabling notifications when the browser exposes the required push APIs.
+Browser push notification work is tracked in [WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.md), and the current grouping, silent-notification, and PWA badge behavior is summarized in [WEB_PUSH_BEHAVIOR.md](./WEB_PUSH_BEHAVIOR.md). Push can use a Tailscale MagicDNS domain when it is served over HTTPS, preferably with Tailscale Serve or Tailscale Funnel. Plain HTTP MagicDNS URLs show a soft warning, but the UI still lets the user try enabling notifications when the browser exposes the required push APIs.
 
-The Remote server polls managed-agent state while it is running and sends one push notification when an agent requires response or finishes. Agent notification clicks open `/#agent/{key}`.
+The Remote server polls managed-agent state while it is running and sends one push notification when an agent requires response or finishes. Agent notifications share the `hq:agents` browser notification tag so repeated agent updates replace the previous Tycho agent notification instead of piling up; input-required notifications renotify audibly, while routine finish notifications are marked silent. Agent payloads also carry the current unread-agent count so browsers with the Badging API can show the count on the installed PWA app icon. Agent notification clicks open `/#agent/{key}`.
 
 Use `.env.sample` as the template for local runtime environment values such as `TYCHO_WEB_PUSH_VAPID_SUBJECT`. Real `.env` files are gitignored, and `tycho serve` loads `.env` automatically on startup. Values already set in the process environment take precedence over `.env`; public runtime overrides use the `TYCHO_*` prefix.
 
@@ -644,7 +644,7 @@ Disables one browser push subscription by endpoint:
 
 ### `POST /push/test`
 
-Sends a test notification to an enabled subscription. Automatic agent-transition notifications are sent by the Remote server poll loop and de-duplicated in `~/.tycho/logs/push_notifications.json`.
+Sends a test notification to an enabled subscription. Automatic agent-transition notifications are sent by the Remote server poll loop, de-duplicated in `~/.tycho/logs/push_notifications.json`, grouped through a shared notification tag, and mirrored to the installed-app badge when the browser exposes the Badging API.
 
 ```json
 {
