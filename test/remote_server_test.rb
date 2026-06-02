@@ -25,6 +25,7 @@ module RemoteServerTest
     assert_remote_hidden_settings_filter_projects_and_agents
     assert_remote_schedule_routes
     assert_remote_setup_payload_includes_readiness
+    assert_remote_setup_uses_shared_executable_resolution
     assert_remote_welcome_onboarding_creates_project
     assert_remote_setup_warns_when_public_url_has_no_token
     assert_remote_server_restart_route_schedules_restart
@@ -885,11 +886,50 @@ module RemoteServerTest
       assert(setup.dig(:counts, :archived_projects) == 1, "expected archived project count")
       assert(setup[:harnesses].map { |item| item[:name] }.sort == %w[claude claude-wrapper codex],
              "expected harness readiness entries")
-      assert(setup[:tools].map { |item| item[:name] }.sort == %w[kamal mise tailscale],
+      assert(setup[:tools].map { |item| item[:name] }.sort == %w[kamal kamal-projects mise tailscale],
              "expected optional tool readiness entries")
       assert(setup.dig(:schema, :valid) == true, "expected valid result schema")
       assert(setup.dig(:config, :prompt_template_count) == 1, "expected prompt template count")
       assert(setup[:safety].any? { |line| line.include?("confirmation") }, "expected safety defaults")
+    end
+  end
+
+  def assert_remote_setup_uses_shared_executable_resolution
+    with_remote_temp_store do |dir|
+      home = File.join(dir, "home")
+      empty_path = File.join(dir, "empty-bin")
+      workspace = File.join(dir, "workspace")
+      %w[claude codex mise].each do |command|
+        write_test_executable(File.join(home, ".local", "bin", command))
+      end
+      FileUtils.mkdir_p(empty_path)
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace, apps: true)
+
+      with_env_values(
+        "HOME" => home,
+        "PATH" => empty_path,
+        "TYCHO_CLAUDE_BIN" => nil,
+        "TYCHO_CODEX_BIN" => nil,
+        "TYCHO_MISE_BIN" => nil
+      ) do
+        setup = HQ::RemoteService.new(registry: registry).setup
+        codex = setup[:harnesses].find { |item| item[:name] == "codex" }
+        claude = setup[:harnesses].find { |item| item[:name] == "claude" }
+        mise = setup[:tools].find { |item| item[:name] == "mise" }
+        global_kamal = setup[:tools].find { |item| item[:name] == "kamal" }
+        project_kamal = setup[:tools].find { |item| item[:name] == "kamal-projects" }
+
+        assert(codex[:ready] && codex[:path].end_with?("/.local/bin/codex"),
+               "expected Remote setup to find fallback Codex")
+        assert(claude[:ready] && claude[:path].end_with?("/.local/bin/claude"),
+               "expected Remote setup to find fallback Claude")
+        assert(mise[:ready] && mise[:path].end_with?("/.local/bin/mise"),
+               "expected Remote setup to find fallback mise")
+        assert(!global_kamal[:ready], "expected global Kamal to remain PATH-only")
+        assert(project_kamal[:ready], "expected project-level Kamal readiness")
+        assert(project_kamal[:detail].include?("1/1 app project"), "expected project Kamal count detail")
+      end
     end
   end
 
@@ -2176,6 +2216,29 @@ module RemoteServerTest
           kamal (2.6.1)
           rails (7.2.2)
     LOCK
+  end
+
+  def write_test_executable(path)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, "#!/bin/sh\nexit 0\n")
+    File.chmod(0o755, path)
+  end
+
+  def with_env_values(values)
+    old_values = {}
+    had_keys = {}
+    values.each_key do |key|
+      had_keys[key] = ENV.key?(key)
+      old_values[key] = ENV[key]
+    end
+    values.each do |key, value|
+      value.nil? ? ENV.delete(key) : ENV[key] = value
+    end
+    yield
+  ensure
+    values.each_key do |key|
+      had_keys[key] ? ENV[key] = old_values[key] : ENV.delete(key)
+    end
   end
 
   def write_archived_config(dir)

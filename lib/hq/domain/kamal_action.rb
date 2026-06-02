@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "constants"
+require_relative "executable_resolver"
 require_relative "log_paths"
 require_relative "process_liveness"
 
@@ -113,18 +114,32 @@ module HQ
       }[action.to_sym]
     end
 
+    def self.project_ready?(project_path)
+      !project_readiness_source(project_path).to_s.empty?
+    end
+
+    def self.project_readiness_source(project_path)
+      path = project_path.to_s
+      return nil if path.empty?
+
+      binstub = File.join(path, "bin", "kamal")
+      return "bin/kamal" if File.executable?(binstub)
+
+      lockfile = File.join(path, "Gemfile.lock")
+      return "Gemfile.lock" if File.file?(lockfile) && File.read(lockfile).match?(/^    kamal \(/)
+
+      gemfile = File.join(path, "Gemfile")
+      return "Gemfile" if File.file?(gemfile) && File.read(gemfile).match?(/gem ["']kamal["']/)
+
+      nil
+    rescue StandardError
+      nil
+    end
+
     private
 
     def mise_executable
-      configured = HQ.env_present("MISE_BIN", "").to_s.strip
-      return configured unless configured.empty?
-
-      candidates = [
-        File.join(Dir.home, ".local", "bin", "mise"),
-        "/opt/homebrew/bin/mise",
-        "/usr/local/bin/mise"
-      ]
-      candidates.find { |path| File.executable?(path) } || "mise"
+      ExecutableResolver.command_for_tool("mise")
     end
 
     def action_exit_success?

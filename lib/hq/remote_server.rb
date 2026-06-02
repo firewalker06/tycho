@@ -15,6 +15,7 @@ require_relative "domain/attachment_normalizer"
 require_relative "domain/agent_attachment_store"
 require_relative "domain/agent_chat_log"
 require_relative "domain/agent_store"
+require_relative "domain/executable_resolver"
 require_relative "domain/kamal_action"
 require_relative "domain/push_notification_store"
 require_relative "domain/push_subscription_store"
@@ -1517,8 +1518,8 @@ module HQ
 
     def harness_readiness
       builtins = [
-        harness_payload("codex", ["codex"]),
-        harness_payload("claude", ["claude"])
+        resolver_payload("codex", ExecutableResolver.resolve_tool("codex")),
+        resolver_payload("claude", ExecutableResolver.resolve_tool("claude"))
       ]
       custom = HQ.custom_harnesses.values.sort_by(&:key).map { |config| custom_harness_payload(config) }
       builtins + custom
@@ -1526,37 +1527,79 @@ module HQ
 
     def tool_readiness
       [
-        harness_payload("mise", ["mise"]),
-        harness_payload("kamal", ["kamal"]),
-        harness_payload("tailscale", ["tailscale"])
+        resolver_payload("mise", ExecutableResolver.resolve_tool("mise")),
+        resolver_payload("kamal", ExecutableResolver.resolve("kamal")),
+        kamal_project_payload,
+        resolver_payload("tailscale", ExecutableResolver.resolve_tool("tailscale"))
       ]
     end
 
-    def harness_payload(name, commands)
-      missing = commands.reject { |command| executable_path(command) }
+    def resolver_payload(name, resolution)
       {
         name: name,
-        ready: missing.empty?,
-        detail: missing.empty? ? "available on PATH" : "missing #{missing.join(", ")}",
-        commands: commands
+        ready: resolution.available?,
+        detail: resolution.available? ? executable_detail(resolution) : "missing #{resolution.command}",
+        commands: [resolution.command],
+        path: resolution.path,
+        source: resolution.source
       }
     end
 
     def custom_harness_payload(config)
       command = readiness_command_for(config.command_parts)
-      available = command && executable_path(command)
+      resolution = command ? ExecutableResolver.resolve(command) : nil
+      available = resolution&.available?
       detail = if available
-                 "adapter #{config.adapter}; #{command} available on PATH"
+                 "adapter #{config.adapter}; #{command} #{executable_detail(resolution)}"
                else
                  "adapter #{config.adapter}; missing #{command || "execution command"}"
                end
       {
         name: config.key,
-        ready: available ? true : false,
+        ready: resolution&.available? ? true : false,
         detail: detail,
         commands: config.command_parts,
-        adapter: config.adapter
+        adapter: config.adapter,
+        path: resolution&.path,
+        source: resolution&.source
       }
+    end
+
+    def executable_detail(resolution)
+      case resolution.source
+      when "path"
+        "available on PATH: #{resolution.path}"
+      else
+        "available at #{resolution.path}"
+      end
+    end
+
+    def kamal_project_payload
+      app_projects = @projects.select(&:apps_enabled?)
+      ready_projects = app_projects.select { |project| KamalAction.project_ready?(project.path) }
+      ready = app_projects.empty? || ready_projects.length == app_projects.length
+      {
+        name: "kamal-projects",
+        ready: ready,
+        detail: kamal_project_detail(app_projects, ready_projects),
+        commands: ["bin/kamal", "bundle exec kamal"],
+        project_count: app_projects.length,
+        ready_project_count: ready_projects.length
+      }
+    end
+
+    def kamal_project_detail(app_projects, ready_projects)
+      return "no app projects configured" if app_projects.empty?
+
+      ready_count = ready_projects.length
+      total = app_projects.length
+      if ready_count == total
+        sources = ready_projects.map { |project| KamalAction.project_readiness_source(project.path) }.compact.uniq
+        return "#{ready_count}/#{total} app project(s) ready via #{sources.join(", ")}"
+      end
+      return "missing project bin/kamal or Kamal gem dependency for #{total} app project(s)" if ready_count.zero?
+
+      "#{ready_count}/#{total} app project(s) ready; #{total - ready_count} missing project Kamal"
     end
 
     def readiness_command_for(parts)
@@ -1565,15 +1608,6 @@ module HQ
       return values.first unless values.first == "env"
 
       values.drop(1).find { |value| !value.include?("=") }
-    end
-
-    def executable_path(command)
-      return command if command.include?(File::SEPARATOR) && File.file?(command) && File.executable?(command)
-
-      ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).find do |dir|
-        path = File.join(dir, command)
-        File.file?(path) && File.executable?(path)
-      end
     end
 
     def schema_readiness
