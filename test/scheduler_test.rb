@@ -179,6 +179,20 @@ module SchedulerTest
       agents = read_agents
       assert(agents.map(&:key) == [first_agent.key], "expected interactive scheduled agent to remain active")
       assert(File.exist?(first_agent.raw_log_path), "expected interactive scheduled logs to remain in place")
+
+      resume_at = Time.at((Time.now + 30).to_i)
+      reconciled = scheduler.reconcile_archived_agent!(first_agent.key, now: resume_at)
+      assert(reconciled, "expected archived interactive scheduled agent to reconcile schedule state")
+      state = store.load.fetch("weekday")
+      assert(state.last_status == "resumed", "expected archive to resume interactive schedule state")
+      assert(state.last_error.nil?, "expected archive to clear interactive skip reason")
+      assert(state.last_target_key.nil?, "expected archive to clear stale scheduled agent target")
+      assert(state.previous_target_key == first_agent.key, "expected archive to record previous scheduled agent")
+      assert(state.next_due_at == resume_at, "expected archive to requeue the schedule immediately")
+
+      HQ::AgentStore.new(projects).save([])
+      resumed = scheduler.tick(now: resume_at)
+      assert(resumed[:started] == 1, "expected next scheduler tick to start after archive reconciliation")
     end
   end
 

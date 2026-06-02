@@ -13,6 +13,7 @@ module RemoteServerTest
 
   def run!
     assert_remote_agent_lifecycle
+    assert_remote_archive_reconciles_scheduled_agent_state
     assert_remote_agent_bulk_archive
     assert_remote_agent_clone_archives_source_with_editable_name
     assert_remote_agent_payload_has_revision
@@ -83,6 +84,51 @@ module RemoteServerTest
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
       replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+    end
+  end
+
+  def assert_remote_archive_reconciles_scheduled_agent_state
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace, apps: false)
+      File.write(HQ::SCHEDULES_FILE, <<~YAML)
+        schedules:
+          - key: weekday
+            cron: "0 9 * * 1-5"
+            target:
+              type: agent
+              project_key: web
+              message: "Run maintenance."
+      YAML
+      service = HQ::RemoteService.new(registry: registry)
+      created = service.create_agent(
+        "project_key" => "web",
+        "template_key" => "custom",
+        "name" => "Scheduled Interactive Agent",
+        "prompt" => "Work remotely.",
+        "agent" => "codex"
+      )
+      state = HQ::ScheduleState.new(
+        key: "weekday",
+        enabled: true,
+        last_status: "skipped",
+        last_error: "interactive",
+        last_target_kind: "agent",
+        last_target_key: created[:key],
+        next_due_at: Time.now + 3600,
+        run_count: 1,
+        skip_count: 1
+      )
+      HQ::ScheduleStore.new.save("weekday" => state)
+
+      archived = service.archive_agent(created[:key])
+      assert(archived[:schedule_reconciled], "expected Remote archive to reconcile schedule state")
+      updated = HQ::ScheduleStore.new.load.fetch("weekday")
+      assert(updated.last_status == "resumed", "expected Remote archive to resume schedule")
+      assert(updated.last_error.nil?, "expected Remote archive to clear interactive state")
+      assert(updated.last_target_key.nil?, "expected Remote archive to clear stale target")
+      assert(updated.previous_target_key == created[:key], "expected Remote archive to keep previous target")
     end
   end
 

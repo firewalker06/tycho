@@ -998,6 +998,7 @@ module HQ
       target.start! if truthy?(attrs["start"])
 
       archive_path = source.archive_logs! if archive_source
+      schedule_reconciled = reconcile_archived_schedule_agent(source.key) if archive_source
       next_agents = current.reject { |agent| agent.key == target.key || (archive_source && agent.key == source.key) }
       next_agents.unshift(target)
       save_agents(sort_agents(next_agents))
@@ -1011,7 +1012,8 @@ module HQ
         agent: agent_payload(target),
         source_agent_key: source.key,
         archived: archive_source,
-        archive_path: archive_path
+        archive_path: archive_path,
+        schedule_reconciled: schedule_reconciled
       }.compact
     end
 
@@ -1020,12 +1022,14 @@ module HQ
       raise Error.new("Agent is running", status: 409) if target.running?
 
       archive_path = target.archive_logs!
+      schedule_reconciled = reconcile_archived_schedule_agent(target.key)
       remaining = load_all_agents.reject { |agent| agent.key == target.key }
       save_agents(remaining)
       {
         archived: true,
         agent_key: target.key,
-        archive_path: archive_path
+        archive_path: archive_path,
+        schedule_reconciled: schedule_reconciled
       }
     end
 
@@ -1052,7 +1056,11 @@ module HQ
           next
         end
 
-        archived << { agent_key: target.key, archive_path: target.archive_logs! }
+        archived << {
+          agent_key: target.key,
+          archive_path: target.archive_logs!,
+          schedule_reconciled: reconcile_archived_schedule_agent(target.key)
+        }
       rescue StandardError => e
         failed << { agent_key: key, error: e.message }
       end
@@ -1066,6 +1074,12 @@ module HQ
         failed: failed,
         archive_count: archived.length
       }
+    end
+
+    def reconcile_archived_schedule_agent(agent_key)
+      scheduler.reconcile_archived_agent!(agent_key)
+    rescue StandardError
+      false
     end
 
     private

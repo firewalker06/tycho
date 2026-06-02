@@ -1154,6 +1154,7 @@ def selected_screen_items
       return [self, nil] if agent.running?
 
       agent.archive_logs!
+      reconcile_archived_schedule_agent(agent.key)
       @agents.delete(agent)
       save_agents!
       rebuild_agent_index!
@@ -1164,6 +1165,12 @@ def selected_screen_items
                        project_key: agent.project_key,
                        name: agent.name)
       [self, nil]
+    end
+
+    def reconcile_archived_schedule_agent(agent_key)
+      Scheduler.new(registry: @registry).reconcile_archived_agent!(agent_key)
+    rescue StandardError
+      false
     end
 
     def open_cloned_agent_chat(agent)
@@ -1254,7 +1261,10 @@ def selected_screen_items
       return [self, nil] unless archived_config
 
       destination = project.archive_logs!
-      @agents_by_project[project.key].each(&:archive_logs!)
+      @agents_by_project[project.key].each do |agent|
+        agent.archive_logs!
+        reconcile_archived_schedule_agent(agent.key)
+      end
       @agents.reject! { |agent| agent.project_key == project.key }
       save_agents!
       load_registry!

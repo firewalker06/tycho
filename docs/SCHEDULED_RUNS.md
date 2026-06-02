@@ -253,7 +253,7 @@ Remote UI:
 
 Hooks:
 
-- Emit `schedule.due`, `schedule.started`, `schedule.skipped`, `schedule.failed`, `schedule.stopped`, `schedule.completed`, and `schedule.recovered`.
+- Emit `schedule.due`, `schedule.started`, `schedule.skipped`, `schedule.failed`, `schedule.stopped`, `schedule.completed`, `schedule.recovered`, `schedule.agent_archived`, and `schedule.resumed`.
 - Include `schedule_key`, `target_kind`, `target_key`, `project_key`, and timestamps.
 
 ### Implementation Order
