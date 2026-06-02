@@ -15,6 +15,7 @@ module ManagedAgentTest
     assert_start_reconciles_session_after_restart
     assert_fallback_summary_uses_assistant_message_not_tool_json
     assert_structured_output_summary_beats_later_agent_message
+    assert_claude_scalar_json_structured_output_normalizes
     assert_final_output_checklist_is_ephemeral_execution_context
     assert_agent_result_schema_describes_summary
     assert_initial_user_message_attachments_seed_memory
@@ -371,6 +372,92 @@ module ManagedAgentTest
              "structured output summary should beat later agent message, got #{summary.inspect}")
       assert(agent.structured_result&.dig("summary") == "Structured summary wins.",
              "expected StructuredOutput tool payload to populate structured_result")
+    end
+  end
+
+  def assert_claude_scalar_json_structured_output_normalizes
+    Dir.mktmpdir("hq-managed-agent-scalar-structured-test") do |dir|
+      log_path = File.join(dir, "scalar-structured.raw.log")
+      started_at = Time.parse("2026-05-12 10:15:00")
+      inquiry = {
+        "message" => "Deploy now?",
+        "fields" => [
+          {
+            "key" => "confirm",
+            "label" => "Confirm deploy",
+            "description" => "Approve the deployment.",
+            "input_type" => "boolean",
+            "required" => true,
+            "options" => nil
+          }
+        ]
+      }
+      attachments = [
+        {
+          "type" => "link",
+          "title" => "Issue 9",
+          "url" => "https://github.com/firewalker06/tycho/issues/9",
+          "description" => "StructuredOutput compatibility issue."
+        }
+      ]
+      File.open(log_path, "w") do |f|
+        f.puts "=== [#{started_at.strftime("%Y-%m-%d %H:%M:%S")}] start ==="
+        f.puts "workspace=#{dir}"
+        f.puts "prompt=Prefer scalar structured output"
+        f.puts JSON.generate(
+          "type" => "assistant",
+          "message" => {
+            "role" => "assistant",
+            "content" => [
+              {
+                "type" => "tool_use",
+                "name" => "StructuredOutput",
+                "input" => {
+                  "status" => "input_required",
+                  "summary" => "Need deploy approval.",
+                  "inquiry_json" => JSON.generate(inquiry),
+                  "attachments_json" => JSON.generate(attachments)
+                }
+              }
+            ]
+          }
+        )
+      end
+
+      agent = HQ::ManagedAgent.new(
+        key: "scalar-structured-demo",
+        name: "Scalar Structured Demo",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "Prefer scalar structured output",
+        agent: "claude",
+        started_at: started_at,
+        finished_at: started_at + 20,
+        last_exit_code: 0,
+        runs: [
+          HQ::ManagedAgent::AgentRun.new(
+            started_at: started_at,
+            finished_at: started_at + 20,
+            exit_code: 0,
+            status: "success",
+            log_path: log_path,
+            command: "claude test"
+          )
+        ],
+        log_path: log_path
+      )
+
+      summary = agent.build_summary!
+      structured = agent.structured_result
+      assert(summary == "Need deploy approval.", "expected scalar structured summary")
+      assert(structured["inquiry"]["message"] == "Deploy now?", "expected scalar inquiry JSON to normalize")
+      assert(structured["inquiry"]["fields"].first["input_type"] == "boolean",
+             "expected scalar inquiry fields to normalize")
+      assert(structured["attachments"].first["url"] == "https://github.com/firewalker06/tycho/issues/9",
+             "expected scalar attachments JSON to normalize")
+      assert(!structured.key?("inquiry_json"), "expected scalar inquiry field to be removed")
+      assert(!structured.key?("attachments_json"), "expected scalar attachments field to be removed")
     end
   end
 

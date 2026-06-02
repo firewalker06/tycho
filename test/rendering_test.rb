@@ -2731,16 +2731,17 @@ module RenderingTest
     schema = command[command.index("--json-schema") + 1]
     assert(!schema.include?("\n"), "expected compact json schema without newlines")
     parsed = JSON.parse(schema)
-    attachment_items = parsed.dig("properties", "attachments", "items")
-    attachment_type = attachment_items.dig("properties", "type")
-    assert(attachment_type["enum"] == %w[file link],
-           "expected structured output schema to expose file/link attachment types")
-    assert(attachment_items["required"].include?("path"),
-           "expected attachment schema to include a nullable path")
-    assert(attachment_items["required"].include?("url"),
-           "expected attachment schema to include a nullable URL")
+    assert(parsed["properties"].key?("inquiry_json"), "expected Claude schema to expose scalar inquiry JSON")
+    assert(parsed["properties"].key?("attachments_json"), "expected Claude schema to expose scalar attachments JSON")
+    assert(parsed.dig("properties", "inquiry_json", "type") == "string",
+           "expected Claude inquiry output to stay scalar")
+    assert(parsed.dig("properties", "attachments_json", "type") == "string",
+           "expected Claude attachments output to stay scalar")
     assert(!schema.include?('"oneOf"'), "expected structured output schema to avoid unsupported oneOf")
-    assert(parsed["required"].include?("attachments"), "expected structured output schema to require attachments")
+    assert(parsed["required"] == %w[status summary inquiry_json attachments_json],
+           "expected Claude schema to require scalar output fields")
+    assert(!parsed["properties"].key?("inquiry"), "expected Claude schema to avoid object root fields")
+    assert(!parsed["properties"].key?("attachments"), "expected Claude schema to avoid array root fields")
   end
 
   def assert_agent_session_id_persists_and_renders
