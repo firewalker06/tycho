@@ -20,7 +20,7 @@ module RemoteServerTest
     assert_remote_agent_payload_includes_attachments
     assert_remote_prompt_accepts_uploaded_attachments
     assert_remote_prompt_start_accepts_dash_prefixed_message
-    assert_remote_agent_conversation_keeps_run_summary
+    assert_remote_agent_conversation_hides_run_summary
     assert_remote_project_payloads_include_status_and_detail
     assert_remote_hidden_settings_filter_projects_and_agents
     assert_remote_schedule_routes
@@ -644,7 +644,7 @@ module RemoteServerTest
     end
   end
 
-  def assert_remote_agent_conversation_keeps_run_summary
+  def assert_remote_agent_conversation_hides_run_summary
     Dir.mktmpdir("hq-remote-test") do |dir|
       old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
       old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
@@ -665,16 +665,27 @@ module RemoteServerTest
         "agent" => "codex"
       )
       agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
-      HQ::AgentMemory.new(agent).append_run_summary!(
+      memory = HQ::AgentMemory.new(agent)
+      memory.append_assistant_message!(
+        "The normal assistant response should stay in the conversation.",
+        created_at: Time.now - 1
+      )
+      memory.append_run_summary!(
         summary: "A detailed run summary that should stay readable in the conversation.",
         status: "succeeded",
         created_at: Time.now
       )
 
-      summary = service.conversation(created[:key]).find { |block| block[:kind] == "run_summary" }
-      assert(summary, "expected Remote UI conversation payload to include the run summary")
-      assert(summary[:content].include?("A detailed run summary"),
-             "expected the full run summary to remain readable in the conversation")
+      conversation = service.conversation(created[:key])
+      summary = conversation.find { |block| block[:kind] == "run_summary" }
+      assistant = conversation.find { |block| block[:role] == "assistant" }
+      memory_summary = memory.events.find { |event| event["type"] == "run_summary" }
+
+      assert(summary.nil?, "expected Remote UI conversation payload to hide run summary blocks")
+      assert(assistant&.dig(:content)&.include?("normal assistant response"),
+             "expected normal assistant messages to remain visible in the conversation")
+      assert(memory_summary&.dig("content")&.include?("A detailed run summary"),
+             "expected run summaries to remain persisted for the Summary page")
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
@@ -1235,9 +1246,9 @@ module RemoteServerTest
            "expected Agent settings to hide edit/archive actions behind the settings panel")
     assert(css[:body].include?(".agent-form"), "expected Remote UI to style agent lifecycle forms")
     assert(css[:body].include?(".inline-icon-button"), "expected Remote UI action buttons to support SVG icons")
-    assert(css[:body].include?(".agent-summary-panel"), "expected Agent summary to render above the composer")
-    assert(css[:body].include?("max-height: min(22dvh, 160px)"),
-           "expected Agent summary to be constrained and scrollable")
+    assert(css[:body].include?(".agent-summary-viewer"), "expected Agent summary to render as a focused page")
+    assert(css[:body].include?("max-width: 72ch"),
+           "expected Agent summary text to keep a readable measure")
     assert(css[:body].include?(".inquiry-form"), "expected Remote UI to style structured inquiry forms")
     assert(css[:body].include?(".inquiry-banner"), "expected Remote UI inquiry forms to show a decision banner")
     assert(css[:body].include?(".inquiry-mark"), "expected Remote UI inquiry forms to style the inquiry icon")
@@ -1265,7 +1276,7 @@ module RemoteServerTest
     assert(css[:body].include?(".row-title .relative-time.recent"),
            "expected Remote UI to color recent list timestamps")
     assert(css[:body].include?("max-height: min(72dvh, 620px)"),
-           "expected mobile inquiry docks to leave room for the summary")
+           "expected mobile inquiry docks to stay within a compact viewport")
     assert(css[:body].include?("max-height: min(24dvh, 220px)"),
            "expected mobile inquiry fields to scroll in a compact viewport")
     assert(css[:body].include?("-webkit-line-clamp: 3"),
@@ -1289,13 +1300,13 @@ module RemoteServerTest
     assert(css[:body].include?(".message.user .message-content {\n  text-align: left;"),
            "expected user chat message text to stay readable with left alignment")
     assert(css[:body].include?(".message-content.markdown-message-content"),
-           "expected assistant and summary chat messages to render markdown with message-scoped layout")
+           "expected assistant and legacy summary chat messages to render markdown with message-scoped layout")
     assert(css[:body].include?(".message-content {\n  min-width: 0;"),
            "expected chat message content to allow markdown blocks to shrink inside the viewport")
     assert(css[:body].include?(".message-markdown-viewer"),
-           "expected assistant and summary chat markdown to have compact message styling")
-    assert(css[:body].include?(".summary-markdown-viewer"),
-           "expected Agent summary markdown to have compact dock styling")
+           "expected assistant and legacy summary chat markdown to have compact message styling")
+    assert(css[:body].include?(".agent-summary-markdown-viewer"),
+           "expected Agent summary markdown to use focused page styling")
     assert(css[:body].include?("font-weight: 700"),
            "expected chat labels to render bold")
     assert(css[:body].include?(".message-group"),
@@ -1571,22 +1582,25 @@ module RemoteServerTest
     assert(js[:body].include?('state.refreshing ? iconSvg("hourglass") : iconSvg(state.headerSubtitleIcon)'),
            "expected refresh to swap the subtitle icon without shifting the text")
     assert(js[:body].include?("function statusIcon"), "expected readiness marks to use SVG status icons")
-    assert(js[:body].include?("data-agent-summary"), "expected Agent detail to expose a docked Summary panel")
-    assert(js[:body].include?("data-preserve-scroll"),
-           "expected Agent summary scroll position to survive polling renders")
-    assert(js[:body].include?("function toggleAgentSummary"), "expected Summary to be toggleable")
+    assert(js[:body].include?("data-agent-summary-page"), "expected Agent detail to expose a focused Summary page")
+    assert(js[:body].include?("data-open-agent-summary"),
+           "expected Agent summary shortcut to navigate to the focused Summary page")
+    assert(js[:body].include?("function renderAgentSummaryView"),
+           "expected Agent summary to render as its own view")
+    assert(!js[:body].include?("function toggleAgentSummary"),
+           "expected Summary to use route navigation instead of a dock toggle")
     assert(js[:body].include?("function renderAgentSummaryToggle"),
            "expected Summary toggle markup to be shared across agent views")
     assert(js[:body].include?("function renderAgentFloatingActions"),
            "expected Agent detail floating actions to be reusable")
-    assert(js[:body].include?("function closeAgentSummary"), "expected Summary to close from outside interactions")
+    assert(!js[:body].include?("function closeAgentSummary"), "expected Summary page to avoid outside-click panel handling")
     assert(!js[:body].include?("Current activity"), "expected Current activity copy to move into Summary naming")
     assert(js[:body].include?("data-preserve-open"), "expected floating controls to preserve open state")
     assert(js[:body].include?("openElements"), "expected polling snapshots to preserve floating control state")
     assert(js[:body].include?("renderedViewHtml"),
            "expected polling renders to skip unchanged Remote UI view HTML")
     assert(js[:body].include?("scrollContainers"),
-           "expected polling snapshots to preserve summary scroll position")
+           "expected polling snapshots to preserve scroll positions for restored controls")
     assert(js[:body].include?("function syncPreservedOpenState"),
            "expected restored floating controls to update related button state")
     assert(js[:body].include?("const discovered = state.skills"),
@@ -1610,16 +1624,16 @@ module RemoteServerTest
            "expected Agent detail to scroll conversations to the recent sentinel")
     assert(js[:body].include?("function scrollAgentConversationToBottom"),
            "expected Agent detail to auto-scroll to the bottom after agent-page renders")
-    assert(js[:body].include?("preserveSummaryOnAutoScroll"),
-           "expected automatic conversation scrolling to keep Summary open")
-    assert(js[:body].include?("&& !state.preserveSummaryOnAutoScroll"),
-           "expected manual scrolling to keep closing Summary")
-    assert(js[:body].include?("openSummaryAfterAutoScroll"),
-           "expected first-open Agent detail scrolling to reopen Summary after landing at the bottom")
+    assert(!js[:body].include?("preserveSummaryOnAutoScroll"),
+           "expected Summary page routing to avoid preserving a docked Summary panel")
+    assert(!js[:body].include?("openSummaryAfterAutoScroll"),
+           "expected Agent detail scrolling to avoid reopening a docked Summary panel")
     assert(js[:body].include?("function shouldOpenSummaryForSucceededAgent"),
-           "expected Agent detail to open Summary when the active agent succeeds")
+           "expected Agent detail to open the Summary page when the active agent succeeds")
     assert(js[:body].include?("!agentSucceeded(previous) && agentSucceeded(next)"),
            "expected Summary to open only on a success transition")
+    assert(js[:body].include?('navigate({ type: "agentSummary", key: currentRoute.key });'),
+           "expected successful agent transitions to navigate to the Summary page")
     assert(js[:body].include?("conversationTailMarkers"),
            "expected Agent detail to remember the latest conversation tail marker")
     assert(js[:body].include?("function markAgentReading"),
@@ -1714,9 +1728,9 @@ module RemoteServerTest
            "expected Remote UI to render attachment detail routes")
     assert(js[:body].include?("function renderAgentAttachmentView"),
            "expected Agent detail to render attachment views without losing the composer")
-    assert(js[:body].include?("${renderAgentFloatingActions()}"),
-           "expected Agent detail attachment view to expose the Summary toggle")
-    assert(js[:body].include?("renderAgentFloatingActions({ recent: true })"),
+    assert(js[:body].include?("${renderAgentFloatingActions(agent)}"),
+           "expected Agent detail attachment view to expose the Summary page shortcut")
+    assert(js[:body].include?("renderAgentFloatingActions(agent, { recent: true })"),
            "expected Agent conversation view to keep the Go to recent shortcut")
     assert(js[:body].include?("function renderAttachmentNavigationDrawer"),
            "expected Agent detail attachment view to render a navigation drawer")
@@ -1728,6 +1742,10 @@ module RemoteServerTest
            "expected Attachment viewer markup to be reusable inside Agent detail")
     assert(js[:body].include?('return { type: "agentAttachment", key: parts[1], attachmentId: parts[3] };'),
            "expected Remote UI to support in-agent attachment routes")
+    assert(js[:body].include?('return { type: "agentSummary", key: parts[1] };'),
+           "expected Remote UI to support in-agent Summary routes")
+    assert(js[:body].include?('if (route.type === "agentSummary") return `#agent/${encodeURIComponent(route.key)}/summary`;'),
+           "expected Remote UI to generate in-agent Summary route hashes")
     assert(js[:body].include?('routeHash({ type: "agentAttachment", key: agentKey, attachmentId: id })'),
            "expected document attachments to open inside the owning Agent detail")
     assert(js[:body].include?("function formDraftRouteKey"),
@@ -1757,17 +1775,17 @@ module RemoteServerTest
     assert(js[:body].include?("function renderMarkdown"),
            "expected markdown attachments to render as markdown")
     assert(js[:body].include?("function markdownMessageBlock"),
-           "expected assistant messages and run summaries to opt into markdown rendering")
+           "expected assistant messages and legacy run summaries to opt into markdown rendering")
     assert(js[:body].include?('block?.kind === "run_summary"'),
-           "expected run summary messages to render as markdown")
+           "expected legacy run summary blocks to render as markdown if present")
     assert(js[:body].include?('block.role === "assistant"'),
            "expected assistant messages to render as markdown")
     assert(js[:body].include?("function renderAgentSummaryContent"),
            "expected Agent summary text to render as markdown")
     assert(js[:body].include?('viewerClassName: "markdown-viewer message-markdown-viewer"'),
            "expected chat markdown to use message-scoped markdown styling")
-    assert(js[:body].include?('viewerClassName: "markdown-viewer summary-markdown-viewer"'),
-           "expected Agent summary markdown to use dock-scoped markdown styling")
+    assert(js[:body].include?('viewerClassName: "markdown-viewer agent-summary-markdown-viewer"'),
+           "expected Agent summary markdown to use focused page styling")
     assert(js[:body].include?("function renderMarkdownRoute"),
            "expected markdown parser load completion to re-render active markdown routes")
     assert(!js[:body].include?("CODE_LANGUAGE_BY_EXTENSION"),
@@ -1803,7 +1821,7 @@ module RemoteServerTest
     assert(js[:body].include?("primaryConversationBlock"),
            "expected Agent detail to keep user and assistant messages visible")
     assert(js[:body].include?('block?.kind === "run_summary"'),
-           "expected Agent detail to keep run summaries visible in the conversation")
+           "expected Agent detail to keep legacy run summary rendering compatible")
     assert(js[:body].include?("<details class=\"message-group\""),
            "expected Agent detail internal groups to be collapsed by default")
     assert(js[:body].include?("iconSvg(\"squareUserRound\")"),

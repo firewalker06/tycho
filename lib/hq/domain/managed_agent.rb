@@ -69,7 +69,9 @@ module HQ
       end
     end
 
-    FINAL_OUTPUT_CHECKLIST = "Before final structured output, check whether this run created or referenced a PR, " \
+    FINAL_OUTPUT_CHECKLIST = "For `summary`, write a concise operator-facing Markdown summary of the outcome, " \
+                             "key changes or findings, blockers, and next steps in 1-3 short paragraphs or bullets. " \
+                             "Before final structured output, check whether this run created or referenced a PR, " \
                              "plan, review, report, markdown file, image, or other durable artifact. " \
                              "If yes, include it in `attachments`: use `type: file` with `path` for local files, " \
                              "or `type: link` with an http(s) `url` for web links."
