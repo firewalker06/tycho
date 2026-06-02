@@ -16,6 +16,7 @@ module ManagedAgentTest
     assert_fallback_summary_uses_assistant_message_not_tool_json
     assert_structured_output_summary_beats_later_agent_message
     assert_final_output_checklist_is_ephemeral_execution_context
+    assert_agent_result_schema_describes_summary
     assert_initial_user_message_attachments_seed_memory
     assert_start_records_missing_harness_without_spawning
     assert_agent_runner_warns_when_command_cannot_execute
@@ -376,6 +377,8 @@ module ManagedAgentTest
   def assert_final_output_checklist_is_ephemeral_execution_context
     Dir.mktmpdir("hq-managed-agent-checklist-test") do |dir|
       checklist = HQ::ManagedAgent::FINAL_OUTPUT_CHECKLIST
+      assert(checklist.include?("For `summary`, write a concise operator-facing Markdown summary"),
+             "final output guidance should explain the summary field")
       log_path = File.join(dir, "checklist.raw.log")
 
       agent = HQ::ManagedAgent.new(
@@ -436,6 +439,15 @@ module ManagedAgentTest
       assert(resumed_user_event["content"] == "Attach the PR",
              "native resume memory should keep the user message unchanged")
     end
+  end
+
+  def assert_agent_result_schema_describes_summary
+    schema_path = File.expand_path("../config/schemas/agent_result.json", __dir__)
+    schema = JSON.parse(File.read(schema_path))
+    description = schema.dig("properties", "summary", "description").to_s
+
+    assert(description.include?("Remote UI Summary page"),
+           "agent result schema should describe how to write the summary field")
   end
 
   def assert_initial_user_message_attachments_seed_memory

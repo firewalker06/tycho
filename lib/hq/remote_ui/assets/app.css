@@ -1454,7 +1454,7 @@ button.restart-server-button {
 }
 
 .message-markdown-fallback,
-.summary-markdown-fallback {
+.agent-summary-fallback {
   margin: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -1804,6 +1804,10 @@ button.restart-server-button {
   min-width: 0;
 }
 
+.agent-summary-viewer {
+  align-self: start;
+}
+
 .agent-attachment-body {
   display: grid;
   min-width: 0;
@@ -1837,6 +1841,11 @@ button.restart-server-button {
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
+}
+
+.agent-summary-markdown-viewer,
+.agent-summary-fallback {
+  max-width: 72ch;
 }
 
 .attachment-image-viewer {
@@ -2154,11 +2163,6 @@ button.restart-server-button {
     padding: 6px 10px calc(10px + env(safe-area-inset-bottom, 0px));
   }
 
-  .agent-dock:has(.inquiry-form) .agent-summary-panel {
-    max-height: min(18dvh, 130px);
-    padding: 7px 8px;
-  }
-
   .agent-dock:has(.inquiry-form) .inquiry-form {
     min-height: 0;
     max-height: min(50dvh, 430px);
@@ -2174,54 +2178,6 @@ button.restart-server-button {
     padding-top: 4px;
     background: color-mix(in srgb, var(--panel) 97%, transparent);
   }
-}
-
-.agent-summary-panel {
-  max-height: min(22dvh, 160px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 9px 10px;
-  background: var(--panel-soft);
-}
-
-.agent-summary-panel > p,
-.agent-summary-panel .summary-markdown-fallback {
-  margin: 0;
-  overflow-wrap: anywhere;
-  color: var(--text);
-  font-size: 13px;
-  line-height: 1.4;
-  white-space: pre-wrap;
-}
-
-.summary-markdown-viewer {
-  min-width: 0;
-  max-width: 100%;
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.summary-markdown-viewer h1,
-.summary-markdown-viewer h2,
-.summary-markdown-viewer h3,
-.summary-markdown-viewer h4,
-.summary-markdown-viewer h5,
-.summary-markdown-viewer h6 {
-  margin: 0 0 7px;
-  font-size: 13px;
-  line-height: 1.25;
-}
-
-.summary-markdown-viewer p,
-.summary-markdown-viewer ul,
-.summary-markdown-viewer ol,
-.summary-markdown-viewer blockquote,
-.summary-markdown-viewer pre,
-.summary-markdown-viewer table,
-.summary-markdown-viewer hr {
-  margin-bottom: 8px;
 }
 
 .go-recent-fab {
