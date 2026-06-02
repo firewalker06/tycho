@@ -81,6 +81,24 @@ module HQ
       result
     end
 
+    def reconcile_archived_agent!(agent_key, now: Time.now)
+      key = agent_key.to_s
+      return false if key.empty?
+
+      schedules = schedule_registry.schedules
+      states = store.load
+      changed = false
+      schedules.each do |schedule|
+        state = store.state_for(states, schedule.key)
+        next unless state.last_target_key.to_s == key
+
+        reconcile_archived_agent_state!(schedule, state, key, now:)
+        changed = true
+      end
+      store.save(states) if changed
+      changed
+    end
+
     def tick(now: Time.now, dry_run: false)
       schedules = schedule_registry.schedules
       states = store.load
@@ -268,6 +286,28 @@ module HQ
       agents.reject! { |agent| agent.key == target.key }
       state.previous_target_key = target.key
       publish("schedule.agent_archived", schedule, state, agent_key: target.key, archive_path:)
+    end
+
+    def reconcile_archived_agent_state!(schedule, state, agent_key, now:)
+      interactive = state.last_status.to_s == "skipped" && state.last_error.to_s == "interactive"
+      state.previous_target_key = agent_key
+      state.last_target_key = nil
+      state.last_target_kind = nil
+      state.last_finished_at ||= now
+      if interactive
+        state.last_status = "resumed"
+        state.last_error = nil
+        state.next_due_at = now if runnable?(schedule, state)
+        publish("schedule.resumed", schedule, state,
+                agent_key: agent_key,
+                target_key: agent_key,
+                reason: "archived_interactive_agent")
+      else
+        publish("schedule.agent_archived", schedule, state,
+                agent_key: agent_key,
+                target_key: agent_key,
+                reason: "manual_archive")
+      end
     end
 
     def last_agent(state, agents)
