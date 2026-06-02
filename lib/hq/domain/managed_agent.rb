@@ -693,7 +693,7 @@ module HQ
       command << "--dangerously-skip-permissions" if @sandbox_mode == "danger-full-access"
       command.concat(["--print", "--output-format", "stream-json", "--verbose"])
       command.concat(claude_session_arguments)
-      schema = compact_agent_result_schema
+      schema = compact_claude_result_schema
       command.concat(["--json-schema", schema]) if schema
       command << prompt_for_execution
       { command: command, env: env }
@@ -1441,10 +1441,11 @@ module HQ
     def normalize_structured_result_payload(parsed)
       return nil unless parsed.is_a?(Hash)
 
-      return parsed if parsed["status"].is_a?(String) && parsed["summary"].is_a?(String)
+      canonical = canonical_structured_result_payload(parsed)
+      return canonical if canonical
 
-      structured = parsed["structured_output"]
-      return structured if structured.is_a?(Hash) && structured["status"].is_a?(String) && structured["summary"].is_a?(String)
+      structured = canonical_structured_result_payload(parsed["structured_output"])
+      return structured if structured
 
       assistant_structured = structured_output_from_assistant_event(parsed)
       return assistant_structured if assistant_structured
@@ -1487,10 +1488,33 @@ module HQ
         next unless item["name"].to_s.downcase == "structuredoutput"
 
         input = item["input"]
-        return input if input.is_a?(Hash) && input["status"].is_a?(String) && input["summary"].is_a?(String)
+        canonical = canonical_structured_result_payload(input)
+        return canonical if canonical
       end
 
       nil
+    end
+
+    def canonical_structured_result_payload(input)
+      return nil unless input.is_a?(Hash) && input["status"].is_a?(String) && input["summary"].is_a?(String)
+
+      result = input.dup
+      if result.key?("inquiry_json") && !result.key?("inquiry")
+        result["inquiry"] = structured_json_field(result["inquiry_json"], Hash)
+      end
+      if result.key?("attachments_json") && !result.key?("attachments")
+        result["attachments"] = structured_json_field(result["attachments_json"], Array)
+      end
+      result.delete("inquiry_json")
+      result.delete("attachments_json")
+      result
+    end
+
+    def structured_json_field(value, expected_class)
+      parsed = parse_json_string(value)
+      return nil if parsed.nil?
+
+      parsed.is_a?(expected_class) ? parsed : nil
     end
 
     def parse_json_string(value)
@@ -1509,12 +1533,33 @@ module HQ
       ExecutableResolver.command_for_tool("claude")
     end
 
-    def compact_agent_result_schema
+    def compact_claude_result_schema
       return nil unless File.exist?(AGENT_RESULT_SCHEMA)
 
-      JSON.generate(JSON.parse(File.read(AGENT_RESULT_SCHEMA)))
+      JSON.generate(claude_result_schema(JSON.parse(File.read(AGENT_RESULT_SCHEMA))))
     rescue StandardError
       nil
+    end
+
+    def claude_result_schema(canonical_schema)
+      properties = canonical_schema.fetch("properties", {})
+      {
+        "type" => "object",
+        "additionalProperties" => false,
+        "properties" => {
+          "status" => properties.fetch("status", { "type" => "string" }),
+          "summary" => properties.fetch("summary", { "type" => "string" }),
+          "inquiry_json" => {
+            "type" => "string",
+            "description" => "JSON-encoded inquiry object, or the literal string null when no inquiry is needed."
+          },
+          "attachments_json" => {
+            "type" => "string",
+            "description" => "JSON-encoded attachments array, or the literal string null when no attachments are needed."
+          }
+        },
+        "required" => ["status", "summary", "inquiry_json", "attachments_json"]
+      }
     end
 
     def current_run_log_lines
