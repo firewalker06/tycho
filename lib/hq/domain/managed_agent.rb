@@ -4,6 +4,7 @@ require_relative "constants"
 require_relative "log_paths"
 require_relative "attachment_normalizer"
 require_relative "agent_memory"
+require_relative "executable_resolver"
 require_relative "../harness_registry"
 require_relative "../parser"
 require_relative "agent_chat_log"
@@ -1501,27 +1502,11 @@ module HQ
     end
 
     def codex_executable
-      configured = HQ.env_present("CODEX_BIN", "").to_s.strip
-      return configured unless configured.empty?
-
-      candidates = [
-        File.join(Dir.home, ".local", "bin", "codex"),
-        "/opt/homebrew/bin/codex",
-        "/usr/local/bin/codex"
-      ]
-      candidates.find { |path| File.executable?(path) } || "codex"
+      ExecutableResolver.command_for_tool("codex")
     end
 
     def claude_executable
-      configured = HQ.env_present("CLAUDE_BIN", "").to_s.strip
-      return configured unless configured.empty?
-
-      candidates = [
-        File.join(Dir.home, ".local", "bin", "claude"),
-        "/opt/homebrew/bin/claude",
-        "/usr/local/bin/claude"
-      ]
-      candidates.find { |path| File.executable?(path) } || "claude"
+      ExecutableResolver.command_for_tool("claude")
     end
 
     def compact_agent_result_schema
