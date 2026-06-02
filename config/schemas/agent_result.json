@@ -8,7 +8,7 @@
     },
     "summary": {
       "type": "string",
-      "description": "Concise operator-facing Markdown summary of this run. State the outcome, important changes or findings, blockers, and concrete next steps. Keep it focused enough for the Remote UI Summary page: usually 1-3 short paragraphs or bullets."
+      "description": "Concise operator-facing Markdown summary of this run. State the outcome, important changes or findings, blockers, and concrete next steps. Keep it focused enough for the Remote UI Summary page: usually 1-3 short paragraphs or bullets. After summarized, do a secondary check to not miss important details."
     },
     "inquiry": {
       "type": ["object", "null"],
