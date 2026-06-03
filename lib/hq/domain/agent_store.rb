@@ -26,6 +26,7 @@ module HQ
       events = []
       agents = JSON.parse(File.read(AGENTS_FILE)).map do |hash|
         agent = ManagedAgent.from_hash(hash)
+        changed = true if hash != agent.to_hash
         before_hash = agent.to_hash
         was_running = running_for_poll_event?(agent)
         agent.poll!
@@ -72,6 +73,8 @@ module HQ
         prompt: template.prompt,
         sandbox_mode: template.sandbox_mode,
         agent: template.agent,
+        model: template.model,
+        reasoning_effort: template.reasoning_effort,
         messages: system_messages_for(project, template.prompt),
         color_index: next_color_index(existing)
       )
@@ -94,6 +97,8 @@ module HQ
         prompt: prompt,
         sandbox_mode: "danger-full-access",
         agent: project.respond_to?(:agent) ? project.agent : project.config.agent,
+        model: project.respond_to?(:model) ? project.model : project.config.model,
+        reasoning_effort: project.respond_to?(:reasoning_effort) ? project.reasoning_effort : project.config.reasoning_effort,
         messages: system_messages,
         created_at: now,
         color_index: next_color_index(existing_agents)
@@ -121,6 +126,8 @@ module HQ
         prompt: agent.prompt,
         sandbox_mode: agent.sandbox_mode,
         agent: agent.agent,
+        model: agent.model,
+        reasoning_effort: agent.reasoning_effort,
         skills: agent.skills,
         color_index: next_color_index(existing_agents)
       )

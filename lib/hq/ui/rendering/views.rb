@@ -136,6 +136,12 @@ module HQ
             width: [sidebar_content_width - 2, 20].max
           )
           name_line = @agent_editor.field_index == @agent_editor.name_field_index ? selected_style.render("  #{@agent_editor.name_input.view}") : "  #{@agent_editor.name_input.view}"
+          model_line = @agent_editor.field_index == @agent_editor.model_field_index ? selected_style.render("  #{@agent_editor.model_input.view}") : "  #{@agent_editor.model_input.view}"
+          reasoning_effort_line = if @agent_editor.field_index == @agent_editor.reasoning_effort_field_index
+                                    selected_style.render("  #{@agent_editor.reasoning_effort_input.view}")
+                                  else
+                                    "  #{@agent_editor.reasoning_effort_input.view}"
+                                  end
           workspace_field_index = @agent_editor.workspace_field_index
           prompt_field_index = @agent_editor.prompt_field_index
           prompt_label = @agent_editor.field_index == prompt_field_index ? selected_style.render("  Prompt:") : "  Prompt:"
@@ -151,6 +157,9 @@ module HQ
           body_lines.concat(template_lines)
           body_lines << ""
           body_lines.concat(harness_lines)
+          body_lines << ""
+          body_lines << model_line
+          body_lines << reasoning_effort_line
           body_lines << ""
           body_lines << name_line
           if workspace_field_index
@@ -942,7 +951,7 @@ module HQ
           name_line = truncate_display(name_line, name_budget)
           gap = [width - visible_width(name_line) - status_width, 1].max
           lines << "#{name_line}#{" " * gap}#{status}"
-          crumb = [project&.name, agent.template_key, agent.agent].compact.reject { |s| s.to_s.empty? }.join(" · ")
+          crumb = [project&.name, agent.template_key, agent.agent, agent.model, agent.reasoning_effort].compact.reject { |s| s.to_s.empty? }.join(" · ")
           lines << "#{Styles::ICONS[:project]}  #{dim_style.render(crumb)}" unless crumb.empty?
 
           chips = agent_chip_row(agent, project)

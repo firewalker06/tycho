@@ -11,6 +11,8 @@
 #   path    (required) absolute path to the project checkout on this machine
 #   apps    (required) true if the project is Kamal-deployed and should show app/health columns
 #   agent   (optional) managed-agent backend: "codex", "claude", or a custom_harnesses key
+#   model   (optional) default model string for new managed agents
+#   reasoning_effort (optional) default effort string for new managed agents
 #   hidden  (optional) true hides the project and its agents; false overrides a hidden group
 #
 # Groups can define shared metadata by display name. Missing hidden settings are
@@ -44,6 +46,9 @@ projects: []
 #   group: Personal
 #   path: "/Users/you/Code/my-app"
 #   apps: true
+#   agent: codex
+#   model: gpt-5.1-codex-max
+#   reasoning_effort: high
 #
 # - key: notes
 #   name: Notes

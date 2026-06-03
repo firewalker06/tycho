@@ -11,6 +11,7 @@ require_relative "agent_chat_log"
 require_relative "process_liveness"
 require "digest"
 require "securerandom"
+require "shellwords"
 
 module HQ
   class ManagedAgent
@@ -87,14 +88,15 @@ module HQ
 
     attr_reader :key, :name, :project_key, :template_key, :workspace, :prompt, :created_at, :started_at,
                 :finished_at, :pid, :last_exit_code, :log_path, :runs, :sandbox_mode, :agent, :messages, :skills,
-                :session_id, :session_bootstrapped, :color_index, :summary, :structured_result
+                :model, :reasoning_effort, :session_id, :session_bootstrapped, :color_index, :summary,
+                :structured_result
     attr_writer :summary, :structured_result
 
     def initialize(key:, name:, project_key:, template_key:, workspace:, prompt:, created_at: nil, started_at: nil,
                    finished_at: nil, pid: nil, last_exit_code: nil, log_path: nil, runs: nil,
                    stop_requested_at: nil, sandbox_mode: "danger-full-access", agent: "codex", messages: nil,
-                   skills: nil, unread: false, session_id: nil, session_bootstrapped: nil, color_index: nil,
-                   summary: nil, structured_result: nil)
+                   model: nil, reasoning_effort: nil, skills: nil, unread: false, session_id: nil,
+                   session_bootstrapped: nil, color_index: nil, summary: nil, structured_result: nil)
       @key = key
       @name = name
       @project_key = project_key
@@ -111,6 +113,8 @@ module HQ
       @stop_requested_at = stop_requested_at
       @sandbox_mode = normalize_sandbox_mode(sandbox_mode)
       @agent = normalize_agent(agent)
+      @model = normalize_model(model)
+      @reasoning_effort = normalize_reasoning_effort(reasoning_effort)
       @messages = normalize_messages(messages)
       seed_memory_from_initial_messages!(messages)
       @skills = normalize_skills(skills)
@@ -142,6 +146,14 @@ module HQ
     end
 
     def self.from_hash(hash)
+      runs = Array(hash["runs"]).map { |run| AgentRun.from_hash(run) }
+      launch_settings = launch_settings_from_runs(runs)
+      model = hash["model"].to_s.strip.empty? ? launch_settings[:model] : hash["model"]
+      reasoning_effort = if hash["reasoning_effort"].to_s.strip.empty?
+                           launch_settings[:reasoning_effort]
+                         else
+                           hash["reasoning_effort"]
+                         end
       new(
         key: hash["key"],
         name: hash["name"],
@@ -155,10 +167,12 @@ module HQ
         pid: hash["pid"],
         last_exit_code: hash["last_exit_code"],
         log_path: hash["log_path"] || LogPaths.legacy_agent_raw_log_path(hash["key"]),
-        runs: Array(hash["runs"]).map { |run| AgentRun.from_hash(run) },
+        runs: runs,
         stop_requested_at: parse_time(hash["stop_requested_at"]),
         sandbox_mode: hash["sandbox_mode"],
         agent: hash["agent"],
+        model: model,
+        reasoning_effort: reasoning_effort,
         skills: hash["skills"],
         unread: hash["unread"],
         session_id: hash["session_id"],
@@ -168,6 +182,84 @@ module HQ
         structured_result: hash["structured_result"]
       )
     end
+
+    def self.launch_settings_from_runs(runs)
+      settings = {}
+      runs.reverse_each do |run|
+        parts = split_command(run.command)
+        next if parts.empty?
+
+        settings[:model] ||= model_from_command(parts)
+        settings[:reasoning_effort] ||= reasoning_effort_from_command(parts)
+        break if settings[:model] && settings[:reasoning_effort]
+      end
+      settings
+    end
+
+    def self.split_command(command)
+      Shellwords.split(command.to_s)
+    rescue ArgumentError
+      []
+    end
+
+    def self.model_from_command(parts)
+      command_option_parts(parts).each_with_index do |part, index|
+        return nonempty_argument(parts[index + 1]) if part == "--model" || part == "-m"
+        return nonempty_argument(part.split("=", 2).last) if part.start_with?("--model=")
+      end
+      nil
+    end
+
+    def self.reasoning_effort_from_command(parts)
+      command_option_parts(parts).each_with_index do |part, index|
+        return nonempty_argument(parts[index + 1]) if part == "--effort"
+        return nonempty_argument(part.split("=", 2).last) if part.start_with?("--effort=")
+
+        if part == "-c" || part == "--config"
+          effort = reasoning_effort_from_config(parts[index + 1])
+          return effort if effort
+        elsif part.start_with?("--config=")
+          effort = reasoning_effort_from_config(part.split("=", 2).last)
+          return effort if effort
+        end
+      end
+      nil
+    end
+
+    def self.command_option_parts(parts)
+      separator = parts.index("--")
+      separator ? parts[0...separator] : parts
+    end
+
+    def self.reasoning_effort_from_config(value)
+      text = value.to_s.strip
+      return nil unless text.start_with?("model_reasoning_effort")
+
+      raw_value = text.split("=", 2).last
+      return nil if raw_value == text
+
+      nonempty_argument(unquote_argument(raw_value))
+    end
+
+    def self.unquote_argument(value)
+      text = value.to_s.strip
+      if (text.start_with?("\"") && text.end_with?("\"")) ||
+         (text.start_with?("'") && text.end_with?("'"))
+        return text[1...-1]
+      end
+
+      text
+    end
+
+    def self.nonempty_argument(value)
+      text = value.to_s.strip
+      text.empty? ? nil : text
+    end
+
+    private_class_method :launch_settings_from_runs, :split_command, :model_from_command,
+                         :reasoning_effort_from_command, :command_option_parts,
+                         :reasoning_effort_from_config, :unquote_argument,
+                         :nonempty_argument
 
     def to_hash
       result = {
@@ -190,6 +282,8 @@ module HQ
         "skills" => @skills,
         "unread" => @unread
       }
+      result["model"] = @model unless @model.to_s.empty?
+      result["reasoning_effort"] = @reasoning_effort unless @reasoning_effort.to_s.empty?
       unless @session_id.to_s.empty?
         result["session_id"] = @session_id
         result["session_bootstrapped"] = @session_bootstrapped
@@ -446,13 +540,16 @@ module HQ
       [claude_executable]
     end
 
-    def update!(name:, template_key:, workspace:, prompt:, sandbox_mode: @sandbox_mode, agent: @agent)
+    def update!(name:, template_key:, workspace:, prompt:, sandbox_mode: @sandbox_mode, agent: @agent,
+                model: @model, reasoning_effort: @reasoning_effort)
       @name = name
       @template_key = template_key
       @workspace = workspace
       @prompt = prompt
       @sandbox_mode = normalize_sandbox_mode(sandbox_mode)
       @agent = normalize_agent(agent)
+      @model = normalize_model(model)
+      @reasoning_effort = normalize_reasoning_effort(reasoning_effort)
       reset_base_prompt!
       memory_store.append_system_prompt!(@prompt, created_at: Time.now)
       HQ.hooks.publish("agent.updated",
@@ -461,7 +558,9 @@ module HQ
                        name: @name,
                        template_key: @template_key,
                        workspace: @workspace,
-                       agent: @agent)
+                       agent: @agent,
+                       model: @model,
+                       reasoning_effort: @reasoning_effort)
     end
 
     def add_user_message!(content, inquiry_id: nil, attachments: nil, metadata: nil)
@@ -641,6 +740,8 @@ module HQ
     def build_codex_command
       command = [codex_executable, "exec"]
       command << "resume" unless @session_id.to_s.empty?
+      command.concat(model_arguments)
+      command.concat(codex_reasoning_effort_arguments)
       if @sandbox_mode == "danger-full-access"
         command << "--dangerously-bypass-approvals-and-sandbox"
       else
@@ -667,6 +768,8 @@ module HQ
 
     def build_interactive_codex_command
       command = [codex_executable]
+      command.concat(model_arguments)
+      command.concat(codex_reasoning_effort_arguments)
       if @sandbox_mode == "danger-full-access"
         command << "--dangerously-bypass-approvals-and-sandbox"
       else
@@ -683,6 +786,8 @@ module HQ
 
     def build_interactive_claude_like_command(command_prefix:, env: {})
       command = command_prefix.dup
+      command.concat(model_arguments)
+      command.concat(claude_effort_arguments)
       command << "--dangerously-skip-permissions" if @sandbox_mode == "danger-full-access"
       command.concat(["--resume", @session_id]) unless @session_id.to_s.empty?
       { command: command, env: env }
@@ -690,6 +795,8 @@ module HQ
 
     def build_claude_like_command(command_prefix:, env: {})
       command = command_prefix.dup
+      command.concat(model_arguments)
+      command.concat(claude_effort_arguments)
       command << "--dangerously-skip-permissions" if @sandbox_mode == "danger-full-access"
       command.concat(["--print", "--output-format", "stream-json", "--verbose"])
       command.concat(claude_session_arguments)
@@ -697,6 +804,18 @@ module HQ
       command.concat(["--json-schema", schema]) if schema
       command << prompt_for_execution
       { command: command, env: env }
+    end
+
+    def model_arguments
+      @model.to_s.empty? ? [] : ["--model", @model]
+    end
+
+    def codex_reasoning_effort_arguments
+      @reasoning_effort.to_s.empty? ? [] : ["-c", "model_reasoning_effort=\"#{@reasoning_effort}\""]
+    end
+
+    def claude_effort_arguments
+      @reasoning_effort.to_s.empty? ? [] : ["--effort", @reasoning_effort]
     end
 
     def missing_executable_for(command)
@@ -1379,6 +1498,16 @@ module HQ
       return "danger-full-access" if value.empty? || value == "none"
 
       value
+    end
+
+    def normalize_model(value)
+      text = value.to_s.strip
+      text.empty? ? nil : text
+    end
+
+    def normalize_reasoning_effort(value)
+      text = value.to_s.strip.downcase
+      text.empty? ? nil : text
     end
 
     def normalize_skills(value)

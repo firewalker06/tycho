@@ -7,7 +7,16 @@ require_relative "domain/constants"
 module HQ
   class ConfigError < StandardError; end
 
-  AgentTemplateConfig = Struct.new(:key, :name, :prompt, :sandbox_mode, :agent, keyword_init: true)
+  AgentTemplateConfig = Struct.new(
+    :key,
+    :name,
+    :prompt,
+    :sandbox_mode,
+    :agent,
+    :model,
+    :reasoning_effort,
+    keyword_init: true
+  )
   GroupConfig = Struct.new(:name, :hidden, keyword_init: true)
   ProjectConfig = Struct.new(
     :key,
@@ -16,6 +25,8 @@ module HQ
     :path,
     :apps,
     :agent,
+    :model,
+    :reasoning_effort,
     :agent_templates,
     :hooks,
     :pr_url,
@@ -52,6 +63,7 @@ module HQ
       @groups = build_groups(data["groups"])
       HQ.custom_harnesses = @custom_harnesses
       remove_instance_variable(:@normalized_system_prompts) if instance_variable_defined?(:@normalized_system_prompts)
+      remove_instance_variable(:@system_prompt_templates) if instance_variable_defined?(:@system_prompt_templates)
       write_yaml(@path, data) if persist_detected_apps!(data)
       @projects = build_projects(data["projects"] || [])
       validate!
@@ -256,6 +268,8 @@ module HQ
           path: path,
           apps: apps_enabled,
           agent: normalize_agent(project["agent"]),
+          model: normalize_model(project["model"]),
+          reasoning_effort: normalize_reasoning_effort(project["reasoning_effort"]),
           agent_templates: build_agent_templates(
             project,
             project_key: key,
@@ -338,6 +352,8 @@ module HQ
       templates = system_prompt_templates
       templates = [default_template(project)] if templates.empty?
       project_agent = normalize_agent(project["agent"])
+      project_model = normalize_model(project["model"])
+      project_reasoning_effort = normalize_reasoning_effort(project["reasoning_effort"])
 
       built_templates = templates.map.with_index(1) do |template, index|
         prompt = resolve_template_prompt(
@@ -353,7 +369,11 @@ module HQ
           name: (template["name"] || humanize_template_key(template["key"]) || "Template #{index}").to_s,
           prompt: prompt.to_s.strip,
           sandbox_mode: (template["sandbox_mode"] || "danger-full-access").to_s,
-          agent: normalize_agent(template["agent"] || project_agent)
+          agent: normalize_agent(template["agent"] || project_agent),
+          model: normalize_model(template.key?("model") ? template["model"] : project_model),
+          reasoning_effort: normalize_reasoning_effort(
+            template.key?("reasoning_effort") ? template["reasoning_effort"] : project_reasoning_effort
+          )
         )
       end
 
@@ -366,8 +386,20 @@ module HQ
         "name" => "Default",
         "prompt" => "Work inside #{expand_path(project["path"])}. Inspect the repository, identify the highest-value next task, implement it if safe, run the relevant checks, and summarize the result.",
         "sandbox_mode" => "danger-full-access",
-        "agent" => normalize_agent(project["agent"])
+        "agent" => normalize_agent(project["agent"]),
+        "model" => normalize_model(project["model"]),
+        "reasoning_effort" => normalize_reasoning_effort(project["reasoning_effort"])
       }
+    end
+
+    def normalize_model(value)
+      text = value.to_s.strip
+      text.empty? ? nil : text
+    end
+
+    def normalize_reasoning_effort(value)
+      text = value.to_s.strip.downcase
+      text.empty? ? nil : text
     end
 
     def normalize_agent(agent)
@@ -421,7 +453,19 @@ module HQ
     end
 
     def system_prompt_templates
-      normalized_system_prompts.keys.map { |prompt_key| { "key" => prompt_key.to_s } }
+      return @system_prompt_templates if defined?(@system_prompt_templates)
+
+      @system_prompt_templates = @system_prompts.map do |prompt_key, prompt|
+        if prompt.is_a?(Hash)
+          prompt.each_with_object({ "key" => prompt_key.to_s }) do |(key, value), result|
+            next if %w[prompt content].include?(key.to_s)
+
+            result[key.to_s] = value
+          end
+        else
+          { "key" => prompt_key.to_s }
+        end
+      end
     end
 
     def interpolate_prompt(prompt, prompt_key:, project_key:, project_name:, project_path:, project_group:)
@@ -452,7 +496,12 @@ module HQ
       return @normalized_system_prompts if defined?(@normalized_system_prompts)
 
       @normalized_system_prompts = @system_prompts.each_with_object({}) do |(prompt_key, prompt), prompts|
-        prompts[prompt_key.to_s] = prompt.to_s
+        prompt_value = if prompt.is_a?(Hash)
+                         prompt["prompt"] || prompt["content"] || prompt[:prompt] || prompt[:content]
+                       else
+                         prompt
+                       end
+        prompts[prompt_key.to_s] = prompt_value.to_s
       end
     end
 

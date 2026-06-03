@@ -92,9 +92,9 @@ Handler blocks receive a frozen payload Hash with string keys. Blocking Ruby han
 | `agent.message.assistant_added` | `agent_key`, `project_key`, `content` | Assistant summary/message appended. |
 | `agent.memory.captured` | `agent_key`, `project_key`, `status` | After `memory.jsonl` write completes for a run. |
 | `agent.session.captured` | `agent_key`, `project_key`, `session_id` | First time a native session id is discovered. |
-| `agent.updated` | `agent_key`, `project_key`, `name`, `template_key`, `workspace`, `agent` | After the agent editor saves an edit. |
-| `agent.created` | `agent_key`, `project_key`, `template_key`, `name`, `workspace` | After the agent editor creates a new agent. |
-| `agent.cloned` | `agent_key`, `source_agent_key`, `project_key`, `name` | After cloning an agent. |
+| `agent.updated` | `agent_key`, `project_key`, `name`, `template_key`, `workspace`, `agent`, `model`, `reasoning_effort` | After the agent editor saves an edit. |
+| `agent.created` | `agent_key`, `project_key`, `template_key`, `name`, `workspace`, `agent`, `model`, `reasoning_effort` | After the agent editor creates a new agent. |
+| `agent.cloned` | `agent_key`, `source_agent_key`, `project_key`, `name`, `agent`, `model`, `reasoning_effort` | After cloning an agent. |
 | `agent.deleted` | `agent_key`, `project_key`, `name` | After an agent is deleted and its logs archived. |
 
 ### Registry / config

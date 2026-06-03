@@ -3,6 +3,15 @@
 # Each top-level key is a prompt the managed-agent chat composer can select.
 # The value is the system prompt sent to the agent when that option is chosen.
 # "custom" is reserved for free-form ad-hoc prompts (leave it empty by default).
+#
+# A prompt may also be a mapping with prompt metadata:
+#
+# reviewer:
+#   name: Reviewer
+#   agent: claude
+#   model: sonnet
+#   reasoning_effort: xhigh
+#   prompt: Review %{project_name}.
 
 custom: ""
 

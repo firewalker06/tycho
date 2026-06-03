@@ -16,6 +16,7 @@ module RegistryTest
 
   def run!
     assert_registry_loads_system_prompts_from_sibling_config
+    assert_registry_loads_model_and_effort_defaults
     assert_registry_ignores_hq_env_aliases
     assert_registry_uses_tycho_home_defaults
     assert_registry_preserves_false_apps_flags
@@ -63,6 +64,49 @@ module RegistryTest
              "expected inline prompt to load from flat system prompts")
       names = project.agent_templates.each_with_object({}) { |template, result| result[template.key] = template.name }
       assert(names["custom"] == "Custom", "expected template names to be derived from prompt keys")
+    end
+  end
+
+  def assert_registry_loads_model_and_effort_defaults
+    Dir.mktmpdir("hq-registry-model-test") do |dir|
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+
+      File.write(config_path, <<~YAML)
+        projects:
+          - key: demo
+            name: Demo
+            group: Personal
+            path: #{File.join(dir, "demo")}
+            agent: codex
+            model: gpt-5.1-codex-max
+            reasoning_effort: HIGH
+      YAML
+
+      File.write(prompts_path, <<~YAML)
+        custom: ""
+        reviewer:
+          name: Reviewer
+          prompt: Review %{project_key} at %{workspace}.
+          agent: claude
+          model: sonnet
+          reasoning_effort: xhigh
+      YAML
+
+      registry = HQ::Registry.new(path: config_path)
+      project = registry.projects.fetch(0)
+      custom = project.agent_templates.find { |template| template.key == "custom" }
+      reviewer = project.agent_templates.find { |template| template.key == "reviewer" }
+
+      assert(project.model == "gpt-5.1-codex-max", "expected project-level model to load")
+      assert(project.reasoning_effort == "high", "expected project-level effort to normalize")
+      assert(custom.model == "gpt-5.1-codex-max", "expected flat prompt template to inherit project model")
+      assert(custom.reasoning_effort == "high", "expected flat prompt template to inherit project effort")
+      assert(reviewer.agent == "claude", "expected structured prompt template to override harness")
+      assert(reviewer.model == "sonnet", "expected structured prompt template to override model")
+      assert(reviewer.reasoning_effort == "xhigh", "expected structured prompt template to override effort")
+      assert(reviewer.prompt == "Review demo at #{File.join(dir, "demo")}.",
+             "expected structured prompt template to interpolate prompt text")
     end
   end
 

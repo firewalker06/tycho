@@ -343,6 +343,8 @@ Request:
   "workspace": "/Users/example/Code/web",
   "sandbox_mode": "danger-full-access",
   "agent": "codex",
+  "model": "gpt-5.1-codex-max",
+  "reasoning_effort": "high",
   "start": false
 }
 ```
@@ -359,6 +361,8 @@ Optional fields:
 - `workspace`: defaults to the project path on create.
 - `sandbox_mode`: defaults to the selected template sandbox mode.
 - `agent`: one of `codex`, `claude`, or a configured `custom_harnesses` key.
+- `model`: optional free-form per-agent model. Omit to inherit the template/project default; send an empty string when editing to clear the agent-level value.
+- `reasoning_effort`: optional free-form per-agent effort. Omit to inherit the template/project default; send an empty string when editing to clear the agent-level value.
 - `start`: when truthy, starts the agent immediately after creation.
 
 Response:
@@ -580,7 +584,7 @@ Response:
 
 ### `POST /agents/{key}/clone`
 
-Creates a fresh managed agent from an existing one with a new key, empty logs, no runs, and no native session id. Form fields such as `name`, `template_key`, `agent`, `workspace`, `prompt`, and `sandbox_mode` may be supplied to edit the clone before it is saved. Set `archive_source: true` to archive the source agent after the clone is created.
+Creates a fresh managed agent from an existing one with a new key, empty logs, no runs, and no native session id. Form fields such as `name`, `template_key`, `agent`, `model`, `reasoning_effort`, `workspace`, `prompt`, and `sandbox_mode` may be supplied to edit the clone before it is saved. Set `archive_source: true` to archive the source agent after the clone is created.
 
 ```bash
 curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/clone \
@@ -679,7 +683,7 @@ Returns active projects after refreshing metadata and health:
 
 ### `GET /projects/{key}`
 
-Returns project detail data for the mobile detail view, including branch/commit metadata, Kamal deploy details, versions, agent template summaries, action log path, managed-agent count, and recent agent summary.
+Returns project detail data for the mobile detail view, including branch/commit metadata, Kamal deploy details, versions, agent template summaries with model/effort defaults, action log path, managed-agent count, and recent agent summary.
 
 ### `GET /projects/{key}/actions/{action}`
 
@@ -721,7 +725,7 @@ Discovers skills for the project workspace and agent harness, reusing `HQ::Skill
 
 ### `GET /setup`
 
-Returns Remote UI readiness metadata: local URL, public Tailscale/MagicDNS URL, auth state, counts, harness readiness, schema/config readiness, log/storage summary, refresh intervals, and safety defaults.
+Returns Remote UI readiness metadata: local URL, public Tailscale/MagicDNS URL, auth state, counts, harness readiness, schema/config readiness, log/storage summary, refresh intervals, and safety defaults. Harness readiness entries may include `model_suggestions`, `reasoning_effort_suggestions`, and `catalog_source`; these are UI hints only and are not validation allowlists.
 
 When no projects are configured, the payload includes onboarding metadata so the
 Remote UI can render a first-run screen without the normal header or footer.
