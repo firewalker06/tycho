@@ -402,6 +402,42 @@ h3 {
   padding: 10px;
 }
 
+.growl {
+  position: fixed;
+  z-index: 30;
+  top: calc(var(--safe-area-top) + 72px);
+  left: 50%;
+  width: min(calc(100% - 24px), 420px);
+  min-height: 42px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 96%, transparent);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  padding: 10px 12px;
+  pointer-events: none;
+  opacity: 1;
+  transform: translate(-50%, 0);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.growl.hidden {
+  opacity: 0;
+  transform: translate(-50%, -8px);
+}
+
+.growl.done {
+  border-color: color-mix(in srgb, var(--ok) 58%, var(--border));
+}
+
+.growl.need {
+  border-color: color-mix(in srgb, var(--warning) 58%, var(--border));
+}
+
+.growl.fail {
+  border-color: color-mix(in srgb, var(--danger) 58%, var(--border));
+}
+
 .unread-panel-header {
   display: flex;
   align-items: baseline;
@@ -1289,6 +1325,33 @@ button.restart-server-button {
   border-radius: 8px;
   padding: 9px;
   background: var(--panel-soft);
+}
+
+.kv-copyable {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+}
+
+.kv-copyable > span,
+.kv-copyable > strong {
+  grid-column: 1;
+}
+
+.kv-copy-button {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+}
+
+.kv-copy-button .ui-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .message-list {

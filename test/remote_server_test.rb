@@ -1331,6 +1331,8 @@ module RemoteServerTest
            "expected root shell logo to control the unread agents panel")
     assert(response[:body].include?('id="unread-agents-panel"'),
            "expected root shell to expose the unread agents popup")
+    assert(response[:body].include?('id="growl"'),
+           "expected root shell to expose growl notifications")
     assert(response[:body].include?("pull-refresh-spinner ui-icon"),
            "expected root shell to render the pull refresh hourglass icon")
     assert(response[:body].match?(%r{href="/ui\.css\?v=[0-9a-f]{12}"}),
@@ -1394,6 +1396,7 @@ module RemoteServerTest
            "expected Agent detail shortcuts to float above the dock")
     assert(css[:body].include?(".go-recent-fab"), "expected Agent detail to include Go to recent")
     assert(css[:body].include?(".agent-settings-panel"), "expected Agent settings to render in the header")
+    assert(css[:body].include?(".growl"), "expected Remote UI to style growl notifications")
     assert(css[:body].include?(".agent-settings-actions"),
            "expected Agent settings to hide edit/archive actions behind the settings panel")
     assert(css[:body].include?(".agent-form"), "expected Remote UI to style agent lifecycle forms")
@@ -1549,6 +1552,8 @@ module RemoteServerTest
            "expected Schedule details wrapper to preserve compact top breathing room")
     assert(css[:body].include?(".schedule-disclosure") && css[:body].include?("position: absolute"),
            "expected Schedule block to pin a visible collapsible disclosure control")
+    assert(css[:body].include?(".kv-copy-button"),
+           "expected copyable key/value rows to style their copy button")
     assert(css[:body].include?(".hidden-toggle-button.active.visible-state"),
            "expected Hidden settings rows to style the visible segment in the triple toggle")
     assert(css[:body].include?("flex-wrap: nowrap"),
@@ -1568,7 +1573,25 @@ module RemoteServerTest
            "expected selected Remote UI nav clicks to scroll the current tab to the top")
     assert(js[:body].include?('route.type === "tab" && route.tab === tab'),
            "expected selected Remote UI nav detection to require the current top-level tab")
-    assert(js[:body].include?("Copied to clipboard"), "expected UI JavaScript to include copy feedback")
+    assert(js[:body].include?("function showGrowl"), "expected UI JavaScript to expose growl notifications")
+    assert(js[:body].include?("function handleDocumentCopyClick"),
+           "expected copy buttons to be handled outside the main view")
+    assert(js[:body].include?('showGrowl("Copied to clipboard", "done")'),
+           "expected copy success to use growl feedback")
+    assert(!js[:body].include?('setConnection("Copied to clipboard")'),
+           "expected copy success to avoid changing the header subtitle")
+    assert(js[:body].include?("function copyableKv"),
+           "expected Remote UI to expose copyable key/value rows")
+    assert(js[:body].include?("kv-copy-button"),
+           "expected copyable key/value rows to render a copy control")
+    assert(js[:body].include?('copyableKv("Raw log", agent.log_path)'),
+           "expected Conversation settings rows to be copyable")
+    assert(js[:body].include?('copyableKv("Service", project.service)') &&
+           js[:body].include?('copyableKv("Templates",'),
+           "expected Project deploy and template details to be copyable")
+    assert(js[:body].include?('copyableKv("Root", setup.logs?.root)') &&
+           js[:body].include?('copyableKv("Auth", setup.auth?.status)'),
+           "expected Settings configuration, logs, and preferences rows to be copyable")
     assert(js[:body].include?("data-agent-dock"), "expected Agent detail composer to live in a dock")
     assert(js[:body].include?("function renderInquiryForm"),
            "expected Agent detail to render structured inquiry forms")
