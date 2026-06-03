@@ -16,6 +16,7 @@ require_relative "domain/agent_attachment_store"
 require_relative "domain/agent_chat_log"
 require_relative "domain/agent_store"
 require_relative "domain/executable_resolver"
+require_relative "domain/harness_catalog"
 require_relative "domain/kamal_action"
 require_relative "domain/push_notification_store"
 require_relative "domain/push_subscription_store"
@@ -1006,7 +1007,10 @@ module HQ
                        agent_key: target.key,
                        source_agent_key: source.key,
                        project_key: target.project_key,
-                       name: target.name)
+                       name: target.name,
+                       agent: target.agent,
+                       model: target.model,
+                       reasoning_effort: target.reasoning_effort)
 
       {
         agent: agent_payload(target),
@@ -1492,6 +1496,8 @@ module HQ
           key: template.key,
           name: template.name,
           agent: template.agent,
+          model: template.model,
+          reasoning_effort: template.reasoning_effort,
           sandbox_mode: template.sandbox_mode,
           skill_trigger: SkillDiscovery.trigger_for(template.agent),
           prompt: template.prompt,
@@ -1532,8 +1538,8 @@ module HQ
 
     def harness_readiness
       builtins = [
-        resolver_payload("codex", ExecutableResolver.resolve_tool("codex")),
-        resolver_payload("claude", ExecutableResolver.resolve_tool("claude"))
+        harness_resolver_payload("codex", ExecutableResolver.resolve_tool("codex")),
+        harness_resolver_payload("claude", ExecutableResolver.resolve_tool("claude"))
       ]
       custom = HQ.custom_harnesses.values.sort_by(&:key).map { |config| custom_harness_payload(config) }
       builtins + custom
@@ -1559,6 +1565,10 @@ module HQ
       }
     end
 
+    def harness_resolver_payload(name, resolution)
+      resolver_payload(name, resolution).merge(HarnessCatalog.for_builtin(name, resolution))
+    end
+
     def custom_harness_payload(config)
       command = readiness_command_for(config.command_parts)
       resolution = command ? ExecutableResolver.resolve(command) : nil
@@ -1576,7 +1586,7 @@ module HQ
         adapter: config.adapter,
         path: resolution&.path,
         source: resolution&.source
-      }
+      }.merge(HarnessCatalog.for_custom(config))
     end
 
     def executable_detail(resolution)
@@ -1695,6 +1705,8 @@ module HQ
       sandbox_mode = attrs.key?("sandbox_mode") ? attrs["sandbox_mode"].to_s : target.sandbox_mode.to_s
       sandbox_mode = template.sandbox_mode.to_s if sandbox_mode.empty?
       agent = (attrs.key?("agent") ? attrs["agent"].to_s : target.agent.to_s).strip.downcase
+      model = attrs.key?("model") ? attrs["model"].to_s.strip : target.model.to_s
+      reasoning_effort = attrs.key?("reasoning_effort") ? attrs["reasoning_effort"].to_s.strip.downcase : target.reasoning_effort.to_s
       workspace = project.path if workspace.empty? && creating
 
       raise Error.new("Name is required") if name.strip.empty?
@@ -1710,7 +1722,9 @@ module HQ
         workspace: workspace.strip,
         prompt: prompt.strip,
         sandbox_mode: sandbox_mode,
-        agent: agent
+        agent: agent,
+        model: model.empty? ? nil : model,
+        reasoning_effort: reasoning_effort.empty? ? nil : reasoning_effort
       }
     end
 
@@ -1754,6 +1768,8 @@ module HQ
         prompt: agent.prompt,
         sandbox_mode: agent.sandbox_mode,
         agent: agent.agent,
+        model: agent.model,
+        reasoning_effort: agent.reasoning_effort,
         status: agent.status,
         running: agent.running?,
         unread: agent.unread?,

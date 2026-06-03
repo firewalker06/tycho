@@ -105,6 +105,7 @@ module RenderingTest
     assert_chat_content_focus_scrolls_with_arrow_keys
     assert_chat_block_selection_scrolls_with_large_messages
     assert_agent_editor_renders_template_and_harness_choices
+    assert_agent_editor_preserves_dirty_model_and_effort_on_template_change
     assert_web_project_icon_renders_for_project_contexts
     assert_non_app_project_uses_folder_icon
     assert_project_archive_moves_config_logs_and_agents
@@ -2309,8 +2310,40 @@ module RenderingTest
     assert(plain_output.include?("codex"), "expected codex harness choice")
     assert(plain_output.include?("claude"), "expected claude harness choice")
     assert(plain_output.include?("claude-wrapper"), "expected custom Claude harness choice")
+    assert(plain_output.include?("Model:"), "expected model field in form")
+    assert(plain_output.include?("Effort:"), "expected reasoning effort field in form")
     assert(template_names == template_names.sort,
            "expected template choices to be sorted alphabetically, got #{template_names.inspect}")
+  end
+
+  def assert_agent_editor_preserves_dirty_model_and_effort_on_template_change
+    app = HQ::App.new
+    projects = app.instance_variable_get(:@projects)
+    project = projects.find { |item| item.key == "warehouse" } || projects.first
+    raise "expected at least one project for agent editor dirty-field test" unless project
+    return unless project.agent_templates.length >= 2
+
+    project.agent_templates[0].model = "gpt-5.1-codex-max"
+    project.agent_templates[0].reasoning_effort = "high"
+    project.agent_templates[1].model = "sonnet"
+    project.agent_templates[1].reasoning_effort = "xhigh"
+
+    app.instance_variable_set(:@screen, :projects)
+    app.instance_variable_get(:@selected)[:projects] = projects.index(project) || 0
+    app.send(:open_agent_editor_for_selected_project)
+
+    editor = app.instance_variable_get(:@agent_editor)
+    editor.model_input.value = "custom-model"
+    editor.reasoning_effort_input.value = "max"
+    editor.mark_model_dirty!
+    editor.mark_reasoning_effort_dirty!
+
+    editor.cycle_template(1)
+
+    assert(editor.model_input.value == "custom-model",
+           "expected dirty model field to survive template change")
+    assert(editor.reasoning_effort_input.value == "max",
+           "expected dirty reasoning effort field to survive template change")
   end
 
   def assert_web_project_icon_renders_for_project_contexts
@@ -2456,6 +2489,8 @@ module RenderingTest
     form = app.instance_variable_get(:@agent_editor)
     form.cycle_template(1)
     form.cycle_harness(1)
+    form.model_input.value = "sonnet"
+    form.reasoning_effort_input.value = "high"
     form.instance_variable_set(:@field_index, form.create_and_run_button_index)
 
     created_agent = nil
@@ -2484,6 +2519,8 @@ module RenderingTest
     assert(created_agent.instance_variable_get(:@started),
            "expected 'Create and Run' to start the new agent immediately")
     assert(created_agent.agent == "claude", "expected selected harness to override the template default")
+    assert(created_agent.model == "sonnet", "expected created agent to save selected model")
+    assert(created_agent.reasoning_effort == "high", "expected created agent to save selected reasoning effort")
     assert(app.instance_variable_get(:@screen) == :agents, "expected create flow to switch to the agents screen")
     assert(app.instance_variable_get(:@selected)[:agents].zero?, "expected the newly created agent to be selected")
     sidebar = app.instance_variable_get(:@sidebar)
@@ -2619,6 +2656,16 @@ module RenderingTest
     app.instance_variable_set(:@screen, :agents)
 
     old_agent = app.instance_variable_get(:@agents).first
+    old_agent.update!(
+      name: old_agent.name,
+      template_key: old_agent.template_key,
+      workspace: old_agent.workspace,
+      prompt: old_agent.prompt,
+      sandbox_mode: old_agent.sandbox_mode,
+      agent: old_agent.agent,
+      model: "opus",
+      reasoning_effort: "xhigh"
+    )
     old_agent.instance_variable_set(:@session_id, "old-session")
     old_agent.instance_variable_set(:@session_bootstrapped, true)
     old_agent.instance_variable_set(:@started_at, Time.parse("2026-04-05 17:50:00"))
@@ -2645,6 +2692,8 @@ module RenderingTest
     assert(new_agent.prompt == old_agent.prompt, "expected clone to copy prompt")
     assert(new_agent.sandbox_mode == old_agent.sandbox_mode, "expected clone to copy sandbox mode")
     assert(new_agent.agent == old_agent.agent, "expected clone to copy harness")
+    assert(new_agent.model == old_agent.model, "expected clone to copy model")
+    assert(new_agent.reasoning_effort == old_agent.reasoning_effort, "expected clone to copy reasoning effort")
     assert(new_agent.runs.empty?, "expected cloned agent to start with no runs")
     assert(new_agent.started_at.nil?, "expected cloned agent to have no started time")
     assert(new_agent.finished_at.nil?, "expected cloned agent to have no finished time")

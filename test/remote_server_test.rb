@@ -23,6 +23,7 @@ module RemoteServerTest
     assert_remote_prompt_start_accepts_dash_prefixed_message
     assert_remote_agent_conversation_hides_run_summary
     assert_remote_project_payloads_include_status_and_detail
+    assert_remote_agent_model_and_effort_payloads
     assert_remote_hidden_settings_filter_projects_and_agents
     assert_remote_schedule_routes
     assert_remote_setup_payload_includes_readiness
@@ -775,6 +776,67 @@ module RemoteServerTest
     end
   end
 
+  def assert_remote_agent_model_and_effort_payloads
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      File.write(config_path, <<~YAML)
+        projects:
+          - key: web
+            name: Web
+            path: #{workspace}
+            apps: false
+            agent: codex
+            model: gpt-5.1-codex-max
+            reasoning_effort: low
+      YAML
+      File.write(prompts_path, <<~YAML)
+        custom: Default prompt for %{project_key}.
+        reviewer:
+          name: Reviewer
+          prompt: Review %{project_key}.
+          agent: claude
+          model: sonnet
+          reasoning_effort: xhigh
+      YAML
+      registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
+      service = HQ::RemoteService.new(registry: registry)
+
+      project = service.project("web")
+      reviewer_template = project[:agent_template_summaries].find { |item| item[:key] == "reviewer" }
+      assert(reviewer_template[:model] == "sonnet", "expected project detail to expose template model")
+      assert(reviewer_template[:reasoning_effort] == "xhigh",
+             "expected project detail to expose template reasoning effort")
+
+      inherited = service.create_agent(
+        "project_key" => "web",
+        "template_key" => "custom",
+        "name" => "Inherited",
+        "prompt" => "Use project defaults."
+      )
+      assert(inherited[:model] == "gpt-5.1-codex-max", "expected created agent to inherit project model")
+      assert(inherited[:reasoning_effort] == "low", "expected created agent to inherit project effort")
+
+      updated = service.update_agent(
+        inherited[:key],
+        "model" => "opus",
+        "reasoning_effort" => "max"
+      )
+      assert(updated[:model] == "opus", "expected update payload to save model")
+      assert(updated[:reasoning_effort] == "max", "expected update payload to save effort")
+
+      cloned = service.clone_agent(updated[:key], {})
+      assert(cloned.dig(:agent, :model) == "opus", "expected clone to copy source model")
+      assert(cloned.dig(:agent, :reasoning_effort) == "max", "expected clone to copy source effort")
+
+      cleared = service.update_agent(updated[:key], "model" => "", "reasoning_effort" => "")
+      assert(cleared[:model].nil?, "expected blank model update to clear model")
+      assert(cleared[:reasoning_effort].nil?, "expected blank effort update to clear effort")
+    end
+  end
+
   def assert_remote_hidden_settings_filter_projects_and_agents
     with_remote_temp_store do |dir|
       prompts_path = File.join(dir, "system_prompts.yml")
@@ -960,16 +1022,20 @@ module RemoteServerTest
         "TYCHO_MISE_BIN" => nil
       ) do
         setup = HQ::RemoteService.new(registry: registry).setup
-        codex = setup[:harnesses].find { |item| item[:name] == "codex" }
-        claude = setup[:harnesses].find { |item| item[:name] == "claude" }
+      codex = setup[:harnesses].find { |item| item[:name] == "codex" }
+      claude = setup[:harnesses].find { |item| item[:name] == "claude" }
         mise = setup[:tools].find { |item| item[:name] == "mise" }
         global_kamal = setup[:tools].find { |item| item[:name] == "kamal" }
         project_kamal = setup[:tools].find { |item| item[:name] == "kamal-projects" }
 
         assert(codex[:ready] && codex[:path].end_with?("/.local/bin/codex"),
                "expected Remote setup to find fallback Codex")
+        assert(codex.key?(:model_suggestions), "expected Codex readiness to expose model suggestions")
+        assert(codex.key?(:reasoning_effort_suggestions), "expected Codex readiness to expose effort suggestions")
         assert(claude[:ready] && claude[:path].end_with?("/.local/bin/claude"),
                "expected Remote setup to find fallback Claude")
+        assert(claude[:reasoning_effort_suggestions].include?("low"),
+               "expected Claude readiness to expose fallback effort suggestions")
         assert(mise[:ready] && mise[:path].end_with?("/.local/bin/mise"),
                "expected Remote setup to find fallback mise")
         assert(!global_kamal[:ready], "expected global Kamal to remain PATH-only")
@@ -1527,6 +1593,16 @@ module RemoteServerTest
     assert(js[:body].include?("normalizeInquiryInputType"),
            "expected Remote UI to normalize inquiry field input types")
     assert(js[:body].include?("function setAgentSettings"), "expected Agent metadata to move into header settings")
+    assert(js[:body].include?('id="agent-model" name="model"'),
+           "expected Remote UI agent form to expose model input")
+    assert(js[:body].include?('name="reasoning_effort"'),
+           "expected Remote UI agent form to expose reasoning effort input")
+    assert(js[:body].include?("data-agent-model-select"),
+           "expected Remote UI agent form to expose a persistent model choice control")
+    assert(js[:body].include?("function modelChoiceOptions"),
+           "expected Remote UI agent form to build model suggestions from setup payload")
+    assert(js[:body].include?("model: String(formData.get(\"model\")"),
+           "expected Remote UI agent form payload to include model")
     assert(js[:body].include?("Push notifications"), "expected Settings screen to expose push readiness")
     assert(js[:body].include?("function renderHiddenSettings"),
            "expected Settings screen to expose a dedicated Hidden settings page")

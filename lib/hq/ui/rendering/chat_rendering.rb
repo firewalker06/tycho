@@ -577,8 +577,13 @@ module HQ
 
         def chat_meta_lines(agent)
           prefix = horizontal_margin_prefix
+          execution_parts = ["template=#{agent.template_key}", "agent=#{agent.agent}"]
+          execution_parts << "model=#{agent.model}" unless agent.model.to_s.empty?
+          execution_parts << "effort=#{agent.reasoning_effort}" unless agent.reasoning_effort.to_s.empty?
+          execution_parts << "sandbox=#{agent.sandbox_mode}"
+          execution_parts << "workspace=#{compact_workspace_path(agent.workspace)}"
           lines = [
-            "template=#{agent.template_key}  agent=#{agent.agent}  sandbox=#{agent.sandbox_mode}  workspace=#{compact_workspace_path(agent.workspace)}",
+            execution_parts.join("  "),
             "created #{format_time(agent.created_at)}  #{Styles::MARKERS[:bullet_sep]}  runs #{agent.run_count}  #{Styles::MARKERS[:bullet_sep]}  last result #{agent.last_result_label}"
           ]
           lines.map { |line| dim_style.render("#{prefix}#{wrap_text(line, chat_content_width)}") }.join("\n")

@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-05-28
+2026-06-03
 
 ## Strategic Direction
 
@@ -27,6 +27,7 @@ Key references:
 - [REMOTE_SERVER.md](./REMOTE_SERVER.md) — Remote Sessions server architecture, runtime behavior, and API endpoint reference.
 - [WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.md) — planned browser push notifications for Remote UI, including the hard HTTPS-over-Tailscale requirement.
 - [SCHEDULED_RUNS.md](./SCHEDULED_RUNS.md) — planned cron-like scheduled runs, `tycho schedule daemon`, command targets, and prompt/message tradeoffs.
+- [MODEL_ARGUMENTS_PLAN.md](./MODEL_ARGUMENTS_PLAN.md) — planned managed-agent `model` and `reasoning_effort` configuration, command mapping, and TUI/Remote UI display.
 
 ## Key Decisions
 
@@ -39,6 +40,7 @@ Key references:
 | Health checks | HEAD requests, concurrent via Ruby threads | HEAD is required for kamal-proxy maintenance detection (503 on root URL) |
 | Config split | `~/.tycho/config/hq.yml` (active) + `~/.tycho/config/hq.archived.yml` (archived) | Archive without losing history; logs move to `~/.tycho/logs/projects/archived/` |
 | Agent transport | Codex JSON output; Claude-compatible `--output-format stream-json` | Streaming logs render incrementally in the chat viewport |
+| Agent model controls | Optional per-agent `model` and `reasoning_effort`, inherited from project/template config and passed as harness run arguments | Model catalogs change outside Tycho; use harness discovery for suggestions where available, keep free-form fallback everywhere, and keep provider-specific thinking budgets out of first-version scope |
 | Agent session strategy | Persist native Claude/Codex `session_id` per managed agent and resume after the first run; keep `memory.jsonl` as HQ's canonical transcript | Native resume recovers agent-side continuity and prompt-cache reuse. HQ only replays bounded `memory.jsonl` on first run or when no native session is known |
 | Agent log layout | New agents use a per-agent stem `<project-key>-<created-at>-<nonce>` for `.raw.log`, `.conversation.log`, `.system.log`, `.memory.jsonl`, `.attachments.json`, `.status`, and `.last_message.json`; legacy `<key>.raw.log` records remain readable | Raw stream + parsed conversation + tool/system events + canonical event log + durable artifact links without collisions when agent keys are reused after Remote/TUI archive timing differences |
 | Chat viewport rendering | Hybrid: `memory.jsonl` for history, `raw.log` tail for live streaming | User messages appear immediately (written to `memory.jsonl` on send); assistant turns commit on run finalization |
@@ -141,6 +143,16 @@ verification.
 - [x] Add README screenshots for TUI and Remote UI workflows
 
 ## Features Candidates
+
+### Model And Effort Arguments
+
+- [x] Add planning doc for managed-agent model and reasoning effort fields in `docs/MODEL_ARGUMENTS_PLAN.md`
+- [x] Add Codex catalog-driven model and effort suggestions from `codex debug models`
+- [x] Add Claude alias/help-derived suggestions without hard validation
+- [x] Add config inheritance and persisted `ManagedAgent` fields for `model` and `reasoning_effort`
+- [x] Add dirty-field-aware dynamic model/effort suggestions when harness, template, or model selection changes
+- [x] Pass model and effort through Codex, Claude, and Claude-compatible command builders
+- [x] Display and edit model and effort in the TUI and Remote UI
 
 ### Scheduled Runs
 

@@ -19,6 +19,9 @@ module ManagedAgentTest
     assert_final_output_checklist_is_ephemeral_execution_context
     assert_agent_result_schema_describes_summary
     assert_initial_user_message_attachments_seed_memory
+    assert_model_and_reasoning_effort_persist_and_update
+    assert_legacy_run_commands_backfill_model_and_reasoning_effort
+    assert_model_and_reasoning_effort_arguments_apply_to_harnesses
     assert_start_records_missing_harness_without_spawning
     assert_agent_runner_warns_when_command_cannot_execute
     puts "managed_agent_test: ok"
@@ -636,6 +639,153 @@ module ManagedAgentTest
     end
   ensure
     replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
+  end
+
+  def assert_model_and_reasoning_effort_persist_and_update
+    agent = HQ::ManagedAgent.new(
+      key: "model-agent",
+      name: "Model Agent",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "System prompt",
+      model: "gpt-5.1-codex-max",
+      reasoning_effort: "HIGH"
+    )
+
+    data = agent.to_hash
+    assert(data["model"] == "gpt-5.1-codex-max", "expected model to persist")
+    assert(data["reasoning_effort"] == "high", "expected reasoning effort to normalize and persist")
+
+    restored = HQ::ManagedAgent.from_hash(data)
+    assert(restored.model == "gpt-5.1-codex-max", "expected model to restore")
+    assert(restored.reasoning_effort == "high", "expected reasoning effort to restore")
+
+    restored.update!(
+      name: "Updated Model Agent",
+      template_key: "reviewer",
+      workspace: Dir.tmpdir,
+      prompt: "Updated prompt",
+      model: "",
+      reasoning_effort: ""
+    )
+
+    assert(restored.model.nil?, "expected blank model update to clear the agent model")
+    assert(restored.reasoning_effort.nil?, "expected blank reasoning effort update to clear the agent effort")
+    assert(!restored.to_hash.key?("model"), "expected cleared model to be omitted from persisted hash")
+    assert(!restored.to_hash.key?("reasoning_effort"), "expected cleared effort to be omitted from persisted hash")
+  end
+
+  def assert_legacy_run_commands_backfill_model_and_reasoning_effort
+    session_id = "019e8b77-6fe8-7f02-bb5e-3d35902e1f4d"
+    data = {
+      "key" => "legacy-model-agent",
+      "name" => "Legacy Model Agent",
+      "project_key" => "demo",
+      "template_key" => "custom",
+      "workspace" => Dir.tmpdir,
+      "prompt" => "System prompt",
+      "agent" => "codex",
+      "session_id" => session_id,
+      "runs" => [
+        {
+          "command" => Shellwords.join([
+            "/opt/homebrew/bin/codex", "exec", "--model", "gpt-5.5",
+            "-c", "model_reasoning_effort=\"xhigh\"", "--json", "--", "Initial prompt"
+          ])
+        },
+        {
+          "command" => Shellwords.join([
+            "/opt/homebrew/bin/codex", "exec", "resume", "--json",
+            session_id, "--", "Follow-up prompt"
+          ])
+        }
+      ]
+    }
+
+    restored = HQ::ManagedAgent.from_hash(data)
+    assert(restored.model == "gpt-5.5", "expected legacy run command to backfill model")
+    assert(restored.reasoning_effort == "xhigh", "expected legacy run command to backfill reasoning effort")
+    assert(restored.to_hash["model"] == "gpt-5.5", "expected backfilled model to persist")
+    assert(restored.to_hash["reasoning_effort"] == "xhigh", "expected backfilled effort to persist")
+
+    resume_command = restored.send(:build_command)[:command]
+    assert(argument_after(resume_command, "--model") == "gpt-5.5",
+           "expected backfilled Codex resume command to include --model")
+    assert(argument_after(resume_command, "-c") == "model_reasoning_effort=\"xhigh\"",
+           "expected backfilled Codex resume command to include model_reasoning_effort")
+
+    explicit = HQ::ManagedAgent.from_hash(data.merge("model" => "gpt-5.1", "reasoning_effort" => "medium"))
+    assert(explicit.model == "gpt-5.1", "expected explicit persisted model to beat command backfill")
+    assert(explicit.reasoning_effort == "medium", "expected explicit persisted effort to beat command backfill")
+  end
+
+  def assert_model_and_reasoning_effort_arguments_apply_to_harnesses
+    codex = HQ::ManagedAgent.new(
+      key: "codex-model-agent",
+      name: "Codex Model Agent",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "System prompt",
+      agent: "codex",
+      model: "gpt-5.1-codex-max",
+      reasoning_effort: "xhigh"
+    )
+    codex_command = codex.send(:build_command)[:command]
+    assert(argument_after(codex_command, "--model") == "gpt-5.1-codex-max",
+           "expected Codex command to include --model")
+    assert(argument_after(codex_command, "-c") == "model_reasoning_effort=\"xhigh\"",
+           "expected Codex command to include model_reasoning_effort config")
+
+    claude = HQ::ManagedAgent.new(
+      key: "claude-model-agent",
+      name: "Claude Model Agent",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "System prompt",
+      agent: "claude",
+      model: "sonnet",
+      reasoning_effort: "max"
+    )
+    claude_command = claude.send(:build_command)[:command]
+    assert(argument_after(claude_command, "--model") == "sonnet",
+           "expected Claude command to include --model")
+    assert(argument_after(claude_command, "--effort") == "max",
+           "expected Claude command to include --effort")
+
+    old_harnesses = HQ.custom_harnesses
+    HQ.custom_harnesses = [
+      HQ::HarnessConfig.new(
+        key: "claude-wrapper",
+        adapter: "claude",
+        execution_command: "claude-wrapper --model sonnet"
+      )
+    ]
+    wrapper = HQ::ManagedAgent.new(
+      key: "wrapper-model-agent",
+      name: "Wrapper Model Agent",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "System prompt",
+      agent: "claude-wrapper",
+      model: "opus",
+      reasoning_effort: "high"
+    )
+    wrapper_command = wrapper.send(:build_command)[:command]
+    assert(wrapper_command.each_cons(2).select { |left, _right| left == "--model" }.map(&:last) == %w[sonnet opus],
+           "expected custom Claude-compatible wrapper to keep its prefix model and append agent-level override")
+    assert(argument_after(wrapper_command, "--effort") == "high",
+           "expected custom Claude-compatible wrapper to include --effort")
+  ensure
+    HQ.custom_harnesses = old_harnesses if defined?(old_harnesses)
+  end
+
+  def argument_after(command, flag)
+    index = command.index(flag)
+    index ? command[index + 1] : nil
   end
 
   def assert(condition, message)

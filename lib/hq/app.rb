@@ -1067,7 +1067,10 @@ def selected_screen_items
                        agent_key: new_agent.key,
                        source_agent_key: old_agent.key,
                        project_key: new_agent.project_key,
-                       name: new_agent.name)
+                       name: new_agent.name,
+                       agent: new_agent.agent,
+                       model: new_agent.model,
+                       reasoning_effort: new_agent.reasoning_effort)
       [self, nil]
     end
 
@@ -1343,6 +1346,12 @@ def selected_screen_items
       when @agent_editor.name_field_index then @agent_editor.instance_variable_set(:@name_input, updated_input)
       when @agent_editor.workspace_field_index
         @agent_editor.instance_variable_set(:@workspace_input, updated_input)
+      when @agent_editor.model_field_index
+        @agent_editor.mark_model_dirty!
+        @agent_editor.instance_variable_set(:@model_input, updated_input)
+      when @agent_editor.reasoning_effort_field_index
+        @agent_editor.mark_reasoning_effort_dirty!
+        @agent_editor.instance_variable_set(:@reasoning_effort_input, updated_input)
       else
         @agent_editor.instance_variable_set(:@prompt_input, updated_input)
       end
@@ -1369,7 +1378,10 @@ def selected_screen_items
                          project_key: agent.project_key,
                          template_key: agent.template_key.to_s,
                          name: agent.name,
-                         workspace: agent.workspace)
+                         workspace: agent.workspace,
+                         agent: agent.agent,
+                         model: agent.model,
+                         reasoning_effort: agent.reasoning_effort)
         if @agent_editor.run_on_submit?
           begin
             agent.start!

@@ -7,7 +7,7 @@ module HQ
   module UI
     class AgentEditor
       attr_reader :mode, :project, :agent, :name_input, :workspace_input, :prompt_input, :field_index,
-                  :template_index
+                  :template_index, :model_input, :reasoning_effort_input
       attr_accessor :error_message
 
       def initialize(mode:, project:, agent: nil)
@@ -20,15 +20,21 @@ module HQ
 
         @name_input = build_input("Name: ", 54)
         @workspace_input = build_input("Workspace: ", 54)
+        @model_input = build_input("Model: ", 54)
+        @reasoning_effort_input = build_input("Effort: ", 54)
         @prompt_input = build_text_area
         @error_message = nil
+        @model_dirty = false
+        @reasoning_effort_dirty = false
 
         if agent
           @name_input.value = agent.name
           @workspace_input.value = agent.workspace
+          @model_input.value = agent.model.to_s
+          @reasoning_effort_input.value = agent.reasoning_effort.to_s
           @prompt_input.value = wrap_prompt(agent.prompt)
         else
-          apply_template_defaults!(preserve_name: false)
+          apply_template_defaults!(preserve_name: false, preserve_model_settings: false)
           @workspace_input.value = project.path
         end
 
@@ -67,6 +73,8 @@ module HQ
         case @field_index
         when name_field_index then @name_input
         when workspace_field_index then @workspace_input
+        when model_field_index then @model_input
+        when reasoning_effort_field_index then @reasoning_effort_input
         when prompt_field_index then @prompt_input
         end
       end
@@ -75,7 +83,7 @@ module HQ
         return if @project.agent_templates.empty?
 
         @template_index = (@template_index + delta) % @project.agent_templates.length
-        apply_template_defaults!(preserve_name: mode == :edit)
+        apply_template_defaults!(preserve_name: mode == :edit, preserve_model_settings: mode == :edit)
       end
 
       def cycle_harness(delta)
@@ -104,7 +112,9 @@ module HQ
           workspace: show_workspace? ? @workspace_input.value.strip : @project.path,
           prompt: @prompt_input.value.strip,
           sandbox_mode: template.sandbox_mode,
-          agent: @selected_harness
+          agent: @selected_harness,
+          model: empty_to_nil(@model_input.value),
+          reasoning_effort: empty_to_nil(@reasoning_effort_input.value&.downcase)
         }
       end
 
@@ -125,7 +135,7 @@ module HQ
       end
 
       def prompt_field_index
-        show_workspace? ? 4 : 3
+        show_workspace? ? 6 : 5
       end
 
       def template_field_index
@@ -137,11 +147,19 @@ module HQ
       end
 
       def name_field_index
-        2
+        4
       end
 
       def workspace_field_index
-        show_workspace? ? 3 : nil
+        show_workspace? ? 5 : nil
+      end
+
+      def model_field_index
+        2
+      end
+
+      def reasoning_effort_field_index
+        3
       end
 
       def create_button_index
@@ -203,7 +221,17 @@ module HQ
         prompt_width = [width, 24].max
         @name_input.width = input_width
         @workspace_input.width = input_width
+        @model_input.width = input_width
+        @reasoning_effort_input.width = input_width
         @prompt_input.width = prompt_width
+      end
+
+      def mark_model_dirty!
+        @model_dirty = true
+      end
+
+      def mark_reasoning_effort_dirty!
+        @reasoning_effort_dirty = true
       end
 
       private
@@ -227,10 +255,14 @@ module HQ
         input
       end
 
-      def apply_template_defaults!(preserve_name:)
+      def apply_template_defaults!(preserve_name:, preserve_model_settings:)
         @prompt_input.value = wrap_prompt(template.prompt)
         @name_input.value = default_name unless preserve_name
         @selected_harness = normalize_harness(template.agent)
+        @model_input.value = template.model.to_s unless preserve_model_settings || @model_dirty
+        unless preserve_model_settings || @reasoning_effort_dirty
+          @reasoning_effort_input.value = template.reasoning_effort.to_s
+        end
       end
 
       def default_name
@@ -260,6 +292,11 @@ module HQ
           end
           lines.join("\n")
         end.join("\n")
+      end
+
+      def empty_to_nil(value)
+        text = value.to_s.strip
+        text.empty? ? nil : text
       end
 
       def focus_current!
