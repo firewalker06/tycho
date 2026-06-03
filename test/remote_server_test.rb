@@ -1632,6 +1632,10 @@ module RemoteServerTest
            "expected Remote UI schedule rows to be collapsed by default")
     assert(js[:body].include?("schedule-disclosure"),
            "expected collapsed schedule block to show a disclosure indicator")
+    assert(js[:body].include?("function scheduleSectionRows"),
+           "expected Schedule section rows to keep non-attention schedules visible")
+    assert(!js[:body].include?("attention.length ? attention : upcomingSchedules().slice(0, 4)"),
+           "expected interactive schedules not to filter out healthy schedule rows")
     assert(js[:body].include?('/schedules/daemon/${action}'),
            "expected Remote UI scheduler controls to call daemon endpoints")
     assert(js[:body].include?("data-schedule-action"),
