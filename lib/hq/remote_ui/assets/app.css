@@ -495,6 +495,7 @@ h3 {
 .top-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -504,12 +505,11 @@ h3 {
 }
 
 .top-actions .search-box {
-  flex: 1 1 auto;
+  flex: 1 1 260px;
 }
 
 .top-actions > button {
   flex: 0 0 auto;
-  margin-left: auto;
 }
 
 .compact-actions button {
@@ -1130,6 +1130,79 @@ select {
   border: 0;
   background: transparent;
   padding: 2px 0;
+}
+
+.agent-sort-menu {
+  position: relative;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.agent-sort-trigger {
+  display: inline-grid;
+  width: 42px;
+  min-width: 42px;
+  min-height: 42px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.agent-sort-trigger::-webkit-details-marker {
+  display: none;
+}
+
+.agent-sort-trigger::marker {
+  content: "";
+}
+
+.agent-sort-menu[open] .agent-sort-trigger,
+.agent-sort-trigger:hover,
+.agent-sort-trigger:focus-visible {
+  border-color: var(--accent);
+  background: var(--panel-soft);
+}
+
+.agent-sort-trigger .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.agent-sort-options {
+  position: absolute;
+  z-index: 18;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  gap: 2px;
+  width: min(72vw, 230px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 4px;
+}
+
+.agent-sort-option {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 34px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  padding: 0 9px;
+  text-align: left;
+}
+
+.agent-sort-option:hover,
+.agent-sort-option:focus-visible,
+.agent-sort-option.active {
+  background: var(--panel-soft);
 }
 
 .agent-group {

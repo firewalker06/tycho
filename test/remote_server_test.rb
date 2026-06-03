@@ -1397,6 +1397,9 @@ module RemoteServerTest
     assert(css[:body].include?(".go-recent-fab"), "expected Agent detail to include Go to recent")
     assert(css[:body].include?(".agent-settings-panel"), "expected Agent settings to render in the header")
     assert(css[:body].include?(".growl"), "expected Remote UI to style growl notifications")
+    assert(css[:body].include?(".agent-sort-menu"), "expected Remote UI to style agent sort dropdowns")
+    assert(css[:body].include?(".agent-sort-trigger"), "expected Remote UI to style icon-only sort triggers")
+    assert(css[:body].include?(".agent-sort-option"), "expected Remote UI to style text sort options")
     assert(css[:body].include?(".agent-settings-actions"),
            "expected Agent settings to hide edit/archive actions behind the settings panel")
     assert(css[:body].include?(".agent-form"), "expected Remote UI to style agent lifecycle forms")
@@ -1573,6 +1576,30 @@ module RemoteServerTest
            "expected selected Remote UI nav clicks to scroll the current tab to the top")
     assert(js[:body].include?('route.type === "tab" && route.tab === tab'),
            "expected selected Remote UI nav detection to require the current top-level tab")
+    assert(js[:body].include?('const DEFAULT_AGENT_SORT = "project_asc"'),
+           "expected agent sorting to default to project grouping ascending")
+    assert(js[:body].include?('const AGENT_SORT_STORAGE_KEY = "hq.remote.agentSort"'),
+           "expected agent sort selection to use session storage")
+    assert(js[:body].include?("data-agent-sort-choice"),
+           "expected Agents screen to expose sort dropdown choices")
+    assert(js[:body].include?('icon: "arrowDownAZ"') &&
+           js[:body].include?('icon: "clockArrowDown"') &&
+           js[:body].include?('icon: "arrowDownWideNarrow"'),
+           "expected agent sort trigger to use lucide sort icons")
+    assert(js[:body].include?('M20 8h-5') &&
+           js[:body].include?('M15 10V6.5a2.5 2.5 0 0 1 5 0V10') &&
+           js[:body].include?('M15 20v-3.5a2.5 2.5 0 0 1 5 0V20'),
+           "expected A-Z and Z-A sort icons to use Lucide SVG paths")
+    assert(js[:body].include?("function agentSortMenuHtml"),
+           "expected Agents screen to render an icon-triggered sort dropdown")
+    assert(js[:body].include?("setSessionStorageValue(AGENT_SORT_STORAGE_KEY, state.agentSort)"),
+           "expected chosen agent sort to persist for the browser session")
+    assert(js[:body].include?("function sortedAgentList"),
+           "expected agent sort to support flat agent lists")
+    assert(js[:body].include?("function agentSortUsesProjectGroups"),
+           "expected agent sort to support project-grouped lists")
+    assert(js[:body].include?("function compareAgentsBySort"),
+           "expected agent list sorting to support multiple sort modes")
     assert(js[:body].include?("function showGrowl"), "expected UI JavaScript to expose growl notifications")
     assert(js[:body].include?("function handleDocumentCopyClick"),
            "expected copy buttons to be handled outside the main view")
