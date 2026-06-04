@@ -120,6 +120,8 @@ module SchedulerTest
 
       agents = read_agents
       assert(agents.map(&:key) == [first_agent.key], "expected first scheduled agent to be active")
+      assert(first_agent.name == "[Scheduled] Weekday maintenance",
+             "expected scheduled agent name to be prefixed without numeric suffix")
       assert(File.exist?(first_agent.raw_log_path), "expected stubbed agent start to write a raw log")
       memory = File.read(first_agent.memory_path)
       assert(memory.include?("Run maintenance."), "expected scheduled message to be written to agent memory")
@@ -130,6 +132,8 @@ module SchedulerTest
       second_agent = second.fetch(:agent)
       agents = read_agents
       assert(agents.map(&:key) == [second_agent.key], "expected second run to replace active scheduled agent")
+      assert(second_agent.name == "[Scheduled] Weekday maintenance",
+             "expected replacement scheduled agent name to stay suffix-free")
       archived = Dir.glob(File.join(HQ::AGENT_ARCHIVE_DIR, "**", File.basename(first_agent.raw_log_path)))
       assert(!archived.empty?, "expected previous scheduled agent logs to be archived")
     end

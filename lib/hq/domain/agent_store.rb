@@ -8,6 +8,7 @@ require_relative "../ui/rendering/styles"
 module HQ
   class AgentStore
     PALETTE_SIZE = HQ::UI::Rendering::Styles::CHAT_BORDER_PALETTE.length
+    SCHEDULED_NAME_PREFIX = "[Scheduled]"
     PollEvent = Struct.new(:agent_key, :from_status, :to_status, :run_count, keyword_init: true)
 
     def initialize(projects)
@@ -90,7 +91,7 @@ module HQ
       system_messages = system_messages_for(project, prompt)
       agent = ManagedAgent.new(
         key: key,
-        name: scheduled_agent_name(project, schedule_key:, name:, suffix:),
+        name: scheduled_agent_name(project, schedule_key:, name:),
         project_key: project.key,
         template_key: "scheduled",
         workspace: project.path,
@@ -176,10 +177,12 @@ module HQ
       (prefixes.max || 0) + 1
     end
 
-    def scheduled_agent_name(project, schedule_key:, name:, suffix:)
+    def scheduled_agent_name(project, schedule_key:, name:)
       label = name.to_s.strip
       label = "#{project.name} #{schedule_key}" if label.empty?
-      "#{label} #{suffix}"
+      return label if label == SCHEDULED_NAME_PREFIX || label.start_with?("#{SCHEDULED_NAME_PREFIX} ")
+
+      "#{SCHEDULED_NAME_PREFIX} #{label}"
     end
 
     def template_for(project, template_key)

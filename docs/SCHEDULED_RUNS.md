@@ -27,6 +27,7 @@ Prompt input is limited to inline text in `~/.tycho/config/schedules.yml` or a f
 - Unsupported commands: `project_action`, `health_check`, `shell`, `agent_template`, `agent_existing`, and `agent_clone`.
 - Prompt sources: only inline text or files under `~/.tycho/schedules/`.
 - Scheduled prompts always include the final-output attachment checklist so created or referenced durable artifacts are reported in `attachments`.
+- Scheduled agent display names are prefixed with `[Scheduled]` and do not include the internal agent-key number.
 - Retention: archive the previous schedule-created agent for a repeating schedule before creating the next one.
 - Interactive protection: skip a due run instead of archiving when the previous scheduled agent has a later user message.
 - Failure management: stop or pause the schedule and notify via web push when a scheduled job fails.
@@ -54,6 +55,7 @@ Schedules support exactly one target type:
 - Uses the project's path and default agent harness from `~/.tycho/config/hq.yml`.
 - Does not select a project agent template.
 - Seeds the scheduled text as the agent's instruction.
+- Names the managed agent from `target.name`, falling back to the schedule name or key, with a `[Scheduled]` prefix.
 - Starts the agent through `ManagedAgent#start!`.
 - Archives the previous schedule-created agent for the same schedule before creating the next repetitive run.
 - Keeps session context fresh and avoids stale native agent sessions.
