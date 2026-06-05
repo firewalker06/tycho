@@ -2334,6 +2334,36 @@ button.restart-server-button {
   gap: 8px;
 }
 
+.composer-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  display: grid;
+  place-items: center;
+  border: 1px dashed color-mix(in srgb, var(--muted) 38%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 62%, transparent);
+  color: var(--muted);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+  backdrop-filter: blur(2px);
+}
+
+.composer-drop-overlay span {
+  border: 1px solid color-mix(in srgb, var(--muted) 34%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 76%, transparent);
+  padding: 8px 12px;
+  color: color-mix(in srgb, var(--muted) 86%, transparent);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.composer.drop-active .composer-drop-overlay {
+  opacity: .88;
+}
+
 .inquiry-form {
   position: relative;
   display: grid;
