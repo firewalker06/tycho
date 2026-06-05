@@ -240,6 +240,7 @@ module HQ
         key = parts[1]
         tail = parts.drop(2)
         return ok(project: service.project(key)) if method == "GET" && tail.empty?
+        return ok(project: service.update_project(key, body)) if %w[PATCH PUT].include?(method) && tail.empty?
         return ok(actions: service.project_action_preflights(key)) if method == "GET" && tail == ["actions"]
         return ok(service.start_project_action(key, body["action"], body)) if method == "POST" && tail == ["actions"]
         if tail.length == 2 && tail.first == "actions"
@@ -656,6 +657,17 @@ module HQ
       refresh_project!(target)
       agents = load_agents.select { |agent| agent.project_key == target.key }
       project_detail_payload(target, agents:, active_action: active_actions[target.key])
+    end
+
+    def update_project(key, attrs)
+      current = find_project!(key)
+      updated = @registry.update_project!(current.key, project_attrs(current, attrs))
+      raise Error.new("Unknown project: #{key}", status: 404) unless updated
+
+      reload_projects_from_registry!
+      project(current.key)
+    rescue ConfigError => e
+      raise Error.new(e.message)
     end
 
     def search_index
@@ -1413,6 +1425,9 @@ module HQ
         commit_url: project.commit_url(project.commit_hash),
         dirty: project.dirty_files.to_i.positive?,
         dirty_files: project.dirty_files.to_i,
+        agent: project.config.agent,
+        model: project.config.model,
+        reasoning_effort: project.config.reasoning_effort,
         service: project.service,
         image: project.image,
         hosts: Array(project.hosts),
@@ -1726,6 +1741,41 @@ module HQ
         model: model.empty? ? nil : model,
         reasoning_effort: reasoning_effort.empty? ? nil : reasoning_effort
       }
+    end
+
+    def project_attrs(target, attrs)
+      immutable_project_field!(attrs, "key", target.key)
+      immutable_project_field!(attrs, "path", target.path)
+      immutable_project_field!(attrs, "apps", target.apps_enabled?)
+      immutable_project_field!(attrs, "pr_url", target.pr_url.to_s)
+
+      name = attrs.key?("name") ? attrs["name"].to_s.strip : target.name.to_s
+      raise Error.new("Name is required") if name.empty?
+
+      agent = attrs.key?("agent") ? attrs["agent"].to_s.strip.downcase : target.config.agent.to_s
+      unless HQ.supported_harness?(agent)
+        raise Error.new("Unsupported agent #{agent.inspect}. Supported agents: #{HQ.harness_keys.join(", ")}")
+      end
+
+      result = {
+        "name" => name,
+        "group" => attrs.key?("group") ? attrs["group"].to_s.strip : target.group.to_s,
+        "agent" => agent,
+        "model" => attrs.key?("model") ? attrs["model"].to_s.strip : target.config.model.to_s,
+        "reasoning_effort" => attrs.key?("reasoning_effort") ? attrs["reasoning_effort"].to_s.strip.downcase : target.config.reasoning_effort.to_s
+      }
+      result["model"] = nil if result["model"].to_s.empty?
+      result["reasoning_effort"] = nil if result["reasoning_effort"].to_s.empty?
+      result
+    end
+
+    def immutable_project_field!(attrs, field, expected)
+      return unless attrs.key?(field)
+
+      value = attrs[field].to_s.strip
+      return if value.empty? || value == expected.to_s
+
+      raise Error.new("Project #{field} cannot be changed from Remote UI")
     end
 
     def required_text(attrs, key, fallback:)
