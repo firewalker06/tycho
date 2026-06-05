@@ -1550,6 +1550,10 @@ module RemoteServerTest
     assert(css[:body].include?(".attachment-nav-item.active"), "expected Attachment detail navigation to highlight the current item")
     assert(css[:body].include?(".pending-attachments"), "expected Agent detail to style pending prompt attachments")
     assert(css[:body].include?(".attachment-upload-button"), "expected Agent detail to style upload attachment controls")
+    assert(css[:body].include?(".composer-drop-overlay"),
+           "expected Agent detail composer to style drag-and-drop attachment overlays")
+    assert(css[:body].include?(".composer.drop-active .composer-drop-overlay"),
+           "expected Agent detail composer to reveal the drag-and-drop attachment overlay while active")
     assert(css[:body].include?(".message-attachments"), "expected chat messages to style attached prompt files")
     assert(css[:body].include?(".attachment-text-viewer"), "expected Attachment detail to style plain text")
     assert(css[:body].include?(".attachment-image-viewer"), "expected Attachment detail to style image previews")
@@ -2012,6 +2016,14 @@ module RemoteServerTest
            "expected Remote UI to route pasted clipboard files into pending attachments")
     assert(js[:body].include?("function clipboardAttachmentFiles"),
            "expected Remote UI to extract files from clipboard data")
+    assert(js[:body].include?('els.view.addEventListener("dragover"'),
+           "expected Agent detail composer to listen for dragged attachment files")
+    assert(js[:body].include?("function handlePromptAttachmentDrop"),
+           "expected Remote UI to route dropped files into pending attachments")
+    assert(js[:body].include?("function dataTransferHasFiles"),
+           "expected Remote UI to ignore non-file drag events")
+    assert(js[:body].include?("Drop files to attach"),
+           "expected Remote UI composer drop overlay to explain the action")
     assert(js[:body].include?("function clipboardAttachmentFilename"),
            "expected Remote UI to synthesize filenames for nameless clipboard blobs")
     assert(js[:body].include?("new File([file], filename"),
