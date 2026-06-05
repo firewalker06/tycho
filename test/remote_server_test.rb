@@ -23,6 +23,7 @@ module RemoteServerTest
     assert_remote_prompt_start_accepts_dash_prefixed_message
     assert_remote_agent_conversation_hides_run_summary
     assert_remote_project_payloads_include_status_and_detail
+    assert_remote_project_update_route_edits_metadata
     assert_remote_agent_model_and_effort_payloads
     assert_remote_hidden_settings_filter_projects_and_agents
     assert_remote_schedule_routes
@@ -776,6 +777,72 @@ module RemoteServerTest
     end
   end
 
+  def assert_remote_project_update_route_edits_metadata
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace, apps: true)
+      service = HQ::RemoteService.new(registry: registry)
+      server = HQ::RemoteServer.new
+
+      updated = server.send(
+        :route,
+        service,
+        "PATCH",
+        "/projects/web",
+        {
+          "name" => "Web Renamed",
+          "group" => "Ops",
+          "agent" => "claude",
+          "model" => "sonnet",
+          "reasoning_effort" => "low"
+        },
+        nil
+      )
+      project = updated.dig(:body, :project)
+      assert(project[:name] == "Web Renamed", "expected updated project name in response")
+      assert(project[:group] == "Ops", "expected updated project group in response")
+      assert(project[:path] == workspace, "expected project workspace path to stay unchanged")
+      assert(project[:apps_enabled] == true, "expected app actions setting to stay unchanged")
+      assert(project[:agent] == "claude", "expected default harness to update")
+      assert(project[:model] == "sonnet", "expected project model to update")
+      assert(project[:reasoning_effort] == "low", "expected project effort to update")
+      assert(project[:pr_url].end_with?("/pull/123"), "expected PR URL to stay unchanged")
+
+      persisted = YAML.safe_load(File.read(registry.path), aliases: true)
+      entry = persisted["projects"].find { |item| item["key"] == "web" }
+      assert(entry["name"] == "Web Renamed", "expected updated project name to persist")
+      assert(entry["group"] == "Ops", "expected updated project group to persist")
+      assert(entry["path"] == workspace, "expected persisted workspace path to stay unchanged")
+      assert(entry["apps"] == true, "expected apps setting to stay unchanged")
+      assert(entry["agent"] == "claude", "expected default harness to persist")
+      assert(entry["model"] == "sonnet", "expected model to persist")
+      assert(entry["reasoning_effort"] == "low", "expected effort to persist")
+      assert(entry["pr_url"].end_with?("/pull/123"), "expected PR URL to stay unchanged")
+
+      begin
+        server.send(:route, service, "PATCH", "/projects/web", { "path" => File.join(dir, "other") }, nil)
+        raise "expected Remote project path edits to be rejected"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.message.include?("path cannot be changed"), "expected immutable path error")
+      end
+
+      begin
+        server.send(:route, service, "PATCH", "/projects/web", { "apps" => false }, nil)
+        raise "expected Remote project app action edits to be rejected"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.message.include?("apps cannot be changed"), "expected immutable apps error")
+      end
+
+      begin
+        server.send(:route, service, "PATCH", "/projects/web", { "pr_url" => "https://github.com/example/web/pull/12" }, nil)
+        raise "expected Remote project PR URL edits to be rejected"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.message.include?("pr_url cannot be changed"), "expected immutable PR URL error")
+      end
+    end
+  end
+
   def assert_remote_agent_model_and_effort_payloads
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
@@ -1339,6 +1406,9 @@ module RemoteServerTest
            "expected root CSS reference to be asset-versioned")
     assert(response[:body].match?(%r{src="/ui\.js\?v=[0-9a-f]{12}"}),
            "expected root JavaScript reference to be asset-versioned")
+    assert(response[:body].include?("project-edit-button"), "expected root shell to expose Project edit")
+    assert(response[:body].include?('<span class="sr-only">Edit project</span>'),
+           "expected Project edit header control to be icon-only with accessible text")
     assert(response[:body].include?("agent-settings-button"), "expected root shell to expose Agent settings")
     assert(response[:body].include?('data-tab="settings"'), "expected root shell to expose Settings navigation")
     assert(response[:body].include?("<span>Settings</span>"), "expected root shell to label setup navigation as Settings")
@@ -1561,6 +1631,8 @@ module RemoteServerTest
            "expected Hidden settings rows to style the visible segment in the triple toggle")
     assert(css[:body].include?("flex-wrap: nowrap"),
            "expected Hidden settings toggle segments to stay horizontal")
+    assert(css[:body].include?(".project-info-title"),
+           "expected Project edit form to style the read-only information title")
     js = server.send(:route_ui, "/ui.js")
     assert(js[:content_type].include?("javascript"), "expected /ui.js to return JavaScript")
     assert(js[:body].include?("DEFAULT_REFRESH_INTERVALS"), "expected UI JavaScript to define refresh defaults")
@@ -1704,6 +1776,38 @@ module RemoteServerTest
            "expected Remote UI agent forms to let the server preserve/default workspace")
     assert(js[:body].include?("data-create-agent"),
            "expected Project detail to expose Add agent navigation")
+    assert(js[:body].include?("function setProjectEditButton"),
+           "expected Project detail to expose edit navigation in the header")
+    assert(js[:body].include?("els.projectEdit.dataset.editProject"),
+           "expected Project edit header button to route to the edit form")
+    assert(js[:body].include?('return { type: "projectForm", key: parts[1] };'),
+           "expected Remote UI to parse Project edit routes")
+    assert(js[:body].include?("function renderProjectForm"),
+           "expected Remote UI to render Project edit forms")
+    assert(js[:body].include?("Project Information"),
+           "expected Project edit form to label read-only project metadata")
+    assert(js[:body].include?('id="project-form"'),
+           "expected Project edit form to use a dedicated form")
+    assert(js[:body].include?('id="project-harness" name="agent"'),
+           "expected Project edit form to expose default harness")
+    assert(js[:body].include?("data-project-model-select"),
+           "expected Project edit form to expose model choices")
+    assert(js[:body].include?("Can be deployed with Kamal"),
+           "expected Project edit form to describe app actions as Kamal deploy capability")
+    assert(!js[:body].include?('id="project-pr-url"'),
+           "expected Project edit form to keep PR URL readonly")
+    assert(!js[:body].include?('id="project-apps"'),
+           "expected Project edit form to keep app actions readonly")
+    assert(!js[:body].include?('formData.get("pr_url")'),
+           "expected Project edit form payload to omit PR URL")
+    assert(!js[:body].include?('formData.get("apps")'),
+           "expected Project edit form payload to omit app actions")
+    assert(js[:body].include?("function projectFormPayload"),
+           "expected Project edit form to serialize project metadata")
+    assert(js[:body].include?('apiPatch(`/projects/${encodeURIComponent(projectKey)}`'),
+           "expected Project edit form to update projects through the API")
+    assert(!js[:body].include?("Project editing opens in the TUI"),
+           "expected Project detail to remove the old TUI-only edit notice")
     assert(js[:body].include?("data-edit-agent"),
            "expected Agent settings to expose edit navigation")
     assert(js[:body].include?("data-archive-agent"),

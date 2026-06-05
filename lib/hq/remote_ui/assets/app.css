@@ -1286,6 +1286,14 @@ select {
   gap: 12px;
 }
 
+.read-only-project-fields {
+  padding-top: 12px;
+}
+
+.project-info-title {
+  padding: 12px 12px 0;
+}
+
 .form-actions {
   flex-wrap: wrap;
   justify-content: flex-end;
