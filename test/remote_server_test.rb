@@ -23,6 +23,7 @@ module RemoteServerTest
     assert_remote_prompt_start_accepts_dash_prefixed_message
     assert_remote_agent_conversation_hides_run_summary
     assert_remote_project_payloads_include_status_and_detail
+    assert_remote_project_git_diff_payload
     assert_remote_project_update_route_edits_metadata
     assert_remote_agent_model_and_effort_payloads
     assert_remote_hidden_settings_filter_projects_and_agents
@@ -774,6 +775,48 @@ module RemoteServerTest
       assert(detail[:agent_template_summaries].first[:prompt] == "Default prompt for web.",
              "expected Remote UI project detail to expose full template prompt for agent creation")
       assert(detail.dig(:recent_agent_summary, :key) == agent[:key], "expected recent agent summary")
+    end
+  end
+
+  def assert_remote_project_git_diff_payload
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      File.write(File.join(workspace, "tracked.txt"), "one\n")
+      git!(workspace, "init")
+      git!(workspace, "config", "user.email", "tycho@example.test")
+      git!(workspace, "config", "user.name", "Tycho Test")
+      git!(workspace, "add", ".")
+      git!(workspace, "commit", "-m", "initial")
+      File.write(File.join(workspace, "tracked.txt"), "one\ntwo\n")
+      File.write(File.join(workspace, "notes draft.txt"), "draft\n")
+
+      registry = registry_for_project(dir, workspace, apps: false)
+      service = HQ::RemoteService.new(registry: registry)
+      diff = service.project_git_diff("web", scope: "worktree")
+      tracked = diff[:files].find { |file| file[:path] == "tracked.txt" }
+      untracked = diff[:files].find { |file| file[:path] == "notes draft.txt" }
+      assert(diff[:scope] == "worktree", "expected worktree diff scope")
+      assert(tracked, "expected tracked file diff")
+      assert(tracked[:hunks].first[:lines].any? { |line| line[:kind] == "added" && line[:content] == "two" },
+             "expected tracked additions to be parsed")
+      assert(untracked && untracked[:status] == "untracked", "expected untracked files to be represented")
+      assert(untracked[:additions] == 1, "expected untracked text additions to be counted")
+
+      server = HQ::RemoteServer.new
+      request = HQ::RemoteServer.const_get(:Request).new(
+        method: "GET",
+        path: "/projects/web/git/diff",
+        query: "scope=all",
+        headers: {},
+        body: ""
+      )
+      response = server.send(:route, service, "GET", "/projects/web/git/diff", {}, request)
+      assert(response.dig(:body, :diff, :scope) == "all", "expected git diff route to honor query scope")
+
+      status = server.send(:route, service, "GET", "/projects/web/git/status", {}, nil)
+      assert(status.dig(:body, :git, :dirty), "expected git status route to report dirty workspace")
+      assert(status.dig(:body, :git, :dirty_files).to_i >= 2, "expected git status route to count dirty files")
     end
   end
 
@@ -1666,6 +1709,10 @@ module RemoteServerTest
            "expected Hidden settings toggle segments to stay horizontal")
     assert(css[:body].include?(".project-info-title"),
            "expected Project edit form to style the read-only information title")
+    assert(css[:body].include?(".diff-viewer") && css[:body].include?(".diff-line.added"),
+           "expected Remote UI to style project Git diff rows")
+    assert(css[:body].include?(".diff-scope-switch"),
+           "expected Remote UI to style Git diff scope toggles")
     js = server.send(:route_ui, "/ui.js")
     assert(js[:content_type].include?("javascript"), "expected /ui.js to return JavaScript")
     assert(js[:body].include?("DEFAULT_REFRESH_INTERVALS"), "expected UI JavaScript to define refresh defaults")
@@ -1758,6 +1805,16 @@ module RemoteServerTest
            "expected Project routes to parse return crumbs")
     assert(js[:body].include?("function routeBackQuery"),
            "expected Project routes to serialize return crumbs")
+    assert(js[:body].include?('const route = { type: "projectDiff"'),
+           "expected Project diff routes to be parsed")
+    assert(js[:body].include?("function ensureProjectDiff"),
+           "expected Remote UI to load project Git diffs from the API")
+    assert(js[:body].include?("function renderProjectDiff"),
+           "expected Remote UI to render project Git diffs")
+    assert(js[:body].include?('/git/diff?scope='),
+           "expected Remote UI to call the project Git diff endpoint")
+    assert(js[:body].include?("data-open-project-diff"),
+           "expected Project detail to expose Git diff navigation")
     assert(js[:body].include?("function agentsMoreMenuHtml"),
            "expected Agents tab actions to move into the header More menu")
     assert(js[:body].include?("function agentMoreMenuHtml"),
@@ -1855,6 +1912,8 @@ module RemoteServerTest
            "expected Project detail actions to render from the header More menu")
     assert(js[:body].include?('label: "Edit project"') && js[:body].include?("data-edit-project"),
            "expected Project More menu to expose edit navigation")
+    assert(js[:body].include?('label: "See diff"') && js[:body].include?("function navigateProjectDiff"),
+           "expected More menus to expose Project diff navigation")
     assert(js[:body].include?('return { type: "projectForm", key: parts[1] };'),
            "expected Remote UI to parse Project edit routes")
     assert(js[:body].include?("function renderProjectForm"),
@@ -2579,8 +2638,14 @@ module RemoteServerTest
       GEM
         specs:
           kamal (2.6.1)
-          rails (7.2.2)
+      rails (7.2.2)
     LOCK
+  end
+
+  def git!(workspace, *args)
+    return if system("git", "-C", workspace, *args, out: File::NULL, err: File::NULL)
+
+    raise "git #{args.join(" ")} failed"
   end
 
   def write_test_executable(path)

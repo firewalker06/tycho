@@ -17,6 +17,7 @@ require_relative "domain/agent_attachment_store"
 require_relative "domain/agent_chat_log"
 require_relative "domain/agent_store"
 require_relative "domain/executable_resolver"
+require_relative "domain/git_diff"
 require_relative "domain/harness_catalog"
 require_relative "domain/kamal_action"
 require_relative "domain/push_notification_store"
@@ -110,9 +111,13 @@ module HQ
 
     private
 
-    Request = Struct.new(:method, :path, :headers, :body, keyword_init: true) do
+    Request = Struct.new(:method, :path, :query, :headers, :body, keyword_init: true) do
       def [](key)
         headers[key.to_s.downcase]
+      end
+
+      def query_params
+        @query_params ||= URI.decode_www_form(query.to_s).to_h
       end
     end
 
@@ -242,6 +247,10 @@ module HQ
         tail = parts.drop(2)
         return ok(project: service.project(key)) if method == "GET" && tail.empty?
         return ok(project: service.update_project(key, body)) if %w[PATCH PUT].include?(method) && tail.empty?
+        return ok(git: service.project_git_status(key)) if method == "GET" && tail == ["git", "status"]
+        if method == "GET" && tail[0, 2] == ["git", "diff"] && tail.length <= 3
+          return ok(diff: service.project_git_diff(key, scope: tail[2] || request&.query_params&.fetch("scope", nil)))
+        end
         return ok(actions: service.project_action_preflights(key)) if method == "GET" && tail == ["actions"]
         return ok(service.start_project_action(key, body["action"], body)) if method == "POST" && tail == ["actions"]
         if tail.length == 2 && tail.first == "actions"
@@ -395,8 +404,8 @@ module HQ
         headers[name.to_s.downcase] = value.to_s.strip unless name.to_s.empty?
       end
       body = client.read(headers["content-length"].to_i).to_s
-      path = raw_path.to_s.split("?", 2).first
-      Request.new(method: method.to_s.upcase, path: path, headers: headers, body: body)
+      path, query = raw_path.to_s.split("?", 2)
+      Request.new(method: method.to_s.upcase, path: path, query: query.to_s, headers: headers, body: body)
     end
 
     def write_http(client, status, body = nil, content_type: "application/json", headers: {}, **payload)
@@ -666,6 +675,20 @@ module HQ
       refresh_project!(target)
       agents = load_agents.select { |agent| agent.project_key == target.key }
       project_detail_payload(target, agents:, active_action: active_actions[target.key])
+    end
+
+    def project_git_status(key)
+      project = find_project!(key)
+      GitDiff.new(project.path).status_payload(project_key: project.key)
+    rescue GitDiff::Error => e
+      raise Error.new(e.message, status: e.status)
+    end
+
+    def project_git_diff(key, scope: nil)
+      project = find_project!(key)
+      GitDiff.new(project.path).diff_payload(scope:, project_key: project.key)
+    rescue GitDiff::Error => e
+      raise Error.new(e.message, status: e.status)
     end
 
     def update_project(key, attrs)

@@ -1576,6 +1576,202 @@ select {
   padding: 0 12px 12px;
 }
 
+.diff-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.diff-scope-switch {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.diff-scope-switch button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 38px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.diff-scope-switch button + button {
+  border-left: 1px solid var(--border);
+}
+
+.diff-scope-switch button.active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.diff-summary-card .card-title {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.diff-viewer {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.diff-file > summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.diff-file {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.diff-file-title {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.diff-file-title span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.diff-file-body {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+  max-height: min(70dvh, 720px);
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 54%, var(--panel));
+  padding: 10px 0;
+}
+
+.diff-file-message {
+  margin: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  padding: 10px;
+}
+
+.diff-hunk {
+  display: grid;
+  width: max-content;
+  min-width: 100%;
+}
+
+.diff-hunk-header {
+  position: sticky;
+  top: -10px;
+  z-index: 1;
+  border-block: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel-soft) 78%, var(--panel));
+  padding: 6px 12px;
+}
+
+.diff-hunk-header code {
+  color: var(--info);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.diff-lines {
+  display: grid;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 5ch 5ch 2ch minmax(40ch, 1fr);
+  min-height: 20px;
+  padding: 0 12px;
+}
+
+.diff-line.added {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+
+.diff-line.removed {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+.diff-line.meta {
+  color: var(--muted);
+}
+
+.diff-line-no {
+  color: var(--muted);
+  user-select: none;
+}
+
+.diff-marker {
+  color: var(--muted);
+  user-select: none;
+}
+
+.diff-line.added .diff-marker {
+  color: var(--ok);
+}
+
+.diff-line.removed .diff-marker {
+  color: var(--danger);
+}
+
+.diff-line code {
+  color: var(--text);
+  font: inherit;
+  white-space: pre;
+}
+
+@media (max-width: 560px) {
+  .diff-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .diff-scope-switch {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .diff-scope-switch button {
+    padding-inline: 6px;
+  }
+
+  .diff-scope-switch button + button {
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .diff-toolbar > button {
+    width: 100%;
+  }
+
+  .diff-file > summary {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .diff-file > summary .pill {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
 .kv-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
