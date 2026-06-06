@@ -1057,6 +1057,8 @@ module RemoteServerTest
       assert(setup.dig(:auth, :required), "expected auth state")
       assert(setup.dig(:auth, :status) == "token required", "expected required auth status")
       assert(setup.dig(:server, :restartable), "expected setup payload to expose Remote restart readiness")
+      assert(setup.dig(:build, :version) == HQ::VERSION, "expected setup payload to expose Tycho version")
+      assert(setup.dig(:build, :asset_version).to_s.length == 12, "expected setup payload to expose Remote UI build")
       assert(setup.dig(:counts, :projects) == 1, "expected active project count")
       assert(setup.dig(:counts, :archived_projects) == 1, "expected archived project count")
       assert(setup[:harnesses].map { |item| item[:name] }.sort == %w[claude claude-wrapper codex],
@@ -1406,10 +1408,10 @@ module RemoteServerTest
            "expected root CSS reference to be asset-versioned")
     assert(response[:body].match?(%r{src="/ui\.js\?v=[0-9a-f]{12}"}),
            "expected root JavaScript reference to be asset-versioned")
-    assert(response[:body].include?("project-edit-button"), "expected root shell to expose Project edit")
-    assert(response[:body].include?('<span class="sr-only">Edit project</span>'),
-           "expected Project edit header control to be icon-only with accessible text")
-    assert(response[:body].include?("agent-settings-button"), "expected root shell to expose Agent settings")
+    assert(!response[:body].include?("project-edit-button"), "expected Project edit to live in the shared More menu")
+    assert(response[:body].include?("header-more-button"), "expected root shell to expose header More actions")
+    assert(response[:body].include?('id="header-more-panel"'), "expected root shell to expose the header More menu panel")
+    assert(response[:body].include?('id="header-more-badge"'), "expected root shell to expose the header More badge")
     assert(response[:body].include?('data-tab="settings"'), "expected root shell to expose Settings navigation")
     assert(response[:body].include?("<span>Settings</span>"), "expected root shell to label setup navigation as Settings")
     assert(!response[:body].include?('data-tab="search"'), "expected root shell to remove Search navigation")
@@ -1466,12 +1468,22 @@ module RemoteServerTest
            "expected Agent detail shortcuts to float above the dock")
     assert(css[:body].include?(".go-recent-fab"), "expected Agent detail to include Go to recent")
     assert(css[:body].include?(".agent-settings-panel"), "expected Agent settings to render in the header")
+    assert(css[:body].include?(".header-more-panel"), "expected header More menus to render as dropdown panels")
+    assert(css[:body].include?(".more-menu-item"), "expected header More menus to style compact menu rows")
+    assert(css[:body].include?(".more-menu-item.single-line"),
+           "expected single-action More menus to use compact rows")
+    assert(css[:body].include?(".more-menu-separator"),
+           "expected Conversation More menu groups to support separators")
+    assert(css[:body].include?(".header-more-badge"),
+           "expected Agents bulk selection count to render on the More button")
+    assert(css[:body].include?("#header-more-button") && css[:body].include?("border: 0;"),
+           "expected the header More button to be borderless")
     assert(css[:body].include?(".growl"), "expected Remote UI to style growl notifications")
     assert(css[:body].include?(".agent-sort-menu"), "expected Remote UI to style agent sort dropdowns")
     assert(css[:body].include?(".agent-sort-trigger"), "expected Remote UI to style icon-only sort triggers")
     assert(css[:body].include?(".agent-sort-option"), "expected Remote UI to style text sort options")
-    assert(css[:body].include?(".agent-settings-actions"),
-           "expected Agent settings to hide edit/archive actions behind the settings panel")
+    assert(!css[:body].include?(".agent-settings-actions"),
+           "expected Agent settings to move edit/archive actions into the More menu")
     assert(css[:body].include?(".agent-form"), "expected Remote UI to style agent lifecycle forms")
     assert(css[:body].include?(".inline-icon-button"), "expected Remote UI action buttons to support SVG icons")
     assert(css[:body].include?(".agent-summary-viewer"), "expected Agent summary to render as a focused page")
@@ -1605,10 +1617,10 @@ module RemoteServerTest
            "expected the skill flyout to stack above the floating Summary shortcut")
     assert(css[:body].include?(".agent-dock:has(.attachment-flyout:not(.hidden))"),
            "expected the attachment flyout to stack above the skill flyout")
-    assert(css[:body].include?(".server-lifecycle-card"),
-           "expected Settings restart lifecycle card to have distinct styling")
-    assert(css[:body].include?(".restart-server-button"),
-           "expected Settings restart action to have distinct button styling")
+    assert(!css[:body].include?(".server-lifecycle-card"),
+           "expected Settings restart readiness to use the normal automation readiness card")
+    assert(css[:body].include?("#settings-push-notifications"),
+           "expected Settings push section to support header menu scrolling")
     assert(css[:body].include?("grid-template-columns: repeat(3, minmax(0, 1fr));"),
            "expected bottom navigation to use the simplified three-tab layout")
     assert(css[:body].include?(".bulk-action-bar"),
@@ -1735,6 +1747,27 @@ module RemoteServerTest
            "expected Remote UI inquiry answers to use the guarded answer endpoint")
     assert(js[:body].include?("normalizeInquiryInputType"),
            "expected Remote UI to normalize inquiry field input types")
+    assert(js[:body].include?("function setHeaderMore"), "expected Remote UI to expose reusable header More menus")
+    assert(js[:body].include?("function headerMoreKeyForRoute"),
+           "expected header More menus to preserve open state across same-route refreshes")
+    assert(js[:body].include?('route.tab === "settings") return "settings"'),
+           "expected Settings More menu to preserve open state across same-route refreshes")
+    assert(js[:body].include?("headerMoreBadge"),
+           "expected header More menus to expose a discoverability badge")
+    assert(js[:body].include?("function parseBackToRoute"),
+           "expected Project routes to parse return crumbs")
+    assert(js[:body].include?("function routeBackQuery"),
+           "expected Project routes to serialize return crumbs")
+    assert(js[:body].include?("function agentsMoreMenuHtml"),
+           "expected Agents tab actions to move into the header More menu")
+    assert(js[:body].include?("function agentMoreMenuHtml"),
+           "expected Conversation actions to move into the header More menu")
+    assert(js[:body].include?("Conversation settings"),
+           "expected Conversation settings to be available from the More menu")
+    assert(js[:body].include?("Open project"),
+           "expected Conversation More menu project navigation to use a verb label")
+    assert(js[:body].include?('back_to=${encodeURIComponent(value)}'),
+           "expected Project links opened from agents to carry a back_to crumb")
     assert(js[:body].include?("function setAgentSettings"), "expected Agent metadata to move into header settings")
     assert(js[:body].include?('id="agent-model" name="model"'),
            "expected Remote UI agent form to expose model input")
@@ -1747,6 +1780,16 @@ module RemoteServerTest
     assert(js[:body].include?("model: String(formData.get(\"model\")"),
            "expected Remote UI agent form payload to include model")
     assert(js[:body].include?("Push notifications"), "expected Settings screen to expose push readiness")
+    assert(js[:body].include?("function settingsMoreMenuHtml"),
+           "expected Settings actions to move into the header More menu")
+    assert(js[:body].include?("Tycho build"),
+           "expected Settings screen to display the Tycho build")
+    assert(js[:body].include?("function tychoBuildLabel"),
+           "expected Settings screen to format Tycho build metadata")
+    assert(js[:body].include?('id="settings-push-notifications"'),
+           "expected Settings push section to expose an in-page menu target")
+    assert(js[:body].include?('data-scroll-settings-section="settings-push-notifications"'),
+           "expected Settings More menu to jump to push notifications")
     assert(js[:body].include?("function renderHiddenSettings"),
            "expected Settings screen to expose a dedicated Hidden settings page")
     assert(js[:body].include?('apiGet("/settings/hidden")'),
@@ -1754,14 +1797,18 @@ module RemoteServerTest
     assert(js[:body].include?('apiPatch("/settings/hidden"'),
            "expected Hidden settings page to update hidden configuration")
     assert(js[:body].include?("data-open-hidden-settings"),
-           "expected Settings screen to link to Hidden settings")
+           "expected Settings More menu to link to Hidden settings")
     assert(js[:body].include?('"eyeOff"') && js[:body].include?('"slash"') && js[:body].include?('"eye"'),
            "expected Hidden settings to use hidden/inherit/visible icon toggle buttons")
-    assert(js[:body].include?("data-restart-server"), "expected Settings screen to expose Remote restart action")
-    assert(js[:body].include?('class="danger inline-icon-button restart-server-button" type="button" data-restart-server'),
-           "expected Remote restart action to use danger button styling")
-    assert(js[:body].index("Refresh and preferences") < js[:body].index("data-restart-server"),
-           "expected Remote restart action to stay at the bottom of the Settings screen")
+    assert(js[:body].include?("Restart server"), "expected Settings More menu to expose Remote restart action")
+    assert(js[:body].include?("data-restart-server"), "expected Settings More menu to expose Remote restart action")
+    assert(js[:body].include?("Remote restart"),
+           "expected Settings readiness to include Remote restart status")
+    assert(js[:body].index("Automation readiness") < js[:body].index("Remote restart"),
+           "expected Remote restart readiness to sit inside Automation readiness")
+    assert(js[:body].index("Remote restart") < js[:body].index("Configuration"),
+           "expected Remote restart readiness to render before Configuration")
+    assert(js[:body].include?("Recheck status"), "expected Settings More menu to expose readiness refresh")
     assert(js[:body].include?("function restartRemoteServer"), "expected Remote UI to handle Remote restarts")
     assert(js[:body].include?('apiPost("/server/restart"'),
            "expected Remote UI restart action to call the restart endpoint")
@@ -1804,10 +1851,10 @@ module RemoteServerTest
            "expected Remote UI agent forms to let the server preserve/default workspace")
     assert(js[:body].include?("data-create-agent"),
            "expected Project detail to expose Add agent navigation")
-    assert(js[:body].include?("function setProjectEditButton"),
-           "expected Project detail to expose edit navigation in the header")
-    assert(js[:body].include?("els.projectEdit.dataset.editProject"),
-           "expected Project edit header button to route to the edit form")
+    assert(js[:body].include?("function projectMoreMenuHtml"),
+           "expected Project detail actions to render from the header More menu")
+    assert(js[:body].include?('label: "Edit project"') && js[:body].include?("data-edit-project"),
+           "expected Project More menu to expose edit navigation")
     assert(js[:body].include?('return { type: "projectForm", key: parts[1] };'),
            "expected Remote UI to parse Project edit routes")
     assert(js[:body].include?("function renderProjectForm"),
@@ -1837,15 +1884,17 @@ module RemoteServerTest
     assert(!js[:body].include?("Project editing opens in the TUI"),
            "expected Project detail to remove the old TUI-only edit notice")
     assert(js[:body].include?("data-edit-agent"),
-           "expected Agent settings to expose edit navigation")
+           "expected Agent More menu to expose edit navigation")
     assert(js[:body].include?("data-archive-agent"),
-           "expected Agent settings to open archive choices")
+           "expected Agent More menu to open archive choices")
     assert(js[:body].include?("Clone instead"),
            "expected archive choices to expose clone instead")
     assert(js[:body].include?("mode === \"clone\""),
            "expected Remote UI agent form to support clone mode")
-    assert(js[:body].include?("els.agentSettingsPanel.addEventListener"),
-           "expected Agent settings actions to work from the fixed header panel")
+    assert(js[:body].include?("els.headerMorePanel.addEventListener"),
+           "expected Agent More menu actions to work from the fixed header panel")
+    assert(js[:body].include?('route.type === "project" && route.backTo'),
+           "expected Project Back to honor agent return crumbs")
     assert(js[:body].include?("apiPatch"),
            "expected Remote UI to update agents through the API")
     assert(js[:body].include?("function toggleSkillFlyout"), "expected Insert Skill to use a floating slash picker")
@@ -2228,9 +2277,9 @@ module RemoteServerTest
     assert(js[:body].include?("renderProjectAgentEmpty()"),
            "expected Agents tab to keep zero-agent projects reachable")
     assert(js[:body].include?("data-toggle-bulk-archive"),
-           "expected Agents tab to expose bulk archive selection mode")
+           "expected Agents tab More menu to expose bulk archive selection mode")
     assert(js[:body].include?("data-run-bulk-archive"),
-           "expected Agents tab to expose bulk archive submission")
+           "expected Agents tab More menu to expose bulk archive submission")
     assert(js[:body].include?('apiPost("/agents/archive", { keys })'),
            "expected Remote UI to call the bulk archive endpoint")
     assert(js[:body].include?("function agentArchiveable"),

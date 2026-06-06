@@ -43,25 +43,14 @@
             </div>
           </div>
           <div class="header-actions">
-            <button id="project-edit-button" class="icon-button hidden" type="button" aria-label="Edit project" title="Edit project">
+            <button id="header-more-button" class="icon-button hidden" type="button" aria-label="More actions" title="More actions" aria-expanded="false" aria-controls="header-more-panel">
               <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24">
-                <path d="M12 20h9"></path>
-                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+                <circle cx="12" cy="12" r="1"></circle>
+                <circle cx="19" cy="12" r="1"></circle>
+                <circle cx="5" cy="12" r="1"></circle>
               </svg>
-              <span class="sr-only">Edit project</span>
-            </button>
-            <button id="agent-project-button" class="icon-button hidden" type="button" aria-label="Open project" title="Open project">
-              <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24">
-                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9l-.81-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>
-              </svg>
-              <span class="sr-only">Open project</span>
-            </button>
-            <button id="agent-settings-button" class="icon-button hidden" type="button" aria-label="Agent settings" title="Agent settings" aria-expanded="false">
-              <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24">
-                <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
-                <circle cx="12" cy="12" r="3"></circle>
-              </svg>
-              <span class="sr-only">Agent settings</span>
+              <span id="header-more-badge" class="header-more-badge hidden" aria-hidden="true"></span>
+              <span class="sr-only">More actions</span>
             </button>
           </div>
         </div>
@@ -74,7 +63,8 @@
           </div>
         </form>
         <section id="unread-agents-panel" class="unread-agents-panel hidden" aria-label="Unread agents"></section>
-        <section id="agent-settings-panel" class="agent-settings-panel hidden" aria-label="Agent settings"></section>
+        <section id="header-more-panel" class="header-more-panel hidden" aria-label="More actions"></section>
+        <section id="agent-settings-panel" class="agent-settings-panel hidden" aria-label="Conversation settings"></section>
       </header>
 
       <section id="growl" class="growl hidden" role="status" aria-live="polite" aria-atomic="true"></section>

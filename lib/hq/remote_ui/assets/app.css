@@ -358,6 +358,37 @@ h3 {
   line-height: 1;
 }
 
+#header-more-button {
+  position: relative;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+}
+
+#header-more-button:hover,
+#header-more-button:focus-visible,
+#header-more-button[aria-expanded="true"] {
+  background: var(--panel-soft);
+}
+
+.header-more-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-grid;
+  min-width: 16px;
+  height: 16px;
+  place-items: center;
+  padding: 0 4px;
+  border: 1px solid var(--bg);
+  border-radius: 999px;
+  background: var(--pink);
+  color: var(--bg);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 14px;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -380,6 +411,102 @@ h3 {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 0 12px 12px;
+}
+
+.header-more-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 12px;
+  z-index: 12;
+  width: max-content;
+  min-width: 180px;
+  max-width: min(64vw, 240px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 98%, transparent);
+  box-shadow: var(--shadow);
+  padding: 6px;
+}
+
+.more-menu {
+  display: grid;
+  gap: 2px;
+}
+
+.more-menu-separator {
+  display: block;
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+.more-menu-item {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
+  min-height: 50px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.more-menu-item.single-line {
+  grid-template-columns: 24px minmax(0, 1fr);
+  min-height: 42px;
+  row-gap: 0;
+  padding-block: 7px;
+}
+
+.more-menu-item .ui-icon {
+  grid-row: 1 / span 2;
+  align-self: center;
+  width: 20px;
+  height: 20px;
+  color: var(--muted);
+}
+
+.more-menu-item.single-line .ui-icon {
+  grid-row: 1;
+  width: 18px;
+  height: 18px;
+}
+
+.more-menu-item strong,
+.more-menu-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.more-menu-item strong {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.more-menu-item span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.more-menu-item:hover,
+.more-menu-item:focus-visible {
+  background: var(--panel-soft);
+}
+
+.more-menu-item.danger {
+  color: var(--danger);
+}
+
+.more-menu-item.danger .ui-icon {
+  color: currentColor;
 }
 
 .unread-agents-panel {
@@ -471,12 +598,6 @@ h3 {
 .agent-settings-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.agent-settings-actions {
-  display: flex;
-  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -1438,15 +1559,8 @@ select {
   overflow: hidden;
 }
 
-.server-lifecycle-card {
-  border-color: color-mix(in srgb, var(--danger) 36%, var(--border));
-  background: color-mix(in srgb, var(--danger) 7%, var(--panel));
-}
-
-button.restart-server-button {
-  border-color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 20%, var(--panel));
-  color: color-mix(in srgb, var(--danger) 78%, var(--text));
+#settings-push-notifications {
+  scroll-margin-top: calc(var(--safe-area-top) + 76px);
 }
 
 .detail-card > summary {

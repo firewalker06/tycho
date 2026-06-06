@@ -10,6 +10,7 @@ require_relative "harness_registry"
 require_relative "registry"
 require_relative "remote_ui"
 require_relative "terminal_qr"
+require_relative "version"
 require_relative "domain/app_project"
 require_relative "domain/attachment_normalizer"
 require_relative "domain/agent_attachment_store"
@@ -702,6 +703,10 @@ module HQ
         },
         server: {
           restartable: @restartable
+        },
+        build: {
+          version: HQ::VERSION,
+          asset_version: HQ::RemoteUI.asset_version
         },
         counts: {
           projects: visible_projects.length,
