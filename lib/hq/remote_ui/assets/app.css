@@ -973,8 +973,11 @@ select {
 }
 
 .schedule-daemon-actions {
-  justify-content: flex-start;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
   flex-wrap: wrap;
+  width: 100%;
   padding: 2px 0;
 }
 
@@ -983,27 +986,92 @@ select {
 }
 
 .schedule-row {
-  align-items: flex-start;
-  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.schedule-summary-grid > .status-mark,
+.schedule-row > .status-mark {
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.schedule-summary-grid > .status-mark .ui-icon,
+.schedule-row > .status-mark .ui-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.schedule-row-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.schedule-row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.schedule-row-title strong {
+  min-width: 0;
+}
+
+.schedule-row-title .pill {
+  flex: 0 0 auto;
+  min-height: 24px;
+  padding: 2px 7px;
 }
 
 .schedule-row-end {
-  grid-column: 2;
   display: grid;
-  justify-items: start;
+  justify-items: end;
   gap: 6px;
   min-width: 0;
-  width: 100%;
+  max-width: 260px;
 }
 
 .schedule-row-actions {
+  display: flex;
+  gap: 8px;
   flex-wrap: wrap;
-  justify-content: flex-start;
+  justify-content: flex-end;
 }
 
 .schedule-row-actions button {
   min-height: 34px;
   min-width: 98px;
+}
+
+@media (max-width: 560px) {
+  .schedule-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .schedule-row > .status-mark {
+    grid-column: 1;
+    grid-row: 1;
+    margin-top: 2px;
+  }
+
+  .schedule-row-main {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .schedule-row-end {
+    grid-column: 2;
+    grid-row: 2;
+    max-width: 100%;
+  }
 }
 
 .list,

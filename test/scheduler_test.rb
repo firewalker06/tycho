@@ -20,13 +20,13 @@ module SchedulerTest
       assert_schedule_registry_validates_scope_and_prompt_paths
       assert_schedule_store_tracks_daemon_state
       assert_scheduler_run_creates_fresh_agent_and_archives_previous
-      assert_scheduler_skips_interactive_scheduled_agent_without_archiving
+      assert_scheduler_stops_interactive_scheduled_agent_until_resume
     end
     assert_schedule_daemon_supervisor_spawns_external_daemon
     assert_bin_schedule_list_lists_configured_schedules
     assert_bin_hq_schedule_daemon_runs_once
     assert_bin_hq_schedule_resume_updates_next_run
-    assert_failed_scheduled_agent_pauses_and_notifies
+    assert_failed_scheduled_agent_stops_and_notifies
     puts "scheduler_test: ok"
   end
 
@@ -139,7 +139,7 @@ module SchedulerTest
     end
   end
 
-  def assert_scheduler_skips_interactive_scheduled_agent_without_archiving
+  def assert_scheduler_stops_interactive_scheduled_agent_until_resume
     with_temp_runtime do |dir|
       registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
         schedules:
@@ -178,6 +178,7 @@ module SchedulerTest
       result = scheduler.tick
       assert(result[:skipped] == 1, "expected interactive scheduled session to skip the due run, got #{result.inspect}")
       state = store.load.fetch("weekday")
+      assert(state.stopped?, "expected interactive scheduled session to stop the schedule")
       assert(state.last_status == "skipped", "expected schedule state to record a skipped run")
       assert(state.last_error == "interactive", "expected skip reason to be interactive")
       agents = read_agents
@@ -185,18 +186,23 @@ module SchedulerTest
       assert(File.exist?(first_agent.raw_log_path), "expected interactive scheduled logs to remain in place")
 
       resume_at = Time.at((Time.now + 30).to_i)
-      reconciled = scheduler.reconcile_archived_agent!(first_agent.key, now: resume_at)
-      assert(reconciled, "expected archived interactive scheduled agent to reconcile schedule state")
-      state = store.load.fetch("weekday")
-      assert(state.last_status == "resumed", "expected archive to resume interactive schedule state")
-      assert(state.last_error.nil?, "expected archive to clear interactive skip reason")
-      assert(state.last_target_key.nil?, "expected archive to clear stale scheduled agent target")
-      assert(state.previous_target_key == first_agent.key, "expected archive to record previous scheduled agent")
-      assert(state.next_due_at == resume_at, "expected archive to requeue the schedule immediately")
+      stopped_tick = scheduler.tick(now: resume_at)
+      assert(stopped_tick[:started] == 0, "expected stopped schedule not to start on a scheduler tick")
 
-      HQ::AgentStore.new(projects).save([])
-      resumed = scheduler.tick(now: resume_at)
-      assert(resumed[:started] == 1, "expected next scheduler tick to start after archive reconciliation")
+      resumed = scheduler.resume("weekday", now: resume_at)
+      state = store.load.fetch("weekday")
+      assert(resumed[:status] == :resumed, "expected resume to re-enable the schedule")
+      assert(state.scheduled?, "expected resume to schedule future runs again")
+      assert(state.next_due_at && state.next_due_at > resume_at,
+             "expected resume to wait until the next schedule, got #{state.next_due_at&.iso8601}")
+      assert(state.last_status == "skipped", "expected resume to preserve last-run diagnostics")
+      assert(state.last_error == "interactive", "expected resume to preserve the interactive skip reason")
+      assert(state.last_target_key.nil?, "expected resume not to start or track a replacement scheduled agent")
+      assert(state.previous_target_key == first_agent.key, "expected resume to archive the previous scheduled agent")
+      agents = read_agents
+      assert(agents.empty?, "expected resume to archive the previous agent without starting a new one")
+      archived = Dir.glob(File.join(HQ::AGENT_ARCHIVE_DIR, "**", File.basename(first_agent.raw_log_path)))
+      assert(!archived.empty?, "expected resume to archive previous scheduled logs")
     end
   end
 
@@ -281,6 +287,7 @@ module SchedulerTest
 
       state = JSON.parse(File.read(state_path)).first
       next_due_at = Time.parse(state.fetch("next_due_at"))
+      assert(state.fetch("status") == "scheduled", "expected resume to mark the schedule scheduled")
       assert(state.fetch("enabled") == true, "expected resume to enable the schedule")
       assert(!state.key?("paused_at"), "expected resume to clear paused_at")
       assert(next_due_at > command_started_at,
@@ -288,7 +295,7 @@ module SchedulerTest
     end
   end
 
-  def assert_failed_scheduled_agent_pauses_and_notifies
+  def assert_failed_scheduled_agent_stops_and_notifies
     with_temp_runtime do |dir|
       registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
         schedules:
@@ -339,7 +346,7 @@ module SchedulerTest
       scheduler.tick
       state = store.load.fetch("weekday")
 
-      assert(state.paused?, "expected failed scheduled agent to pause the schedule")
+      assert(state.stopped?, "expected failed scheduled agent to stop the schedule")
       assert(state.last_status == "failed", "expected schedule state to record failed status")
       assert(notifier.payloads.any? { |payload| payload[:title] == "Schedule failed" },
              "expected failure to send a web push payload")

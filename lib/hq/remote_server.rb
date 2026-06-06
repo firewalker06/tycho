@@ -233,7 +233,7 @@ module HQ
         return ok(schedule: service.schedule(key)) if method == "GET" && tail.empty?
         return ok(service.run_schedule(key)) if method == "POST" && tail == ["run"]
         return ok(schedule: service.pause_schedule(key)) if method == "POST" && tail == ["pause"]
-        return ok(schedule: service.resume_schedule(key)) if method == "POST" && tail == ["resume"]
+        return ok(service.resume_schedule(key)) if method == "POST" && tail == ["resume"]
       end
 
       if parts.length >= 2 && parts.first == "projects"
@@ -535,7 +535,15 @@ module HQ
     end
 
     def resume_schedule(key)
-      scheduler.resume(key)
+      result = scheduler.resume(key)
+      if result.fetch(:status) == :failed
+        raise Error.new(result.fetch(:error), status: 409)
+      end
+
+      {
+        schedule: result.fetch(:schedule),
+        agent: result[:agent] ? agent_payload(result[:agent]) : nil
+      }.compact
     rescue ScheduleRegistry::Error => e
       raise Error.new(e.message, status: 404)
     end

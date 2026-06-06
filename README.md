@@ -266,11 +266,12 @@ tycho doctor
 ```
 
 The TUI includes a Schedules screen, and the Remote UI `Now` view shows
-scheduler daemon freshness plus schedules that are paused, failed, stale, due,
-or skipped because of an interactive user conversation. The Remote UI keeps the
-schedule card compact by showing daemon status, PID, and last tick in the
-header, while schedule rows show project, next run, and a humanized cron
-cadence such as `every 15 minutes`.
+scheduler daemon freshness plus schedule state. Schedule rows use three
+operator-facing statuses: `scheduled`, `paused`, and `stopped`. Last outcome
+details such as failed runs or interactive protection are shown separately. The
+Remote UI keeps the schedule card compact by showing daemon status, PID, and
+last tick in the header, while schedule rows show project, next run, and a
+humanized cron cadence such as `every 15 minutes`.
 
 ## Scheduled Agents
 
@@ -332,9 +333,10 @@ Prompt tips for reliable schedules:
   output, name the expected files or links so they appear in `attachments`.
 
 If you converse with a scheduled agent, Tycho protects that session. A later
-due run skips with reason `interactive` instead of archiving the user-touched
-agent. Archive that agent manually when you want the recurring schedule to
-continue with a fresh session.
+due run stops the schedule with reason `interactive` instead of archiving the
+user-touched agent. Resume the stopped schedule when you want Tycho to archive
+the active scheduled session and wait for the next scheduled run with fresh
+context.
 
 `tycho schedule daemon` writes daemon heartbeat state to `~/.tycho/logs/scheduler_daemon.json`.
 The schedule UI treats a missing or stale heartbeat as daemon attention. If it

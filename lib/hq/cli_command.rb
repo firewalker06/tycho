@@ -536,8 +536,15 @@ module HQ
     end
 
     def resume_schedule(schedule_key, out: $stdout, err: $stderr)
-      schedule = scheduler.resume(schedule_key)
+      result = scheduler.resume(schedule_key)
+      if result.fetch(:status) == :failed
+        schedule = result.fetch(:schedule)
+        return failure("Schedule #{schedule.fetch(:key)} failed: #{result.fetch(:error)}", err:)
+      end
+
+      schedule = result.fetch(:schedule)
       out.puts "Resumed #{schedule.fetch(:key)}."
+      out.puts "Agent: #{result[:agent].key}" if result[:agent]
       out.puts "Next: #{schedule[:next_due_at] || "n/a"}"
       0
     rescue ScheduleRegistry::Error => e
@@ -553,12 +560,12 @@ module HQ
     end
 
     def schedule_list_table(rows)
-      headers = %w[Key Project Paused Next Last Agent Runs Skips]
+      headers = %w[Key Project Status Next Last Agent Runs Skips]
       table_rows = rows.map do |row|
         [
           row[:key],
           row[:project_key],
-          row[:paused] ? "yes" : "no",
+          row[:status] || "scheduled",
           row[:next_due_at] || "n/a",
           row[:last_status] || "n/a",
           row[:last_target_key] || "n/a",

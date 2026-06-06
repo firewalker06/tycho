@@ -57,7 +57,8 @@ Key references:
 | Scheduled runs | Dedicated `tycho schedule daemon`, definitions in `~/.tycho/config/schedules.yml`, runtime state in `~/.tycho/logs/schedules.json`, validated standard cron syntax | Scheduled work should continue independently from the TUI and Remote UI while still reusing existing agent execution paths |
 | Schedule daemon freshness | `tycho schedule daemon` writes heartbeat state to `~/.tycho/logs/scheduler_daemon.json`; UI surfaces derive running/stale/stopped from heartbeat age and process liveness, and report untracked running daemons without heartbeat state | Users need to know whether cron work is actually ticking, not only whether definitions are valid |
 | Schedule command scope | Agent-only schedules; each run creates a fresh managed agent, archives the previous schedule-created agent, and accepts only inline messages or files under `schedules/` | Avoid stale sessions, arbitrary shell execution, and first-class scheduled project actions while keeping recurring automation reviewable |
-| Schedule interactive protection | A due run skips with reason `interactive` instead of archiving when the previous scheduled agent has later user messages | User conversations in scheduled sessions must not disappear under the next cron tick |
+| Schedule statuses | Schedules expose `scheduled`, `paused`, or `stopped`; last outcome and error reason are tracked separately | Operators need a small action-oriented state model without losing diagnostic context |
+| Schedule interactive protection | A due run stops with reason `interactive` instead of archiving when the previous scheduled agent has later user messages; resuming a stopped schedule archives the active scheduled session and waits for the next scheduled run | User conversations in scheduled sessions must not disappear under the next cron tick, and recovery should be one explicit action |
 | Schedule management | Expose schedule list/detail/run/pause/resume/reload in both TUI and Remote UI | Interfaces should manage and observe schedules, but the daemon owns ticking, locks, missed-run policy, and dispatch |
 | Open-source license | MIT | Keep adoption simple while making contribution and reuse terms explicit |
 
@@ -166,7 +167,8 @@ verification.
 - [x] Persist scheduler daemon heartbeat state in `~/.tycho/logs/scheduler_daemon.json`
 - [x] Add `tycho schedule daemon` with `--once`, `--dry-run`, and long-running daemon modes
 - [x] Support fresh scheduled-agent creation with previous-agent archiving
-- [x] Skip due runs instead of archiving when the previous scheduled agent has user conversation
+- [x] Stop due runs instead of archiving when the previous scheduled agent has user conversation
+- [x] Simplify schedule status to scheduled/paused/stopped with separate last-outcome details
 - [x] Support schedule messages from inline text and `schedules/` files
 - [x] Append the final-output attachment checklist to every scheduled prompt
 - [x] Add Remote JSON API schedule list/run/pause/resume/reload

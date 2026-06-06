@@ -127,8 +127,8 @@ module RemoteServerTest
       archived = service.archive_agent(created[:key])
       assert(archived[:schedule_reconciled], "expected Remote archive to reconcile schedule state")
       updated = HQ::ScheduleStore.new.load.fetch("weekday")
-      assert(updated.last_status == "resumed", "expected Remote archive to resume schedule")
-      assert(updated.last_error.nil?, "expected Remote archive to clear interactive state")
+      assert(updated.stopped?, "expected Remote archive to leave stopped schedule stopped")
+      assert(updated.last_error == "interactive", "expected Remote archive to preserve stop reason")
       assert(updated.last_target_key.nil?, "expected Remote archive to clear stale target")
       assert(updated.previous_target_key == created[:key], "expected Remote archive to keep previous target")
     end
@@ -1629,6 +1629,23 @@ module RemoteServerTest
            "expected Schedule details wrapper to preserve compact top breathing room")
     assert(css[:body].include?(".schedule-disclosure") && css[:body].include?("position: absolute"),
            "expected Schedule block to pin a visible collapsible disclosure control")
+    assert(css[:body].include?(".schedule-daemon-actions") && css[:body].include?("justify-content: flex-end"),
+           "expected Schedule daemon actions to align right")
+    assert(css[:body].include?(".schedule-daemon-actions") && css[:body].include?("gap: 8px;"),
+           "expected Schedule daemon action buttons to be spaced")
+    assert(css[:body].include?(".schedule-row") && css[:body].include?("grid-template-columns: auto minmax(0, 1fr) auto"),
+           "expected Schedule rows to reserve a right-side action column")
+    assert(css[:body].include?(".schedule-summary-grid > .status-mark") &&
+           css[:body].include?(".schedule-row > .status-mark") &&
+           css[:body].include?("background: transparent;") &&
+           css[:body].include?("border: 0;"),
+           "expected Schedule calendar icons to render without boxed backgrounds")
+    assert(css[:body].include?(".schedule-row-title") && css[:body].include?("align-items: center"),
+           "expected Schedule status labels to align inline with row titles")
+    assert(css[:body].include?(".schedule-row-actions") && css[:body].include?("justify-content: flex-end"),
+           "expected Schedule row buttons to align right")
+    assert(css[:body].include?(".schedule-row-actions") && css[:body].include?("gap: 8px;"),
+           "expected Schedule row buttons to be properly spaced")
     assert(css[:body].include?(".kv-copy-button"),
            "expected copyable key/value rows to style their copy button")
     assert(css[:body].include?(".hidden-toggle-button.active.visible-state"),
@@ -1768,6 +1785,13 @@ module RemoteServerTest
            "expected Remote UI to expose schedule run/pause/resume controls")
     assert(js[:body].include?("Run now") && js[:body].include?("schedule-toggle-button"),
            "expected Remote UI schedule rows to distinguish manual runs from pause/resume toggles")
+    assert(js[:body].include?('class="schedule-row-title"') &&
+           js[:body].include?('<span class="pill ${className}">${escapeHtml(scheduleStatusLabel(schedule))}</span>'),
+           "expected Remote UI schedule status labels to render inline with the title")
+    assert(js[:body].include?("return `${project} / ${next} / ${humanizeCron(schedule.cron)}`;"),
+           "expected Remote UI schedule rows to omit last outcome from the compact subtext")
+    assert(!js[:body].include?("last ${schedule.last_status}"),
+           "expected Remote UI schedule rows not to render last status text")
     assert(js[:body].include?("MagicDNS push requires Tailscale HTTPS"),
            "expected Remote UI to warn when MagicDNS is not HTTPS")
     assert(js[:body].include?("navigator.serviceWorker.register"),
