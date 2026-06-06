@@ -309,8 +309,8 @@ module HQ
       return unless File.exist?(lockfile)
 
       content = File.read(lockfile)
-      @kamal_version = content[/^    kamal \((.+)\)/, 1]
-      @rails_version = content[/^    rails \((.+)\)/, 1]
+      @kamal_version = content[/^\s*kamal \((.+)\)/, 1]
+      @rails_version = content[/^\s*rails \((.+)\)/, 1]
     end
 
     def parse_git_status
