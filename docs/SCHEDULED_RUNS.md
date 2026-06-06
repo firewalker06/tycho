@@ -1,7 +1,7 @@
 ---
 name: SCHEDULED_RUNS
 description: Current decisions for cron-like scheduled agent runs in Tycho/HQ
-type: planning
+type: reference
 ---
 
 # Scheduled Runs
@@ -12,7 +12,7 @@ Tycho scheduled runs are driven by `tycho schedule daemon`. Definitions live in 
 
 The current scope is intentionally narrow: schedules create fresh managed agents only. There are no first-class scheduled project actions, health checks, shell commands, agent-template selections, existing-agent resumes, or agent clones. Each due run creates a brand-new agent with fresh context, starts it through the existing `ManagedAgent` path, and archives the previous schedule-created agent for that schedule before the next repetitive run.
 
-Prompt input is limited to inline text in `~/.tycho/config/schedules.yml` or a file under `~/.tycho/schedules/`. On failure, stop or pause the schedule and notify via web push. On success, notify only on the first successful run and the first successful run after a prior failure; both success notifications should include the next scheduled run time.
+Prompt input is limited to inline text in `~/.tycho/config/schedules.yml` or a file under `~/.tycho/schedules/`. On failure, stop the schedule and notify via web push. On success, notify only on the first successful run and the first successful run after a prior failure; both success notifications should include the next scheduled run time.
 
 ## Current Decisions
 
@@ -29,8 +29,10 @@ Prompt input is limited to inline text in `~/.tycho/config/schedules.yml` or a f
 - Scheduled prompts always include the final-output attachment checklist so created or referenced durable artifacts are reported in `attachments`.
 - Scheduled agent display names are prefixed with `[Scheduled]` and do not include the internal agent-key number.
 - Retention: archive the previous schedule-created agent for a repeating schedule before creating the next one.
-- Interactive protection: skip a due run instead of archiving when the previous scheduled agent has a later user message.
-- Failure management: stop or pause the schedule and notify via web push when a scheduled job fails.
+- Interactive protection: stop the schedule instead of archiving when the previous scheduled agent has a later user message.
+- Failure management: stop the schedule and notify via web push when a scheduled job fails.
+- Schedule statuses: schedules expose `scheduled`, `paused`, or `stopped` as operator-facing state. Last run details stay in `last_status` and `last_error`.
+- Resume behavior: resuming a stopped schedule archives any previous active scheduled session and waits until the next scheduled run.
 - Success notifications: notify only on first success and first success after failure, including the next scheduled run time.
 
 ## Current Design
@@ -109,10 +111,19 @@ Cron validation:
 Failure:
 
 - Record scheduler failure separately from target agent failure.
-- If a scheduled job fails, stop or pause the schedule immediately.
-- Send a web push notification for the failure with the schedule key, agent key when available, failure summary, and the schedule's paused/stopped state.
+- If a scheduled job fails, stop the schedule immediately.
+- Send a web push notification for the failure with the schedule key, agent key when available, failure summary, and the schedule's stopped state.
 - A start failure should create a visible schedule status even if no agent run exists.
 - Reuse agent logs for target output when an agent was created.
+
+Schedule status:
+
+- `scheduled`: the schedule is eligible for daemon ticks. Current-run and last-run details are shown separately.
+- `paused`: the schedule is intentionally held by user action or config and will not run until resumed.
+- `stopped`: Tycho stopped the schedule because continuing is unsafe or impossible, such as a failed run, blocked/input-required result, start error, or interactive protection.
+- Paused and stopped schedules prevent subsequent scheduled jobs.
+- Resuming a paused schedule marks it scheduled and recomputes the next due time.
+- Resuming a stopped schedule marks it scheduled, archives any previous active scheduled session for that schedule, and waits until the next scheduled run.
 
 Success notifications:
 
@@ -157,6 +168,7 @@ Runtime fields:
 ```json
 {
   "key": "weekday-maintenance",
+  "status": "scheduled",
   "enabled": true,
   "paused_at": null,
   "last_due_at": "2026-05-18T09:00:00+07:00",
@@ -240,7 +252,7 @@ POST /schedules/daemon/restart
 TUI:
 
 - Add schedule management as a first-class TUI surface, either as a dedicated screen or a Schedules panel with list/detail behavior.
-- Show enabled/paused, next due, last status, last target, skip count, validation status, and daemon freshness.
+- Show schedule status, next due, last outcome, last target, skip count, validation status, and daemon freshness.
 - Support manual run, pause, resume, and reload actions.
 - Link project and agent detail views back to related schedules.
 
@@ -257,34 +269,3 @@ Hooks:
 
 - Emit `schedule.due`, `schedule.started`, `schedule.skipped`, `schedule.failed`, `schedule.stopped`, `schedule.completed`, `schedule.recovered`, `schedule.agent_archived`, and `schedule.resumed`.
 - Include `schedule_key`, `target_kind`, `target_key`, `project_key`, and timestamps.
-
-### Implementation Order
-
-Phase 1: Schedule config and validation
-
-- Add `~/.tycho/config/schedules.yml` loading with a small `ScheduleRegistry`.
-- Validate schedule keys, enabled flags, cron syntax, time zones, target references, and prompt/message sources.
-- Validate that file prompt sources resolve inside `schedules/`.
-- Add `bin/tycho schedule validate`.
-- Add tests for valid/invalid cron syntax and target reference errors.
-
-Phase 2: Dispatch primitives
-
-- Add a schedule dispatch service that creates a fresh managed agent from `project_key` and schedule message source.
-- Archive the previous schedule-created agent for the same schedule before creating a new repetitive run.
-- Add tests for inline message starts, file message starts, path validation, and previous-agent archiving.
-
-Phase 3: `tycho schedule daemon`
-
-- Add `ScheduledRun` and `ScheduleStore`.
-- Persist runtime state under `~/.tycho/logs/schedules.json`.
-- Implement due calculation, overlap/missed policies, lock handling, `--once`, and `--dry-run`.
-- Stop schedules on failed jobs, log scheduler decisions, emit hooks, and trigger web push notification events.
-
-Phase 4: TUI and Remote UI management
-
-- Add Remote API schedule endpoints. Done.
-- Show schedule list/detail/manage flows in Remote UI and TUI. Done for TUI list/detail and Remote UI compact Now controls.
-- Add separate Remote UI daemon lifecycle controls without making `tycho serve` the scheduler loop. Done.
-- Add daemon freshness, validation failures, and linked target navigation.
-- Add push notifications for failures, first success, and first success after failure.

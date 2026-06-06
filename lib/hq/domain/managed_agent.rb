@@ -383,6 +383,20 @@ module HQ
       clear_foreign_pid!
     end
 
+    def retire_for_archive!(timeout: 1.0)
+      if running?
+        @stop_requested_at ||= Time.now
+        signal_process_group("TERM")
+        wait_until_not_running(timeout)
+        if running?
+          signal_process_group("KILL")
+          wait_until_not_running(0.5)
+        end
+      end
+
+      finalize_retired_run!
+    end
+
     def poll!
       return unless @pid
       return if running?
@@ -1090,6 +1104,33 @@ module HQ
       return true if [128 + Signal.list["TERM"].to_i, 143].include?(@last_exit_code)
 
       @stop_requested_at && @last_exit_code.to_i.positive?
+    end
+
+    def signal_process_group(signal)
+      Process.kill(signal, -@pid)
+    rescue Errno::ESRCH, Errno::EPERM
+      clear_foreign_pid!
+    end
+
+    def wait_until_not_running(timeout)
+      deadline = Time.now + timeout.to_f
+      while running? && Time.now < deadline
+        sleep 0.05
+      end
+    end
+
+    def finalize_retired_run!
+      @finished_at ||= Time.now if @started_at || @pid || last_run
+      @last_exit_code = read_exit_code if @last_exit_code.nil?
+      if last_run&.status == "running" || @stop_requested_at
+        @stop_requested_at ||= Time.now
+        @last_exit_code ||= 143
+      end
+      finalize_latest_run!
+      @pid = nil
+      @structured_result = nil if last_run&.status == "stopped"
+      @summary ||= "Stopped by schedule resume" if last_run&.status == "stopped"
+      self
     end
 
     def trim_runs!

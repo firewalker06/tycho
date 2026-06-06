@@ -174,24 +174,14 @@ module HQ
 
         SCHEDULE_STATUS_META = {
           "scheduled" => { label: "scheduled", icon: Styles::STATUS_ICONS[:pending], style: :healthy },
-          "running" => { label: "running", icon: Styles::STATUS_ICONS[:running], style: :healthy },
-          "started" => { label: "running", icon: Styles::STATUS_ICONS[:running], style: :healthy },
-          "queued" => { label: "queued", icon: Styles::STATUS_ICONS[:pending], style: :warning },
           "paused" => { label: "paused", icon: Styles::STATUS_ICONS[:stopped], style: :maintenance },
-          "interactive" => { label: "interactive", icon: Styles::STATUS_ICONS[:awaiting_input], style: :warning },
-          "failed" => { label: "failed", icon: Styles::STATUS_ICONS[:failed], style: :fail },
-          "error" => { label: "error", icon: Styles::STATUS_ICONS[:failed], style: :fail },
-          "succeeded" => { label: "done", icon: Styles::STATUS_ICONS[:succeeded], style: :success },
-          "skipped" => { label: "skipped", icon: Styles::STATUS_ICONS[:partial], style: :warning }
+          "stopped" => { label: "stopped", icon: Styles::STATUS_ICONS[:failed], style: :fail }
         }.freeze
 
-        SCHEDULE_STATUS_LEGEND_KEYS = %w[scheduled running paused interactive failed].freeze
+        SCHEDULE_STATUS_LEGEND_KEYS = %w[scheduled paused stopped].freeze
 
         def schedule_status_key(schedule)
-          return "paused" if schedule[:paused] || schedule[:enabled] == false
-          return "interactive" if schedule[:last_error].to_s == "interactive"
-
-          schedule[:last_status].to_s.empty? ? "scheduled" : schedule[:last_status].to_s
+          schedule[:status].to_s.empty? ? "scheduled" : schedule[:status].to_s
         end
 
         def schedule_status_meta(schedule_or_key)

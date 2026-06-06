@@ -32,22 +32,35 @@ module HQ
   end
 
   ScheduleState = Struct.new(
-    :key, :enabled, :paused_at, :last_due_at, :last_started_at, :last_finished_at,
+    :key, :status, :enabled, :paused_at, :last_due_at, :last_started_at, :last_finished_at,
     :last_status, :last_error, :last_target_kind, :last_target_key, :previous_target_key,
     :next_due_at, :run_count, :skip_count, :first_success_notified_at, :failure_started_at,
     :recovery_notified_at,
     keyword_init: true
   ) do
+    OPERATOR_STATUSES = %w[scheduled paused stopped].freeze
+    LEGACY_STOPPED_STATUSES = %w[failed blocked awaiting-input stopped].freeze
+
     def self.from_hash(hash)
+      enabled = hash.key?("enabled") ? hash["enabled"] != false : true
+      paused_at = parse_time(hash["paused_at"])
+      last_status = hash["last_status"]
+      last_error = hash["last_error"]
       new(
         key: hash["key"],
-        enabled: hash.key?("enabled") ? hash["enabled"] != false : true,
-        paused_at: parse_time(hash["paused_at"]),
+        status: normalize_status(hash["status"]) || legacy_status(
+          enabled: enabled,
+          paused_at: paused_at,
+          last_status: last_status,
+          last_error: last_error
+        ),
+        enabled: enabled,
+        paused_at: paused_at,
         last_due_at: parse_time(hash["last_due_at"]),
         last_started_at: parse_time(hash["last_started_at"]),
         last_finished_at: parse_time(hash["last_finished_at"]),
-        last_status: hash["last_status"],
-        last_error: hash["last_error"],
+        last_status: last_status,
+        last_error: last_error,
         last_target_kind: hash["last_target_kind"],
         last_target_key: hash["last_target_key"],
         previous_target_key: hash["previous_target_key"],
@@ -58,6 +71,24 @@ module HQ
         failure_started_at: parse_time(hash["failure_started_at"]),
         recovery_notified_at: parse_time(hash["recovery_notified_at"])
       )
+    end
+
+    def self.normalize_status(value)
+      text = value.to_s.strip
+      OPERATOR_STATUSES.include?(text) ? text : nil
+    end
+
+    def self.legacy_status(enabled:, paused_at:, last_status:, last_error:)
+      return "stopped" if stopped_legacy_state?(last_status:, last_error:)
+      return "paused" if enabled == false || paused_at
+
+      "scheduled"
+    end
+
+    def self.stopped_legacy_state?(last_status:, last_error:)
+      return true if last_error.to_s == "interactive"
+
+      LEGACY_STOPPED_STATUSES.include?(last_status.to_s)
     end
 
     def self.parse_time(value)
@@ -71,6 +102,7 @@ module HQ
     def to_hash
       {
         "key" => key,
+        "status" => status,
         "enabled" => enabled != false,
         "paused_at" => paused_at&.iso8601,
         "last_due_at" => last_due_at&.iso8601,
@@ -90,8 +122,47 @@ module HQ
       }.compact
     end
 
+    def status
+      self[:status] = self.class.normalize_status(self[:status]) || self.class.legacy_status(
+        enabled: enabled,
+        paused_at: paused_at,
+        last_status: last_status,
+        last_error: last_error
+      )
+    end
+
+    def status=(value)
+      self[:status] = self.class.normalize_status(value) || "scheduled"
+    end
+
+    def scheduled?
+      status == "scheduled"
+    end
+
     def paused?
-      !!paused_at || enabled == false
+      status == "paused"
+    end
+
+    def stopped?
+      status == "stopped"
+    end
+
+    def mark_scheduled!
+      self.status = "scheduled"
+      self.enabled = true
+      self.paused_at = nil
+    end
+
+    def mark_paused!(now: Time.now)
+      self.status = "paused"
+      self.enabled = false
+      self.paused_at ||= now
+    end
+
+    def mark_stopped!(now: Time.now)
+      self.status = "stopped"
+      self.enabled = false
+      self.paused_at ||= now
     end
   end
 
@@ -127,6 +198,7 @@ module HQ
     def state_for(states, key)
       states[key.to_s] ||= ScheduleState.new(
         key: key.to_s,
+        status: "scheduled",
         enabled: true,
         run_count: 0,
         skip_count: 0
