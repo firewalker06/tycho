@@ -4,6 +4,36 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.4.0 - 2026-06-06
+
+### Notable Releases
+
+- Add grouped Web Push badge support so Remote UI notifications can update
+  scoped browser badges and document push behavior. (#10)
+- Add managed-agent model and reasoning effort settings with config inheritance,
+  harness catalog suggestions, and TUI/Remote UI editing. (#15)
+- Add drag-and-drop file attachments to the Remote UI composer. (#20)
+
+### Others
+
+- Improve the Remote UI Summary surface and keep run summary blocks out of the
+  main conversation stream. (#11)
+
+- Fix Remote readiness checks by sharing executable resolution for `mise`,
+  Kamal, Codex, Claude, and compatible harnesses. (#12)
+- Fix Claude structured output schema handling so Claude-compatible runs can
+  produce and parse structured results reliably. (#13)
+- Resume stopped schedules safely after interactive scheduled agents are
+  archived, while preserving protection for user-touched sessions. (#14)
+- Keep schedule rows visible in the Remote UI as schedule and daemon state
+  changes.
+- Add copyable Remote UI details for operator-facing metadata. (#16)
+- Add a Remote UI agent sort dropdown for faster agent list triage. (#17)
+- Clarify scheduled-agent titles so recurring run history is easier to scan. (#18)
+- Add Remote UI project editing with JSON API support. (#19)
+- Simplify schedule status handling to `scheduled`, `paused`, and `stopped`,
+  with last outcome and error diagnostics tracked separately. (#21)
+
 ## 0.3.0 - 2026-05-31
 
 - Add first-run onboarding for pristine installs, including TUI and Remote UI
