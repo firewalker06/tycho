@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-06-03
+2026-06-06
 
 ## Strategic Direction
 
@@ -64,9 +64,10 @@ Key references:
 
 ## Current Focus
 
-**v0.3.0 release**: Tycho's current release focus is packaging first-run
-onboarding, the simplified Remote UI agent workspace, clipboard attachment
-uploads, and attachment dedupe/prepend behavior. After release, the next focus is
+**v0.4.0 release**: Tycho's current release focus is Remote UI project editing,
+agent operator ergonomics, managed-agent model/effort controls, schedule
+resilience, simplified schedule statuses, and grouped web push badges. After
+release, the next focus is completing schedule management surfaces and
 stabilizing install/update paths through Homebrew checks and browser/TUI smoke
 verification.
 
