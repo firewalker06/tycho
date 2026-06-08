@@ -1501,10 +1501,10 @@ module RemoteServerTest
            "expected Remote UI to reserve compact iPad standalone window control spacing")
     assert(css[:body].include?("padding: 10px 12px 10px calc(12px + var(--ipad-header-control-space));"),
            "expected header rows to keep content clear of iPad left-side controls")
-    assert(css[:body].include?("top: var(--safe-area-top);"),
-           "expected sticky and fixed headers to sit below iOS status controls")
     assert(css[:body].include?("padding-top: var(--safe-area-top);"),
-           "expected the app shell to start below the iOS safe area")
+           "expected Remote UI headers to absorb iOS safe-area top padding")
+    assert(css[:body].include?("top: 0;"),
+           "expected sticky and fixed headers to own their safe-area padding instead of being offset")
     assert(css[:body].include?(".agent-dock"), "expected Agent detail to have a bottom dock")
     assert(css[:body].include?("position: fixed"), "expected Agent detail dock to stay pinned to the viewport")
     assert(css[:body].include?(".agent-floating-actions"),

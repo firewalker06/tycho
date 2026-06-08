@@ -128,17 +128,18 @@ h3 {
   min-height: 100vh;
   min-height: 100dvh;
   margin: 0 auto;
-  padding-top: var(--safe-area-top);
+  padding-top: 0;
 }
 
 .app-header {
   --header-offset-y: 0;
   position: sticky;
-  top: var(--safe-area-top);
+  top: 0;
   z-index: 7;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--panel) 95%, transparent);
   backdrop-filter: blur(10px);
+  padding-top: var(--safe-area-top);
   transform: translateY(var(--header-offset-y));
   transition: transform 180ms ease;
   will-change: transform;
@@ -751,6 +752,47 @@ select {
 
 .content.agent-detail {
   padding-bottom: calc(var(--agent-dock-height, 220px) + 62px + env(safe-area-inset-bottom, 0px));
+}
+
+.agent-workspace {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.agent-conversation-pane,
+.agent-detail-pane,
+.agent-conversation-scroll {
+  min-width: 0;
+}
+
+.agent-conversation-scroll {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.agent-workspace.has-detail .agent-conversation-pane {
+  display: none;
+}
+
+.agent-detail-pane {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.agent-workspace-project-diff .agent-dock {
+  display: none;
+}
+
+.content.agent-split-diff {
+  padding-bottom: 16px;
+}
+
+.diff-pane-header {
+  min-width: 0;
 }
 
 .bottom-nav {
@@ -2671,6 +2713,99 @@ select {
 .agent-floating-pill .ui-icon {
   width: 16px;
   height: 16px;
+}
+
+@media (min-width: 900px) {
+  body:has(.content.agent-split-active) {
+    overflow: hidden;
+  }
+
+  body:has(.content.agent-split-active) .app-shell,
+  body:has(.content.agent-split-active) .app-header.detail-header {
+    max-width: 1440px;
+  }
+
+  .content.agent-split-active {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+    padding-bottom: 12px;
+  }
+
+  .agent-workspace.has-detail {
+    grid-template-columns: minmax(340px, 0.85fr) minmax(420px, 1.15fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    align-content: stretch;
+    width: 100%;
+    max-width: 1400px;
+    height: calc(100dvh - var(--detail-header-height, 64px) - 24px);
+    min-height: 0;
+    margin: 0 auto;
+  }
+
+  .agent-workspace.has-detail .agent-conversation-pane {
+    position: relative;
+    display: grid;
+    grid-column: 1;
+    grid-row: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .agent-workspace.has-detail .agent-conversation-scroll {
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding-right: 4px;
+    padding-bottom: 56px;
+  }
+
+  .agent-workspace.has-detail .agent-detail-pane {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding-right: 4px;
+  }
+
+  .agent-workspace.has-detail .agent-dock {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    z-index: 3;
+    grid-column: 1;
+    grid-row: 2;
+    display: grid;
+    width: 100%;
+    max-width: none;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: none;
+    padding: 8px;
+    transform: none;
+  }
+
+  .agent-workspace.has-detail .agent-floating-actions {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+  }
+
+  .agent-workspace.has-detail .agent-attachment-shell {
+    min-height: 0;
+  }
+
+  .agent-workspace.has-detail .diff-file-body {
+    max-height: min(58dvh, 680px);
+  }
+
+  .agent-workspace.has-detail .skill-flyout,
+  .agent-workspace.has-detail .attachment-flyout {
+    max-width: min(360px, calc(100vw - 24px));
+  }
 }
 
 @media (max-width: 520px) {
