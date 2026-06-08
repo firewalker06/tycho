@@ -1053,6 +1053,45 @@ module RemoteServerTest
       listed = server.send(:route, service, "GET", "/schedules", {}, nil)
       assert(listed.dig(:body, :schedules).length == 1, "expected schedule list route")
       assert(listed.dig(:body, :daemon, :status) == "stopped", "expected schedule daemon status")
+      assert(listed.dig(:body, :schedules, 0, :message_source) == "inline", "expected editable message source in payload")
+      assert(listed.dig(:body, :schedules, 0, :message) == "Run maintenance.", "expected editable message in payload")
+
+      created = server.send(:route, service, "POST", "/schedules", {
+                              "key" => "daily",
+                              "name" => "Daily check",
+                              "cron" => "15 10 * * *",
+                              "timezone" => "UTC",
+                              "project_key" => "web",
+                              "agent_name" => "Daily Agent",
+                              "message_source" => "inline",
+                              "message" => "Check the project.",
+                              "policy" => {
+                                "overlap" => "queue",
+                                "missed" => "skip_missed",
+                                "archive_previous_agent" => false
+                              }
+                            }, nil)
+      assert(created[:status] == 201, "expected schedule create route")
+      assert(created.dig(:body, :schedule, :key) == "daily", "expected created schedule payload")
+      assert(created.dig(:body, :schedule, :project_key) == "web", "expected created schedule project")
+      assert(created.dig(:body, :schedule, :policy, "overlap") == "queue", "expected created schedule policy")
+
+      updated = server.send(:route, service, "PATCH", "/schedules/daily", {
+                              "key" => "daily",
+                              "name" => "Daily check edited",
+                              "cron" => "30 11 * * 1-5",
+                              "timezone" => "local",
+                              "project_key" => "web",
+                              "message_source" => "inline",
+                              "message" => "Check weekdays.",
+                              "policy" => {
+                                "overlap" => "skip",
+                                "missed" => "run_once_on_start",
+                                "archive_previous_agent" => true
+                              }
+                            }, nil)
+      assert(updated.dig(:body, :schedule, :name) == "Daily check edited", "expected schedule update route")
+      assert(updated.dig(:body, :schedule, :cron) == "30 11 * * 1-5", "expected updated schedule cron")
 
       paused = server.send(:route, service, "POST", "/schedules/weekday/pause", {}, nil)
       assert(paused.dig(:body, :schedule, :paused), "expected schedule pause route")
@@ -1076,6 +1115,16 @@ module RemoteServerTest
       assert(restarted[:status] == 202, "expected schedule daemon restart route to be accepted")
       assert(restarted.dig(:body, :restarted), "expected schedule daemon restart payload")
       assert(daemon_supervisor.calls.include?([:restart, nil, true]), "expected restart route to use separate daemon supervisor")
+
+      HQ::ScheduleStore.new.save(
+        "daily" => HQ::ScheduleState.new(key: "daily", status: "paused", enabled: false, run_count: 1, skip_count: 0)
+      )
+      deleted = server.send(:route, service, "DELETE", "/schedules/daily", {}, nil)
+      assert(deleted.dig(:body, :deleted), "expected schedule delete route")
+      assert(!HQ::ScheduleStore.new.load.key?("daily"), "expected schedule delete to clear runtime state")
+      persisted = YAML.safe_load_file(HQ::SCHEDULES_FILE)
+      assert(Array(persisted["schedules"]).none? { |entry| entry["key"] == "daily" },
+             "expected deleted schedule to be removed from schedules.yml")
     end
   end
 
@@ -1686,6 +1735,8 @@ module RemoteServerTest
            "expected Schedule block to pin a visible collapsible disclosure control")
     assert(css[:body].include?(".schedule-daemon-actions") && css[:body].include?("justify-content: flex-end"),
            "expected Schedule daemon actions to align right")
+    assert(css[:body].include?(".schedule-management-actions") && css[:body].include?("justify-content: flex-end"),
+           "expected Schedule management actions to align right")
     assert(css[:body].include?(".schedule-daemon-actions") && css[:body].include?("gap: 8px;"),
            "expected Schedule daemon action buttons to be spaced")
     assert(css[:body].include?(".schedule-row") && css[:body].include?("grid-template-columns: auto minmax(0, 1fr) auto"),
@@ -1889,6 +1940,22 @@ module RemoteServerTest
            "expected Remote UI to expose schedule run/pause/resume controls")
     assert(js[:body].include?("Run now") && js[:body].include?("schedule-toggle-button"),
            "expected Remote UI schedule rows to distinguish manual runs from pause/resume toggles")
+    assert(js[:body].include?("data-new-schedule"),
+           "expected Remote UI to expose schedule creation")
+    assert(js[:body].include?("data-edit-schedule") && js[:body].include?("data-delete-schedule"),
+           "expected Remote UI schedule rows to expose edit and delete controls")
+    assert(js[:body].include?("function renderScheduleForm"),
+           "expected Remote UI to render schedule create/edit forms")
+    assert(js[:body].include?('id="schedule-form"'),
+           "expected Remote UI schedule forms to have a dedicated submit target")
+    assert(js[:body].include?("function scheduleFormPayload"),
+           "expected Remote UI to serialize schedule form payloads")
+    assert(js[:body].include?('apiPost("/schedules", payload)'),
+           "expected Remote UI to call the schedule create endpoint")
+    assert(js[:body].include?('apiPatch(`/schedules/${encodeURIComponent(scheduleKey)}`, payload)'),
+           "expected Remote UI to call the schedule update endpoint")
+    assert(js[:body].include?('apiDelete(`/schedules/${encodeURIComponent(key)}`)'),
+           "expected Remote UI to call the schedule delete endpoint")
     assert(js[:body].include?('class="schedule-row-title"') &&
            js[:body].include?('<span class="pill ${className}">${escapeHtml(scheduleStatusLabel(schedule))}</span>'),
            "expected Remote UI schedule status labels to render inline with the title")

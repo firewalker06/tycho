@@ -878,6 +878,22 @@ select {
   padding: 12px;
 }
 
+.checkbox-card label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.checkbox-card input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .onboarding-page {
   display: grid;
   width: 100%;
@@ -1135,7 +1151,8 @@ select {
   padding: 8px 10px 10px;
 }
 
-.schedule-daemon-actions {
+.schedule-daemon-actions,
+.schedule-management-actions {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
@@ -1144,7 +1161,8 @@ select {
   padding: 2px 0;
 }
 
-.schedule-daemon-actions button {
+.schedule-daemon-actions button,
+.schedule-management-actions button {
   min-height: 34px;
 }
 
@@ -2093,7 +2111,7 @@ select {
   z-index: 8;
   display: grid;
   gap: 8px;
-  width: min(360px, calc(100vw - 24px));
+  width: min(360px, calc(100vw - 24px), calc(100% - 24px));
   max-height: min(46dvh, 340px);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -3018,7 +3036,7 @@ select {
   bottom: 52px;
   left: 0;
   z-index: 7;
-  width: min(320px, calc(100vw - 24px));
+  width: min(320px, calc(100vw - 24px), calc(100% - 24px));
   min-height: min(180px, 42dvh);
   max-height: min(44dvh, 320px);
   overflow-y: auto;
