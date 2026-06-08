@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "time"
 require "yaml"
 
@@ -162,11 +163,60 @@ module HQ
       schedules.find { |schedule| schedule.key == key.to_s }
     end
 
+    def create(attrs)
+      data = load_yaml
+      entries = schedule_entries(data)
+      entry = schedule_entry_from_attrs(attrs)
+      entries << entry
+      validated = validate_entries!(entries)
+      data["schedules"] = entries
+      write_yaml(data)
+      @schedules = validated
+      find(entry.fetch("key"))
+    end
+
+    def update(key, attrs)
+      values = stringify_keys(attrs || {})
+      data = load_yaml
+      entries = schedule_entries(data)
+      index = entries.index { |entry| entry.is_a?(Hash) && entry["key"].to_s == key.to_s }
+      raise Error, "Unknown schedule: #{key}" unless index
+
+      if values.key?("key") && values["key"].to_s.strip != key.to_s
+        raise Error, "Schedule key cannot be changed"
+      end
+
+      entries[index] = schedule_entry_from_attrs(values, existing: entries[index], key: key)
+      validated = validate_entries!(entries)
+      data["schedules"] = entries
+      write_yaml(data)
+      @schedules = validated
+      find(key)
+    end
+
+    def delete(key)
+      data = load_yaml
+      entries = schedule_entries(data)
+      original_count = entries.length
+      entries = entries.reject { |entry| entry.is_a?(Hash) && entry["key"].to_s == key.to_s }
+      raise Error, "Unknown schedule: #{key}" if entries.length == original_count
+
+      validated = validate_entries!(entries)
+      data["schedules"] = entries
+      write_yaml(data)
+      @schedules = validated
+      true
+    end
+
     private
 
     def load_schedules
       data = load_yaml
-      entries = Array(data["schedules"])
+      entries = schedule_entries(data)
+      validate_entries!(entries)
+    end
+
+    def validate_entries!(entries)
       seen = {}
       entries.each_with_index.map do |entry, index|
         schedule = build_schedule(entry || {}, index:)
@@ -175,6 +225,10 @@ module HQ
         seen[schedule.key] = true
         schedule
       end
+    end
+
+    def schedule_entries(data)
+      Array(data["schedules"]).map { |entry| stringify_keys(entry) }
     end
 
     def load_yaml
@@ -186,6 +240,81 @@ module HQ
       parsed
     rescue Psych::SyntaxError => e
       raise Error, "Invalid schedules YAML: #{e.message}"
+    end
+
+    def write_yaml(data)
+      FileUtils.mkdir_p(File.dirname(@path))
+      File.write(@path, YAML.dump(data))
+    end
+
+    def schedule_entry_from_attrs(attrs, existing: nil, key: nil)
+      values = stringify_keys(attrs || {})
+      entry = stringify_keys(existing || {})
+      target = stringify_keys(entry["target"] || {})
+
+      entry["key"] = key.to_s.empty? ? clean_string(values["key"], fallback: entry["key"]) : key.to_s
+      assign_clean_string(entry, "name", values, fallback: entry["name"])
+      assign_bool(entry, "enabled", values, fallback: entry.key?("enabled") ? entry["enabled"] : true)
+      assign_clean_string(entry, "cron", values, fallback: entry["cron"])
+      assign_clean_string(entry, "timezone", values, fallback: entry["timezone"] || "local")
+
+      target["type"] = "agent"
+      assign_clean_string(target, "project_key", values, fallback: target["project_key"])
+      assign_clean_string(target, "name", values, source_key: "agent_name", fallback: target["name"])
+      source = clean_string(values["message_source"], fallback: target["message_source"])
+      source = target["message_file"].to_s.empty? ? "inline" : "file" if source.to_s.empty?
+      target["message_source"] = source
+      if source == "file"
+        assign_clean_string(target, "message_file", values, fallback: target["message_file"])
+        target.delete("message")
+      else
+        target["message_source"] = "inline"
+        assign_clean_string(target, "message", values, fallback: target["message"])
+        target.delete("message_file")
+      end
+      entry["target"] = target
+
+      policy = stringify_keys(entry["policy"] || {})
+      policy_values = stringify_keys(values["policy"] || {})
+      %w[overlap missed].each do |field|
+        assign_clean_string(policy, field, policy_values, fallback: policy[field])
+      end
+      assign_bool(policy, "archive_previous_agent", policy_values,
+                  fallback: policy.key?("archive_previous_agent") ? policy["archive_previous_agent"] : true)
+      entry["policy"] = policy
+      entry
+    end
+
+    def stringify_keys(value)
+      case value
+      when Hash
+        value.each_with_object({}) { |(key, item), hash| hash[key.to_s] = stringify_keys(item) }
+      when Array
+        value.map { |item| stringify_keys(item) }
+      else
+        value
+      end
+    end
+
+    def assign_clean_string(target, field, values, source_key: field, fallback: nil)
+      value = clean_string(values[source_key], fallback:)
+      value.to_s.empty? ? target.delete(field) : target[field] = value
+    end
+
+    def assign_bool(target, field, values, fallback:)
+      raw = values.key?(field) ? values[field] : fallback
+      target[field] = boolean_value(raw)
+    end
+
+    def clean_string(value, fallback: nil)
+      candidate = value.nil? ? fallback : value
+      candidate.to_s.strip
+    end
+
+    def boolean_value(value)
+      return value if value == true || value == false
+
+      !%w[false 0 no off].include?(value.to_s.strip.downcase)
     end
 
     def build_schedule(entry, index:)

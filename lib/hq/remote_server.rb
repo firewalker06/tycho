@@ -193,6 +193,7 @@ module HQ
       return ok(agents: service.agents) if method == "GET" && parts == ["agents"]
       return created(agent: service.create_agent(body)) if method == "POST" && parts == ["agents"]
       return ok(schedules: service.schedules, daemon: service.schedule_daemon) if method == "GET" && parts == ["schedules"]
+      return created(schedule: service.create_schedule(body)) if method == "POST" && parts == ["schedules"]
       return ok(service.reload_schedules) if method == "POST" && parts == ["schedules", "reload"]
       return accepted(service.start_schedule_daemon(body)) if method == "POST" && parts == ["schedules", "daemon", "start"]
       return accepted(service.stop_schedule_daemon) if method == "POST" && parts == ["schedules", "daemon", "stop"]
@@ -236,7 +237,11 @@ module HQ
       if parts.length >= 2 && parts.first == "schedules"
         key = parts[1]
         tail = parts.drop(2)
+        return ok(message: service.schedule_message(key)) if method == "GET" && tail == ["message"]
+        return ok(message: service.update_schedule_message(key, body)) if %w[PATCH PUT].include?(method) && tail == ["message"]
         return ok(schedule: service.schedule(key)) if method == "GET" && tail.empty?
+        return ok(schedule: service.update_schedule(key, body)) if %w[PATCH PUT].include?(method) && tail.empty?
+        return ok(service.delete_schedule(key)) if method == "DELETE" && tail.empty?
         return ok(service.run_schedule(key)) if method == "POST" && tail == ["run"]
         return ok(schedule: service.pause_schedule(key)) if method == "POST" && tail == ["pause"]
         return ok(service.resume_schedule(key)) if method == "POST" && tail == ["resume"]
@@ -519,6 +524,44 @@ module HQ
       raise Error.new("Unknown schedule: #{key}", status: 404) unless found
 
       found
+    end
+
+    def create_schedule(attrs)
+      created = schedule_registry.create(attrs)
+      schedule(created.key)
+    rescue ScheduleRegistry::Error => e
+      raise Error.new(e.message, status: 400)
+    end
+
+    def update_schedule(key, attrs)
+      schedule_registry.update(key, attrs)
+      schedule(key)
+    rescue ScheduleRegistry::Error => e
+      raise Error.new(e.message, status: e.message.start_with?("Unknown schedule:") ? 404 : 400)
+    end
+
+    def delete_schedule(key)
+      schedule_registry.delete(key)
+      ScheduleStore.new.delete(key)
+      { deleted: true, key: key.to_s }
+    rescue ScheduleRegistry::Error => e
+      raise Error.new(e.message, status: 404)
+    end
+
+    def schedule_message(key)
+      schedule_message_payload(schedule_definition!(key))
+    rescue ScheduleRegistry::Error => e
+      raise Error.new(e.message, status: 404)
+    end
+
+    def update_schedule_message(key, attrs)
+      schedule = schedule_definition!(key)
+      raise ScheduleRegistry::Error, "Schedule #{key.inspect} does not use a message_file" unless schedule.message_source == "file"
+
+      File.write(schedule.message_path, attrs["content"].to_s)
+      schedule_message_payload(schedule)
+    rescue ScheduleRegistry::Error => e
+      raise Error.new(e.message, status: 404)
     end
 
     def run_schedule(key)
@@ -1196,9 +1239,34 @@ module HQ
     def scheduler
       Scheduler.new(
         registry: @registry,
+        schedule_registry: schedule_registry,
         push_notification_store: @push_notification_store,
         web_push_notifier: @web_push_notifier
       )
+    end
+
+    def schedule_registry
+      ScheduleRegistry.new(projects: @projects)
+    end
+
+    def schedule_definition!(key)
+      schedule = schedule_registry.find(key)
+      raise ScheduleRegistry::Error, "Unknown schedule: #{key}" unless schedule
+
+      schedule
+    end
+
+    def schedule_message_payload(schedule)
+      unless schedule.message_source == "file"
+        raise ScheduleRegistry::Error, "Schedule #{schedule.key.inspect} does not use a message_file"
+      end
+
+      {
+        key: schedule.key,
+        message_file: schedule.message_file,
+        path: schedule.message_path,
+        content: File.read(schedule.message_path)
+      }
     end
 
     def schedule_daemon_supervisor

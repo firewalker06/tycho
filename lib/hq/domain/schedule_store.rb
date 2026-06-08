@@ -195,6 +195,13 @@ module HQ
       File.write(@path, JSON.pretty_generate(ordered.map(&:to_hash)))
     end
 
+    def delete(key)
+      states = load
+      removed = states.delete(key.to_s)
+      save(states) if removed
+      !!removed
+    end
+
     def state_for(states, key)
       states[key.to_s] ||= ScheduleState.new(
         key: key.to_s,
