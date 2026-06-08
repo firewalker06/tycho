@@ -124,6 +124,7 @@ Schedule status:
 - Paused and stopped schedules prevent subsequent scheduled jobs.
 - Resuming a paused schedule marks it scheduled and recomputes the next due time.
 - Resuming a stopped schedule marks it scheduled, archives any previous active scheduled session for that schedule, and waits until the next scheduled run.
+- Archiving a session for a `stopped` or `paused` schedule returns it to `scheduled` for future job execution.
 
 Success notifications:
 

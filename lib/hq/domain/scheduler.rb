@@ -309,6 +309,7 @@ module HQ
       state.last_target_key = nil
       state.last_target_kind = nil
       state.last_finished_at ||= now
+      state.mark_scheduled! if state.stopped? || state.paused?
       publish("schedule.agent_archived", schedule, state,
               agent_key: agent_key,
               target_key: agent_key,

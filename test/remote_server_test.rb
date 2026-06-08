@@ -105,33 +105,59 @@ module RemoteServerTest
               message: "Run maintenance."
       YAML
       service = HQ::RemoteService.new(registry: registry)
-      created = service.create_agent(
+      archive_reconciles_status = lambda do |agent_key:, status:, enabled:, paused_at: nil|
+        state = HQ::ScheduleState.new(
+          key: "weekday",
+          status: status,
+          enabled: enabled,
+          paused_at: paused_at,
+          last_status: "skipped",
+          last_error: "interactive",
+          last_target_kind: "agent",
+          last_target_key: agent_key,
+          next_due_at: Time.now + 3600,
+          run_count: 1,
+          skip_count: 1
+        )
+        HQ::ScheduleStore.new.save("weekday" => state)
+
+        archived = service.archive_agent(agent_key)
+        assert(archived[:schedule_reconciled], "expected Remote archive to reconcile schedule state")
+        updated = HQ::ScheduleStore.new.load.fetch("weekday")
+        assert(updated.scheduled?, "expected Remote archive to re-schedule the schedule from #{status.inspect}")
+        assert(updated.enabled == true, "expected Remote archive to re-enable schedule")
+        assert(updated.paused_at.nil?, "expected Remote archive to clear paused schedule state")
+        assert(updated.last_error == "interactive", "expected Remote archive to preserve stop reason")
+        assert(updated.last_target_key.nil?, "expected Remote archive to clear stale target")
+        assert(updated.previous_target_key == agent_key, "expected Remote archive to keep previous target")
+      end
+
+      stopped_agent = service.create_agent(
         "project_key" => "web",
         "template_key" => "custom",
-        "name" => "Scheduled Interactive Agent",
+        "name" => "Scheduled Stopped Agent",
         "prompt" => "Work remotely.",
         "agent" => "codex"
       )
-      state = HQ::ScheduleState.new(
-        key: "weekday",
-        enabled: true,
-        last_status: "skipped",
-        last_error: "interactive",
-        last_target_kind: "agent",
-        last_target_key: created[:key],
-        next_due_at: Time.now + 3600,
-        run_count: 1,
-        skip_count: 1
+      archive_reconciles_status.call(
+        agent_key: stopped_agent[:key],
+        status: "stopped",
+        enabled: true
       )
-      HQ::ScheduleStore.new.save("weekday" => state)
 
-      archived = service.archive_agent(created[:key])
-      assert(archived[:schedule_reconciled], "expected Remote archive to reconcile schedule state")
-      updated = HQ::ScheduleStore.new.load.fetch("weekday")
-      assert(updated.stopped?, "expected Remote archive to leave stopped schedule stopped")
-      assert(updated.last_error == "interactive", "expected Remote archive to preserve stop reason")
-      assert(updated.last_target_key.nil?, "expected Remote archive to clear stale target")
-      assert(updated.previous_target_key == created[:key], "expected Remote archive to keep previous target")
+      paused_agent = service.create_agent(
+        "project_key" => "web",
+        "template_key" => "custom",
+        "name" => "Scheduled Paused Agent",
+        "prompt" => "Work remotely.",
+        "agent" => "codex"
+      )
+      archive_reconciles_status.call(
+        agent_key: paused_agent[:key],
+        status: "paused",
+        enabled: false,
+        paused_at: Time.now
+      )
     end
   end
 
