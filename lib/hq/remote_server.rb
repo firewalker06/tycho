@@ -240,7 +240,9 @@ module HQ
         return ok(message: service.schedule_message(key)) if method == "GET" && tail == ["message"]
         return ok(message: service.update_schedule_message(key, body)) if %w[PATCH PUT].include?(method) && tail == ["message"]
         return ok(schedule: service.schedule(key)) if method == "GET" && tail.empty?
+        return ok(service.schedule_message_file(key, request: request)) if method == "GET" && tail == ["message_file"]
         return ok(schedule: service.update_schedule(key, body)) if %w[PATCH PUT].include?(method) && tail.empty?
+        return ok(service.update_schedule_message_file(key, body)) if method == "PUT" && tail == ["message_file"]
         return ok(service.delete_schedule(key)) if method == "DELETE" && tail.empty?
         return ok(service.run_schedule(key)) if method == "POST" && tail == ["run"]
         return ok(schedule: service.pause_schedule(key)) if method == "POST" && tail == ["pause"]
@@ -524,6 +526,34 @@ module HQ
       raise Error.new("Unknown schedule: #{key}", status: 404) unless found
 
       found
+    end
+
+    def schedule_message_file(key, request: nil)
+      schedule = find_schedule_definition!(key)
+      raise Error.new("Schedule #{key.inspect} is not using file-based message mode") unless schedule.message_source == "file"
+
+      requested_path = request&.query_params&.fetch("path", nil)
+      message_file = requested_path.to_s.strip
+      message_file = schedule.message_file.to_s if message_file.empty?
+      raise Error.new("Schedule #{key.inspect} has no message file", status: 400) if message_file.empty?
+
+      path = resolve_schedule_message_path!(key, message_file)
+      {
+        message_file: message_file,
+        content: File.read(path)
+      }
+    rescue Errno::ENOENT => e
+      raise Error.new(e.message, status: 404)
+    end
+
+    def update_schedule_message_file(key, attrs)
+      schedule = find_schedule_definition!(key)
+      raise Error.new("Schedule #{key.inspect} is not using file-based message mode") unless schedule.message_source == "file"
+
+      message_file = required_text(attrs, "message_file", fallback: "message_file").to_s.strip
+      path = resolve_schedule_message_path!(key, message_file)
+      File.write(path, attrs["content"].to_s)
+      { message_file: message_file, content: attrs["content"].to_s }
     end
 
     def create_schedule(attrs)
@@ -1267,6 +1297,29 @@ module HQ
         path: schedule.message_path,
         content: File.read(schedule.message_path)
       }
+    end
+
+    def find_schedule_definition!(key)
+      schedule_definition = schedule_registry.find(key)
+      raise Error.new("Unknown schedule: #{key}", status: 404) unless schedule_definition
+
+      schedule_definition
+    end
+
+    def resolve_schedule_message_path!(key, message_file)
+      value = message_file.to_s
+      if value.start_with?("/") || value.split("/").include?("..") || !value.start_with?("schedules/")
+        raise Error.new("Schedule #{key.inspect} message_file must be a relative path under schedules/")
+      end
+
+      path = File.expand_path(value.delete_prefix("schedules/"), schedule_registry.schedules_root)
+      root = File.join(schedule_registry.schedules_root, "")
+      unless path.start_with?(root)
+        raise Error.new("Schedule #{key.inspect} message_file must stay inside schedules/")
+      end
+
+      raise Error.new("Schedule #{key.inspect} message_file does not exist: #{message_file}") unless File.file?(path)
+      path
     end
 
     def schedule_daemon_supervisor
