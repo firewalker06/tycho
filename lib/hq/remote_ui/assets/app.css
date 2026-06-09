@@ -838,6 +838,25 @@ select {
   background: color-mix(in srgb, var(--accent) 16%, var(--panel));
 }
 
+.pr-diff-nav-loading,
+.pr-diff-title-loading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--info);
+  animation: poll-refresh-hourglass 1s linear infinite;
+}
+
+.pr-diff-nav-loading .ui-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.pr-diff-title-loading .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
 .pr-diff-nav-copy {
   display: grid;
   min-width: 0;
