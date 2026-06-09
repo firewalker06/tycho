@@ -257,6 +257,10 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `DELETE` | `/agents/{key}` | Archive one idle managed agent. |
 | `POST` | `/agents/archive` | Archive multiple idle managed agents from a `keys` array, returning archived, skipped, and failed keys. |
 | `GET` | `/agents/{key}/conversation` | Read the rendered conversation blocks for one agent. |
+| `GET` | `/agents/{key}/pull-requests` | List GitHub pull request links detected from one agent's attachments with snapshot freshness metadata. |
+| `GET` | `/agents/{key}/pull-requests/{id}/diff` | Read one saved pull request diff snapshot. |
+| `POST` | `/agents/{key}/pull-requests/{id}/refresh` | Fetch current PR metadata and patch content, then save a fresh diff snapshot. |
+| `POST` | `/agents/{key}/pull-requests/refresh` | Refresh every detected pull request diff for one agent. |
 | `PUT` | `/agents/{key}/reading` | Mark one agent as read after the user opens its conversation. |
 | `POST` | `/agents/{key}/messages` | Append a user prompt to one agent. |
 | `POST` | `/agents/{key}/prompt` | Alias for appending a user prompt. |

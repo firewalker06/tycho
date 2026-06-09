@@ -12,6 +12,10 @@ module HQ
     MAX_DIFF_BYTES = 512 * 1024
     MAX_UNTRACKED_BYTES = 64 * 1024
 
+    def self.parse_patch_text(output)
+      new(Dir.pwd).send(:parse_patch, output)
+    end
+
     class Error < StandardError
       attr_reader :status
 

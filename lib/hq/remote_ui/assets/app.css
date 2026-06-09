@@ -795,6 +795,81 @@ select {
   min-width: 0;
 }
 
+.agent-pr-diff-shell {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  gap: 10px;
+}
+
+.agent-pr-diff-layout {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.pr-diff-list {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.pr-diff-nav-item {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  padding: 8px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.pr-diff-nav-item:hover,
+.pr-diff-nav-item:focus-visible {
+  border-color: var(--info);
+  color: var(--text);
+}
+
+.pr-diff-nav-item.active {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+}
+
+.pr-diff-nav-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.pr-diff-nav-copy strong,
+.pr-diff-nav-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr-diff-nav-copy strong {
+  font-size: 13px;
+}
+
+.pr-diff-nav-copy span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pr-diff-detail {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.pr-diff-summary .button-row {
+  justify-content: flex-start;
+}
+
 .bottom-nav {
   --nav-offset-y: 0;
   position: fixed;
@@ -2840,6 +2915,28 @@ select {
 
   .agent-workspace.has-detail .diff-file-body {
     max-height: min(58dvh, 680px);
+  }
+
+  .agent-workspace-pull-requests.has-detail .agent-detail-pane {
+    overflow: hidden;
+  }
+
+  .agent-workspace-pull-requests.has-detail .agent-pr-diff-shell {
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100%;
+  }
+
+  .agent-workspace-pull-requests.has-detail .agent-pr-diff-layout {
+    grid-template-columns: minmax(220px, 0.42fr) minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .agent-workspace-pull-requests.has-detail .pr-diff-list,
+  .agent-workspace-pull-requests.has-detail .pr-diff-detail {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 4px;
   }
 
   .agent-workspace.has-detail .skill-flyout,

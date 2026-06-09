@@ -22,6 +22,7 @@ require_relative "domain/harness_catalog"
 require_relative "domain/kamal_action"
 require_relative "domain/push_notification_store"
 require_relative "domain/push_subscription_store"
+require_relative "domain/pull_request_diff"
 require_relative "domain/schedule_daemon_supervisor"
 require_relative "domain/scheduler"
 require_relative "domain/skill_discovery"
@@ -223,6 +224,14 @@ module HQ
         return ok(agent: service.update_agent(key, body)) if %w[PATCH PUT].include?(method) && tail.empty?
         return ok(service.archive_agent(key)) if method == "DELETE" && tail.empty?
         return ok(conversation: service.conversation(key)) if method == "GET" && tail == ["conversation"]
+        return ok(pull_requests: service.agent_pull_requests(key)) if method == "GET" && tail == ["pull-requests"]
+        return ok(service.refresh_agent_pull_requests(key)) if method == "POST" && tail == ["pull-requests", "refresh"]
+        if tail.length == 3 && tail.first == "pull-requests" && tail[2] == "diff"
+          return ok(diff: service.agent_pull_request_diff(key, tail[1])) if method == "GET"
+        end
+        if tail.length == 3 && tail.first == "pull-requests" && tail[2] == "refresh"
+          return ok(diff: service.refresh_agent_pull_request_diff(key, tail[1])) if method == "POST"
+        end
         return ok(agent: service.mark_agent_read(key)) if method == "PUT" && tail == ["reading"]
         if method == "POST" && tail.length == 3 && tail.first == "inquiries" && tail[2] == "answer"
           return ok(service.answer_inquiry(key, tail[1], body))
@@ -509,6 +518,56 @@ module HQ
 
     def agent(key)
       agent_payload(find_agent!(key))
+    end
+
+    def agent_pull_requests(key)
+      agent = find_agent!(key)
+      references = PullRequestDiff.references_for_agent(agent)
+      store = PullRequestDiff::Store.new
+      provider = PullRequestDiff::GitHubProvider.new
+      references.map do |reference|
+        snapshot = store.fetch(reference.id)
+        begin
+          metadata = provider.metadata(reference)
+          PullRequestDiff.reference_payload(reference, snapshot:, metadata:)
+        rescue PullRequestDiff::Error => e
+          PullRequestDiff.reference_payload(reference, snapshot:, error: e.message)
+        end
+      end
+    end
+
+    def agent_pull_request_diff(key, id)
+      agent = find_agent!(key)
+      reference = pull_request_reference!(agent, id)
+      snapshot = PullRequestDiff::Store.new.fetch(reference.id)
+      raise Error.new("Pull request diff has not been fetched yet", status: 404) unless snapshot
+
+      snapshot
+    end
+
+    def refresh_agent_pull_request_diff(key, id)
+      agent = find_agent!(key)
+      reference = pull_request_reference!(agent, id)
+      PullRequestDiff::Store.new.save(PullRequestDiff.snapshot_for(reference))
+    rescue PullRequestDiff::Error => e
+      raise Error.new(e.message, status: e.status)
+    end
+
+    def refresh_agent_pull_requests(key)
+      agent = find_agent!(key)
+      refreshed = []
+      failed = []
+      PullRequestDiff.references_for_agent(agent).each do |reference|
+        refreshed << PullRequestDiff::Store.new.save(PullRequestDiff.snapshot_for(reference))
+      rescue PullRequestDiff::Error => e
+        failed << {
+          id: reference.id,
+          repository: reference.repository,
+          number: reference.number,
+          error: e.message
+        }
+      end
+      { refreshed: refreshed, failed: failed }
     end
 
     def schedules
@@ -1383,6 +1442,11 @@ module HQ
     def find_agent!(key)
       load_agents.find { |agent| agent.key == key.to_s } ||
         raise(Error.new("Unknown agent: #{key}", status: 404))
+    end
+
+    def pull_request_reference!(agent, id)
+      PullRequestDiff.references_for_agent(agent).find { |reference| reference.id == id.to_s } ||
+        raise(Error.new("Pull request not found: #{id}", status: 404))
     end
 
     def find_project!(key)

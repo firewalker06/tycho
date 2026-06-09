@@ -19,6 +19,7 @@ module RemoteServerTest
     assert_remote_agent_payload_has_revision
     assert_remote_inquiry_payload_has_stable_id_and_guarded_answer
     assert_remote_agent_payload_includes_attachments
+    assert_remote_agent_pull_request_diff_payload
     assert_remote_prompt_accepts_uploaded_attachments
     assert_remote_prompt_start_accepts_dash_prefixed_message
     assert_remote_agent_conversation_hides_run_summary
@@ -533,6 +534,85 @@ module RemoteServerTest
       rescue HQ::RemoteServer::Error => e
         assert(e.status == 404, "expected deleted attachment lookup to return not found")
       end
+    end
+  end
+
+  def assert_remote_agent_pull_request_diff_payload
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace, apps: false)
+      service = HQ::RemoteService.new(registry: registry)
+      server = HQ::RemoteServer.new
+      created = service.create_agent(
+        "project_key" => "web",
+        "template_key" => "custom",
+        "name" => "Remote Agent",
+        "prompt" => "Work remotely.",
+        "agent" => "codex"
+      )
+      agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+      memory = HQ::AgentMemory.new(agent)
+      memory.append_attachment!(
+        {
+          "kind" => "pull_request",
+          "title" => "Example PR",
+          "url" => "https://github.com/example/web/pull/123",
+          "description" => "Generated review."
+        },
+        created_at: Time.parse("2026-04-05 17:57:00")
+      )
+      memory.append_attachment!(
+        {
+          "kind" => "link",
+          "title" => "Duplicate PR",
+          "url" => "https://github.com/example/web/pull/123/files"
+        },
+        created_at: Time.parse("2026-04-05 17:58:00")
+      )
+
+      payload = service.agent_pull_requests(created[:key])
+      assert(payload.length == 1, "expected duplicate PR URLs to collapse into one reference")
+      reference = payload.first
+      assert(reference["repository"] == "example/web", "expected GitHub repository to be parsed")
+      assert(reference["number"] == 123, "expected GitHub PR number to be parsed")
+      assert(reference["error"].to_s.length.positive?,
+             "expected metadata errors to be reported without hiding PR references")
+
+      snapshot = {
+        "id" => reference["id"],
+        "agent_key" => created[:key],
+        "provider" => "github",
+        "repository" => "example/web",
+        "number" => 123,
+        "url" => "https://github.com/example/web/pull/123",
+        "title" => "Example PR",
+        "head_sha" => "abc1234",
+        "base_sha" => "def5678",
+        "fetched_at" => Time.now.iso8601,
+        "files" => [
+          {
+            "path" => "lib/example.rb",
+            "status" => "modified",
+            "binary" => false,
+            "additions" => 1,
+            "deletions" => 0,
+            "hunks" => []
+          }
+        ],
+        "file_count" => 1,
+        "additions" => 1,
+        "deletions" => 0,
+        "truncated" => false
+      }
+      HQ::PullRequestDiff::Store.new.save(snapshot)
+
+      diff = service.agent_pull_request_diff(created[:key], reference["id"])
+      assert(diff["files"].first["path"] == "lib/example.rb", "expected saved PR diff snapshot to be returned")
+
+      routed = server.send(:route, service, "GET",
+                           "/agents/#{created[:key]}/pull-requests/#{reference["id"]}/diff", {}, nil)
+      assert(routed.dig(:body, :diff, "file_count") == 1, "expected PR diff route to return saved snapshots")
     end
   end
 
