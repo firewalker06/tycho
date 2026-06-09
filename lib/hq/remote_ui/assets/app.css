@@ -2816,6 +2816,28 @@ select {
     min-height: 0;
   }
 
+  .agent-workspace-attachment.has-detail .agent-detail-pane {
+    overflow: hidden;
+  }
+
+  .agent-workspace-attachment.has-detail .agent-attachment-shell {
+    grid-template-rows: auto minmax(0, 1fr);
+    align-content: stretch;
+    height: 100%;
+  }
+
+  .agent-workspace-attachment.has-detail .attachment-nav-drawer {
+    position: relative;
+    z-index: 2;
+  }
+
+  .agent-workspace-attachment.has-detail .agent-attachment-viewer {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 4px;
+  }
+
   .agent-workspace.has-detail .diff-file-body {
     max-height: min(58dvh, 680px);
   }
