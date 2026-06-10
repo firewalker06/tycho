@@ -9,6 +9,7 @@ require "lipgloss"
 require_relative "domain/app_project"
 require_relative "domain/kamal_action"
 require_relative "domain/scheduler"
+require_relative "domain/agent_store"
 
 module HQ
   module CLICommand
@@ -125,6 +126,35 @@ module HQ
         prefix.register "update", ProjectUpdate
       end
 
+      class Agent < Dry::CLI::Command
+        desc "Manage agents"
+
+        def call(**)
+          exit CLICommand.usage("Missing agent command", err: err)
+        end
+      end
+
+      class AgentCreate < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Create a new agent for a project"
+        argument :project_key, required: true, desc: "Project key"
+        argument :prompt, required: true, desc: "Initial prompt for the agent"
+        option :model, desc: "Model override (e.g. claude-opus-4-5)"
+        option :harness, desc: "Agent harness override (e.g. claude, codex)"
+        option :name, desc: "Agent name override"
+        option :template, desc: "Template key to use (defaults to project's first template)"
+        usage_template "agent create %{project_key} %{prompt}"
+
+        def call(project_key:, prompt:, **opts)
+          exit CLICommand.create_agent(project_key, prompt, opts, out: out, err: err)
+        end
+      end
+
+      register "agent", Agent do |prefix|
+        prefix.register "create", AgentCreate
+      end
+
       class Schedule < Dry::CLI::Command
         desc "Manage scheduled agent runs"
 
@@ -223,6 +253,9 @@ module HQ
     PROJECT_COMMANDS = [
       Commands::ProjectUpdate
     ].freeze
+    AGENT_COMMANDS = [
+      Commands::AgentCreate
+    ].freeze
     SCHEDULE_COMMANDS = [
       Commands::ScheduleValidate,
       Commands::ScheduleList,
@@ -244,6 +277,7 @@ module HQ
       *RUNTIME_COMMANDS,
       *APP_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, project_key: "<project-key>")}" },
       *PROJECT_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, project_key: "<project-key>")}" },
+      *AGENT_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, project_key: "<project-key>", prompt: "<prompt>")}" },
       *SCHEDULE_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, schedule_key: "<schedule-key>")}" },
       "",
       "Run without a command to open the interactive Tycho TUI."
@@ -474,6 +508,55 @@ module HQ
       0
     rescue StandardError => e
       failure("Failed to update #{project_key}: #{e.message}", err: err)
+    end
+
+    def create_agent(project_key, prompt, opts, out: $stdout, err: $stderr)
+      require_relative "registry"
+      require_relative "harness_registry"
+
+      registry = Registry.new
+      project = registry.projects.find { |p| p.key == project_key.to_s }
+      return failure("Unknown project: #{project_key}", err: err) unless project
+
+      harness = opts[:harness].to_s.strip.downcase
+      harness = project.agent.to_s if harness.empty?
+      unless HQ.supported_harness?(harness)
+        return failure("Unsupported harness #{harness.inspect}. Supported: #{HQ.harness_keys.join(", ")}", err: err)
+      end
+
+      template_key = opts[:template].to_s.strip
+      agent_store = AgentStore.new(registry.projects)
+      agent = agent_store.create_from_template(project, template_key)
+
+      name = opts[:name].to_s.strip
+      name = agent.name if name.empty?
+      model = opts[:model].to_s.strip
+      model = nil if model.empty?
+
+      agent.update!(
+        name: name,
+        template_key: agent.template_key,
+        workspace: agent.workspace,
+        prompt: prompt.strip,
+        agent: harness,
+        model: model,
+        reasoning_effort: agent.reasoning_effort
+      )
+      agent_store.ensure_project_context_prompt!(agent, project)
+
+      existing = agent_store.load
+      existing.unshift(agent)
+      agent_store.save(existing)
+
+      out.puts "Created agent #{agent.key}"
+      out.puts "  Name:    #{agent.name}"
+      out.puts "  Project: #{agent.project_key}"
+      out.puts "  Harness: #{agent.agent}"
+      out.puts "  Model:   #{agent.model || "(project default)"}"
+      out.puts "  Prompt:  #{agent.prompt.lines.first&.chomp}"
+      0
+    rescue StandardError => e
+      failure("Failed to create agent: #{e.message}", err: err)
     end
 
     def validate_schedules(out: $stdout, err: $stderr)
