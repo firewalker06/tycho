@@ -144,6 +144,7 @@ module HQ
         option :harness, desc: "Agent harness override (e.g. claude, codex)"
         option :name, desc: "Agent name override"
         option :template, desc: "Template key to use (defaults to project's first template)"
+        option :run, type: :boolean, default: false, desc: "Start the agent immediately after creating"
         usage_template "agent create %{project_key} %{prompt}"
 
         def call(project_key:, prompt:, **opts)
@@ -554,6 +555,23 @@ module HQ
       out.puts "  Harness: #{agent.agent}"
       out.puts "  Model:   #{agent.model || "(project default)"}"
       out.puts "  Prompt:  #{agent.prompt.lines.first&.chomp}"
+
+      if opts[:run]
+        agent.start!
+        # Persist started state (pid, status, started_at) back to disk.
+        existing = agent_store.load
+        idx = existing.index { |a| a.key == agent.key }
+        existing[idx] = agent if idx
+        agent_store.save(existing)
+        if agent.running?
+          out.puts "  Status:  running (pid #{agent.pid})"
+          out.puts "  Log:     #{agent.raw_log_path}"
+        else
+          out.puts "  Status:  start failed — #{agent.last_run&.error || "unknown error"}"
+          return 1
+        end
+      end
+
       0
     rescue StandardError => e
       failure("Failed to create agent: #{e.message}", err: err)
