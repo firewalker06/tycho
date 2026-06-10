@@ -812,6 +812,7 @@ module RemoteServerTest
       git!(workspace, "init")
       git!(workspace, "config", "user.email", "tycho@example.test")
       git!(workspace, "config", "user.name", "Tycho Test")
+      git!(workspace, "config", "diff.mnemonicPrefix", "true")
       git!(workspace, "add", ".")
       git!(workspace, "commit", "-m", "initial")
       File.write(File.join(workspace, "tracked.txt"), "one\ntwo\n")

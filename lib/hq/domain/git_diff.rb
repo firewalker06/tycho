@@ -86,7 +86,16 @@ module HQ
     end
 
     def diff_output(scope)
-      args = ["diff", "--no-color", "--no-ext-diff", "--find-renames", "--patch", "--unified=3"]
+      args = [
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "--find-renames",
+        "--patch",
+        "--unified=3"
+      ]
       case scope
       when "staged"
         args << "--cached"

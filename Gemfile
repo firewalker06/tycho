@@ -15,3 +15,5 @@ gem "rqrcode"
 gem "uri"
 gem "web-push", "~> 3.1"
 gem "yaml"
+
+gem "erb", "~> 6.0"
