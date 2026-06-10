@@ -810,6 +810,7 @@ select {
 
 .pr-diff-list {
   display: grid;
+  align-content: start;
   min-width: 0;
   gap: 8px;
 }
@@ -2956,6 +2957,20 @@ select {
     overflow-y: auto;
     overscroll-behavior: contain;
     padding-right: 4px;
+  }
+
+  .agent-workspace-full-view.has-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-workspace-full-view.has-detail .agent-conversation-pane,
+  .agent-workspace-full-view.has-detail .agent-dock {
+    display: none;
+  }
+
+  .agent-workspace-full-view.has-detail .agent-detail-pane {
+    grid-column: 1;
+    grid-row: 1 / span 2;
   }
 
   .agent-workspace.has-detail .skill-flyout,
