@@ -61,6 +61,20 @@ button {
   padding: 0 12px;
 }
 
+a.icon-button,
+a.inline-icon-button {
+  min-height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  text-decoration: none;
+}
+
+a.inline-icon-button {
+  padding: 0 12px;
+}
+
 button.primary,
 .button.primary {
   border-color: var(--accent);
