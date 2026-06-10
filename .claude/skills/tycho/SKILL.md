@@ -1,6 +1,6 @@
 ---
 name: tycho
-description: Manages Tycho-monitored projects and managed agents. Use when the user asks to deploy, check status, manage maintenance mode, create agents, or control schedules for any project.
+description: Manages Tycho-monitored projects and managed agents. Use when the user asks to deploy, check status, manage maintenance mode, create/list/run/stop/send/archive/clone agents, or control schedules for any project.
 ---
 
 # Tycho CLI Skill
@@ -18,6 +18,14 @@ Manage Kamal-deployed projects, managed agents, and scheduled runs via the `tych
 | | `app live <project-key>` | Resume live traffic |
 | **project** | `project update <project-key> --pr-url <url>` | Set / clear open PR URL |
 | **agent** | `agent create <project-key> <prompt>` | Create (and optionally run) a managed agent |
+| | `agent list [<project-key>]` | List agents, optionally filtered by project |
+| | `agent status <agent-key>` | Show full status and metadata |
+| | `agent run <agent-key>` | Start or re-run an existing agent |
+| | `agent stop <agent-key>` | Stop a running agent |
+| | `agent logs <agent-key>` | Print agent log |
+| | `agent send <agent-key> <message>` | Append a message and re-run the agent |
+| | `agent archive <agent-key>` | Archive an agent and move its logs |
+| | `agent clone <agent-key>` | Clone an existing agent |
 | **schedule** | `schedule list` | List all schedules and daemon status |
 | | `schedule validate` | Validate schedule config |
 | | `schedule run <schedule-key>` | Trigger a schedule immediately |
@@ -29,18 +37,11 @@ Manage Kamal-deployed projects, managed agents, and scheduled runs via the `tych
 
 ## `tycho agent create`
 
-Create a new managed agent for a project. This is the primary command for programmatically launching coding agents.
+Create a new managed agent for a project.
 
 ```
 tycho agent create <project-key> <prompt> [options]
 ```
-
-### Arguments
-
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `project-key` | Yes | Key of the target project (see `app list` or `hq.yml`) |
-| `prompt` | Yes | Initial system prompt / task description for the agent |
 
 ### Options
 
@@ -49,60 +50,124 @@ tycho agent create <project-key> <prompt> [options]
 | `--model MODEL` | Model override, e.g. `claude-opus-4-5`, `o4-mini` |
 | `--harness HARNESS` | Agent harness, e.g. `claude`, `codex` (defaults to project default) |
 | `--name NAME` | Override auto-generated agent name |
-| `--template KEY` | Template key to use (defaults to project's first template) |
+| `--template KEY` | Template key (defaults to project's first template) |
 | `--run` | Start the agent immediately after creation |
 
-### Examples
-
 ```bash
-# Create an agent (does not start it)
+# Create only
 tycho agent create my-project "Refactor the auth module to use JWT"
 
 # Create and start immediately
 tycho agent create my-project "Fix failing tests in spec/models" --run
 
-# Use a specific model and harness
-tycho agent create global-web "Review open PRs and summarise findings" \
-  --harness claude --model claude-opus-4-5 --run
-
-# Use a specific template
-tycho agent create fizzy "Write release notes for this sprint" \
-  --template release --run
+# Specify harness and model
+tycho agent create global-web "Review open PRs" --harness claude --model claude-opus-4-5 --run
 ```
 
-### Output
+---
 
-```
-Created agent my-project-agent-7
-  Name:    My Project custom 7
-  Project: my-project
-  Harness: claude
-  Model:   claude-opus-4-5
-  Prompt:  Refactor the auth module to use JWT
-  Status:  running (pid 12345)          # only shown with --run
-  Log:     ~/.tycho/logs/agents/...     # only shown with --run
+## `tycho agent list`
+
+List all managed agents, or filter to one project.
+
+```bash
+tycho agent list                  # all agents
+tycho agent list my-project       # only agents for my-project
 ```
 
-The agent key (`my-project-agent-7`) can be used to locate logs under `~/.tycho/logs/agents/`.
+Output columns: Key, Project, Name, Harness, Status, Runs.
+
+---
+
+## `tycho agent status`
+
+Full status table for a single agent — pid, model, harness, run count, start/finish times, exit code, workspace, log path.
+
+```bash
+tycho agent status my-project-agent-3
+```
+
+---
+
+## `tycho agent run`
+
+Start or re-run an existing agent (same as `create --run` but for agents that already exist).
+
+```bash
+tycho agent run my-project-agent-3
+```
+
+Prints the pid and log path on success.
+
+---
+
+## `tycho agent stop`
+
+Send SIGTERM to a running agent's process group.
+
+```bash
+tycho agent stop my-project-agent-3
+```
+
+Errors if the agent is not currently running.
+
+---
+
+## `tycho agent logs`
+
+Print the agent's log file. Three log types are available.
+
+```bash
+tycho agent logs my-project-agent-3                        # raw stream (default)
+tycho agent logs my-project-agent-3 --type conversation    # user/assistant turns
+tycho agent logs my-project-agent-3 --type system         # tool calls and events
+tycho agent logs my-project-agent-3 --follow              # tail -f the raw log
+```
+
+---
+
+## `tycho agent send`
+
+Append a user message to the agent's conversation and start it. This is the primary command for multi-turn agent interactions from the CLI.
+
+```bash
+tycho agent send my-project-agent-3 "The tests still fail on line 42 — try a different approach"
+```
+
+Errors if the agent is already running. Prints pid and log path on success.
+
+---
+
+## `tycho agent archive`
+
+Archive a stopped agent — moves all its log files to the archive directory and removes it from the active agents list.
+
+```bash
+tycho agent archive my-project-agent-3
+```
+
+Errors if the agent is currently running.
+
+---
+
+## `tycho agent clone`
+
+Clone an existing agent (copies prompt, harness, model, template). The clone gets a new key and a fresh run history.
+
+```bash
+tycho agent clone my-project-agent-3          # clone only
+tycho agent clone my-project-agent-3 --run    # clone and start immediately
+```
 
 ---
 
 ## `tycho app` — Deployment Commands
 
 ```bash
-# List all Kamal-enabled projects
 tycho app list
-
-# Check health, last action, and metadata
 tycho app status my-project
-
-# Trigger a deploy (detached, logs to ~/.tycho/logs/projects/my-project/action.log)
 tycho app deploy my-project
-
-# Enable maintenance mode
 tycho app maintenance my-project
-
-# Resume live traffic
 tycho app live my-project
 ```
 
@@ -113,20 +178,11 @@ Actions run as detached background processes. Check progress via `app status` or
 ## `tycho schedule` — Schedule Management
 
 ```bash
-# Show all schedules and daemon status
 tycho schedule list
-
-# Validate config without running
 tycho schedule validate
-
-# Fire a schedule right now (ignores cron timing)
 tycho schedule run weekly-review
-
-# Pause / resume
 tycho schedule pause weekly-review
 tycho schedule resume weekly-review
-
-# Signal the daemon to reload config on next tick
 tycho schedule reload
 ```
 
@@ -135,21 +191,17 @@ tycho schedule reload
 ## `tycho project update`
 
 ```bash
-# Set the open PR URL shown in the TUI
 tycho project update my-project --pr-url https://github.com/org/repo/pull/123
-
-# Clear the PR URL
-tycho project update my-project --pr-url ""
+tycho project update my-project --pr-url ""   # clear
 ```
 
 ---
 
 ## Project Keys
 
-Project keys are defined in `~/.tycho/config/hq.yml`. Use `tycho app list` to see keys for Kamal-enabled projects. Agent-only projects (no Kamal) do not appear in `app list` — read the config directly if needed:
-
 ```bash
-grep "^- key:" ~/.tycho/config/hq.yml
+tycho app list                              # Kamal-enabled projects
+grep "^- key:" ~/.tycho/config/hq.yml      # all projects (including agent-only)
 ```
 
 ---
@@ -171,5 +223,8 @@ grep "^- key:" ~/.tycho/config/hq.yml
 
 1. **Find the project key** — `tycho app list` or `grep "^- key:" ~/.tycho/config/hq.yml`
 2. **Create the agent** — `tycho agent create <key> "<task>" [--harness claude] [--run]`
-3. **Monitor** — tail `~/.tycho/logs/agents/<key>.raw.log`, or open the TUI (`tycho`)
-4. **Deploy / maintenance** — `tycho app deploy <key>` / `tycho app maintenance <key>`
+3. **Check status** — `tycho agent status <agent-key>` or `tycho agent list <project-key>`
+4. **Read output** — `tycho agent logs <agent-key> --type conversation`
+5. **Continue the conversation** — `tycho agent send <agent-key> "<follow-up>"`
+6. **Stop if needed** — `tycho agent stop <agent-key>`
+7. **Clean up** — `tycho agent archive <agent-key>`

@@ -152,8 +152,116 @@ module HQ
         end
       end
 
+      class AgentList < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "List managed agents"
+        argument :project_key, required: false, desc: "Filter by project key"
+        usage_template "agent list [%{project_key}]"
+
+        def call(**opts)
+          exit CLICommand.list_agents(opts[:project_key], out: out, err: err)
+        end
+      end
+
+      class AgentStatus < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Show status and metadata for an agent"
+        argument :agent_key, required: true, desc: "Agent key"
+        usage_template "agent status %{agent_key}"
+
+        def call(agent_key:, **)
+          exit CLICommand.agent_status(agent_key, out: out, err: err)
+        end
+      end
+
+      class AgentRun < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Start (or re-run) an existing agent"
+        argument :agent_key, required: true, desc: "Agent key"
+        usage_template "agent run %{agent_key}"
+
+        def call(agent_key:, **)
+          exit CLICommand.run_agent(agent_key, out: out, err: err)
+        end
+      end
+
+      class AgentStop < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Stop a running agent"
+        argument :agent_key, required: true, desc: "Agent key"
+        usage_template "agent stop %{agent_key}"
+
+        def call(agent_key:, **)
+          exit CLICommand.stop_agent(agent_key, out: out, err: err)
+        end
+      end
+
+      class AgentLogs < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Print agent log (raw stream by default)"
+        argument :agent_key, required: true, desc: "Agent key"
+        option :type, default: "raw", desc: "Log type: raw, conversation, system"
+        option :follow, type: :boolean, default: false, desc: "Follow the log (like tail -f)"
+        usage_template "agent logs %{agent_key}"
+
+        def call(agent_key:, **opts)
+          exit CLICommand.agent_logs(agent_key, opts, out: out, err: err)
+        end
+      end
+
+      class AgentSend < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Send a message to an agent and re-run it"
+        argument :agent_key, required: true, desc: "Agent key"
+        argument :message, required: true, desc: "Message to send"
+        usage_template "agent send %{agent_key} %{message}"
+
+        def call(agent_key:, message:, **)
+          exit CLICommand.send_agent_message(agent_key, message, out: out, err: err)
+        end
+      end
+
+      class AgentArchive < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Archive an agent and move its logs"
+        argument :agent_key, required: true, desc: "Agent key"
+        usage_template "agent archive %{agent_key}"
+
+        def call(agent_key:, **)
+          exit CLICommand.archive_agent(agent_key, out: out, err: err)
+        end
+      end
+
+      class AgentClone < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Clone an existing agent"
+        argument :agent_key, required: true, desc: "Agent key to clone"
+        option :run, type: :boolean, default: false, desc: "Start the cloned agent immediately"
+        usage_template "agent clone %{agent_key}"
+
+        def call(agent_key:, **opts)
+          exit CLICommand.clone_agent(agent_key, opts, out: out, err: err)
+        end
+      end
+
       register "agent", Agent do |prefix|
         prefix.register "create", AgentCreate
+        prefix.register "list", AgentList
+        prefix.register "status", AgentStatus
+        prefix.register "run", AgentRun
+        prefix.register "stop", AgentStop
+        prefix.register "logs", AgentLogs
+        prefix.register "send", AgentSend
+        prefix.register "archive", AgentArchive
+        prefix.register "clone", AgentClone
       end
 
       class Schedule < Dry::CLI::Command
@@ -255,7 +363,15 @@ module HQ
       Commands::ProjectUpdate
     ].freeze
     AGENT_COMMANDS = [
-      Commands::AgentCreate
+      Commands::AgentCreate,
+      Commands::AgentList,
+      Commands::AgentStatus,
+      Commands::AgentRun,
+      Commands::AgentStop,
+      Commands::AgentLogs,
+      Commands::AgentSend,
+      Commands::AgentArchive,
+      Commands::AgentClone,
     ].freeze
     SCHEDULE_COMMANDS = [
       Commands::ScheduleValidate,
@@ -278,7 +394,10 @@ module HQ
       *RUNTIME_COMMANDS,
       *APP_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, project_key: "<project-key>")}" },
       *PROJECT_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, project_key: "<project-key>")}" },
-      *AGENT_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, project_key: "<project-key>", prompt: "<prompt>")}" },
+      *AGENT_COMMANDS.map { |command|
+        template = command.usage_template
+        "  #{COMMAND_NAME} #{format(template, project_key: "<project-key>", agent_key: "<agent-key>", prompt: "<prompt>", message: "<message>")}"
+      },
       *SCHEDULE_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, schedule_key: "<schedule-key>")}" },
       "",
       "Run without a command to open the interactive Tycho TUI."
@@ -577,6 +696,184 @@ module HQ
       failure("Failed to create agent: #{e.message}", err: err)
     end
 
+    def list_agents(project_key, out: $stdout, err: $stderr)
+      agents = load_all_agents
+      agents = agents.select { |a| a.project_key == project_key.to_s } if project_key
+      if agents.empty?
+        out.puts project_key ? "No agents for project: #{project_key}" : "No agents found."
+        return 0
+      end
+      headers = %w[Key Project Name Harness Status Runs]
+      rows = agents.map do |a|
+        [a.key, a.project_key, a.name, a.agent, a.status, a.run_count.to_s]
+      end
+      out.puts agent_table(headers, rows)
+      0
+    rescue StandardError => e
+      failure("Failed to list agents: #{e.message}", err: err)
+    end
+
+    def agent_status(agent_key, out: $stdout, err: $stderr)
+      agent = load_all_agents.find { |a| a.key == agent_key.to_s }
+      return failure("Unknown agent: #{agent_key}", err: err) unless agent
+
+      last = agent.last_run
+      rows = [
+        ["Key", agent.key],
+        ["Name", agent.name],
+        ["Project", agent.project_key],
+        ["Harness", agent.agent],
+        ["Model", agent.model || "(project default)"],
+        ["Status", agent.status],
+        ["PID", agent.pid ? agent.pid.to_s : "n/a"],
+        ["Runs", agent.run_count.to_s],
+        ["Started", agent.started_at ? agent.started_at.strftime("%Y-%m-%d %H:%M:%S") : "n/a"],
+        ["Finished", agent.finished_at ? agent.finished_at.strftime("%Y-%m-%d %H:%M:%S") : "n/a"],
+        ["Exit code", agent.last_exit_code ? agent.last_exit_code.to_s : "n/a"],
+        ["Last run", last ? last.started_at&.strftime("%Y-%m-%d %H:%M:%S") || "n/a" : "n/a"],
+        ["Workspace", agent.workspace],
+        ["Log", agent.raw_log_path || "n/a"],
+      ]
+      table = Lipgloss::Table.new
+        .rows(rows)
+        .border_style(Lipgloss::Style.new.foreground(COLORS[:accent_alt]))
+        .style_func(rows: rows.length, columns: 2) { |_row, column|
+          column.zero? ? Lipgloss::Style.new.bold(true).foreground(COLORS[:notice]) : Lipgloss::Style.new.foreground(COLORS[:text])
+        }
+      out.puts table.render
+      0
+    rescue StandardError => e
+      failure("Failed to get agent status: #{e.message}", err: err)
+    end
+
+    def run_agent(agent_key, out: $stdout, err: $stderr)
+      agent = load_all_agents.find { |a| a.key == agent_key.to_s }
+      return failure("Unknown agent: #{agent_key}", err: err) unless agent
+      return failure("Agent #{agent_key} is already running", err: err) if agent.running?
+
+      agent.start!
+      save_agent_in_store(agent)
+      if agent.running?
+        out.puts "Started #{agent.key} (pid #{agent.pid})"
+        out.puts "Log: #{agent.raw_log_path}"
+      else
+        out.puts "Failed to start #{agent.key}"
+        return 1
+      end
+      0
+    rescue StandardError => e
+      failure("Failed to run agent: #{e.message}", err: err)
+    end
+
+    def stop_agent(agent_key, out: $stdout, err: $stderr)
+      agent = load_all_agents.find { |a| a.key == agent_key.to_s }
+      return failure("Unknown agent: #{agent_key}", err: err) unless agent
+      return failure("Agent #{agent_key} is not running", err: err) unless agent.running?
+
+      agent.stop!
+      save_agent_in_store(agent)
+      out.puts "Stopped #{agent.key}"
+      0
+    rescue StandardError => e
+      failure("Failed to stop agent: #{e.message}", err: err)
+    end
+
+    def agent_logs(agent_key, opts, out: $stdout, err: $stderr)
+      agent = load_all_agents.find { |a| a.key == agent_key.to_s }
+      return failure("Unknown agent: #{agent_key}", err: err) unless agent
+
+      log_path = case opts[:type].to_s
+                 when "conversation" then agent.conversation_log_path
+                 when "system" then agent.system_log_path
+                 else agent.raw_log_path
+                 end
+
+      return failure("Log file not found: #{log_path}", err: err) unless log_path && File.exist?(log_path)
+
+      if opts[:follow]
+        exec("tail", "-f", log_path)
+      else
+        out.puts File.read(log_path)
+      end
+      0
+    rescue StandardError => e
+      failure("Failed to read agent logs: #{e.message}", err: err)
+    end
+
+    def send_agent_message(agent_key, message, out: $stdout, err: $stderr)
+      agent = load_all_agents.find { |a| a.key == agent_key.to_s }
+      return failure("Unknown agent: #{agent_key}", err: err) unless agent
+      return failure("Agent #{agent_key} is already running", err: err) if agent.running?
+
+      agent.add_user_message!(message)
+      agent.start!
+      save_agent_in_store(agent)
+      if agent.running?
+        out.puts "Message sent and agent started (pid #{agent.pid})"
+        out.puts "Log: #{agent.raw_log_path}"
+      else
+        out.puts "Message saved but agent failed to start"
+        return 1
+      end
+      0
+    rescue StandardError => e
+      failure("Failed to send message: #{e.message}", err: err)
+    end
+
+    def archive_agent(agent_key, out: $stdout, err: $stderr)
+      agents = load_all_agents
+      agent = agents.find { |a| a.key == agent_key.to_s }
+      return failure("Unknown agent: #{agent_key}", err: err) unless agent
+      return failure("Agent #{agent_key} is running — stop it first", err: err) if agent.running?
+
+      archive_path = agent.archive_logs!
+      remaining = agents.reject { |a| a.key == agent_key.to_s }
+      agent_store_for_all.save(remaining)
+      out.puts "Archived #{agent.key}"
+      out.puts "Archive: #{archive_path}" if archive_path
+      0
+    rescue StandardError => e
+      failure("Failed to archive agent: #{e.message}", err: err)
+    end
+
+    def clone_agent(agent_key, opts, out: $stdout, err: $stderr)
+      require_relative "registry"
+
+      registry = Registry.new
+      agents = load_all_agents
+      source = agents.find { |a| a.key == agent_key.to_s }
+      return failure("Unknown agent: #{agent_key}", err: err) unless source
+
+      store = AgentStore.new(registry.projects)
+      clone = store.clone_agent(source, existing_agents: agents)
+
+      project = registry.projects.find { |p| p.key == clone.project_key }
+      store.ensure_project_context_prompt!(clone, project) if project
+
+      agents.unshift(clone)
+      store.save(agents)
+
+      out.puts "Cloned #{source.key} → #{clone.key}"
+      out.puts "  Name:    #{clone.name}"
+      out.puts "  Harness: #{clone.agent}"
+      out.puts "  Model:   #{clone.model || "(project default)"}"
+
+      if opts[:run]
+        clone.start!
+        store.save(store.load.map { |a| a.key == clone.key ? clone : a })
+        if clone.running?
+          out.puts "  Status:  running (pid #{clone.pid})"
+          out.puts "  Log:     #{clone.raw_log_path}"
+        else
+          out.puts "  Status:  start failed"
+          return 1
+        end
+      end
+      0
+    rescue StandardError => e
+      failure("Failed to clone agent: #{e.message}", err: err)
+    end
+
     def validate_schedules(out: $stdout, err: $stderr)
       scheduler.validate!
       out.puts "Schedules valid."
@@ -705,6 +1002,47 @@ module HQ
 
     def native_lipgloss_features
       $LOADED_FEATURES.grep(%r{/lipgloss/\d+\.\d+/lipgloss\.(?:bundle|so)\z})
+    end
+
+    def load_all_agents
+      return [] unless File.exist?(AGENTS_FILE)
+
+      JSON.parse(File.read(AGENTS_FILE)).map { |hash| ManagedAgent.from_hash(hash) }
+    rescue StandardError
+      []
+    end
+
+    def agent_store_for_all
+      require_relative "registry"
+
+      AgentStore.new(Registry.new.projects)
+    end
+
+    def save_agent_in_store(agent)
+      agents = load_all_agents
+      idx = agents.index { |a| a.key == agent.key }
+      if idx
+        agents[idx] = agent
+      else
+        agents.unshift(agent)
+      end
+      agent_store_for_all.save(agents)
+    end
+
+    def agent_table(headers, rows)
+      Lipgloss::Table.new
+        .headers(headers)
+        .rows(rows)
+        .border_style(Lipgloss::Style.new.foreground(COLORS[:accent_alt]))
+        .style_func(rows: rows.length, columns: headers.length) do |row, column|
+          if row == Lipgloss::Table::HEADER_ROW
+            Lipgloss::Style.new.bold(true).foreground(COLORS[:accent])
+          elsif column.zero?
+            Lipgloss::Style.new.bold(true).foreground(COLORS[:notice])
+          else
+            Lipgloss::Style.new.foreground(COLORS[:text])
+          end
+        end.render
     end
 
     def find_app_project(project_key)
