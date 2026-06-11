@@ -730,6 +730,14 @@ textarea {
   padding: 10px 12px;
 }
 
+#prompt-input {
+  field-sizing: content;
+  min-height: calc(2lh + 20px);
+  max-height: calc(4lh + 20px);
+  resize: none;
+  overflow-y: auto;
+}
+
 select {
   appearance: none;
 }
