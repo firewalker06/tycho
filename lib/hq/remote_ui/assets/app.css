@@ -924,7 +924,8 @@ select {
 
 .pr-diff-title-actions {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: 6px;
   flex-shrink: 0;
 }
