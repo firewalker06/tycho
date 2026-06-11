@@ -1987,6 +1987,7 @@ select {
 }
 
 .message {
+  position: relative;
   display: grid;
   gap: 5px;
   min-width: 0;
@@ -2183,6 +2184,70 @@ select {
 
 .message.user .message-content {
   text-align: left;
+}
+
+.block-menu-anchor {
+  position: absolute;
+  top: 6px;
+  right: -28px;
+  width: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.message.user .block-menu-anchor {
+  right: auto;
+  left: -28px;
+}
+
+.message.user .block-menu-popover {
+  right: auto;
+  left: 0;
+}
+
+.block-menu-trigger {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.message:hover .block-menu-trigger,
+.message:focus-within .block-menu-trigger,
+.block-menu-trigger.active,
+.block-menu-trigger:focus-visible {
+  opacity: 1;
+}
+
+.block-menu-trigger .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.block-menu-trigger:hover,
+.block-menu-trigger.active {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+.block-menu-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 160px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 98%, transparent);
+  box-shadow: var(--shadow);
+  padding: 6px;
 }
 
 .message-attachments {
