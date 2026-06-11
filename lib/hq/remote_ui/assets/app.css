@@ -1987,7 +1987,6 @@ select {
 }
 
 .message {
-  position: relative;
   display: grid;
   gap: 5px;
   min-width: 0;
@@ -2186,49 +2185,35 @@ select {
   text-align: left;
 }
 
-.block-menu-anchor {
-  position: absolute;
-  top: 6px;
-  right: -28px;
-  width: 28px;
+.message-header {
   display: flex;
-  flex-direction: column;
   align-items: center;
+  justify-content: space-between;
+  gap: 6px;
 }
 
-.message.user .block-menu-anchor {
-  right: auto;
-  left: -28px;
-}
-
-.message.user .block-menu-popover {
-  right: auto;
-  left: 0;
+.block-menu-anchor {
+  position: relative;
+  flex-shrink: 0;
 }
 
 .block-menu-trigger {
-  width: 28px;
-  height: 28px;
-  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
   padding: 0;
   border: 0;
   background: transparent;
   color: var(--muted);
   border-radius: 6px;
-  opacity: 0;
-  transition: opacity 0.1s;
-}
-
-.message:hover .block-menu-trigger,
-.message:focus-within .block-menu-trigger,
-.block-menu-trigger.active,
-.block-menu-trigger:focus-visible {
-  opacity: 1;
 }
 
 .block-menu-trigger .ui-icon {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
 }
 
 .block-menu-trigger:hover,
@@ -2248,6 +2233,11 @@ select {
   background: color-mix(in srgb, var(--panel) 98%, transparent);
   box-shadow: var(--shadow);
   padding: 6px;
+}
+
+.message.user .block-menu-popover {
+  right: auto;
+  left: 0;
 }
 
 .message-attachments {
@@ -2876,7 +2866,7 @@ select {
 .agent-floating-actions {
   position: fixed;
   right: max(12px, calc((100vw - 820px) / 2 + 12px));
-  bottom: calc(var(--agent-dock-height, 220px) + 12px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(var(--agent-dock-height, 220px) + 4px + env(safe-area-inset-bottom, 0px));
   left: max(12px, calc((100vw - 820px) / 2 + 12px));
   z-index: 6;
   display: flex;
