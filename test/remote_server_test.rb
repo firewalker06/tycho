@@ -1829,8 +1829,8 @@ module RemoteServerTest
            "expected detail headers to be fixed to the top")
     assert(css[:body].include?(".content.detail-page"),
            "expected detail pages to reserve space for fixed headers")
-    assert(css[:body].include?("var(--agent-dock-height, 220px) + 44px"),
-           "expected Agent detail content to reserve space for floating shortcuts")
+    assert(css[:body].include?("var(--agent-dock-height, 220px) + 8px"),
+           "expected Agent detail content to reserve space for the dock")
     assert(css[:body].include?(".agent-dock:has(.skill-flyout:not(.hidden))"),
            "expected the skill flyout to stack above the floating Summary shortcut")
     assert(css[:body].include?(".agent-dock:has(.attachment-flyout:not(.hidden))"),
