@@ -20,7 +20,7 @@ module HQ
   module Parser
     ConversationEntry = Struct.new(:role, :content, :timestamp, :metadata, keyword_init: true)
     SystemEntry = Struct.new(:type, :content, :timestamp, :tool_name, :metadata, keyword_init: true)
-    ChatBlock = Struct.new(:kind, :role, :content, :tool_name, :metadata, keyword_init: true)
+    ChatBlock = Struct.new(:kind, :role, :content, :tool_name, :metadata, :created_at, keyword_init: true)
 
     HEADER_RE = /\A\[(?<role>[^\]]+)\](?:\s+\d{2}:\d{2}:\d{2})?\s*\z/
     SUMMARY_RE = /\A\(.*\)\s*\z/
@@ -153,7 +153,7 @@ module HQ
         if kind == :conversation
           blocks.concat(system_group_chat_blocks(system_group))
           system_group = []
-          blocks << ChatBlock.new(kind: :message, role: entry.role, content: entry.content, metadata: entry.metadata)
+          blocks << ChatBlock.new(kind: :message, role: entry.role, content: entry.content, metadata: entry.metadata, created_at: entry.timestamp&.iso8601)
         else
           system_group << entry
         end

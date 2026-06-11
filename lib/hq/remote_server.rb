@@ -1067,7 +1067,8 @@ module HQ
           role: block.role,
           content: block.content.to_s,
           tool_name: block.tool_name,
-          metadata: block.metadata
+          metadata: block.metadata,
+          created_at: block.created_at
         }.compact
       end
     end
