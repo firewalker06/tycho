@@ -908,6 +908,59 @@ select {
   gap: 10px;
 }
 
+.pr-diff-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pr-diff-title-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pr-diff-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.pr-diff-refreshing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: default;
+}
+
+.pr-diff-refreshing .ui-icon {
+  width: 15px;
+  height: 15px;
+  animation: poll-refresh-hourglass 1s linear infinite;
+}
+
+.pr-loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.pr-loading-state .ui-icon {
+  width: 18px;
+  height: 18px;
+  animation: poll-refresh-hourglass 1s linear infinite;
+}
+
 .pr-diff-summary .button-row {
   justify-content: flex-start;
 }
