@@ -922,6 +922,10 @@ select {
   min-width: 0;
 }
 
+.pr-diff-title-meta .chip-row {
+  margin-top: 6px;
+}
+
 .pr-diff-title-actions {
   display: flex;
   flex-direction: column;
