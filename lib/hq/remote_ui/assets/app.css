@@ -908,7 +908,7 @@ select {
   gap: 10px;
 }
 
-.pr-diff-title-row {
+.card-title.pr-diff-title-row {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
