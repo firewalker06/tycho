@@ -1851,8 +1851,14 @@ module RemoteServerTest
            "expected Remote UI to style the Quick Agent modal")
     assert(css[:body].include?(".top-actions .search-box"),
            "expected Agents tab search to flex inside the action row")
+    assert(css[:body].include?(".top-actions {\n  flex-wrap: nowrap;"),
+           "expected Agents tab search and toolbar controls to stay on one row")
+    assert(css[:body].include?("flex: 1 1 auto;"),
+           "expected Agents tab search to shrink instead of forcing toolbar wrapping")
     assert(css[:body].include?(".agent-toolbar-actions"),
            "expected Agents tab toolbar actions to align independently from the search width")
+    assert(css[:body].include?(".agent-toolbar-actions {\n  display: inline-flex;\n  flex: 0 0 auto;"),
+           "expected Agents tab toolbar actions to keep fixed width beside search")
     assert(css[:body].include?(".agent-bulk-select-button"),
            "expected Agents tab to style the icon-only bulk selection control")
     assert(css[:body].include?(".agent-bulk-menu"),
@@ -1898,6 +1904,10 @@ module RemoteServerTest
            "expected Project edit form to style the read-only information title")
     assert(css[:body].include?(".diff-viewer") && css[:body].include?(".diff-line.added"),
            "expected Remote UI to style project Git diff rows")
+    assert(!css[:body].include?("max-height: min(70dvh, 720px);"),
+           "expected diff file bodies to avoid per-file vertical scroll limits")
+    assert(!css[:body].include?("max-height: min(58dvh, 680px);"),
+           "expected split diff file bodies to avoid per-file vertical scroll limits")
     assert(css[:body].include?(".diff-scope-switch"),
            "expected Remote UI to style Git diff scope toggles")
     js = server.send(:route_ui, "/ui.js")
@@ -2280,6 +2290,12 @@ module RemoteServerTest
            "expected polling renders to skip unchanged Remote UI view HTML")
     assert(js[:body].include?("scrollContainers"),
            "expected polling snapshots to preserve scroll positions for restored controls")
+    assert(js[:body].include?("pageScroll"),
+           "expected polling snapshots to preserve page scroll on same-route renders")
+    assert(js[:body].include?("function controlScrollFor"),
+           "expected polling snapshots to preserve prompt textarea scroll offsets")
+    assert(js[:body].include?("function restorePageScroll"),
+           "expected polling renders to restore PR diff and conversation page scroll")
     assert(js[:body].include?("function syncPreservedOpenState"),
            "expected restored floating controls to update related button state")
     assert(js[:body].include?("const discovered = state.skills"),

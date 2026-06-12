@@ -641,7 +641,11 @@ h3 {
 }
 
 .top-actions .search-box {
-  flex: 1 1 260px;
+  flex: 1 1 auto;
+}
+
+.top-actions {
+  flex-wrap: nowrap;
 }
 
 .top-actions > button {
@@ -650,6 +654,7 @@ h3 {
 
 .agent-toolbar-actions {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
   margin-left: auto;
@@ -1911,8 +1916,6 @@ select {
   gap: 10px;
   min-width: 0;
   max-width: 100%;
-  max-height: min(70dvh, 720px);
-  overflow: auto;
   border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 54%, var(--panel));
   padding: 10px 0;
@@ -3087,10 +3090,6 @@ select {
     overflow-y: auto;
     overscroll-behavior: contain;
     padding-right: 4px;
-  }
-
-  .agent-workspace.has-detail .diff-file-body {
-    max-height: min(58dvh, 680px);
   }
 
   .agent-workspace-pull-requests.has-detail .agent-detail-pane {
