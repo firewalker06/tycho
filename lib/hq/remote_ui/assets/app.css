@@ -1569,8 +1569,7 @@ select {
 }
 
 .agent-sort-trigger,
-.agent-bulk-select-button,
-.agent-bulk-trigger {
+.agent-bulk-select-button {
   display: inline-grid;
   width: 42px;
   min-width: 42px;
@@ -1584,22 +1583,20 @@ select {
 }
 
 .agent-sort-trigger::-webkit-details-marker,
-.agent-bulk-trigger::-webkit-details-marker {
+.agent-bulk-select-button::-webkit-details-marker {
   display: none;
 }
 
 .agent-sort-trigger::marker,
-.agent-bulk-trigger::marker {
+.agent-bulk-select-button::marker {
   content: "";
 }
 
 .agent-sort-menu[open] .agent-sort-trigger,
-.agent-bulk-menu[open] .agent-bulk-trigger,
+.agent-bulk-menu.open .agent-bulk-select-button,
 .agent-bulk-select-button.active,
 .agent-sort-trigger:hover,
 .agent-sort-trigger:focus-visible,
-.agent-bulk-trigger:hover,
-.agent-bulk-trigger:focus-visible,
 .agent-bulk-select-button:hover,
 .agent-bulk-select-button:focus-visible {
   border-color: var(--accent);
@@ -1607,8 +1604,7 @@ select {
 }
 
 .agent-sort-trigger .ui-icon,
-.agent-bulk-select-button .ui-icon,
-.agent-bulk-trigger .ui-icon {
+.agent-bulk-select-button .ui-icon {
   width: 16px;
   height: 16px;
 }
