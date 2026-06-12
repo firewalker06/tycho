@@ -1857,6 +1857,8 @@ module RemoteServerTest
            "expected Agents tab to style the icon-only bulk selection control")
     assert(css[:body].include?(".agent-bulk-menu"),
            "expected Agents tab to style bulk action dropdowns")
+    assert(!css[:body].include?(".agent-bulk-trigger"),
+           "expected the bulk selector itself to anchor the bulk action dropdown")
     assert(css[:body].include?(".selectable-agent-row"),
            "expected Agents tab to style selectable bulk archive rows")
     assert(css[:body].include?(".compact-actions"),
@@ -2560,6 +2562,10 @@ module RemoteServerTest
            "expected Agents tab toolbar to expose bulk archive selection mode")
     assert(js[:body].include?("data-run-bulk-archive"),
            "expected Agents tab bulk menu to expose bulk archive submission")
+    assert(js[:body].include?("data-cancel-bulk-archive"),
+           "expected Agents tab bulk menu to expose selection cancellation")
+    assert(!js[:body].include?("agent-bulk-trigger"),
+           "expected Agents tab bulk actions to avoid a separate ellipsis trigger")
     assert(js[:body].include?('apiPost("/agents/archive", { keys })'),
            "expected Remote UI to call the bulk archive endpoint")
     assert(js[:body].include?("function agentArchiveable"),
