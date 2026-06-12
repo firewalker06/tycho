@@ -14,7 +14,7 @@ optional integrations that enable specific features.
 | Native build tools | Compiling Ruby native extensions and Go c-archives when needed | Hard fail for source installs; on macOS this usually means Xcode Command Line Tools |
 
 The direct Ruby gems are declared in `Gemfile` and `hq.gemspec`: `bubbles`,
-`bubbletea`, `dry-cli`, `glamour`, `lipgloss`, `logger`, `net-http`,
+`bubbletea`, `dry-cli`, `erb`, `glamour`, `lipgloss`, `logger`, `net-http`,
 `rqrcode`, `uri`, `web-push`, and `yaml`.
 
 `bubbletea`, `lipgloss`, and `glamour` are Ruby wrappers around Charm Go
