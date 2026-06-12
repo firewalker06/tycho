@@ -1630,6 +1630,8 @@ module RemoteServerTest
     assert(response[:body].include?("header-more-button"), "expected root shell to expose header More actions")
     assert(response[:body].include?('id="header-more-panel"'), "expected root shell to expose the header More menu panel")
     assert(response[:body].include?('id="header-more-badge"'), "expected root shell to expose the header More badge")
+    assert(response[:body].include?('id="quick-agent-fab"'), "expected root shell to expose Quick Agent launch")
+    assert(response[:body].include?('id="quick-agent-dialog"'), "expected root shell to expose Quick Agent modal")
     assert(response[:body].include?('data-tab="settings"'), "expected root shell to expose Settings navigation")
     assert(response[:body].include?("<span>Settings</span>"), "expected root shell to label setup navigation as Settings")
     assert(!response[:body].include?('data-tab="search"'), "expected root shell to remove Search navigation")
@@ -1693,7 +1695,7 @@ module RemoteServerTest
     assert(css[:body].include?(".more-menu-separator"),
            "expected Conversation More menu groups to support separators")
     assert(css[:body].include?(".header-more-badge"),
-           "expected Agents bulk selection count to render on the More button")
+           "expected header More menus to expose badge styling")
     assert(css[:body].include?("#header-more-button") && css[:body].include?("border: 0;"),
            "expected the header More button to be borderless")
     assert(css[:body].include?(".growl"), "expected Remote UI to style growl notifications")
@@ -1843,12 +1845,18 @@ module RemoteServerTest
            "expected bottom navigation to use the simplified three-tab layout")
     assert(css[:body].include?(".bulk-action-bar"),
            "expected Agents tab to style bulk archive controls")
+    assert(css[:body].include?(".quick-agent-fab"),
+           "expected Remote UI to style the Quick Agent floating action button")
+    assert(css[:body].include?(".quick-agent-dialog"),
+           "expected Remote UI to style the Quick Agent modal")
     assert(css[:body].include?(".top-actions .search-box"),
            "expected Agents tab search to flex inside the action row")
-    assert(css[:body].include?(".top-actions > button"),
-           "expected Agents tab actions to align independently from the search width")
-    assert(css[:body].include?("margin-left: auto;"),
-           "expected Agents tab action button to stay right aligned")
+    assert(css[:body].include?(".agent-toolbar-actions"),
+           "expected Agents tab toolbar actions to align independently from the search width")
+    assert(css[:body].include?(".agent-bulk-select-button"),
+           "expected Agents tab to style the icon-only bulk selection control")
+    assert(css[:body].include?(".agent-bulk-menu"),
+           "expected Agents tab to style bulk action dropdowns")
     assert(css[:body].include?(".selectable-agent-row"),
            "expected Agents tab to style selectable bulk archive rows")
     assert(css[:body].include?(".compact-actions"),
@@ -1992,8 +2000,8 @@ module RemoteServerTest
            "expected Remote UI to call the project Git diff endpoint")
     assert(js[:body].include?("data-open-project-diff"),
            "expected Project detail to expose Git diff navigation")
-    assert(js[:body].include?("function agentsMoreMenuHtml"),
-           "expected Agents tab actions to move into the header More menu")
+    assert(js[:body].include?("function agentBulkControlsHtml"),
+           "expected Agents tab bulk selection to render beside the sort control")
     assert(js[:body].include?("function agentMoreMenuHtml"),
            "expected Conversation actions to move into the header More menu")
     assert(js[:body].include?("Conversation settings"),
@@ -2016,6 +2024,14 @@ module RemoteServerTest
     assert(js[:body].include?("Push notifications"), "expected Settings screen to expose push readiness")
     assert(js[:body].include?("function settingsMoreMenuHtml"),
            "expected Settings actions to move into the header More menu")
+    assert(js[:body].include?("function setMainHeaderMore"),
+           "expected main tabs to share the Settings More menu")
+    assert(js[:body].include?("function openQuickAgent"),
+           "expected Remote UI to expose Quick Agent creation")
+    assert(js[:body].include?("function quickAgentProjectDefaults"),
+           "expected Quick Agent to derive project-specific defaults")
+    assert(js[:body].include?("await ensureProject(newKey)"),
+           "expected Quick Agent project changes to load project detail defaults")
     assert(js[:body].include?("Tycho build"),
            "expected Settings screen to display the Tycho build")
     assert(js[:body].include?("function tychoBuildLabel"),
@@ -2541,9 +2557,9 @@ module RemoteServerTest
     assert(js[:body].include?("renderProjectAgentEmpty()"),
            "expected Agents tab to keep zero-agent projects reachable")
     assert(js[:body].include?("data-toggle-bulk-archive"),
-           "expected Agents tab More menu to expose bulk archive selection mode")
+           "expected Agents tab toolbar to expose bulk archive selection mode")
     assert(js[:body].include?("data-run-bulk-archive"),
-           "expected Agents tab More menu to expose bulk archive submission")
+           "expected Agents tab bulk menu to expose bulk archive submission")
     assert(js[:body].include?('apiPost("/agents/archive", { keys })'),
            "expected Remote UI to call the bulk archive endpoint")
     assert(js[:body].include?("function agentArchiveable"),
