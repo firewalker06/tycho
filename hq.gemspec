@@ -40,6 +40,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency "bubbles"
   spec.add_dependency "bubbletea"
   spec.add_dependency "dry-cli"
+  spec.add_dependency "erb", "~> 6.0"
   spec.add_dependency "glamour"
   spec.add_dependency "lipgloss"
   spec.add_dependency "logger"
