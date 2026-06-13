@@ -4,6 +4,36 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.5.0 - 2026-06-13
+
+### Notable Releases
+
+- Add Remote UI project Git diff inspection and agent-attached GitHub PR diff
+  snapshots, so operators can review worktree/staged/all changes and referenced
+  PR changes in-app. (#24, #32)
+- Add Remote UI schedule management for schedule create/edit/delete, manual
+  run/pause/resume, daemon controls, and file-backed schedule message editing.
+  (#25)
+- Add Quick Agent creation in the Remote UI, with project/template defaults and
+  advanced harness, model, effort, and sandbox options. (#29)
+- Expand managed-agent control from the CLI and Remote UI, including new
+  `tycho agent` subcommands plus clone/archive/run/stop/send and bulk archive
+  flows. (#28, #30)
+
+### Others
+
+- Add shared Remote UI More menus and expose build metadata in setup. (#23)
+- Add Tycho Claude skill documentation for the current CLI surface. (#26)
+- Add the direct `erb` runtime dependency and make Git diff parsing stable when
+  user Git config enables mnemonic prefixes. (#27)
+- Improve PR diff loading, attachment download UX, expand/collapse behavior,
+  diff detail headers, long-line scrolling, and mobile diff readability.
+- Preserve Remote UI scroll positions, form values, composer state, and selected
+  detail state across polling refreshes. (#31)
+- Add conversation message copy menus and relative timestamps.
+- Fix wide attachment viewer navigation and stale schedule state when archived
+  scheduled-agent targets disappear.
+
 ## 0.4.0 - 2026-06-06
 
 ### Notable Releases
