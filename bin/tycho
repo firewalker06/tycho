@@ -43,6 +43,12 @@ end
 
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 
+source_gemfile = File.expand_path("../Gemfile", __dir__)
+if File.file?(source_gemfile)
+  ENV["BUNDLE_GEMFILE"] = source_gemfile
+  require "bundler/setup"
+end
+
 require "hq/dotenv_loader"
 
 HQ::DotenvLoader.load(File.expand_path("../.env", __dir__))

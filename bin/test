@@ -11,7 +11,8 @@ end
 
 commands = [
   ["bundle", "exec", "ruby", "-c", "bin/tycho"],
-  ["bundle", "exec", "ruby", "-c", "bin/schedule"]
+  ["bundle", "exec", "ruby", "-c", "bin/schedule"],
+  ["ruby", "bin/tycho", "doctor"]
 ] +
            test_files.map { |path| ["bundle", "exec", "ruby", path] }
 
