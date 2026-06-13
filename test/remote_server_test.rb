@@ -1905,6 +1905,14 @@ module RemoteServerTest
            "expected Project edit form to style the read-only information title")
     assert(css[:body].include?(".diff-viewer") && css[:body].include?(".diff-line.added"),
            "expected Remote UI to style project Git diff rows")
+    assert(css[:body].include?("overflow-x: auto;"),
+           "expected diff file bodies to expose a horizontal scrollbar for long code lines")
+    assert(css[:body].include?("-webkit-text-size-adjust: 100%;") &&
+           css[:body].include?("text-size-adjust: 100%;"),
+           "expected Remote UI to prevent mobile browser text inflation")
+    assert(css[:body].include?(".diff-hunk-header code,\n  .diff-lines") &&
+           css[:body].include?("font-size: 11px;"),
+           "expected mobile diff code typography to stay compact")
     assert(!css[:body].include?("max-height: min(70dvh, 720px);"),
            "expected diff file bodies to avoid per-file vertical scroll limits")
     assert(!css[:body].include?("max-height: min(58dvh, 680px);"),
@@ -2297,6 +2305,10 @@ module RemoteServerTest
            "expected polling snapshots to preserve prompt textarea scroll offsets")
     assert(js[:body].include?("function restorePageScroll"),
            "expected polling renders to restore PR diff and conversation page scroll")
+    assert(js[:body].include?("state.prDiffExpandAll[agent.key] !== false"),
+           "expected PR diff files to open by default")
+    assert(js[:body].include?("const expand = state.prDiffExpandAll[key] === false"),
+           "expected PR diff collapse-all control to toggle from the open default")
     assert(js[:body].include?("function syncPreservedOpenState"),
            "expected restored floating controls to update related button state")
     assert(js[:body].include?("const discovered = state.skills"),
@@ -2573,8 +2585,10 @@ module RemoteServerTest
            "expected Agents tab to sort agents alphabetically within each project group")
     assert(js[:body].include?("projectMatches(project, query)"),
            "expected Agents tab filtering to match project fields")
-    assert(js[:body].include?("renderProjectAgentEmpty()"),
-           "expected Agents tab to keep zero-agent projects reachable")
+    assert(!js[:body].include?("No managed agents"),
+           "expected Agents tab to omit redundant zero-agent empty rows")
+    assert(js[:body].include?("agent-group-create"),
+           "expected Agents tab to keep zero-agent projects reachable from the group header")
     assert(js[:body].include?("data-toggle-bulk-archive"),
            "expected Agents tab toolbar to expose bulk archive selection mode")
     assert(js[:body].include?("data-run-bulk-archive"),

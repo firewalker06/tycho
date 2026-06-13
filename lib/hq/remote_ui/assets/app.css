@@ -31,6 +31,8 @@ html.ipad-standalone {
 html {
   min-width: 0;
   overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -1916,6 +1918,7 @@ select {
   gap: 10px;
   min-width: 0;
   max-width: 100%;
+  overflow-x: auto;
   border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 54%, var(--panel));
   padding: 10px 0;
@@ -2022,6 +2025,21 @@ select {
 
   .diff-toolbar > button {
     width: 100%;
+  }
+
+  .diff-hunk-header code,
+  .diff-lines {
+    font-size: 11px;
+  }
+
+  .diff-lines {
+    line-height: 1.4;
+  }
+
+  .diff-line {
+    grid-template-columns: 4.5ch 4.5ch 2ch minmax(36ch, 1fr);
+    min-height: 18px;
+    padding-inline: 10px;
   }
 
   .diff-file > summary {
