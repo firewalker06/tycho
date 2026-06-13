@@ -2572,8 +2572,10 @@ module RemoteServerTest
            "expected Agents tab to sort agents alphabetically within each project group")
     assert(js[:body].include?("projectMatches(project, query)"),
            "expected Agents tab filtering to match project fields")
-    assert(js[:body].include?("renderProjectAgentEmpty()"),
-           "expected Agents tab to keep zero-agent projects reachable")
+    assert(!js[:body].include?("No managed agents"),
+           "expected Agents tab to omit redundant zero-agent empty rows")
+    assert(js[:body].include?("agent-group-create"),
+           "expected Agents tab to keep zero-agent projects reachable from the group header")
     assert(js[:body].include?("data-toggle-bulk-archive"),
            "expected Agents tab toolbar to expose bulk archive selection mode")
     assert(js[:body].include?("data-run-bulk-archive"),
