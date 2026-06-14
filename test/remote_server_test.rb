@@ -2301,6 +2301,8 @@ module RemoteServerTest
            "expected polling snapshots to preserve scroll positions for restored controls")
     assert(js[:body].include?("pageScroll"),
            "expected polling snapshots to preserve page scroll on same-route renders")
+    assert(js[:body].include?('data-preserve-scroll data-state-key="agent-attachment:${escapeAttr(id)}"'),
+           "expected embedded attachment viewers to preserve their split-pane scroll position")
     assert(js[:body].include?("function controlScrollFor"),
            "expected polling snapshots to preserve prompt textarea scroll offsets")
     assert(js[:body].include?("function restorePageScroll"),
