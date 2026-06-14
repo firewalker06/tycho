@@ -114,14 +114,14 @@ module HQ
 
     def compose_chat(conversation_entries, system_entries)
       events = []
-      conversation_entries.each { |e| events << [:conversation, e] }
-      system_entries.each { |e| events << [:system, e] }
-      events.sort_by! { |_, e| e.timestamp || Time.at(0) }
+      conversation_entries.each_with_index { |e, index| events << [:conversation, e, index] }
+      system_entries.each_with_index { |e, index| events << [:system, e, conversation_entries.length + index] }
+      events.sort_by! { |_, e, index| event_sort_key(e, index) }
 
       lines = []
       system_group = []
 
-      events.each do |(kind, entry)|
+      events.each do |(kind, entry, _)|
         if kind == :conversation
           unless system_group.empty?
             lines << summarize_system_group(system_group)
@@ -142,14 +142,14 @@ module HQ
 
     def compose_chat_blocks(conversation_entries, system_entries)
       events = []
-      conversation_entries.each { |e| events << [:conversation, e] }
-      system_entries.each { |e| events << [:system, e] }
-      events.sort_by! { |_, e| e.timestamp || Time.at(0) }
+      conversation_entries.each_with_index { |e, index| events << [:conversation, e, index] }
+      system_entries.each_with_index { |e, index| events << [:system, e, conversation_entries.length + index] }
+      events.sort_by! { |_, e, index| event_sort_key(e, index) }
 
       blocks = []
       system_group = []
 
-      events.each do |(kind, entry)|
+      events.each do |(kind, entry, _)|
         if kind == :conversation
           blocks.concat(system_group_chat_blocks(system_group))
           system_group = []
@@ -162,6 +162,20 @@ module HQ
       blocks.concat(system_group_chat_blocks(system_group))
 
       blocks
+    end
+
+    def event_sort_key(entry, fallback_sequence)
+      [
+        entry.timestamp || Time.at(0),
+        entry_sequence(entry, fallback_sequence)
+      ]
+    end
+
+    def entry_sequence(entry, fallback_sequence)
+      sequence = entry.metadata&.dig("_sequence")
+      Integer(sequence)
+    rescue StandardError
+      fallback_sequence
     end
 
     def system_group_chat_blocks(entries)

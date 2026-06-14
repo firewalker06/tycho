@@ -22,6 +22,7 @@ module ParserTest
     assert_agent_tool
     assert_skill_tool
     assert_structured_output_tool
+    assert_chat_blocks_use_sequence_for_equal_timestamps
     puts "parser_test: ok"
   end
 
@@ -81,6 +82,34 @@ module ParserTest
                        "Report written to /tmp/hq-public-review.md and opened for user."
     assert_call(call, "StructuredOutput", expected_summary)
     assert_result(result, "StructuredOutput", "Structured output provided successfully")
+  end
+
+  def assert_chat_blocks_use_sequence_for_equal_timestamps
+    timestamp = Time.utc(2026, 6, 14, 8, 0, 0)
+    conversation = [
+      HQ::Parser::ConversationEntry.new(
+        role: "assistant",
+        content: "assistant first",
+        timestamp:,
+        metadata: { "_sequence" => 1 }
+      )
+    ]
+    system = [
+      HQ::Parser::SystemEntry.new(
+        type: :run_summary,
+        content: "run summary last",
+        timestamp:,
+        tool_name: nil,
+        metadata: { "_sequence" => 2, "summary_id" => "summary-2" }
+      )
+    ]
+
+    blocks = HQ::Parser.compose_chat_blocks(conversation, system)
+
+    assert(blocks.map(&:kind) == %i[message run_summary],
+           "expected equal-timestamp blocks to use metadata sequence, got #{blocks.map(&:kind).inspect}")
+    assert(blocks.last.metadata["summary_id"] == "summary-2",
+           "expected summary metadata to survive chat block composition")
   end
 
   def parse_fixture(name)

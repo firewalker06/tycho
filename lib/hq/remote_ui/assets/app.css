@@ -2392,12 +2392,107 @@ select {
   gap: 10px;
 }
 
+.summary-message-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 10px;
+  min-width: 0;
+}
+
 .summary-message-content p {
   margin: 0;
 }
 
 .summary-message-open {
   justify-self: start;
+}
+
+.summary-attachment-menu {
+  position: relative;
+  display: inline-flex;
+  justify-self: start;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  max-height: 42px;
+}
+
+.summary-attachment-menu > summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  min-height: 42px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  list-style: none;
+  cursor: pointer;
+}
+
+.summary-attachment-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.summary-attachment-menu-popover {
+  position: fixed;
+  top: var(--summary-attachment-popover-top, calc(100% + 8px));
+  left: var(--summary-attachment-popover-left, 0);
+  z-index: 18;
+  width: min(360px, calc(100vw - 48px));
+  max-height: min(48dvh, 360px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--info) 46%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 98%, transparent);
+  box-shadow: var(--shadow);
+}
+
+.summary-attachment-menu-open-above .summary-attachment-menu-popover {
+  top: auto;
+  bottom: var(--summary-attachment-popover-bottom, calc(100% + 8px));
+}
+
+.summary-attachment-list {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.summary-attachment-list-full {
+  margin-top: 12px;
+}
+
+.summary-attachment-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-soft) 72%, transparent);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+}
+
+.summary-attachment-row:hover,
+.summary-attachment-row:focus-visible {
+  border-color: color-mix(in srgb, var(--info) 60%, var(--border));
+  background: color-mix(in srgb, var(--info) 10%, var(--panel-soft));
+}
+
+.summary-attachment-row.missing {
+  cursor: pointer;
+  color: var(--muted);
 }
 
 .attachment-flyout {

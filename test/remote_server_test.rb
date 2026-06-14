@@ -826,21 +826,46 @@ module RemoteServerTest
         "The normal assistant response should stay in the conversation.",
         created_at: Time.now - 1
       )
+      shared_time = Time.now
+      memory.append_assistant_message!(
+        "This same-second assistant update should render before the summary.",
+        created_at: shared_time
+      )
       memory.append_run_summary!(
         summary: "A detailed run summary that should stay readable in the conversation.\n\nSecond paragraph stays available for the full Summary page.",
         status: "succeeded",
-        created_at: Time.now
+        created_at: shared_time,
+        metadata: {
+          "attachments" => [
+            {
+              "type" => "file",
+              "kind" => "document",
+              "title" => "summary-notes.md",
+              "path" => File.join(workspace, "summary-notes.md")
+            }
+          ]
+        }
       )
 
       conversation = service.conversation(created[:key])
       summary = conversation.find { |block| block[:kind] == "run_summary" }
       assistant = conversation.find { |block| block[:role] == "assistant" }
+      same_second_assistant_index = conversation.index do |block|
+        block[:role] == "assistant" && block[:content].include?("same-second assistant")
+      end
+      summary_index = conversation.index(summary)
       memory_summary = memory.events.find { |event| event["type"] == "run_summary" }
 
       assert(summary&.dig(:content)&.include?("A detailed run summary"),
              "expected Remote UI conversation payload to include run summary blocks")
       assert(summary&.dig(:content)&.include?("Second paragraph"),
              "expected Remote UI conversation payload to expose full run summaries for preview truncation")
+      assert(summary&.dig(:metadata, "summary_id").to_s.start_with?("summary-"),
+             "expected run summary conversation blocks to expose a stable summary id")
+      assert(summary&.dig(:metadata, "attachments")&.first&.dig("title") == "summary-notes.md",
+             "expected run summary conversation blocks to keep attachment metadata")
+      assert(same_second_assistant_index && summary_index && same_second_assistant_index < summary_index,
+             "expected same-second summaries to render after earlier memory events")
       assert(assistant&.dig(:content)&.include?("normal assistant response"),
              "expected normal assistant messages to remain visible in the conversation")
       assert(memory_summary&.dig("content")&.include?("A detailed run summary"),
@@ -1791,6 +1816,13 @@ module RemoteServerTest
     assert(css[:body].include?(".composer.drop-active .composer-drop-overlay"),
            "expected Agent detail composer to reveal the drag-and-drop attachment overlay while active")
     assert(css[:body].include?(".message-attachments"), "expected chat messages to style attached prompt files")
+    assert(css[:body].include?(".summary-attachment-menu"), "expected Conversation summaries to style attachment menus")
+    assert(css[:body].include?(".summary-attachment-menu-popover"),
+           "expected Conversation summary attachments to open as a menu")
+    assert(css[:body].include?(".summary-attachment-list-full"),
+           "expected detailed Summary pages to render full attachment lists")
+    assert(css[:body].include?(".summary-attachment-row"),
+           "expected Summary attachments to render as block rows")
     assert(css[:body].include?(".attachment-text-viewer"), "expected Attachment detail to style plain text")
     assert(css[:body].include?(".attachment-image-viewer"), "expected Attachment detail to style image previews")
     assert(css[:body].include?(".agent-attachment-shell"),
@@ -2463,9 +2495,9 @@ module RemoteServerTest
            "expected Attachment viewer markup to be reusable inside Agent detail")
     assert(js[:body].include?('return { type: "agentAttachment", key: parts[1], attachmentId: parts[3] };'),
            "expected Remote UI to support in-agent attachment routes")
-    assert(js[:body].include?('return { type: "agentSummary", key: parts[1] };'),
+    assert(js[:body].include?('return { type: "agentSummary", key: parts[1], summaryId: parts[3] || "" };'),
            "expected Remote UI to support in-agent Summary routes")
-    assert(js[:body].include?('if (route.type === "agentSummary") return `#agent/${encodeURIComponent(route.key)}/summary`;'),
+    assert(js[:body].include?('const suffix = route.summaryId ? `/${encodeURIComponent(route.summaryId)}` : "";'),
            "expected Remote UI to generate in-agent Summary route hashes")
     assert(js[:body].include?('routeHash({ type: "agentAttachment", key: agentKey, attachmentId: id })'),
            "expected document attachments to open inside the owning Agent detail")
@@ -2543,6 +2575,36 @@ module RemoteServerTest
            "expected Agent detail to keep user and assistant messages visible")
     assert(js[:body].include?('block?.kind === "run_summary"'),
            "expected Agent detail to keep legacy run summary rendering compatible")
+    assert(js[:body].include?("summaryId: parts[3] || \"\""),
+           "expected Agent detail summary routes to support per-summary pages")
+    assert(js[:body].include?("data-open-agent-summary-id"),
+           "expected run summary rows to open their own full summary")
+    assert(js[:body].include?("<span>Open</span>"),
+           "expected run summary rows to use a compact Open label")
+    assert(js[:body].include?("queueRunSummaryConversationScroll"),
+           "expected per-summary pages to scroll the conversation to the opened summary")
+    assert(js[:body].include?("pendingSummaryScrollId"),
+           "expected per-summary conversation scrolling to be a one-shot click action")
+    assert(js[:body].include?("consumePendingRunSummaryConversationScroll"),
+           "expected polling renders not to re-scroll already-open summaries")
+    assert(js[:body].include?("data-missing-summary-attachment"),
+           "expected stale summary attachments to show a growl instead of navigating")
+    assert(js[:body].include?("renderSummaryAttachmentMenu"),
+           "expected Conversation summary attachments to use a menu trigger")
+    assert(js[:body].include?("Choose summary attachment"),
+           "expected Conversation summary attachment menus to be accessible")
+    assert(js[:body].include?('data-state-key="summary-attachment-menu:${escapeAttr(summaryId)}"'),
+           "expected Conversation summary attachment menus to preserve open state across polling")
+    assert(js[:body].include?("function repositionOpenSummaryAttachmentMenus"),
+           "expected restored summary attachment menus to recompute fixed popover coordinates")
+    assert(js[:body].include?("closeSummaryAttachmentMenus();"),
+           "expected Summary attachment menus to close on outside clicks")
+    assert(js[:body].include?("renderSummaryAttachmentList"),
+           "expected detailed Summary pages to render attachment list blocks")
+    assert(js[:body].include?("Open attachment"),
+           "expected Summary attachment menu items to remain individually accessible")
+    assert(js[:body].include?("Attachment might have been removed."),
+           "expected stale summary attachment growl copy")
     assert(js[:body].include?("<details class=\"message-group\""),
            "expected Agent detail internal groups to be collapsed by default")
     assert(js[:body].include?("iconSvg(\"squareUserRound\")"),

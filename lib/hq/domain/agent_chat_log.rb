@@ -109,7 +109,7 @@ module HQ
       system_log = []
       inquiry_responses = inquiry_response_metadata_by_signature(events)
 
-      events.each do |event|
+      events.each_with_index do |event, sequence|
         timestamp = parse_time(event["created_at"])
 
         case event["type"]
@@ -117,10 +117,11 @@ module HQ
           conversation << Parser::ConversationEntry.new(
             role: "system",
             content: event["content"].to_s,
-            timestamp:
+            timestamp:,
+            metadata: sequence_metadata(sequence)
           )
         when "user_message"
-          metadata = message_metadata_for(event)
+          metadata = message_metadata_for(event, sequence:)
           if (response_metadata = inquiry_responses[inquiry_response_signature(event)]&.shift)
             metadata = (metadata || {}).merge(response_metadata)
           end
@@ -135,7 +136,7 @@ module HQ
             role: "assistant",
             content: event["content"].to_s,
             timestamp:,
-            metadata: message_metadata_for(event)
+            metadata: message_metadata_for(event, sequence:)
           )
         when "tool_summary"
           entry = Parser::SystemEntry.new(
@@ -143,7 +144,7 @@ module HQ
             content: event["content"].to_s,
             timestamp:,
             tool_name: tool_name_for(event),
-            metadata: system_metadata_for(event)
+            metadata: system_metadata_for(event, sequence:)
           )
           chat_system << entry
           system_log << entry
@@ -153,7 +154,7 @@ module HQ
             content: event["content"].to_s,
             timestamp:,
             tool_name: nil,
-            metadata: event["metadata"].is_a?(Hash) ? event["metadata"] : nil
+            metadata: merge_sequence_metadata(event["metadata"], sequence)
           )
           chat_system << entry
           system_log << entry
@@ -163,7 +164,7 @@ module HQ
             content: event["content"].to_s,
             timestamp:,
             tool_name: nil,
-            metadata: run_summary_metadata_for(event)
+            metadata: run_summary_metadata_for(event, sequence:)
           )
           chat_system << entry
           system_log << entry
@@ -210,12 +211,13 @@ module HQ
       metadata["tool_name"].to_s.empty? ? metadata.dig("details", "tool_name") : metadata["tool_name"]
     end
 
-    def system_metadata_for(event)
+    def system_metadata_for(event, sequence: nil)
       metadata = event["metadata"]
-      return nil unless metadata.is_a?(Hash)
+      return sequence_metadata(sequence) unless metadata.is_a?(Hash)
 
       details = metadata["details"]
-      details.is_a?(Hash) && !details.empty? ? details : metadata
+      selected = details.is_a?(Hash) && !details.empty? ? details : metadata
+      merge_sequence_metadata(selected, sequence)
     end
 
     def inquiry_metadata_for(event)
@@ -264,16 +266,40 @@ module HQ
       id.empty? ? nil : id
     end
 
-    def run_summary_metadata_for(event)
+    def run_summary_metadata_for(event, sequence: nil)
+      metadata = event["metadata"].is_a?(Hash) ? event["metadata"].dup : {}
       status = event["status"].to_s.strip
-      status.empty? ? nil : { "status" => status }
+      metadata["status"] = status unless status.empty?
+      metadata["summary_id"] ||= summary_id_for(event, sequence)
+      merge_sequence_metadata(metadata, sequence)
     end
 
-    def message_metadata_for(event)
+    def message_metadata_for(event, sequence: nil)
       metadata = event["metadata"]
-      return nil unless metadata.is_a?(Hash) && !metadata.empty?
+      return sequence_metadata(sequence) unless metadata.is_a?(Hash) && !metadata.empty?
 
-      metadata
+      merge_sequence_metadata(metadata, sequence)
+    end
+
+    def summary_id_for(event, sequence)
+      base = [
+        "summary",
+        event["created_at"].to_s.gsub(/[^0-9A-Za-z]+/, "-").sub(/\A-+|-+\z/, ""),
+        sequence
+      ].compact.join("-")
+      base.empty? ? "summary-#{sequence}" : base
+    end
+
+    def merge_sequence_metadata(metadata, sequence)
+      result = metadata.is_a?(Hash) ? metadata.dup : {}
+      return nil if result.empty? && sequence.nil?
+
+      result["_sequence"] = sequence unless sequence.nil?
+      result
+    end
+
+    def sequence_metadata(sequence)
+      merge_sequence_metadata(nil, sequence)
     end
 
     def parse_time(value)
