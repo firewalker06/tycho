@@ -22,7 +22,7 @@ module RemoteServerTest
     assert_remote_agent_pull_request_diff_payload
     assert_remote_prompt_accepts_uploaded_attachments
     assert_remote_prompt_start_accepts_dash_prefixed_message
-    assert_remote_agent_conversation_hides_run_summary
+    assert_remote_agent_conversation_includes_run_summary
     assert_remote_project_payloads_include_status_and_detail
     assert_remote_project_git_diff_payload
     assert_remote_project_update_route_edits_metadata
@@ -800,7 +800,7 @@ module RemoteServerTest
     end
   end
 
-  def assert_remote_agent_conversation_hides_run_summary
+  def assert_remote_agent_conversation_includes_run_summary
     Dir.mktmpdir("hq-remote-test") do |dir|
       old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
       old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
@@ -827,7 +827,7 @@ module RemoteServerTest
         created_at: Time.now - 1
       )
       memory.append_run_summary!(
-        summary: "A detailed run summary that should stay readable in the conversation.",
+        summary: "A detailed run summary that should stay readable in the conversation.\n\nSecond paragraph stays available for the full Summary page.",
         status: "succeeded",
         created_at: Time.now
       )
@@ -837,7 +837,10 @@ module RemoteServerTest
       assistant = conversation.find { |block| block[:role] == "assistant" }
       memory_summary = memory.events.find { |event| event["type"] == "run_summary" }
 
-      assert(summary.nil?, "expected Remote UI conversation payload to hide run summary blocks")
+      assert(summary&.dig(:content)&.include?("A detailed run summary"),
+             "expected Remote UI conversation payload to include run summary blocks")
+      assert(summary&.dig(:content)&.include?("Second paragraph"),
+             "expected Remote UI conversation payload to expose full run summaries for preview truncation")
       assert(assistant&.dig(:content)&.include?("normal assistant response"),
              "expected normal assistant messages to remain visible in the conversation")
       assert(memory_summary&.dig("content")&.include?("A detailed run summary"),
@@ -2492,10 +2495,10 @@ module RemoteServerTest
            "expected Remote UI to support #attachment/:id routes")
     assert(js[:body].include?("function renderMarkdown"),
            "expected markdown attachments to render as markdown")
-    assert(js[:body].include?("function markdownMessageBlock"),
-           "expected assistant messages and legacy run summaries to opt into markdown rendering")
-    assert(js[:body].include?('block?.kind === "run_summary"'),
-           "expected legacy run summary blocks to render as markdown if present")
+    assert(js[:body].include?("function renderRunSummaryMessageContent"),
+           "expected run summaries to render as compact Conversation blocks")
+    assert(js[:body].include?('data-open-agent-summary="${escapeAttr(agentKey)}"'),
+           "expected compact run summaries to link to the full Summary page")
     assert(js[:body].include?('block.role === "assistant"'),
            "expected assistant messages to render as markdown")
     assert(js[:body].include?("function renderAgentSummaryContent"),

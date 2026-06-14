@@ -191,9 +191,10 @@ module HQ
           blocks << ChatBlock.new(
             kind: :run_summary,
             role: nil,
-            content: run_summary_block_content(entry),
+            content: run_summary_chat_content(entry),
             tool_name: nil,
-            metadata: entry.metadata
+            metadata: entry.metadata,
+            created_at: entry.timestamp&.iso8601
           )
         else
           summary_group << entry
@@ -246,13 +247,17 @@ module HQ
       parts.empty? ? "(#{entries.length} system events)" : "(#{parts.join(" · ")})"
     end
 
-    def run_summary_block_content(entry)
-      message = summary_first_line(entry.content)
+    def run_summary_chat_content(entry)
+      content = entry.content.to_s
       status = entry.metadata&.dig("status").to_s.strip
-      return message if status.empty? || %w[success succeeded].include?(status)
-      return status if message.empty?
+      return content if status.empty? || %w[success succeeded].include?(status)
 
-      "#{status}: #{message}"
+      message = summary_first_line(content)
+      return status if message.empty? && content.empty?
+      return "#{status}: #{message}" if content.empty?
+
+      prefix = message.empty? ? status : "#{status}: #{message}"
+      content.start_with?(prefix) ? content : "#{prefix}\n\n#{content}"
     end
 
     def summary_first_line(content)

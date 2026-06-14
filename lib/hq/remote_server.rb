@@ -1058,7 +1058,7 @@ module HQ
 
     def conversation(key)
       target = find_agent!(key)
-      blocks = AgentChatLog.new(target).chat_blocks.reject { |block| block.kind == :run_summary }
+      blocks = AgentChatLog.new(target).chat_blocks
       return conversation_messages(target) if blocks.empty?
 
       blocks.map do |block|

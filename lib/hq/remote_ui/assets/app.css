@@ -2387,6 +2387,19 @@ select {
   background: color-mix(in srgb, var(--accent-alt) 12%, var(--panel));
 }
 
+.summary-message-content {
+  display: grid;
+  gap: 10px;
+}
+
+.summary-message-content p {
+  margin: 0;
+}
+
+.summary-message-open {
+  justify-self: start;
+}
+
 .attachment-flyout {
   position: absolute;
   bottom: 52px;
