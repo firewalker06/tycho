@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "constants"
+require_relative "file_store"
 require_relative "../cli_command"
 require_relative "managed_agent"
 require_relative "../ui/rendering/styles"
@@ -25,7 +26,7 @@ module HQ
 
       changed = false
       events = []
-      agents = JSON.parse(File.read(AGENTS_FILE)).map do |hash|
+      agents = Array(FileStore.read_json(AGENTS_FILE, fallback: [])).map do |hash|
         agent = ManagedAgent.from_hash(hash)
         changed = true if hash != agent.to_hash
         before_hash = agent.to_hash
@@ -48,12 +49,13 @@ module HQ
       changed = backfill_color_indexes!(agents) || changed
       save(agents) if changed
       [agents, events]
-    rescue StandardError
+    rescue StandardError => e
+      HQ.logger.warn("AgentStore") { "Failed to load agents from #{AGENTS_FILE}: #{e.class} - #{e.message}" }
       [[], []]
     end
 
     def save(agents)
-      File.write(AGENTS_FILE, JSON.pretty_generate(agents.map(&:to_hash)))
+      FileStore.write_json(AGENTS_FILE, agents.map(&:to_hash))
     end
 
     def create_for_project(project)

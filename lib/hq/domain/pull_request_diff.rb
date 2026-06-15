@@ -9,6 +9,7 @@ require "timeout"
 require "uri"
 
 require_relative "constants"
+require_relative "file_store"
 require_relative "git_diff"
 
 module HQ
@@ -47,10 +48,10 @@ module HQ
       end
 
       def all
-        return {} unless File.file?(@path)
-
-        JSON.parse(File.read(@path))
-      rescue JSON::ParserError
+        parsed = FileStore.read_json(@path, fallback: {})
+        parsed.is_a?(Hash) ? parsed : {}
+      rescue StandardError => e
+        HQ.logger.warn("PRDiff") { "Failed to load PR diffs from #{@path}: #{e.class} - #{e.message}" }
         {}
       end
 
@@ -62,8 +63,7 @@ module HQ
         id = snapshot.fetch("id")
         snapshots = all
         snapshots[id] = snapshot
-        FileUtils.mkdir_p(File.dirname(@path))
-        File.write(@path, JSON.pretty_generate(snapshots))
+        FileStore.write_json(@path, snapshots)
         snapshot
       end
     end

@@ -5,6 +5,7 @@ require "fileutils"
 require "time"
 
 require_relative "attachment_normalizer"
+require_relative "file_store"
 
 module HQ
   class AgentMemory
@@ -396,9 +397,7 @@ module HQ
     end
 
     def read_attachment_records
-      return [] unless File.exist?(attachments_path)
-
-      parsed = JSON.parse(File.read(attachments_path))
+      parsed = FileStore.read_json(attachments_path, fallback: [])
       records = parsed.is_a?(Hash) ? parsed["attachments"] : parsed
       Array(records).filter_map do |record|
         next unless record.is_a?(Hash)
@@ -412,7 +411,8 @@ module HQ
           record
         end
       end
-    rescue StandardError
+    rescue StandardError => e
+      HQ.logger.warn("AgentMemory") { "Failed to load attachment records from #{attachments_path}: #{e.class} - #{e.message}" }
       []
     end
 
@@ -428,8 +428,7 @@ module HQ
       return if records_to_append.empty?
 
       records = dedupe_attachments(records_to_append + read_attachment_records)
-      FileUtils.mkdir_p(File.dirname(attachments_path))
-      File.write(attachments_path, "#{JSON.pretty_generate("attachments" => records)}\n")
+      FileStore.write_json(attachments_path, { "attachments" => records })
     rescue StandardError
       nil
     end
@@ -442,8 +441,7 @@ module HQ
       if filtered.empty?
         FileUtils.rm_f(attachments_path)
       else
-        FileUtils.mkdir_p(File.dirname(attachments_path))
-        File.write(attachments_path, "#{JSON.pretty_generate("attachments" => filtered)}\n")
+        FileStore.write_json(attachments_path, { "attachments" => filtered })
       end
       true
     rescue StandardError

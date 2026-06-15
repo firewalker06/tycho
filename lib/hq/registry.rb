@@ -3,6 +3,7 @@
 require "yaml"
 require_relative "harness_registry"
 require_relative "domain/constants"
+require_relative "domain/file_store"
 
 module HQ
   class ConfigError < StandardError; end
@@ -489,7 +490,7 @@ module HQ
     end
 
     def write_yaml(path, data)
-      File.write(path, YAML.dump(data))
+      FileStore.write_yaml(path, data)
     end
 
     def normalized_system_prompts

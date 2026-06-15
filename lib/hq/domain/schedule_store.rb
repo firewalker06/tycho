@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
 require "json"
-require "fileutils"
 require "time"
 
 require_relative "constants"
+require_relative "file_store"
 require_relative "process_liveness"
 
 module HQ
@@ -180,19 +180,19 @@ module HQ
     def load
       return {} unless File.exist?(@path)
 
-      parsed = JSON.parse(File.read(@path))
+      parsed = FileStore.read_json(@path, fallback: [])
       Array(parsed).each_with_object({}) do |hash, states|
         state = ScheduleState.from_hash(hash)
         states[state.key] = state unless state.key.to_s.empty?
       end
-    rescue StandardError
+    rescue StandardError => e
+      HQ.logger.warn("ScheduleStore") { "Failed to load schedules from #{@path}: #{e.class} - #{e.message}" }
       {}
     end
 
     def save(states)
-      FileUtils.mkdir_p(File.dirname(@path))
       ordered = states.values.sort_by { |state| state.key.to_s }
-      File.write(@path, JSON.pretty_generate(ordered.map(&:to_hash)))
+      FileStore.write_json(@path, ordered.map(&:to_hash))
     end
 
     def delete(key)
@@ -288,15 +288,15 @@ module HQ
     def read_daemon_state
       return {} unless File.exist?(@daemon_path)
 
-      parsed = JSON.parse(File.read(@daemon_path))
+      parsed = FileStore.read_json(@daemon_path, fallback: {})
       parsed.is_a?(Hash) ? parsed : {}
-    rescue StandardError
+    rescue StandardError => e
+      HQ.logger.warn("ScheduleStore") { "Failed to load scheduler daemon state from #{@daemon_path}: #{e.class} - #{e.message}" }
       {}
     end
 
     def write_daemon_state(data)
-      FileUtils.mkdir_p(File.dirname(@daemon_path))
-      File.write(@daemon_path, JSON.pretty_generate(data.compact))
+      FileStore.write_json(@daemon_path, data.compact)
     end
 
     def merge_daemon_state(attrs)

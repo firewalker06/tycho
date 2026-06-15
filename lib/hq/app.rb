@@ -10,6 +10,7 @@ require "fileutils"
 require_relative "bubbletea_input"
 require_relative "registry"
 require_relative "domain/constants"
+require_relative "domain/file_store"
 require_relative "domain/log_paths"
 require_relative "domain/version_lookup"
 require_relative "domain/kamal_action"
@@ -1565,7 +1566,7 @@ def selected_screen_items
     end
 
     def save_actions!
-      File.write(ACTIONS_FILE, JSON.pretty_generate(@actions.values.map(&:to_hash)))
+      FileStore.write_json(ACTIONS_FILE, @actions.values.map(&:to_hash))
     rescue StandardError => e
       HQ.logger.error("ActionStore") { "Failed to save actions: #{e.message}" }
     end
@@ -1573,7 +1574,7 @@ def selected_screen_items
     def load_actions!
       return unless File.exist?(ACTIONS_FILE)
 
-      data = JSON.parse(File.read(ACTIONS_FILE))
+      data = FileStore.read_json(ACTIONS_FILE, fallback: [])
       data.each do |hash|
         action = KamalAction.from_hash(hash)
         action.poll!

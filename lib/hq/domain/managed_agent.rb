@@ -3,7 +3,10 @@
 require_relative "constants"
 require_relative "log_paths"
 require_relative "attachment_normalizer"
+require_relative "agent_command_builder"
 require_relative "agent_memory"
+require_relative "agent_result_normalizer"
+require_relative "agent_structured_result"
 require_relative "executable_resolver"
 require_relative "../harness_registry"
 require_relative "../parser"
@@ -541,10 +544,7 @@ module HQ
     end
 
     def interactive_command
-      return build_interactive_claude_like_command(command_prefix: claude_command_prefix) if claude_like_agent?
-      return build_interactive_codex_command if codex_agent?
-
-      raise "Unsupported managed-agent harness #{@agent.inspect}"
+      command_builder.interactive
     end
 
     def claude_command_prefix
@@ -744,92 +744,27 @@ module HQ
       LogPaths.derived_agent_log_path(@log_path, suffix)
     end
 
+    def command_builder(prompt: prompt_for_execution)
+      AgentCommandBuilder.new(
+        agent: @agent,
+        harness_adapter: harness_adapter,
+        workspace: @workspace,
+        sandbox_mode: @sandbox_mode,
+        model: @model,
+        reasoning_effort: @reasoning_effort,
+        session_id: @session_id,
+        session_bootstrapped: @session_bootstrapped,
+        prompt: prompt,
+        codex_executable: codex_executable,
+        claude_command_prefix: claude_command_prefix,
+        last_message_file_path: last_message_file_path,
+        result_schema_path: AGENT_RESULT_SCHEMA,
+        claude_result_schema: compact_claude_result_schema
+      )
+    end
+
     def build_command
-      return build_claude_command if claude_like_agent?
-      return build_codex_command if codex_agent?
-
-      raise "Unsupported managed-agent harness #{@agent.inspect}"
-    end
-
-    def build_codex_command
-      command = [codex_executable, "exec"]
-      command << "resume" unless @session_id.to_s.empty?
-      command.concat(model_arguments)
-      command.concat(codex_reasoning_effort_arguments)
-      if @sandbox_mode == "danger-full-access"
-        command << "--dangerously-bypass-approvals-and-sandbox"
-      else
-        command << "--full-auto"
-        command.concat(["--sandbox", @sandbox_mode]) if @session_id.to_s.empty?
-      end
-      command << "--json"
-      if @session_id.to_s.empty? && File.exist?(AGENT_RESULT_SCHEMA)
-        command.concat(["--output-schema", AGENT_RESULT_SCHEMA, "-o", last_message_file_path])
-      else
-        command.concat(["-o", last_message_file_path])
-      end
-      command << "--skip-git-repo-check"
-      command.concat(["-C", @workspace]) if @session_id.to_s.empty?
-      command << @session_id unless @session_id.to_s.empty?
-      command << "--"
-      command << prompt_for_execution
-      { command: command }
-    end
-
-    def build_claude_command
-      build_claude_like_command(command_prefix: claude_command_prefix)
-    end
-
-    def build_interactive_codex_command
-      command = [codex_executable]
-      command.concat(model_arguments)
-      command.concat(codex_reasoning_effort_arguments)
-      if @sandbox_mode == "danger-full-access"
-        command << "--dangerously-bypass-approvals-and-sandbox"
-      else
-        command << "--full-auto"
-        command.concat(["--sandbox", @sandbox_mode])
-      end
-      command.concat(["-C", @workspace])
-      if @session_id.to_s.empty?
-        { command: command }
-      else
-        { command: command + ["resume", @session_id] }
-      end
-    end
-
-    def build_interactive_claude_like_command(command_prefix:, env: {})
-      command = command_prefix.dup
-      command.concat(model_arguments)
-      command.concat(claude_effort_arguments)
-      command << "--dangerously-skip-permissions" if @sandbox_mode == "danger-full-access"
-      command.concat(["--resume", @session_id]) unless @session_id.to_s.empty?
-      { command: command, env: env }
-    end
-
-    def build_claude_like_command(command_prefix:, env: {})
-      command = command_prefix.dup
-      command.concat(model_arguments)
-      command.concat(claude_effort_arguments)
-      command << "--dangerously-skip-permissions" if @sandbox_mode == "danger-full-access"
-      command.concat(["--print", "--output-format", "stream-json", "--verbose"])
-      command.concat(claude_session_arguments)
-      schema = compact_claude_result_schema
-      command.concat(["--json-schema", schema]) if schema
-      command << prompt_for_execution
-      { command: command, env: env }
-    end
-
-    def model_arguments
-      @model.to_s.empty? ? [] : ["--model", @model]
-    end
-
-    def codex_reasoning_effort_arguments
-      @reasoning_effort.to_s.empty? ? [] : ["-c", "model_reasoning_effort=\"#{@reasoning_effort}\""]
-    end
-
-    def claude_effort_arguments
-      @reasoning_effort.to_s.empty? ? [] : ["--effort", @reasoning_effort]
+      command_builder.build
     end
 
     def missing_executable_for(command)
@@ -898,13 +833,7 @@ module HQ
     end
 
     def claude_session_arguments
-      if @session_id.to_s.empty?
-        []
-      elsif @session_bootstrapped
-        ["--resume", @session_id]
-      else
-        ["--session-id", @session_id]
-      end
+      command_builder(prompt: "").claude_session_arguments
     end
 
     def status_file_path
@@ -1005,18 +934,7 @@ module HQ
     end
 
     def normalize_structured_result(parsed)
-      return nil unless parsed.is_a?(Hash)
-
-      status = parsed["status"].to_s
-      summary = parsed["summary"].to_s.strip
-      return nil if status.empty? || summary.empty?
-
-      result = { "status" => status, "summary" => summary }
-      inquiry = normalize_inquiry(parsed["inquiry"])
-      result["inquiry"] = inquiry if inquiry
-      attachments = normalize_attachments(parsed["attachments"])
-      result["attachments"] = attachments if attachments
-      result
+      result_normalizer.normalize_structured_result(parsed)
     rescue StandardError => e
       HQ.logger.warn("Agent") { "Failed to normalize result for #{@key}: #{e.message}" }
       nil
@@ -1204,21 +1122,7 @@ module HQ
     end
 
     def normalize_inquiry(value)
-      return nil unless value.is_a?(Hash)
-
-      message = value["message"].to_s.strip
-      return nil if message.empty?
-
-      normalized_fields = normalize_inquiry_fields(value["fields"])
-      normalized_schema = inquiry_requested_schema_from_fields(normalized_fields) ||
-                          normalize_inquiry_requested_schema(value["requested_schema"])
-
-      result = {
-        "message" => message,
-        "requested_schema" => normalized_schema
-      }
-      result["fields"] = normalized_fields if normalized_fields
-      result.compact
+      result_normalizer.normalize_inquiry(value)
     end
 
     def inquiry_identity(inquiry, run: last_run)
@@ -1236,187 +1140,27 @@ module HQ
     end
 
     def normalize_attachments(value)
-      normalized = AttachmentNormalizer.normalize(value, workspace: @workspace)
-      normalized.empty? ? nil : normalized
+      result_normalizer.normalize_attachments(value)
     end
 
     def normalize_attachment(value)
-      AttachmentNormalizer.normalize(value, workspace: @workspace).first
+      result_normalizer.normalize_attachment(value)
     end
 
     def dedupe_attachments(attachments)
-      AttachmentNormalizer.normalize(attachments, workspace: @workspace)
+      result_normalizer.dedupe_attachments(attachments)
     end
 
     def attachment_dedupe_key(attachment)
-      normalized = normalize_attachments([attachment])&.first
-      return nil unless normalized.is_a?(Hash)
-
-      [
-        normalized["type"],
-        normalized["type"] == "link" ? normalized["url"] : normalized["path"]
-      ].map(&:to_s)
-    end
-
-    def normalize_inquiry_fields(fields)
-      items = Array(fields)
-      return nil if items.empty?
-
-      normalized_fields = items.filter_map do |field|
-        next unless field.is_a?(Hash)
-
-        key = field["key"].to_s.strip
-        next if key.empty?
-
-        input_type = field["input_type"].to_s.strip
-        label = field["label"].to_s.strip
-        description = field["description"].to_s.strip
-        options = Array(field["options"]).map(&:to_s).reject(&:empty?)
-        {
-          "key" => key,
-          "label" => label.empty? ? key : label,
-          "description" => description,
-          "input_type" => input_type.empty? ? "text" : input_type,
-          "required" => field["required"] == true,
-          "options" => options.empty? ? nil : options
-        }
-      end
-      return nil if normalized_fields.empty?
-
-      normalized_fields
-    end
-
-    def inquiry_requested_schema_from_fields(fields)
-      items = Array(fields)
-      return nil if items.empty?
-
-      properties = {}
-      required = []
-
-      items.each do |field|
-        key = field["key"].to_s
-        next if key.empty?
-
-        input_type = field["input_type"].to_s
-        options = Array(field["options"]).map(&:to_s).reject(&:empty?)
-        normalized = case input_type
-                     when "number"
-                       { "type" => "number" }
-                     when "integer"
-                       { "type" => "integer" }
-                     when "boolean"
-                       { "type" => "boolean" }
-                     when "multi_select"
-                       {
-                         "type" => "array",
-                         "items" => {
-                           "type" => "string",
-                           "enum" => options
-                         }
-                       }
-                     else
-                       definition = { "type" => "string" }
-                       definition["enum"] = options if options.any?
-                       definition["x-input-type"] = "multiline" if input_type == "multiline"
-                       definition
-                     end
-        label = field["label"].to_s.strip
-        description = field["description"].to_s.strip
-        normalized["title"] = label unless label.empty?
-        normalized["description"] = description unless description.empty?
-        properties[key] = normalized
-        required << key if field["required"] == true
-      end
-      return nil if properties.empty?
-
-      result = {
-        "type" => "object",
-        "properties" => properties
-      }
-      result["required"] = required if required.any?
-      result
-    end
-
-    def normalize_inquiry_requested_schema(schema)
-      return nil unless schema.is_a?(Hash) && schema_type(schema["type"]) == "object"
-
-      properties = schema["properties"]
-      return nil unless properties.is_a?(Hash) && !properties.empty?
-
-      normalized_properties = properties.each_with_object({}) do |(key, definition), result|
-        next if key.to_s.strip.empty?
-        next unless definition.is_a?(Hash)
-
-        type = schema_type(definition["type"])
-        type = "string" if type.empty?
-
-        normalized = { "type" => type }
-        title = definition["title"].to_s.strip
-        description = definition["description"].to_s.strip
-        normalized["title"] = title unless title.empty?
-        normalized["description"] = description unless description.empty?
-        options = Array(definition["enum"]).map(&:to_s).reject(&:empty?)
-        normalized["enum"] = options if options.any?
-        normalized["items"] = normalize_schema_items(definition["items"]) if type == "array" && definition["items"].is_a?(Hash)
-        input_type = definition["x-input-type"].to_s.strip
-        normalized["x-input-type"] = input_type unless input_type.empty?
-        result[key.to_s] = normalized
-      end
-      return nil if normalized_properties.empty?
-
-      result = {
-        "type" => "object",
-        "properties" => normalized_properties
-      }
-      required = Array(schema["required"]).map(&:to_s).reject(&:empty?)
-      result["required"] = required if required.any?
-      result
-    end
-
-    def normalize_schema_items(items)
-      normalized = { "type" => schema_type(items["type"]).yield_self { |type| type.empty? ? "string" : type } }
-      options = Array(items["enum"]).map(&:to_s).reject(&:empty?)
-      normalized["enum"] = options if options.any?
-      normalized
-    end
-
-    def schema_type(value)
-      case value
-      when Array
-        value.find { |item| item.to_s != "null" }.to_s
-      else
-        value.to_s.strip
-      end
+      result_normalizer.attachment_dedupe_key(attachment)
     end
 
     def merge_inquiries(primary, secondary)
-      return secondary unless primary.is_a?(Hash)
-      return primary unless secondary.is_a?(Hash)
-      return primary if primary["message"].to_s.strip != secondary["message"].to_s.strip
-
-      merged = primary.dup
-      merged["fields"] ||= secondary["fields"] if secondary["fields"].is_a?(Array)
-      merged["requested_schema"] ||= secondary["requested_schema"] if secondary["requested_schema"].is_a?(Hash)
-      if richer_inquiry?(secondary, primary)
-        merged["fields"] = secondary["fields"] if secondary["fields"].is_a?(Array)
-        merged["requested_schema"] = secondary["requested_schema"] if secondary["requested_schema"].is_a?(Hash)
-      end
-      merged
+      result_normalizer.merge_inquiries(primary, secondary)
     end
 
-    def richer_inquiry?(candidate, current)
-      return false unless candidate.is_a?(Hash)
-      return true unless current.is_a?(Hash)
-
-      candidate_fields = Array(candidate["fields"])
-      current_fields = Array(current["fields"])
-      return true if candidate_fields.any? && current_fields.empty?
-
-      candidate_types = candidate_fields.map { |field| field["input_type"].to_s }
-      current_types = current_fields.map { |field| field["input_type"].to_s }
-      richer_input_types = %w[multiline multi_select]
-
-      richer_input_types.any? { |type| candidate_types.include?(type) && !current_types.include?(type) }
+    def result_normalizer
+      @result_normalizer ||= AgentResultNormalizer.new(workspace: @workspace)
     end
 
     def seed_memory_from_initial_messages!(messages)
@@ -1574,23 +1318,7 @@ module HQ
     end
 
     def read_structured_result_payload_from_log
-      lines = last_run_log_lines
-      return nil if lines.empty?
-
-      lines.reverse_each do |line|
-        stripped = line.to_s.strip
-        next unless stripped.start_with?("{") && stripped.end_with?("}")
-
-        parsed = JSON.parse(stripped)
-        normalized = normalize_structured_result_payload(parsed)
-        return normalized if normalized
-      rescue JSON::ParserError
-        next
-      end
-
-      nil
-    rescue StandardError
-      nil
+      AgentStructuredResult.from_log_lines(last_run_log_lines)
     end
 
     # Walks raw.log to extract the lines belonging to the most recent
@@ -1606,93 +1334,6 @@ module HQ
       lines[(start_index + 1)..] || []
     rescue StandardError
       []
-    end
-
-    def normalize_structured_result_payload(parsed)
-      return nil unless parsed.is_a?(Hash)
-
-      canonical = canonical_structured_result_payload(parsed)
-      return canonical if canonical
-
-      structured = canonical_structured_result_payload(parsed["structured_output"])
-      return structured if structured
-
-      assistant_structured = structured_output_from_assistant_event(parsed)
-      return assistant_structured if assistant_structured
-
-      # Codex emits the assistant's structured output as the `text` of an
-      # `item.completed` agent_message event in raw.log. Unwrap it so we can
-      # treat it the same as Claude's `structured_output`.
-      if parsed["type"] == "item.completed"
-        item = parsed["item"]
-        if item.is_a?(Hash) && item["type"] == "agent_message"
-          inner = parse_json_string(item["text"])
-          normalized = normalize_structured_result_payload(inner) if inner
-          return normalized if normalized
-        end
-      end
-
-      # Claude-compatible stream-json fallback: `--json-schema` is not always
-      # honored on resumed sessions, so the final `{"type":"result"}` event can
-      # arrive without `structured_output` and with prose in the top-level
-      # `result` field. Synthesize a minimal payload so the chat viewport gets
-      # the assistant's prose instead of a truncated raw-JSON slice from
-      # `summarize_from_log`.
-      if parsed["type"] == "result"
-        prose = parsed["result"].to_s.strip
-        unless prose.empty?
-          status = parsed["is_error"] == true ? "failed" : "success"
-          return { "status" => status, "summary" => prose }
-        end
-      end
-
-      nil
-    end
-
-    def structured_output_from_assistant_event(parsed)
-      return nil unless parsed["type"] == "assistant"
-
-      Array(parsed.dig("message", "content")).reverse_each do |item|
-        next unless item.is_a?(Hash)
-        next unless item["type"] == "tool_use"
-        next unless item["name"].to_s.downcase == "structuredoutput"
-
-        input = item["input"]
-        canonical = canonical_structured_result_payload(input)
-        return canonical if canonical
-      end
-
-      nil
-    end
-
-    def canonical_structured_result_payload(input)
-      return nil unless input.is_a?(Hash) && input["status"].is_a?(String) && input["summary"].is_a?(String)
-
-      result = input.dup
-      if result.key?("inquiry_json") && !result.key?("inquiry")
-        result["inquiry"] = structured_json_field(result["inquiry_json"], Hash)
-      end
-      if result.key?("attachments_json") && !result.key?("attachments")
-        result["attachments"] = structured_json_field(result["attachments_json"], Array)
-      end
-      result.delete("inquiry_json")
-      result.delete("attachments_json")
-      result
-    end
-
-    def structured_json_field(value, expected_class)
-      parsed = parse_json_string(value)
-      return nil if parsed.nil?
-
-      parsed.is_a?(expected_class) ? parsed : nil
-    end
-
-    def parse_json_string(value)
-      return nil unless value.is_a?(String)
-
-      JSON.parse(value)
-    rescue JSON::ParserError
-      nil
     end
 
     def codex_executable

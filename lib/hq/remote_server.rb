@@ -17,6 +17,7 @@ require_relative "domain/agent_attachment_store"
 require_relative "domain/agent_chat_log"
 require_relative "domain/agent_store"
 require_relative "domain/executable_resolver"
+require_relative "domain/file_store"
 require_relative "domain/git_diff"
 require_relative "domain/harness_catalog"
 require_relative "domain/kamal_action"
@@ -285,6 +286,8 @@ module HQ
         ui_asset("text/html; charset=utf-8", RemoteUI.index)
       when "/ui.css"
         ui_asset("text/css; charset=utf-8", RemoteUI.css)
+      when "/ui-helpers.js"
+        ui_asset("application/javascript; charset=utf-8", RemoteUI.helpers_js)
       when "/ui.js"
         ui_asset("application/javascript; charset=utf-8", RemoteUI.js)
       when "/service-worker.js"
@@ -320,6 +323,7 @@ module HQ
         "/ui",
         "/ui/",
         "/ui.css",
+        "/ui-helpers.js",
         "/ui.js",
         "/service-worker.js",
         "/manifest.webmanifest",
@@ -1458,7 +1462,7 @@ module HQ
     def load_actions
       return {} unless File.exist?(ACTIONS_FILE)
 
-      JSON.parse(File.read(ACTIONS_FILE)).each_with_object({}) do |hash, actions|
+      FileStore.read_json(ACTIONS_FILE, fallback: []).each_with_object({}) do |hash, actions|
         action = KamalAction.from_hash(hash)
         actions[action.project_key] = action
       end
@@ -1468,8 +1472,7 @@ module HQ
     end
 
     def save_actions(actions)
-      FileUtils.mkdir_p(File.dirname(ACTIONS_FILE))
-      File.write(ACTIONS_FILE, JSON.pretty_generate(actions.values.map(&:to_hash)))
+      FileStore.write_json(ACTIONS_FILE, actions.values.map(&:to_hash))
     rescue StandardError => e
       HQ.logger.warn("Remote") { "Failed to save actions: #{e.message}" }
     end

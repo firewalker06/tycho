@@ -1,0 +1,231 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "net/http"
+require "open3"
+require "rbconfig"
+require "socket"
+require "tempfile"
+require "tmpdir"
+require "timeout"
+require "uri"
+
+ROOT = File.expand_path("..", __dir__)
+
+def free_port
+  server = TCPServer.new("127.0.0.1", 0)
+  server.addr[1]
+ensure
+  server&.close
+end
+
+def write_fixture(dir)
+  config_dir = File.join(dir, "config")
+  workspace = File.join(dir, "workspace")
+  FileUtils.mkdir_p(config_dir)
+  FileUtils.mkdir_p(workspace)
+
+  config_path = File.join(config_dir, "hq.yml")
+  prompts_path = File.join(config_dir, "system_prompts.yml")
+  schedules_path = File.join(config_dir, "schedules.yml")
+  File.write(config_path, <<~YAML)
+    ---
+    projects:
+      - key: web
+        name: Web
+        path: #{workspace.inspect}
+        apps: false
+        agent: codex
+  YAML
+  File.write(prompts_path, "---\ncustom: \"Check the app.\"\n")
+  File.write(schedules_path, "---\nschedules: []\n")
+
+  {
+    config_path: config_path,
+    prompts_path: prompts_path,
+    schedules_path: schedules_path,
+    logs_dir: File.join(dir, "logs")
+  }
+end
+
+def wait_for_health(base_url, log_path)
+  uri = URI("#{base_url}/health")
+  Timeout.timeout(15) do
+    loop do
+      response = Net::HTTP.get_response(uri)
+      return if response.is_a?(Net::HTTPSuccess)
+    rescue Errno::ECONNREFUSED, Errno::ECONNRESET
+      raise "Remote server exited early:\n#{File.read(log_path)}" if @server_pid && !process_alive?(@server_pid)
+
+      sleep 0.1
+    end
+  end
+rescue Timeout::Error
+  raise "Remote server did not become healthy:\n#{File.read(log_path)}"
+end
+
+def process_alive?(pid)
+  Process.kill(0, pid)
+  true
+rescue Errno::ESRCH
+  false
+end
+
+def create_agent(base_url)
+  uri = URI("#{base_url}/agents")
+  request = Net::HTTP::Post.new(uri)
+  request["Content-Type"] = "application/json"
+  request.body = JSON.generate(
+    project_key: "web",
+    template_key: "custom",
+    name: "Smoke Agent",
+    prompt: "Exercise Remote UI composer preservation.",
+    agent: "codex"
+  )
+  response = Net::HTTP.start(uri.hostname, uri.port) { |http| http.request(request) }
+  raise "Failed to create smoke agent: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
+
+  JSON.parse(response.body).fetch("agent").fetch("key")
+end
+
+def chrome_path
+  explicit = ENV["CHROME_PATH"].to_s
+  return explicit unless explicit.empty?
+
+  candidates = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+  ]
+  candidates.find { |path| File.executable?(path) }
+end
+
+def ensure_browser_prerequisites!
+  raise "node is required for Remote UI smoke checks" unless system("node", "--version", out: File::NULL, err: File::NULL)
+  raise "npm is required for Remote UI smoke checks" unless system("npm", "--version", out: File::NULL, err: File::NULL)
+
+  browser = chrome_path
+  raise "Chrome/Chromium is required; set CHROME_PATH to the browser executable" unless browser
+
+  browser
+end
+
+def install_playwright!(node_dir)
+  FileUtils.mkdir_p(node_dir)
+  package_json = File.join(node_dir, "package.json")
+  File.write(package_json, JSON.generate("private" => true, "dependencies" => {}))
+  command = [
+    "npm", "install",
+    "--prefix", node_dir,
+    "--no-audit",
+    "--fund=false",
+    "--ignore-scripts",
+    "playwright"
+  ]
+  out, err, status = Open3.capture3(*command)
+  return if status.success?
+
+  raise "Failed to install Playwright for Remote UI smoke check:\n#{out}\n#{err}"
+end
+
+def write_smoke_script(path)
+  File.write(path, <<~JS)
+    const { chromium } = require("playwright");
+
+    async function main() {
+      const baseUrl = process.env.TYCHO_REMOTE_UI_URL;
+      const agentKey = process.env.TYCHO_REMOTE_UI_AGENT_KEY;
+      const chromePath = process.env.CHROME_PATH;
+      const draft = "Remote UI smoke draft " + Date.now();
+      const errors = [];
+
+      const browser = await chromium.launch({ executablePath: chromePath, headless: true });
+      const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      page.on("console", (message) => {
+        if (message.type() === "error") errors.push(message.text());
+      });
+      page.on("pageerror", (error) => errors.push(error.message));
+
+      try {
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
+        await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+        await page.fill("#prompt-input", draft);
+        await page.evaluate(async () => {
+          if (typeof refresh !== "function") throw new Error("refresh function is unavailable");
+          await refresh({ force: true, forceConversation: true });
+        });
+        await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+
+        const value = await page.locator("#prompt-input").inputValue();
+        if (value !== draft) throw new Error(`Composer draft was not preserved: ${JSON.stringify(value)}`);
+
+        const dockBox = await page.locator("[data-agent-dock]").boundingBox();
+        if (!dockBox || dockBox.y + dockBox.height > 844) {
+          throw new Error(`Agent dock is outside mobile viewport: ${JSON.stringify(dockBox)}`);
+        }
+
+        if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
+        console.log("remote-ui-smoke: ok");
+      } finally {
+        await browser.close();
+      }
+    }
+
+    main().catch((error) => {
+      console.error(error);
+      process.exit(1);
+    });
+  JS
+end
+
+browser = ensure_browser_prerequisites!
+
+Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
+  fixture = write_fixture(dir)
+  port = free_port
+  base_url = "http://127.0.0.1:#{port}"
+  log_path = File.join(dir, "remote-server.log")
+  env = {
+    "TYCHO_CONFIG_PATH" => fixture.fetch(:config_path),
+    "TYCHO_SYSTEM_PROMPTS_PATH" => fixture.fetch(:prompts_path),
+    "TYCHO_SCHEDULES_PATH" => fixture.fetch(:schedules_path),
+    "TYCHO_LOGS_ROOT" => fixture.fetch(:logs_dir),
+    "TYCHO_REMOTE_TOKEN" => ""
+  }
+
+  @server_pid = Process.spawn(
+    env,
+    RbConfig.ruby, "bin/tycho", "serve", "--host", "127.0.0.1", "--port", port.to_s,
+    chdir: ROOT,
+    out: [log_path, "w"],
+    err: %i[child out],
+    pgroup: true
+  )
+
+  begin
+    wait_for_health(base_url, log_path)
+    agent_key = create_agent(base_url)
+    node_dir = File.join(dir, "node")
+    install_playwright!(node_dir)
+    script = File.join(node_dir, "remote-ui-smoke.js")
+    write_smoke_script(script)
+
+    smoke_env = {
+      "TYCHO_REMOTE_UI_URL" => base_url,
+      "TYCHO_REMOTE_UI_AGENT_KEY" => agent_key,
+      "CHROME_PATH" => browser
+    }
+    command = ["node", script]
+    out, err, status = Open3.capture3(smoke_env, *command, chdir: node_dir)
+    puts out unless out.empty?
+    warn err unless err.empty?
+    exit(status.exitstatus || 1) unless status.success?
+  ensure
+    if @server_pid && process_alive?(@server_pid)
+      Process.kill("TERM", -@server_pid)
+      Process.wait(@server_pid)
+    end
+  end
+end

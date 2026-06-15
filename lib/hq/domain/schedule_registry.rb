@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
-require "fileutils"
 require "time"
 require "yaml"
 
 require_relative "constants"
+require_relative "file_store"
 
 module HQ
   class CronExpression
@@ -243,8 +243,7 @@ module HQ
     end
 
     def write_yaml(data)
-      FileUtils.mkdir_p(File.dirname(@path))
-      File.write(@path, YAML.dump(data))
+      FileStore.write_yaml(@path, data)
     end
 
     def schedule_entry_from_attrs(attrs, existing: nil, key: nil)

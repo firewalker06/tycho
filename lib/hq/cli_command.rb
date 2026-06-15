@@ -7,6 +7,7 @@ require "dry/cli"
 require "lipgloss"
 
 require_relative "domain/app_project"
+require_relative "domain/file_store"
 require_relative "domain/kamal_action"
 require_relative "domain/scheduler"
 require_relative "domain/agent_store"
@@ -1052,7 +1053,7 @@ module HQ
     def load_actions
       return {} unless File.exist?(ACTIONS_FILE)
 
-      JSON.parse(File.read(ACTIONS_FILE)).each_with_object({}) do |hash, actions|
+      FileStore.read_json(ACTIONS_FILE, fallback: []).each_with_object({}) do |hash, actions|
         action = KamalAction.from_hash(hash)
         actions[action.project_key] = action
       end
@@ -1062,7 +1063,7 @@ module HQ
     end
 
     def save_actions(actions)
-      File.write(ACTIONS_FILE, JSON.pretty_generate(actions.values.map(&:to_hash)))
+      FileStore.write_json(ACTIONS_FILE, actions.values.map(&:to_hash))
     end
 
     def usage(error = nil, err: $stderr)

@@ -9,6 +9,7 @@ module HQ
     ROOT = File.expand_path("remote_ui", __dir__)
     TEMPLATE_PATH = File.join(ROOT, "templates", "index.html.erb")
     CSS_PATH = File.join(ROOT, "assets", "app.css")
+    HELPERS_JS_PATH = File.join(ROOT, "assets", "app_helpers.js")
     JS_PATH = File.join(ROOT, "assets", "app.js")
     LOGO_PATH = File.join(ROOT, "assets", "tycho-logo.png")
     HORIZONTAL_LOGO_PATH = File.join(ROOT, "assets", "tycho-logo-horizontal.png")
@@ -28,6 +29,7 @@ module HQ
     ASSET_VERSION_PATHS = [
       TEMPLATE_PATH,
       CSS_PATH,
+      HELPERS_JS_PATH,
       JS_PATH,
       SERVICE_WORKER_PATH,
       *PNG_ASSETS.values
@@ -54,6 +56,10 @@ module HQ
 
     def self.js
       File.read(JS_PATH)
+    end
+
+    def self.helpers_js
+      File.read(HELPERS_JS_PATH)
     end
 
     def self.service_worker_js

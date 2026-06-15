@@ -1954,9 +1954,43 @@ module RemoteServerTest
            "expected split diff file bodies to avoid per-file vertical scroll limits")
     assert(css[:body].include?(".diff-scope-switch"),
            "expected Remote UI to style Git diff scope toggles")
+    helper_request = HQ::RemoteServer.const_get(:Request).new(
+      method: "GET",
+      path: "/ui-helpers.js",
+      headers: {},
+      body: ""
+    )
+    assert(server.send(:ui_request?, helper_request), "expected /ui-helpers.js to be recognized as a UI route")
+    assert(response[:body].match?(%r{src="/ui-helpers\.js\?v=[0-9a-f]{12}"}),
+           "expected root helper JavaScript reference to be asset-versioned")
+    assert(response[:body].index("/ui-helpers.js") < response[:body].index("/ui.js"),
+           "expected Remote UI helpers to load before the main application script")
+    helpers_js = server.send(:route_ui, "/ui-helpers.js")
+    assert(helpers_js[:content_type].include?("javascript"), "expected /ui-helpers.js to return JavaScript")
+    assert(helpers_js[:body].include?("TychoRemoteHelpers"),
+           "expected Remote UI helper asset to expose the helper namespace")
+    assert(helpers_js[:body].include?("function compareAgentsBySort"),
+           "expected agent sort comparators to live in the helper asset")
+    assert(helpers_js[:body].include?("function parseRoute") &&
+           helpers_js[:body].include?("function routeHash") &&
+           helpers_js[:body].include?("function routeStateKey"),
+           "expected Remote UI route helpers to live in the helper asset")
+    assert(helpers_js[:body].include?("function elementStateKey") &&
+           helpers_js[:body].include?("function controlState") &&
+           helpers_js[:body].include?("function safeLocalStorageGet"),
+           "expected Remote UI form preservation primitives to live in the helper asset")
+    assert(helpers_js[:body].include?("function markdownHeadingSlug") &&
+           helpers_js[:body].include?("function decodeHashFragment"),
+           "expected Remote UI Markdown anchor primitives to live in the helper asset")
+    assert(helpers_js[:body].include?("function attachmentHref") &&
+           helpers_js[:body].include?("function attachmentTarget") &&
+           helpers_js[:body].include?("function attachmentBlobPath"),
+           "expected Remote UI attachment target primitives to live in the helper asset")
     js = server.send(:route_ui, "/ui.js")
     assert(js[:content_type].include?("javascript"), "expected /ui.js to return JavaScript")
     assert(js[:body].include?("DEFAULT_REFRESH_INTERVALS"), "expected UI JavaScript to define refresh defaults")
+    assert(js[:body].include?("window.TychoRemoteHelpers"),
+           "expected the main Remote UI script to use the helper namespace")
     assert(js[:body].include?('updateViaCache: "none"'),
            "expected service worker registration to bypass browser caches")
     assert(js[:body].include?("function resetRemoteCaches"),
@@ -2042,11 +2076,11 @@ module RemoteServerTest
            "expected Settings More menu to preserve open state across same-route refreshes")
     assert(js[:body].include?("headerMoreBadge"),
            "expected header More menus to expose a discoverability badge")
-    assert(js[:body].include?("function parseBackToRoute"),
+    assert(helpers_js[:body].include?("function parseBackToRoute"),
            "expected Project routes to parse return crumbs")
-    assert(js[:body].include?("function routeBackQuery"),
+    assert(helpers_js[:body].include?("function routeBackQuery"),
            "expected Project routes to serialize return crumbs")
-    assert(js[:body].include?('const route = { type: "projectDiff"'),
+    assert(helpers_js[:body].include?('const route = { type: "projectDiff"'),
            "expected Project diff routes to be parsed")
     assert(js[:body].include?("function ensureProjectDiff"),
            "expected Remote UI to load project Git diffs from the API")
@@ -2064,7 +2098,7 @@ module RemoteServerTest
            "expected Conversation settings to be available from the More menu")
     assert(js[:body].include?("Open project"),
            "expected Conversation More menu project navigation to use a verb label")
-    assert(js[:body].include?('back_to=${encodeURIComponent(value)}'),
+    assert(helpers_js[:body].include?('back_to=${encodeURIComponent(value)}'),
            "expected Project links opened from agents to carry a back_to crumb")
     assert(js[:body].include?("function setAgentSettings"), "expected Agent metadata to move into header settings")
     assert(js[:body].include?('id="agent-model" name="model"'),
@@ -2191,7 +2225,7 @@ module RemoteServerTest
            "expected Project More menu to expose edit navigation")
     assert(js[:body].include?('label: "See diff"') && js[:body].include?("function navigateProjectDiff"),
            "expected More menus to expose Project diff navigation")
-    assert(js[:body].include?('return { type: "projectForm", key: parts[1] };'),
+    assert(helpers_js[:body].include?('return { type: "projectForm", key: parts[1] };'),
            "expected Remote UI to parse Project edit routes")
     assert(js[:body].include?("function renderProjectForm"),
            "expected Remote UI to render Project edit forms")
@@ -2338,7 +2372,7 @@ module RemoteServerTest
            "expected polling snapshots to preserve page scroll on same-route renders")
     assert(js[:body].include?('data-preserve-scroll data-state-key="agent-attachment:${escapeAttr(id)}"'),
            "expected embedded attachment viewers to preserve their split-pane scroll position")
-    assert(js[:body].include?("function controlScrollFor"),
+    assert(helpers_js[:body].include?("function controlScrollFor"),
            "expected polling snapshots to preserve prompt textarea scroll offsets")
     assert(js[:body].include?("function restorePageScroll"),
            "expected polling renders to restore PR diff and conversation page scroll")
@@ -2409,7 +2443,7 @@ module RemoteServerTest
            "expected Attachment rows and detail to support deleting attachments")
     assert(js[:body].include?("function attachmentRefreshAvailable"),
            "expected Attachment detail to show refresh only when runtime content is newer")
-    assert(js[:body].include?("content_mtime"),
+    assert(helpers_js[:body].include?("content_mtime"),
            "expected Attachment refresh detection to compare source freshness metadata")
     assert(js[:body].include?("data-refresh-attachment"),
            "expected Attachment detail to expose a refresh action")
@@ -2493,13 +2527,13 @@ module RemoteServerTest
            "expected Attachment navigation to mark the current attachment")
     assert(js[:body].include?("function attachmentViewerHtml"),
            "expected Attachment viewer markup to be reusable inside Agent detail")
-    assert(js[:body].include?('return { type: "agentAttachment", key: parts[1], attachmentId: parts[3] };'),
+    assert(helpers_js[:body].include?('return { type: "agentAttachment", key: parts[1], attachmentId: parts[3] };'),
            "expected Remote UI to support in-agent attachment routes")
-    assert(js[:body].include?('return { type: "agentSummary", key: parts[1], summaryId: parts[3] || "" };'),
+    assert(helpers_js[:body].include?('return { type: "agentSummary", key: parts[1], summaryId: parts[3] || "" };'),
            "expected Remote UI to support in-agent Summary routes")
-    assert(js[:body].include?('const suffix = route.summaryId ? `/${encodeURIComponent(route.summaryId)}` : "";'),
+    assert(helpers_js[:body].include?('const suffix = route.summaryId ? `/${encodeURIComponent(route.summaryId)}` : "";'),
            "expected Remote UI to generate in-agent Summary route hashes")
-    assert(js[:body].include?('routeHash({ type: "agentAttachment", key: agentKey, attachmentId: id })'),
+    assert(helpers_js[:body].include?('routeHash({ type: "agentAttachment", key: agentKey, attachmentId: id })'),
            "expected document attachments to open inside the owning Agent detail")
     assert(js[:body].include?("function formDraftRouteKey"),
            "expected composer drafts to survive switching between conversation and attachment views")
@@ -2521,9 +2555,9 @@ module RemoteServerTest
            "expected Remote UI to render fetched image blobs through object URLs")
     assert(js[:body].include?('class="attachment-image-viewer"'),
            "expected Remote UI to render image attachments as images")
-    assert(js[:body].include?('const path = `/attachments/${encodeURIComponent(id)}/blob`;'),
+    assert(helpers_js[:body].include?('const path = `/attachments/${encodeURIComponent(id)}/blob`;'),
            "expected Remote UI to load images from the attachment blob route")
-    assert(js[:body].include?('return { type: "attachment", id: parts[1] };'),
+    assert(helpers_js[:body].include?('return { type: "attachment", id: parts[1] };'),
            "expected Remote UI to support #attachment/:id routes")
     assert(js[:body].include?("function renderMarkdown"),
            "expected markdown attachments to render as markdown")
@@ -2549,7 +2583,7 @@ module RemoteServerTest
            "expected markdown rendering to sanitize parsed HTML with DOMPurify")
     assert(js[:body].include?("function renderPlainTextMarkdown"),
            "expected markdown rendering to fall back to escaped plain text")
-    assert(js[:body].include?('routeHash({ type: "attachment", id })'),
+    assert(helpers_js[:body].include?('routeHash({ type: "attachment", id })'),
            "expected document attachments to open the attachment viewer")
     assert(js[:body].include?('target="_blank" rel="noreferrer"'),
            "expected link attachments to open in a new tab")
@@ -2575,7 +2609,7 @@ module RemoteServerTest
            "expected Agent detail to keep user and assistant messages visible")
     assert(js[:body].include?('block?.kind === "run_summary"'),
            "expected Agent detail to keep legacy run summary rendering compatible")
-    assert(js[:body].include?("summaryId: parts[3] || \"\""),
+    assert(helpers_js[:body].include?("summaryId: parts[3] || \"\""),
            "expected Agent detail summary routes to support per-summary pages")
     assert(js[:body].include?("data-open-agent-summary-id"),
            "expected run summary rows to open their own full summary")
@@ -2638,9 +2672,9 @@ module RemoteServerTest
            "expected Markdown hash links to preserve the attachment route")
     assert(js[:body].include?('const TOP_TABS = ["now", "agents", "settings"];'),
            "expected Remote UI to simplify top-level tabs")
-    assert(js[:body].include?('if (parts[0] === "search" || parts[0] === "projects") return { type: "tab", tab: "agents" };'),
+    assert(helpers_js[:body].include?('if (parts[0] === "search" || parts[0] === "projects") return { type: "tab", tab: "agents" };'),
            "expected legacy Search and Projects hashes to land on Agents")
-    assert(js[:body].include?('return "#settings/hidden";'),
+    assert(helpers_js[:body].include?('return "#settings/hidden";'),
            "expected Hidden settings to use the Settings route")
     assert(js[:body].include?('setHeader("Settings"'),
            "expected Setup screen to be labeled Settings")
@@ -2648,7 +2682,7 @@ module RemoteServerTest
            "expected Agents tab to render project groups in sorted order")
     assert(js[:body].include?("function compareAgentProjectKeys"),
            "expected Agents tab group sorting to compare project display names")
-    assert(js[:body].include?("function compareAgentsByName"),
+    assert(helpers_js[:body].include?("function compareAgentsByName"),
            "expected Agents tab to sort agents alphabetically within each project group")
     assert(js[:body].include?("projectMatches(project, query)"),
            "expected Agents tab filtering to match project fields")

@@ -3,6 +3,7 @@
 require "json"
 
 require_relative "constants"
+require_relative "file_store"
 
 module HQ
   class PushNotificationStore
@@ -34,17 +35,15 @@ module HQ
     private
 
     def events
-      return [] unless File.exist?(@path)
-
-      parsed = JSON.parse(File.read(@path))
+      parsed = FileStore.read_json(@path, fallback: [])
       parsed.is_a?(Array) ? parsed : []
-    rescue StandardError
+    rescue StandardError => e
+      HQ.logger.warn("Push") { "Failed to load push notifications from #{@path}: #{e.class} - #{e.message}" }
       []
     end
 
     def write(events)
-      FileUtils.mkdir_p(File.dirname(@path))
-      File.write(@path, JSON.pretty_generate(events))
+      FileStore.write_json(@path, events)
     end
   end
 end

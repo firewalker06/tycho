@@ -5,6 +5,7 @@ require "digest"
 require "web_push"
 
 require_relative "constants"
+require_relative "file_store"
 require_relative "push_subscription_store"
 
 module HQ
@@ -180,8 +181,8 @@ module HQ
     end
 
     def persisted_vapid_keys
-      if File.exist?(@vapid_path)
-        parsed = JSON.parse(File.read(@vapid_path))
+      parsed = FileStore.read_json(@vapid_path, fallback: nil)
+      if parsed.is_a?(Hash)
         return {
           public_key: parsed["public_key"].to_s,
           private_key: parsed["private_key"].to_s
@@ -194,8 +195,7 @@ module HQ
         "private_key" => key.private_key,
         "created_at" => Time.now.utc.iso8601
       }
-      FileUtils.mkdir_p(File.dirname(@vapid_path))
-      File.write(@vapid_path, JSON.pretty_generate(payload))
+      FileStore.write_json(@vapid_path, payload)
       { public_key: payload["public_key"], private_key: payload["private_key"] }
     rescue StandardError => e
       HQ.logger.warn("Push") { "Failed to load VAPID keys: #{e.class} - #{e.message}" }
