@@ -2084,6 +2084,8 @@ module RemoteServerTest
            "expected Project diff routes to be parsed")
     assert(js[:body].include?("function ensureProjectDiff"),
            "expected Remote UI to load project Git diffs from the API")
+    assert(js[:body].include?("ensureProjectDiff(route.key, route.scope, options.forceProjectDiff || options.force)"),
+           "expected polling to preserve loaded project Git diffs unless refresh is explicit")
     assert(js[:body].include?("function renderProjectDiff"),
            "expected Remote UI to render project Git diffs")
     assert(js[:body].include?('/git/diff?scope='),
@@ -2380,6 +2382,14 @@ module RemoteServerTest
            "expected PR diff files to open by default")
     assert(js[:body].include?("const expand = state.prDiffExpandAll[key] === false"),
            "expected PR diff collapse-all control to toggle from the open default")
+    assert(js[:body].include?("state.projectDiffExpandAll[diffKey] !== false"),
+           "expected local project diff files to open by default")
+    assert(js[:body].include?("data-toggle-project-diff-expand-all"),
+           "expected local project diff views to expose a collapse-all control")
+    assert(js[:body].include?("const expand = state.projectDiffExpandAll[key] === false"),
+           "expected local project diff collapse-all control to toggle from the open default")
+    assert(js[:body].include?("toggleProjectDiffExpandAllButton.innerHTML"),
+           "expected local project diff collapse-all control to update in place without rerendering")
     assert(js[:body].include?("function syncPreservedOpenState"),
            "expected restored floating controls to update related button state")
     assert(js[:body].include?("const discovered = state.skills"),
