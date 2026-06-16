@@ -1794,6 +1794,8 @@ module RemoteServerTest
            "expected chat message content to allow markdown blocks to shrink inside the viewport")
     assert(css[:body].include?(".message-markdown-viewer"),
            "expected assistant and legacy summary chat markdown to have compact message styling")
+    assert(!css[:body].include?(".message.user .block-menu-popover"),
+           "expected user message action menus to keep the shared inward alignment")
     assert(css[:body].include?(".agent-summary-markdown-viewer"),
            "expected Agent summary markdown to use focused page styling")
     assert(css[:body].include?("font-weight: 700"),
@@ -2372,6 +2374,8 @@ module RemoteServerTest
            "expected polling snapshots to preserve scroll positions for restored controls")
     assert(js[:body].include?("pageScroll"),
            "expected polling snapshots to preserve page scroll on same-route renders")
+    assert(js[:body].include?('class="agent-detail-pane" aria-label="${escapeAttr(detailKind)}" data-preserve-scroll'),
+           "expected split workspace detail panes to preserve local diff scroll across polling")
     assert(js[:body].include?('data-preserve-scroll data-state-key="agent-attachment:${escapeAttr(id)}"'),
            "expected embedded attachment viewers to preserve their split-pane scroll position")
     assert(helpers_js[:body].include?("function controlScrollFor"),

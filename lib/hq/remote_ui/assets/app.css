@@ -2354,11 +2354,6 @@ select {
   padding: 6px;
 }
 
-.message.user .block-menu-popover {
-  right: auto;
-  left: 0;
-}
-
 .message-attachments {
   display: grid;
   gap: 6px;
