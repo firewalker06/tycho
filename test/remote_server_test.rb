@@ -633,6 +633,7 @@ module RemoteServerTest
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
       )
       notes = "# Prompt Notes\n\nUse this as uploaded context.\n"
+      binary_bytes = "\x00\x01tycho-binary-payload".b
 
       result = service.submit_prompt(
         created[:key],
@@ -649,12 +650,17 @@ module RemoteServerTest
             "mime_type" => "text/markdown",
             "kind" => "document",
             "content_base64" => Base64.strict_encode64(notes)
+          },
+          {
+            "filename" => "payload.custom",
+            "mime_type" => "application/octet-stream",
+            "content_base64" => Base64.strict_encode64(binary_bytes)
           }
         ]
       )
 
       uploads = result[:agent][:attachments].select { |attachment| attachment["source"] == "remote_upload" }
-      assert(uploads.length == 2, "expected uploaded prompt attachments in the agent payload")
+      assert(uploads.length == 3, "expected uploaded prompt attachments in the agent payload")
       assert(uploads.all? { |attachment| attachment["id"].start_with?("att_") },
              "expected uploaded prompt attachments to keep generated IDs")
       assert(uploads.all? { |attachment| attachment["type"] == "file" },
@@ -664,7 +670,7 @@ module RemoteServerTest
       assert(uploads.all? { |attachment| File.file?(attachment["path"]) },
              "expected uploaded prompt attachments to be written under the agent asset store")
       conversation_message = result[:conversation].find { |block| block[:kind] == "message" && block[:role] == "user" }
-      assert(conversation_message.dig(:metadata, "attachments").length == 2,
+      assert(conversation_message.dig(:metadata, "attachments").length == 3,
              "expected conversation messages to expose uploaded attachment metadata")
 
       document = service.attachment(uploads.find { |item| item["title"] == "prompt-notes.md" }["id"])
@@ -673,6 +679,11 @@ module RemoteServerTest
       assert(image["blob_path"].end_with?("/blob"), "expected uploaded image to expose a blob path")
       blob = service.attachment_blob(image["id"])
       assert(blob[:body] == image_bytes, "expected uploaded image blob to be served unchanged")
+      binary = service.attachment(uploads.find { |item| item["title"] == "payload.custom" }["id"])
+      assert(binary["format"] == "binary", "expected arbitrary uploaded files to use download-only binary handling")
+      assert(!binary.key?("content"), "expected arbitrary binary uploads not to expose preview content")
+      binary_blob = service.attachment_blob(binary["id"])
+      assert(binary_blob[:body] == binary_bytes, "expected arbitrary uploaded file blobs to be served unchanged")
 
       saved_agent = HQ::AgentStore.new(registry.projects).load.find { |agent| agent.key == created[:key] }
       prompt_context = HQ::AgentMemory.new(saved_agent).latest_user_message_after(Time.at(0))
@@ -2501,6 +2512,8 @@ module RemoteServerTest
            "expected Agent detail composer to expose a file picker trigger")
     assert(js[:body].include?("data-prompt-attachment-input"),
            "expected Agent detail composer to include a hidden file input")
+    assert(!js[:body].include?("accept="),
+           "expected Agent detail composer file input to allow any file type")
     assert(js[:body].include?("content_base64"),
            "expected Remote UI prompt attachments to submit base64 file content")
     assert(js[:body].include?("function renderMessageAttachments"),
@@ -2555,6 +2568,8 @@ module RemoteServerTest
            "expected focused composer drafts to be saved before attachment route switches")
     assert(js[:body].include?("Loading file preview..."),
            "expected attachment views to avoid rendering empty content before preview data loads")
+    assert(!js[:body].include?("Preview unavailable for this file."),
+           "expected unsupported attachment formats to render download actions instead of preview messaging")
     assert(js[:body].include?("function renderAgentViewToggle"),
            "expected Agent detail attachment view to expose icon-only conversation switching")
     assert(js[:body].include?("data-open-agent"),
