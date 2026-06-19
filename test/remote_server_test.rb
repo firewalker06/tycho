@@ -1656,8 +1656,10 @@ module RemoteServerTest
            "expected root shell to render the Remote UI logo")
     assert(response[:body].include?('aria-controls="unread-agents-panel"'),
            "expected root shell logo to control the unread agents panel")
+    assert(response[:body].include?('aria-label="Open agent switcher"'),
+           "expected root shell logo to be clickable as an agent switcher")
     assert(response[:body].include?('id="unread-agents-panel"'),
-           "expected root shell to expose the unread agents popup")
+           "expected root shell to expose the agent switcher popup")
     assert(response[:body].include?('id="growl"'),
            "expected root shell to expose growl notifications")
     assert(response[:body].include?("pull-refresh-spinner ui-icon"),
@@ -1984,6 +1986,8 @@ module RemoteServerTest
            "expected Remote UI helper asset to expose the helper namespace")
     assert(helpers_js[:body].include?("function compareAgentsBySort"),
            "expected agent sort comparators to live in the helper asset")
+    assert(helpers_js[:body].include?("function compareQuickSwitchAgents"),
+           "expected quick switch agent ordering to live in the helper asset")
     assert(helpers_js[:body].include?("function parseRoute") &&
            helpers_js[:body].include?("function routeHash") &&
            helpers_js[:body].include?("function routeStateKey"),
@@ -2329,6 +2333,12 @@ module RemoteServerTest
     assert(js[:body].include?("function brandLogoHtml"), "expected HQ header mark to render the Remote UI logo")
     assert(js[:body].include?("function unreadAgents"),
            "expected the Remote UI to compute unread agents for the logo popup")
+    assert(js[:body].include?("function quickSwitchAgents"),
+           "expected the Remote UI logo popup to include all agents")
+    assert(js[:body].include?("function compareQuickSwitchAgents"),
+           "expected the Remote UI logo popup to sort unread agents first")
+    assert(js[:body].include?("REMOTE_HELPERS.compareQuickSwitchAgents"),
+           "expected the Remote UI logo popup to use the shared quick switch ordering")
     assert(js[:body].include?("function syncAppBadge"),
            "expected the Remote UI to sync unread agents to the PWA app badge")
     assert(js[:body].include?("navigator.setAppBadge"),
@@ -2342,9 +2352,11 @@ module RemoteServerTest
     assert(js[:body].include?("ipad-standalone"),
            "expected iPad standalone detection to toggle the header spacing class")
     assert(js[:body].include?("function toggleUnreadPanel"),
-           "expected the Remote UI logo to toggle an unread agents popup")
+           "expected the Remote UI logo to toggle an agent switcher popup")
+    assert(js[:body].include?('navigate({ type: "tab", tab: "now" })'),
+           "expected a second Remote UI logo click to navigate to Now")
     assert(js[:body].include?("function renderUnreadAgentsPanel"),
-           "expected unread agents to render in a header popup")
+           "expected agents to render in a header popup")
     assert(js[:body].include?('classList.toggle("unread-panel-open"'),
            "expected the Remote UI logo to track the open unread popup state")
     assert(js[:body].include?("els.mark.addEventListener(\"click\", toggleUnreadPanel)"),
@@ -2353,7 +2365,7 @@ module RemoteServerTest
            "expected the unread popup outside-click guard to survive logo re-rendering during clicks")
     assert(js[:body].include?("eventPathIncludes(event, els.mark)"),
            "expected the unread popup click guard to use the original event path for the logo")
-    assert(js[:body].include?("els.mark.innerHTML = brandLogoHtml(count);"),
+    assert(js[:body].include?("els.mark.innerHTML = brandLogoHtml(unreadCount);"),
            "expected the Remote UI header mark to stay on the brand logo with unread state")
     assert(!js[:body].include?("function markHtml"),
            "expected page-specific icons to stay out of the header brand mark")

@@ -34,7 +34,7 @@
             <span class="sr-only">Back</span>
           </button>
           <div class="identity">
-            <button id="header-mark" class="header-mark" type="button" aria-label="No unread agents" title="No unread agents" aria-expanded="false" aria-controls="unread-agents-panel">
+            <button id="header-mark" class="header-mark" type="button" aria-label="Open agent switcher" title="Open agent switcher" aria-expanded="false" aria-controls="unread-agents-panel">
               <img class="brand-logo" src="/remote-logo.png?v=<%= HQ::RemoteUI.asset_version %>" alt="">
             </button>
             <div class="title-block">
@@ -62,7 +62,7 @@
             <button id="save-token-button" type="button">Save</button>
           </div>
         </form>
-        <section id="unread-agents-panel" class="unread-agents-panel hidden" aria-label="Unread agents"></section>
+        <section id="unread-agents-panel" class="unread-agents-panel hidden" aria-label="Agent switcher"></section>
         <section id="header-more-panel" class="header-more-panel hidden" aria-label="More actions"></section>
         <section id="agent-settings-panel" class="agent-settings-panel hidden" aria-label="Conversation settings"></section>
       </header>
