@@ -1860,6 +1860,8 @@ module RemoteServerTest
     assert(css[:body].include?("overflow-wrap: anywhere"),
            "expected rendered markdown inline code to avoid horizontal page overflow")
     assert(css[:body].include?(".skill-flyout"), "expected skills to use a floating picker")
+    assert(css[:body].include?(".skill-autocomplete"), "expected prompt skill autocomplete to use a floating picker")
+    assert(css[:body].include?(".skill-autocomplete-action"), "expected skill autocomplete commands to have distinct styling")
     assert(css[:body].include?("min-height: min(180px, 42dvh)"),
            "expected the skill picker to show multiple skills before scrolling")
     assert(css[:body].include?(".agent-running-indicator"),
@@ -2287,6 +2289,22 @@ module RemoteServerTest
     assert(js[:body].include?("apiPatch"),
            "expected Remote UI to update agents through the API")
     assert(js[:body].include?("function toggleSkillFlyout"), "expected Insert Skill to use a floating slash picker")
+    assert(js[:body].include?("function refreshSkillAutocomplete"),
+           "expected Remote UI to provide prompt skill autocomplete")
+    assert(js[:body].include?("function ensureSkillsForProject"),
+           "expected Remote UI autocomplete to load skills for form project/harness pairs")
+    assert(js[:body].include?("skillAutocompleteToken(control, trigger)"),
+           "expected Remote UI autocomplete to replace the active trigger token")
+    assert(js[:body].include?("event.key === \"Enter\" || event.key === \"Tab\""),
+           "expected Remote UI autocomplete to support keyboard selection")
+    assert(js[:body].include?("data-skill-autocomplete-rescan"),
+           "expected Remote UI autocomplete to expose a re-scan command")
+    assert(js[:body].include?("ensureSkillsForProject(active.projectKey, active.harness, { force: true })"),
+           "expected Remote UI autocomplete re-scan to refresh the skill cache")
+    assert(js[:body].include?("function restoreSkillAutocompleteAfterRender"),
+           "expected Remote UI autocomplete to persist across polling renders")
+    assert(js[:body].include?("scrollSkillAutocompleteHighlightIntoView"),
+           "expected Remote UI autocomplete arrows to scroll the highlighted item into view")
     assert(js[:body].include?("!event.target.closest(\"[data-skill-flyout]\")"),
            "expected Skill flyout to close when clicking outside it")
     assert(js[:body].include?("agentIsRunning(agent)"),

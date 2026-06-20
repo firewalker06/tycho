@@ -3491,6 +3491,51 @@ select {
   text-align: left;
 }
 
+.skill-autocomplete {
+  position: fixed;
+  z-index: 80;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  max-height: min(180px, 42dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  background: var(--panel);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.38);
+}
+
+.skill-autocomplete button {
+  justify-content: start;
+  width: 100%;
+  min-height: 34px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.skill-autocomplete button.active,
+.skill-autocomplete button:hover {
+  border-color: var(--accent);
+  background: rgba(139, 233, 253, 0.12);
+}
+
+.skill-autocomplete-action {
+  margin-top: 4px;
+  border-top-color: var(--border) !important;
+  color: var(--muted) !important;
+}
+
+.skill-autocomplete-empty {
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
 .send-row {
   justify-content: space-between;
 }
