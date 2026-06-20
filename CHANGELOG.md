@@ -4,6 +4,34 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.6.0 - 2026-06-20
+
+### Notable Releases
+
+- Add persisted Remote UI server switching for configured `remote_servers`,
+  including backend proxy routes, selected-server persistence, and peer health
+  display. (#39)
+- Add Remote UI skill autocomplete and a quick agent switcher for faster chat
+  composition and agent navigation. (#38)
+- Show run summaries in Remote UI conversations and allow any Remote UI
+  attachment file type.
+- Improve source-checkout execution by loading the local Bundler context from
+  `bin/tycho`. (#34)
+
+### Others
+
+- Preserve Remote UI scroll positions, menus, embedded attachment scroll, and
+  local diff scroll controls across polling refreshes.
+- Fix summary attachment menu behavior.
+- Split managed-agent command building, structured result normalization, and
+  shared Remote UI helpers into focused modules.
+- Add a throwaway Remote UI smoke script for browser checks against temp config
+  and log roots.
+- Add semantic `name` attributes to Remote UI form controls while preserving
+  existing labels and ARIA behavior. (#37)
+- Read and write FileStore JSON/YAML content as UTF-8 so persisted state remains
+  readable when Ruby's default external encoding is ASCII.
+
 ## 0.5.0 - 2026-06-13
 
 ### Notable Releases

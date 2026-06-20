@@ -13,6 +13,7 @@ module FileStoreTest
     assert_write_json_creates_backup_and_replaces_atomically
     assert_write_yaml_creates_backup_and_replaces_atomically
     assert_read_json_recovers_from_backup
+    assert_read_json_handles_utf8_when_external_encoding_is_ascii
     puts "file_store_test: ok"
   end
 
@@ -58,6 +59,22 @@ module FileStoreTest
 
       recovered = HQ::FileStore.read_json(path, fallback: [])
       assert(recovered == [{ "key" => "backup" }], "expected invalid primary JSON to recover from backup")
+    end
+  end
+
+  def assert_read_json_handles_utf8_when_external_encoding_is_ascii
+    Dir.mktmpdir("hq-file-store-test") do |dir|
+      path = File.join(dir, "state.json")
+      File.binwrite(path, JSON.pretty_generate([{ "name" => "Let’s implement autocomplete" }]))
+
+      previous_external = Encoding.default_external
+      Encoding.default_external = Encoding::US_ASCII
+      loaded = HQ::FileStore.read_json(path, fallback: [])
+
+      assert(loaded == [{ "name" => "Let’s implement autocomplete" }],
+             "expected UTF-8 JSON to load when default external encoding is US-ASCII")
+    ensure
+      Encoding.default_external = previous_external if previous_external
     end
   end
 

@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-06-13
+2026-06-20
 
 ## Strategic Direction
 
@@ -66,11 +66,12 @@ Key references:
 
 ## Current Focus
 
-**v0.5.0 release**: Tycho's current release focus is Remote UI schedule
-management, in-app project and PR diff review, Quick Agent creation,
-managed-agent CLI controls, and Remote UI polling/readability refinements. After
-release, the next focus is stabilizing install/update paths through Homebrew
-checks and continuing browser/TUI smoke verification.
+**v0.6.0 release**: Tycho's current release packages Remote UI multiserver
+switching, skill autocomplete, quick agent switching, run summary visibility,
+attachment handling, source-checkout boot fixes, and Remote UI state
+preservation. After release, the next focus is formalizing specs, stabilizing
+install/update paths through Homebrew checks, and continuing browser/TUI smoke
+verification.
 
 ## Roadmap
 
@@ -120,7 +121,7 @@ checks and continuing browser/TUI smoke verification.
 - [x] Connection-reused, tightened-timeout health checks
 - [x] Global `ctrl-g` terminal shortcut; `ctrl-r` HQ restart
 
-### v0.6 — [Current]: Agent UX Polish and Stabilize
+### v0.6 — Agent UX Polish and Stabilize ✓
 
 - [x] Project git info surfaced in agent detail
 - [x] Managed-agent unread-state fixes
@@ -129,9 +130,12 @@ checks and continuing browser/TUI smoke verification.
 - [x] Project’s icon statuses, similar to Agent’s icon statuses
 - [x] Omnisearch floating fuzzy finder for agents and projects
 - [x] Agent chat attachments from structured output (`ctrl+a` floating panel)
-- [ ] Formalize specs
+- [x] Remote UI multiserver switching for configured `remote_servers`
+- [x] Remote UI skill autocomplete and quick agent switching
+- [x] Remote UI run summaries, broader attachments, and state preservation fixes
+- [x] Source-checkout `bin/tycho` Bundler boot fix
 
-### v0.7 — [Current]: Open Source Readiness
+### v0.7 — Open Source Readiness ✓
 
 - [x] Add MIT license, README, contributing guide, code of conduct, security policy, changelog, issue templates, PR template, and CI workflow
 - [x] Add `bin/test` as the public CI-equivalent test runner
@@ -146,6 +150,12 @@ checks and continuing browser/TUI smoke verification.
 - [x] Add README screenshots for TUI and Remote UI workflows
 
 ## Features Candidates
+
+### Release Hardening
+
+- [ ] Formalize specs
+- [ ] Stabilize install/update paths through Homebrew checks
+- [ ] Continue browser/TUI smoke verification
 
 ### Model And Effort Arguments
 
