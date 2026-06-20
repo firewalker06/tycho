@@ -12,7 +12,7 @@ module HQ
     def read_json(path, fallback:)
       return fallback unless File.exist?(path)
 
-      JSON.parse(File.read(path))
+      JSON.parse(read_text(path))
     rescue StandardError => e
       if (backup = read_backup_json(path))
         log_warning("Recovered #{path} from backup after #{e.class}: #{e.message}")
@@ -36,7 +36,7 @@ module HQ
       temp_path = "#{path}.tmp-#{$PROCESS_ID}-#{SecureRandom.hex(6)}"
 
       File.open(temp_path, File::WRONLY | File::CREAT | File::EXCL, 0o600) do |file|
-        file.write(content.to_s)
+        file.write(content.to_s.encode(Encoding::UTF_8))
         file.flush
         file.fsync
       end
@@ -57,10 +57,14 @@ module HQ
       backup = backup_path(path)
       return nil unless File.exist?(backup)
 
-      JSON.parse(File.read(backup))
+      JSON.parse(read_text(backup))
     rescue StandardError => e
       log_warning("Failed to read backup #{backup}: #{e.class} - #{e.message}")
       nil
+    end
+
+    def read_text(path)
+      File.read(path, mode: "r:UTF-8")
     end
 
     def copy_backup(path)
