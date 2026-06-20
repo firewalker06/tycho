@@ -732,6 +732,7 @@ h3 {
 }
 
 .token-row input,
+.server-connection-grid input,
 .search-box input,
 select,
 textarea {
@@ -742,6 +743,75 @@ textarea {
   background: var(--bg);
   color: var(--text);
   padding: 10px 12px;
+}
+
+.server-connection-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.server-form-heading span,
+.server-connection-grid label span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.server-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.server-section-label > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.server-section-label .inline-icon-button span {
+  color: inherit;
+  font-size: inherit;
+}
+
+.server-form-heading {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.server-connection-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 0.45fr) minmax(0, 1fr) minmax(0, 0.6fr);
+}
+
+.server-connection-grid label {
+  display: grid;
+  gap: 6px;
+}
+
+.server-connection-actions,
+.server-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.server-row-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.server-connection-actions {
+  justify-content: flex-end;
+}
+
+@media (max-width: 640px) {
+  .server-connection-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 #prompt-input {
@@ -1482,6 +1552,14 @@ select {
   display: grid;
   min-width: 0;
   gap: 2px;
+}
+
+.detail-row > .server-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .card-copy {

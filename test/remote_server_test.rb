@@ -34,6 +34,11 @@ module RemoteServerTest
     assert_remote_welcome_onboarding_creates_project
     assert_remote_setup_warns_when_public_url_has_no_token
     assert_remote_server_restart_route_schedules_restart
+    assert_remote_broker_lists_configured_servers
+    assert_remote_broker_proxies_configured_server_requests
+    assert_remote_broker_proxies_loopback_peer_requests
+    assert_remote_server_persists_added_servers
+    assert_remote_server_allows_tailnet_ad_hoc_servers
     assert_server_detects_unauthenticated_non_loopback_bind
     assert_remote_push_subscription_lifecycle
     assert_remote_agent_push_notifications
@@ -1460,6 +1465,324 @@ module RemoteServerTest
     end
   end
 
+  def assert_remote_broker_lists_configured_servers
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      File.write(config_path, <<~YAML)
+        remote_servers:
+          - key: office-mac
+            name: Office Mac
+            url: http://office-mac.example.test:7373/
+            token_env: TYCHO_OFFICE_MAC_TOKEN
+        projects:
+          - key: web
+            name: Web
+            path: #{workspace}
+            apps: false
+      YAML
+      File.write(prompts_path, "custom: Default prompt for %{project_key}.\n")
+      registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
+      service = HQ::RemoteService.new(registry: registry, server_url: "http://127.0.0.1:7373")
+      server = HQ::RemoteServer.new
+
+      response = server.send(:route, service, "GET", "/servers", {}, nil)
+      servers = response.dig(:body, :servers)
+
+      assert(servers.map { |item| item[:key] } == %w[local office-mac],
+             "expected broker server list to include local and configured remotes")
+      assert(servers.first[:local] == true && servers.first[:healthy] == true,
+             "expected local broker server to be marked healthy")
+      remote = servers.last
+      assert(remote[:name] == "Office Mac", "expected configured remote display name")
+      assert(remote[:url] == "http://office-mac.example.test:7373",
+             "expected configured remote URL to be normalized")
+      assert(remote[:auth_configured] == false,
+             "expected missing token env to avoid exposing credentials as configured")
+    end
+  end
+
+  def assert_remote_broker_proxies_configured_server_requests
+    old_token = ENV["TYCHO_REMOTE_TARGET_TOKEN"]
+    ENV["TYCHO_REMOTE_TARGET_TOKEN"] = "target-secret"
+    requests = []
+    handler = lambda do |request|
+      requests << request
+      case [request[:method], request[:path]]
+      when ["GET", "/health"]
+        {
+          status: 200,
+          content_type: "application/json",
+          body: JSON.generate(status: "ok", node: "target")
+        }
+      when ["POST", "/agents/web-agent-1/messages"]
+        {
+          status: 200,
+          content_type: "application/json",
+          body: JSON.generate(
+            agent: { key: "web-agent-1", name: "Remote Agent" },
+            echoed_query: request[:query],
+            echoed_body: JSON.parse(request[:body])
+          )
+        }
+      when ["GET", "/attachments/image/blob"]
+        {
+          status: 200,
+          content_type: "image/png",
+          body: "png-bytes".b,
+          headers: { "X-Content-Type-Options" => "nosniff" }
+        }
+      when ["GET", "/unauthorized"]
+        {
+          status: 401,
+          content_type: "application/json",
+          body: JSON.generate(error: "Unauthorized")
+        }
+      else
+        {
+          status: 404,
+          content_type: "application/json",
+          body: JSON.generate(error: "missing #{request[:path]}")
+        }
+      end
+    end
+    with_fixture_http_server(handler) do |target_url|
+      with_remote_temp_store do |dir|
+        workspace = File.join(dir, "workspace")
+        write_project_workspace(workspace)
+        config_path = File.join(dir, "hq.yml")
+        prompts_path = File.join(dir, "system_prompts.yml")
+        File.write(config_path, <<~YAML)
+          remote_servers:
+            - key: target
+              name: Target
+              url: #{target_url}
+              token_env: TYCHO_REMOTE_TARGET_TOKEN
+          projects:
+            - key: web
+              name: Web
+              path: #{workspace}
+              apps: false
+        YAML
+        File.write(prompts_path, "custom: Default prompt for %{project_key}.\n")
+        registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
+        service = HQ::RemoteService.new(registry: registry)
+        server = HQ::RemoteServer.new
+
+        health = server.send(:route, service, "GET", "/servers/target/health", {}, nil)
+        assert(health.dig(:body, :server, :healthy) == true, "expected target health to be proxied")
+        assert(health.dig(:body, :server, :status) == "ok", "expected target health status")
+
+        request = HQ::RemoteServer.const_get(:Request).new(
+          method: "POST",
+          path: "/servers/target/proxy/agents/web-agent-1/messages",
+          query: "force=true",
+          headers: {},
+          body: ""
+        )
+        proxied = server.send(
+          :route,
+          service,
+          "POST",
+          "/servers/target/proxy/agents/web-agent-1/messages",
+          { "prompt" => "Hello target" },
+          request
+        )
+        assert(proxied[:status] == 200, "expected broker proxy to preserve target success status")
+        assert(proxied.dig(:body, "echoed_query") == "force=true",
+               "expected broker proxy to preserve query string")
+        assert(proxied.dig(:body, "echoed_body", "prompt") == "Hello target",
+               "expected broker proxy to forward JSON request body")
+        assert(requests.last.dig(:headers, "authorization") == "Bearer target-secret",
+               "expected broker proxy to use configured target token")
+
+        blob = server.send(:route, service, "GET", "/servers/target/proxy/attachments/image/blob", {}, nil)
+        assert(blob[:content_type] == "image/png", "expected broker proxy to preserve target content type")
+        assert(blob[:body] == "png-bytes", "expected broker proxy to pass non-JSON response bodies through")
+        assert(blob.dig(:headers, "X-Content-Type-Options") == "nosniff",
+               "expected broker proxy to preserve safe blob headers")
+
+        unauthorized = server.send(:route, service, "GET", "/servers/target/proxy/unauthorized", {}, nil)
+        assert(unauthorized[:status] == 502, "expected target 401 to be mapped away from broker auth")
+        assert(unauthorized.dig(:body, :error).include?("rejected broker credentials"),
+               "expected target credential failures to be explicit")
+      end
+    end
+  ensure
+    if old_token
+      ENV["TYCHO_REMOTE_TARGET_TOKEN"] = old_token
+    else
+      ENV.delete("TYCHO_REMOTE_TARGET_TOKEN")
+    end
+  end
+
+  def assert_remote_broker_proxies_loopback_peer_requests
+    requests = []
+    handler = lambda do |request|
+      requests << request
+      case [request[:method], request[:path]]
+      when ["GET", "/health"]
+        {
+          status: 200,
+          content_type: "application/json",
+          body: JSON.generate(status: "ok", node: "loopback")
+        }
+      when ["GET", "/agents"]
+        {
+          status: 200,
+          content_type: "application/json",
+          body: JSON.generate(agents: [{ key: "peer-agent-1", name: "Peer Agent" }])
+        }
+      else
+        {
+          status: 404,
+          content_type: "application/json",
+          body: JSON.generate(error: "missing #{request[:path]}")
+        }
+      end
+    end
+
+    with_fixture_http_server(handler) do |target_url|
+      port = URI.parse(target_url).port
+      key = "loopback-#{port}"
+      with_remote_temp_store do |dir|
+        workspace = File.join(dir, "workspace")
+        write_project_workspace(workspace)
+        registry = registry_for(dir, workspace)
+        service = HQ::RemoteService.new(registry: registry)
+        server = HQ::RemoteServer.new
+
+        health = server.send(:route, service, "GET", "/servers/#{key}/health", {}, nil)
+        assert(health.dig(:body, :server, :healthy) == true, "expected loopback peer health to be proxied")
+        assert(health.dig(:body, :server, :status) == "ok", "expected loopback peer health status")
+
+        proxied = server.send(:route, service, "GET", "/servers/#{key}/proxy/agents", {}, nil)
+        assert(proxied.dig(:body, "agents", 0, "key") == "peer-agent-1",
+               "expected loopback peer API request to be proxied")
+        assert(!requests.last.fetch(:headers, {}).key?("authorization"),
+               "expected ad hoc loopback peer proxy to avoid forwarding browser authorization")
+      end
+    end
+  end
+
+  def assert_remote_server_persists_added_servers
+    requests = []
+    handler = lambda do |request|
+      requests << request
+      case [request[:method], request[:path]]
+      when ["GET", "/health"]
+        unless request.dig(:headers, "authorization") == "Bearer target-secret"
+          next({
+            status: 401,
+            content_type: "application/json",
+            body: JSON.generate(error: "Unauthorized")
+          })
+        end
+        {
+          status: 200,
+          content_type: "application/json",
+          body: JSON.generate(status: "ok", node: "persisted-peer")
+        }
+      when ["GET", "/agents"]
+        unless request.dig(:headers, "authorization") == "Bearer target-secret"
+          next({
+            status: 401,
+            content_type: "application/json",
+            body: JSON.generate(error: "Unauthorized")
+          })
+        end
+        {
+          status: 200,
+          content_type: "application/json",
+          body: JSON.generate(agents: [{ key: "peer-agent-1", name: "Peer Agent" }])
+        }
+      else
+        {
+          status: 404,
+          content_type: "application/json",
+          body: JSON.generate(error: "missing #{request[:path]}")
+        }
+      end
+    end
+
+    with_fixture_http_server(handler) do |target_url|
+      with_remote_temp_store do |dir|
+        workspace = File.join(dir, "workspace")
+        write_project_workspace(workspace)
+        config_path = File.join(dir, "hq.yml")
+        prompts_path = File.join(dir, "system_prompts.yml")
+        File.write(config_path, <<~YAML)
+          projects:
+            - key: web
+              name: Web
+              path: #{workspace}
+              apps: false
+        YAML
+        File.write(prompts_path, "custom: Default prompt for %{project_key}.\n")
+        registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
+        service = HQ::RemoteService.new(registry: registry, server_url: "http://127.0.0.1:7373")
+        server = HQ::RemoteServer.new
+
+        created = server.send(:route, service, "POST", "/servers", {
+          "name" => "tycho-peer",
+          "url" => target_url,
+          "token" => "target-secret"
+        }, nil)
+
+        assert(created[:status] == 201, "expected Remote server add route to create a persisted server")
+        assert(created.dig(:body, :server, :key) == "tycho-peer",
+               "expected persisted server key to derive from display name")
+        persisted = YAML.safe_load(File.read(config_path), aliases: true)
+        assert(persisted.dig("remote_servers", 0, "key") == "tycho-peer",
+               "expected added server to persist to hq.yml")
+        assert(persisted.dig("remote_servers", 0, "url") == target_url.sub(%r{/+\z}, ""),
+               "expected persisted server URL to be normalized")
+        assert(!persisted.dig("remote_servers", 0).key?("token"),
+               "expected UI-entered server token to stay out of hq.yml")
+        assert(!persisted.dig("remote_servers", 0).key?("token_encrypted"),
+               "expected UI-entered server token to stay out of hq.yml")
+        assert(!File.read(config_path).include?("target-secret"),
+               "expected Remote server route to avoid writing UI-entered tokens")
+        assert(requests.all? { |request| request.dig(:headers, "authorization") == "Bearer target-secret" },
+               "expected health checks to use the provided browser-local token")
+
+        proxy_request = HQ::RemoteServer.const_get(:Request).new(
+          method: "GET",
+          path: "/servers/tycho-peer/proxy/agents",
+          query: "",
+          headers: { "x-tycho-remote-server-token" => "target-secret" },
+          body: ""
+        )
+        proxied = server.send(:route, service, "GET", "/servers/tycho-peer/proxy/agents", {}, proxy_request)
+        assert(proxied.dig(:body, "agents", 0, "key") == "peer-agent-1",
+               "expected browser-local token header to authenticate broker proxy requests")
+
+        deleted = server.send(:route, service, "DELETE", "/servers/tycho-peer", {}, nil)
+        assert(deleted[:status] == 200, "expected Remote server delete route to succeed")
+        persisted_after_delete = YAML.safe_load(File.read(config_path), aliases: true)
+        assert(!persisted_after_delete.key?("remote_servers"),
+               "expected deleted server to be removed from hq.yml")
+      end
+    end
+  end
+
+  def assert_remote_server_allows_tailnet_ad_hoc_servers
+    service = HQ::RemoteService.allocate
+    service.send(:validate_ad_hoc_remote_url!, "http://vps-cd946cb7.tail952bf7.ts.net:7373")
+    service.send(:validate_ad_hoc_remote_url!, "https://vps-cd946cb7.tail952bf7.ts.net")
+
+    begin
+      service.send(:validate_ad_hoc_remote_url!, "http://example.com:7373")
+      raise "expected public ad hoc host to be rejected"
+    rescue HQ::RemoteServer::Error => e
+      assert(e.status == 400, "expected public ad hoc host rejection to return bad request")
+      assert(e.message.include?("loopback or Tailscale MagicDNS"),
+             "expected rejection to explain supported ad hoc host types")
+    end
+  end
+
   def assert_server_detects_unauthenticated_non_loopback_bind
     output = StringIO.new
     logger = Logger.new(StringIO.new)
@@ -2147,6 +2470,36 @@ module RemoteServerTest
            "expected Settings screen to display the Tycho build")
     assert(js[:body].include?("function tychoBuildLabel"),
            "expected Settings screen to format Tycho build metadata")
+    assert(js[:body].include?("data-toggle-server-form") &&
+           js[:body].include?("state.serverFormOpen ? renderAddServerForm() :") &&
+           js[:body].include?("Switch to") &&
+           js[:body].include?("data-select-server"),
+           "expected Settings server switching to use list actions and a hidden add-server form")
+    assert(!js[:body].include?("function renderServerSelect") &&
+           !js[:body].include?("data-server-select") &&
+           !js[:body].include?("Active Tycho server"),
+           "expected Settings server switching to avoid the removed dropdown")
+    assert(js[:body].include?("function renderAddServerForm") &&
+           js[:body].include?("Add server") &&
+           js[:body].include?('name="name"') &&
+           js[:body].include?('name="token"') &&
+           js[:body].include?("Remote token") &&
+           js[:body].include?("tycho-peer"),
+           "expected Settings to expose a named add-server form with token input and the 7374 peer default")
+    assert(js[:body].include?('brokerPost("/servers"') &&
+           js[:body].include?('token: String(token || "")') &&
+           js[:body].include?("SERVER_TOKENS_STORAGE_KEY") &&
+           js[:body].include?("hq.remote.serverTokens") &&
+           js[:body].include?("X-Tycho-Remote-Server-Token") &&
+           js[:body].include?("storeRemoteServerToken(server?.key, token)") &&
+           js[:body].include?("removeRemoteServerToken(value)") &&
+           js[:body].include?('brokerDelete(`/servers/${encodeURIComponent(value)}`') &&
+           !js[:body].include?("hq.remote.customServers"),
+           "expected Settings server add/remove to persist metadata through broker routes and tokens through browser storage")
+    assert(js[:body].include?("Restart the local Remote server to enable ad hoc peer switching"),
+           "expected stale broker errors to explain that the local Remote server must be restarted")
+    assert(!js[:body].include?("Connect local peer"),
+           "expected Settings to replace the URL-only peer form")
     assert(js[:body].include?('id="settings-push-notifications"'),
            "expected Settings push section to expose an in-page menu target")
     assert(js[:body].include?('data-scroll-settings-section="settings-push-notifications"'),
@@ -3061,6 +3414,80 @@ module RemoteServerTest
           kamal (2.6.1)
       rails (7.2.2)
     LOCK
+  end
+
+  def with_fixture_http_server(handler)
+    tcp = TCPServer.new("127.0.0.1", 0)
+    port = tcp.addr[1]
+    stop = false
+    thread = Thread.new do
+      until stop
+        begin
+          client = tcp.accept
+        rescue IOError, Errno::EBADF
+          break
+        end
+
+        begin
+          request = read_fixture_http_request(client)
+          response = handler.call(request)
+          write_fixture_http_response(client, response)
+        rescue StandardError => e
+          write_fixture_http_response(
+            client,
+            status: 500,
+            content_type: "application/json",
+            body: JSON.generate(error: e.message)
+          )
+        ensure
+          client&.close
+        end
+      end
+    end
+
+    yield "http://127.0.0.1:#{port}"
+  ensure
+    stop = true
+    tcp&.close
+    thread&.join(1)
+    thread&.kill if thread&.alive?
+  end
+
+  def read_fixture_http_request(client)
+    request_line = client.gets&.strip
+    method, raw_path = request_line.to_s.split(/\s+/, 3)
+    headers = {}
+    while (line = client.gets)
+      line = line.chomp
+      break if line.empty?
+
+      name, value = line.split(":", 2)
+      headers[name.to_s.downcase] = value.to_s.strip unless name.to_s.empty?
+    end
+    body = client.read(headers["content-length"].to_i).to_s
+    path, query = raw_path.to_s.split("?", 2)
+    {
+      method: method.to_s.upcase,
+      path: path.to_s,
+      query: query.to_s,
+      headers: headers,
+      body: body
+    }
+  end
+
+  def write_fixture_http_response(client, response)
+    status = response.fetch(:status)
+    body = response.fetch(:body, "").to_s
+    content_type = response.fetch(:content_type, "application/json")
+    client.write "HTTP/1.1 #{status} OK\r\n"
+    client.write "Content-Type: #{content_type}\r\n"
+    client.write "Content-Length: #{body.bytesize}\r\n"
+    response.fetch(:headers, {}).each do |name, value|
+      client.write "#{name}: #{value}\r\n"
+    end
+    client.write "Connection: close\r\n"
+    client.write "\r\n"
+    client.write body
   end
 
   def git!(workspace, *args)

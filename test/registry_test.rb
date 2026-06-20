@@ -22,6 +22,7 @@ module RegistryTest
     assert_registry_preserves_false_apps_flags
     assert_registry_resolves_hidden_groups_and_project_overrides
     assert_registry_loads_custom_claude_harnesses
+    assert_registry_persists_remote_servers
     assert_custom_harness_resolves_executable_after_env_assignments
     assert_registry_rejects_unsupported_custom_harness_adapters
     assert_agent_store_prepends_project_tool_system_prompt
@@ -107,6 +108,35 @@ module RegistryTest
       assert(reviewer.reasoning_effort == "xhigh", "expected structured prompt template to override effort")
       assert(reviewer.prompt == "Review demo at #{File.join(dir, "demo")}.",
              "expected structured prompt template to interpolate prompt text")
+    end
+  end
+
+  def assert_registry_persists_remote_servers
+    Dir.mktmpdir("hq-registry-remote-server-test") do |dir|
+      config_path = File.join(dir, "hq.yml")
+      File.write(config_path, <<~YAML)
+        projects: []
+      YAML
+
+      registry = HQ::Registry.new(path: config_path)
+      server = registry.add_remote_server!(name: "tycho-peer", url: "http://127.0.0.1:7374/")
+      persisted = YAML.safe_load(File.read(config_path), aliases: true)
+      remote = persisted.fetch("remote_servers").fetch(0)
+
+      assert(server.key == "tycho-peer", "expected remote server key to be derived from name")
+      assert(remote["key"] == "tycho-peer", "expected remote server key to persist")
+      assert(remote["name"] == "tycho-peer", "expected remote server name to persist")
+      assert(remote["url"] == "http://127.0.0.1:7374", "expected remote server URL to be normalized")
+      assert(!remote.key?("token"), "expected UI-added remote server tokens to stay out of hq.yml")
+      assert(!remote.key?("token_encrypted"), "expected UI-added remote server tokens to stay out of hq.yml")
+      assert(server.resolved_token.empty?, "expected UI-added remote server token to stay browser-local")
+      assert(registry.remote_servers.length == 1, "expected registry to reload persisted remote server")
+
+      removed = registry.remove_remote_server!("tycho-peer")
+      persisted_after_remove = YAML.safe_load(File.read(config_path), aliases: true)
+      assert(removed == "tycho-peer", "expected removed remote server key")
+      assert(!persisted_after_remove.key?("remote_servers"), "expected empty remote_servers list to be removed")
+      assert(registry.remote_servers.empty?, "expected registry remote server list to reload after removal")
     end
   end
 
