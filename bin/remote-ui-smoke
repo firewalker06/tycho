@@ -41,6 +41,14 @@ def write_fixture(dir)
   YAML
   File.write(prompts_path, "---\ncustom: \"Check the app.\"\n")
   File.write(schedules_path, "---\nschedules: []\n")
+  skill_dir = File.join(workspace, ".agents", "skills", "review")
+  FileUtils.mkdir_p(skill_dir)
+  File.write(File.join(skill_dir, "SKILL.md"), "# Review\n")
+  12.times do |index|
+    dir = File.join(workspace, ".agents", "skills", "alpha-#{index.to_s.rjust(2, "0")}")
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, "SKILL.md"), "# Alpha #{index}\n")
+  end
 
   {
     config_path: config_path,
@@ -161,9 +169,59 @@ def write_smoke_script(path)
         const value = await page.locator("#prompt-input").inputValue();
         if (value !== draft) throw new Error(`Composer draft was not preserved: ${JSON.stringify(value)}`);
 
+        await page.fill("#prompt-input", "$rev");
+        await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
+        if (!(await page.locator("[data-skill-autocomplete-rescan]").isVisible())) {
+          throw new Error("Skill autocomplete re-scan command was not visible");
+        }
+        await page.evaluate(async () => {
+          if (typeof refresh !== "function") throw new Error("refresh function is unavailable");
+          await refresh({ force: true, forceConversation: true });
+        });
+        await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
+        const stillAutocompleting = await page.locator("#prompt-input").inputValue();
+        if (stillAutocompleting !== "$rev") {
+          throw new Error(`Autocomplete draft did not survive refresh: ${JSON.stringify(stillAutocompleting)}`);
+        }
+        await page.keyboard.press("Tab");
+        const autocompletedPrompt = await page.locator("#prompt-input").inputValue();
+        if (autocompletedPrompt !== "$review ") {
+          throw new Error(`Composer skill autocomplete failed: ${JSON.stringify(autocompletedPrompt)}`);
+        }
+
+        await page.fill("#prompt-input", "$");
+        await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
+        for (let index = 0; index < 10; index += 1) await page.keyboard.press("ArrowDown");
+        const menuScrollTop = await page.locator("[data-skill-autocomplete]").evaluate((element) => element.scrollTop);
+        if (menuScrollTop <= 0) {
+          throw new Error(`Skill autocomplete did not scroll to highlighted item: ${menuScrollTop}`);
+        }
+
         const dockBox = await page.locator("[data-agent-dock]").boundingBox();
         if (!dockBox || dockBox.y + dockBox.height > 844) {
           throw new Error(`Agent dock is outside mobile viewport: ${JSON.stringify(dockBox)}`);
+        }
+
+        await page.goto(`${baseUrl}/ui#project/web/agent/new`, { waitUntil: "networkidle" });
+        await page.waitForSelector("#agent-prompt", { state: "visible", timeout: 10_000 });
+        await page.fill("#agent-prompt", "$rev");
+        await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
+        await page.keyboard.press("Tab");
+        const agentPrompt = await page.locator("#agent-prompt").inputValue();
+        if (agentPrompt !== "$review ") {
+          throw new Error(`Agent form skill autocomplete failed: ${JSON.stringify(agentPrompt)}`);
+        }
+
+        await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
+        await page.waitForSelector("#quick-agent-fab:not(.hidden)", { state: "visible", timeout: 10_000 });
+        await page.click("#quick-agent-fab");
+        await page.waitForSelector("#quick-agent-prompt", { state: "visible", timeout: 10_000 });
+        await page.fill("#quick-agent-prompt", "$rev");
+        await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
+        await page.keyboard.press("Tab");
+        const quickPrompt = await page.locator("#quick-agent-prompt").inputValue();
+        if (quickPrompt !== "$review ") {
+          throw new Error(`Quick Agent skill autocomplete failed: ${JSON.stringify(quickPrompt)}`);
         }
 
         if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
