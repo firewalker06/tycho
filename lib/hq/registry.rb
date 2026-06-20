@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "yaml"
+require "uri"
 require_relative "harness_registry"
 require_relative "domain/constants"
 require_relative "domain/file_store"
@@ -19,6 +20,21 @@ module HQ
     keyword_init: true
   )
   GroupConfig = Struct.new(:name, :hidden, keyword_init: true)
+  RemoteServerConfig = Struct.new(
+    :key,
+    :name,
+    :url,
+    :token,
+    :token_env,
+    keyword_init: true
+  ) do
+    def resolved_token
+      env_name = token_env.to_s.strip
+      return ENV[env_name].to_s unless env_name.empty?
+
+      token.to_s
+    end
+  end
   ProjectConfig = Struct.new(
     :key,
     :name,
@@ -41,7 +57,7 @@ module HQ
     DEFAULT_PATH = HQ.default_config_path
     DEFAULT_ARCHIVED_BASENAME = "hq.archived.yml"
 
-    attr_reader :path, :projects, :groups, :system_prompts_path, :custom_harnesses
+    attr_reader :path, :projects, :groups, :remote_servers, :system_prompts_path, :custom_harnesses
 
     def initialize(path: HQ.env_present("CONFIG_PATH", DEFAULT_PATH), system_prompts_path: nil)
       @path = File.expand_path(path)
@@ -62,6 +78,7 @@ module HQ
       @system_prompts = load_yaml(@system_prompts_path, optional: true)
       @custom_harnesses = build_custom_harnesses(data["custom_harnesses"])
       @groups = build_groups(data["groups"])
+      @remote_servers = build_remote_servers(data["remote_servers"])
       HQ.custom_harnesses = @custom_harnesses
       remove_instance_variable(:@normalized_system_prompts) if instance_variable_defined?(:@normalized_system_prompts)
       remove_instance_variable(:@system_prompt_templates) if instance_variable_defined?(:@system_prompt_templates)
@@ -333,6 +350,7 @@ module HQ
     def validate!
       validate_uniqueness!(@custom_harnesses.map(&:key), "custom harness")
       validate_uniqueness!(@projects.map(&:key), "project")
+      validate_uniqueness!(@remote_servers.map(&:key), "remote server")
       @projects.each do |project|
         raise ConfigError, "Project path is missing for #{project.key}" if project.path.to_s.empty?
         if project.agent_templates.empty?
@@ -379,6 +397,39 @@ module HQ
       end
 
       built_templates.sort_by { |template| [template.name.downcase, template.key.downcase] }
+    end
+
+    def build_remote_servers(raw_servers)
+      Array(raw_servers).map do |server|
+        key = fetch_key(server, "remote server")
+        unless key.match?(/\A[a-zA-Z0-9][a-zA-Z0-9_-]*\z/)
+          raise ConfigError, "Invalid remote server key #{key.inspect}; use letters, numbers, dashes, or underscores"
+        end
+        if key == "local"
+          raise ConfigError, "Remote server key local is reserved for the current Tycho server"
+        end
+
+        url = server["url"].to_s.strip
+        raise ConfigError, "Remote server #{key} must define url" if url.empty?
+
+        parsed = URI.parse(url)
+        unless %w[http https].include?(parsed.scheme) && parsed.host
+          raise ConfigError, "Remote server #{key} url must be an http(s) URL"
+        end
+        unless parsed.userinfo.to_s.empty?
+          raise ConfigError, "Remote server #{key} url must not include credentials"
+        end
+
+        RemoteServerConfig.new(
+          key: key,
+          name: server["name"].to_s.strip.empty? ? key : server["name"].to_s.strip,
+          url: url.sub(%r{/+\z}, ""),
+          token: server["token"].to_s,
+          token_env: server["token_env"].to_s.strip
+        )
+      rescue URI::InvalidURIError => e
+        raise ConfigError, "Invalid remote server #{key.inspect} url: #{e.message}"
+      end
     end
 
     def default_template(project)

@@ -3,6 +3,7 @@
 require "digest"
 require "fileutils"
 require "json"
+require "net/http"
 require "socket"
 require "uri"
 
@@ -192,6 +193,18 @@ module HQ
       parts = path.split("/").reject(&:empty?)
 
       return ok(service.health) if method == "GET" && parts == ["health"]
+      if parts.first == "servers"
+        broker = RemoteBroker.new(registry: service.registry, server_url: service.server_url)
+        return ok(servers: broker.servers) if method == "GET" && parts == ["servers"]
+        if method == "GET" && parts.length == 3 && parts[2] == "health"
+          return ok(server: broker.health(parts[1]))
+        end
+        if parts.length >= 3 && parts[2] == "proxy"
+          proxy_path = "/#{parts.drop(3).join("/")}"
+          proxy_path = "/" if proxy_path == "/"
+          return broker.proxy(parts[1], method, proxy_path, body, request)
+        end
+      end
       return ok(agents: service.agents) if method == "GET" && parts == ["agents"]
       return created(agent: service.create_agent(body)) if method == "POST" && parts == ["agents"]
       return ok(schedules: service.schedules, daemon: service.schedule_daemon) if method == "GET" && parts == ["schedules"]
@@ -478,6 +491,204 @@ module HQ
     end
   end
 
+  class RemoteClient
+    DEFAULT_TIMEOUT = 5
+
+    def initialize(config, timeout: DEFAULT_TIMEOUT)
+      @config = config
+      @base_uri = URI.parse(config.url)
+      @timeout = timeout
+    end
+
+    def request(method, path, body: nil, query: nil)
+      uri = target_uri(path, query)
+      response = perform_request(method, uri, body)
+      response_payload(response)
+    rescue Net::OpenTimeout, Net::ReadTimeout
+      {
+        status: 504,
+        body: { error: "Remote server #{@config.key} timed out" }
+      }
+    rescue SystemCallError, IOError, SocketError, OpenSSL::SSL::SSLError => e
+      {
+        status: 502,
+        body: { error: "Remote server #{@config.key} is unreachable: #{e.message}" }
+      }
+    end
+
+    private
+
+    def target_uri(path, query)
+      target_path = path.to_s
+      target_path = "/#{target_path}" unless target_path.start_with?("/")
+      base_path = @base_uri.path.to_s.sub(%r{/+\z}, "")
+      uri = @base_uri.dup
+      uri.path = "#{base_path}#{target_path}"
+      uri.query = query.to_s.empty? ? nil : query.to_s
+      uri
+    end
+
+    def perform_request(method, uri, body)
+      request = request_for(method, uri)
+      request["Accept"] = "application/json"
+      token = @config.resolved_token
+      request["Authorization"] = "Bearer #{token}" unless token.to_s.empty?
+      if request.request_body_permitted?
+        request["Content-Type"] = "application/json"
+        request.body = JSON.generate(body || {})
+      end
+
+      Net::HTTP.start(
+        uri.hostname,
+        uri.port,
+        use_ssl: uri.scheme == "https",
+        open_timeout: @timeout,
+        read_timeout: @timeout
+      ) do |http|
+        http.request(request)
+      end
+    end
+
+    def request_for(method, uri)
+      klass = {
+        "GET" => Net::HTTP::Get,
+        "POST" => Net::HTTP::Post,
+        "PUT" => Net::HTTP::Put,
+        "PATCH" => Net::HTTP::Patch,
+        "DELETE" => Net::HTTP::Delete
+      }.fetch(method.to_s.upcase) do
+        raise RemoteServer::Error.new("Unsupported broker method: #{method}", status: 400)
+      end
+      klass.new(uri)
+    end
+
+    def response_payload(response)
+      content_type = response["content-type"].to_s
+      if response.code.to_i == 401
+        return {
+          status: 502,
+          body: { error: "Remote server #{@config.key} rejected broker credentials" }
+        }
+      end
+
+      if content_type.start_with?("application/json")
+        parsed = JSON.parse(response.body.to_s)
+        return {
+          status: response.code.to_i,
+          body: parsed.is_a?(Hash) ? parsed : { data: parsed },
+          content_type: content_type.empty? ? "application/json" : content_type
+        }
+      end
+
+      if response.code.to_i >= 400
+        return {
+          status: response.code.to_i,
+          body: { error: response.body.to_s.empty? ? response.message : response.body.to_s }
+        }
+      end
+
+      {
+        status: response.code.to_i,
+        body: response.body.to_s,
+        content_type: content_type.empty? ? "application/octet-stream" : content_type,
+        headers: proxy_response_headers(response)
+      }
+    rescue JSON::ParserError
+      {
+        status: response.code.to_i >= 400 ? response.code.to_i : 502,
+        body: { error: "Remote server #{@config.key} returned invalid JSON" }
+      }
+    end
+
+    def proxy_response_headers(response)
+      headers = {}
+      %w[cache-control x-content-type-options content-disposition].each do |name|
+        value = response[name]
+        headers[name.split("-").map(&:capitalize).join("-")] = value if value
+      end
+      headers
+    end
+  end
+
+  class RemoteBroker
+    LocalServerConfig = Struct.new(:key, :name, :url, keyword_init: true) do
+      def resolved_token
+        ""
+      end
+    end
+
+    def initialize(registry:, server_url: nil, timeout: RemoteClient::DEFAULT_TIMEOUT)
+      @registry = registry
+      @server_url = server_url.to_s
+      @timeout = timeout
+    end
+
+    def servers
+      [server_payload(local_config, local: true, healthy: true)] +
+        remote_configs.map { |config| server_payload(config, local: false) }
+    end
+
+    def health(key)
+      config = find_config!(key)
+      payload = server_payload(config, local: local_key?(key))
+      if local_key?(key)
+        payload[:healthy] = true
+        return payload
+      end
+
+      response = RemoteClient.new(config, timeout: @timeout).request("GET", "/health")
+      payload[:healthy] = response[:status].to_i.between?(200, 299)
+      payload[:status] = response.dig(:body, "status") || response.dig(:body, :status) || response[:status]
+      payload[:error] = response.dig(:body, "error") || response.dig(:body, :error) unless payload[:healthy]
+      payload
+    end
+
+    def proxy(key, method, path, body, request)
+      config = find_config!(key)
+      raise RemoteServer::Error.new("Cannot proxy to local server", status: 400) if local_key?(config.key)
+
+      RemoteClient.new(config, timeout: @timeout).request(method, path, body:, query: request&.query)
+    end
+
+    private
+
+    def remote_configs
+      Array(@registry.remote_servers)
+    end
+
+    def local_config
+      LocalServerConfig.new(
+        key: "local",
+        name: "Local",
+        url: @server_url.empty? ? nil : @server_url
+      )
+    end
+
+    def find_config!(key)
+      value = key.to_s
+      return local_config if local_key?(value)
+
+      remote_configs.find { |config| config.key == value } ||
+        raise(RemoteServer::Error.new("Unknown remote server: #{key}", status: 404))
+    end
+
+    def local_key?(key)
+      key.to_s == "local"
+    end
+
+    def server_payload(config, local:, healthy: nil)
+      payload = {
+        key: config.key,
+        name: config.name,
+        url: config.url,
+        local: local,
+        auth_configured: !config.resolved_token.to_s.empty?
+      }
+      payload[:healthy] = healthy unless healthy.nil?
+      payload
+    end
+  end
+
   class RemoteService
     ATTACHMENT_CONTENT_LIMIT = 512 * 1024
     IMAGE_CONTENT_TYPES = {
@@ -492,6 +703,8 @@ module HQ
 
     Error = RemoteServer::Error
     PROJECT_ACTIONS = %w[deploy maintenance live].freeze
+
+    attr_reader :registry, :server_url
 
     def initialize(registry: Registry.new, server_url: nil, public_url: nil, auth_required: false,
                    push_subscription_store: PushSubscriptionStore.new,
