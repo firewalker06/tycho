@@ -196,8 +196,10 @@ module HQ
       if parts.first == "servers"
         broker = RemoteBroker.new(registry: service.registry, server_url: service.server_url)
         return ok(servers: broker.servers) if method == "GET" && parts == ["servers"]
+        return created(service.add_remote_server(body)) if method == "POST" && parts == ["servers"]
+        return ok(service.remove_remote_server(parts[1])) if method == "DELETE" && parts.length == 2
         if method == "GET" && parts.length == 3 && parts[2] == "health"
-          return ok(server: broker.health(parts[1]))
+          return ok(server: broker.health(parts[1], request))
         end
         if parts.length >= 3 && parts[2] == "proxy"
           proxy_path = "/#{parts.drop(3).join("/")}"
@@ -494,10 +496,11 @@ module HQ
   class RemoteClient
     DEFAULT_TIMEOUT = 5
 
-    def initialize(config, timeout: DEFAULT_TIMEOUT)
+    def initialize(config, timeout: DEFAULT_TIMEOUT, token_override: nil)
       @config = config
       @base_uri = URI.parse(config.url)
       @timeout = timeout
+      @token_override = token_override.to_s
     end
 
     def request(method, path, body: nil, query: nil)
@@ -531,7 +534,7 @@ module HQ
     def perform_request(method, uri, body)
       request = request_for(method, uri)
       request["Accept"] = "application/json"
-      token = @config.resolved_token
+      token = @token_override.empty? ? @config.resolved_token : @token_override
       request["Authorization"] = "Bearer #{token}" unless token.to_s.empty?
       if request.request_body_permitted?
         request["Content-Type"] = "application/json"
@@ -611,6 +614,8 @@ module HQ
   end
 
   class RemoteBroker
+    LOOPBACK_PEER_KEY = /\Aloopback-(\d{1,5})\z/
+
     LocalServerConfig = Struct.new(:key, :name, :url, keyword_init: true) do
       def resolved_token
         ""
@@ -628,7 +633,7 @@ module HQ
         remote_configs.map { |config| server_payload(config, local: false) }
     end
 
-    def health(key)
+    def health(key, request = nil)
       config = find_config!(key)
       payload = server_payload(config, local: local_key?(key))
       if local_key?(key)
@@ -636,7 +641,11 @@ module HQ
         return payload
       end
 
-      response = RemoteClient.new(config, timeout: @timeout).request("GET", "/health")
+      response = RemoteClient.new(
+        config,
+        timeout: @timeout,
+        token_override: remote_server_token(request)
+      ).request("GET", "/health")
       payload[:healthy] = response[:status].to_i.between?(200, 299)
       payload[:status] = response.dig(:body, "status") || response.dig(:body, :status) || response[:status]
       payload[:error] = response.dig(:body, "error") || response.dig(:body, :error) unless payload[:healthy]
@@ -647,7 +656,11 @@ module HQ
       config = find_config!(key)
       raise RemoteServer::Error.new("Cannot proxy to local server", status: 400) if local_key?(config.key)
 
-      RemoteClient.new(config, timeout: @timeout).request(method, path, body:, query: request&.query)
+      RemoteClient.new(
+        config,
+        timeout: @timeout,
+        token_override: remote_server_token(request)
+      ).request(method, path, body:, query: request&.query)
     end
 
     private
@@ -668,12 +681,37 @@ module HQ
       value = key.to_s
       return local_config if local_key?(value)
 
-      remote_configs.find { |config| config.key == value } ||
-        raise(RemoteServer::Error.new("Unknown remote server: #{key}", status: 404))
+      configured = remote_configs.find { |config| config.key == value }
+      return configured if configured
+      return loopback_config(value) if loopback_key?(value)
+
+      raise RemoteServer::Error.new("Unknown remote server: #{key}", status: 404)
     end
 
     def local_key?(key)
       key.to_s == "local"
+    end
+
+    def loopback_key?(key)
+      match = key.to_s.match(LOOPBACK_PEER_KEY)
+      return false unless match
+
+      port = match[1].to_i
+      port.positive? && port <= 65_535
+    end
+
+    def loopback_config(key)
+      port = key.to_s.match(LOOPBACK_PEER_KEY)[1].to_i
+      LocalServerConfig.new(
+        key: key,
+        name: "Loopback #{port}",
+        url: "http://127.0.0.1:#{port}"
+      )
+    end
+
+    def remote_server_token(request)
+      value = request&.[]("X-Tycho-Remote-Server-Token").to_s
+      value.empty? ? request&.[]("x-tycho-remote-server-token").to_s : value
     end
 
     def server_payload(config, local:, healthy: nil)
@@ -727,6 +765,42 @@ module HQ
 
     def health
       { status: "ok", agents: load_agents.length, projects: visible_projects.length }
+    end
+
+    def add_remote_server(body)
+      name = body["name"].to_s.strip
+      url = body["url"].to_s.strip
+      token = body["token"].to_s
+      raise Error.new("Server name is required", status: 400) if name.empty?
+      validate_ad_hoc_remote_url!(url)
+
+      config = RemoteServerConfig.new(key: "candidate", name: name, url: url.sub(%r{/+\z}, ""), token:, token_env: "")
+      response = RemoteClient.new(config).request("GET", "/health")
+      unless response[:status].to_i.between?(200, 299)
+        detail = response.dig(:body, "error") || response.dig(:body, :error) || response[:status]
+        raise Error.new("#{name} is not healthy: #{detail}", status: 502)
+      end
+
+      stored = @registry.add_remote_server!(name:, url:)
+      broker = RemoteBroker.new(registry: @registry, server_url: @server_url)
+      health_request = token.empty? ? nil : { "X-Tycho-Remote-Server-Token" => token }
+      {
+        server: broker.health(stored.key, health_request),
+        servers: broker.servers
+      }
+    rescue ConfigError => e
+      raise Error.new(e.message, status: 400)
+    end
+
+    def remove_remote_server(key)
+      removed = @registry.remove_remote_server!(key)
+      broker = RemoteBroker.new(registry: @registry, server_url: @server_url)
+      {
+        removed: removed,
+        servers: broker.servers
+      }
+    rescue ConfigError => e
+      raise Error.new(e.message, status: e.message.start_with?("Unknown") ? 404 : 400)
     end
 
     def agents
@@ -1485,6 +1559,23 @@ module HQ
     end
 
     private
+
+    def validate_ad_hoc_remote_url!(value)
+      uri = URI.parse(value.to_s.strip)
+      unless %w[http https].include?(uri.scheme) && ad_hoc_remote_host?(uri.host) && uri.port.positive? && uri.port <= 65_535
+        raise Error.new("Ad hoc servers must use a loopback or Tailscale MagicDNS http(s) URL", status: 400)
+      end
+      raise Error.new("Remote server url must not include credentials", status: 400) unless uri.userinfo.to_s.empty?
+    rescue URI::InvalidURIError => e
+      raise Error.new("Invalid remote server url: #{e.message}", status: 400)
+    end
+
+    def ad_hoc_remote_host?(host)
+      normalized = host.to_s.downcase.delete_suffix(".")
+      return true if %w[127.0.0.1 localhost ::1].include?(normalized)
+
+      normalized.end_with?(".ts.net") || normalized.end_with?(".beta.tailscale.net")
+    end
 
     def visible_projects
       HQ::Visibility.visible_projects(@projects)

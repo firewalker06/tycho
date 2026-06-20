@@ -129,7 +129,7 @@ The top-level mobile tabs are `Now`, `Agents`, and `Settings`. Agents is the can
 
 ## Multiserver Broker
 
-One Remote UI can switch between the local `tycho serve` instance and configured peer Remote servers. The browser still talks only to the server that served the UI; that local server brokers requests to the selected peer. This avoids browser CORS and keeps peer credentials out of browser storage.
+One Remote UI can switch between the local `tycho serve` instance and configured peer Remote servers. The browser still talks only to the server that served the UI; that local server brokers requests to the selected peer. This avoids browser CORS and lets the local broker apply either server-side configured peer credentials or browser-local peer credentials.
 
 Configure peers in `~/.tycho/config/hq.yml`:
 
@@ -147,7 +147,11 @@ remote_servers:
 
 `key` must be stable and URL-safe. `url` must be an `http` or `https` base URL without embedded credentials. Prefer `token_env` over inline `token` outside local development. The synthetic `local` server is always present and cannot be redefined in config.
 
-The Settings screen shows the configured servers and the header menu can switch the active server. Top-level agents, projects, schedules, setup state, drafts, attachment previews, and mutations are scoped to the active server. There is no cross-server aggregation in this mode.
+The Settings screen shows the configured servers in a server list. Use a row's **Switch to** button to change the active server; the default **Local** server is always present. Top-level agents, projects, schedules, setup state, drafts, attachment previews, and mutations are scoped to the active server. There is no cross-server aggregation in this mode.
+
+For ad hoc peers, open Settings, use the **Add server** toggle in the **Servers** header, and enter a display name plus a loopback or Tailscale MagicDNS URL such as `tycho-peer` and `http://127.0.0.1:7374/` or `http://vps-cd946cb7.tail952bf7.ts.net:7373`. If the peer requires a bearer token, enter it in **Remote token**. The UI checks `/health`, writes the peer metadata to `remote_servers` in `~/.tycho/config/hq.yml`, reloads the registry, and switches the active server to that peer. Removing a non-local server from the list also removes it from `hq.yml`. Ad hoc UI-added peers are intentionally limited to loopback and Tailscale MagicDNS hosts; edit `remote_servers` directly for broader LAN, public, or credentialed peers.
+
+UI-entered remote tokens are not written to `hq.yml`. The browser stores them in local storage under `hq.remote.serverTokens`, keyed by server key, and sends the selected peer token to the local broker as `X-Tycho-Remote-Server-Token`. The broker uses that value only for the outgoing peer request. The UI's own bearer token remains separate under `hq.remote.token` and is sent as the normal `Authorization` header to the server that served the UI. For durable server-side peer credentials, configure `token_env` manually in `hq.yml`.
 
 Browser push notification work is tracked in [WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.md), and the current grouping, silent-notification, and PWA badge behavior is summarized in [WEB_PUSH_BEHAVIOR.md](./WEB_PUSH_BEHAVIOR.md). Push can use a Tailscale MagicDNS domain when it is served over HTTPS, preferably with Tailscale Serve or Tailscale Funnel. Plain HTTP MagicDNS URLs show a soft warning, but the UI still lets the user try enabling notifications when the browser exposes the required push APIs.
 
@@ -296,6 +300,8 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `POST` | `/push/test` | Send a test notification to an enabled subscription. |
 | `POST` | `/server/restart` | Restart the `tycho serve` Remote server process when restart is available. |
 | `GET` | `/servers` | List the local server and configured broker targets for Remote UI server switching. |
+| `POST` | `/servers` | Add or update one loopback or Tailscale MagicDNS Remote server in `remote_servers` inside `hq.yml`. |
+| `DELETE` | `/servers/{key}` | Remove one non-local Remote server from `remote_servers` inside `hq.yml`. |
 | `GET` | `/servers/{key}/health` | Read broker-visible health for one local or configured remote server. |
 | `GET` / `POST` / `PUT` / `PATCH` / `DELETE` | `/servers/{key}/proxy/{path}` | Forward an API request to one configured remote server. |
 | `GET` | `/projects` | List active projects with health, latency, agent counts, and action state. |
@@ -312,6 +318,8 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `GET` | `/search` | Return agent and project payloads for compatibility with older client-side search flows. |
 | `GET` | `/`, `/ui`, `/ui.css`, `/ui.js` | Serve the Remote UI. `/ui` remains a compatibility alias. |
 | `GET` | `/favicon.svg`, `/favicon.ico` | Serve the Remote UI favicon. |
+
+For `/servers/{key}/health` and `/servers/{key}/proxy/{path}`, the browser may send `X-Tycho-Remote-Server-Token` when the selected peer token lives in browser local storage. The broker converts it to the peer request's `Authorization: Bearer ...` header and does not persist it.
 
 ## Endpoint Details
 
