@@ -2501,8 +2501,14 @@ module RemoteServerTest
            js[:body].include?("saveRemoteServerToken") &&
            js[:body].include?("brokerGetWithHeaders") &&
            js[:body].include?("Remote token saved for this browser") &&
-           js[:body].include?("Token needed here"),
+           js[:body].include?("Token needed here") &&
+           js[:body].include?("function renderActiveServerTokenRecovery") &&
+           js[:body].include?("Remote token required"),
            "expected Settings to let existing remote servers save a browser-local token")
+    assert(css[:body].include?(".remote-server-list-item > .detail-row > .server-row-actions") &&
+           css[:body].include?("grid-template-columns: repeat(3, minmax(0, 1fr))") &&
+           css[:body].include?(".remote-server-list-item .server-row-actions .inline-icon-button span"),
+           "expected remote server row actions to fit small screens")
     assert(js[:body].include?("Restart the local Remote server to enable ad hoc peer switching"),
            "expected stale broker errors to explain that the local Remote server must be restarted")
     assert(!js[:body].include?("Connect local peer"),
