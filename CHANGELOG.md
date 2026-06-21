@@ -4,6 +4,16 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.6.1 - 2026-06-21
+
+### Bug Fixes
+
+- Add a Remote UI token re-authentication path for existing remote servers, so
+  another browser or device can save the peer token locally after switching to a
+  token-protected server. (#42)
+- Show a token recovery prompt when the active remote server rejects broker
+  credentials and tidy compact server-row actions on small screens. (#43)
+
 ## 0.6.0 - 2026-06-20
 
 ### Notable Releases
