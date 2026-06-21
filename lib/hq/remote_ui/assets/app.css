@@ -755,6 +755,10 @@ textarea {
 .server-token-form {
   display: grid;
   gap: 10px;
+  margin-top: 10px;
+}
+
+.server-list-item .server-token-form {
   margin: 0 12px 12px 46px;
 }
 
@@ -774,6 +778,15 @@ textarea {
 .server-list-item {
   display: grid;
   gap: 0;
+}
+
+.server-list-item > .detail-row {
+  align-items: start;
+}
+
+.server-list-item .chip {
+  width: max-content;
+  margin-top: 4px;
 }
 
 .server-section-label > div {
@@ -829,6 +842,34 @@ textarea {
 @media (max-width: 640px) {
   .server-connection-grid {
     grid-template-columns: 1fr;
+  }
+
+  .remote-server-list-item > .detail-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .remote-server-list-item > .detail-row > .server-row-actions {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .remote-server-list-item .server-row-actions .inline-icon-button {
+    justify-content: center;
+    min-width: 0;
+    padding-inline: 8px;
+  }
+
+  .remote-server-list-item .server-row-actions .inline-icon-button span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .remote-server-list-item .server-token-form {
+    margin-left: 0;
+    margin-right: 0;
   }
 }
 
