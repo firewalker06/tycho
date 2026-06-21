@@ -2496,6 +2496,13 @@ module RemoteServerTest
            js[:body].include?('brokerDelete(`/servers/${encodeURIComponent(value)}`') &&
            !js[:body].include?("hq.remote.customServers"),
            "expected Settings server add/remove to persist metadata through broker routes and tokens through browser storage")
+    assert(js[:body].include?("data-toggle-server-token-form") &&
+           js[:body].include?("function renderServerTokenForm") &&
+           js[:body].include?("saveRemoteServerToken") &&
+           js[:body].include?("brokerGetWithHeaders") &&
+           js[:body].include?("Remote token saved for this browser") &&
+           js[:body].include?("Token needed here"),
+           "expected Settings to let existing remote servers save a browser-local token")
     assert(js[:body].include?("Restart the local Remote server to enable ad hoc peer switching"),
            "expected stale broker errors to explain that the local Remote server must be restarted")
     assert(!js[:body].include?("Connect local peer"),
