@@ -733,6 +733,7 @@ h3 {
 
 .token-row input,
 .server-connection-grid input,
+.server-token-form input,
 .search-box input,
 select,
 textarea {
@@ -751,8 +752,15 @@ textarea {
   margin-top: 14px;
 }
 
+.server-token-form {
+  display: grid;
+  gap: 10px;
+  margin: 0 12px 12px 46px;
+}
+
 .server-form-heading span,
-.server-connection-grid label span {
+.server-connection-grid label span,
+.server-token-form label span {
   color: var(--muted);
   font-size: 13px;
 }
@@ -761,6 +769,11 @@ textarea {
   display: grid;
   gap: 8px;
   margin-top: 12px;
+}
+
+.server-list-item {
+  display: grid;
+  gap: 0;
 }
 
 .server-section-label > div {
@@ -788,6 +801,11 @@ textarea {
 }
 
 .server-connection-grid label {
+  display: grid;
+  gap: 6px;
+}
+
+.server-token-form label {
   display: grid;
   gap: 6px;
 }
