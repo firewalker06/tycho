@@ -512,6 +512,8 @@ module RemoteServerTest
       assert(image_attachment["blob_path"].end_with?("/blob"), "expected image attachments to expose a blob route")
       image_blob = service.attachment_blob(image_attachment["id"])
       assert(image_blob[:content_type] == "image/png", "expected image blob route to preserve image MIME type")
+      assert(image_blob.dig(:headers, "Content-Disposition").include?('filename="screenshot.png"'),
+             "expected image blob route to expose a download filename")
       assert(image_blob.dig(:headers, "X-Content-Type-Options") == "nosniff",
              "expected image blob route to prevent MIME sniffing")
       assert(image_blob[:body].bytes.first(8) == image_bytes.bytes.first(8),
@@ -2991,6 +2993,13 @@ module RemoteServerTest
            "expected Remote UI to fetch authenticated image blobs")
     assert(js[:body].include?("function apiBlob"),
            "expected Remote UI to support non-JSON attachment blob responses")
+    assert(js[:body].include?("function downloadAttachmentFile"),
+           "expected Remote UI to download attachments through authenticated fetch")
+    assert(js[:body].include?("data-download-attachment"),
+           "expected Remote UI attachment download controls to opt into authenticated downloads")
+    assert(js[:body].include?("event.preventDefault();") &&
+           js[:body].include?("downloadAttachmentButton.dataset.downloadAttachment"),
+           "expected Remote UI attachment download clicks to avoid unauthenticated navigation")
     assert(js[:body].include?("URL.createObjectURL"),
            "expected Remote UI to render fetched image blobs through object URLs")
     assert(js[:body].include?('class="attachment-image-viewer"'),

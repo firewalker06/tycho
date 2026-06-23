@@ -1051,6 +1051,7 @@ module HQ
         content_type: attachment_content_type(attachment, path),
         headers: {
           "Cache-Control" => "private, max-age=60",
+          "Content-Disposition" => "attachment; filename=\"#{http_quoted_filename(File.basename(path))}\"",
           "X-Content-Type-Options" => "nosniff"
         },
         body: File.binread(path)
@@ -2488,6 +2489,11 @@ module HQ
 
     def attachment_content_type(attachment, path)
       attachment["mime_type"].to_s.strip.empty? ? AttachmentNormalizer.mime_type_for_path(path) : attachment["mime_type"].to_s
+    end
+
+    def http_quoted_filename(value)
+      name = value.to_s.empty? ? "attachment" : value.to_s
+      name.gsub(/[\\"]/, "_").gsub(/[\x00-\x1f\x7f]/, "_")
     end
 
     def cleanup_uploaded_attachment_file(agent, attachment)
