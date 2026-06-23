@@ -1909,16 +1909,31 @@ module RemoteServerTest
   def assert_remote_skills_payload_uses_discovery
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
+      old_home = ENV["HOME"]
+      home = File.join(dir, "home")
+      ENV["HOME"] = home
       write_project_workspace(workspace)
       skill_dir = File.join(workspace, ".agents", "skills", "review")
       FileUtils.mkdir_p(skill_dir)
       File.write(File.join(skill_dir, "SKILL.md"), "# Review\n")
+      user_skill_dir = File.join(home, ".agents", "skills", "teach")
+      FileUtils.mkdir_p(user_skill_dir)
+      File.write(File.join(user_skill_dir, "SKILL.md"), "# Teach\n")
+      system_skill_dir = File.join(home, ".codex", "skills", ".system", "imagegen")
+      FileUtils.mkdir_p(system_skill_dir)
+      File.write(File.join(system_skill_dir, "SKILL.md"), "# Imagegen\n")
       registry = registry_for_project(dir, workspace, apps: true)
       service = HQ::RemoteService.new(registry: registry)
 
       payload = service.skills("web", "codex")
       assert(payload[:trigger] == "$", "expected Codex skill trigger")
       assert(payload[:skills].any? { |skill| skill["name"] == "review" }, "expected discovered skill")
+      assert(payload[:skills].any? { |skill| skill["name"] == "teach" },
+             "expected Codex discovery to include ~/.agents/skills")
+      assert(payload[:skills].any? { |skill| skill["name"] == "imagegen" },
+             "expected Codex discovery to include nested ~/.codex/skills")
+    ensure
+      ENV["HOME"] = old_home
     end
   end
 

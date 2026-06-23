@@ -982,9 +982,7 @@ def selected_screen_items
       @agent_chat_form = UI::AgentChatForm.new(agent, width: width, body_height: body_height)
       @sidebar = { kind: :agent_chat }
       agent.mark_read!
-      if agent.skills.empty?
-        refresh_skills_for_workspace!(agent)
-      end
+      refresh_skills_for_workspace!(agent)
       save_agents!
       @agent_chat_form.composer.skill_picker.skills = agent.skills
       sync_agent_chat_workspace!

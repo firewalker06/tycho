@@ -237,7 +237,7 @@ The selected agent detail panel shows:
 
 - Discovers skills from agent-appropriate locations:
   - Claude-compatible harnesses: `~/.claude/skills` and workspace `.claude/skills`.
-  - Codex: `~/.codex/skills` and workspace `.agents/skills`.
+  - Codex: `~/.codex/skills`, `~/.agents/skills`, and workspace `.agents/skills`.
 - Uses the correct trigger for each harness.
 - Opens from an empty composer when the trigger character is typed.
 - Filters and autocompletes available skills.

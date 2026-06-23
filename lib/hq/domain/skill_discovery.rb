@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "find"
+
 require_relative "../harness_registry"
 
 module HQ
@@ -13,12 +15,9 @@ module HQ
       roots.each do |root|
         next unless root && Dir.exist?(root)
 
-        Dir.children(root).sort.each do |entry|
-          dir = File.join(root, entry)
-          skill_file = File.join(dir, "SKILL.md")
-          next unless File.directory?(dir) && File.file?(skill_file)
-
-          seen[entry] = { "name" => entry, "path" => skill_file }
+        skill_files(root).each do |skill_file|
+          name = File.basename(File.dirname(skill_file))
+          seen[name] = { "name" => name, "path" => skill_file }
         end
       end
       seen.values
@@ -28,6 +27,21 @@ module HQ
 
     def trigger_for(agent_kind)
       HQ.harness_adapter(agent_kind) == "claude" ? "/" : "$"
+    end
+
+    def skill_files(root)
+      files = []
+      Find.find(root) do |path|
+        next if path == root
+        next unless File.directory?(path)
+
+        skill_file = File.join(path, "SKILL.md")
+        next unless File.file?(skill_file)
+
+        files << skill_file
+        Find.prune
+      end
+      files.sort
     end
 
     def roots_for(kind, workspace)
@@ -40,6 +54,7 @@ module HQ
       else
         [
           File.expand_path("~/.codex/skills"),
+          File.expand_path("~/.agents/skills"),
           workspace.empty? ? nil : File.join(workspace, ".agents", "skills")
         ]
       end
