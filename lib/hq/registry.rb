@@ -314,7 +314,17 @@ module HQ
           raise ConfigError, "Custom harness #{key} must define execution_command as a string or list"
         end
 
-        config = HarnessConfig.new(key: key, adapter: adapter, execution_command: execution_command)
+        version_command = harness["version_command"]
+        unless version_command.nil? || version_command.is_a?(String) || version_command.is_a?(Array)
+          raise ConfigError, "Custom harness #{key} version_command must be a string or list"
+        end
+
+        config = HarnessConfig.new(
+          key: key,
+          adapter: adapter,
+          execution_command: execution_command,
+          version_command: version_command
+        )
         if config.command_parts.empty?
           raise ConfigError, "Custom harness #{key} execution_command cannot be empty"
         end
