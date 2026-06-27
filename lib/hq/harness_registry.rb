@@ -5,21 +5,13 @@ require "shellwords"
 module HQ
   BUILTIN_HARNESSES = %w[codex claude].freeze
 
-  HarnessConfig = Struct.new(:key, :adapter, :execution_command, :version_command, keyword_init: true) do
+  HarnessConfig = Struct.new(:key, :adapter, :execution_command, keyword_init: true) do
     def command_parts
-      split_command(execution_command)
-    end
-
-    def version_command_parts
-      split_command(version_command)
-    end
-
-    def split_command(command)
-      case command
+      case execution_command
       when Array
-        command.map(&:to_s).reject(&:empty?)
+        execution_command.map(&:to_s).reject(&:empty?)
       else
-        Shellwords.split(command.to_s)
+        Shellwords.split(execution_command.to_s)
       end
     end
 

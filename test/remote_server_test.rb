@@ -1367,13 +1367,10 @@ module RemoteServerTest
 
         assert(codex[:ready] && codex[:path].end_with?("/.local/bin/codex"),
                "expected Remote setup to find fallback Codex")
-        assert(codex[:version] == "1.2.3", "expected Remote setup to expose Codex version")
-        assert(codex[:version_command].include?("codex"), "expected Codex version command metadata")
         assert(codex.key?(:model_suggestions), "expected Codex readiness to expose model suggestions")
         assert(codex.key?(:reasoning_effort_suggestions), "expected Codex readiness to expose effort suggestions")
         assert(claude[:ready] && claude[:path].end_with?("/.local/bin/claude"),
                "expected Remote setup to find fallback Claude")
-        assert(claude[:version] == "1.2.3", "expected Remote setup to expose Claude version")
         assert(claude[:reasoning_effort_suggestions].include?("low"),
                "expected Claude readiness to expose fallback effort suggestions")
         assert(mise[:ready] && mise[:path].end_with?("/.local/bin/mise"),
@@ -3587,13 +3584,7 @@ module RemoteServerTest
 
   def write_test_executable(path)
     FileUtils.mkdir_p(File.dirname(path))
-    File.write(path, <<~SH)
-      #!/bin/sh
-      if [ "$1" = "--version" ]; then
-        echo "#{File.basename(path)} 1.2.3"
-      fi
-      exit 0
-    SH
+    File.write(path, "#!/bin/sh\nexit 0\n")
     File.chmod(0o755, path)
   end
 

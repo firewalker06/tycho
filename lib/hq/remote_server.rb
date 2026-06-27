@@ -22,7 +22,6 @@ require_relative "domain/executable_resolver"
 require_relative "domain/file_store"
 require_relative "domain/git_diff"
 require_relative "domain/harness_catalog"
-require_relative "domain/harness_version"
 require_relative "domain/kamal_action"
 require_relative "domain/push_notification_store"
 require_relative "domain/push_subscription_store"
@@ -2132,9 +2131,7 @@ module HQ
     end
 
     def harness_resolver_payload(name, resolution)
-      resolver_payload(name, resolution)
-        .merge(HarnessVersion.cached_for_builtin(name, resolution:).readiness_fields)
-        .merge(HarnessCatalog.for_builtin(name, resolution))
+      resolver_payload(name, resolution).merge(HarnessCatalog.for_builtin(name, resolution))
     end
 
     def custom_harness_payload(config)
@@ -2154,8 +2151,7 @@ module HQ
         adapter: config.adapter,
         path: resolution&.path,
         source: resolution&.source
-      }.merge(HarnessVersion.cached_for_custom(config).readiness_fields)
-        .merge(HarnessCatalog.for_custom(config))
+      }.merge(HarnessCatalog.for_custom(config))
     end
 
     def executable_detail(resolution)

@@ -22,7 +22,6 @@ module ManagedAgentTest
     assert_model_and_reasoning_effort_persist_and_update
     assert_legacy_run_commands_backfill_model_and_reasoning_effort
     assert_model_and_reasoning_effort_arguments_apply_to_harnesses
-    assert_start_records_harness_version_snapshot
     assert_start_records_missing_harness_without_spawning
     assert_agent_runner_warns_when_command_cannot_execute
     puts "managed_agent_test: ok"
@@ -640,56 +639,6 @@ module ManagedAgentTest
     end
   ensure
     replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
-  end
-
-  def assert_start_records_harness_version_snapshot
-    old_logs_dir = nil
-    old_codex_bin = ENV["TYCHO_CODEX_BIN"]
-    Dir.mktmpdir("hq-harness-version-test") do |dir|
-      logs_dir = File.join(dir, "agents")
-      FileUtils.mkdir_p(logs_dir)
-      fake_codex = File.join(dir, "codex")
-      File.write(fake_codex, <<~SH)
-        #!/bin/sh
-        if [ "$1" = "--version" ]; then
-          echo "codex-cli 9.8.7"
-        fi
-        exit 0
-      SH
-      File.chmod(0o755, fake_codex)
-      ENV["TYCHO_CODEX_BIN"] = fake_codex
-      old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, logs_dir)
-
-      agent = HQ::ManagedAgent.new(
-        key: "versioned",
-        name: "Versioned",
-        project_key: "demo",
-        template_key: "custom",
-        workspace: dir,
-        prompt: "System prompt",
-        agent: "codex",
-        log_path: File.join(logs_dir, "versioned.raw.log")
-      )
-
-      assert(agent.start! == true, "expected fake Codex agent to start")
-      run = agent.last_run
-      assert(run.harness == "codex", "expected run to snapshot harness name")
-      assert(run.harness_adapter == "codex", "expected run to snapshot harness adapter")
-      assert(run.harness_version == "9.8.7", "expected run to snapshot harness version")
-      assert(run.harness_raw_version == "codex-cli 9.8.7", "expected run to keep raw version output")
-      assert(run.harness_executable_path == fake_codex, "expected run to snapshot executable path")
-      assert(run.harness_executable_source == "env", "expected run to snapshot executable source")
-
-      restored = HQ::ManagedAgent::AgentRun.from_hash(run.to_hash)
-      assert(restored.harness_version == "9.8.7", "expected harness version to round-trip")
-    end
-  ensure
-    replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
-    if old_codex_bin
-      ENV["TYCHO_CODEX_BIN"] = old_codex_bin
-    else
-      ENV.delete("TYCHO_CODEX_BIN")
-    end
   end
 
   def assert_model_and_reasoning_effort_persist_and_update
