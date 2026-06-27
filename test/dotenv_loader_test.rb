@@ -9,6 +9,8 @@ module DotenvLoaderTest
 
   def run!
     assert_loads_dotenv_without_overriding_existing_env
+    assert_load_files_preserves_env_and_allows_later_files_to_override
+    assert_default_paths_include_root_and_tycho_home
     assert_missing_file_is_empty
     puts "dotenv_loader_test: ok"
   end
@@ -38,6 +40,40 @@ module DotenvLoaderTest
       assert(env["EMPTY"] == "", "expected empty value to load")
       assert(!env.key?("NO_EQUALS"), "expected entry without equals to be ignored")
       assert(!env.key?("INVALID-NAME"), "expected invalid key to be ignored")
+    end
+  end
+
+  def assert_load_files_preserves_env_and_allows_later_files_to_override
+    Dir.mktmpdir("hq-dotenv-test") do |dir|
+      install_env = File.join(dir, "install.env")
+      user_env = File.join(dir, "user.env")
+      File.write(install_env, <<~ENV)
+        TYCHO_REMOTE_TOKEN=install-token
+        TYCHO_LOG_LEVEL=DEBUG
+      ENV
+      File.write(user_env, <<~ENV)
+        TYCHO_REMOTE_TOKEN=user-token
+        TYCHO_WEB_PUSH_VAPID_SUBJECT=mailto:user@example.com
+      ENV
+
+      env = { "TYCHO_LOG_LEVEL" => "WARN" }
+      loaded = HQ::DotenvLoader.load_files([install_env, user_env], env: env)
+
+      assert(env["TYCHO_REMOTE_TOKEN"] == "user-token", "expected later dotenv file to override earlier dotenv value")
+      assert(env["TYCHO_LOG_LEVEL"] == "WARN", "expected existing environment to beat every dotenv file")
+      assert(env["TYCHO_WEB_PUSH_VAPID_SUBJECT"] == "mailto:user@example.com", "expected user dotenv values to load")
+      assert(loaded["TYCHO_REMOTE_TOKEN"] == "user-token", "expected loaded map to show final loaded value")
+      assert(!loaded.key?("TYCHO_LOG_LEVEL"), "expected protected shell env value to stay out of loaded map")
+    end
+  end
+
+  def assert_default_paths_include_root_and_tycho_home
+    Dir.mktmpdir("hq-dotenv-test") do |dir|
+      home = File.join(dir, "home")
+      paths = HQ::DotenvLoader.default_paths(root: File.join(dir, "install"), env: { "TYCHO_HOME" => home })
+
+      assert(paths == [File.join(dir, "install", ".env"), File.join(home, ".env")],
+             "expected default dotenv paths to include install root and TYCHO_HOME")
     end
   end
 

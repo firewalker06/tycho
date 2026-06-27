@@ -7,6 +7,7 @@ require "rbconfig"
 require "base64"
 
 require_relative "../lib/hq/remote_server"
+require_relative "../lib/hq/serve_command"
 
 module RemoteServerTest
   module_function
@@ -40,6 +41,7 @@ module RemoteServerTest
     assert_remote_server_persists_added_servers
     assert_remote_server_allows_tailnet_ad_hoc_servers
     assert_server_detects_unauthenticated_non_loopback_bind
+    assert_serve_command_accepts_daemon_mode
     assert_remote_push_subscription_lifecycle
     assert_remote_agent_push_notifications
     assert_remote_search_index_includes_agents_and_projects
@@ -50,6 +52,7 @@ module RemoteServerTest
     assert_server_prints_public_url
     assert_server_prints_startup_messages
     assert_server_prints_public_url_qr
+    assert_server_daemonizes_after_startup_to_log
     assert_server_prints_request_logs
     puts "remote_server_test: ok"
   end
@@ -1364,13 +1367,10 @@ module RemoteServerTest
 
         assert(codex[:ready] && codex[:path].end_with?("/.local/bin/codex"),
                "expected Remote setup to find fallback Codex")
-        assert(codex[:version] == "1.2.3", "expected Remote setup to expose Codex version")
-        assert(codex[:version_command].include?("codex"), "expected Codex version command metadata")
         assert(codex.key?(:model_suggestions), "expected Codex readiness to expose model suggestions")
         assert(codex.key?(:reasoning_effort_suggestions), "expected Codex readiness to expose effort suggestions")
         assert(claude[:ready] && claude[:path].end_with?("/.local/bin/claude"),
                "expected Remote setup to find fallback Claude")
-        assert(claude[:version] == "1.2.3", "expected Remote setup to expose Claude version")
         assert(claude[:reasoning_effort_suggestions].include?("low"),
                "expected Claude readiness to expose fallback effort suggestions")
         assert(mise[:ready] && mise[:path].end_with?("/.local/bin/mise"),
@@ -1794,6 +1794,29 @@ module RemoteServerTest
     server = HQ::RemoteServer.new(host: "100.64.0.10", token: "", logger: logger, output: output)
 
     assert(server.send(:unauthenticated_non_loopback?), "expected tokenless non-loopback bind to be flagged")
+  end
+
+  def assert_serve_command_accepts_daemon_mode
+    captured = nil
+    out = StringIO.new
+    err = StringIO.new
+    status = HQ::ServeCommand.run(
+      ["daemon", "--host", "127.0.0.1", "--port", "7474"],
+      executable: "bin/tycho",
+      command_prefix: ["serve"],
+      out: out,
+      err: err,
+      server_starter: ->(**kwargs) { captured = kwargs }
+    )
+
+    assert(status == 0, "expected serve daemon parser to succeed")
+    assert(err.string.empty?, "expected no parser errors, got #{err.string.inspect}")
+    assert(captured.fetch(:daemonize) == true, "expected serve daemon to request daemon mode")
+    assert(captured.fetch(:explicit_host) == true, "expected explicit host to be preserved")
+    assert(captured.dig(:options, :host) == "127.0.0.1", "expected host option to be parsed")
+    assert(captured.dig(:options, :port) == 7474, "expected port option to be parsed")
+    assert(captured.fetch(:restart_command) == ["bin/tycho", "serve", "daemon", "--host", "127.0.0.1", "--port", "7474"],
+           "expected daemon restart command to preserve original argv")
   end
 
   def assert_remote_push_subscription_lifecycle
@@ -3281,6 +3304,29 @@ module RemoteServerTest
     assert(rendered.include?("▀"), "expected terminal QR half-block characters")
   end
 
+  def assert_server_daemonizes_after_startup_to_log
+    Dir.mktmpdir("hq-remote-daemon-test") do |dir|
+      output = StringIO.new
+      logger = Logger.new(StringIO.new)
+      daemonized = []
+      log_path = File.join(dir, "remote_server_daemon.log")
+      server = HQ::RemoteServer.new(
+        logger: logger,
+        output: output,
+        daemon_log_path: log_path,
+        daemonizer: ->(nochdir, noclose) { daemonized << [nochdir, noclose] }
+      )
+
+      server.send(:daemonize_after_startup!)
+
+      assert(daemonized == [[true, false]], "expected server to detach without changing cwd")
+      assert(output.string.include?("Remote server daemonizing; logs at #{log_path}"),
+             "expected startup output to show daemon log path")
+      assert(File.read(log_path).include?("Remote server daemon started with PID"),
+             "expected daemon output to continue in the daemon log")
+    end
+  end
+
   class RecordingPushNotifier
     attr_reader :payloads
 
@@ -3538,13 +3584,7 @@ module RemoteServerTest
 
   def write_test_executable(path)
     FileUtils.mkdir_p(File.dirname(path))
-    File.write(path, <<~SH)
-      #!/bin/sh
-      if [ "$1" = "--version" ]; then
-        echo "#{File.basename(path)} 1.2.3"
-      fi
-      exit 0
-    SH
+    File.write(path, "#!/bin/sh\nexit 0\n")
     File.chmod(0o755, path)
   end
 

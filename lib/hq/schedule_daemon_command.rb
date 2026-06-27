@@ -5,7 +5,7 @@ require "time"
 
 require_relative "dotenv_loader"
 
-HQ::DotenvLoader.load(File.expand_path("../.env", __dir__))
+HQ::DotenvLoader.load_defaults(root: File.expand_path("../..", __dir__))
 
 require_relative "domain/scheduler"
 

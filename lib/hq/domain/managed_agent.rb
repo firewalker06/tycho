@@ -8,7 +8,6 @@ require_relative "agent_memory"
 require_relative "agent_result_normalizer"
 require_relative "agent_structured_result"
 require_relative "executable_resolver"
-require_relative "harness_version"
 require_relative "../harness_registry"
 require_relative "../parser"
 require_relative "agent_chat_log"
@@ -50,8 +49,6 @@ module HQ
 
     AgentRun = Struct.new(
       :started_at, :finished_at, :exit_code, :status, :log_path, :command,
-      :harness, :harness_adapter, :harness_version, :harness_raw_version, :harness_version_checked_at,
-      :harness_version_command, :harness_executable_path, :harness_executable_source,
       keyword_init: true
     ) do
       def self.from_hash(hash)
@@ -61,20 +58,12 @@ module HQ
           exit_code: hash["exit_code"],
           status: hash["status"],
           log_path: hash["log_path"],
-          command: hash["command"],
-          harness: hash["harness"],
-          harness_adapter: hash["harness_adapter"],
-          harness_version: hash["harness_version"],
-          harness_raw_version: hash["harness_raw_version"],
-          harness_version_checked_at: ManagedAgent.parse_time(hash["harness_version_checked_at"]),
-          harness_version_command: hash["harness_version_command"],
-          harness_executable_path: hash["harness_executable_path"],
-          harness_executable_source: hash["harness_executable_source"]
+          command: hash["command"]
         )
       end
 
       def to_hash
-        result = {
+        {
           "started_at" => started_at&.iso8601,
           "finished_at" => finished_at&.iso8601,
           "exit_code" => exit_code,
@@ -82,17 +71,6 @@ module HQ
           "log_path" => log_path,
           "command" => command
         }
-        result["harness"] = harness unless harness.to_s.empty?
-        result["harness_adapter"] = harness_adapter unless harness_adapter.to_s.empty?
-        result["harness_version"] = harness_version unless harness_version.to_s.empty?
-        result["harness_raw_version"] = harness_raw_version unless harness_raw_version.to_s.empty?
-        unless harness_version_checked_at.nil?
-          result["harness_version_checked_at"] = harness_version_checked_at.iso8601
-        end
-        result["harness_version_command"] = harness_version_command unless harness_version_command.to_s.empty?
-        result["harness_executable_path"] = harness_executable_path unless harness_executable_path.to_s.empty?
-        result["harness_executable_source"] = harness_executable_source unless harness_executable_source.to_s.empty?
-        result
       end
     end
 
@@ -343,12 +321,10 @@ module HQ
       execution = build_command
       command = execution.fetch(:command)
       environment = execution.fetch(:env, {})
-      version_snapshot = harness_version_snapshot
       if (missing = missing_executable_for(command))
         return record_start_failure!(
           "Agent harness #{@agent.inspect} executable not found: #{missing}",
-          command,
-          version_snapshot
+          command
         )
       end
 
@@ -385,8 +361,7 @@ module HQ
         started_at: @started_at,
         status: "running",
         log_path: @log_path,
-        command: Shellwords.join(command),
-        **version_snapshot.run_fields.transform_keys(&:to_sym)
+        command: Shellwords.join(command)
       )
       @structured_result = nil
       @summary = nil
@@ -792,10 +767,6 @@ module HQ
       command_builder.build
     end
 
-    def harness_version_snapshot
-      HarnessVersion.for_agent(@agent)
-    end
-
     def missing_executable_for(command)
       executable = executable_for_preflight(command)
       return "execution command" if executable.to_s.empty?
@@ -825,7 +796,7 @@ module HQ
       end
     end
 
-    def record_start_failure!(message, command, version_snapshot)
+    def record_start_failure!(message, command)
       @started_at = Time.now
       @finished_at = @started_at
       @last_exit_code = 127
@@ -852,8 +823,7 @@ module HQ
         exit_code: @last_exit_code,
         status: "failed",
         log_path: @log_path,
-        command: Shellwords.join(command),
-        **version_snapshot.run_fields.transform_keys(&:to_sym)
+        command: Shellwords.join(command)
       )
       @structured_result = nil
       @summary = message

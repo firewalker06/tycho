@@ -14,6 +14,7 @@ require_relative "terminal_qr"
 require_relative "version"
 require_relative "domain/app_project"
 require_relative "domain/attachment_normalizer"
+require_relative "domain/constants"
 require_relative "domain/agent_attachment_store"
 require_relative "domain/agent_chat_log"
 require_relative "domain/agent_store"
@@ -21,7 +22,6 @@ require_relative "domain/executable_resolver"
 require_relative "domain/file_store"
 require_relative "domain/git_diff"
 require_relative "domain/harness_catalog"
-require_relative "domain/harness_version"
 require_relative "domain/kamal_action"
 require_relative "domain/push_notification_store"
 require_relative "domain/push_subscription_store"
@@ -38,6 +38,7 @@ module HQ
     DEFAULT_HOST = "127.0.0.1"
     DEFAULT_PORT = 7373
     AGENT_PUSH_POLL_INTERVAL = 5
+    REMOTE_DAEMON_LOG_FILE = File.join(LOGS_DIR, "remote_server_daemon.log")
     RESTART_CACHE_RESET_HEADERS = {
       "Cache-Control" => "no-store, max-age=0, must-revalidate",
       "Clear-Site-Data" => "\"cache\"",
@@ -55,7 +56,8 @@ module HQ
     end
 
     def initialize(host: DEFAULT_HOST, port: DEFAULT_PORT, public_url: nil, startup_messages: nil,
-                   restart_command: nil, token: HQ.env("REMOTE_TOKEN"), logger: HQ.logger, output: $stdout)
+                   restart_command: nil, token: HQ.env("REMOTE_TOKEN"), logger: HQ.logger, output: $stdout,
+                   daemonize_after_startup: false, daemon_log_path: REMOTE_DAEMON_LOG_FILE, daemonizer: nil)
       @host = host.to_s.empty? ? DEFAULT_HOST : host.to_s
       @port = port.to_i.positive? ? port.to_i : DEFAULT_PORT
       @public_url = public_url.to_s
@@ -64,6 +66,9 @@ module HQ
       @token = token.to_s
       @logger = logger
       @output = output
+      @daemonize_after_startup = daemonize_after_startup ? true : false
+      @daemon_log_path = daemon_log_path.to_s.empty? ? REMOTE_DAEMON_LOG_FILE : daemon_log_path.to_s
+      @daemonizer = daemonizer
     end
 
     def start
@@ -93,6 +98,7 @@ module HQ
         @output.puts(TerminalQR.render(@public_url))
         @output.flush if @output.respond_to?(:flush)
       end
+      daemonize_after_startup! if @daemonize_after_startup
 
       until @shutdown
         begin
@@ -109,6 +115,7 @@ module HQ
       end
     ensure
       server&.close unless server&.closed?
+      @daemon_log_io&.close
       @server = nil
       perform_restart! if @restart_requested
     end
@@ -174,6 +181,18 @@ module HQ
     ensure
       log_request(request, status || 500, started_at) if started_at
       client&.close
+    end
+
+    def daemonize_after_startup!
+      FileUtils.mkdir_p(File.dirname(@daemon_log_path))
+      log_server("Remote server daemonizing; logs at #{@daemon_log_path}")
+      @output.flush if @output.respond_to?(:flush)
+      daemonizer = @daemonizer || Process.method(:daemon)
+      daemonizer.call(true, false)
+      @daemon_log_io = File.open(@daemon_log_path, "ab")
+      @daemon_log_io.sync = true
+      @output = @daemon_log_io
+      log_server("Remote server daemon started with PID #{Process.pid}")
     end
 
     def poll_agent_push_notifications!
@@ -2112,9 +2131,7 @@ module HQ
     end
 
     def harness_resolver_payload(name, resolution)
-      resolver_payload(name, resolution)
-        .merge(HarnessVersion.cached_for_builtin(name, resolution:).readiness_fields)
-        .merge(HarnessCatalog.for_builtin(name, resolution))
+      resolver_payload(name, resolution).merge(HarnessCatalog.for_builtin(name, resolution))
     end
 
     def custom_harness_payload(config)
@@ -2134,8 +2151,7 @@ module HQ
         adapter: config.adapter,
         path: resolution&.path,
         source: resolution&.source
-      }.merge(HarnessVersion.cached_for_custom(config).readiness_fields)
-        .merge(HarnessCatalog.for_custom(config))
+      }.merge(HarnessCatalog.for_custom(config))
     end
 
     def executable_detail(resolution)

@@ -305,9 +305,6 @@ module RegistryTest
               - /usr/local/bin/claude-wrapper
               - --profile
               - demo
-            version_command:
-              - /usr/local/bin/claude-wrapper
-              - --version
         projects:
           - key: web
             name: Web
@@ -323,8 +320,6 @@ module RegistryTest
       assert(harness.adapter == "claude", "expected custom harness to use Claude adapter")
       assert(harness.command_parts == ["/usr/local/bin/claude-wrapper", "--profile", "demo"],
              "expected custom harness command to preserve argv parts")
-      assert(harness.version_command_parts == ["/usr/local/bin/claude-wrapper", "--version"],
-             "expected custom harness version command to preserve argv parts")
       assert(registry.projects.first.agent == "claude-wrapper",
              "expected project to accept custom harness key")
     end
