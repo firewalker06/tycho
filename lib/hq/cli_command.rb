@@ -384,7 +384,7 @@ module HQ
     ].freeze
     COMMAND_NAME = "tycho"
     RUNTIME_COMMANDS = [
-      "  #{COMMAND_NAME} serve [--host 127.0.0.1] [--port 7373]",
+      "  #{COMMAND_NAME} serve [daemon] [--host 127.0.0.1] [--port 7373]",
       "  #{COMMAND_NAME} schedule daemon [--once] [--dry-run] [--interval SECONDS]",
       "  #{COMMAND_NAME} doctor"
     ].freeze

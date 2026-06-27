@@ -4,7 +4,7 @@ require "optparse"
 
 require_relative "dotenv_loader"
 
-HQ::DotenvLoader.load(File.expand_path("../.env", __dir__))
+HQ::DotenvLoader.load_defaults(root: File.expand_path("../..", __dir__))
 
 require_relative "remote_server"
 require_relative "tailscale"
@@ -13,22 +13,29 @@ module HQ
   module ServeCommand
     module_function
 
-    def run(argv = ARGV, executable: nil, command_prefix: [], out: $stdout, err: $stderr)
+    def run(argv = ARGV, executable: nil, command_prefix: [], out: $stdout, err: $stderr, server_starter: nil)
       args = Array(argv).dup
       options = {
         host: nil,
         port: RemoteServer::DEFAULT_PORT
       }
       explicit_host = false
+      daemonize = false
       original_argv = args.dup
 
+      if args.first == "daemon"
+        daemonize = true
+        args.shift
+      end
+
       parser = OptionParser.new do |opts|
-        opts.banner = "Usage: tycho serve [--host 127.0.0.1] [--port 7373]"
+        opts.banner = "Usage: tycho serve [daemon] [--host 127.0.0.1] [--port 7373]"
         opts.on("--host HOST", "Bind host") do |host|
           explicit_host = true
           options[:host] = host
         end
         opts.on("--port PORT", Integer, "Bind port") { |port| options[:port] = port }
+        opts.on("--daemon", "Print startup details, then run in the background") { daemonize = true }
         opts.on("-h", "--help", "Show this help") do
           out.puts opts
           return 0
@@ -42,16 +49,18 @@ module HQ
         return 1
       end
 
-      start_server(
+      starter = server_starter || method(:start_server)
+      starter.call(
         options: options,
         explicit_host: explicit_host,
         restart_command: restart_command(executable, command_prefix, original_argv),
-        out: out
+        out: out,
+        daemonize: daemonize
       )
       0
     end
 
-    def start_server(options:, explicit_host:, restart_command:, out:)
+    def start_server(options:, explicit_host:, restart_command:, out:, daemonize: false)
       tailscale = explicit_host ? nil : Tailscale.detect
       tailscale_https_url = if tailscale&.https_capable?
                               Tailscale.serve_https_url(
@@ -71,7 +80,8 @@ module HQ
         public_url: public_url,
         restart_command: restart_command,
         startup_messages: startup_messages,
-        output: out
+        output: out,
+        daemonize_after_startup: daemonize
       ).start
     end
 

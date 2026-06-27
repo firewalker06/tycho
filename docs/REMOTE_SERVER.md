@@ -22,6 +22,18 @@ Start the server:
 tycho serve
 ```
 
+Start it as a background daemon after startup details and the QR code
+are printed:
+
+```bash
+tycho serve daemon
+```
+
+Daemon mode binds the server first, prints the same Remote UI URL and QR
+code, then returns control to the shell. After detaching, request and
+lifecycle lines continue in `~/.tycho/logs/remote_server_daemon.log` and
+`~/.tycho/logs/hq.log`.
+
 When Tailscale is not available, the default bind is:
 
 ```text
@@ -157,7 +169,7 @@ Browser push notification work is tracked in [WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.
 
 The Remote server polls managed-agent state while it is running and sends one push notification when an agent requires response or finishes. Agent notifications share the `hq:agents` browser notification tag so repeated agent updates replace the previous Tycho agent notification instead of piling up; input-required notifications renotify audibly, while routine finish notifications are marked silent. Agent payloads also carry the current unread-agent count so browsers with the Badging API can show the count on the installed PWA app icon. Agent notification clicks open `/#agent/{key}`.
 
-Use `.env.sample` as the template for local runtime environment values such as `TYCHO_WEB_PUSH_VAPID_SUBJECT`. Real `.env` files are gitignored, and `tycho serve` loads `.env` automatically on startup. Values already set in the process environment take precedence over `.env`; public runtime overrides use the `TYCHO_*` prefix.
+Use `.env.sample` as the template for local runtime environment values such as `TYCHO_WEB_PUSH_VAPID_SUBJECT`. Real `.env` files are gitignored. `tycho serve` loads both the install/repo `.env` and `~/.tycho/.env` automatically on startup, with `~/.tycho/.env` taking precedence over the install/repo file. Values already set in the process environment take precedence over both files; public runtime overrides use the `TYCHO_*` prefix.
 
 Auto-refresh uses polling with backoff:
 
