@@ -600,6 +600,7 @@ module RemoteServerTest
         "head_sha" => "abc1234",
         "base_sha" => "def5678",
         "fetched_at" => Time.now.iso8601,
+        "diff_format" => HQ::PullRequestDiff::DIFF_FORMAT,
         "files" => [
           {
             "path" => "lib/example.rb",

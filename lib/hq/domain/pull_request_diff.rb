@@ -15,6 +15,7 @@ require_relative "git_diff"
 module HQ
   class PullRequestDiff
     GITHUB_PR_URL = %r{\Ahttps?://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)(?:[/?#].*)?\z}i
+    DIFF_FORMAT = "github_diff_v1"
     MAX_PATCH_BYTES = 768 * 1024
 
     class Error < StandardError
@@ -83,6 +84,9 @@ module HQ
           "head_sha" => data.dig("head", "sha"),
           "base_ref" => data.dig("base", "ref"),
           "head_ref" => data.dig("head", "ref"),
+          "file_count" => data["changed_files"],
+          "additions" => data["additions"],
+          "deletions" => data["deletions"],
           "remote_updated_at" => data["updated_at"]
         }.compact
       end
@@ -90,7 +94,7 @@ module HQ
       def patch(reference)
         output = gh_output(
           "api",
-          "-H", "Accept: application/vnd.github.v3.patch",
+          "-H", "Accept: application/vnd.github.v3.diff",
           "repos/#{reference.repository}/pulls/#{reference.number}"
         )
         truncated = output.bytesize > MAX_PATCH_BYTES
@@ -198,6 +202,7 @@ module HQ
           "head_ref" => metadata["head_ref"],
           "remote_updated_at" => metadata["remote_updated_at"],
           "fetched_at" => Time.now.iso8601,
+          "diff_format" => DIFF_FORMAT,
           "files" => files,
           "file_count" => files.length,
           "additions" => files.sum { |file| file[:additions].to_i },
@@ -218,7 +223,8 @@ module HQ
 
         fresh = if metadata
                   snapshot["head_sha"].to_s == metadata["head_sha"].to_s &&
-                    snapshot["remote_updated_at"].to_s == metadata["remote_updated_at"].to_s
+                    snapshot["remote_updated_at"].to_s == metadata["remote_updated_at"].to_s &&
+                    current_snapshot?(snapshot)
                 end
         {
           "fetched_at" => snapshot["fetched_at"],
@@ -231,6 +237,10 @@ module HQ
           "truncated" => snapshot["truncated"],
           "fresh" => fresh.nil? ? nil : fresh
         }.compact
+      end
+
+      def current_snapshot?(snapshot)
+        snapshot.is_a?(Hash) && snapshot["diff_format"] == DIFF_FORMAT
       end
 
       private

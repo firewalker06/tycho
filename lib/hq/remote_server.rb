@@ -852,8 +852,11 @@ module HQ
       reference = pull_request_reference!(agent, id)
       snapshot = PullRequestDiff::Store.new.fetch(reference.id)
       raise Error.new("Pull request diff has not been fetched yet", status: 404) unless snapshot
+      return snapshot if PullRequestDiff.current_snapshot?(snapshot)
 
-      snapshot
+      PullRequestDiff::Store.new.save(PullRequestDiff.snapshot_for(reference))
+    rescue PullRequestDiff::Error => e
+      raise Error.new(e.message, status: e.status)
     end
 
     def refresh_agent_pull_request_diff(key, id)
