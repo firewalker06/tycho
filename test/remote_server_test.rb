@@ -2235,6 +2235,10 @@ module RemoteServerTest
            "expected running agents to show an animated composer status icon")
     assert(css[:body].include?(".ui-icon"), "expected shared SVG icon styling")
     assert(css[:body].include?(".header-mark .brand-logo"), "expected Remote UI logo image styling")
+    assert(css[:body].include?(".keyboard-shortcut-hint"),
+           "expected Remote UI keyboard shortcut hints to have shared styling")
+    assert(css[:body].include?(".shortcut-hints-visible .keyboard-shortcut-hint"),
+           "expected Remote UI shortcut hints to appear while the modifier key is held")
     assert(css[:body].include?(".logo-alert-badge"), "expected Remote UI logo to style an unread count badge")
     assert(css[:body].include?(".header-mark.unread-panel-open"),
            "expected Remote UI logo to highlight while the unread popup is open")
@@ -2759,6 +2763,16 @@ module RemoteServerTest
     assert(js[:body].include?("iconSvg(\"scanText\")"), "expected Summary to render a scan-text SVG icon")
     assert(js[:body].include?("iconSvg(\"folder\")"), "expected Project marks to render a folder SVG icon")
     assert(js[:body].include?("function brandLogoHtml"), "expected HQ header mark to render the Remote UI logo")
+    assert(js[:body].include?("function agentSwitcherShortcutLabel"),
+           "expected the Remote UI to label the agent switcher shortcut by platform")
+    assert(js[:body].include?('class="keyboard-shortcut-hint logo-shortcut-hint"'),
+           "expected the Remote UI logo to render the agent switcher keyboard hint")
+    assert(js[:body].include?("function setShortcutModifierActive"),
+           "expected the Remote UI to track pressed shortcut modifier keys")
+    assert(js[:body].include?('classList.toggle("shortcut-hints-visible", state.shortcutModifierActive)'),
+           "expected the Remote UI logo shortcut hint to sync through logo rerenders")
+    assert(js[:body].include?('window.addEventListener("blur", () => setShortcutModifierActive(false))'),
+           "expected Remote UI shortcut hints to clear when the window loses focus")
     assert(js[:body].include?("function unreadAgents"),
            "expected the Remote UI to compute unread agents for the logo popup")
     assert(js[:body].include?("function quickSwitchAgents"),
@@ -2781,6 +2795,14 @@ module RemoteServerTest
            "expected iPad standalone detection to toggle the header spacing class")
     assert(js[:body].include?("function toggleUnreadPanel"),
            "expected the Remote UI logo to toggle an agent switcher popup")
+    assert(js[:body].include?("function openUnreadPanelFromKeyboard"),
+           "expected the Remote UI logo switcher to open from the keyboard shortcut")
+    assert(js[:body].include?("function handleUnreadPanelKeydown"),
+           "expected the Remote UI logo switcher to support keyboard selection")
+    assert(js[:body].include?("openSelectedSwitcherAgent"),
+           "expected the Remote UI logo switcher to open the selected agent")
+    assert(js[:body].include?('event.key.toLowerCase() === "k"'),
+           "expected Cmd/Ctrl+K to trigger the Remote UI logo switcher")
     assert(js[:body].include?('navigate({ type: "tab", tab: "now" })'),
            "expected a second Remote UI logo click to navigate to Now")
     assert(js[:body].include?("function renderUnreadAgentsPanel"),
