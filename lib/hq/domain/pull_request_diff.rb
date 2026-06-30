@@ -15,7 +15,7 @@ require_relative "git_diff"
 module HQ
   class PullRequestDiff
     GITHUB_PR_URL = %r{\Ahttps?://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)(?:[/?#].*)?\z}i
-    DIFF_FORMAT = "github_diff_v1"
+    DIFF_FORMAT = "github_diff_v2"
     MAX_PATCH_BYTES = 768 * 1024
 
     class Error < StandardError
@@ -93,9 +93,9 @@ module HQ
 
       def patch(reference)
         output = gh_output(
-          "api",
-          "-H", "Accept: application/vnd.github.v3.diff",
-          "repos/#{reference.repository}/pulls/#{reference.number}"
+          "pr", "diff", reference.number.to_s,
+          "--repo", reference.repository,
+          "--color", "never"
         )
         truncated = output.bytesize > MAX_PATCH_BYTES
         output = output.byteslice(0, MAX_PATCH_BYTES).to_s if truncated

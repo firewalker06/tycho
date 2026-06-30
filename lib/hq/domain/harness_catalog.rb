@@ -32,6 +32,8 @@ module HQ
         codex_catalog(resolution)
       when "claude"
         claude_catalog(resolution)
+      when "opencode"
+        opencode_catalog(resolution)
       else
         empty_catalog
       end
@@ -108,11 +110,33 @@ module HQ
       }
     end
 
+    def opencode_catalog(resolution)
+      unless resolution&.available?
+        return {
+          model_suggestions: [],
+          reasoning_effort_suggestions: REASONING_EFFORT_ORDER,
+          catalog_source: "opencode defaults",
+          auth_providers: []
+        }
+      end
+
+      model_rows = opencode_model_rows(resolution.command)
+      source = model_rows.empty? ? "opencode models unavailable" : "opencode models"
+      {
+        model_suggestions: model_rows,
+        reasoning_effort_suggestions: REASONING_EFFORT_ORDER,
+        catalog_source: source,
+        auth_providers: opencode_auth_providers(resolution.command)
+      }
+    end
+
     def claude_help_efforts(command)
       _out, err, status = nil
       out = ""
-      Timeout.timeout(COMMAND_TIMEOUT) do
-        out, err, status = Open3.capture3(command, "--help")
+      with_quiet_open3_timeout do
+        Timeout.timeout(COMMAND_TIMEOUT) do
+          out, err, status = Open3.capture3(command, "--help")
+        end
       end
       return [] unless status.success?
 
@@ -128,14 +152,65 @@ module HQ
     def capture_json(command)
       out = ""
       status = nil
-      Timeout.timeout(COMMAND_TIMEOUT) do
-        out, _err, status = Open3.capture3(*command)
+      with_quiet_open3_timeout do
+        Timeout.timeout(COMMAND_TIMEOUT) do
+          out, _err, status = Open3.capture3(*command)
+        end
       end
       return nil unless status.success?
 
       JSON.parse(out)
     rescue StandardError
       nil
+    end
+
+    def opencode_model_rows(command)
+      out = capture_stdout([command, "models"])
+      return [] if out.to_s.empty?
+
+      out.lines.filter_map do |line|
+        text = line.strip
+        next if text.empty? || text.start_with?("Provider", "MODEL", "─", "-")
+
+        value = text.split(/\s+/).find { |part| part.include?("/") }
+        value ||= text.split(/\s+/).first
+        next if value.to_s.empty? || value == "ID"
+
+        { value: value, label: value }
+      end.uniq { |item| item[:value] }
+    end
+
+    def opencode_auth_providers(command)
+      out = capture_stdout([command, "auth", "list"])
+      return [] if out.to_s.empty?
+
+      out.lines.filter_map do |line|
+        text = line.strip
+        next if text.empty? || text.match?(/\A(provider|name)\b/i)
+
+        text.split(/\s+/).first
+      end.uniq
+    end
+
+    def capture_stdout(command)
+      out = ""
+      status = nil
+      with_quiet_open3_timeout do
+        Timeout.timeout(COMMAND_TIMEOUT) do
+          out, _err, status = Open3.capture3(*command)
+        end
+      end
+      status.success? ? out : ""
+    rescue StandardError
+      ""
+    end
+
+    def with_quiet_open3_timeout
+      previous = Thread.report_on_exception
+      Thread.report_on_exception = false
+      yield
+    ensure
+      Thread.report_on_exception = previous
     end
 
     def sort_efforts(values)

@@ -142,7 +142,7 @@ module HQ
         argument :project_key, required: true, desc: "Project key"
         argument :prompt, required: true, desc: "Initial prompt for the agent"
         option :model, desc: "Model override (e.g. claude-opus-4-5)"
-        option :harness, desc: "Agent harness override (e.g. claude, codex)"
+        option :harness, desc: "Agent harness override (e.g. claude, codex, opencode)"
         option :name, desc: "Agent name override"
         option :template, desc: "Template key to use (defaults to project's first template)"
         option :run, type: :boolean, default: false, desc: "Start the agent immediately after creating"
@@ -1006,9 +1006,7 @@ module HQ
     end
 
     def load_all_agents
-      return [] unless File.exist?(AGENTS_FILE)
-
-      JSON.parse(File.read(AGENTS_FILE)).map { |hash| ManagedAgent.from_hash(hash) }
+      agent_store_for_all.load
     rescue StandardError
       []
     end

@@ -131,7 +131,7 @@ OpenCode should also be a built-in adapter. It has a direct non-interactive `ope
 | Built-in selection in config/TUI/Remote UI/CLI | Adaptable | Low risk after registration and frontend fallback changes |
 | Detached run lifecycle, logs, stop, hooks | Adaptable | Existing process wrapper works with `opencode run` |
 | Headless live streaming | Adaptable with parser work | `opencode run --format json` provides raw JSON events, but Tycho needs captured fixtures for event names and final-message behavior |
-| Native session resume | Adaptable with verification | Use `opencode run --session <id>` after capturing the emitted session id; avoid global `--continue` |
+| Native session resume | Adaptable and verified | Use `opencode run --session <id>` after capturing the emitted session id; avoid global `--continue` |
 | Structured result parity | Partial | Prompt-only, best-effort; no schema flag found in OpenCode CLI/config docs |
 | Inquiry and attachments | Adaptable after structured normalization | Generic Tycho flows can consume normalized hashes; local file inputs can later map to `--file` |
 | Model selection | Adaptable | `--model <provider/model>` is supported by `opencode run` |
@@ -144,7 +144,7 @@ OpenCode should also be a built-in adapter. It has a direct non-interactive `ope
 
 ## OpenCode Capability Inventory
 
-Local version inspected: `opencode 1.15.13` at `/opt/homebrew/bin/opencode`.
+Local versions inspected: `opencode 1.15.13` at `/opt/homebrew/bin/opencode` during initial research, then `opencode 1.17.10` during parser fixture capture.
 
 Primary docs inspected: OpenCode CLI, config, agents, permissions, MCP servers, commands, and skills docs at `https://opencode.ai/docs/`.
 
@@ -159,7 +159,7 @@ Primary docs inspected: OpenCode CLI, config, agents, permissions, MCP servers, 
 | Model | `-m, --model` accepts `provider/model` | Map Tycho model directly to `--model` |
 | Reasoning effort | `--variant` is described as provider-specific reasoning effort | Map Tycho `reasoning_effort` to OpenCode `--variant`, but label it as provider-specific and allow empty |
 | Agent selection | `--agent` selects an OpenCode agent; `opencode agent list` lists primary/subagents | Tycho can expose model separately from harness; agent selection is probably an OpenCode-specific advanced option, not Tycho's `agent` field |
-| Session resume | `-s, --session` continues a session id; `-c, --continue` continues the last session; `--fork` can fork before continuing | Persist emitted OpenCode session id and resume with `--session <id>`; avoid `--continue` because Tycho needs deterministic agent-specific sessions |
+| Session resume | `-s, --session` continues a session id; `-c, --continue` continues the last session; `--fork` can fork before continuing | Persist emitted OpenCode session id and resume with `--session <id>`; verified through a two-turn `tycho agent create --harness opencode --run` / `tycho agent send` smoke test |
 | Attachments | `-f, --file` attaches one or more files | Tycho already has attachment normalization; later integration can pass local file attachments through `--file` for initial prompts |
 | Dangerous mode | `--dangerously-skip-permissions` auto-approves permissions not explicitly denied | Map `danger-full-access` to this flag only when operator intent is clear; explicit deny rules still matter |
 | Interactive mode | `opencode run -i` runs direct interactive split-footer mode; plain `opencode [project]` starts TUI | Add an interactive command branch using either `opencode run -i` or plain `opencode`, then verify resume behavior |
@@ -186,22 +186,23 @@ Primary docs inspected: OpenCode CLI, config, agents, permissions, MCP servers, 
 
 | Tycho capability | OpenCode status | Notes |
 | --- | --- | --- |
-| Raw log parsing | Adaptable, requires fixtures | `--format json` provides raw events, but event names and shapes must be captured from real runs before implementing parser logic |
-| Assistant text | Likely adaptable | Parser should handle streaming deltas and final message events without duplicating partial output |
-| Tool calls | Likely adaptable | Map OpenCode permission/tool events into Tycho system/tool entries after fixture capture |
-| Usage/cost | Likely adaptable | OpenCode has `stats` and session export; raw run events may include usage, but this must be verified |
-| Session id | Likely adaptable | Use emitted session id if present; otherwise derive from session list/export only as a fallback |
-| Structured output | Partial | No schema flag found in local help or official CLI docs. Use prompt-only final JSON instructions and Tycho's existing fallback parser |
+| Raw log parsing | Adaptable, partially fixture-backed | `--format json` provides raw events; Tycho now has sanitized basic and tool-use fixtures from OpenCode 1.17.10 |
+| Assistant text | Adaptable | Real `type=text` / `part.type=text` events are parsed without duplicating step metadata |
+| Tool calls | Adaptable, fixture-backed | Real completed `tool_use` events carry tool name, input, and output under `part.state`; a bash-denied fixture showed OpenCode hides/refuses Bash and may continue with other tools rather than emitting a separate denial event |
+| Usage/cost | Adaptable | Real `step_finish` events include `part.tokens` and `part.cost`; `stats` and session export remain diagnostic/backfill options |
+| Session id | Adaptable, fixture-backed | Use emitted session id if present; otherwise derive from session list/export only as a fallback |
+| Structured output | Partial, fixture-backed | No schema flag found in local help or official CLI docs. Use prompt-only final JSON instructions and Tycho's existing fallback parser |
 | Inquiry and attachments | Partial | Reuse Tycho normalizer after parser extracts a final JSON object; pass initial local files with `--file` later |
 | Native resume prompt policy | Adaptable | Once a session id is known, send only the latest user message using `--session <id>` like Codex/Claude native resume paths |
 
 ### OpenCode Implementation Slices
 
 1. Foundation: register `opencode`, add executable/version resolution, setup readiness, command-builder branch, and tests for `opencode run --format json --dir`.
-2. Fixture capture: run a tiny real OpenCode prompt with `--format json`, a tool-using prompt, a permission prompt/deny case, and a resumed session; store sanitized fixtures under `test/fixtures/`.
+2. Fixture capture: basic text, completed tool-use, structured JSON, bash-denied, and resumed-session fixtures are stored under `test/fixtures/parser/opencode/`.
 3. Parser/session: implement `HQ::Parser::OpenCode`, capture session id, normalize assistant/tool/result events, and reuse native resume prompt policy.
 4. Structured result: prompt for Tycho's final JSON shape, parse final assistant/result JSON best-effort, and document that schema enforcement is weaker than Codex/Claude.
 5. Catalog/UI: expose version/auth/model readiness, map `reasoning_effort` to `--variant`, and consider adapter-specific OpenCode agent selection only after v1 works.
+6. Smoke verification: a temp-state CLI run created an OpenCode agent, finalized the first detached run, sent a second message with the persisted `--session`, and captured both summaries plus token usage in memory.
 
 ## Cursor Recommended Implementation Slices
 

@@ -46,10 +46,20 @@ module HQ
 
     def roots_for(kind, workspace)
       workspace = workspace.to_s
-      if HQ.harness_adapter(kind) == "claude"
+      case HQ.harness_adapter(kind)
+      when "claude"
         [
           File.expand_path("~/.claude/skills"),
           workspace.empty? ? nil : File.join(workspace, ".claude", "skills")
+        ]
+      when "opencode"
+        [
+          File.expand_path("~/.config/opencode/skills"),
+          File.expand_path("~/.claude/skills"),
+          File.expand_path("~/.agents/skills"),
+          workspace.empty? ? nil : File.join(workspace, ".opencode", "skills"),
+          workspace.empty? ? nil : File.join(workspace, ".claude", "skills"),
+          workspace.empty? ? nil : File.join(workspace, ".agents", "skills")
         ]
       else
         [

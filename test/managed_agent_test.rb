@@ -3,8 +3,10 @@
 require "tmpdir"
 require "fileutils"
 require "json"
+require "stringio"
 
 require_relative "../lib/hq/domain/managed_agent"
+require_relative "../lib/hq/cli_command"
 
 module ManagedAgentTest
   module_function
@@ -12,10 +14,13 @@ module ManagedAgentTest
   def run!
     assert_new_agents_use_unique_log_stems
     assert_start_finalizes_unpolled_previous_run
+    assert_cli_status_finalizes_unpolled_dead_pid
     assert_start_reconciles_session_after_restart
     assert_fallback_summary_uses_assistant_message_not_tool_json
+    assert_opencode_fallback_summary_uses_text_event_not_prompt
     assert_structured_output_summary_beats_later_agent_message
     assert_claude_scalar_json_structured_output_normalizes
+    assert_opencode_assistant_json_structured_output_normalizes
     assert_final_output_checklist_is_ephemeral_execution_context
     assert_agent_result_schema_describes_summary
     assert_initial_user_message_attachments_seed_memory
@@ -60,6 +65,69 @@ module ManagedAgentTest
     end
   ensure
     replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
+  end
+
+  def assert_cli_status_finalizes_unpolled_dead_pid
+    old_agents_file = nil
+    old_logs_dir = nil
+    old_archive_dir = nil
+    Dir.mktmpdir("hq-cli-agent-status-test") do |dir|
+      logs_dir = File.join(dir, "agents")
+      FileUtils.mkdir_p(logs_dir)
+      old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, logs_dir)
+      old_archive_dir = replace_constant(HQ, :AGENT_ARCHIVE_DIR, File.join(logs_dir, "archive"))
+
+      started_at = Time.now - 60
+      log_path = File.join(logs_dir, "demo.raw.log")
+      File.open(log_path, "w") do |f|
+        f.puts "=== [#{started_at.strftime("%Y-%m-%d %H:%M:%S")}] start ==="
+        f.puts "workspace=#{dir}"
+        f.puts "prompt=SYSTEM: test"
+        f.puts JSON.generate(
+          "type" => "text",
+          "sessionID" => "ses_cli_status",
+          "part" => {
+            "type" => "text",
+            "text" => "{\"status\":\"success\",\"summary\":\"CLI_STATUS_DONE\"}"
+          }
+        )
+      end
+      File.write(log_path.sub(/\.raw\.log\z/, ".status"), "0")
+
+      agent = HQ::ManagedAgent.new(
+        key: "demo-agent-1",
+        name: "Demo",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "test",
+        agent: "opencode",
+        pid: 999_999,
+        started_at: started_at,
+        log_path: log_path,
+        runs: [HQ::ManagedAgent::AgentRun.new(
+          started_at: started_at,
+          status: "running",
+          log_path: log_path,
+          command: "opencode run"
+        )]
+      )
+      File.write(HQ::AGENTS_FILE, JSON.pretty_generate([agent.to_hash]))
+
+      code = HQ::CLICommand.agent_status("demo-agent-1", out: StringIO.new, err: StringIO.new)
+      saved = JSON.parse(File.read(HQ::AGENTS_FILE)).first
+
+      assert(code == 0, "expected CLI agent status to succeed")
+      assert(saved["last_exit_code"] == 0, "expected CLI status to persist finalized exit code")
+      assert(saved["summary"] == "CLI_STATUS_DONE", "expected CLI status to persist finalized summary")
+      assert(saved["session_id"] == "ses_cli_status", "expected CLI status to persist OpenCode session id")
+      assert(saved.dig("runs", 0, "finished_at"), "expected CLI status to persist run finish time")
+    end
+  ensure
+    replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+    replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
+    replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
   end
 
   # Regression for a bug where a Claude run that exited before the 10s poll tick
@@ -305,6 +373,69 @@ module ManagedAgentTest
     end
   end
 
+  def assert_opencode_fallback_summary_uses_text_event_not_prompt
+    Dir.mktmpdir("hq-managed-agent-opencode-summary-test") do |dir|
+      log_path = File.join(dir, "opencode-summary.raw.log")
+      started_at = Time.parse("2026-06-27 22:21:20")
+      finished_at = started_at + 6
+      File.open(log_path, "w") do |f|
+        f.puts "=== [#{started_at.strftime("%Y-%m-%d %H:%M:%S")}] start ==="
+        f.puts "workspace=#{dir}"
+        f.puts "prompt=SYSTEM:"
+        f.puts "this is just a test. reply with OK"
+        f.puts
+        f.puts "For `summary`, write a concise operator-facing Markdown summary."
+        f.puts
+        f.puts JSON.generate(
+          "type" => "step_start",
+          "sessionID" => "ses_test",
+          "part" => { "type" => "step-start", "sessionID" => "ses_test" }
+        )
+        f.puts JSON.generate(
+          "type" => "text",
+          "sessionID" => "ses_test",
+          "part" => { "type" => "text", "text" => "OK" }
+        )
+        f.puts JSON.generate(
+          "type" => "step_finish",
+          "sessionID" => "ses_test",
+          "part" => {
+            "type" => "step-finish",
+            "tokens" => { "input" => 3, "output" => 4 },
+            "cost" => 0.08288375
+          }
+        )
+      end
+
+      run = HQ::ManagedAgent::AgentRun.new(
+        started_at: started_at,
+        finished_at: finished_at,
+        exit_code: 0,
+        status: "succeeded",
+        log_path: log_path,
+        command: "opencode run"
+      )
+      agent = HQ::ManagedAgent.new(
+        key: "opencode-summary-demo",
+        name: "OpenCode Summary Demo",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "this is just a test. reply with OK",
+        agent: "opencode",
+        started_at: started_at,
+        finished_at: finished_at,
+        last_exit_code: 0,
+        runs: [run],
+        log_path: log_path
+      )
+
+      summary = agent.build_summary!
+      assert(summary == "OK",
+             "OpenCode fallback summary should prefer text event, got #{summary.inspect}")
+    end
+  end
+
   def assert_structured_output_summary_beats_later_agent_message
     Dir.mktmpdir("hq-managed-agent-structured-summary-test") do |dir|
       log_path = File.join(dir, "structured-summary.raw.log")
@@ -462,6 +593,29 @@ module ManagedAgentTest
       assert(!structured.key?("inquiry_json"), "expected scalar inquiry field to be removed")
       assert(!structured.key?("attachments_json"), "expected scalar attachments field to be removed")
     end
+  end
+
+  def assert_opencode_assistant_json_structured_output_normalizes
+    payload = {
+      "status" => "success",
+      "summary" => "OpenCode summary.",
+      "attachments" => [
+        { "type" => "file", "path" => "/tmp/opencode-report.md" }
+      ]
+    }
+    structured = HQ::AgentStructuredResult.normalize_payload(
+      "type" => "text",
+      "sessionID" => "opencode-session-1",
+      "part" => {
+        "type" => "text",
+        "text" => "```json\n#{JSON.generate(payload)}\n```"
+      }
+    )
+
+    assert(structured["summary"] == "OpenCode summary.",
+           "expected OpenCode assistant JSON to normalize")
+    assert(structured["attachments"].first["path"] == "/tmp/opencode-report.md",
+           "expected OpenCode attachments to normalize")
   end
 
   def assert_final_output_checklist_is_ephemeral_execution_context
@@ -754,6 +908,38 @@ module ManagedAgentTest
            "expected Claude command to include --model")
     assert(argument_after(claude_command, "--effort") == "max",
            "expected Claude command to include --effort")
+
+    opencode = HQ::ManagedAgent.new(
+      key: "opencode-model-agent",
+      name: "OpenCode Model Agent",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "System prompt",
+      agent: "opencode",
+      model: "anthropic/claude-sonnet-4",
+      reasoning_effort: "high"
+    )
+    opencode_command = opencode.send(:build_command)[:command]
+    assert(File.basename(opencode_command[0]) == "opencode" && opencode_command[1..3] == ["run", "--format", "json"],
+           "expected OpenCode command to use opencode run --format json")
+    assert(argument_after(opencode_command, "--dir") == Dir.tmpdir,
+           "expected OpenCode command to include --dir")
+    assert(argument_after(opencode_command, "--model") == "anthropic/claude-sonnet-4",
+           "expected OpenCode command to include --model")
+    assert(argument_after(opencode_command, "--variant") == "high",
+           "expected OpenCode command to include --variant")
+    assert(opencode_command.include?("--dangerously-skip-permissions"),
+           "expected OpenCode full-access command to include dangerous permission flag")
+
+    resumed = HQ::ManagedAgent.from_hash(opencode.to_hash.merge(
+      "session_id" => "opencode-session-1",
+      "session_bootstrapped" => true,
+      "runs" => [{ "finished_at" => Time.now.iso8601, "status" => "succeeded" }]
+    ))
+    resumed_command = resumed.send(:build_command)[:command]
+    assert(argument_after(resumed_command, "--session") == "opencode-session-1",
+           "expected OpenCode resume command to include --session")
 
     old_harnesses = HQ.custom_harnesses
     HQ.custom_harnesses = [

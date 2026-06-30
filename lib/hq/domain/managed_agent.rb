@@ -757,6 +757,7 @@ module HQ
         prompt: prompt,
         codex_executable: codex_executable,
         claude_command_prefix: claude_command_prefix,
+        opencode_executable: opencode_executable,
         last_message_file_path: last_message_file_path,
         result_schema_path: AGENT_RESULT_SCHEMA,
         claude_result_schema: compact_claude_result_schema
@@ -1006,6 +1007,11 @@ module HQ
 
           item["text"].to_s.strip
         end.join("\n").strip
+      when "text"
+        part = event["part"]
+        return "" unless part.is_a?(Hash) && part["type"] == "text"
+
+        Parser.assistant_display_text(part["text"].to_s.strip).to_s.strip
       else
         ""
       end
@@ -1257,7 +1263,7 @@ module HQ
 
     def native_resume?
       return false if @session_id.to_s.empty?
-      return false unless %w[codex claude].include?(harness_adapter)
+      return false unless %w[codex claude opencode].include?(harness_adapter)
 
       claude_like_agent? ? @session_bootstrapped : @runs.any?
     end
@@ -1268,6 +1274,10 @@ module HQ
 
     def codex_agent?
       harness_adapter == "codex"
+    end
+
+    def opencode_agent?
+      harness_adapter == "opencode"
     end
 
     def harness_adapter
@@ -1342,6 +1352,10 @@ module HQ
 
     def claude_executable
       ExecutableResolver.command_for_tool("claude")
+    end
+
+    def opencode_executable
+      ExecutableResolver.command_for_tool("opencode")
     end
 
     def compact_claude_result_schema
@@ -1483,6 +1497,10 @@ module HQ
 
         id = if codex_agent?
                event["thread_id"] || event["session_id"] || event["id"]
+             elsif opencode_agent?
+               event["session_id"] || event["sessionID"] || event["sessionId"] ||
+                 event.dig("session", "id") || event.dig("session", "session_id") ||
+                 (event["id"] if event["type"].to_s.include?("session"))
              else
                event["session_id"]
              end
