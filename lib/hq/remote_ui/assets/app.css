@@ -104,6 +104,33 @@ button:disabled {
   opacity: 0.5;
 }
 
+form.form-pending {
+  position: relative;
+}
+
+form.form-pending input,
+form.form-pending select,
+form.form-pending textarea,
+form.form-pending button {
+  cursor: wait;
+}
+
+form.form-pending input:not([type="hidden"]),
+form.form-pending select,
+form.form-pending textarea {
+  opacity: 0.68;
+}
+
+form.form-pending::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: 6;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 16%, transparent);
+  pointer-events: none;
+}
+
 .inline-icon-button {
   display: inline-flex;
   align-items: center;
@@ -2357,6 +2384,20 @@ select {
   background: color-mix(in srgb, var(--accent) 18%, var(--panel));
 }
 
+.message.user.pending {
+  animation: pending-user-message-pulse 1.45s ease-in-out infinite;
+}
+
+.message-send-status {
+  justify-self: end;
+  margin-top: -4px;
+  margin-right: 10px;
+  color: color-mix(in srgb, var(--muted) 78%, transparent);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
 .message-role {
   display: inline-flex;
   align-items: center;
@@ -2487,6 +2528,18 @@ select {
 
 .message.user .message-content {
   text-align: left;
+}
+
+@keyframes pending-user-message-pulse {
+  0%, 100% {
+    opacity: 0.74;
+    box-shadow: var(--shadow);
+  }
+
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent), var(--shadow);
+  }
 }
 
 .message-header {
@@ -3824,6 +3877,39 @@ select {
   align-content: center;
   min-height: 180px;
   text-align: center;
+}
+
+.conversation-loading-state {
+  justify-items: center;
+}
+
+.conversation-loading-logo {
+  width: 42px;
+  height: 42px;
+  opacity: 0.86;
+  filter: drop-shadow(0 0 0 color-mix(in srgb, var(--accent) 0%, transparent));
+  animation: conversation-loading-pulse 1.35s ease-in-out infinite;
+}
+
+@keyframes conversation-loading-pulse {
+  0%,
+  100% {
+    opacity: 0.48;
+    transform: scale(0.96);
+    filter: drop-shadow(0 0 0 color-mix(in srgb, var(--accent) 0%, transparent));
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+    filter: drop-shadow(0 0 12px color-mix(in srgb, var(--accent) 44%, transparent));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-loading-logo {
+    animation: none;
+  }
 }
 
 .nowrap {

@@ -2130,6 +2130,8 @@ module RemoteServerTest
     assert(!css[:body].include?(".agent-settings-actions"),
            "expected Agent settings to move edit/archive actions into the More menu")
     assert(css[:body].include?(".agent-form"), "expected Remote UI to style agent lifecycle forms")
+    assert(css[:body].include?("form.form-pending"),
+           "expected Remote UI to visibly disable submitted forms while requests are pending")
     assert(css[:body].include?(".inline-icon-button"), "expected Remote UI action buttons to support SVG icons")
     assert(css[:body].include?(".agent-summary-viewer"), "expected Agent summary to render as a focused page")
     assert(css[:body].include?("max-width: 72ch"),
@@ -2184,6 +2186,12 @@ module RemoteServerTest
            "expected user chat message content to have dedicated alignment")
     assert(css[:body].include?(".message.user .message-content {\n  text-align: left;"),
            "expected user chat message text to stay readable with left alignment")
+    assert(css[:body].include?(".message.user.pending"),
+           "expected pending user chat messages to pulse while sending")
+    assert(css[:body].include?(".message-send-status"),
+           "expected pending user chat messages to show a sending status outside the bubble")
+    assert(css[:body].include?(".conversation-loading-logo"),
+           "expected Remote UI conversation loading state to animate the Tycho logo")
     assert(css[:body].include?(".message-content.markdown-message-content"),
            "expected assistant and legacy summary chat messages to render markdown with message-scoped layout")
     assert(css[:body].include?(".message-content {\n  min-width: 0;"),
@@ -3174,6 +3182,28 @@ module RemoteServerTest
            "expected Remote UI to save text form drafts on blur")
     assert(js[:body].include?("restoreFormDrafts();"),
            "expected Remote UI to restore form drafts after rendering")
+    assert(js[:body].include?("function setFormPending"),
+           "expected Remote UI to disable submitted forms while requests are pending")
+    assert(js[:body].include?("pendingComposerKeys"),
+           "expected Remote UI chat composer sending state to survive optimistic conversation re-renders")
+    assert(js[:body].include?('input.placeholder = "sending...";'),
+           "expected Remote UI chat composer to show a sending placeholder while prompt submission is pending")
+    assert(js[:body].include?("setComposerSending(form, true);\n    clearFormDraft(form);\n    const pendingMessageId = addPendingConversationMessage"),
+           "expected Remote UI to clear the prompt before optimistic conversation rendering replaces the composer")
+    assert(js[:body].include?("pendingConversationMessages"),
+           "expected Remote UI to render optimistic pending chat messages")
+    assert(js[:body].include?("await apiPost(`/agents/${encodeURIComponent(key)}/messages`, { prompt, start: true, attachments });\n      removePendingConversationMessage(key, pendingMessageId, { render: false });"),
+           "expected Remote UI to remove optimistic chat before refreshing server-backed conversation")
+    assert(js[:body].include?("loadingConversations"),
+           "expected Remote UI to track conversation loading per agent")
+    assert(js[:body].include?("state.loadingConversation = Object.keys(state.loadingConversations).length > 0;"),
+           "expected Remote UI per-agent conversation loading to preserve the global loadingConversation flag")
+    assert(js[:body].include?("function conversationLoadingState"),
+           "expected Remote UI to render a loading state before empty conversations are fetched")
+    assert(js[:body].include?("Loading conversation"),
+           "expected Remote UI conversation loading copy to avoid showing an empty state while fetching")
+    assert(js[:body].include?('class="message-send-status">sending...</div>'),
+           "expected Remote UI pending chat status copy to stay concise")
     assert(js[:body].include?("clearFormDraft(form)"),
            "expected Remote UI to clear submitted or cancelled form drafts")
     assert(js[:body].include?("function syncMarkdownHeadingAnchors"),
