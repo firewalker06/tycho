@@ -7,6 +7,7 @@ module PullRequestDiffTest
 
   def run!
     assert_github_provider_fetches_current_diff_not_commit_patch
+    assert_previous_diff_snapshots_are_not_fresh
     assert_legacy_snapshots_are_not_fresh
     puts "pull_request_diff_test: ok"
   end
@@ -41,8 +42,23 @@ module PullRequestDiffTest
 
     assert(!truncated, "expected small diff payload to stay untruncated")
     assert(diff.include?("diff --git"), "expected provider to return diff text")
-    assert(provider.commands.first.include?("Accept: application/vnd.github.v3.diff"),
-           "expected GitHub provider to request PR diff media type, not per-commit patch media type")
+    assert(provider.commands.first == ["pr", "diff", "123", "--repo", "example/web", "--color", "never"],
+           "expected GitHub provider to request the current PR diff, not per-commit patch output")
+  end
+
+  def assert_previous_diff_snapshots_are_not_fresh
+    previous = {
+      "diff_format" => "github_diff_v1",
+      "head_sha" => "abc123",
+      "remote_updated_at" => "2026-06-29T07:43:31Z"
+    }
+    metadata = {
+      "head_sha" => "abc123",
+      "remote_updated_at" => "2026-06-29T07:43:31Z"
+    }
+
+    assert(!HQ::PullRequestDiff.snapshot_summary(previous, metadata:)["fresh"],
+           "expected previous diff-format snapshots to be stale so bad cached patch snapshots refetch")
   end
 
   def assert_legacy_snapshots_are_not_fresh
