@@ -37,6 +37,9 @@ module HQ
         codex_structured = codex_agent_message_payload(parsed)
         return codex_structured if codex_structured
 
+        assistant_text_structured = assistant_text_payload(parsed)
+        return assistant_text_structured if assistant_text_structured
+
         result_event_payload(parsed)
       end
 
@@ -65,6 +68,42 @@ module HQ
 
         inner = parse_json_string(item["text"])
         normalize_payload(inner) if inner
+      end
+
+      def assistant_text_payload(parsed)
+        text = assistant_text(parsed)
+        inner = parse_json_string(text)
+        normalize_payload(inner) if inner
+      end
+
+      def assistant_text(parsed)
+        return "" unless parsed.is_a?(Hash)
+
+        message = parsed["message"].is_a?(Hash) ? parsed["message"] : {}
+        item = parsed["item"].is_a?(Hash) ? parsed["item"] : {}
+        part = parsed["part"].is_a?(Hash) ? parsed["part"] : {}
+        role = parsed["role"].to_s
+        role = message["role"].to_s if role.empty?
+        type = parsed["type"].to_s
+        return "" unless role == "assistant" || type.match?(/assistant|message|result/i) ||
+                         (type == "text" && part["type"].to_s == "text") ||
+                         item["type"].to_s.match?(/agent_message|assistant|message/i)
+
+        [
+          parsed["text"],
+          parsed["content"],
+          parsed["result"],
+          message["text"],
+          message["content"],
+          item["text"],
+          item["content"],
+          part["text"],
+          part["content"]
+        ].each do |value|
+          text = stringify_text(value).strip
+          return text unless text.empty?
+        end
+        ""
       end
 
       def result_event_payload(parsed)
@@ -102,9 +141,29 @@ module HQ
       def parse_json_string(value)
         return nil unless value.is_a?(String)
 
-        JSON.parse(value)
+        text = value.strip
+        JSON.parse(text)
       rescue JSON::ParserError
-        nil
+        fenced = text.match(/\A```(?:json)?\s*(?<json>.*?)\s*```\z/m)
+        return parse_json_string(fenced[:json]) if fenced
+
+        object = text.match(/(?<json>\{.*\})/m)
+        return nil if object && object[:json] == text
+
+        object ? parse_json_string(object[:json]) : nil
+      end
+
+      def stringify_text(value)
+        case value
+        when String
+          value
+        when Array
+          value.map { |entry| stringify_text(entry) }.reject(&:empty?).join("\n")
+        when Hash
+          stringify_text(value["text"] || value["content"])
+        else
+          ""
+        end
       end
     end
   end

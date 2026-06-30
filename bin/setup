@@ -19,7 +19,7 @@ Options:
   --check              Run dependency checks only; do not install gems or copy config files.
   --skip-bundle        Skip bundle install.
   --profile NAME       Escalate optional dependencies for a feature profile.
-                       Supported: app, codex, claude, all. May be repeated.
+                       Supported: app, codex, claude, opencode, all. May be repeated.
   --remote             Check Remote UI readiness hints.
   --push               Check browser push notification readiness hints.
   -h, --help           Show this help.
@@ -46,7 +46,7 @@ while (($#)); do
         exit 2
       fi
       case "$1" in
-        app|codex|claude|all)
+        app|codex|claude|opencode|all)
           PROFILES+=("$1")
           ;;
         *)
@@ -540,15 +540,17 @@ main() {
   info "Checking optional runtime integrations"
   check_optional_tool "Git CLI" "git" "" "Project git metadata will render as n/a."
 
-  local mise_bin codex_bin claude_bin
+  local mise_bin codex_bin claude_bin opencode_bin
   mise_bin="$(resolve_tool MISE_BIN mise "$HOME/.local/bin/mise" /opt/homebrew/bin/mise /usr/local/bin/mise)"
   codex_bin="$(resolve_tool CODEX_BIN codex "$HOME/.local/bin/codex" /opt/homebrew/bin/codex /usr/local/bin/codex)"
   claude_bin="$(resolve_tool CLAUDE_BIN claude "$HOME/.local/bin/claude" /opt/homebrew/bin/claude /usr/local/bin/claude)"
+  opencode_bin="$(resolve_tool OPENCODE_BIN opencode "$HOME/.local/bin/opencode" /opt/homebrew/bin/opencode /usr/local/bin/opencode)"
 
   check_optional_tool "mise" "$mise_bin" "app" "Deploy, maintenance, and live actions require mise."
   check_kamal_readiness
   check_optional_tool "Codex CLI" "$codex_bin" "codex" "Set TYCHO_CODEX_BIN or install codex."
   check_optional_tool "Claude CLI" "$claude_bin" "claude" "Set TYCHO_CLAUDE_BIN or install claude."
+  check_optional_tool "OpenCode CLI" "$opencode_bin" "opencode" "Set TYCHO_OPENCODE_BIN or install opencode."
   check_custom_harnesses
   check_tailscale
   check_macos_terminal_tools

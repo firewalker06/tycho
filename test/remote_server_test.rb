@@ -1330,7 +1330,7 @@ module RemoteServerTest
       assert(setup.dig(:build, :asset_version).to_s.length == 12, "expected setup payload to expose Remote UI build")
       assert(setup.dig(:counts, :projects) == 1, "expected active project count")
       assert(setup.dig(:counts, :archived_projects) == 1, "expected archived project count")
-      assert(setup[:harnesses].map { |item| item[:name] }.sort == %w[claude claude-wrapper codex],
+      assert(setup[:harnesses].map { |item| item[:name] }.sort == %w[claude claude-wrapper codex opencode],
              "expected harness readiness entries")
       assert(setup[:tools].map { |item| item[:name] }.sort == %w[kamal kamal-projects mise tailscale],
              "expected optional tool readiness entries")
@@ -1345,7 +1345,7 @@ module RemoteServerTest
       home = File.join(dir, "home")
       empty_path = File.join(dir, "empty-bin")
       workspace = File.join(dir, "workspace")
-      %w[claude codex mise].each do |command|
+      %w[claude codex opencode mise].each do |command|
         write_test_executable(File.join(home, ".local", "bin", command))
       end
       FileUtils.mkdir_p(empty_path)
@@ -1357,11 +1357,13 @@ module RemoteServerTest
         "PATH" => empty_path,
         "TYCHO_CLAUDE_BIN" => nil,
         "TYCHO_CODEX_BIN" => nil,
-        "TYCHO_MISE_BIN" => nil
+        "TYCHO_MISE_BIN" => nil,
+        "TYCHO_OPENCODE_BIN" => nil
       ) do
         setup = HQ::RemoteService.new(registry: registry).setup
-      codex = setup[:harnesses].find { |item| item[:name] == "codex" }
-      claude = setup[:harnesses].find { |item| item[:name] == "claude" }
+        codex = setup[:harnesses].find { |item| item[:name] == "codex" }
+        claude = setup[:harnesses].find { |item| item[:name] == "claude" }
+        opencode = setup[:harnesses].find { |item| item[:name] == "opencode" }
         mise = setup[:tools].find { |item| item[:name] == "mise" }
         global_kamal = setup[:tools].find { |item| item[:name] == "kamal" }
         project_kamal = setup[:tools].find { |item| item[:name] == "kamal-projects" }
@@ -1374,6 +1376,10 @@ module RemoteServerTest
                "expected Remote setup to find fallback Claude")
         assert(claude[:reasoning_effort_suggestions].include?("low"),
                "expected Claude readiness to expose fallback effort suggestions")
+        assert(opencode[:ready] && opencode[:path].end_with?("/.local/bin/opencode"),
+               "expected Remote setup to find fallback OpenCode")
+        assert(opencode[:reasoning_effort_suggestions].include?("high"),
+               "expected OpenCode readiness to expose variant suggestions")
         assert(mise[:ready] && mise[:path].end_with?("/.local/bin/mise"),
                "expected Remote setup to find fallback mise")
         assert(!global_kamal[:ready], "expected global Kamal to remain PATH-only")
@@ -1951,6 +1957,9 @@ module RemoteServerTest
       system_skill_dir = File.join(home, ".codex", "skills", ".system", "imagegen")
       FileUtils.mkdir_p(system_skill_dir)
       File.write(File.join(system_skill_dir, "SKILL.md"), "# Imagegen\n")
+      opencode_skill_dir = File.join(workspace, ".opencode", "skills", "plan")
+      FileUtils.mkdir_p(opencode_skill_dir)
+      File.write(File.join(opencode_skill_dir, "SKILL.md"), "# Plan\n")
       registry = registry_for_project(dir, workspace, apps: true)
       service = HQ::RemoteService.new(registry: registry)
 
@@ -1961,6 +1970,13 @@ module RemoteServerTest
              "expected Codex discovery to include ~/.agents/skills")
       assert(payload[:skills].any? { |skill| skill["name"] == "imagegen" },
              "expected Codex discovery to include nested ~/.codex/skills")
+
+      opencode_payload = service.skills("web", "opencode")
+      assert(opencode_payload[:trigger] == "$", "expected OpenCode fallback skill trigger")
+      assert(opencode_payload[:skills].any? { |skill| skill["name"] == "plan" },
+             "expected OpenCode discovery to include workspace .opencode/skills")
+      assert(opencode_payload[:skills].any? { |skill| skill["name"] == "teach" },
+             "expected OpenCode discovery to include ~/.agents/skills")
     ensure
       ENV["HOME"] = old_home
     end

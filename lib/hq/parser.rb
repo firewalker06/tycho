@@ -34,6 +34,8 @@ module HQ
         Claude.new
       when "codex"
         Codex.new
+      when "opencode"
+        OpenCode.new
       else
         raise ArgumentError, "Unsupported agent parser #{agent_type.inspect}"
       end
@@ -309,6 +311,10 @@ module HQ
     # `summary` (falling back to the inquiry message) so the chat viewport
     # doesn't render the raw payload.
     def assistant_display_text(text)
+      original = text
+      text = text.to_s.strip
+      fenced = text.match(/\A```(?:json)?\s*(?<json>.*?)\s*```\z/m)
+      text = fenced[:json].strip if fenced
       parsed = JSON.parse(text)
       return text unless parsed.is_a?(Hash)
       return text unless parsed.key?("summary") || parsed.key?("inquiry") || parsed.key?("status")
@@ -319,7 +325,7 @@ module HQ
       inquiry = parsed["inquiry"]
       inquiry.is_a?(Hash) ? inquiry["message"].to_s.strip : ""
     rescue JSON::ParserError
-      text
+      original
     end
 
     # Both Claude and Codex raw logs prepend a `prompt=` block with
@@ -421,3 +427,4 @@ end
 
 require_relative "parser/claude"
 require_relative "parser/codex"
+require_relative "parser/opencode"

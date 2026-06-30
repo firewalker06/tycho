@@ -2107,7 +2107,8 @@ module HQ
     def harness_readiness
       builtins = [
         harness_resolver_payload("codex", ExecutableResolver.resolve_tool("codex")),
-        harness_resolver_payload("claude", ExecutableResolver.resolve_tool("claude"))
+        harness_resolver_payload("claude", ExecutableResolver.resolve_tool("claude")),
+        harness_resolver_payload("opencode", ExecutableResolver.resolve_tool("opencode"))
       ]
       custom = HQ.custom_harnesses.values.sort_by(&:key).map { |config| custom_harness_payload(config) }
       builtins + custom
