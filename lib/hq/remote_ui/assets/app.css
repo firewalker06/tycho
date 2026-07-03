@@ -63,6 +63,17 @@ button {
   padding: 0 12px;
 }
 
+button:not(:disabled),
+a.icon-button,
+a.inline-icon-button,
+.button-link {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
 a.icon-button,
 a.inline-icon-button {
   min-height: 42px;
@@ -3010,8 +3021,43 @@ select {
 
 .attachment-viewer-actions {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.attachment-content-copy-button {
+  min-height: 42px;
+  padding: 0 14px;
+  font-weight: 750;
+}
+
+.attachment-viewer-secondary-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.attachment-viewer-icon-action {
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+}
+
+.attachment-viewer-icon-action .ui-icon {
+  width: 17px;
+  height: 17px;
+}
+
+@media (max-width: 520px) {
+  .attachment-content-copy-button {
+    flex: 1 1 170px;
+  }
+
+  .attachment-viewer-secondary-actions {
+    flex: 0 1 auto;
+  }
 }
 
 .attachment-target {

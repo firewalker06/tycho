@@ -2133,6 +2133,9 @@ module RemoteServerTest
     assert(css[:body].include?("form.form-pending"),
            "expected Remote UI to visibly disable submitted forms while requests are pending")
     assert(css[:body].include?(".inline-icon-button"), "expected Remote UI action buttons to support SVG icons")
+    assert(css[:body].include?("button:not(:disabled)") &&
+           css[:body].include?("cursor: pointer"),
+           "expected enabled button-like controls to show a pointer cursor")
     assert(css[:body].include?(".agent-summary-viewer"), "expected Agent summary to render as a focused page")
     assert(css[:body].include?("max-width: 72ch"),
            "expected Agent summary text to keep a readable measure")
@@ -2213,6 +2216,10 @@ module RemoteServerTest
     assert(css[:body].include?(".attachment-main"), "expected Agent detail attachment rows to separate links from actions")
     assert(css[:body].include?(".attachment-actions"), "expected Agent detail attachment rows to expose row actions")
     assert(css[:body].include?(".attachment-viewer-actions"), "expected Attachment detail to style refresh/delete actions")
+    assert(css[:body].include?(".attachment-content-copy-button") &&
+           css[:body].include?(".attachment-viewer-secondary-actions") &&
+           css[:body].include?(".attachment-viewer-icon-action"),
+           "expected Attachment detail actions to separate primary content copy from compact icon actions")
     assert(css[:body].include?(".attachment-nav-drawer"), "expected Attachment detail to style the navigation drawer")
     assert(css[:body].include?(".attachment-nav-item.active"), "expected Attachment detail navigation to highlight the current item")
     assert(css[:body].include?(".pending-attachments"), "expected Agent detail to style pending prompt attachments")
@@ -2962,8 +2969,9 @@ module RemoteServerTest
            "expected Attachment list and detail to expose delete actions")
     assert(js[:body].include?('data-copy="${escapeAttr(target)}"'),
            "expected Attachment detail to expose a copy path/link action")
-    assert(js[:body].include?('${iconSvg("copy")}<span>${copyLabel}</span>'),
-           "expected Attachment detail copy action to use the plain copy icon")
+    assert(js[:body].include?('class="icon-button attachment-viewer-icon-action"') &&
+           js[:body].include?('<span class="sr-only">${escapeHtml(copyLabel)}</span>'),
+           "expected Attachment detail secondary copy action to render as an accessible icon button")
     assert(js[:body].include?('attachmentKind(attachment) === "link" ? "Copy link" : "Copy path"'),
            "expected Attachment detail copy action to label links and files clearly")
     assert(js[:body].include?("function copyAttachmentContent") &&
@@ -2971,6 +2979,9 @@ module RemoteServerTest
            "expected Attachment detail to copy supported attachment content")
     assert(js[:body].include?("data-copy-attachment-content"),
            "expected Attachment detail to expose a content copy action")
+    assert(js[:body].include?("attachment-content-copy-button") &&
+           js[:body].include?("attachment-viewer-secondary-actions"),
+           "expected Attachment detail to keep content copy visually primary")
     assert(js[:body].include?('label = "Copy image"') &&
            js[:body].include?('label = attachment.content_truncated ? "Copy preview" : "Copy content"'),
            "expected Attachment detail content copy actions to label images, full text, and truncated previews clearly")
@@ -3080,6 +3091,9 @@ module RemoteServerTest
            "expected Remote UI to download attachments through authenticated fetch")
     assert(js[:body].include?("data-download-attachment"),
            "expected Remote UI attachment download controls to opt into authenticated downloads")
+    assert(js[:body].include?('<button class="icon-button attachment-viewer-icon-action" type="button" data-download-attachment=') &&
+           !js[:body].include?('<a class="icon-button attachment-viewer-icon-action" href="${escapeAttr(download)}" data-download-attachment='),
+           "expected Remote UI attachment detail downloads to use background button handlers instead of navigational links")
     assert(js[:body].include?("event.preventDefault();") &&
            js[:body].include?("downloadAttachmentButton.dataset.downloadAttachment"),
            "expected Remote UI attachment download clicks to avoid unauthenticated navigation")
