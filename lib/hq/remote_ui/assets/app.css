@@ -1168,22 +1168,6 @@ select {
   animation: poll-refresh-hourglass 1s linear infinite;
 }
 
-.pr-loading-state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 32px 0;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.pr-loading-state .ui-icon {
-  width: 18px;
-  height: 18px;
-  animation: poll-refresh-hourglass 1s linear infinite;
-}
-
 .pr-diff-summary .button-row {
   justify-content: flex-start;
 }
@@ -3879,19 +3863,21 @@ select {
   text-align: center;
 }
 
+.tycho-loading-state,
 .conversation-loading-state {
   justify-items: center;
 }
 
+.tycho-loading-logo,
 .conversation-loading-logo {
   width: 42px;
   height: 42px;
   opacity: 0.86;
   filter: drop-shadow(0 0 0 color-mix(in srgb, var(--accent) 0%, transparent));
-  animation: conversation-loading-pulse 1.35s ease-in-out infinite;
+  animation: tycho-loading-pulse 1.35s ease-in-out infinite;
 }
 
-@keyframes conversation-loading-pulse {
+@keyframes tycho-loading-pulse {
   0%,
   100% {
     opacity: 0.48;
@@ -3907,6 +3893,7 @@ select {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .tycho-loading-logo,
   .conversation-loading-logo {
     animation: none;
   }

@@ -2190,8 +2190,8 @@ module RemoteServerTest
            "expected pending user chat messages to pulse while sending")
     assert(css[:body].include?(".message-send-status"),
            "expected pending user chat messages to show a sending status outside the bubble")
-    assert(css[:body].include?(".conversation-loading-logo"),
-           "expected Remote UI conversation loading state to animate the Tycho logo")
+    assert(css[:body].include?(".tycho-loading-logo") && css[:body].include?("@keyframes tycho-loading-pulse"),
+           "expected Remote UI loading states to animate the Tycho logo")
     assert(css[:body].include?(".message-content.markdown-message-content"),
            "expected assistant and legacy summary chat messages to render markdown with message-scoped layout")
     assert(css[:body].include?(".message-content {\n  min-width: 0;"),
@@ -3052,8 +3052,8 @@ module RemoteServerTest
            "expected composer drafts to survive switching between conversation and attachment views")
     assert(js[:body].include?("function saveAgentShellFormDrafts"),
            "expected focused composer drafts to be saved before attachment route switches")
-    assert(js[:body].include?("Loading file preview..."),
-           "expected attachment views to avoid rendering empty content before preview data loads")
+    assert(js[:body].include?("Loading file preview") && js[:body].include?("Loading image"),
+           "expected attachment views to use the Tycho loading state before preview data loads")
     assert(!js[:body].include?("Preview unavailable for this file."),
            "expected unsupported attachment formats to render download actions instead of preview messaging")
     assert(js[:body].include?("function renderAgentViewToggle"),
@@ -3200,8 +3200,14 @@ module RemoteServerTest
            "expected Remote UI per-agent conversation loading to preserve the global loadingConversation flag")
     assert(js[:body].include?("function conversationLoadingState"),
            "expected Remote UI to render a loading state before empty conversations are fetched")
+    assert(js[:body].include?("function tychoLoadingState"),
+           "expected Remote UI loading states to share the pulsating Tycho logo")
     assert(js[:body].include?("Loading conversation"),
            "expected Remote UI conversation loading copy to avoid showing an empty state while fetching")
+    assert(js[:body].include?("Loading pull requests") &&
+           js[:body].include?("Loading PR diff") &&
+           js[:body].include?("Loading diff"),
+           "expected PR and local diff loading states to use the Tycho loading state")
     assert(js[:body].include?('class="message-send-status">sending...</div>'),
            "expected Remote UI pending chat status copy to stay concise")
     assert(js[:body].include?("clearFormDraft(form)"),
