@@ -2966,6 +2966,16 @@ module RemoteServerTest
            "expected Attachment detail copy action to use the plain copy icon")
     assert(js[:body].include?('attachmentKind(attachment) === "link" ? "Copy link" : "Copy path"'),
            "expected Attachment detail copy action to label links and files clearly")
+    assert(js[:body].include?("function copyAttachmentContent") &&
+           js[:body].include?("function copyAttachmentImageToClipboard"),
+           "expected Attachment detail to copy supported attachment content")
+    assert(js[:body].include?("data-copy-attachment-content"),
+           "expected Attachment detail to expose a content copy action")
+    assert(js[:body].include?('label = "Copy image"') &&
+           js[:body].include?('label = attachment.content_truncated ? "Copy preview" : "Copy content"'),
+           "expected Attachment detail content copy actions to label images, full text, and truncated previews clearly")
+    assert(js[:body].include?('showGrowl("Use download for binary files", "need")'),
+           "expected binary attachment copy attempts to direct users to download")
     assert(js[:body].include?("function renderAttachmentToggle"),
            "expected Agent detail to expose attachments from a composer toggle")
     assert(js[:body].include?("function renderPendingAttachments"),
