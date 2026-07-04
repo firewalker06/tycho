@@ -1,31 +1,18 @@
 # Tycho
 
-projects and supervising managed coding agents.
+Tycho - Factorio for Agents.
+
+Tycho is a local-first control center for supervising managed coding agents
+across many projects. It keeps project context, agent sessions, schedules,
+logs, attachments, and follow-up questions in one operator workflow, with both
+a terminal UI and an optional lightweight Remote UI for checking agent state
+from a browser on your local network or tailnet.
+
+## Screenshots
 
 <p align="center">
   <img src="docs/assets/tycho-hero.jpg" alt="Tycho terminal dashboard and remote agent control interface" width="100%">
 </p>
-
-logs, and an optional lightweight Remote UI for checking agent state from a
-browser on your local network or tailnet.
-
-## Status
-
-Tycho is early open-source software. It is designed around a single-operator
-workflow and is currently macOS-first, with Linux expected to work where the
-same Ruby and CLI dependencies are available.
-
-## Features
-
-- Project registry from `~/.tycho/config/hq.yml`.
-- Managed Codex, Claude, and custom Claude-compatible agents with persistent chat memory.
-- Scheduled managed-agent runs from cron-style local config.
-- In-app log views, agent detail views, project detail views, and omnisearch.
-- Local JSON API and mobile Remote UI through `tycho serve`.
-- Optional Tailscale MagicDNS URL and terminal QR code for Remote UI access.
-- Optional browser push notifications for agent completions and inquiries.
-
-## Screenshots
 
 ### TUI
 
@@ -47,12 +34,37 @@ same Ruby and CLI dependencies are available.
 |---------------|--------------------|
 | <img src="docs/assets/readme/web-chat-compose.png" alt="Tycho Remote UI agent chat composer with a selected agent conversation" width="420"> | <img src="docs/assets/readme/web-chat-attachment.png" alt="Tycho Remote UI Markdown attachment preview with copy and delete actions" width="420"> |
 
+| Remote connection switcher | Agent switcher |
+|----------------------------|----------------|
+| <img src="docs/assets/readme/web-remote-connection-switcher.png" alt="Tycho Remote UI menu showing multiple Remote servers with Local, VPS, and ATASGG options" width="420"> | <img src="docs/assets/readme/web-agent-switcher.png" alt="Tycho Remote UI agent switcher showing recent managed agents and status badges" width="420"> |
+
+## Status
+
+Tycho is early open-source software. It is designed around a single-operator
+workflow and is currently macOS-first for packaged installs. Source installs
+also work on Linux-style environments where Ruby and the optional agent CLIs
+are available, and Tycho has been tested on Windows 11 through WSL.
+
+## Features
+
+- Project registry from `~/.tycho/config/hq.yml`.
+- Managed Codex, Claude, OpenCode, and custom Claude-compatible agents with
+  persistent chat memory.
+- Scheduled managed-agent runs from cron-style local config.
+- In-app log views, agent detail views, project detail views, and omnisearch.
+- Local JSON API and mobile Remote UI through `tycho serve`.
+- Remote UI server switching across multiple Tycho servers through a local
+  broker.
+- Optional Tailscale MagicDNS URL and terminal QR code for Remote UI access.
+- Optional browser push notifications for agent completions and inquiries.
+
 ## Requirements
 
 - Homebrew for the packaged macOS install.
 - Ruby 3.2 or newer for source installs.
 - Bundler for source installs.
 - Go, when Charm Ruby native gems need to be compiled during install.
+- Windows 11 users should run Tycho inside WSL.
 
 Tycho can run without every optional tool, but features backed by missing tools
 will show as unavailable.
@@ -164,6 +176,7 @@ Homebrew and source installs use the same user-scoped defaults:
 | Schedules | `~/.tycho/config/schedules.yml` |
 | Schedule prompt files | `~/.tycho/schedules/` |
 | Hooks | `~/.tycho/config/hooks.yml` |
+| Remote server peers | `remote_servers` in `~/.tycho/config/hq.yml` |
 | Runtime state and logs | `~/.tycho/logs/` |
 | Project logs | `~/.tycho/logs/projects/` |
 | Agent logs and artifacts | `~/.tycho/logs/agents/` |
@@ -220,6 +233,22 @@ Bind explicitly to localhost:
 ```bash
 tycho serve --host 127.0.0.1 --port 7373
 ```
+
+Connect one Remote UI to multiple Tycho servers by adding `remote_servers` to
+`~/.tycho/config/hq.yml`:
+
+```yaml
+remote_servers:
+  - key: vps
+    name: VPS
+    url: http://vps-cd946cb7.tail952bf7.ts.net:7373
+    token_env: TYCHO_VPS_REMOTE_TOKEN
+```
+
+The Remote UI always includes the local server and can switch to configured
+peers from Settings or the top-right menu. Agents, projects, schedules, drafts,
+attachments, and mutations are scoped to the active server; Tycho does not
+merge state across servers.
 
 Run scheduled agents:
 
@@ -387,11 +416,16 @@ When Tailscale HTTPS Serve is available, Tycho can print an HTTPS MagicDNS
 Remote UI URL and QR code. Public screenshots should redact MagicDNS URLs,
 Tailscale IPs, and QR codes.
 
+For multiple Remote servers, the browser still talks only to the Tycho server
+that served the UI. That local server brokers requests to the selected peer,
+using `token_env` values from local config or per-browser peer tokens entered
+in Settings. Browser-entered peer tokens are not written to `hq.yml`.
+
 ## Custom Claude Harnesses
 
-Tycho has built-in `codex` and `claude` harnesses. To run Claude through a
-wrapper, define a custom harness in `~/.tycho/config/hq.yml` and use its key as
-a project or template agent:
+Tycho has built-in `codex`, `claude`, and `opencode` harnesses. To run Claude
+through a wrapper, define a custom harness in `~/.tycho/config/hq.yml` and use
+its key as a project or template agent:
 
 ```yaml
 custom_harnesses:
@@ -431,11 +465,12 @@ bundle exec ruby test/rendering_test.rb
 ## Known Limitations
 
 - Tycho is macOS-first for the initial Homebrew release.
-- Linux is expected to work where Ruby, native build tools, and optional CLIs
-  are available, but it is not the primary packaged target yet.
+- Linux and Windows 11 through WSL are source-install targets where Ruby,
+  native build tools, and optional CLIs are available, but they are not the
+  primary packaged target yet.
 - Remote UI is local-first. Set `TYCHO_REMOTE_TOKEN` before binding to a
   non-loopback interface.
-  custom harness dependencies.
+- Custom harness dependencies remain the operator's responsibility.
 - Managed agents can run powerful local tools. Review prompts, project paths,
   and sandbox settings before starting agents.
 
