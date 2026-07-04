@@ -4,6 +4,27 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.7.0 - 2026-07-04
+
+### Notable Releases
+
+- Add OpenCode harness support, including stream parsing, fixtures, registry
+  wiring, harness inventory documentation, and skill discovery behavior.
+- Add daemon mode for the Remote Sessions server so local Remote UI processes
+  can be supervised more directly.
+- Remove the app orchestration surface and consolidate project handling around
+  the current project model.
+
+### Others
+
+- Add Remote UI agent switcher shortcuts and improve remote chat submission
+  feedback.
+- Add attachment content copy actions, tidy attachment detail controls, and fix
+  Remote UI attachment downloads.
+- Fix pull request diff counts and PR diff snapshot handling.
+- Fix Codex skill discovery roots and refresh Remote UI loading states with the
+  Tycho loader.
+
 ## 0.6.1 - 2026-06-21
 
 ### Bug Fixes
