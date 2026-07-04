@@ -2,7 +2,6 @@
 
 require "bubbles"
 require_relative "../../harness_registry"
-require_relative "../../registry"
 
 module HQ
   module UI
@@ -45,10 +44,6 @@ module HQ
 
       def agent_index
         agent_options.index(@selected_agent) || 0
-      end
-
-      def kamal_app_detected?
-        Registry.kamal_app?(@path_input.value.strip)
       end
 
       def existing_groups

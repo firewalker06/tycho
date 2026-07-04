@@ -14,7 +14,6 @@ type: project
 
 ## Strategic Direction
 
-HQ is a terminal-based dashboard (Bubbletea + Lipgloss + Bubbles via Charm Ruby) for monitoring Kamal-deployed Rails projects and orchestrating managed coding agents (Codex and Claude-compatible harnesses). It is a single-operator tool: the dashboard lives next to the developer's checkout, runs Kamal actions detached, and supervises managed-agent processes with persistent chat history.
 
 Key references:
 
@@ -35,9 +34,6 @@ Key references:
 |----------|--------|-----------|
 | TUI framework | Bubbletea + Lipgloss-compatible styling + Bubbles (Charm Ruby) | Elm Architecture fits the dashboard's event-driven model; Tycho uses native Lipgloss except on Intel macOS, where a Ruby compatibility backend avoids Go cgo callback crashes from multiple Charm native runtimes |
 | Default data root | `~/.tycho` for config, schedule prompts, runtime state, and logs | Source and packaged installs should never write runtime data into the repository or Homebrew Cellar by default |
-| Process model | Detached background processes via `mise exec` | Kamal actions outlive the TUI; state is restored on startup from `~/.tycho/logs/actions.json` |
-| Kamal invocation | Prefer project `bin/kamal` binstub, fall back to `bundle exec kamal` | Matches per-project Ruby/gem versions |
-| Health checks | HEAD requests, concurrent via Ruby threads | HEAD is required for kamal-proxy maintenance detection (503 on root URL) |
 | Config split | `~/.tycho/config/hq.yml` (active) + `~/.tycho/config/hq.archived.yml` (archived) | Archive without losing history; logs move to `~/.tycho/logs/projects/archived/` |
 | Agent transport | Codex JSON output; Claude-compatible `--output-format stream-json` | Streaming logs render incrementally in the chat viewport |
 | Agent model controls | Optional per-agent `model` and `reasoning_effort`, inherited from project/template config and passed as harness run arguments | Model catalogs change outside Tycho; use harness discovery for suggestions where available, keep free-form fallback everywhere, and keep provider-specific thinking budgets out of first-version scope |
@@ -53,12 +49,11 @@ Key references:
 | Input handling | `BubbleteaInput` patches `Bubbletea::Program#poll_event` with a Ruby-side queue | Fixes multi-byte / bracketed paste truncation in Bubbles `TextInput`/`TextArea` |
 | Logging | Centralized `HQ.logger` (stdlib `Logger`), daily rotation, 7-day retention | Single sink for lifecycle, config, process, and silently-rescued errors |
 | Skill discovery | Enumerate SKILL.md from `~/.claude/skills` + workspace `.claude/skills` (Claude-compatible harnesses) and `~/.codex/skills` + `~/.agents/skills` + workspace `.agents/skills` (Codex) | Per-agent trigger character (`/` vs `$`) surfaced in the chat composer |
-| Refresh cadence | App auto-refresh 30s; action/agent polling 10s | Balances responsiveness against Kamal/healthcheck cost |
 | Remote Sessions | Local JSON API and web UI via `tycho serve`; Tailscale auto-bind; terminal QR startup URL | Remote clients can inspect and control managed agents through the same `AgentStore` / `ManagedAgent` paths as the TUI |
 | Remote multiserver broker | Configured `remote_servers` let one Remote UI switch between local and peer `tycho serve` instances through backend proxy routes | Browser clients stay connected to one origin; peer credentials remain server-side; each view and mutation is scoped to the selected server |
 | Scheduled runs | Dedicated `tycho schedule daemon`, definitions in `~/.tycho/config/schedules.yml`, runtime state in `~/.tycho/logs/schedules.json`, validated standard cron syntax | Scheduled work should continue independently from the TUI and Remote UI while still reusing existing agent execution paths |
 | Schedule daemon freshness | `tycho schedule daemon` writes heartbeat state to `~/.tycho/logs/scheduler_daemon.json`; UI surfaces derive running/stale/stopped from heartbeat age and process liveness, and report untracked running daemons without heartbeat state | Users need to know whether cron work is actually ticking, not only whether definitions are valid |
-| Schedule command scope | Agent-only schedules; each run creates a fresh managed agent, archives the previous schedule-created agent, and accepts only inline messages or files under `schedules/` | Avoid stale sessions, arbitrary shell execution, and first-class scheduled project actions while keeping recurring automation reviewable |
+| Schedule command scope | Agent-only schedules; each run creates a fresh managed agent, archives the previous schedule-created agent, and accepts only inline messages or files under `schedules/` | Avoid stale sessions and arbitrary shell execution while keeping recurring automation reviewable |
 | Schedule statuses | Schedules expose `scheduled`, `paused`, or `stopped`; last outcome and error reason are tracked separately | Operators need a small action-oriented state model without losing diagnostic context |
 | Schedule interactive protection | A due run stops with reason `interactive` instead of archiving when the previous scheduled agent has later user messages; resuming a stopped schedule archives the active scheduled session and waits for the next scheduled run | User conversations in scheduled sessions must not disappear under the next cron tick, and recovery should be one explicit action |
 | Schedule management | Expose schedule list/detail/run/pause/resume/reload in both TUI and Remote UI | Interfaces should manage and observe schedules, but the daemon owns ticking, locks, missed-run policy, and dispatch |
@@ -81,9 +76,8 @@ verification.
 
 - [x] Bubbletea/Lipgloss/Bubbles TUI scaffold (`hq.rb` + `lib/hq/app.rb`)
 - [x] Project registry from `~/.tycho/config/hq.yml` (`lib/hq/registry.rb`)
-- [x] Concurrent HEAD-based health checks with maintenance detection
-- [x] Kamal deploy / maintenance / live actions as detached `mise exec` processes
-- [x] Action persistence and restoration via `~/.tycho/logs/actions.json`
+- [x] Concurrent project metadata refresh
+- [x] Managed-agent persistence and restoration via `~/.tycho/logs/managed_agents.json`
 - [x] In-app sidebar log viewer; `g` shortcut to open project terminal
 
 ### v0.2 — Managed Agents ✓
@@ -114,11 +108,9 @@ verification.
 
 - [x] Project archiving (config + logs move to archived locations)
 - [x] New-project form with live path autocomplete
-- [x] Auto-detection of Kamal apps from `config/deploy.yml`
 - [x] Per-project log organization under `~/.tycho/logs/projects/{project}/`
 - [x] Centralized `HQ.logger` with daily rotation and 7-day cleanup
 - [x] Loading screen with progress bar; deferred slow startup work
-- [x] Connection-reused, tightened-timeout health checks
 - [x] Global `ctrl-g` terminal shortcut; `ctrl-r` HQ restart
 
 ### v0.6 — Agent UX Polish and Stabilize ✓
@@ -172,7 +164,7 @@ verification.
 - [x] Decide scheduler owner: dedicated `tycho schedule daemon`
 - [x] Decide config source: `~/.tycho/config/schedules.yml` with cron syntax validation
 - [x] Decide management surfaces: TUI and Remote UI
-- [x] Decide command scope: fresh agent only; no project actions, health checks, shell, templates, existing-agent resumes, or clones
+- [x] Decide command scope: fresh agent only; no shell, templates, existing-agent resumes, or clones
 - [x] Decide prompt sources: inline text or files under `schedules/`
 - [x] Decide failure/success notifications: stop and web-push on failure; notify only first success and first success after failure
 - [x] Add `ScheduleRegistry` / `ScheduleStore` and persisted runtime state in `~/.tycho/logs/schedules.json`
@@ -212,7 +204,7 @@ verification.
 
 ### Observability
 
-- [ ] Structured event metrics (action durations, healthcheck latencies, agent run timings)
+- [ ] Structured event metrics for agent run timings and lifecycle events
 - [ ] In-app log filter / search for `~/.tycho/logs/hq.log`
 - [ ] Agent run timeline view
 
@@ -221,10 +213,8 @@ verification.
 - [ ] Revamp header: inverse background with the font color, let font color to white. Add quote of the day
 - [ ] Implement Claude wordy quirkiness to Header and Loading Screen
 
-### Integrate Kamal Actions as Tools
 
-- [x] Inventorize HQ's Kamal Actions
-- [x] Add as HQ's Tools to be executed by Harness (available through `bin/tycho app ...`)
+- [x] Add Tycho tools to be executed by harnesses
 
 ### Planning Flow Tools
 
@@ -239,7 +229,6 @@ verification.
 
 ### Agent Chat Follow-ups
 
-- [ ] [bug] App deployment does not show an error when it stops because Docker is inactive
 - [x] [ui] Move Conversation block diagnostics (`Block 71/81`, visible line count / viewport height) to the right side of the Conversation section header as compact icons and numbers
 - [x] [ux] In Conversation block detail view, allow left/right to move to previous/next block and show compact (`Block 71/81`, visible line count / viewport height) detail metadata on the right side of the detail header
 
@@ -262,8 +251,7 @@ verification.
 - [x] Start / Stop an agent (`POST /agents/{key}/start`, `POST /agents/{key}/stop`)
 - [x] Creates / Edit an agent (`POST /agents`, `PATCH /agents/{key}`)
 - [x] Archive one agent (`DELETE /agents/{key}` or `POST /agents/{key}/archive`) or bulk archive idle agents (`POST /agents/archive`)
-- [x] Project list/detail endpoints and mobile project health/detail screens
-- [x] Guarded deploy/maintenance/live preflight and start endpoints
+- [x] Project list/detail endpoints and mobile project detail screens
 - [x] Remote setup/readiness endpoint and Settings screen
 - [x] Client-side Remote UI filtering across agents and projects
 - [x] Remote UI skill discovery for chat insertion

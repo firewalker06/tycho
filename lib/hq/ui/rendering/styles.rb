@@ -9,10 +9,7 @@ module HQ
         ICONS = {
           agent: "\u{f06a9}",
           project: "\u{f07b}",
-          web_project: "\u{f059f}",
           group: "\u{f0849}",
-          kamal: "\u{f1382}",
-          rails: "\u{e73b}",
           pr: "\u{ea64}",
           github: "\u{ea84}",
           branch: "\u{e725}",
@@ -165,10 +162,6 @@ module HQ
 
         def summary_style
           @summary_style ||= Lipgloss::Style.new.italic(true).foreground(COLORS[:text_muted])
-        end
-
-        def outdated_style
-          @outdated_style ||= Lipgloss::Style.new.bold(true).foreground(COLORS[:warning])
         end
 
         def confirm_style

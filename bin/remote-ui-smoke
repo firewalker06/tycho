@@ -36,10 +36,9 @@ def write_fixture(dir)
       - key: web
         name: Web
         path: #{workspace.inspect}
-        apps: false
         agent: codex
   YAML
-  File.write(prompts_path, "---\ncustom: \"Check the app.\"\n")
+  File.write(prompts_path, "---\ncustom: \"Check the workspace.\"\n")
   File.write(schedules_path, "---\nschedules: []\n")
   skill_dir = File.join(workspace, ".agents", "skills", "review")
   FileUtils.mkdir_p(skill_dir)
@@ -58,8 +57,8 @@ def write_fixture(dir)
   }
 end
 
-def wait_for_health(base_url, log_path)
-  uri = URI("#{base_url}/health")
+def wait_for_remote(base_url, log_path)
+  uri = URI("#{base_url}/setup")
   Timeout.timeout(15) do
     loop do
       response = Net::HTTP.get_response(uri)
@@ -71,7 +70,7 @@ def wait_for_health(base_url, log_path)
     end
   end
 rescue Timeout::Error
-  raise "Remote server did not become healthy:\n#{File.read(log_path)}"
+  raise "Remote server did not become reachable:\n#{File.read(log_path)}"
 end
 
 def process_alive?(pid)
@@ -263,7 +262,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   )
 
   begin
-    wait_for_health(base_url, log_path)
+    wait_for_remote(base_url, log_path)
     agent_key = create_agent(base_url)
     node_dir = File.join(dir, "node")
     install_playwright!(node_dir)

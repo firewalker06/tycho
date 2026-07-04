@@ -41,7 +41,7 @@ module SchedulerTest
               project_key: web
               message: "Run maintenance."
       YAML
-      schedules = HQ::ScheduleRegistry.new(path: schedule_path, projects: registry.projects.map { |config| HQ::AppProject.new(config) }).schedules
+      schedules = HQ::ScheduleRegistry.new(path: schedule_path, projects: registry.projects.map { |config| HQ::Project.new(config) }).schedules
       assert(schedules.length == 1, "expected valid inline schedule")
 
       _registry, invalid_target = write_registry_and_schedule(dir, <<~YAML, suffix: "invalid-target")
@@ -54,7 +54,7 @@ module SchedulerTest
               message: "Nope."
       YAML
       assert_raises(HQ::ScheduleRegistry::Error, "expected shell target to be rejected") do
-        HQ::ScheduleRegistry.new(path: invalid_target, projects: registry.projects.map { |config| HQ::AppProject.new(config) }).schedules
+        HQ::ScheduleRegistry.new(path: invalid_target, projects: registry.projects.map { |config| HQ::Project.new(config) }).schedules
       end
 
       _registry, invalid_file = write_registry_and_schedule(dir, <<~YAML, suffix: "invalid-file")
@@ -67,7 +67,7 @@ module SchedulerTest
               message_file: "../secret.md"
       YAML
       assert_raises(HQ::ScheduleRegistry::Error, "expected message_file outside schedules/ to be rejected") do
-        HQ::ScheduleRegistry.new(path: invalid_file, projects: registry.projects.map { |config| HQ::AppProject.new(config) }).schedules
+        HQ::ScheduleRegistry.new(path: invalid_file, projects: registry.projects.map { |config| HQ::Project.new(config) }).schedules
       end
     end
   end
@@ -164,7 +164,7 @@ module SchedulerTest
       store.save(states)
 
       first_agent.add_user_message!("Can you explain that result?")
-      projects = registry.projects.map { |config| HQ::AppProject.new(config) }
+      projects = registry.projects.map { |config| HQ::Project.new(config) }
       HQ::AgentStore.new(projects).save([first_agent])
       loaded = HQ::AgentStore.new(projects).load
       assert(loaded.length == 1, "expected interactive agent to reload from agent store")
@@ -306,7 +306,7 @@ module SchedulerTest
               project_key: web
               message: "Run maintenance."
       YAML
-      projects = registry.projects.map { |config| HQ::AppProject.new(config) }
+      projects = registry.projects.map { |config| HQ::Project.new(config) }
       failed = HQ::ManagedAgent.new(
         key: "web-agent-1",
         name: "Failed schedule",
@@ -392,7 +392,7 @@ module SchedulerTest
   end
 
   def build_scheduler(registry, schedule_path, web_push_notifier: FakeNotifier.new)
-    projects = registry.projects.map { |config| HQ::AppProject.new(config) }
+    projects = registry.projects.map { |config| HQ::Project.new(config) }
     HQ::Scheduler.new(
       registry: registry,
       schedule_registry: HQ::ScheduleRegistry.new(path: schedule_path, projects: projects),
@@ -413,7 +413,6 @@ module SchedulerTest
         - key: web
           name: Web
           path: #{workspace}
-          apps: false
           agent: codex
     YAML
     schedule_path = File.join(config_dir, "schedules-#{suffix}.yml")

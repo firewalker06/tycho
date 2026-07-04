@@ -25,7 +25,6 @@ Follow the existing Ruby style:
 - `SCREAMING_SNAKE_CASE` constants.
 - Small domain objects and focused rendering modules.
 
-Keep registry/config parsing out of the TUI layer. Keep managed-agent and Kamal
 behavior in domain objects. Keep rendering split between
 `lib/hq/ui/rendering.rb` and focused modules under `lib/hq/ui/rendering/`.
 

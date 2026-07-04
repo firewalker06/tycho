@@ -14,14 +14,6 @@ module HQ
       File.join(PROJECT_LOGS_DIR, project_key.to_s)
     end
 
-    def project_action_log_path(project_key)
-      File.join(project_log_dir(project_key), "action.log")
-    end
-
-    def project_healthcheck_log_path
-      File.join(PROJECT_LOGS_DIR, "healthcheck.log")
-    end
-
     def project_archive_destination(root, archive_name, now: Time.now)
       unique_path(File.join(root, "#{now.strftime("%Y-%m-%d")}_#{safe_segment(archive_name)}"))
     end

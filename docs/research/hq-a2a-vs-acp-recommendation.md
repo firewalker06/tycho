@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-For HQ as it exists today, neither A2A nor ACP is a necessary core dependency. HQ is currently a local terminal control plane for project metadata, deployment actions, app health checks, and locally managed coding agents. Its main responsibilities are local process orchestration, run tracking, log inspection, and user interaction inside the TUI.
+For HQ as it exists today, neither A2A nor ACP is a necessary core dependency. HQ is currently a local terminal control plane for project metadata and locally managed coding agents. Its main responsibilities are local process orchestration, run tracking, log inspection, and user interaction inside the TUI.
 
 If HQ evolves to support remote agents, cross-machine orchestration, or interoperability with third-party agent systems, A2A is the better fit. ACP is conceptually relevant, but it is no longer the active standalone direction and has been incorporated into A2A. For new work, A2A is the stronger strategic choice.
 
@@ -18,7 +18,6 @@ HQ loads projects from configuration, including:
 - project name,
 - group,
 - local filesystem path,
-- app enablement,
 - agent templates.
 
 This behavior is defined in `config/hq.yml` and loaded through `HQ::Registry`.
@@ -29,36 +28,22 @@ For each configured project, HQ reads:
 
 - Git branch,
 - Git commit hash,
-- dirty file count,
-- Kamal version from `Gemfile.lock`,
-- Rails version from `Gemfile.lock`.
+- dirty file count.
 
 This is local repository introspection, not network agent communication.
 
-### 3. App health monitoring
+### 3. Agent orchestration state
 
-For app-enabled projects, HQ:
+For managed agents, HQ:
 
-- parses deploy configuration,
-- resolves proxy host and healthcheck path,
-- performs health requests,
-- measures latency,
-- classifies app and health status,
-- writes healthcheck logs.
+- tracks run status,
+- persists session memory,
+- records structured results,
+- exposes logs and follow-up prompts.
 
-This is application operations monitoring, not agent interoperability.
+This is local orchestration state, not network agent interoperability.
 
-### 4. Deployment operations
-
-HQ can trigger and track Kamal actions:
-
-- deploy,
-- maintenance,
-- live.
-
-It spawns local processes, stores running action state, restores action state after restart, and exposes action logs in the UI.
-
-### 5. Managed agent lifecycle
+### 4. Managed agent lifecycle
 
 HQ creates and manages local coding agents per project. It supports:
 
@@ -71,7 +56,7 @@ HQ creates and manages local coding agents per project. It supports:
 - structured result summaries,
 - log file persistence.
 
-### 6. Agent chat workflow
+### 5. Agent chat workflow
 
 HQ lets the user continue interacting with a managed agent through a chat-like interface:
 
@@ -80,7 +65,7 @@ HQ lets the user continue interacting with a managed agent through a chat-like i
 - recent messages and result summaries are displayed in the TUI,
 - conversation state is persisted locally.
 
-### 7. Local-first execution model
+### 6. Local-first execution model
 
 HQ runs agents as local `codex exec` processes. The current architecture is built around:
 

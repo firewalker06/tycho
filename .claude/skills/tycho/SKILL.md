@@ -1,21 +1,15 @@
 ---
 name: tycho
-description: Manages Tycho-monitored projects and managed agents. Use when the user asks to deploy, check status, manage maintenance mode, create/list/run/stop/send/archive/clone agents, or control schedules for any project.
+description: Manages Tycho-monitored projects and managed agents. Use when the user asks to check status, create/list/run/stop/send/archive/clone agents, or control schedules for any project.
 ---
 
 # Tycho CLI Skill
 
-Manage Kamal-deployed projects, managed agents, and scheduled runs via the `tycho` CLI.
 
 ## Quick Reference
 
 | Group | Command | Description |
 |-------|---------|-------------|
-| **app** | `app list` | List projects with Kamal deployment |
-| | `app status <project-key>` | Check a project's health and last action |
-| | `app deploy <project-key>` | Start a deploy |
-| | `app maintenance <project-key>` | Enable maintenance mode |
-| | `app live <project-key>` | Resume live traffic |
 | **project** | `project update <project-key> --pr-url <url>` | Set / clear open PR URL |
 | **agent** | `agent create <project-key> <prompt>` | Create (and optionally run) a managed agent |
 | | `agent list [<project-key>]` | List agents, optionally filtered by project |
@@ -161,20 +155,6 @@ tycho agent clone my-project-agent-3 --run    # clone and start immediately
 
 ---
 
-## `tycho app` — Deployment Commands
-
-```bash
-tycho app list
-tycho app status my-project
-tycho app deploy my-project
-tycho app maintenance my-project
-tycho app live my-project
-```
-
-Actions run as detached background processes. Check progress via `app status` or the TUI.
-
----
-
 ## `tycho schedule` — Schedule Management
 
 ```bash
@@ -200,7 +180,6 @@ tycho project update my-project --pr-url ""   # clear
 ## Project Keys
 
 ```bash
-tycho app list                              # Kamal-enabled projects
 grep "^- key:" ~/.tycho/config/hq.yml      # all projects (including agent-only)
 ```
 

@@ -25,11 +25,6 @@ module RenderingTest
     fixture_dir = Dir.mktmpdir("hq-rendering-config-test")
     ENV["TYCHO_CONFIG_PATH"] = write_rendering_config_fixture(fixture_dir)
 
-    original_fetch = HQ::VersionLookup.method(:fetch_latest_gem_version)
-    HQ::VersionLookup.singleton_class.send(:define_method, :fetch_latest_gem_version) do |gem_name|
-      { "kamal" => "2.11.0", "rails" => "8.1.3" }[gem_name]
-    end
-
     original_load = HQ::AgentStore.instance_method(:load)
     original_save = HQ::AgentStore.instance_method(:save)
     HQ::AgentStore.define_method(:load) { [] }
@@ -40,8 +35,6 @@ module RenderingTest
     assert_app_boot_refreshes_project_metadata
     assert_missing_config_opens_onboarding_panel
     assert_onboarding_welcome_creates_sandbox_project
-    assert_concurrent_project_metadata_uses_each_dotenv
-    assert_project_without_proxy_host_is_not_healthchecked
     assert_main_screen_shows_detail_panel_and_footer
     assert_empty_project_state_mentions_new_project_shortcut
     assert_empty_agent_state_mentions_new_agent_shortcut
@@ -52,7 +45,6 @@ module RenderingTest
     assert_list_sidebar_renders_agent_names
     assert_list_sidebar_renders_project_status_icons
     assert_list_sidebar_scrolls_to_selected_agent
-    assert_failed_project_action_with_healthy_app_renders_warning_status
     assert_agent_unread_cursor_and_chat_clear
     assert_finished_agent_poll_marks_unread
     assert_exited_agent_poll_marks_unread_after_status_turns_idle
@@ -69,10 +61,8 @@ module RenderingTest
     assert_agent_detail_omits_conversation_and_recent_runs
     assert_agent_detail_renders_project_git_metadata
     assert_project_detail_renders_log_locations
-    assert_project_detail_renders_last_action_status
     assert_projects_list_renders_group_rows
     assert_log_overlay_renders_in_right_panel
-    assert_project_log_shortcut_opens_action_log
     assert_chat_screen_renders_transcript_and_composer
     assert_chat_section_labels_use_tag_backgrounds
     assert_chat_attachments_render_compact_and_overlay
@@ -106,10 +96,9 @@ module RenderingTest
     assert_chat_block_selection_scrolls_with_large_messages
     assert_agent_editor_renders_template_and_harness_choices
     assert_agent_editor_preserves_dirty_model_and_effort_on_template_change
-    assert_web_project_icon_renders_for_project_contexts
-    assert_non_app_project_uses_folder_icon
+    assert_project_icon_renders_for_project_contexts
+    assert_project_list_uses_folder_icon
     assert_project_archive_moves_config_logs_and_agents
-    assert_failed_kamal_action_log_marks_action_failed
     assert_create_agent_keeps_project_tool_system_prompt
     assert_create_and_run_raw_log_includes_project_tool_system_prompt
     assert_create_agent_starts_immediately_and_uses_selected_harness
@@ -126,11 +115,6 @@ module RenderingTest
     assert_glamour_worker_renders_sample_markdown
     puts "rendering_test: ok"
   ensure
-    if defined?(original_fetch) && original_fetch
-      HQ::VersionLookup.singleton_class.send(:define_method, :fetch_latest_gem_version) do |gem_name|
-        original_fetch.call(gem_name)
-      end
-    end
     HQ::AgentStore.define_method(:load, original_load) if defined?(original_load) && original_load
     HQ::AgentStore.define_method(:save, original_save) if defined?(original_save) && original_save
     ENV["TYCHO_CONFIG_PATH"] = old_config_path if defined?(old_config_path)
@@ -155,17 +139,14 @@ module RenderingTest
           name: hq
           group: Personal
           path: #{File.join(dir, "hq")}
-          apps: false
         - key: warehouse
           name: warehouse
           group: Personal
           path: #{File.join(dir, "warehouse")}
-          apps: true
         - key: demo-web
           name: Demo Web
           group: Example
           path: #{File.join(dir, "demo-web")}
-          apps: false
     YAML
 
     File.write(File.join(dir, "system_prompts.yml"), <<~YAML)
@@ -182,12 +163,9 @@ module RenderingTest
     lines = output.lines.map(&:chomp)
 
     assert(lines.length <= 30, "expected output to fit within 30 lines, got #{lines.length}")
-    assert(lines[0].include?("Tycho - Ops Cockpit"), "expected title on first line")
+    assert(lines[0].include?("Tycho - Factorio for Agents"), "expected title on first line")
     assert(lines[1].include?("1. Agents"), "expected agents tab on second line")
     assert(lines[1].include?("2. Projects"), "expected projects tab on second line")
-    assert(lines[1].include?("Latest:"), "expected latest versions on second line")
-    assert(lines[1].include?("2.11.0"), "expected kamal version text on second line")
-    assert(lines[1].include?("8.1.3"), "expected rails version text on second line")
   end
 
   def assert_loading_screen_renders_tycho_logotype
@@ -212,27 +190,19 @@ module RenderingTest
     Dir.mktmpdir("hq-app-boot-metadata-test") do |dir|
       project_path = File.join(dir, "demo")
       FileUtils.mkdir_p(project_path)
-      File.write(File.join(project_path, "Gemfile.lock"), <<~LOCK)
-        GEM
-          specs:
-            kamal (2.8.1)
-            rails (8.0.2)
-      LOCK
       config_path = File.join(dir, "hq.yml")
       File.write(config_path, <<~YAML)
         projects:
           - key: demo
             name: Demo
             path: #{project_path}
-            apps: false
       YAML
 
       ENV["TYCHO_CONFIG_PATH"] = config_path
       app = HQ::App.new
       project = app.instance_variable_get(:@projects).fetch(0)
 
-      assert(project.kamal_version == "2.8.1", "expected Kamal version to load during app boot")
-      assert(project.rails_version == "8.0.2", "expected Rails version to load during app boot")
+      assert(project.path == project_path, "expected project metadata to load during app boot")
       assert(app.instance_variable_get(:@loading) == false, "expected App.new to render the main UI before async refresh")
     end
   ensure
@@ -289,7 +259,6 @@ module RenderingTest
 
       assert(project["key"] == "welcome", "expected welcome project to be persisted")
       assert(project["path"] == welcome_path, "expected welcome project to use sandbox workspace")
-      assert(project["apps"] == false, "expected welcome project to disable app checks")
       assert(File.exist?(File.join(welcome_path, "README.md")), "expected welcome workspace README")
       assert(!app.instance_variable_get(:@onboarding), "expected onboarding to close after sandbox creation")
       assert(app.instance_variable_get(:@projects).map(&:key).include?("welcome"),
@@ -303,104 +272,6 @@ module RenderingTest
       ENV["TYCHO_SYSTEM_PROMPTS_PATH"] = old_system_prompts_path
     else
       ENV.delete("TYCHO_SYSTEM_PROMPTS_PATH")
-    end
-  end
-
-  def assert_project_without_proxy_host_is_not_healthchecked
-    Dir.mktmpdir("hq-host-health-test") do |dir|
-      project_path = File.join(dir, "host-only")
-      FileUtils.mkdir_p(File.join(project_path, "config"))
-      File.write(File.join(project_path, "config", "deploy.yml"), <<~YAML)
-        service: host-only
-        image: host-only
-        servers:
-          web:
-            hosts:
-              - 10.0.0.42
-            proxy: false
-      YAML
-      project = HQ::AppProject.new(
-        HQ::ProjectConfig.new(
-          key: "host-only",
-          name: "Host Only",
-          group: "Tests",
-          path: project_path,
-          apps: true,
-          agent_templates: []
-        )
-      )
-      project.refresh_metadata!
-
-      original_new = Net::HTTP.method(:new)
-      fake_http = Class.new do
-        attr_accessor :use_ssl, :open_timeout, :read_timeout, :keep_alive_timeout
-        attr_reader :host, :port, :paths
-
-        def initialize(host, port)
-          @host = host
-          @port = port
-          @paths = []
-        end
-
-        def start
-          yield self
-        end
-
-        def head(path)
-          @paths << path
-          Struct.new(:code).new("200")
-        end
-      end
-      created = []
-      Net::HTTP.singleton_class.define_method(:new) do |host, port|
-        fake_http.new(host, port).tap { |http| created << http }
-      end
-
-      project.check_health!
-
-      assert(project.health_status == "not checked", "expected host-only project without proxy.host to be neutral")
-      assert(project.app_status == "unknown", "expected host-only project without proxy.host to have unknown app status")
-      assert(created.empty?, "expected host-only project without proxy.host not to issue HTTP checks")
-    ensure
-      Net::HTTP.define_singleton_method(:new) { |*args| original_new.call(*args) } if original_new
-    end
-  end
-
-  def assert_concurrent_project_metadata_uses_each_dotenv
-    Dir.mktmpdir("hq-concurrent-deploy-config-test") do |dir|
-      projects = %w[one two].map do |name|
-        path = File.join(dir, name)
-        FileUtils.mkdir_p(File.join(path, "config"))
-        File.write(File.join(path, ".env"), "PROXY_HOST=#{name}.example.test\n")
-        File.write(File.join(path, "config", "deploy.yml"), <<~YAML)
-          service: #{name}
-          image: #{name}
-          servers:
-            web:
-              hosts:
-                - 127.0.0.1
-          proxy:
-            ssl: true
-            host: <%= ENV.fetch("PROXY_HOST") %>
-        YAML
-        HQ::AppProject.new(
-          HQ::ProjectConfig.new(
-            key: name,
-            name: name,
-            group: "Tests",
-            path: path,
-            apps: true,
-            agent_templates: []
-          )
-        )
-      end
-
-      20.times do
-        projects.map { |project| Thread.new { project.refresh_metadata! } }.each(&:join)
-      end
-
-      assert(projects.map(&:proxy_host) == %w[one.example.test two.example.test],
-             "expected concurrent deploy config parsing to keep each project's dotenv isolated")
     end
   end
 
@@ -563,31 +434,6 @@ module RenderingTest
            "expected overflowing list sidebar to render the selected agent")
     assert(!plain.include?("Scroll Agent 0"),
            "expected overflowing list sidebar to scroll early agents out of view")
-  end
-
-  def assert_failed_project_action_with_healthy_app_renders_warning_status
-    project = HQ::AppProject.new(
-      HQ::ProjectConfig.new(
-        key: "healthy-failed-action",
-        name: "Healthy Failed Action",
-        group: "Tests",
-        path: "/tmp",
-        apps: true,
-        agent_templates: []
-      )
-    )
-    project.instance_variable_set(:@health_status, "healthy")
-    project.instance_variable_set(:@app_status, "running")
-    result = { success: false, action: :deploy, at: Time.now, log_path: "/tmp/action.log" }
-
-    badge = HQ::UI::Rendering::ProjectStatusBadge.for(project, action: nil, result: result, steady: :health)
-
-    assert(badge.style_key == :warning, "expected failed action with healthy app to render as warning")
-    assert(badge.text == "! deploy", "expected failed action with healthy app to use warning result text")
-    assert(HQ::UI::Rendering::ProjectStatusBadge.result_active?(result.merge(at: Time.now - 299)),
-           "expected failed action result to remain active for the longer failure window")
-    assert(!HQ::UI::Rendering::ProjectStatusBadge.result_active?(result.merge(at: Time.now - 301)),
-           "expected failed action result to expire after the failure window")
   end
 
   def assert_agent_unread_cursor_and_chat_clear
@@ -916,27 +762,7 @@ module RenderingTest
     plain = Bubbles::ANSI.strip(app.send(:project_detail_text))
 
     assert(plain.include?("Log Dir"), "expected project detail to label project log directory")
-    assert(plain.include?("Action Log"), "expected project detail to label action log path")
-  end
-
-  def assert_project_detail_renders_last_action_status
-    app = app_with_default_agent(width: 120, height: 30)
-    app.instance_variable_set(:@screen, :projects)
-    project = app.send(:selected_project)
-    app.instance_variable_get(:@action_results)[project.key] = {
-      success: false,
-      action: :deploy,
-      action_label: "deploying",
-      at: Time.now,
-      log_path: project.action_log_path
-    }
-
-    detail = app.send(:project_detail_text)
-
-    plain = Bubbles::ANSI.strip(detail)
-    assert(plain.include?("Last Action"), "expected project detail to label last action")
-    assert(plain.include?("deploying - failed"),
-           "expected project detail to show last action result")
+    assert(plain.include?("Templates"), "expected project detail to label templates")
   end
 
   def assert_detail_sidebar_renders_in_split_layout
@@ -966,29 +792,12 @@ module RenderingTest
       assert(output.include?("line one"), "expected log overlay content")
       assert(output.include?("line 1/"), "expected log overlay status line")
 
-      %i[chat_log healthcheck_log].each do |kind|
+      %i[chat_log raw_log].each do |kind|
         app.send(:open_sidebar_text, kind:, title: kind.to_s) { "one\ntwo\n" }
         assert(app.instance_variable_get(:@sidebar_viewport).is_a?(HQ::UI::LogViewer),
                "expected #{kind} to use the log viewer")
       end
     end
-  end
-
-  def assert_project_log_shortcut_opens_action_log
-    app = app_with_default_agent(width: 120, height: 30)
-    app.instance_variable_set(:@screen, :projects)
-    project = app.send(:selected_project)
-    FileUtils.mkdir_p(project.log_dir)
-    File.write(project.action_log_path, "deploy output\n")
-
-    app.send(:handle_key, "l")
-    output = Bubbles::ANSI.strip(app.view)
-
-    assert(output.include?("Action Log"), "expected l on Projects to open the selected project's action log")
-    assert(app.instance_variable_get(:@sidebar_viewport).is_a?(HQ::UI::LogViewer),
-           "expected action logs to use the log viewer")
-    assert(output.include?("deploy output"), "expected project action.log content")
-    assert(!output.include?("Agent Chat Log"), "expected Projects log shortcut not to open an agent chat log")
   end
 
   def assert_agent_raw_log_shortcut_displays_full_file
@@ -1683,7 +1492,7 @@ module RenderingTest
            "expected requested_schema 'required' list to mark the first four fields required")
     assert(form.answer_fields[1].options == [
       "Meetup Scheduling", "Admin Panel", "Discord Notifications",
-      "Typefully Webhook", "Deployment / Infrastructure", "Other"
+      "Typefully Webhook", "Infrastructure", "Other"
     ], "expected enum values to carry over as select options")
     assert(form.fields.length == 6,
            "expected inquiry form to append a review step as the last field, got #{form.fields.length}")
@@ -2346,25 +2155,26 @@ module RenderingTest
            "expected dirty reasoning effort field to survive template change")
   end
 
-  def assert_web_project_icon_renders_for_project_contexts
+  def assert_project_icon_renders_for_project_contexts
     projects_output = Bubbles::ANSI.strip(render_main_screen(:projects, width: 120, height: 30))
     editor_output = Bubbles::ANSI.strip(render_agent_editor(width: 120, height: 30))
     chat_output = Bubbles::ANSI.strip(render_chat_screen(width: 120, height: 30))
 
-    assert(projects_output.include?("#{WEB_PROJECT_ICON} warehouse"), "expected app project row to use the web icon")
-    assert(editor_output.include?("Create Agent for #{WEB_PROJECT_ICON} warehouse"),
-           "expected agent editor project label to use the web icon")
-    assert(chat_output.include?("#{WEB_PROJECT_ICON} warehouse #{CURSOR_MARKER}"),
-           "expected chat header project label to use the web icon")
+    assert(projects_output.include?("#{FOLDER_PROJECT_ICON} warehouse"),
+           "expected project row to use the folder icon")
+    assert(editor_output.include?("Create Agent for #{FOLDER_PROJECT_ICON} warehouse"),
+           "expected agent editor project label to use the folder icon")
+    assert(chat_output.include?("#{FOLDER_PROJECT_ICON} warehouse #{CURSOR_MARKER}"),
+           "expected chat header project label to use the folder icon")
   end
 
-  def assert_non_app_project_uses_folder_icon
+  def assert_project_list_uses_folder_icon
     projects_output = Bubbles::ANSI.strip(render_main_screen(:projects, width: 120, height: 30))
 
     assert(projects_output.include?("#{FOLDER_PROJECT_ICON} hq"),
-           "expected non-app project row to use the folder icon")
+           "expected project row to use the folder icon")
     assert(projects_output.include?("#{FOLDER_PROJECT_ICON} Demo Web"),
-           "expected grouped non-app project row to use the folder icon")
+           "expected grouped project row to use the folder icon")
   end
 
   def assert_project_archive_moves_config_logs_and_agents
@@ -2381,12 +2191,10 @@ module RenderingTest
             name: Demo Project
             group: Test
             path: #{demo_path}
-            apps: false
           - key: keep
             name: Keep Project
             group: Test
             path: #{keep_path}
-            apps: false
       YAML
       ENV["TYCHO_CONFIG_PATH"] = config_path
 
@@ -2410,8 +2218,7 @@ module RenderingTest
       app.instance_variable_get(:@selected)[:projects] = app.instance_variable_get(:@projects).index(project) || 0
 
       FileUtils.mkdir_p(project.log_dir)
-      File.write(project.action_log_path, "deploy output")
-      File.write(File.join(project.log_dir, "deploy_20260321_084122.log"), "old deploy output")
+      File.write(File.join(project.log_dir, "notes.log"), "old project output")
 
       app.send(:handle_key, "x")
       archive_confirm = app.instance_variable_get(:@project_archive_confirm)
@@ -2439,39 +2246,12 @@ module RenderingTest
       archived = archives.first
 
       assert(!Dir.exist?(project.log_dir), "expected original project log directory to be moved")
-      assert(File.exist?(File.join(archived, "action.log")), "expected action log in archive")
-      assert(File.exist?(File.join(archived, "deploy_20260321_084122.log")), "expected historical deploy log in archive")
+      assert(File.exist?(File.join(archived, "notes.log")), "expected project log in archive")
       assert(Dir.glob(File.join(HQ::AGENT_ARCHIVE_DIR, "*demo-agent-1", "*.raw.log")).any?,
              "expected related agent logs to be archived")
     ensure
       ENV["TYCHO_CONFIG_PATH"] = old_config_path
     end
-  end
-
-  def assert_failed_kamal_action_log_marks_action_failed
-    started_at = Time.parse("2026-05-02 05:30:23")
-    action = HQ::KamalAction.new(
-      project_key: "failed-deploy-test",
-      project_name: "Failed Deploy",
-      project_path: "/tmp",
-      action: :deploy,
-      pid: 999_999,
-      started_at: started_at
-    )
-    FileUtils.mkdir_p(File.dirname(action.log_path))
-    File.write(action.log_path, <<~LOG)
-
-      === [#{started_at.strftime("%Y-%m-%d %H:%M:%S")}] deploy ===
-
-      Build and push app image...
-        ERROR (SSHKit::Command::Failed): docker exit status: 32000
-      docker stderr: Cannot connect to the Docker daemon
-    LOG
-
-    action.poll!
-
-    assert(action.done?, "expected finished action to be marked done")
-    assert(action.success? == false, "expected failed deploy log to mark action failed")
   end
 
   def assert_create_agent_starts_immediately_and_uses_selected_harness
@@ -2534,8 +2314,8 @@ module RenderingTest
     app.define_singleton_method(:save_agents!) { nil }
 
     projects = app.instance_variable_get(:@projects)
-    project = projects.find { |item| item.key == "warehouse" } || projects.find(&:apps_enabled?)
-    raise "expected an app project for agent prompt test" unless project
+    project = projects.find { |item| item.key == "warehouse" } || projects.first
+    raise "expected a project for agent prompt test" unless project
 
     app.instance_variable_set(:@screen, :projects)
     app.instance_variable_get(:@selected)[:projects] = projects.index(project) || 0
@@ -2553,10 +2333,6 @@ module RenderingTest
            "expected created agent to keep project context and template prompts as separate system messages")
     assert(system_messages[0].content.include?("Project:"),
            "expected first created-agent system prompt to include project context")
-    assert(system_messages[0].content.include?("bin/tycho app deploy #{project.key}"),
-           "expected first created-agent system prompt to include project deploy command")
-    assert(system_messages[0].content.include?("Ensure to check the Last Action when performing HQ command."),
-           "expected first created-agent system prompt to include last-action instruction")
     assert(system_messages[1].content == "Maintenance for #{project.key}.",
            "expected second created-agent system prompt to be the edited agent prompt")
   end
@@ -2566,8 +2342,8 @@ module RenderingTest
     app.define_singleton_method(:save_agents!) { nil }
 
     projects = app.instance_variable_get(:@projects)
-    project = projects.find { |item| item.key == "warehouse" } || projects.find(&:apps_enabled?)
-    raise "expected an app project for raw log prompt test" unless project
+    project = projects.find { |item| item.key == "warehouse" } || projects.first
+    raise "expected a project for raw log prompt test" unless project
 
     store = app.instance_variable_get(:@agent_store)
     original_create = store.method(:create_from_template)
@@ -2594,8 +2370,6 @@ module RenderingTest
       raw_log = File.read(created_agent.raw_log_path)
       assert(raw_log.include?("prompt=SYSTEM:\nProject:"),
              "expected raw log prompt to start with project context system prompt")
-      assert(raw_log.include?("bin/tycho app deploy #{project.key}"),
-             "expected raw log prompt to include project deploy command")
       assert(raw_log.include?("SYSTEM:\nMaintenance for #{project.key}."),
              "expected raw log prompt to include edited agent system prompt after project context")
     ensure
@@ -3026,8 +2800,6 @@ module RenderingTest
 
   def app_with_default_agent(width:, height:)
     app = HQ::App.new
-    app.instance_variable_set(:@latest_kamal, "2.11.0")
-    app.instance_variable_set(:@latest_rails, "8.1.3")
     if app.instance_variable_get(:@agents).empty?
       project = app.instance_variable_get(:@projects).find do |item|
         item.key == "warehouse"

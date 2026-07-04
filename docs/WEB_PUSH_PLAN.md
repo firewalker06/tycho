@@ -75,7 +75,7 @@ Send notifications for managed-agent state transitions:
 - Agent transitions from running to `succeeded`.
 - Agent transitions from running to `failed`, `stopped`, or `blocked`.
 
-Defer project action notifications until the agent notification path is stable.
+Keep notification scope focused on managed-agent state transitions.
 
 ## Configuration
 

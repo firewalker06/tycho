@@ -6,7 +6,6 @@ Prepare HQ to become a public open-source project without exposing private
 configuration, local runtime artifacts, company-specific data, or unclear
 security assumptions.
 
-HQ should be presented as a local-first developer dashboard for Kamal-deployed
 applications and managed coding agents.
 
 ## Readiness Snapshot
@@ -43,12 +42,10 @@ Current blockers:
 
 Define the public positioning:
 
-- HQ is a local-first dashboard for monitoring Kamal apps and supervising managed
   coding agents.
 - Supported runtime: Ruby 3.2+.
 - Initial platform expectation: macOS-first, with Linux support where the runtime
   paths work.
-- Optional integrations: `mise`, `kamal`, `tailscale`, Codex, Claude, and
   custom Claude-compatible harnesses.
 - License: MIT.
 
@@ -125,7 +122,6 @@ bin/tycho
 
 Review local-machine assumptions and document or soften them:
 
-- `/opt/homebrew/bin/mise` should have a clear fallback or setup note.
 - Missing optional tools should produce clear messages.
 - `bin/tycho serve` should warn or require `TYCHO_REMOTE_TOKEN` when binding to a
   non-loopback address.
@@ -134,8 +130,6 @@ Review local-machine assumptions and document or soften them:
 
 Add startup validation for optional tools:
 
-- `kamal`
-- `mise`
 - `tailscale`
 - `codex`
 - `claude`

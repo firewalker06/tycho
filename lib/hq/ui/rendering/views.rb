@@ -107,7 +107,7 @@ module HQ
 
         def config_error_view
           [
-            title_style.render("Tycho - Ops Cockpit"),
+            title_style.render("Tycho - Factorio for Agents"),
             "",
             fail_style.render("  Configuration error"),
             "  #{@config_error}",
@@ -221,11 +221,6 @@ module HQ
             width: field_width
           )
 
-          detected = @project_editor.kamal_app_detected?
-          apps_info_line = dim_style.render(
-            "  Kamal app: #{detected ? "detected (config/deploy.yml found)" : "not detected"}"
-          )
-
           submit_label = "Create Project"
           submit_style = @project_editor.submit_focused? ? selected_button_style : button_style
           submit_line = "  #{submit_style.render("  #{submit_label}  ")}"
@@ -246,8 +241,6 @@ module HQ
           body_lines.concat(group_suggestions)
           body_lines << ""
           body_lines.concat(agent_lines)
-          body_lines << ""
-          body_lines << apps_info_line
           body_lines << ""
           if @project_editor.error_message
             body_lines << fail_style.render("  #{@project_editor.error_message}")
@@ -472,12 +465,9 @@ module HQ
             screen == @screen ? selected_tab_style.render(" #{label} ") : tab_style.render(" #{label} ")
           end.join(" ")
 
-          latest = dim_style.render("Latest: #{icon_label(:kamal,
-                                                          @latest_kamal || "?")}  #{Styles::MARKERS[:bullet_sep]}  #{icon_label(:rails,
-                                                                                                  @latest_rails || "?")}")
           [
-            title_style.render("Tycho - Ops Cockpit"),
-            join_left_right(nav, latest)
+            title_style.render("Tycho - Factorio for Agents"),
+            nav
           ].join("\n")
         end
 
@@ -825,13 +815,7 @@ module HQ
               return footer_confirm_style.render(truncate("Rebuild conversation and summary? (y/n)", footer_content_width))
             end
 
-            project = selected_project
-            action_name = if @confirming == :maintenance && project&.app_status == "maintenance"
-                            "Set live"
-                          else
-                            @confirming.to_s
-                          end
-            return footer_confirm_style.render(truncate("#{action_name} #{project&.name}? (y/n)", footer_content_width))
+            return footer_confirm_style.render(truncate("#{@confirming}? (y/n)", footer_content_width))
           end
 
           refresh_text = @last_refresh ? "Last refresh: #{@last_refresh.strftime("%H:%M:%S")}" : "Loading..."
@@ -839,7 +823,7 @@ module HQ
           sidebar_hint_text = "#{Styles::KEYS[:ctrl]}B: #{sidebar_visible? ? "hide" : "show"} sidebar"
           hint = case @screen
                  when :agents then "#{Styles::KEYS[:tab]}/1-3: switch  #{Styles::MARKERS[:bullet_sep]}  j/k: nav  #{Styles::MARKERS[:bullet_sep]}  v: detail  #{Styles::MARKERS[:bullet_sep]}  #{sidebar_hint_text}  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}G: term  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}T: agent term  #{Styles::MARKERS[:bullet_sep]}  c/C: chat/clone  #{Styles::MARKERS[:bullet_sep]}  s: start  #{Styles::MARKERS[:bullet_sep]}  R: rerun  #{Styles::MARKERS[:bullet_sep]}  t: stop  #{Styles::MARKERS[:bullet_sep]}  e: edit  #{Styles::MARKERS[:bullet_sep]}  x: delete  #{Styles::MARKERS[:bullet_sep]}  l/L: log  #{Styles::MARKERS[:bullet_sep]}  r: refresh  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}R: restart  #{Styles::MARKERS[:bullet_sep]}  q: quit"
-                 when :projects then "#{Styles::KEYS[:tab]}/1-3: switch  #{Styles::MARKERS[:bullet_sep]}  j/k: nav  #{Styles::MARKERS[:bullet_sep]}  v: detail  #{Styles::MARKERS[:bullet_sep]}  #{sidebar_hint_text}  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}G: term  #{Styles::MARKERS[:bullet_sep]}  n: new agent  #{Styles::MARKERS[:bullet_sep]}  N: new project  #{Styles::MARKERS[:bullet_sep]}  d: deploy  #{Styles::MARKERS[:bullet_sep]}  m: maint  #{Styles::MARKERS[:bullet_sep]}  x: archive  #{Styles::MARKERS[:bullet_sep]}  l: log  #{Styles::MARKERS[:bullet_sep]}  h: health  #{Styles::MARKERS[:bullet_sep]}  r: refresh  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}R: restart  #{Styles::MARKERS[:bullet_sep]}  q: quit"
+                 when :projects then "#{Styles::KEYS[:tab]}/1-3: switch  #{Styles::MARKERS[:bullet_sep]}  j/k: nav  #{Styles::MARKERS[:bullet_sep]}  v: detail  #{Styles::MARKERS[:bullet_sep]}  #{sidebar_hint_text}  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}G: term  #{Styles::MARKERS[:bullet_sep]}  n: new agent  #{Styles::MARKERS[:bullet_sep]}  N: new project  #{Styles::MARKERS[:bullet_sep]}  x: archive  #{Styles::MARKERS[:bullet_sep]}  r: refresh  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}R: restart  #{Styles::MARKERS[:bullet_sep]}  q: quit"
                  when :schedules then "#{Styles::KEYS[:tab]}/1-3: switch  #{Styles::MARKERS[:bullet_sep]}  j/k: nav  #{Styles::MARKERS[:bullet_sep]}  v: detail  #{Styles::MARKERS[:bullet_sep]}  #{sidebar_hint_text}  #{Styles::MARKERS[:bullet_sep]}  r: refresh  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}R: restart  #{Styles::MARKERS[:bullet_sep]}  q: quit"
                  end
           hint = "esc: close  #{Styles::MARKERS[:bullet_sep]}  #{hint}" if overlay_open?
@@ -1107,22 +1091,8 @@ module HQ
           lines.concat(project_hero_block(project))
           lines << ""
           lines << divider
-          if project.apps_enabled?
-            lines << ""
-            lines.concat(project_service_health_block(project))
-          end
-          lines << ""
-          lines << divider
           lines << ""
           lines.concat(project_footer_meta(project))
-
-          action_block = project_action_block(project)
-          unless action_block.empty?
-            lines << ""
-            lines << divider
-            lines << ""
-            lines.concat(action_block)
-          end
 
           recent = project_recent_agent_block(project)
           unless recent.empty?
@@ -1135,7 +1105,7 @@ module HQ
           lines << ""
           lines << divider
           lines << ""
-          lines << footer_style.render("d: deploy  #{Styles::MARKERS[:bullet_sep]}  m: maint  #{Styles::MARKERS[:bullet_sep]}  h: health  #{Styles::MARKERS[:bullet_sep]}  r: refresh  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}G: term  #{Styles::MARKERS[:bullet_sep]}  n: new agent  #{Styles::MARKERS[:bullet_sep]}  l: log  #{Styles::MARKERS[:bullet_sep]}  x: archive")
+          lines << footer_style.render("r: refresh  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}G: term  #{Styles::MARKERS[:bullet_sep]}  n: new agent  #{Styles::MARKERS[:bullet_sep]}  x: archive")
           lines.join("\n")
         end
 
@@ -1151,9 +1121,8 @@ module HQ
         def project_hero_block(project)
           width = detail_content_width
           lines = []
-          icon_key = project.apps_enabled? ? :web_project : :project
-          name_line = "#{Styles::ICONS[icon_key]}  #{project.name}"
-          status = project.apps_enabled? ? status_text_for(project) : dim_style.render("not an app")
+          name_line = "#{Styles::ICONS[:project]}  #{project.name}"
+          status = status_text_for(project)
           status_width = visible_width(status)
           name_budget = [width - status_width - 2, 10].max
           name_line = truncate_display(name_line, name_budget)
@@ -1188,38 +1157,6 @@ module HQ
           parts.join("   ")
         end
 
-        def project_service_health_block(project)
-          width = detail_content_width
-          col_width = [(width / 2) - 1, 20].max
-
-          hosts = Array(project.hosts).map { |host| obfuscate_ip(host) }.join(", ")
-          service_rows = [
-            ["Service", project.service.to_s.empty? ? "n/a" : project.service.to_s],
-            ["Image", project.image.to_s.empty? ? "n/a" : project.image.to_s],
-            ["Hosts", hosts.empty? ? "n/a" : hosts],
-            ["Proxy", project.proxy_host.to_s.empty? ? "n/a" : project.proxy_host.to_s]
-          ]
-
-          latency = project.response_time ? "#{project.response_time}ms" : "n/a"
-          health_rows = [
-            ["Status", project.health_status.to_s],
-            ["Latency", latency],
-            ["Health", project.healthcheck_path.to_s.empty? ? "n/a" : project.healthcheck_path.to_s],
-            ["Versions", "kamal #{project.kamal_version || "?"} · rails #{project.rails_version || "?"}"]
-          ]
-
-          lines = []
-          service_header = "#{Styles::ICONS[:kamal]} #{title_mini("Service")}"
-          health_header = "#{Styles::ICONS[:rails]} #{title_mini("Health")}"
-          lines << "#{pad_visible(service_header, col_width)}#{health_header}"
-          service_rows.zip(health_rows).each do |left_row, right_row|
-            left = format_detail_row(left_row[0], left_row[1])
-            right = format_detail_row(right_row[0], right_row[1])
-            lines << "#{pad_visible(left, col_width)}#{right}"
-          end
-          lines
-        end
-
         def project_footer_meta(project)
           width = detail_content_width
           templates = project.agent_templates.map(&:name).join(", ")
@@ -1229,7 +1166,6 @@ module HQ
           rows = []
           rows << [:workspace, "Path", project.path.to_s, :path]
           rows << [:log, "Log Dir", project.log_dir.to_s, :path]
-          rows << [:log, "Action Log", project.action_log_path.to_s, :path]
           rows << [:template, "Templates", templates, :text]
           rows << [:agent, "Agents", agents_count.to_s, :text]
 
@@ -1243,29 +1179,6 @@ module HQ
                              end
             prefix + rendered_value
           end
-        end
-
-        def project_action_block(project)
-          width = detail_content_width
-          lines = []
-          if @actions.key?(project.key)
-            action = @actions[project.key]
-            elapsed = "#{(Time.now - action.started_at).to_i}s"
-            lines << "#{Styles::ICONS[:run]} #{title_mini("Action")}"
-            lines << format_detail_row("Running", "#{@spinner.view} #{action.label} (#{elapsed})")
-            prefix = "#{Styles::ICONS[:log]} #{dim_style.render("Log".ljust(10))}"
-            budget = [width - visible_width(prefix), 10].max
-            lines << prefix + render_path_value(action.log_path.to_s, budget)
-          elsif (result = @action_results[project.key]) && UI::Rendering::ProjectStatusBadge.result_active?(result)
-            lines << "#{Styles::ICONS[:result]} #{title_mini("Last Action")}"
-            lines << format_detail_row("Result", project_action_result_label(result))
-            if result[:log_path]
-              prefix = "#{Styles::ICONS[:log]} #{dim_style.render("Log".ljust(10))}"
-              budget = [width - visible_width(prefix), 10].max
-              lines << prefix + render_path_value(result[:log_path].to_s, budget)
-            end
-          end
-          lines
         end
 
         def project_recent_agent_block(project)
@@ -1288,12 +1201,6 @@ module HQ
             lines.concat(detail_prose_block(:summary, summary))
           end
           lines
-        end
-
-        def project_action_result_label(result)
-          action = result[:action_label] || KamalAction.label_for(result[:action])
-          status = result[:success] ? "success" : "failed"
-          "#{action} - #{status}"
         end
 
         def group_row(name)
@@ -1400,7 +1307,7 @@ module HQ
           case @sidebar[:kind]
           when :agent_detail, :project_detail
             "j/k/g/G #{Styles::KEYS[:arrow_up]}/#{Styles::KEYS[:arrow_down]}: scroll  #{Styles::MARKERS[:bullet_sep]}  esc: close"
-          when :chat_log, :raw_log, :project_log, :healthcheck_log
+          when :chat_log, :raw_log, :project_log
             total_lines = @sidebar_viewport ? @sidebar_viewport.total_line_count : 0
             current_line = total_lines.zero? ? 0 : @sidebar_viewport.y_offset + 1
             "line #{current_line}/#{total_lines}  #{Styles::MARKERS[:bullet_sep]}  h/l #{Styles::KEYS[:arrow_left]}/#{Styles::KEYS[:arrow_right]}: pan  #{Styles::MARKERS[:bullet_sep]}  j/k/g/G #{Styles::KEYS[:arrow_up]}/#{Styles::KEYS[:arrow_down]}: scroll  #{Styles::MARKERS[:bullet_sep]}  r: reload  #{Styles::MARKERS[:bullet_sep]}  esc: close"

@@ -125,7 +125,7 @@ After publishing:
    ```sh
    bin/tycho --help
    bin/tycho doctor
-   bin/tycho app list
+   bin/tycho agent list
    bin/tycho schedule list
    ```
 

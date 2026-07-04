@@ -40,11 +40,10 @@ Expose broker-only routes from the UI-serving Remote server:
 
 ```text
 GET  /servers
-GET  /servers/:server_key/health
 ANY  /servers/:server_key/proxy/*
 ```
 
-`GET /servers` returns local plus configured remote entries with display metadata and coarse health state. `/servers/:server_key/proxy/*` forwards the original HTTP method, JSON body, query string, and target-specific Authorization header to the selected server.
+`GET /servers` returns local plus configured remote entries with display metadata. `/servers/:server_key/proxy/*` forwards the original HTTP method, JSON body, query string, and target-specific Authorization header to the selected server.
 
 The existing local routes stay unchanged:
 
@@ -85,7 +84,7 @@ Top-level lists (`agents`, `projects`, `schedules`, `setup`) represent only the 
 
 ### Request Ownership
 
-Agents, projects, schedules, project actions, and attachments are owned by the active server. The UI should show the active server name in the header/status area so operators know where a mutation will run.
+Agents, projects, schedules, and attachments are owned by the active server. The UI should show the active server name in the header/status area so operators know where a mutation will run.
 
 No cross-server bulk archive, search, unread count, or dashboard aggregation in the first slice.
 
@@ -117,7 +116,7 @@ Add small focused classes rather than expanding `RemoteService` too much:
 
 - `HQ::RemoteServerRegistry`: loads and validates configured target servers
 - `HQ::RemoteClient`: forwards authenticated requests to one target server
-- `HQ::RemoteBroker`: lists targets, health-checks targets, and performs proxy calls
+- `HQ::RemoteBroker`: lists targets and performs proxy calls
 
 ### Frontend
 
@@ -144,10 +143,9 @@ Keep plain JavaScript with no build step:
 1. Add config loading for `remote_servers`.
 2. Add validation for `key`, `url`, and token source.
 3. Add `RemoteClient` with JSON request forwarding and timeout handling.
-4. Add `RemoteBroker` with server listing and health checks.
+4. Add `RemoteBroker` with server listing and request proxying.
 5. Add routes:
    - `GET /servers`
-   - `GET /servers/:key/health`
    - `GET|POST|PUT|PATCH|DELETE /servers/:key/proxy/*`
 6. Add `test/remote_server_test.rb` coverage with a local fixture target server.
 

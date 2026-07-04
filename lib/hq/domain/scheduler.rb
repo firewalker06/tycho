@@ -4,7 +4,7 @@ require "time"
 
 require_relative "../registry"
 require_relative "agent_store"
-require_relative "app_project"
+require_relative "project"
 require_relative "push_notification_store"
 require_relative "schedule_registry"
 require_relative "schedule_store"
@@ -20,7 +20,7 @@ module HQ
     def initialize(registry: Registry.new, schedule_registry: nil, store: ScheduleStore.new,
                    push_notification_store: PushNotificationStore.new, web_push_notifier: nil)
       @registry = registry
-      @projects = registry.projects.map { |config| AppProject.new(config) }
+      @projects = registry.projects.map { |config| Project.new(config) }
       @agent_store = AgentStore.new(@projects)
       @schedule_registry = schedule_registry || ScheduleRegistry.new(projects: @projects)
       @store = store

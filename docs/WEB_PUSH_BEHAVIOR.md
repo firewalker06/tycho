@@ -67,7 +67,7 @@ Example agent payload:
 ```json
 {
   "title": "Agent requires response",
-  "body": "Smoke Project reviewer: Needs deployment confirmation (2 unread agents)",
+  "body": "Smoke Project reviewer: Needs review confirmation (2 unread agents)",
   "tag": "hq:agents",
   "renotify": true,
   "silent": false,

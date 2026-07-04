@@ -12,7 +12,7 @@ require_relative "registry"
 require_relative "remote_ui"
 require_relative "terminal_qr"
 require_relative "version"
-require_relative "domain/app_project"
+require_relative "domain/project"
 require_relative "domain/attachment_normalizer"
 require_relative "domain/constants"
 require_relative "domain/agent_attachment_store"
@@ -22,7 +22,6 @@ require_relative "domain/executable_resolver"
 require_relative "domain/file_store"
 require_relative "domain/git_diff"
 require_relative "domain/harness_catalog"
-require_relative "domain/kamal_action"
 require_relative "domain/push_notification_store"
 require_relative "domain/push_subscription_store"
 require_relative "domain/pull_request_diff"
@@ -212,15 +211,11 @@ module HQ
     def route(service, method, path, body, request = nil)
       parts = path.split("/").reject(&:empty?)
 
-      return ok(service.health) if method == "GET" && parts == ["health"]
       if parts.first == "servers"
         broker = RemoteBroker.new(registry: service.registry, server_url: service.server_url)
         return ok(servers: broker.servers) if method == "GET" && parts == ["servers"]
         return created(service.add_remote_server(body)) if method == "POST" && parts == ["servers"]
         return ok(service.remove_remote_server(parts[1])) if method == "DELETE" && parts.length == 2
-        if method == "GET" && parts.length == 3 && parts[2] == "health"
-          return ok(server: broker.health(parts[1], request))
-        end
         if parts.length >= 3 && parts[2] == "proxy"
           proxy_path = "/#{parts.drop(3).join("/")}"
           proxy_path = "/" if proxy_path == "/"
@@ -302,12 +297,6 @@ module HQ
         return ok(git: service.project_git_status(key)) if method == "GET" && tail == ["git", "status"]
         if method == "GET" && tail[0, 2] == ["git", "diff"] && tail.length <= 3
           return ok(diff: service.project_git_diff(key, scope: tail[2] || request&.query_params&.fetch("scope", nil)))
-        end
-        return ok(actions: service.project_action_preflights(key)) if method == "GET" && tail == ["actions"]
-        return ok(service.start_project_action(key, body["action"], body)) if method == "POST" && tail == ["actions"]
-        if tail.length == 2 && tail.first == "actions"
-          return ok(service.project_action_preflight(key, tail[1])) if method == "GET"
-          return ok(service.start_project_action(key, tail[1], body)) if method == "POST"
         end
         return ok(service.skills(key, tail[1])) if method == "GET" && tail.length == 2 && tail.first == "skills"
       end
@@ -649,27 +638,8 @@ module HQ
     end
 
     def servers
-      [server_payload(local_config, local: true, healthy: true)] +
+      [server_payload(local_config, local: true)] +
         remote_configs.map { |config| server_payload(config, local: false) }
-    end
-
-    def health(key, request = nil)
-      config = find_config!(key)
-      payload = server_payload(config, local: local_key?(key))
-      if local_key?(key)
-        payload[:healthy] = true
-        return payload
-      end
-
-      response = RemoteClient.new(
-        config,
-        timeout: @timeout,
-        token_override: remote_server_token(request)
-      ).request("GET", "/health")
-      payload[:healthy] = response[:status].to_i.between?(200, 299)
-      payload[:status] = response.dig(:body, "status") || response.dig(:body, :status) || response[:status]
-      payload[:error] = response.dig(:body, "error") || response.dig(:body, :error) unless payload[:healthy]
-      payload
     end
 
     def proxy(key, method, path, body, request)
@@ -734,16 +704,14 @@ module HQ
       value.empty? ? request&.[]("x-tycho-remote-server-token").to_s : value
     end
 
-    def server_payload(config, local:, healthy: nil)
-      payload = {
+    def server_payload(config, local:)
+      {
         key: config.key,
         name: config.name,
         url: config.url,
         local: local,
         auth_configured: !config.resolved_token.to_s.empty?
       }
-      payload[:healthy] = healthy unless healthy.nil?
-      payload
     end
   end
 
@@ -760,8 +728,6 @@ module HQ
     }.freeze
 
     Error = RemoteServer::Error
-    PROJECT_ACTIONS = %w[deploy maintenance live].freeze
-
     attr_reader :registry, :server_url
 
     def initialize(registry: Registry.new, server_url: nil, public_url: nil, auth_required: false,
@@ -771,7 +737,7 @@ module HQ
                    schedule_daemon_supervisor: nil,
                    restartable: false)
       @registry = registry
-      @projects = registry.projects.map { |config| AppProject.new(config) }
+      @projects = registry.projects.map { |config| Project.new(config) }
       @agent_store = AgentStore.new(@projects)
       @push_subscription_store = push_subscription_store
       @push_notification_store = push_notification_store
@@ -783,10 +749,6 @@ module HQ
       @restartable = restartable ? true : false
     end
 
-    def health
-      { status: "ok", agents: load_agents.length, projects: visible_projects.length }
-    end
-
     def add_remote_server(body)
       name = body["name"].to_s.strip
       url = body["url"].to_s.strip
@@ -795,17 +757,16 @@ module HQ
       validate_ad_hoc_remote_url!(url)
 
       config = RemoteServerConfig.new(key: "candidate", name: name, url: url.sub(%r{/+\z}, ""), token:, token_env: "")
-      response = RemoteClient.new(config).request("GET", "/health")
+      response = RemoteClient.new(config).request("GET", "/agents")
       unless response[:status].to_i.between?(200, 299)
         detail = response.dig(:body, "error") || response.dig(:body, :error) || response[:status]
-        raise Error.new("#{name} is not healthy: #{detail}", status: 502)
+        raise Error.new("#{name} rejected the agent request: #{detail}", status: 502)
       end
 
       stored = @registry.add_remote_server!(name:, url:)
       broker = RemoteBroker.new(registry: @registry, server_url: @server_url)
-      health_request = token.empty? ? nil : { "X-Tycho-Remote-Server-Token" => token }
       {
-        server: broker.health(stored.key, health_request),
+        server: broker.servers.find { |server| server[:key] == stored.key },
         servers: broker.servers
       }
     rescue ConfigError => e
@@ -1111,9 +1072,8 @@ module HQ
     def projects
       refresh_projects!(visible_projects)
       agents_by_project = load_agents.group_by(&:project_key)
-      actions = active_actions
       visible_projects.map do |project|
-        project_list_payload(project, agents: agents_by_project.fetch(project.key, []), active_action: actions[project.key])
+        project_list_payload(project, agents: agents_by_project.fetch(project.key, []))
       end
     end
 
@@ -1121,7 +1081,7 @@ module HQ
       target = find_project!(key)
       refresh_project!(target)
       agents = load_agents.select { |agent| agent.project_key == target.key }
-      project_detail_payload(target, agents:, active_action: active_actions[target.key])
+      project_detail_payload(target, agents:)
     end
 
     def project_git_status(key)
@@ -1209,8 +1169,7 @@ module HQ
       if existing
         refresh_project!(existing)
         return project_detail_payload(existing,
-                                      agents: load_agents.select { |agent| agent.project_key == existing.key },
-                                      active_action: active_actions[existing.key])
+                                      agents: load_agents.select { |agent| agent.project_key == existing.key })
       end
 
       unless @projects.empty?
@@ -1317,57 +1276,6 @@ module HQ
         agent: agent,
         trigger: SkillDiscovery.trigger_for(agent),
         skills: SkillDiscovery.discover(workspace: project.path, agent_kind: agent)
-      }
-    end
-
-    def project_action_preflights(project_key)
-      PROJECT_ACTIONS.map { |action| project_action_preflight(project_key, action) }
-    end
-
-    def project_action_preflight(project_key, action_name)
-      project = find_project!(project_key)
-      action = normalize_project_action!(action_name)
-      refresh_project!(project)
-      active_action = active_actions[project.key]
-      checks = project_action_checks(project, active_action)
-      {
-        project: project_list_payload(project, agents: load_agents.select { |agent| agent.project_key == project.key },
-                                      active_action:),
-        action: action,
-        label: KamalAction.label_for(action),
-        can_start: checks.all? { |check| check.fetch(:passed) },
-        checks: checks,
-        consequences: project_action_consequences(action),
-        log_path: project.action_log_path
-      }
-    end
-
-    def start_project_action(project_key, action_name, attrs)
-      project = find_project!(project_key)
-      action = normalize_project_action!(action_name)
-      unless truthy?(attrs["confirm"])
-        raise Error.new("Project action requires confirm=true", status: 400)
-      end
-
-      preflight = project_action_preflight(project.key, action)
-      unless preflight.fetch(:can_start)
-        failed = preflight.fetch(:checks).reject { |check| check.fetch(:passed) }.map { |check| check.fetch(:label) }
-        raise Error.new("Project action cannot start: #{failed.join(", ")}", status: 409)
-      end
-
-      action_record = KamalAction.new(
-        project_key: project.key,
-        project_name: project.name,
-        project_path: project.path,
-        action: action.to_sym
-      )
-      action_record.start!
-      actions = active_actions
-      actions[project.key] = action_record
-      save_actions(actions)
-      {
-        action: action_state_payload(project, action_record).merge(started: true),
-        log_path: action_record.log_path
       }
     end
 
@@ -1719,7 +1627,7 @@ module HQ
     end
 
     def reload_projects_from_registry!
-      @projects = @registry.projects.map { |config| AppProject.new(config) }
+      @projects = @registry.projects.map { |config| Project.new(config) }
       @agent_store = AgentStore.new(@projects)
     end
 
@@ -1732,7 +1640,6 @@ module HQ
 
     def refresh_project!(project)
       project.refresh_metadata!
-      project.check_health!
       project
     rescue StandardError => e
       HQ.logger.warn("Remote") { "Project refresh failed for #{project.key}: #{e.class} - #{e.message}" }
@@ -1785,39 +1692,6 @@ module HQ
     def find_project!(key)
       visible_projects.find { |project| project.key == key.to_s } ||
         raise(Error.new("Unknown project: #{key}", status: 404))
-    end
-
-    def load_actions
-      return {} unless File.exist?(ACTIONS_FILE)
-
-      FileStore.read_json(ACTIONS_FILE, fallback: []).each_with_object({}) do |hash, actions|
-        action = KamalAction.from_hash(hash)
-        actions[action.project_key] = action
-      end
-    rescue StandardError => e
-      HQ.logger.warn("Remote") { "Failed to load actions: #{e.message}" }
-      {}
-    end
-
-    def save_actions(actions)
-      FileStore.write_json(ACTIONS_FILE, actions.values.map(&:to_hash))
-    rescue StandardError => e
-      HQ.logger.warn("Remote") { "Failed to save actions: #{e.message}" }
-    end
-
-    def active_actions
-      actions = load_actions
-      changed = false
-      actions.keys.each do |key|
-        action = actions[key]
-        action.poll!
-        next unless action.done?
-
-        actions.delete(key)
-        changed = true
-      end
-      save_actions(actions) if changed
-      actions
     end
 
     def dispatch_agent_push_events(events, agents:)
@@ -1893,83 +1767,22 @@ module HQ
       ].join(":")
     end
 
-    def normalize_project_action!(value)
-      action = value.to_s.strip
-      unless PROJECT_ACTIONS.include?(action)
-        raise Error.new("Unsupported project action #{value.inspect}. Supported actions: #{PROJECT_ACTIONS.join(", ")}")
-      end
-
-      action
-    end
-
-    def project_action_checks(project, active_action)
-      [
-        {
-          key: "kamal",
-          label: "Kamal deployment configured",
-          passed: project.apps_enabled?,
-          detail: project.apps_enabled? ? "Project has deployment metadata" : "Project is not configured for app actions"
-        },
-        {
-          key: "action",
-          label: "No project action running",
-          passed: active_action.nil?,
-          detail: active_action ? "#{active_action.label} started #{time_text(active_action.started_at)}" : "No active action"
-        },
-        {
-          key: "health",
-          label: "Health state reviewed",
-          passed: true,
-          detail: [project.health_status, project.app_status].compact.join(" / ")
-        },
-        {
-          key: "git",
-          label: "Git state reviewed",
-          passed: true,
-          detail: project.dirty_files.to_i.positive? ? "#{project.dirty_files} dirty files" : "clean or unavailable"
-        }
-      ]
-    end
-
-    def project_action_consequences(action)
-      {
-        "deploy" => [
-          "Starts a detached Kamal deploy for the selected project.",
-          "Output is appended to the project action log."
-        ],
-        "maintenance" => [
-          "Puts the app into Kamal maintenance mode.",
-          "Root health can return 503 while the healthcheck path remains healthy."
-        ],
-        "live" => [
-          "Removes Kamal maintenance mode and resumes live traffic.",
-          "Health is refreshed after the action completes."
-        ]
-      }.fetch(action)
-    end
-
-    def project_list_payload(project, agents:, active_action:)
+    def project_list_payload(project, agents:)
       {
         key: project.key,
         name: project.name,
         group: empty_to_nil(project.group),
         path: project.path,
-        status: project_status(project, active_action),
-        apps_enabled: project.apps_enabled?,
-        app_status: project.app_status,
-        health_status: project.health_status,
-        latency_ms: project.response_time,
-        maintenance: maintenance?(project),
-        action_state: action_state_for(project, active_action),
+        status: project.status,
         agent_count: agents.length,
         unread_agent_count: agents.count(&:unread?),
         running_agent_count: agents.count(&:running?)
       }
     end
 
-    def project_detail_payload(project, agents:, active_action:)
+    def project_detail_payload(project, agents:)
       recent_agent = agents.max_by(&:last_activity_at)
-      project_list_payload(project, agents:, active_action:).merge(
+      project_list_payload(project, agents:).merge(
         pr_url: project.pr_url,
         pr_number: project.pr_number,
         branch: project.branch,
@@ -1981,81 +1794,10 @@ module HQ
         agent: project.config.agent,
         model: project.config.model,
         reasoning_effort: project.config.reasoning_effort,
-        service: project.service,
-        image: project.image,
-        hosts: Array(project.hosts),
-        proxy: project.proxy_host,
-        healthcheck_path: project.healthcheck_path,
-        kamal_version: project.kamal_version,
-        rails_version: project.rails_version,
         agent_template_summaries: agent_template_summaries(project),
         managed_agent_count: agents.length,
-        action_log_path: project.action_log_path,
         recent_agent_summary: recent_agent ? recent_agent_payload(recent_agent) : nil
       )
-    end
-
-    def project_status(project, active_action)
-      return "#{active_action.label} running" if active_action
-      return "maintenance" if maintenance?(project)
-      return project.health_status unless project.health_status.to_s.empty? || project.health_status == "pending"
-      return project.app_status unless project.app_status.to_s.empty? || project.app_status == "pending"
-
-      "configured"
-    end
-
-    def maintenance?(project)
-      project.health_status == "maintenance" || project.app_status == "maintenance"
-    end
-
-    def action_state_for(project, active_action)
-      return action_state_payload(project, active_action) if active_action
-
-      last_action_state_from_log(project)
-    end
-
-    def action_state_payload(_project, action)
-      {
-        action: action.action.to_s,
-        label: action.label,
-        status: "running",
-        started_at: action.started_at&.iso8601,
-        log_path: action.log_path
-      }
-    end
-
-    def last_action_state_from_log(project)
-      return nil unless File.exist?(project.action_log_path)
-
-      content = File.read(project.action_log_path)
-      matches = content.to_enum(:scan, /^=== \[(.+?)\] ([a-z_]+) ===$/).map { Regexp.last_match }
-      last = matches.last
-      return nil unless last
-
-      action = last[2]
-      {
-        action: action,
-        label: KamalAction.label_for(action),
-        status: action_status_label(project, content[last.begin(0)..]),
-        started_at: Time.parse(last[1]).iso8601,
-        log_path: project.action_log_path
-      }
-    rescue StandardError
-      nil
-    end
-
-    def action_status_label(project, section)
-      status_path = "#{project.action_log_path}.status"
-      if File.exist?(status_path)
-        return File.read(status_path).to_i.zero? ? "success" : "failed"
-      end
-
-      return "failed" if section.match?(/\bERROR\b|\bexit status:\s*[1-9]\d*\b|failed to/i)
-      return "success" if section.match?(/\bexit status 0\b|successful/i)
-
-      "unknown"
-    rescue StandardError
-      "unknown"
     end
 
     def agent_template_summaries(project)
@@ -2116,9 +1858,6 @@ module HQ
 
     def tool_readiness
       [
-        resolver_payload("mise", ExecutableResolver.resolve_tool("mise")),
-        resolver_payload("kamal", ExecutableResolver.resolve("kamal")),
-        kamal_project_payload,
         resolver_payload("tailscale", ExecutableResolver.resolve_tool("tailscale"))
       ]
     end
@@ -2167,34 +1906,6 @@ module HQ
       end
     end
 
-    def kamal_project_payload
-      app_projects = @projects.select(&:apps_enabled?)
-      ready_projects = app_projects.select { |project| KamalAction.project_ready?(project.path) }
-      ready = app_projects.empty? || ready_projects.length == app_projects.length
-      {
-        name: "kamal-projects",
-        ready: ready,
-        detail: kamal_project_detail(app_projects, ready_projects),
-        commands: ["bin/kamal", "bundle exec kamal"],
-        project_count: app_projects.length,
-        ready_project_count: ready_projects.length
-      }
-    end
-
-    def kamal_project_detail(app_projects, ready_projects)
-      return "no app projects configured" if app_projects.empty?
-
-      ready_count = ready_projects.length
-      total = app_projects.length
-      if ready_count == total
-        sources = ready_projects.map { |project| KamalAction.project_readiness_source(project.path) }.compact.uniq
-        return "#{ready_count}/#{total} app project(s) ready via #{sources.join(", ")}"
-      end
-      return "missing project bin/kamal or Kamal gem dependency for #{total} app project(s)" if ready_count.zero?
-
-      "#{ready_count}/#{total} app project(s) ready; #{total - ready_count} missing project Kamal"
-    end
-
     def readiness_command_for(parts)
       values = Array(parts).map(&:to_s).reject(&:empty?)
       return nil if values.empty?
@@ -2234,7 +1945,6 @@ module HQ
         root: LOGS_DIR,
         agent_runs: agents.sum(&:run_count),
         agent_log_files: Dir.glob(File.join(AGENT_LOGS_DIR, "*")).count { |path| File.file?(path) },
-        project_action_logs: Dir.glob(File.join(PROJECT_LOGS_DIR, "*", "action.log")).length,
         project_archive_dir: PROJECT_ARCHIVE_DIR
       }
     rescue StandardError
@@ -2242,7 +1952,6 @@ module HQ
         root: LOGS_DIR,
         agent_runs: agents.sum(&:run_count),
         agent_log_files: 0,
-        project_action_logs: 0,
         project_archive_dir: PROJECT_ARCHIVE_DIR
       }
     end
@@ -2300,7 +2009,6 @@ module HQ
     def project_attrs(target, attrs)
       immutable_project_field!(attrs, "key", target.key)
       immutable_project_field!(attrs, "path", target.path)
-      immutable_project_field!(attrs, "apps", target.apps_enabled?)
       immutable_project_field!(attrs, "pr_url", target.pr_url.to_s)
 
       name = attrs.key?("name") ? attrs["name"].to_s.strip : target.name.to_s
@@ -2562,7 +2270,6 @@ module HQ
 
     def safety_guidance
       lines = [
-        "Deploy and maintenance actions require confirmation.",
         "Running agents cannot be edited.",
         "Existing workspaces are read-only in the mobile UI."
       ]

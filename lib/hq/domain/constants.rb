@@ -67,7 +67,6 @@ module HQ
   end
 
   LOGS_DIR = USER_LOGS_DIR
-  ACTIONS_FILE = File.join(LOGS_DIR, "actions.json")
   AGENTS_FILE = File.join(LOGS_DIR, "managed_agents.json")
   SCHEDULES_FILE = env_present("SCHEDULES_PATH", default_schedules_path)
   SCHEDULES_STATE_FILE = env_present("SCHEDULES_STATE_PATH", File.join(LOGS_DIR, "schedules.json"))

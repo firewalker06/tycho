@@ -13,8 +13,6 @@ module HQ
         end
 
         def icon_for(kind, value)
-          return Styles::ICONS[:web_project] if kind == :project && value.respond_to?(:apps_enabled?) && value.apps_enabled?
-
           Styles::ICONS[kind]
         end
 

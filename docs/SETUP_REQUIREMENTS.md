@@ -27,8 +27,6 @@ install/build dependency, not a Tycho runtime subprocess dependency.
 | Dependency | Used by | Current failure behavior | Setup behavior |
 |------------|---------|--------------------------|----------------|
 | `git` | Project metadata: branch, commit SHA, dirty file count | Soft fail. Tycho checks for `.git`, redirects Git stderr to `/dev/null`, and falls back to `n/a` / clean-looking values | Warn if missing; do not block basic TUI usage |
-| `mise` | Detached Kamal actions through `mise exec` | Feature failure. Tycho looks at `TYCHO_MISE_BIN`, common install paths, then `mise` on `PATH`; missing `mise` breaks deploy/maintenance/live actions | Warn by default; hard fail only for an app-deployment profile |
-| `kamal` | Deploy, maintenance, and live actions | Feature failure. Tycho prefers project `bin/kamal`, then `bundle exec kamal` inside the project | Warn if no usable project Kamal command is found for app projects |
 | `codex` | Built-in Codex managed-agent harness | Soft feature fail. Agent start records a failed run if the executable is missing | Warn if missing; hard fail only for a Codex-agent profile |
 | `claude` | Built-in Claude managed-agent harness | Soft feature fail. Agent start records a failed run if the executable is missing | Warn if missing; hard fail only for a Claude-agent profile |
 | `opencode` | Built-in OpenCode managed-agent harness | Soft feature fail. Agent start records a failed run if the executable is missing | Warn if missing; hard fail only for an OpenCode-agent profile |
@@ -42,8 +40,6 @@ install/build dependency, not a Tycho runtime subprocess dependency.
 
 | Capability | Used by | Setup behavior |
 |------------|---------|----------------|
-| RubyGems access | `bundle install` and latest `kamal` / `rails` version lookup | Hard fail for first install if gems are unavailable; latest-version lookup can remain best effort |
-| App health URLs | HEAD checks for configured projects | Do not preflight globally; projects can be offline |
 | Web Push endpoints | Browser push notifications through `web-push` | Optional; warn only when push notifications are enabled |
 | HTTPS secure context | Browser push notifications from non-localhost Remote UI origins | Warn when Remote UI is exposed over non-local HTTP; Tailscale Serve HTTPS is preferred |
 
@@ -62,7 +58,6 @@ The setup script should respect the same executable overrides that Tycho uses:
 | `TYCHO_HOOKS_PATH` | Override global hooks config path |
 | `TYCHO_SCHEDULES_STATE_PATH` | Override scheduler runtime state path |
 | `TYCHO_SCHEDULER_DAEMON_PATH` | Override scheduler daemon heartbeat path |
-| `TYCHO_MISE_BIN` | Override `mise` executable |
 | `TYCHO_CODEX_BIN` | Override Codex executable |
 | `TYCHO_CLAUDE_BIN` | Override Claude executable |
 | `TYCHO_TAILSCALE_BIN` | Override Tailscale executable |
@@ -89,7 +84,6 @@ bin/setup --check
 Escalate optional tools to hard requirements for specific feature profiles:
 
 ```bash
-bin/setup --profile app
 bin/setup --profile codex --profile claude
 bin/setup --profile all
 ```
@@ -104,7 +98,6 @@ bin/setup --profile all
    - `config/schedules.yml.example` to `~/.tycho/config/schedules.yml`
    - `config/hooks.example.yml` to `~/.tycho/config/hooks.yml`
 3. Check optional CLIs and print a feature readiness summary.
-4. For app projects, validate whether `mise` and a Kamal command are available.
 5. For managed-agent projects, validate the selected built-in or custom harness.
 6. For Remote UI setup, check `TYCHO_REMOTE_TOKEN` when binding outside loopback and
    check Tailscale/HTTPS readiness when phone or push-notification use is requested.
@@ -125,7 +118,6 @@ Recommended hard failures:
 - Go or native build tools are missing for a source install that must compile
   Charm Ruby native extensions.
 - `bundle install` fails.
-- A requested profile cannot run, such as app deployment without `mise`/Kamal or
   a Codex-only setup without a Codex executable.
 
 Recommended soft failures:

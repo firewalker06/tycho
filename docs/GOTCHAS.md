@@ -26,7 +26,6 @@ brew install ruby go
 ```
 
 If optional features show as unavailable, install the corresponding CLI
-yourself. Tycho does not install `mise`, `kamal`, `codex`, `claude`,
 `tailscale`, terminal apps, or custom harness dependencies.
 
 If an install appears stale, reinstall from a clean tap:

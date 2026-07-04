@@ -8,11 +8,11 @@ The Remote Sessions server is HQ's local JSON API for inspecting and controlling
 - Transport: HTTP/1.1 over `TCPServer` from `socket`.
 - Body format: JSON request and response bodies.
 - Routing: manual method/path dispatch in `HQ::RemoteServer`.
-- Domain layer: `HQ::RemoteService`, backed by `Registry`, `AppProject`, `AgentStore`, `ManagedAgent`, and `AgentChatLog`.
+- Domain layer: `HQ::RemoteService`, backed by `Registry`, `Project`, `AgentStore`, `ManagedAgent`, and `AgentChatLog`.
 - QR rendering: `rqrcode` generates the QR matrix; HQ renders a compact terminal half-block QR for the remote UI URL.
 - Logging: request/lifecycle lines are printed to stdout and also sent to `HQ.logger`, which writes to `~/.tycho/logs/hq.log`.
 
-No Rack, Rails, Puma, WEBrick, or external webserver gem is used.
+No Rack, Puma, WEBrick, or external webserver gem is used.
 
 ## Running
 
@@ -121,7 +121,7 @@ The restart flow is intentionally ordered so the browser gets a clean acknowledg
 4. The current HTTP response is written as `202 Accepted` with `{ "restarting": true }`.
 5. After the response is flushed and the client socket is closed, the server loop exits.
 6. The server closes the listener if needed and calls `exec(*restart_command)`.
-7. The browser polls `/health` until the replacement process is reachable again, then refreshes `/agents`, `/projects`, and `/setup`.
+7. The browser polls `/setup` until the replacement process is reachable again, then refreshes `/agents`, `/projects`, and `/setup`.
 
 If a `RemoteServer` is constructed without a restart command, `POST /server/restart` returns `409 Conflict`. That keeps test and embedded server instances from accidentally attempting to replace their process.
 
@@ -135,7 +135,7 @@ http://127.0.0.1:7373/
 
 The UI is plain server-served HTML/CSS/JavaScript, with no frontend build step or JavaScript package dependencies. It uses the existing JSON endpoints, stores the optional bearer token in browser local storage, and sends it as `Authorization: Bearer ...` for API requests.
 
-Home-screen launches are treated as normal browser sessions, but mobile browsers can be more aggressive about reusing an old app shell. The root UI references `/ui.css` and `/ui.js` with a content digest query string, and `POST /server/restart` is the explicit cache-reset path: the restart response sends cache-reset headers, the browser clears Cache Storage when available, and the UI reloads itself with a restart query string after the replacement server is healthy.
+Home-screen launches are treated as normal browser sessions, but mobile browsers can be more aggressive about reusing an old app shell. The root UI references `/ui.css` and `/ui.js` with a content digest query string, and `POST /server/restart` is the explicit cache-reset path: the restart response sends cache-reset headers, the browser clears Cache Storage when available, and the UI reloads itself with a restart query string after the replacement server responds to setup requests.
 
 The top-level mobile tabs are `Now`, `Agents`, and `Settings`. Agents is the canonical project-and-agent workspace: it filters agents and project metadata, keeps zero-agent projects reachable for first-agent creation, and links to project detail routes. Legacy `#search`, `#projects`, and `#setup` hashes are redirected to the closest surviving tab. Detail routes use hash navigation such as `#agent/{key}`, `#project/{key}`, and `#project/{key}/action/{action}`. The footer nav is fixed on top-level routes, hides while scrolling down, shows again while scrolling up, and is hidden on detail subpages.
 
@@ -161,7 +161,7 @@ remote_servers:
 
 The Settings screen shows the configured servers in a server list. Use a row's **Switch to** button to change the active server; the default **Local** server is always present. Top-level agents, projects, schedules, setup state, drafts, attachment previews, and mutations are scoped to the active server. There is no cross-server aggregation in this mode.
 
-For ad hoc peers, open Settings, use the **Add server** toggle in the **Servers** header, and enter a display name plus a loopback or Tailscale MagicDNS URL such as `tycho-peer` and `http://127.0.0.1:7374/` or `http://vps-cd946cb7.tail952bf7.ts.net:7373`. If the peer requires a bearer token, enter it in **Remote token**. The UI checks `/health`, writes the peer metadata to `remote_servers` in `~/.tycho/config/hq.yml`, reloads the registry, and switches the active server to that peer. Removing a non-local server from the list also removes it from `hq.yml`. Ad hoc UI-added peers are intentionally limited to loopback and Tailscale MagicDNS hosts; edit `remote_servers` directly for broader LAN, public, or credentialed peers.
+For ad hoc peers, open Settings, use the **Add server** toggle in the **Servers** header, and enter a display name plus a loopback or Tailscale MagicDNS URL such as `tycho-peer` and `http://127.0.0.1:7374/` or `http://vps-cd946cb7.tail952bf7.ts.net:7373`. If the peer requires a bearer token, enter it in **Remote token**. The UI verifies the peer through the agent API, writes the peer metadata to `remote_servers` in `~/.tycho/config/hq.yml`, reloads the registry, and switches the active server to that peer. Removing a non-local server from the list also removes it from `hq.yml`. Ad hoc UI-added peers are intentionally limited to loopback and Tailscale MagicDNS hosts; edit `remote_servers` directly for broader LAN, public, or credentialed peers.
 
 UI-entered remote tokens are not written to `hq.yml`. The browser stores them in local storage under `hq.remote.serverTokens`, keyed by server key, and sends the selected peer token to the local broker as `X-Tycho-Remote-Server-Token`. The broker uses that value only for the outgoing peer request. If another browser can see an existing remote server but does not have its token, use that server row's **Token** action in Settings to re-authenticate it for the current browser. The UI's own bearer token remains separate under `hq.remote.token` and is sent as the normal `Authorization` header to the server that served the UI. For durable server-side peer credentials, configure `token_env` manually in `hq.yml`.
 
@@ -176,7 +176,7 @@ Auto-refresh uses polling with backoff:
 - `/agents`, `/projects`, and `/setup` are polled while the page is visible.
 - The selected agent's `/conversation` is fetched only when that agent's `revision` changes.
 - Polling uses the server-advertised refresh intervals from `/setup`, slows down when agents are idle, pauses while the browser tab is hidden, and backs off after network errors.
-- Start, stop, send, and project action operations trigger an immediate refresh.
+- Start, stop, and send operations trigger an immediate refresh.
 
 ## Screenshot Safety
 
@@ -210,7 +210,7 @@ TYCHO_REMOTE_TOKEN="$(ruby -rsecurerandom -e 'puts SecureRandom.hex(24)')" tycho
 ```
 
 ```bash
-curl http://127.0.0.1:7373/health \
+curl http://127.0.0.1:7373/agents \
   -H "Authorization: Bearer $TYCHO_REMOTE_TOKEN"
 ```
 
@@ -228,7 +228,7 @@ While running, the server prints request logs to stdout:
 
 ```text
 [Remote] 00:14:22 Remote server listening on http://127.0.0.1:7373
-[Remote] 00:14:26 GET /health 200 4.2ms
+[Remote] 00:14:26 GET /agents 200 4.2ms
 [Remote] 00:14:31 POST /agents/web-charlie-agent-8/messages 200 18.7ms
 ```
 
@@ -286,8 +286,6 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/` | Health check alias. |
-| `GET` | `/health` | Health check. |
 | `GET` | `/agents` | List active managed agents. |
 | `POST` | `/agents` | Create a managed agent. |
 | `GET` | `/agents/{key}` | Read one managed agent. |
@@ -314,14 +312,9 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `GET` | `/servers` | List the local server and configured broker targets for Remote UI server switching. |
 | `POST` | `/servers` | Add or update one loopback or Tailscale MagicDNS Remote server in `remote_servers` inside `hq.yml`. |
 | `DELETE` | `/servers/{key}` | Remove one non-local Remote server from `remote_servers` inside `hq.yml`. |
-| `GET` | `/servers/{key}/health` | Read broker-visible health for one local or configured remote server. |
 | `GET` / `POST` / `PUT` / `PATCH` / `DELETE` | `/servers/{key}/proxy/{path}` | Forward an API request to one configured remote server. |
-| `GET` | `/projects` | List active projects with health, latency, agent counts, and action state. |
+| `GET` | `/projects` | List active projects with metadata and agent counts. |
 | `GET` | `/projects/{key}` | Read one project detail payload. |
-| `GET` | `/projects/{key}/actions` | List guarded action preflights for deploy, maintenance, and live. |
-| `POST` | `/projects/{key}/actions` | Start a guarded project action from a request body `action`. |
-| `GET` | `/projects/{key}/actions/{action}` | Read one guarded project action preflight. |
-| `POST` | `/projects/{key}/actions/{action}` | Start one guarded project action with `confirm: true`. |
 | `GET` | `/projects/{key}/skills/{agent}` | Discover skills for a project workspace and agent harness. |
 | `GET` | `/attachments/{id}` | Read normalized attachment metadata and inline preview content when available. |
 | `GET` | `/attachments/{id}/blob` | Stream the attachment file bytes for image and binary previews. |
@@ -331,21 +324,9 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `GET` | `/`, `/ui`, `/ui.css`, `/ui.js` | Serve the Remote UI. `/ui` remains a compatibility alias. |
 | `GET` | `/favicon.svg`, `/favicon.ico` | Serve the Remote UI favicon. |
 
-For `/servers/{key}/health` and `/servers/{key}/proxy/{path}`, the browser may send `X-Tycho-Remote-Server-Token` when the selected peer token lives in browser local storage. The broker converts it to the peer request's `Authorization: Bearer ...` header and does not persist it.
+For `/servers/{key}/proxy/{path}`, the browser may send `X-Tycho-Remote-Server-Token` when the selected peer token lives in browser local storage. The broker converts it to the peer request's `Authorization: Bearer ...` header and does not persist it.
 
 ## Endpoint Details
-
-### `GET /health`
-
-Returns basic process-visible counts:
-
-```json
-{
-  "status": "ok",
-  "agents": 4,
-  "projects": 12
-}
-```
 
 ### `POST /server/restart`
 
@@ -354,7 +335,7 @@ Requests a Remote server self-restart. The endpoint is authenticated like other 
 ```json
 {
   "restarting": true,
-  "command": "/Users/example/.local/share/mise/installs/ruby/3.4.7/bin/ruby"
+  "command": "/usr/local/bin/ruby"
 }
 ```
 
@@ -503,7 +484,7 @@ Response:
     "title": "Notes",
     "path": "/Users/example/project/docs/notes.md",
     "blob_path": "/attachments/att_abc123/blob",
-    "content": "# Notes\n\n- Check deployment"
+    "content": "# Notes\n\n- Check follow-up work"
   }
 }
 ```
@@ -707,7 +688,7 @@ Sends a test notification to an enabled subscription. Automatic agent-transition
 
 ### `GET /projects`
 
-Returns active projects after refreshing metadata and health:
+Returns active projects after refreshing metadata:
 
 ```json
 {
@@ -716,12 +697,7 @@ Returns active projects after refreshing metadata and health:
       "key": "web",
       "name": "Web",
       "group": "Core",
-      "status": "healthy",
-      "apps_enabled": true,
-      "app_status": "running",
-      "health_status": "healthy",
-      "latency_ms": 42,
-      "maintenance": false,
+      "status": "configured",
       "agent_count": 2,
       "unread_agent_count": 1,
       "running_agent_count": 0
@@ -731,42 +707,6 @@ Returns active projects after refreshing metadata and health:
 ```
 
 ### `GET /projects/{key}`
-
-Returns project detail data for the mobile detail view, including branch/commit metadata, Kamal deploy details, versions, agent template summaries with model/effort defaults, action log path, managed-agent count, and recent agent summary.
-
-### `GET /projects/{key}/actions/{action}`
-
-Returns a guarded action preflight for `deploy`, `maintenance`, or `live`:
-
-```json
-{
-  "action": "deploy",
-  "label": "deploying",
-  "can_start": true,
-  "checks": [
-    {
-      "key": "kamal",
-      "label": "Kamal deployment configured",
-      "passed": true
-    }
-  ],
-  "consequences": [
-    "Starts a detached Kamal deploy for the selected project."
-  ]
-}
-```
-
-### `POST /projects/{key}/actions/{action}`
-
-Starts a detached Kamal action through `KamalAction`. The request must include confirmation:
-
-```json
-{
-  "confirm": true
-}
-```
-
-Without confirmation the server returns `400`. If a preflight check blocks the action, the server returns `409`.
 
 ### `GET /projects/{key}/skills/{agent}`
 

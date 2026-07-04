@@ -19,7 +19,6 @@ one file to grep when debugging.
 
   Sources:
   +-------------+  +-------------+  +--------------+  +-----------+
-  |    App       |  |   Config    |  | KamalAction  |  |   Agent   |
   |  lifecycle   |  |   loading   |  |  start/stop  |  | start/stop|
   |  errors      |  |   errors    |  |  completion  |  | exit code |
   |  refresh     |  |   project   |  |              |  | errors    |
@@ -30,13 +29,13 @@ one file to grep when debugging.
                   |                                   |
                   v                                   v
   +---------------+---+                  +------------+---------+
-  |   Health check     |                 |   ActionStore /       |
-  |   failures         |                 |   AgentStore errors   |
+  |   Remote UI        |                 |   AgentStore errors   |
+  |   request failures |                 |                      |
   +--------------------+                 +----------------------+
 
   Log format:
   [INFO] [2026-04-25 10:30:00] [App] Starting HQ
-  [WARN] [2026-04-25 10:30:05] [Health] myapp: Net::ReadTimeout
+  [WARN] [2026-04-25 10:30:05] [Remote] GET /agents 502 1002.4ms
   [ERROR] [2026-04-25 10:31:00] [Agent] Memory capture failed for agent-1: ...
 
   Configurable via TYCHO_LOG_LEVEL env var (default: INFO)
@@ -46,12 +45,10 @@ one file to grep when debugging.
   Tier 2: Process Capture Logs (raw output, unchanged)
  ----------------------------------------
 
-  Kamal Actions                    Managed Agents
   +--------------------------+     +-------------------------------+
   | logs/{project}.log       |     | logs/agents/{project}-{time}-{id}.raw.log |
   |                          |     |                               |
   | Raw stdout/stderr from   |     | Raw stdout/stderr from        |
-  | kamal deploy/maintenance |     | codex/claude-compatible       |
   +--------------------------+     +-------------------------------+
                                                   |
                                                   | AgentLogParser
@@ -79,9 +76,7 @@ one file to grep when debugging.
 
   State Files
  ----------------------------------------
-  logs/actions.json          Kamal action state (PIDs, status)
   logs/managed_agents.json   Agent metadata (PIDs, config, status)
-  logs/healthcheck.log       Health check results per project
 
  ============================================================================
 
@@ -100,7 +95,6 @@ one file to grep when debugging.
                             HQ.logger <----+
                          (summary lines)   |
                                            |
-  Kamal process stdout -> {project}.log ---+
 
   TUI Chat Viewport (hybrid rendering)
  ----------------------------------------

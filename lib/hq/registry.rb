@@ -40,7 +40,6 @@ module HQ
     :name,
     :group,
     :path,
-    :apps,
     :agent,
     :model,
     :reasoning_effort,
@@ -82,7 +81,6 @@ module HQ
       HQ.custom_harnesses = @custom_harnesses
       remove_instance_variable(:@normalized_system_prompts) if instance_variable_defined?(:@normalized_system_prompts)
       remove_instance_variable(:@system_prompt_templates) if instance_variable_defined?(:@system_prompt_templates)
-      write_yaml(@path, data) if persist_detected_apps!(data)
       @projects = build_projects(data["projects"] || [])
       validate!
       HQ.logger.info("Config") { "Loaded #{@projects.size} projects" }
@@ -96,13 +94,6 @@ module HQ
       raise ConfigError, "Invalid YAML in #{e.file}: #{e.message}"
     end
 
-    def self.kamal_app?(project_path)
-      path = project_path.to_s
-      return false if path.empty?
-
-      File.exist?(File.join(path, "config", "deploy.yml"))
-    end
-
     def add_project!(attrs)
       data = load_yaml(@path)
       projects = Array(data["projects"])
@@ -113,7 +104,6 @@ module HQ
       entry = { "key" => key, "name" => attrs[:name].to_s }
       entry["group"] = attrs[:group].to_s unless attrs[:group].to_s.strip.empty?
       entry["path"] = attrs[:path].to_s
-      entry["apps"] = attrs[:apps] == true unless attrs[:apps].nil?
       entry["agent"] = attrs[:agent].to_s unless attrs[:agent].to_s.strip.empty?
 
       group = entry["group"].to_s
@@ -328,7 +318,6 @@ module HQ
         key = fetch_key(project, "project")
         path = expand_path(project["path"])
         name = (project["name"] || File.basename(path)).to_s
-        apps_enabled = apps_enabled_for(project)
         group_name = project["group"].to_s.strip
         hidden_config = hidden_value(project, "project #{key}")
         group_hidden = @groups[group_name]&.hidden
@@ -338,7 +327,6 @@ module HQ
           name: name,
           group: group_name,
           path: path,
-          apps: apps_enabled,
           agent: normalize_agent(project["agent"]),
           model: normalize_model(project["model"]),
           reasoning_effort: normalize_reasoning_effort(project["reasoning_effort"]),
@@ -373,32 +361,6 @@ module HQ
       return nil if %w[inherit default nil null].include?(normalized)
 
       raise ConfigError, "Invalid hidden value for #{label}: #{value.inspect}"
-    end
-
-    def apps_enabled_for(project)
-      return Registry.kamal_app?(expand_path(project["path"])) unless project.key?("apps")
-
-      value = project["apps"]
-      return value if [true, false].include?(value)
-      return false if value.nil?
-
-      normalized = value.to_s.strip.downcase
-      return true if %w[true yes on 1].include?(normalized)
-      return false if %w[false no off 0].include?(normalized)
-
-      !!value
-    end
-
-    def persist_detected_apps!(data)
-      projects = Array(data["projects"])
-      changed = false
-      projects.each do |project|
-        next if project.key?("apps")
-
-        project["apps"] = Registry.kamal_app?(expand_path(project["path"]))
-        changed = true
-      end
-      changed
     end
 
     def validate!

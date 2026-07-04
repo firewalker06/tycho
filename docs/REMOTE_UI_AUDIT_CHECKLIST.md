@@ -5,7 +5,7 @@
 ## Inventory
 
 - Live endpoint was reachable and served `/`, `/ui.css`, `/ui.js`, and JSON API endpoints.
-- Checked main routes: Now, Agents, Search, Projects, Setup, agent detail, project detail, and project action preflight.
+- Checked main routes: Now, Agents, Search, Projects, Setup, agent detail, and project detail.
 - Observed live state: 20 managed agents, 14 active projects, 3 unread agents, no bearer token required, and Tailscale MagicDNS available.
 
 ## Fix Checklist

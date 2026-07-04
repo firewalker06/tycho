@@ -12,9 +12,7 @@ require_relative "registry"
 require_relative "domain/constants"
 require_relative "domain/file_store"
 require_relative "domain/log_paths"
-require_relative "domain/version_lookup"
-require_relative "domain/kamal_action"
-require_relative "domain/app_project"
+require_relative "domain/project"
 require_relative "domain/managed_agent"
 require_relative "domain/agent_store"
 require_relative "domain/visibility"
@@ -61,8 +59,6 @@ module HQ
     def initialize
       HQ.logger.info("App") { "Starting HQ" }
       HQ.log_boot_step("App#initialize enter")
-      @latest_kamal = nil
-      @latest_rails = nil
       @config_error = nil
       @last_refresh = nil
       @loading = false
@@ -83,8 +79,6 @@ module HQ
       @sidebar_viewport = nil
       @sidebar_content_proc = nil
       @confirming = nil
-      @actions = {}
-      @action_results = {}
       @all_projects = []
       @projects = []
       @all_agents = []
@@ -119,8 +113,6 @@ module HQ
       @agent_store = AgentStore.new(@all_projects)
       load_agents!
       HQ.log_boot_step("agents loaded (#{@agents.length} agents)")
-      load_actions!
-      HQ.log_boot_step("actions loaded (#{@actions.length} actions)")
       load_schedules!
       HQ.log_boot_step("schedules loaded (#{@schedules.length} schedules)")
       sync_agent_chat_workspace!
@@ -181,7 +173,6 @@ module HQ
         cmds << begin_refresh! unless refreshing?
         [self, Bubbletea.batch(*cmds.compact)]
       when ActionPollMessage
-        poll_actions!
         poll_agents!
         refresh_omnisearch_index! if omnisearch_open?
         cmds = [schedule_action_poll]
@@ -255,16 +246,10 @@ module HQ
         stop_selected_agent
       when "x"
         @screen == :projects ? maybe_confirm_project_archive : delete_selected_agent
-      when "d"
-        maybe_confirm(:deploy)
-      when "m"
-        maybe_confirm(:maintenance)
       when "l"
         open_context_log
       when "L"
         open_raw_log
-      when "h"
-        open_healthcheck_log
       when "v"
         open_detail_view
       when "ctrl+g"
@@ -352,7 +337,6 @@ module HQ
         key: candidate[:key],
         name: candidate[:name],
         path: candidate[:path],
-        apps: candidate[:apps],
         agent: HQ.harness_keys.first
       }
       create_onboarding_project(attrs, success_message: "Created project from current directory")
@@ -384,7 +368,7 @@ module HQ
       retried_missing_config = false
       begin
         @registry = Registry.new
-        @all_projects = @registry.projects.map { |config| AppProject.new(config) }
+        @all_projects = @registry.projects.map { |config| Project.new(config) }
         apply_project_visibility!
         @registry_mtime = File.mtime(@registry.path) if File.exist?(@registry.path)
         @config_error = nil
@@ -460,7 +444,7 @@ module HQ
       options << {
         key: :add_project,
         title: "Add Local Project",
-        detail: "Choose a project folder and let Tycho detect app support"
+        detail: "Choose a project folder for managed agents"
       }
       @onboarding_options = options
       @onboarding_selected = clamp_selection(@onboarding_selected, @onboarding_options.length)
@@ -479,11 +463,8 @@ module HQ
       @registry_mtime = current
       @all_projects = @registry.projects.map do |config|
         prior = previous[config.key]
-        project = AppProject.new(config)
+        project = Project.new(config)
         if prior
-          project.instance_variable_set(:@health_status, prior.health_status)
-          project.instance_variable_set(:@app_status, prior.app_status)
-          project.instance_variable_set(:@response_time, prior.response_time)
           project.instance_variable_set(:@commit_hash, prior.commit_hash)
           project.instance_variable_set(:@branch, prior.branch)
           project.instance_variable_set(:@dirty_files, prior.dirty_files)
@@ -534,15 +515,11 @@ module HQ
 
       projects = @projects
       agents = @agents
-      apps = @projects.select(&:apps_enabled?)
-
       @progress_mutex.synchronize do
         @progress_activity = []
         @progress_done = 0
-        @progress_total = projects.length + agents.length + apps.length
+        @progress_total = projects.length + agents.length
       end
-
-      kick_off_version_lookups! if @latest_kamal.nil? || @latest_rails.nil?
 
       if @progress_total.zero?
         finish_refresh!
@@ -572,20 +549,7 @@ module HQ
           end
         end
 
-        metadata_by_project = projects.zip(metadata_threads).to_h
-
-        health_threads = apps.map do |project|
-          Thread.new do
-            timed_step("health:#{project.key}") do
-              metadata_by_project[project]&.join
-              log_activity("Checking health: #{project.name}")
-              project.check_health!
-              log_activity("#{project.name} → #{project.health_status} (#{project.response_time}ms)")
-            end
-          end
-        end
-
-        (metadata_threads + agent_threads + health_threads).each(&:join)
+        (metadata_threads + agent_threads).each(&:join)
       end
 
       @progress_threads = [worker]
@@ -598,20 +562,8 @@ module HQ
 
       Thread.new do
         project.refresh_metadata!
-        project.check_health! if project.apps_enabled?
       rescue StandardError => e
         HQ.logger.warn("Project") { "Async refresh failed for #{project_key}: #{e.class}: #{e.message}" }
-      end
-    end
-
-    def kick_off_version_lookups!
-      return if @version_lookup_thread&.alive?
-
-      @version_lookup_thread = Thread.new do
-        kamal_thread = Thread.new { VersionLookup.fetch_latest_gem_version("kamal") }
-        rails_thread = Thread.new { VersionLookup.fetch_latest_gem_version("rails") }
-        @latest_kamal = kamal_thread.value
-        @latest_rails = rails_thread.value
       end
     end
 
@@ -929,24 +881,11 @@ def selected_screen_items
       [self, nil]
     end
 
-    def maybe_confirm(action)
-      return [self, nil] unless @screen == :projects
-
-      project = selected_project
-      return [self, nil] unless project
-      return [self, nil] unless project.apps_enabled?
-      return [self, nil] if @actions.key?(project.key)
-
-      @confirming = action
-      [self, nil]
-    end
-
     def maybe_confirm_project_archive
       return [self, nil] unless @screen == :projects
 
       project = selected_project
       return [self, nil] unless project
-      return [self, nil] if @actions.key?(project.key)
       return [self, nil] if @agents_by_project[project.key].any?(&:running?)
 
       @project_archive_confirm = UI::ProjectArchiveConfirm.new(project, agents: @agents_by_project[project.key])
@@ -1237,15 +1176,7 @@ def selected_screen_items
         return [self, Bubbletea.quit] if action == :quit
         return rebuild_memory_for_chat_agent if action == :rebuild_memory
 
-        project = selected_project
-        return [self, nil] unless project
-        action_type = if action == :maintenance
-                        project.app_status == "maintenance" ? :live : :maintenance
-                      else
-                        :deploy
-                      end
-        start_action!(project, action_type)
-        [self, schedule_action_poll]
+        [self, nil]
       when "n", "escape"
         @confirming = nil
         [self, nil]
@@ -1256,7 +1187,6 @@ def selected_screen_items
 
     def archive_project(project)
       return [self, nil] unless project
-      return [self, nil] if @actions.key?(project.key)
       return [self, nil] if @agents_by_project[project.key].any?(&:running?)
 
       archived_config = @registry.archive_project!(project.key)
@@ -1272,8 +1202,6 @@ def selected_screen_items
       load_registry!
       @agent_store = AgentStore.new(@all_projects)
       rebuild_agent_index!
-      @actions.delete(project.key)
-      @action_results.delete(project.key)
       @selected[:projects] = [@selected[:projects], @projects.length - 1].min
       @selected[:projects] = 0 if @selected[:projects].negative?
       @selected[:agents] = [@selected[:agents], @agents.length - 1].min
@@ -1528,62 +1456,6 @@ def selected_screen_items
       @sidebar&.fetch(:kind, nil) == :agent_chat && @agent_chat_form&.agent == agent
     end
 
-    def start_action!(project, action_type)
-      action = KamalAction.new(
-        project_key: project.key,
-        project_name: project.name,
-        project_path: project.path,
-        action: action_type
-      )
-      action.start!
-      @actions[project.key] = action
-      save_actions!
-    end
-
-    def poll_actions!
-      finished = false
-      @actions.each do |key, action|
-        action.poll!
-        next unless action.done?
-
-        @actions.delete(key)
-        @action_results[key] = {
-          success: action.success?,
-          action: action.action,
-          action_label: action.label,
-          at: Time.now,
-          log_path: action.log_path
-        }
-        finished = true
-      end
-
-      return unless finished
-
-      save_actions!
-      @loading = true
-    end
-
-    def save_actions!
-      FileStore.write_json(ACTIONS_FILE, @actions.values.map(&:to_hash))
-    rescue StandardError => e
-      HQ.logger.error("ActionStore") { "Failed to save actions: #{e.message}" }
-    end
-
-    def load_actions!
-      return unless File.exist?(ACTIONS_FILE)
-
-      data = FileStore.read_json(ACTIONS_FILE, fallback: [])
-      data.each do |hash|
-        action = KamalAction.from_hash(hash)
-        action.poll!
-        @actions[action.project_key] = action unless action.done?
-      end
-      save_actions!
-    rescue StandardError => e
-      HQ.logger.error("ActionStore") { "Failed to load actions: #{e.message}" }
-      @actions = {}
-    end
-
     def schedule_refresh
       Bubbletea.tick(30) { TickMessage.new }
     end
@@ -1601,15 +1473,12 @@ def selected_screen_items
     end
 
     def schedule_action_poll
-      return nil if @actions.empty? && @agents.none? { |agent| agent.pid || agent.running? }
+      return nil if @agents.none? { |agent| agent.pid || agent.running? }
 
       Bubbletea.tick(10) { ActionPollMessage.new }
     end
 
     def clear_stale_results
-      @action_results.delete_if do |_, result|
-        !UI::Rendering::ProjectStatusBadge.result_active?(result)
-      end
     end
 
     def open_context_log
@@ -1622,18 +1491,6 @@ def selected_screen_items
           kind: :chat_log,
           title: "Agent Chat Log  #{Styles::MARKERS[:bullet_sep]}  #{agent.name}"
         ) { read_agent_chat_log(agent) }
-      when :projects
-        project = selected_project
-        return [self, nil] unless project
-
-        path = project.action_log_path
-        return [self, nil] unless File.exist?(path)
-
-        return open_sidebar_text(
-          kind: :project_log,
-          title: "Action Log  #{Styles::MARKERS[:bullet_sep]}  #{project.name}",
-          path: path
-        ) { read_log_file(path) }
       end
 
       [self, nil]
@@ -1659,19 +1516,6 @@ def selected_screen_items
       "(chat log unavailable)"
     end
 
-    def open_healthcheck_log
-      return [self, nil] unless @screen == :projects
-
-      path = LogPaths.project_healthcheck_log_path
-      return [self, nil] unless File.exist?(path)
-
-      open_sidebar_text(
-        kind: :healthcheck_log,
-        title: "Healthchecks",
-        path: path
-      ) { read_log_file(path) }
-    end
-
     def open_sidebar_text(kind:, title:, path: nil, &content_proc)
       close_sidebar!
       @sidebar = {
@@ -1691,7 +1535,7 @@ def selected_screen_items
     end
 
     def log_sidebar_kind?(kind)
-      %i[chat_log raw_log project_log healthcheck_log].include?(kind)
+      %i[chat_log raw_log project_log].include?(kind)
     end
 
     def read_agent_chat_log(agent)
@@ -1879,7 +1723,6 @@ def selected_screen_items
         apply_window_size(message.width, message.height)
         return [self, nil]
       when ActionPollMessage
-        poll_actions!
         poll_agents!
         sync_sidebar_text!
         return [self, schedule_action_poll]
@@ -1929,7 +1772,6 @@ def selected_screen_items
         apply_window_size(message.width, message.height)
         return [self, nil]
       when ActionPollMessage
-        poll_actions!
         poll_agents!
         sync_detail_overlay!
         return [self, schedule_action_poll]
