@@ -8,7 +8,7 @@ This pass looked for debt that is likely to slow near-term feature work or creat
 
 ### 1. Remote UI Client Monolith And Browser Verification
 
-`lib/hq/remote_ui/assets/app.js` is 8,612 lines and owns routing, state preservation, rendering, polling, Markdown rendering, attachments, schedules, project actions, push notification UI, and header/menu behavior in one script. Server-side tests assert many static expectations against the served asset, but there is no dedicated JavaScript or browser automation harness in the repo. That leaves the most fragile Remote UI promises, especially polling preservation, sticky docks, mobile layout, and real form behavior, dependent on manual checks.
+`lib/hq/remote_ui/assets/app.js` is large and owns routing, state preservation, rendering, polling, Markdown rendering, attachments, schedules, push notification UI, and header/menu behavior in one script. Server-side tests assert many static expectations against the served asset, but there is no dedicated JavaScript or browser automation harness in the repo. That leaves the most fragile Remote UI promises, especially polling preservation, sticky docks, mobile layout, and real form behavior, dependent on manual checks.
 
 Recommended first slice:
 

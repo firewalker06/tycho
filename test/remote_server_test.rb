@@ -46,7 +46,6 @@ module RemoteServerTest
     assert_remote_agent_push_notifications
     assert_remote_search_index_includes_agents_and_projects
     assert_remote_skills_payload_uses_discovery
-    assert_remote_project_action_requires_confirmation
     assert_remote_ui_routes_load_without_auth
     assert_write_http_keeps_keyword_body_compatibility
     assert_server_prints_public_url
@@ -103,7 +102,7 @@ module RemoteServerTest
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
-      registry = registry_for_project(dir, workspace, apps: false)
+      registry = registry_for_project(dir, workspace)
       File.write(HQ::SCHEDULES_FILE, <<~YAML)
         schedules:
           - key: weekday
@@ -323,7 +322,7 @@ module RemoteServerTest
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
-      registry = registry_for_project(dir, workspace, apps: false)
+      registry = registry_for_project(dir, workspace)
       service = HQ::RemoteService.new(registry: registry)
       created = service.create_agent(
         "project_key" => "web",
@@ -399,7 +398,7 @@ module RemoteServerTest
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
-      registry = registry_for_project(dir, workspace, apps: true)
+      registry = registry_for_project(dir, workspace)
       service = HQ::RemoteService.new(registry: registry)
       created = service.create_agent(
         "project_key" => "web",
@@ -551,7 +550,7 @@ module RemoteServerTest
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
-      registry = registry_for_project(dir, workspace, apps: false)
+      registry = registry_for_project(dir, workspace)
       service = HQ::RemoteService.new(registry: registry)
       server = HQ::RemoteServer.new
       created = service.create_agent(
@@ -631,7 +630,7 @@ module RemoteServerTest
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
-      registry = registry_for_project(dir, workspace, apps: false)
+      registry = registry_for_project(dir, workspace)
       service = HQ::RemoteService.new(registry: registry)
       created = service.create_agent(
         "project_key" => "web",
@@ -773,7 +772,7 @@ module RemoteServerTest
       File.chmod(0o755, fake_codex)
       ENV["TYCHO_CODEX_BIN"] = fake_codex
 
-      registry = registry_for_project(dir, workspace, apps: false)
+      registry = registry_for_project(dir, workspace)
       service = HQ::RemoteService.new(registry: registry)
       created = service.create_agent(
         "project_key" => "web",
@@ -903,7 +902,7 @@ module RemoteServerTest
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
-      registry = registry_for_project(dir, workspace, apps: true)
+      registry = registry_for_project(dir, workspace)
       service = HQ::RemoteService.new(registry: registry)
       agent = service.create_agent(
         "project_key" => "web",
@@ -917,16 +916,9 @@ module RemoteServerTest
       project = projects.find { |item| item[:key] == "web" }
       assert(project, "expected project list to include web")
       assert(project[:group] == "Core", "expected project group")
-      assert(project.key?(:health_status), "expected project health status")
-      assert(project.key?(:latency_ms), "expected project latency")
-      assert(project.key?(:action_state), "expected project action state key")
+      assert(project[:status] == "configured", "expected project status")
       detail = service.project("web")
       assert(detail[:pr_number] == "123", "expected PR number")
-      assert(detail[:service] == "web-service", "expected parsed Kamal service")
-      assert(detail[:image] == "ghcr.io/example/web", "expected parsed Kamal image")
-      assert(detail[:hosts] == ["web-1"], "expected parsed Kamal hosts")
-      assert(detail[:kamal_version] == "2.6.1", "expected parsed Kamal version")
-      assert(detail[:rails_version] == "7.2.2", "expected parsed Rails version")
       assert(detail[:managed_agent_count] == 1, "expected managed-agent count")
       assert(detail[:agent_template_summaries].first[:prompt] == "Default prompt for web.",
              "expected Remote UI project detail to expose full template prompt for agent creation")
@@ -948,7 +940,7 @@ module RemoteServerTest
       File.write(File.join(workspace, "tracked.txt"), "one\ntwo\n")
       File.write(File.join(workspace, "notes draft.txt"), "draft\n")
 
-      registry = registry_for_project(dir, workspace, apps: false)
+      registry = registry_for_project(dir, workspace)
       service = HQ::RemoteService.new(registry: registry)
       diff = service.project_git_diff("web", scope: "worktree")
       tracked = diff[:files].find { |file| file[:path] == "tracked.txt" }
@@ -981,7 +973,7 @@ module RemoteServerTest
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
-      registry = registry_for_project(dir, workspace, apps: true)
+      registry = registry_for_project(dir, workspace)
       service = HQ::RemoteService.new(registry: registry)
       server = HQ::RemoteServer.new
 
@@ -1003,7 +995,6 @@ module RemoteServerTest
       assert(project[:name] == "Web Renamed", "expected updated project name in response")
       assert(project[:group] == "Ops", "expected updated project group in response")
       assert(project[:path] == workspace, "expected project workspace path to stay unchanged")
-      assert(project[:apps_enabled] == true, "expected app actions setting to stay unchanged")
       assert(project[:agent] == "claude", "expected default harness to update")
       assert(project[:model] == "sonnet", "expected project model to update")
       assert(project[:reasoning_effort] == "low", "expected project effort to update")
@@ -1014,7 +1005,6 @@ module RemoteServerTest
       assert(entry["name"] == "Web Renamed", "expected updated project name to persist")
       assert(entry["group"] == "Ops", "expected updated project group to persist")
       assert(entry["path"] == workspace, "expected persisted workspace path to stay unchanged")
-      assert(entry["apps"] == true, "expected apps setting to stay unchanged")
       assert(entry["agent"] == "claude", "expected default harness to persist")
       assert(entry["model"] == "sonnet", "expected model to persist")
       assert(entry["reasoning_effort"] == "low", "expected effort to persist")
@@ -1025,13 +1015,6 @@ module RemoteServerTest
         raise "expected Remote project path edits to be rejected"
       rescue HQ::RemoteServer::Error => e
         assert(e.message.include?("path cannot be changed"), "expected immutable path error")
-      end
-
-      begin
-        server.send(:route, service, "PATCH", "/projects/web", { "apps" => false }, nil)
-        raise "expected Remote project app action edits to be rejected"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.message.include?("apps cannot be changed"), "expected immutable apps error")
       end
 
       begin
@@ -1054,7 +1037,6 @@ module RemoteServerTest
           - key: web
             name: Web
             path: #{workspace}
-            apps: false
             agent: codex
             model: gpt-5.1-codex-max
             reasoning_effort: low
@@ -1122,18 +1104,15 @@ module RemoteServerTest
             name: Web Charlie
             group: Cookpad
             path: #{workspaces["web-charlie"]}
-            apps: false
             hidden: false
           - key: worker
             name: Worker
             group: Cookpad
             path: #{workspaces["worker"]}
-            apps: false
           - key: docs
             name: Docs
             group: Personal
             path: #{workspaces["docs"]}
-            apps: false
       YAML
       File.write(prompts_path, <<~YAML)
         custom: Default prompt for %{project_key}.
@@ -1310,7 +1289,7 @@ module RemoteServerTest
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
       write_archived_config(dir)
-      registry = registry_for_project(dir, workspace, apps: true)
+      registry = registry_for_project(dir, workspace)
       service = HQ::RemoteService.new(
         registry: registry,
         server_url: "http://127.0.0.1:7373",
@@ -1332,11 +1311,11 @@ module RemoteServerTest
       assert(setup.dig(:counts, :archived_projects) == 1, "expected archived project count")
       assert(setup[:harnesses].map { |item| item[:name] }.sort == %w[claude claude-wrapper codex opencode],
              "expected harness readiness entries")
-      assert(setup[:tools].map { |item| item[:name] }.sort == %w[kamal kamal-projects mise tailscale],
+      assert(setup[:tools].map { |item| item[:name] }.sort == %w[tailscale],
              "expected optional tool readiness entries")
       assert(setup.dig(:schema, :valid) == true, "expected valid result schema")
       assert(setup.dig(:config, :prompt_template_count) == 1, "expected prompt template count")
-      assert(setup[:safety].any? { |line| line.include?("confirmation") }, "expected safety defaults")
+      assert(setup[:safety].any? { |line| line.include?("Running agents") }, "expected safety defaults")
     end
   end
 
@@ -1345,29 +1324,24 @@ module RemoteServerTest
       home = File.join(dir, "home")
       empty_path = File.join(dir, "empty-bin")
       workspace = File.join(dir, "workspace")
-      %w[claude codex opencode mise].each do |command|
+      %w[claude codex opencode].each do |command|
         write_test_executable(File.join(home, ".local", "bin", command))
       end
       FileUtils.mkdir_p(empty_path)
       write_project_workspace(workspace)
-      registry = registry_for_project(dir, workspace, apps: true)
+      registry = registry_for_project(dir, workspace)
 
       with_env_values(
         "HOME" => home,
         "PATH" => empty_path,
         "TYCHO_CLAUDE_BIN" => nil,
         "TYCHO_CODEX_BIN" => nil,
-        "TYCHO_MISE_BIN" => nil,
         "TYCHO_OPENCODE_BIN" => nil
       ) do
         setup = HQ::RemoteService.new(registry: registry).setup
         codex = setup[:harnesses].find { |item| item[:name] == "codex" }
         claude = setup[:harnesses].find { |item| item[:name] == "claude" }
         opencode = setup[:harnesses].find { |item| item[:name] == "opencode" }
-        mise = setup[:tools].find { |item| item[:name] == "mise" }
-        global_kamal = setup[:tools].find { |item| item[:name] == "kamal" }
-        project_kamal = setup[:tools].find { |item| item[:name] == "kamal-projects" }
-
         assert(codex[:ready] && codex[:path].end_with?("/.local/bin/codex"),
                "expected Remote setup to find fallback Codex")
         assert(codex.key?(:model_suggestions), "expected Codex readiness to expose model suggestions")
@@ -1380,11 +1354,6 @@ module RemoteServerTest
                "expected Remote setup to find fallback OpenCode")
         assert(opencode[:reasoning_effort_suggestions].include?("high"),
                "expected OpenCode readiness to expose variant suggestions")
-        assert(mise[:ready] && mise[:path].end_with?("/.local/bin/mise"),
-               "expected Remote setup to find fallback mise")
-        assert(!global_kamal[:ready], "expected global Kamal to remain PATH-only")
-        assert(project_kamal[:ready], "expected project-level Kamal readiness")
-        assert(project_kamal[:detail].include?("1/1 app project"), "expected project Kamal count detail")
       end
     end
   end
@@ -1393,7 +1362,7 @@ module RemoteServerTest
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
-      registry = registry_for_project(dir, workspace, apps: true)
+      registry = registry_for_project(dir, workspace)
       service = HQ::RemoteService.new(
         registry: registry,
         server_url: "http://127.0.0.1:7373",
@@ -1434,7 +1403,6 @@ module RemoteServerTest
       assert(project[:key] == "welcome", "expected welcome project payload")
       assert(entry["key"] == "welcome", "expected welcome project to persist")
       assert(entry["path"] == welcome_path, "expected persisted welcome workspace path")
-      assert(entry["apps"] == false, "expected welcome project to disable app checks")
       assert(File.exist?(File.join(welcome_path, "README.md")), "expected welcome README")
       assert(service.setup.dig(:onboarding, :active) == false, "expected onboarding to finish after project creation")
     ensure
@@ -1493,7 +1461,6 @@ module RemoteServerTest
           - key: web
             name: Web
             path: #{workspace}
-            apps: false
       YAML
       File.write(prompts_path, "custom: Default prompt for %{project_key}.\n")
       registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
@@ -1505,8 +1472,9 @@ module RemoteServerTest
 
       assert(servers.map { |item| item[:key] } == %w[local office-mac],
              "expected broker server list to include local and configured remotes")
-      assert(servers.first[:local] == true && servers.first[:healthy] == true,
-             "expected local broker server to be marked healthy")
+      assert(servers.first[:local] == true, "expected local broker server to be marked local")
+      assert(servers.first.keys.sort == %i[auth_configured key local name url],
+             "expected broker server list to include only display metadata")
       remote = servers.last
       assert(remote[:name] == "Office Mac", "expected configured remote display name")
       assert(remote[:url] == "http://office-mac.example.test:7373",
@@ -1523,12 +1491,6 @@ module RemoteServerTest
     handler = lambda do |request|
       requests << request
       case [request[:method], request[:path]]
-      when ["GET", "/health"]
-        {
-          status: 200,
-          content_type: "application/json",
-          body: JSON.generate(status: "ok", node: "target")
-        }
       when ["POST", "/agents/web-agent-1/messages"]
         {
           status: 200,
@@ -1576,16 +1538,11 @@ module RemoteServerTest
             - key: web
               name: Web
               path: #{workspace}
-              apps: false
         YAML
         File.write(prompts_path, "custom: Default prompt for %{project_key}.\n")
         registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
         service = HQ::RemoteService.new(registry: registry)
         server = HQ::RemoteServer.new
-
-        health = server.send(:route, service, "GET", "/servers/target/health", {}, nil)
-        assert(health.dig(:body, :server, :healthy) == true, "expected target health to be proxied")
-        assert(health.dig(:body, :server, :status) == "ok", "expected target health status")
 
         request = HQ::RemoteServer.const_get(:Request).new(
           method: "POST",
@@ -1635,12 +1592,6 @@ module RemoteServerTest
     handler = lambda do |request|
       requests << request
       case [request[:method], request[:path]]
-      when ["GET", "/health"]
-        {
-          status: 200,
-          content_type: "application/json",
-          body: JSON.generate(status: "ok", node: "loopback")
-        }
       when ["GET", "/agents"]
         {
           status: 200,
@@ -1666,10 +1617,6 @@ module RemoteServerTest
         service = HQ::RemoteService.new(registry: registry)
         server = HQ::RemoteServer.new
 
-        health = server.send(:route, service, "GET", "/servers/#{key}/health", {}, nil)
-        assert(health.dig(:body, :server, :healthy) == true, "expected loopback peer health to be proxied")
-        assert(health.dig(:body, :server, :status) == "ok", "expected loopback peer health status")
-
         proxied = server.send(:route, service, "GET", "/servers/#{key}/proxy/agents", {}, nil)
         assert(proxied.dig(:body, "agents", 0, "key") == "peer-agent-1",
                "expected loopback peer API request to be proxied")
@@ -1684,7 +1631,7 @@ module RemoteServerTest
     handler = lambda do |request|
       requests << request
       case [request[:method], request[:path]]
-      when ["GET", "/health"]
+      when ["GET", "/agents"]
         unless request.dig(:headers, "authorization") == "Bearer target-secret"
           next({
             status: 401,
@@ -1695,7 +1642,7 @@ module RemoteServerTest
         {
           status: 200,
           content_type: "application/json",
-          body: JSON.generate(status: "ok", node: "persisted-peer")
+          body: JSON.generate(agents: [{ key: "peer-agent-1", name: "Peer Agent" }])
         }
       when ["GET", "/agents"]
         unless request.dig(:headers, "authorization") == "Bearer target-secret"
@@ -1730,7 +1677,6 @@ module RemoteServerTest
             - key: web
               name: Web
               path: #{workspace}
-              apps: false
         YAML
         File.write(prompts_path, "custom: Default prompt for %{project_key}.\n")
         registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
@@ -1758,7 +1704,7 @@ module RemoteServerTest
         assert(!File.read(config_path).include?("target-secret"),
                "expected Remote server route to avoid writing UI-entered tokens")
         assert(requests.all? { |request| request.dig(:headers, "authorization") == "Bearer target-secret" },
-               "expected health checks to use the provided browser-local token")
+               "expected broker requests to use the provided browser-local token")
 
         proxy_request = HQ::RemoteServer.const_get(:Request).new(
           method: "GET",
@@ -1829,7 +1775,7 @@ module RemoteServerTest
   def assert_remote_push_subscription_lifecycle
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
-      registry = registry_for_project(dir, workspace, apps: false)
+      registry = registry_for_project(dir, workspace)
       service = HQ::RemoteService.new(registry: registry)
       config = service.push_config
 
@@ -1860,7 +1806,7 @@ module RemoteServerTest
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
-      registry = registry_for_project(dir, workspace, apps: false)
+      registry = registry_for_project(dir, workspace)
       notifier = RecordingPushNotifier.new
       service = HQ::RemoteService.new(registry: registry, web_push_notifier: notifier)
       started_at = Time.now - 60
@@ -1872,8 +1818,8 @@ module RemoteServerTest
         started_at: started_at,
         structured_result: {
           "status" => "input_required",
-          "summary" => "Needs deployment confirmation",
-          "inquiry" => { "message" => "Deploy now?" }
+          "summary" => "Needs release confirmation",
+          "inquiry" => { "message" => "Release now?" }
         }
       )
       finished_agent = stale_running_agent(
@@ -1923,7 +1869,7 @@ module RemoteServerTest
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
-      registry = registry_for_project(dir, workspace, apps: true)
+      registry = registry_for_project(dir, workspace)
       service = HQ::RemoteService.new(registry: registry)
       service.create_agent(
         "project_key" => "web",
@@ -1960,7 +1906,7 @@ module RemoteServerTest
       opencode_skill_dir = File.join(workspace, ".opencode", "skills", "plan")
       FileUtils.mkdir_p(opencode_skill_dir)
       File.write(File.join(opencode_skill_dir, "SKILL.md"), "# Plan\n")
-      registry = registry_for_project(dir, workspace, apps: true)
+      registry = registry_for_project(dir, workspace)
       service = HQ::RemoteService.new(registry: registry)
 
       payload = service.skills("web", "codex")
@@ -1982,27 +1928,6 @@ module RemoteServerTest
     end
   end
 
-  def assert_remote_project_action_requires_confirmation
-    with_remote_temp_store do |dir|
-      workspace = File.join(dir, "workspace")
-      write_project_workspace(workspace)
-      registry = registry_for_project(dir, workspace, apps: true)
-      service = HQ::RemoteService.new(registry: registry)
-
-      preflight = service.project_action_preflight("web", "deploy")
-      assert(preflight[:action] == "deploy", "expected deploy preflight")
-      assert(preflight[:checks].any? { |check| check[:key] == "kamal" && check[:passed] },
-             "expected Kamal preflight check")
-
-      begin
-        service.start_project_action("web", "deploy", {})
-        raise "expected missing confirmation to fail"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 400, "expected missing confirmation to return 400")
-      end
-    end
-  end
-
   def assert_remote_ui_routes_load_without_auth
     server = HQ::RemoteServer.new(token: "secret", logger: Logger.new(StringIO.new), output: StringIO.new)
     ui_request = HQ::RemoteServer.const_get(:Request).new(
@@ -2015,7 +1940,7 @@ module RemoteServerTest
     assert(server.send(:ui_request?, ui_request), "expected / to be recognized as a UI route")
     response = server.send(:route_ui, "/")
     assert(response[:content_type].include?("text/html"), "expected / to return HTML")
-    assert(response[:body].include?("Tycho - its Factorio for agents"), "expected / body to include app shell title")
+    assert(response[:body].include?("Tycho - Factorio for Agents"), "expected / body to include app shell title")
     legacy_request = HQ::RemoteServer.const_get(:Request).new(
       method: "GET",
       path: "/ui",
@@ -2461,9 +2386,9 @@ module RemoteServerTest
            "expected copyable key/value rows to render a copy control")
     assert(js[:body].include?('copyableKv("Raw log", agent.log_path)'),
            "expected Conversation settings rows to be copyable")
-    assert(js[:body].include?('copyableKv("Service", project.service)') &&
+    assert(js[:body].include?('copyableKv("Path", project.path)') &&
            js[:body].include?('copyableKv("Templates",'),
-           "expected Project deploy and template details to be copyable")
+           "expected Project workspace and template details to be copyable")
     assert(js[:body].include?('copyableKv("Root", setup.logs?.root)') &&
            js[:body].include?('copyableKv("Auth", setup.auth?.status)'),
            "expected Settings configuration, logs, and preferences rows to be copyable")
@@ -2703,16 +2628,10 @@ module RemoteServerTest
            "expected Project edit form to expose default harness")
     assert(js[:body].include?("data-project-model-select"),
            "expected Project edit form to expose model choices")
-    assert(js[:body].include?("Can be deployed with Kamal"),
-           "expected Project edit form to describe app actions as Kamal deploy capability")
     assert(!js[:body].include?('id="project-pr-url"'),
            "expected Project edit form to keep PR URL readonly")
-    assert(!js[:body].include?('id="project-apps"'),
-           "expected Project edit form to keep app actions readonly")
     assert(!js[:body].include?('formData.get("pr_url")'),
            "expected Project edit form payload to omit PR URL")
-    assert(!js[:body].include?('formData.get("apps")'),
-           "expected Project edit form payload to omit app actions")
     assert(js[:body].include?("function projectFormPayload"),
            "expected Project edit form to serialize project metadata")
     assert(js[:body].include?('apiPatch(`/projects/${encodeURIComponent(projectKey)}`'),
@@ -3331,7 +3250,7 @@ module RemoteServerTest
     assert(manifest[:content_type].include?("application/manifest+json"),
            "expected manifest route to return a web app manifest")
     parsed_manifest = JSON.parse(manifest[:body])
-    assert(parsed_manifest["name"] == "Tycho - its Factorio for agents",
+    assert(parsed_manifest["name"] == "Tycho - Factorio for Agents",
            "expected manifest name to match the Remote UI page title")
     assert(parsed_manifest["short_name"] == "Tycho", "expected manifest short name to use Tycho")
     assert(parsed_manifest["display"] == "standalone", "expected manifest to install as a standalone PWA")
@@ -3505,7 +3424,6 @@ module RemoteServerTest
         - key: web
           name: Web
           path: #{workspace}
-          apps: false
     YAML
     File.write(prompts_path, <<~YAML)
       custom: Default prompt.
@@ -3516,7 +3434,6 @@ module RemoteServerTest
   def with_remote_temp_store
     Dir.mktmpdir("hq-remote-test") do |dir|
       old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
-      old_actions_file = replace_constant(HQ, :ACTIONS_FILE, File.join(dir, "actions.json"))
       old_schedules_file = replace_constant(HQ, :SCHEDULES_FILE, File.join(dir, "config", "schedules.yml"))
       old_schedules_state_file = replace_constant(HQ, :SCHEDULES_STATE_FILE, File.join(dir, "schedules.json"))
       old_scheduler_daemon_file = replace_constant(HQ, :SCHEDULER_DAEMON_FILE, File.join(dir, "scheduler_daemon.json"))
@@ -3541,7 +3458,6 @@ module RemoteServerTest
       yield dir
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
-      replace_constant(HQ, :ACTIONS_FILE, old_actions_file) if old_actions_file
       replace_constant(HQ, :SCHEDULES_FILE, old_schedules_file) if old_schedules_file
       replace_constant(HQ, :SCHEDULES_STATE_FILE, old_schedules_state_file) if old_schedules_state_file
       replace_constant(HQ, :SCHEDULER_DAEMON_FILE, old_scheduler_daemon_file) if old_scheduler_daemon_file
@@ -3561,7 +3477,7 @@ module RemoteServerTest
     end
   end
 
-  def registry_for_project(dir, workspace, apps:)
+  def registry_for_project(dir, workspace)
     config_path = File.join(dir, "hq.yml")
     prompts_path = File.join(dir, "system_prompts.yml")
     File.write(config_path, <<~YAML)
@@ -3574,7 +3490,6 @@ module RemoteServerTest
           name: Web
           group: Core
           path: #{workspace}
-          apps: #{apps}
           pr_url: https://github.com/example/web/pull/123
     YAML
     File.write(prompts_path, <<~YAML)
@@ -3584,21 +3499,7 @@ module RemoteServerTest
   end
 
   def write_project_workspace(workspace)
-    FileUtils.mkdir_p(File.join(workspace, "config"))
-    File.write(File.join(workspace, "config", "deploy.yml"), <<~YAML)
-      service: web-service
-      image: ghcr.io/example/web
-      servers:
-        web:
-          hosts:
-            - web-1
-    YAML
-    File.write(File.join(workspace, "Gemfile.lock"), <<~LOCK)
-      GEM
-        specs:
-          kamal (2.6.1)
-      rails (7.2.2)
-    LOCK
+    FileUtils.mkdir_p(workspace)
   end
 
   def with_fixture_http_server(handler)
@@ -3730,7 +3631,7 @@ module RemoteServerTest
     server = HQ::RemoteServer.new(logger: logger, output: output)
     request = HQ::RemoteServer.const_get(:Request).new(
       method: "GET",
-      path: "/health",
+      path: "/agents",
       headers: {},
       body: ""
     )
@@ -3739,7 +3640,7 @@ module RemoteServerTest
 
     line = output.string
     assert(line.include?("[Remote]"), "expected console log to include Remote prefix")
-    assert(line.include?("GET /health 200"), "expected console log to include request method, path, and status")
+    assert(line.include?("GET /agents 200"), "expected console log to include request method, path, and status")
     assert(line.include?("ms"), "expected console log to include duration")
   end
 

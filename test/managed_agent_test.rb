@@ -514,12 +514,12 @@ module ManagedAgentTest
       log_path = File.join(dir, "scalar-structured.raw.log")
       started_at = Time.parse("2026-05-12 10:15:00")
       inquiry = {
-        "message" => "Deploy now?",
+        "message" => "Release now?",
         "fields" => [
           {
             "key" => "confirm",
-            "label" => "Confirm deploy",
-            "description" => "Approve the deployment.",
+            "label" => "Confirm release",
+            "description" => "Approve the release.",
             "input_type" => "boolean",
             "required" => true,
             "options" => nil
@@ -548,7 +548,7 @@ module ManagedAgentTest
                 "name" => "StructuredOutput",
                 "input" => {
                   "status" => "input_required",
-                  "summary" => "Need deploy approval.",
+                  "summary" => "Need release approval.",
                   "inquiry_json" => JSON.generate(inquiry),
                   "attachments_json" => JSON.generate(attachments)
                 }
@@ -584,8 +584,8 @@ module ManagedAgentTest
 
       summary = agent.build_summary!
       structured = agent.structured_result
-      assert(summary == "Need deploy approval.", "expected scalar structured summary")
-      assert(structured["inquiry"]["message"] == "Deploy now?", "expected scalar inquiry JSON to normalize")
+      assert(summary == "Need release approval.", "expected scalar structured summary")
+      assert(structured["inquiry"]["message"] == "Release now?", "expected scalar inquiry JSON to normalize")
       assert(structured["inquiry"]["fields"].first["input_type"] == "boolean",
              "expected scalar inquiry fields to normalize")
       assert(structured["attachments"].first["url"] == "https://github.com/firewalker06/tycho/issues/9",

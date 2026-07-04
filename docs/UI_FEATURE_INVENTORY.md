@@ -8,27 +8,23 @@
 
 HQ is a local-first operations cockpit for a developer's projects. It combines:
 
-- A terminal dashboard for monitoring Rails/Kamal projects.
 - A managed-agent workspace for Codex and Claude-compatible sessions.
 - A lightweight remote web UI at `/` for inspecting and controlling agents from a browser or phone.
 - A small JSON API and CLI command surface for automation.
 
-The primary user is a single operator working from a local machine that has project checkouts, Kamal credentials, agent CLIs, and optional Tailscale access.
 
 ## Core Objects
 
 ### Projects
 
-Projects are configured in `~/.tycho/config/hq.yml` and represent either deployable apps or non-app workspaces.
+Projects are configured in `~/.tycho/config/hq.yml` and represent local workspaces for managed agents.
 
 Project data includes:
 
 - Key, name, group, and local path.
-- Whether app/Kamal features are enabled.
 - Default managed-agent backend.
 - Agent prompt templates loaded from `~/.tycho/config/system_prompts.yml`.
 - Optional pull request URL metadata.
-- Parsed Kamal deploy metadata: service, image, hosts, proxy host, and healthcheck path.
 - Git metadata: branch, commit hash, dirty-file count, and related GitHub links when a PR URL exists.
 - Per-project logs under `~/.tycho/logs/projects/{project}/`.
 
@@ -46,18 +42,6 @@ Agent data includes:
 - Summary and structured result from the latest run.
 - Skills discovered from the workspace and agent type.
 - Logs and transcript artifacts under `~/.tycho/logs/agents/`.
-
-### Actions
-
-Actions are detached Kamal commands tracked per project.
-
-Supported action types:
-
-- Deploy.
-- Enter maintenance mode.
-- Return to live traffic.
-
-Action state persists in `~/.tycho/logs/actions.json` and action output is written to each project's `action.log`.
 
 ## Main TUI Features
 
@@ -85,7 +69,7 @@ Action state persists in `~/.tycho/logs/actions.json` and action output is writt
 ### Project List
 
 - Shows all configured projects grouped by project group.
-- Displays app/project status icons.
+- Displays project status icons.
 - Handles empty state when no projects are configured.
 - Keeps selection visible while scrolling long lists.
 - Shows a status legend when space allows.
@@ -99,24 +83,17 @@ The selected project detail panel shows:
 - Git branch chip.
 - Commit hash chip.
 - Git clean/dirty indicator.
-- Kamal service metadata for app projects: service, image, hosts, and proxy.
-- Health metadata: health status, latency, healthcheck path, Kamal version, and Rails version.
-- Local filesystem links for project path, log directory, and action log.
+- Local filesystem links for project path and log directory.
 - Available agent templates.
 - Managed-agent count for the project.
-- Current or recent Kamal action state and log path.
 - Most recent agent summary for the project.
-- Contextual action shortcuts.
+- Contextual project shortcuts.
 
-### Project Health Monitoring
+### Project Metadata Refresh
 
-- Concurrent refresh of project metadata and health checks.
-- HEAD requests against the configured healthcheck path.
-- Separate root URL check to detect kamal-proxy maintenance mode.
-- Health outcomes include healthy, maintenance, unhealthy, down, stopped, timeout, unreachable, and error.
-- Response latency is tracked in milliseconds.
-- Healthcheck history is appended to `~/.tycho/logs/projects/healthcheck.log`.
-- App refresh runs automatically every 30 seconds.
+- Concurrent refresh of project metadata.
+- Git metadata and managed-agent counts refresh automatically.
+- The app refreshes automatically every 30 seconds.
 
 ### Project Creation
 
@@ -125,7 +102,6 @@ The selected project detail panel shows:
 - Path autocomplete for local directories.
 - Group autocomplete from existing project groups.
 - Key/name prefill from selected path.
-- Detection of Kamal app capability via `config/deploy.yml`.
 - Validation for required fields and existing local path.
 - Saves to `~/.tycho/config/hq.yml`.
 - Starts asynchronous project metadata refresh after creation.
@@ -133,25 +109,11 @@ The selected project detail panel shows:
 ### Project Archiving
 
 - Confirmation dialog before archiving.
-- Blocks archive while a project action is active.
 - Blocks archive while related agents are running.
 - Moves config from `~/.tycho/config/hq.yml` to `~/.tycho/config/hq.archived.yml`.
 - Moves project logs to `~/.tycho/logs/projects/archived/YYYY-MM-DD_project-name/`.
 - Archives related managed-agent logs.
 - Removes related active agents from the dashboard.
-
-### Kamal Actions
-
-- Deploy selected app project.
-- Toggle maintenance mode for selected app project.
-- Restore live traffic when already in maintenance mode.
-- Confirmation before running actions.
-- Detached process execution through `/opt/homebrew/bin/mise exec`.
-- Prefers project `bin/kamal`; falls back to `bundle exec kamal`.
-- Persists action state so actions survive TUI restarts.
-- Polls active actions and reports success/failure.
-- Triggers project health refresh after an action completes.
-- Displays action log in a sidebar viewer.
 
 ### Agent List
 
@@ -247,8 +209,6 @@ The selected agent detail panel shows:
 - In-app sidebar log viewers for:
   - Agent conversation log.
   - Agent raw log.
-  - Project action log.
-  - Healthcheck log.
 - Log viewers support scrolling, horizontal panning, reload, and close.
 - Log content is UTF-8 normalized and can be tailed/truncated for large files.
 - Detail views expose clickable terminal OSC 8 links for local paths where supported.
@@ -303,9 +263,8 @@ Current Remote UI capabilities:
 
 Current Remote UI constraints:
 
-- It is agent-focused; it does not expose project lists or Kamal actions.
 - It does not create, edit, clone, or archive agents from the current JavaScript UI, although the JSON API supports create/edit/archive.
-- It does not expose project creation, project archiving, healthcheck logs, project action logs, terminal integration, omnisearch, or structured inquiry forms.
+- It does not expose project creation, project archiving, terminal integration, omnisearch, or structured inquiry forms.
 - It uses plain server-served HTML/CSS/JavaScript with no frontend build step.
 
 ## Remote Server And JSON API
@@ -326,7 +285,6 @@ Runtime features:
 
 API endpoints:
 
-- `GET /health`.
 - `GET /agents`.
 - `POST /agents`.
 - `GET /agents/{key}`.
@@ -346,14 +304,8 @@ Running `bin/tycho` without a subcommand opens the TUI.
 Command surface:
 
 - `bin/tycho --help`.
-- `bin/tycho app list`: list projects with Kamal deployment configured.
-- `bin/tycho app status <project-key>`: refresh and print one app's status.
-- `bin/tycho app deploy <project-key>`: start deploy action.
-- `bin/tycho app maintenance <project-key>`: enter maintenance mode.
-- `bin/tycho app live <project-key>`: return to live traffic.
 - `bin/tycho project update <project-key> --pr-url <url>`: update project PR metadata.
 
-The app commands are intended to let external harnesses invoke HQ's Kamal actions as tools.
 
 ## Hooks And Automation
 
@@ -393,11 +345,9 @@ Configuration:
 
 Runtime state:
 
-- Active Kamal actions: `~/.tycho/logs/actions.json`.
 - Managed agents: `~/.tycho/logs/managed_agents.json`.
 - App log: `~/.tycho/logs/hq.log`.
 - Hook log: `~/.tycho/logs/hooks.log`.
-- Healthcheck log: `~/.tycho/logs/projects/healthcheck.log`.
 - Project logs: `~/.tycho/logs/projects/{project}/`.
 - Archived project logs: `~/.tycho/logs/projects/archived/`.
 - Agent raw logs, conversation logs, system logs, memory logs, status files, and result files: `~/.tycho/logs/agents/`.
@@ -416,8 +366,6 @@ High-value design surfaces to consider:
 - Agent conversation with tool-call grouping and block detail.
 - Prompt composer with start-after-send, multi-line input, and pending inquiry state.
 - Agent create/edit/archive flows using the existing API.
-- Project list and detail states if the Remote UI should manage app operations.
-- Kamal action controls with confirmation and log inspection.
-- Health status timeline and current latency.
+- Project list and detail states for workspace metadata and agent ownership.
 - Mobile-friendly remote access flow for token entry and QR-opened sessions.
 - Clear distinction between local-only operations, remote-safe operations, and destructive operations.

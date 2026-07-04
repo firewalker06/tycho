@@ -101,12 +101,11 @@ module HQ
 
         def project_table_widths
           total = table_content_width
-          fixed = { agents: 3, kamal: 8, rails: 8, status: 14 }
-          remaining = [total - fixed.values.sum - 5, 30].max
+          fixed = { agents: 3, status: 14 }
+          remaining = [total - fixed.values.sum - 3, 30].max
           project = [(remaining * 0.25).floor, 12].max
           git = [remaining - project, 16].max
-          { project: project, git: git, status: fixed[:status], agents: fixed[:agents], kamal: fixed[:kamal],
-            rails: fixed[:rails] }
+          { project: project, git: git, status: fixed[:status], agents: fixed[:agents] }
         end
 
         def agent_table_widths

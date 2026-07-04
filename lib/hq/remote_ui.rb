@@ -70,7 +70,7 @@ module HQ
       version = asset_version
       JSON.pretty_generate(
         {
-          name: "Tycho - its Factorio for agents",
+          name: "Tycho - Factorio for Agents",
           short_name: "Tycho",
           description: "Remote control for managed HQ agents and projects.",
           id: "/",

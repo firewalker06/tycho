@@ -228,7 +228,7 @@ The official specification defines a JSON-RPC 2.0 binding over HTTP(S) with Serv
 - SSE for streaming,
 - HTTP headers for A2A service parameters such as version and extensions.
 
-This is a pragmatic design. JSON-RPC gives method structure, HTTP keeps deployment familiar, and SSE covers streaming without introducing a more complex baseline transport.
+This is a pragmatic design. JSON-RPC gives method structure, HTTP keeps hosting familiar, and SSE covers streaming without introducing a more complex baseline transport.
 
 ### Multiple bindings
 
@@ -255,7 +255,7 @@ This matters operationally. Many agent tasks are slow, externally dependent, or 
 
 ## Security Model
 
-A2A is designed with enterprise deployment in mind. The specification includes:
+A2A is designed with enterprise operation in mind. The specification includes:
 
 - authentication and authorization sections,
 - declared security schemes in the Agent Card,
@@ -264,9 +264,9 @@ A2A is designed with enterprise deployment in mind. The specification includes:
 - guidance for push notification security,
 - guidance for signed Agent Cards.
 
-The current spec states that production deployments must use encrypted communication and recommends modern TLS configurations. It also requires authorization checks on every A2A request and insists that responses be scoped to the caller’s authorized access boundaries.
+The current spec states that production systems must use encrypted communication and recommends modern TLS configurations. It also requires authorization checks on every A2A request and insists that responses be scoped to the caller’s authorized access boundaries.
 
-That is a strong signal that A2A is trying to be deployable in real organizations, not only as a developer demo protocol.
+That is a strong signal that A2A is intended for real organizations, not only as a developer demo protocol.
 
 ## Versioning and Compatibility
 
@@ -395,7 +395,7 @@ That matches the official framing and keeps protocol responsibilities clean.
 
 ## Conclusion
 
-A2A is the most important current open protocol for agent-to-agent interoperability. Its key ideas are strong: discoverable agents, explicit capabilities, structured messages and artifacts, durable task lifecycles, streaming updates, async notifications, and security-conscious deployment.
+A2A is the most important current open protocol for agent-to-agent interoperability. Its key ideas are strong: discoverable agents, explicit capabilities, structured messages and artifacts, durable task lifecycles, streaming updates, async notifications, and security-conscious operations.
 
 Its biggest advantage is conceptual clarity. It does not try to turn agents into tools. Instead, it gives autonomous systems a shared contract for collaboration. That makes it more appropriate for real multi-agent systems than plain RPC or tool-calling abstractions alone.
 

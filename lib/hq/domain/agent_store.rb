@@ -2,7 +2,6 @@
 
 require_relative "constants"
 require_relative "file_store"
-require_relative "../cli_command"
 require_relative "managed_agent"
 require_relative "../ui/rendering/styles"
 
@@ -194,7 +193,6 @@ module HQ
     def backfill_project_context_prompt!(agent)
       project = project_for(agent.project_key)
       return false unless project
-      return false unless project_apps_enabled?(project)
 
       ensure_project_context_prompt!(agent, project)
     end
@@ -220,23 +218,13 @@ module HQ
     end
 
     def project_context_prompt(project)
-      return "" unless project_apps_enabled?(project)
-
       lines = [
         "Project:",
         "- Key: #{project.key}",
         "- Name: #{project.name}",
-        "- Path: #{project.path}",
-        CLICommand.prompt_reference(project_key: project.key),
-        "Ensure to check the Last Action when performing HQ command."
+        "- Path: #{project.path}"
       ]
       lines.join("\n")
-    end
-
-    def project_apps_enabled?(project)
-      return project.apps_enabled? if project.respond_to?(:apps_enabled?)
-
-      project.respond_to?(:apps) && project.apps
     end
 
     def project_for(project_key)

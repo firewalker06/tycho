@@ -14,5 +14,4 @@ assignees: ""
 
 ## Notes
 
-Mention affected areas such as TUI, Remote UI, Kamal actions, managed agents,
 hooks, config, or docs.

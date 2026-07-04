@@ -19,7 +19,7 @@ Options:
   --check              Run dependency checks only; do not install gems or copy config files.
   --skip-bundle        Skip bundle install.
   --profile NAME       Escalate optional dependencies for a feature profile.
-                       Supported: app, codex, claude, opencode, all. May be repeated.
+                       Supported: codex, claude, opencode, all. May be repeated.
   --remote             Check Remote UI readiness hints.
   --push               Check browser push notification readiness hints.
   -h, --help           Show this help.
@@ -27,7 +27,7 @@ Options:
 Examples:
   bin/setup
   bin/setup --check
-  bin/setup --profile app --profile codex
+  bin/setup --profile codex --profile claude
 USAGE
 }
 
@@ -46,7 +46,7 @@ while (($#)); do
         exit 2
       fi
       case "$1" in
-        app|codex|claude|opencode|all)
+        codex|claude|opencode|all)
           PROFILES+=("$1")
           ;;
         *)
@@ -413,43 +413,6 @@ check_custom_harnesses() {
   done <<< "$output"
 }
 
-check_kamal_readiness() {
-  if is_executable kamal; then
-    ok "Kamal CLI found: kamal"
-    return
-  fi
-
-  local count="0"
-  local config_path
-  config_path="$(tycho_config_path)"
-  if [[ -f "$config_path" ]] && has_command ruby; then
-    count="$(
-      TYCHO_SETUP_CONFIG_PATH="$config_path" ruby -ryaml -e '
-        data = YAML.load_file(ENV.fetch("TYCHO_SETUP_CONFIG_PATH")) || {}
-        projects = Array(data["projects"]).select { |project| project["apps"] }
-        ready = projects.count do |project|
-          path = File.expand_path(project["path"].to_s)
-          binstub = File.join(path, "bin", "kamal")
-          lockfile = File.join(path, "Gemfile.lock")
-          gemfile = File.join(path, "Gemfile")
-          File.executable?(binstub) ||
-            (File.file?(lockfile) && File.read(lockfile).match?(/^    kamal \(/)) ||
-            (File.file?(gemfile) && File.read(gemfile).match?(/gem ["'"'"']kamal["'"'"']/))
-        end
-        puts ready
-      ' 2>/dev/null || printf '0'
-    )"
-  fi
-
-  if [[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]]; then
-    ok "Project Kamal dependency found for $count app project(s)"
-  elif profile_enabled app; then
-    fail "Kamal command not found for requested 'app' profile. Install Kamal globally or configure app projects with bin/kamal or a Kamal gem dependency."
-  else
-    warn "Kamal command not found. Deploy, maintenance, and live actions need global kamal or project Kamal dependencies."
-  fi
-}
-
 check_tailscale() {
   local tailscale_bin
   tailscale_bin="$(resolve_tool TAILSCALE_BIN tailscale)"
@@ -540,14 +503,11 @@ main() {
   info "Checking optional runtime integrations"
   check_optional_tool "Git CLI" "git" "" "Project git metadata will render as n/a."
 
-  local mise_bin codex_bin claude_bin opencode_bin
-  mise_bin="$(resolve_tool MISE_BIN mise "$HOME/.local/bin/mise" /opt/homebrew/bin/mise /usr/local/bin/mise)"
+  local codex_bin claude_bin opencode_bin
   codex_bin="$(resolve_tool CODEX_BIN codex "$HOME/.local/bin/codex" /opt/homebrew/bin/codex /usr/local/bin/codex)"
   claude_bin="$(resolve_tool CLAUDE_BIN claude "$HOME/.local/bin/claude" /opt/homebrew/bin/claude /usr/local/bin/claude)"
   opencode_bin="$(resolve_tool OPENCODE_BIN opencode "$HOME/.local/bin/opencode" /opt/homebrew/bin/opencode /usr/local/bin/opencode)"
 
-  check_optional_tool "mise" "$mise_bin" "app" "Deploy, maintenance, and live actions require mise."
-  check_kamal_readiness
   check_optional_tool "Codex CLI" "$codex_bin" "codex" "Set TYCHO_CODEX_BIN or install codex."
   check_optional_tool "Claude CLI" "$claude_bin" "claude" "Set TYCHO_CLAUDE_BIN or install claude."
   check_optional_tool "OpenCode CLI" "$opencode_bin" "opencode" "Set TYCHO_OPENCODE_BIN or install opencode."

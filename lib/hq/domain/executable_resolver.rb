@@ -14,7 +14,6 @@ module HQ
       "claude" => "CLAUDE_BIN",
       "codex" => "CODEX_BIN",
       "opencode" => "OPENCODE_BIN",
-      "mise" => "MISE_BIN",
       "tailscale" => "TAILSCALE_BIN"
     }.freeze
 
@@ -59,7 +58,7 @@ module HQ
 
     def fallback_paths_for(name)
       case name.to_s
-      when "claude", "codex", "opencode", "mise"
+      when "claude", "codex", "opencode"
         [
           File.join(Dir.home, ".local", "bin", name.to_s),
           "/opt/homebrew/bin/#{name}",

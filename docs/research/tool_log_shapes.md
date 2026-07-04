@@ -25,7 +25,7 @@ Tool calls appear in `assistant` events:
         "name": "Bash",
         "input": {
           "description": "Inspect demo project status",
-          "command": "bin/tycho app status demo --verbose"
+          "command": "bin/tycho agent status demo-agent"
         }
       }
     ]
@@ -44,7 +44,7 @@ Tool results appear in `user` events and are correlated by `tool_use_id`:
       {
         "type": "tool_result",
         "tool_use_id": "toolu_demo_bash",
-        "content": "Demo project status: healthy\nApp: live\nHealth: ok"
+        "content": "Demo agent status: complete\nResult: ready"
       }
     ]
   }
@@ -58,7 +58,7 @@ of text parts:
 [
   {
     "type": "text",
-    "text": "Here are the demo findings:\n\n- The status path returns healthy."
+    "text": "Here are the demo findings:\n\n- Parser fixtures use synthetic data."
   }
 ]
 ```

@@ -148,7 +148,6 @@ projects:
 - key: app
   name: App
   path: /Users/you/Code/app
-  apps: true
   agent: codex
   model: gpt-5.1-codex-max
   reasoning_effort: high

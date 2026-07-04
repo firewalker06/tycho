@@ -117,12 +117,10 @@ module AppAgentPersistenceTest
           - key: web
             name: Web
             path: #{visible_workspace}
-            apps: false
           - key: secret
             name: Secret
             group: Hidden
             path: #{hidden_workspace}
-            apps: false
       YAML
       File.write(prompts_path, <<~YAML)
         custom: Default prompt for %{project_key}.
@@ -192,7 +190,6 @@ module AppAgentPersistenceTest
   def with_temp_agent_store
     Dir.mktmpdir("hq-app-agent-persistence-test") do |dir|
       old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
-      old_actions_file = replace_constant(HQ, :ACTIONS_FILE, File.join(dir, "actions.json"))
       old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
       old_archive_dir = replace_constant(HQ, :AGENT_ARCHIVE_DIR, File.join(dir, "agents", "archive"))
       old_project_logs_dir = replace_constant(HQ, :PROJECT_LOGS_DIR, File.join(dir, "projects"))
@@ -205,7 +202,6 @@ module AppAgentPersistenceTest
       yield dir
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
-      replace_constant(HQ, :ACTIONS_FILE, old_actions_file) if old_actions_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
       replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
       replace_constant(HQ, :PROJECT_LOGS_DIR, old_project_logs_dir) if old_project_logs_dir
@@ -221,7 +217,6 @@ module AppAgentPersistenceTest
         - key: web
           name: Web
           path: #{workspace}
-          apps: false
     YAML
     File.write(prompts_path, <<~YAML)
       custom: Default prompt for %{project_key}.

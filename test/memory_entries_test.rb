@@ -43,8 +43,8 @@ module MemoryEntriesTest
   def assert_bash_entries
     call, result = capture_summaries("bash")
 
-    assert_summary(call, "Bash", "Bash: Inspect demo project status")
-    assert_summary(result, "Bash", "tool result: Demo project status: healthy")
+    assert_summary(call, "Bash", "Bash: Inspect demo agent status")
+    assert_summary(result, "Bash", "tool result: Demo agent status: succeeded")
   end
 
   def assert_read_entries

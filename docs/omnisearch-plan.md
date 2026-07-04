@@ -97,8 +97,8 @@ Omnisearch should not read config files or logs directly while the user types. I
 
 Sources:
 
-- Projects: use `@projects`, which is populated from `Registry#projects` and wrapped as `AppProject` objects in `load_registry!`.
-- Project searchable/display text: `AppProject#name` only. Do not search `key`, `path`, `group`, host, or repo metadata for the first version.
+- Projects: use `@projects`, which is populated from `Registry#projects` and wrapped as `Project` objects in `load_registry!`.
+- Project searchable/display text: `Project#name` only. Do not search `key`, `path`, `group`, host, or repo metadata for the first version.
 - Project target: keep the project object or its `key`, plus its current index in `@projects`.
 - Agents: use `@agents`, which is loaded from `AgentStore#load` and sorted by `sort_agents`.
 - Agent searchable/display text: `ManagedAgent#name` plus the project name shown beside it. Do not search harness/provider, workspace path, prompt, template, or logs for the first version.

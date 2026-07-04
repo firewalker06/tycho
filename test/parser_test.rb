@@ -33,8 +33,8 @@ module ParserTest
   def assert_bash_tool
     call, result = parse_fixture("bash")
 
-    assert_call(call, "Bash", "Inspect demo project status\nbin/tycho app status demo --verbose")
-    assert_result(result, "Bash", "Demo project status: healthy")
+    assert_call(call, "Bash", "Inspect demo agent status\nbin/tycho agent status demo-agent")
+    assert_result(result, "Bash", "Demo agent status: succeeded")
   end
 
   def assert_read_tool

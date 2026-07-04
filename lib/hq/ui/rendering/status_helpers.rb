@@ -8,13 +8,8 @@ module HQ
       module StatusHelpers
         private
 
-        def project_status_badge(project, steady: :app)
-          ProjectStatusBadge.for(
-            project,
-            action: @actions[project.key],
-            result: @action_results[project.key],
-            steady: steady
-          )
+        def project_status_badge(project)
+          ProjectStatusBadge.for(project)
         end
 
         def style_for_badge_key(key)
@@ -30,66 +25,42 @@ module HQ
           end
         end
 
-        def plain_health_text(project)
-          ProjectStatusBadge.health_text(project)
-        end
-
-        def health_style_for(project)
-          style_for_badge_key(ProjectStatusBadge.health_style_key(project))
-        end
-
-        def health_text(project)
-          health_style_for(project).render(plain_health_text(project))
-        end
-
         def render_badge_text(badge)
-          badge.spinner? ? "#{@spinner.view} #{badge.action_label}" : badge.text
+          badge.text
         end
 
         def plain_status_text_for(project)
-          badge = project_status_badge(project)
-          return render_badge_text(badge) unless badge.kind == ProjectStatusBadge::RESULT
-
-          # status-text variant uses "complete"/"failed" suffixes instead of bare action name
-          result = @action_results[project.key]
-          result[:success] ? "#{Styles::MARKERS[:check]} #{result[:action]} complete" : "#{Styles::MARKERS[:cross]} #{result[:action]} failed"
+          render_badge_text(project_status_badge(project))
         end
 
         def status_text_for(project)
-          app_status_style_for(project).render(plain_status_text_for(project))
+          project_status_style_for(project).render(plain_status_text_for(project))
         end
 
-        def app_status_style_for(project)
+        def project_status_style_for(project)
           style_for_badge_key(project_status_badge(project).style_key)
         end
 
         def plain_status_text_for_row(project)
-          render_badge_text(project_status_badge(project, steady: :health))
+          render_badge_text(project_status_badge(project))
         end
 
         def project_status_styled_cell(project, width)
-          return dim_style.render(fit_cell("--", width)) unless project.apps_enabled?
-
-          badge = project_status_badge(project, steady: :health)
+          badge = project_status_badge(project)
           text = render_badge_text(badge)
           pad_visible(style_for_badge_key(badge.style_key).render(text), width)
         end
 
         PROJECT_STATUS_META = {
-          healthy: { label: "up", icon: Styles::STATUS_ICONS[:healthy], style: :healthy },
-          maintenance: { label: "maint", icon: Styles::STATUS_ICONS[:maintenance], style: :maintenance },
-          warning: { label: "action failed", icon: Styles::STATUS_ICONS[:warning], style: :warning },
-          fail: { label: "down", icon: Styles::STATUS_ICONS[:fail], style: :fail },
+          healthy: { label: "configured", icon: Styles::STATUS_ICONS[:healthy], style: :healthy },
           pending: { label: "pending", icon: Styles::STATUS_ICONS[:pending], style: :pending },
-          dim: { label: "not app", icon: Styles::STATUS_ICONS[:dim], style: :dim }
+          dim: { label: "workspace", icon: Styles::STATUS_ICONS[:dim], style: :dim }
         }.freeze
 
-        PROJECT_STATUS_LEGEND_KEYS = %i[healthy maintenance warning fail pending dim].freeze
+        PROJECT_STATUS_LEGEND_KEYS = %i[healthy pending dim].freeze
 
         def styled_project_status_icon(project, spinner: false)
-          return project_status_meta_style(:dim).render(project_status_icon(:dim)) unless project.apps_enabled?
-
-          badge = project_status_badge(project, steady: :health)
+          badge = project_status_badge(project)
           glyph = spinner && badge.spinner? ? @spinner.view : project_status_icon(badge.style_key)
           project_status_meta_style(badge.style_key).render(glyph)
         end
@@ -252,22 +223,6 @@ module HQ
           pad_visible(styled, width)
         end
 
-        def decorate_version(current, latest)
-          value = current || "n/a"
-          return outdated_style.render(value) if minor_outdated?(current, latest)
-
-          value
-        end
-
-        def minor_outdated?(current, latest)
-          return false unless current && latest
-
-          current_parts = current.split(".").map(&:to_i)
-          latest_parts = latest.split(".").map(&:to_i)
-          return false if current_parts.length < 2 || latest_parts.length < 2
-
-          current_parts[0] < latest_parts[0] || (current_parts[0] == latest_parts[0] && current_parts[1] < latest_parts[1])
-        end
       end
     end
   end

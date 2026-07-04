@@ -6,8 +6,8 @@ Gem::Specification.new do |spec|
   spec.name = "hq"
   spec.version = HQ::VERSION
   spec.authors = ["Tycho contributors"]
-  spec.summary = "Local-first dashboard for Kamal projects and managed coding agents."
-  spec.description = "Tycho provides a Ruby TUI and local Remote UI for monitoring Kamal projects and supervising managed coding agents."
+  spec.summary = "Local-first dashboard for orchestrating managed coding agents."
+  spec.description = "Tycho provides a Ruby TUI and local Remote UI for supervising managed coding agents and scheduled runs."
   spec.homepage = "https://github.com/firewalker06/tycho"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.2.0"

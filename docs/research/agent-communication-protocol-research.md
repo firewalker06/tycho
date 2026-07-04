@@ -59,9 +59,9 @@ ACP documentation frames the system around clients, servers, and agents:
 - An ACP server exposes one or more agents through a REST interface.
 - An ACP agent is the unit of capability that actually performs the work.
 
-This supports several deployment models:
+This supports several runtime topologies:
 
-- Single-agent deployment: one client talks to one ACP-exposed agent.
+- Single-agent topology: one client talks to one ACP-exposed agent.
 - Multi-agent single server: several agents are hosted behind one ACP server.
 - Distributed multi-agent systems: an agent can also act as a client and call other agents.
 
@@ -188,7 +188,7 @@ ACP had strong backing from IBM Research and BeeAI, but it did not become the so
 
 ### Not an orchestration framework
 
-ACP standardizes communication, not workflow management, deployment, scheduling, or policy coordination. It helps agents interoperate, but teams still need orchestration, monitoring, governance, and runtime controls outside the protocol itself.
+ACP standardizes communication, not workflow management, hosting, scheduling, or policy coordination. It helps agents interoperate, but teams still need orchestration, monitoring, governance, and runtime controls outside the protocol itself.
 
 ### Operational complexity remains
 

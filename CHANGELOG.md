@@ -19,8 +19,7 @@ All notable changes to Tycho will be documented in this file.
 ### Notable Releases
 
 - Add persisted Remote UI server switching for configured `remote_servers`,
-  including backend proxy routes, selected-server persistence, and peer health
-  display. (#39)
+  including backend proxy routes and selected-server persistence. (#39)
 - Add Remote UI skill autocomplete and a quick agent switcher for faster chat
   composition and agent navigation. (#38)
 - Show run summaries in Remote UI conversations and allow any Remote UI
@@ -87,8 +86,6 @@ All notable changes to Tycho will be documented in this file.
 - Improve the Remote UI Summary surface and keep run summary blocks out of the
   main conversation stream. (#11)
 
-- Fix Remote readiness checks by sharing executable resolution for `mise`,
-  Kamal, Codex, Claude, and compatible harnesses. (#12)
 - Fix Claude structured output schema handling so Claude-compatible runs can
   produce and parse structured results reliably. (#13)
 - Resume stopped schedules safely after interactive scheduled agents are

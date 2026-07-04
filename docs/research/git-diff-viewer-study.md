@@ -12,7 +12,7 @@ A first-class diff viewer would make Tycho much more useful as an operator conso
 
 ## Current State in the Codebase
 
-Current Git metadata is collected in `HQ::AppProject#parse_git_status`:
+Current Git metadata is collected in `HQ::Project#parse_git_status`:
 
 - `git rev-parse --short HEAD`
 - `git branch --show-current`
@@ -38,7 +38,7 @@ Patch application or staging should be a later step. The first implementation sh
 
 ## TUI Concept
 
-Add a `D` or `ctrl+d` project action that opens a diff view for the selected project.
+Add a `D` or `ctrl+d` project shortcut that opens a diff view for the selected project.
 
 Useful TUI layout:
 

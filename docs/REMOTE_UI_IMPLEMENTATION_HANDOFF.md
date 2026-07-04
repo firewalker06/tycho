@@ -23,7 +23,7 @@ Current implementation files:
 - JavaScript: `lib/hq/remote_ui/assets/app.js`
 - Static asset helper: `lib/hq/remote_ui.rb`
 
-The old phase checklist has been retired because the shell, simplified top-level screens, main detail routes, project payloads, setup/readiness payloads, skill discovery, client-side filtering, guarded project actions, audit fixes, and mobile nav polish are now implemented.
+The old phase checklist has been retired because the shell, simplified top-level screens, main detail routes, project payloads, setup/readiness payloads, skill discovery, client-side filtering, audit fixes, and mobile nav polish are now implemented.
 
 ## Implemented
 
@@ -36,8 +36,7 @@ The old phase checklist has been retired because the shell, simplified top-level
 - Project detail routes remain reachable from Agents project headers.
 - Settings screen shows URL, Tailscale/MagicDNS state, auth state, harness readiness, schema/config readiness, logs/storage, refresh intervals, and safety defaults.
 - Agent detail supports conversation viewing, current activity, run metadata, skill insertion, prompt submission, start run, and stop confirmation.
-- Project detail shows health, revision, deploy details, versions/templates, recent agent summary, and guarded project actions.
-- Guarded deploy/maintenance/live action screens show consequences and preflight checks before starting a detached Kamal action.
+- Project detail shows workspace metadata, revision, versions/templates, and recent agent summary.
 - Copy actions show feedback.
 - Long paths and summaries wrap without horizontal page overflow at mobile widths.
 - `/favicon.svg` and `/favicon.ico` are served to avoid browser 404 noise.
@@ -52,7 +51,6 @@ Implemented Remote UI API surfaces:
 - Setup/readiness: `/setup`.
 - Search index: `/search`.
 - Skill discovery: `/projects/{key}/skills/{agent}`.
-- Guarded project action preflight/start: `/projects/{key}/actions`, `/projects/{key}/actions/{action}`.
 
 API behavior is covered in `test/remote_server_test.rb`.
 
@@ -62,7 +60,6 @@ API behavior is covered in `test/remote_server_test.rb`.
 - Dedicated activity/log detail page with tabs, find/filter, and raw log inspection.
 - Full mobile agent create/edit form. The API supports create/edit, but the current mobile UI sends users through project context and keeps advanced setup TUI-first.
 - In-browser project modification. This remains intentionally TUI-only because it needs local filesystem handling.
-- More explicit action progress polling and post-action health refresh UI around project action logs.
 - Optional QR display inside Setup. Startup terminal QR is implemented; in-page QR remains a future enhancement.
 
 ## Verification
@@ -86,13 +83,10 @@ Manual smoke:
 - Check `Now`, `Agents`, and `Settings`.
 - Confirm the footer nav hides while scrolling down and shows while scrolling up.
 - Deep-link to an agent and project detail route.
-- Open a guarded project action preflight.
 - Confirm no horizontal page overflow at `390px`.
 
 ## Notes For Future Agents
 
 - Preserve the no-build frontend approach unless the user explicitly approves frontend tooling.
-- Keep Remote UI state transitions backed by `RemoteService`, `AgentStore`, `ManagedAgent`, `AppProject`, and `KamalAction`.
-- Keep dangerous/local project actions guarded by confirmation screens.
 - Keep raw paths, logs, and diagnostics behind disclosure or detail routes.
 - Avoid changing TUI behavior unless a shared domain contract requires it.

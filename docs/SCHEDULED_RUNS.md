@@ -10,7 +10,7 @@ type: reference
 
 Tycho scheduled runs are driven by `tycho schedule daemon`. Definitions live in `~/.tycho/config/schedules.yml`, mutable runtime state lives in `~/.tycho/logs/schedules.json`, daemon heartbeat state lives in `~/.tycho/logs/scheduler_daemon.json`, and cron syntax is validated before any long-running scheduler loop starts. The TUI and Remote UI are management surfaces, but neither owns the clock.
 
-The current scope is intentionally narrow: schedules create fresh managed agents only. There are no first-class scheduled project actions, health checks, shell commands, agent-template selections, existing-agent resumes, or agent clones. Each due run creates a brand-new agent with fresh context, starts it through the existing `ManagedAgent` path, and archives the previous schedule-created agent for that schedule before the next repetitive run.
+The current scope is intentionally narrow: schedules create fresh managed agents only. There are no shell commands, agent-template selections, existing-agent resumes, or agent clones. Each due run creates a brand-new agent with fresh context, starts it through the existing `ManagedAgent` path, and archives the previous schedule-created agent for that schedule before the next repetitive run.
 
 Prompt input is limited to inline text in `~/.tycho/config/schedules.yml` or a file under `~/.tycho/schedules/`. On failure, stop the schedule and notify via web push. On success, notify only on the first successful run and the first successful run after a prior failure; both success notifications should include the next scheduled run time.
 
@@ -24,7 +24,7 @@ Prompt input is limited to inline text in `~/.tycho/config/schedules.yml` or a f
 - Runtime state: persist mutable schedule state separately from config under `~/.tycho/logs/schedules.json`.
 - Daemon state: persist `tycho schedule daemon` heartbeat and last tick metadata under `~/.tycho/logs/scheduler_daemon.json`.
 - Target scope: agent-only. Each run creates a brand-new managed agent with fresh context.
-- Unsupported commands: `project_action`, `health_check`, `shell`, `agent_template`, `agent_existing`, and `agent_clone`.
+- Unsupported commands: `shell`, `agent_template`, `agent_existing`, and `agent_clone`.
 - Prompt sources: only inline text or files under `~/.tycho/schedules/`.
 - Scheduled prompts always include the final-output attachment checklist so created or referenced durable artifacts are reported in `attachments`.
 - Scheduled agent display names are prefixed with `[Scheduled]` and do not include the internal agent-key number.
@@ -62,7 +62,7 @@ Schedules support exactly one target type:
 - Archives the previous schedule-created agent for the same schedule before creating the next repetitive run.
 - Keeps session context fresh and avoids stale native agent sessions.
 
-An agent can technically be prompted to run a Tycho project command, but schedules should not model project actions as their own target type.
+An agent can technically be prompted to run local commands, but schedules should not model shell commands as their own target type.
 
 ### Prompt Sources
 

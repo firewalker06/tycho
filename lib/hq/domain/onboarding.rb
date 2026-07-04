@@ -28,7 +28,6 @@ module HQ
         name: WELCOME_PROJECT_NAME,
         group: WELCOME_PROJECT_GROUP,
         path: ensure_welcome_workspace!,
-        apps: false,
         agent: agent.to_s
       }
     end
@@ -45,7 +44,6 @@ module HQ
         key: project_key_for(basename),
         name: basename,
         path: path,
-        apps: File.exist?(File.join(path, "config", "deploy.yml")),
         kind: kind
       }
     end
@@ -56,7 +54,6 @@ module HQ
     end
 
     def workspace_kind(path)
-      return "Kamal app" if File.exist?(File.join(path, "config", "deploy.yml"))
       return "Git repository" if File.directory?(File.join(path, ".git"))
       return "Ruby project" if File.exist?(File.join(path, "Gemfile"))
       return "JavaScript project" if File.exist?(File.join(path, "package.json"))

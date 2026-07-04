@@ -2,14 +2,12 @@
 # Tycho copies this file to ~/.tycho/config/hq.yml on first setup.
 # Add entries for your local projects when you are ready.
 #
-# Each project entry describes a Kamal-deployed app or a managed-agent target.
 #
 # Fields:
 #   key     (required) unique identifier used for logs, agent files, and UI keys
 #   name    (required) display name in the TUI
 #   group   (optional) group header projects are bucketed under
 #   path    (required) absolute path to the project checkout on this machine
-#   apps    (required) true if the project is Kamal-deployed and should show app/health columns
 #   agent   (optional) managed-agent backend: "codex", "claude", or a custom_harnesses key
 #   model   (optional) default model string for new managed agents
 #   reasoning_effort (optional) default effort string for new managed agents
@@ -41,11 +39,10 @@ projects: []
 #     hidden: false
 #
 # projects:
-# - key: my-app
-#   name: My App
+# - key: my-workspace
+#   name: My Workspace
 #   group: Personal
-#   path: "/Users/you/Code/my-app"
-#   apps: true
+#   path: "/Users/you/Code/my-workspace"
 #   agent: codex
 #   model: gpt-5.1-codex-max
 #   reasoning_effort: high
@@ -54,11 +51,9 @@ projects: []
 #   name: Notes
 #   group: Personal
 #   path: "/Users/you/Documents/Notes"
-#   apps: false
 #
 # - key: work-web
 #   name: Work Web
 #   group: Work
 #   path: "/Users/you/Code/work/web"
-#   apps: true
 #   agent: claude-wrapper

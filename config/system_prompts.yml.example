@@ -32,7 +32,7 @@ reviewer: >-
 
 maintenance: >-
   Your task is to perform maintenance by:
-  - List down at most 3 todo notes (e.g. bin/rails notes)
+  - List down at most 3 todo notes
   - List down at most 3 open github issues
   - List down at most 3 open github pull requests
   - Assess priority by evaluating the urgency, severity, and complexity

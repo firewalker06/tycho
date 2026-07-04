@@ -8,7 +8,7 @@ require "rbconfig"
 
 require_relative "../lib/hq/registry"
 require_relative "../lib/hq/cli_command"
-require_relative "../lib/hq/domain/app_project"
+require_relative "../lib/hq/domain/project"
 require_relative "../lib/hq/domain/agent_store"
 
 module RegistryTest
@@ -19,7 +19,6 @@ module RegistryTest
     assert_registry_loads_model_and_effort_defaults
     assert_registry_ignores_hq_env_aliases
     assert_registry_uses_tycho_home_defaults
-    assert_registry_preserves_false_apps_flags
     assert_registry_resolves_hidden_groups_and_project_overrides
     assert_registry_loads_custom_claude_harnesses
     assert_registry_persists_remote_servers
@@ -27,8 +26,6 @@ module RegistryTest
     assert_registry_rejects_unsupported_custom_harness_adapters
     assert_agent_store_prepends_project_tool_system_prompt
     assert_agent_store_backfills_project_tool_system_prompt
-    assert_hq_tool_lists_kamal_actions
-    assert_hq_tool_checks_app_status
     puts "registry_test: ok"
   end
 
@@ -231,30 +228,6 @@ module RegistryTest
     end
   end
 
-  def assert_registry_preserves_false_apps_flags
-    Dir.mktmpdir("hq-registry-apps-test") do |dir|
-      config_path = File.join(dir, "hq.yml")
-
-      File.write(config_path, <<~YAML)
-        projects:
-          - key: web
-            name: Web
-            path: #{File.join(dir, "web")}
-            apps: true
-          - key: docs
-            name: Docs
-            path: #{File.join(dir, "docs")}
-            apps: false
-      YAML
-
-      registry = HQ::Registry.new(path: config_path)
-      web, docs = registry.projects
-
-      assert(web.apps == true, "expected apps: true to stay true")
-      assert(docs.apps == false, "expected apps: false to stay false")
-    end
-  end
-
   def assert_registry_resolves_hidden_groups_and_project_overrides
     Dir.mktmpdir("hq-registry-hidden-test") do |dir|
       config_path = File.join(dir, "hq.yml")
@@ -309,7 +282,6 @@ module RegistryTest
           - key: web
             name: Web
             path: #{File.join(dir, "web")}
-            apps: false
             agent: claude-wrapper
       YAML
 
@@ -357,7 +329,6 @@ module RegistryTest
           - key: web
             name: Web
             path: #{File.join(dir, "web")}
-            apps: false
       YAML
 
       begin
@@ -382,11 +353,9 @@ module RegistryTest
           - key: web
             name: Web
             path: #{File.join(dir, "web")}
-            apps: true
           - key: docs
             name: Docs
             path: #{File.join(dir, "docs")}
-            apps: false
       YAML
       File.write(prompts_path, <<~YAML)
         custom: Work on %{project_key}.
@@ -395,121 +364,32 @@ module RegistryTest
       registry = HQ::Registry.new(path: config_path)
       web, docs = registry.projects
 
-      assert(!web.agent_templates.first.prompt.include?("Available Tycho commands for projects with Kamal deployment"),
-             "expected template prompt to stay separate from project tool prompt")
-
       agent = HQ::AgentStore.new(registry.projects).create_from_template(web, "custom")
       system_messages = agent.messages.select { |message| message.role == "system" }
       assert(system_messages.length == 2, "expected project context and template prompt to be separate system messages")
       assert(system_messages[0].content.include?("Project:"),
              "expected first system message to include project context")
-      assert(system_messages[0].content.include?("Available Tycho commands for projects with Kamal deployment"),
-             "expected first system message to include HQ Kamal command reference")
-      assert(system_messages[0].content.include?("Ensure to check the Last Action when performing HQ command."),
-             "expected first system message to include last-action instruction")
-      HQ::CLICommand::APP_COMMANDS.each do |command|
-        assert(!command.description.to_s.strip.empty?,
-               "expected every app command exposed to prompts to define a description")
-        usage = format(command.usage_template, project_key: "web")
-        assert(system_messages[0].content.include?("bin/tycho #{usage}"),
-               "expected project system prompt to include #{usage}")
-      end
+      assert(system_messages[0].content.include?("- Path: #{File.join(dir, "web")}"),
+             "expected first system message to include workspace path")
       assert(system_messages[1].content == "Work on web.",
              "expected second system message to be the selected template prompt")
       conversation_roles = agent.conversation_messages.map(&:role)
       assert(conversation_roles.first(2) == %w[system system],
              "expected chat conversation to render both leading system messages")
 
-      app_project_agent = HQ::AgentStore.new(registry.projects).create_from_template(HQ::AppProject.new(web), "custom")
-      app_project_context = app_project_agent.messages.select { |message| message.role == "system" }.first.content
-      assert(app_project_context.include?("Available Tycho commands for projects with Kamal deployment"),
-             "expected AppProject-created agents to include HQ Kamal command reference")
+      project_agent = HQ::AgentStore.new(registry.projects).create_from_template(HQ::Project.new(web), "custom")
+      project_context = project_agent.messages.select { |message| message.role == "system" }.first.content
+      assert(project_context.include?("Project:"),
+             "expected Project-created agents to include project context")
 
       docs_agent = HQ::AgentStore.new(registry.projects).create_from_template(docs, "custom")
       docs_system_messages = docs_agent.messages.select { |message| message.role == "system" }
-      assert(docs_system_messages.length == 1,
-             "expected non-Kamal project to only include the template system prompt")
-      assert(docs_system_messages.first.content == "Work on docs.",
-             "expected non-Kamal project to omit project context system prompt")
+      assert(docs_system_messages.length == 2,
+             "expected every project to include project context and template prompt")
+      assert(docs_system_messages.last.content == "Work on docs.",
+             "expected final system prompt to be the template prompt")
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
-    end
-  end
-
-  def assert_hq_tool_lists_kamal_actions
-    old_config_path = ENV["TYCHO_CONFIG_PATH"]
-    Dir.mktmpdir("hq-tool-list-test") do |dir|
-      config_path = File.join(dir, "hq.yml")
-      File.write(config_path, <<~YAML)
-        projects:
-          - key: web
-            name: Web
-            path: #{File.join(dir, "web")}
-            apps: true
-          - key: docs
-            name: Docs
-            path: #{File.join(dir, "docs")}
-            apps: false
-      YAML
-      ENV["TYCHO_CONFIG_PATH"] = config_path
-
-      output = capture_stdout { HQ::CLICommand.run(%w[app list]) }
-
-      assert(output.include?("Key") && output.include?("Name") && output.include?("Actions"),
-             "expected bin/tycho app list to render table headers")
-      assert(output.include?("web") && output.include?("Web") && output.include?("deploy, maintenance, live"),
-             "expected bin/tycho app list to inventory Kamal actions")
-      assert(!output.include?("docs"), "expected bin/tycho app list to omit non-Kamal projects")
-    ensure
-      ENV["TYCHO_CONFIG_PATH"] = old_config_path
-    end
-  end
-
-  def assert_hq_tool_checks_app_status
-    old_config_path = ENV["TYCHO_CONFIG_PATH"]
-    old_actions_file = nil
-    old_project_logs_dir = nil
-    Dir.mktmpdir("hq-tool-status-test") do |dir|
-      project_path = File.join(dir, "web")
-      project_logs_dir = File.join(dir, "project-logs")
-      FileUtils.mkdir_p(project_path)
-      old_actions_file = replace_constant(HQ, :ACTIONS_FILE, File.join(dir, "actions.json"))
-      old_project_logs_dir = replace_constant(HQ, :PROJECT_LOGS_DIR, project_logs_dir)
-      config_path = File.join(dir, "hq.yml")
-      File.write(config_path, <<~YAML)
-        projects:
-          - key: web
-            name: Web
-            path: #{project_path}
-            apps: true
-      YAML
-      ENV["TYCHO_CONFIG_PATH"] = config_path
-      action_log = File.join(project_logs_dir, "web", "action.log")
-      FileUtils.mkdir_p(File.dirname(action_log))
-      File.write(action_log, <<~LOG)
-        === [2026-05-02 09:12:00] deploy ===
-
-        ERROR failed to deploy
-      LOG
-      File.write("#{action_log}.status", "1")
-      File.write(HQ::ACTIONS_FILE, "[]")
-
-      output = capture_stdout { HQ::CLICommand.run(%w[app status web]) }
-
-      assert(output.include?("Key") && output.include?("web"),
-             "expected app status to include project key")
-      assert(output.include?("App") && output.include?("unknown"),
-             "expected app status to include app status")
-      assert(output.include?("Health") && output.include?("not checked"),
-             "expected app status to include health status")
-      assert(output.include?("Action Log"),
-             "expected app status to include action log location")
-      assert(output.include?("Last Action") && output.include?("deploying - failed"),
-             "expected app status to include last action result")
-    ensure
-      ENV["TYCHO_CONFIG_PATH"] = old_config_path
-      replace_constant(HQ, :ACTIONS_FILE, old_actions_file) if old_actions_file
-      replace_constant(HQ, :PROJECT_LOGS_DIR, old_project_logs_dir) if old_project_logs_dir
     end
   end
 
@@ -527,7 +407,6 @@ module RegistryTest
           - key: web
             name: Web
             path: #{File.join(dir, "web")}
-            apps: true
       YAML
       agent_data = [{
         "key" => "web-agent-1",
@@ -555,10 +434,10 @@ module RegistryTest
       agent = HQ::AgentStore.new(registry.projects).load.fetch(0)
       system_messages = agent.messages.select { |message| message.role == "system" }
       assert(system_messages.length == 2, "expected existing agent messages to gain project context")
-      assert(system_messages.first.content.include?("bin/tycho app deploy web"),
-             "expected backfilled project context to include deploy command")
+      assert(system_messages.first.content.include?("Project:"),
+             "expected backfilled project context")
       memory_events = File.readlines(memory_path, chomp: true).map { |line| JSON.parse(line) }
-      assert(memory_events.first["content"].include?("bin/tycho app deploy web"),
+      assert(memory_events.first["content"].include?("Project:"),
              "expected existing memory file to be prepended with project context")
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file

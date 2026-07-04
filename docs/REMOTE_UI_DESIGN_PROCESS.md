@@ -9,7 +9,6 @@ The design pass started from `docs/UI_FEATURE_INVENTORY.md`, which captures the 
 - Terminal-first project and agent cockpit.
 - Remote `/` agent controls.
 - Managed-agent conversation, structured inquiry, logs, and process state.
-- Project health, Kamal actions, action logs, and remote access constraints.
 
 The inventory made it clear that the current feature set is broad enough to support a full cockpit, but the mobile web UI should not mirror the CLI/TUI hierarchy directly.
 
@@ -20,12 +19,11 @@ The first static mockup explored a fuller remote cockpit:
 - Agent queue.
 - Agent conversation.
 - Structured inquiry.
-- Projects with health and actions.
-- Action log.
+- Projects with workspace metadata.
 - Remote access/token state.
 - Desktop adaptation.
 
-This helped expose the product surface area, but it also showed the main risk: the mobile UI felt like a compressed version of the TUI. It put Agents, Projects, Logs, Deploy, Terminal, Archive, tokens, health, action logs, structured inquiry, and chat into one parallel hierarchy.
+This helped expose the product surface area, but it also showed the main risk: the mobile UI felt like a compressed version of the TUI. It put Agents, Projects, Logs, Terminal, Archive, tokens, structured inquiry, and chat into one parallel hierarchy.
 
 ## V1 Drawbacks
 
@@ -47,10 +45,9 @@ V2 reorganizes the mobile app around task-first surfaces:
 2. **Decision** - structured inquiry becomes an explicit decision flow with clear consequences.
 3. **Conversation** - chat focuses on the active agent, current activity, and a compact composer.
 4. **Activity Detail** - logs and tool activity are available on demand, with summary first and raw detail secondary.
-5. **Project Health** - project operations start from health triage rather than a full project object view.
-6. **Guarded Action** - deploy and other local actions require a dedicated confirmation flow with preflight context.
+5. **Project Context** - project operations start from workspace and agent context rather than a full project object view.
 
-The selected V2 artifact is `docs/hq_ui_mockups_v2.html`.
+The old V2 static mockup artifact was retired when Tycho's project-action surface was removed.
 
 ## Icon Direction
 

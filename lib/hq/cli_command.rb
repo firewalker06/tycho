@@ -6,9 +6,8 @@ require "rbconfig"
 require "dry/cli"
 require "lipgloss"
 
-require_relative "domain/app_project"
+require_relative "domain/project"
 require_relative "domain/file_store"
-require_relative "domain/kamal_action"
 require_relative "domain/scheduler"
 require_relative "domain/agent_store"
 
@@ -30,76 +29,6 @@ module HQ
           @usage_template = value if value
           @usage_template
         end
-      end
-
-      class App < Dry::CLI::Command
-        desc "Manage projects with Kamal deployment"
-
-        def call(**)
-          exit CLICommand.usage("Missing app command", err: err)
-        end
-      end
-
-      class ListApps < Dry::CLI::Command
-        extend CommandMetadata
-
-        desc "List projects with Kamal deployment"
-        usage_template "app list"
-
-        def call(**)
-          exit CLICommand.list_kamal_actions(out: out)
-        end
-      end
-
-      class AppStatus < Dry::CLI::Command
-        extend CommandMetadata
-
-        desc "Check this project's app status"
-        argument :project_key, required: true, desc: "Project key"
-        usage_template "app status %{project_key}"
-
-        def call(project_key:, **)
-          exit CLICommand.check_app_status(project_key, out: out, err: err)
-        end
-      end
-
-      class AppAction < Dry::CLI::Command
-        extend CommandMetadata
-
-        argument :project_key, required: true, desc: "Project key"
-
-        def self.action_name(value = nil, usage: nil)
-          @action_name = value if value
-          usage_template(usage) if usage
-          @action_name
-        end
-
-        def call(project_key:, **)
-          exit CLICommand.start_kamal_action(self.class.action_name, project_key, out: out, err: err)
-        end
-      end
-
-      class DeployApp < AppAction
-        desc "Deploy this project"
-        action_name "deploy", usage: "app deploy %{project_key}"
-      end
-
-      class MaintenanceApp < AppAction
-        desc "Put this project into maintenance mode"
-        action_name "maintenance", usage: "app maintenance %{project_key}"
-      end
-
-      class LiveApp < AppAction
-        desc "Resume live traffic for this project"
-        action_name "live", usage: "app live %{project_key}"
-      end
-
-      register "app", App do |prefix|
-        prefix.register "list", ListApps
-        prefix.register "status", AppStatus
-        prefix.register "deploy", DeployApp
-        prefix.register "maintenance", MaintenanceApp
-        prefix.register "live", LiveApp
       end
 
       class Project < Dry::CLI::Command
@@ -353,13 +282,6 @@ module HQ
 
     end
 
-    APP_COMMANDS = [
-      Commands::ListApps,
-      Commands::AppStatus,
-      Commands::DeployApp,
-      Commands::MaintenanceApp,
-      Commands::LiveApp
-    ].freeze
     PROJECT_COMMANDS = [
       Commands::ProjectUpdate
     ].freeze
@@ -388,12 +310,10 @@ module HQ
       "  #{COMMAND_NAME} schedule daemon [--once] [--dry-run] [--interval SECONDS]",
       "  #{COMMAND_NAME} doctor"
     ].freeze
-    ACTIONS = APP_COMMANDS.filter_map { |command| command.action_name if command.respond_to?(:action_name) }.freeze
     USAGE = [
       "Usage:",
       "  #{COMMAND_NAME} --help",
       *RUNTIME_COMMANDS,
-      *APP_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, project_key: "<project-key>")}" },
       *PROJECT_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, project_key: "<project-key>")}" },
       *AGENT_COMMANDS.map { |command|
         template = command.usage_template
@@ -458,160 +378,10 @@ module HQ
       1
     end
 
-    def list_kamal_actions(out: $stdout)
-      projects = registry_projects.select(&:apps_enabled?)
-      if projects.empty?
-        out.puts "No projects with Kamal deployment configured."
-        return 0
-      end
-
-      out.puts app_list_table(projects)
-      0
-    end
-
-    def check_app_status(project_key, out: $stdout, err: $stderr)
-      project = find_app_project(project_key)
-      return failure("Unknown project: #{project_key}", err: err) unless project
-      return failure("Project does not have Kamal deployment: #{project.key}", err: err) unless project.apps_enabled?
-
-      project.refresh_metadata!
-      project.check_health!
-      out.puts app_status_table(project, action_status: action_status_for(project))
-      0
-    end
-
-    def app_list_table(projects)
-      headers = %w[Key Name Actions]
-      rows = projects.map { |project| [project.key, project.name, ACTIONS.join(", ")] }
-      Lipgloss::Table.new
-        .headers(headers)
-        .rows(rows)
-        .border_style(Lipgloss::Style.new.foreground(COLORS[:accent_alt]))
-        .style_func(rows: rows.length, columns: headers.length) do |row, column|
-        if row == Lipgloss::Table::HEADER_ROW
-          Lipgloss::Style.new.bold(true).foreground(COLORS[:accent])
-        elsif column.zero?
-          Lipgloss::Style.new.bold(true).foreground(COLORS[:notice])
-        else
-          Lipgloss::Style.new.foreground(COLORS[:text])
-        end
-      end.render
-    end
-
-    def app_status_table(project, action_status: nil)
-      rows = [
-        ["Key", project.key],
-        ["Name", project.name],
-        ["Path", project.path],
-        ["Service", project.service || "n/a"],
-        ["Image", project.image || "n/a"],
-        ["Hosts", Array(project.hosts).empty? ? "n/a" : Array(project.hosts).join(", ")],
-        ["Proxy", project.proxy_host || "n/a"],
-        ["Health Path", project.healthcheck_path || "n/a"],
-        ["App", project.app_status],
-        ["Health", project.health_status],
-        ["Latency", project.response_time ? "#{project.response_time}ms" : "n/a"],
-        ["Action Log", project.action_log_path]
-      ]
-      if action_status
-        rows.insert(-2, ["Last Action", action_status.fetch(:label)])
-        rows.insert(-2, ["Last Action At", action_status.fetch(:started_at)])
-      end
-      Lipgloss::Table.new
-        .rows(rows)
-        .border_style(Lipgloss::Style.new.foreground(COLORS[:accent_alt]))
-        .style_func(rows: rows.length, columns: 2) do |_row, column|
-        if column.zero?
-          Lipgloss::Style.new.bold(true).foreground(COLORS[:notice])
-        else
-          Lipgloss::Style.new.foreground(COLORS[:text])
-        end
-      end.render
-    end
-
-    def action_status_for(project)
-      active = load_actions[project.key]
-      if active
-        active.poll!
-        return {
-          label: active.done? ? action_result_label(active) : "#{active.label} - running",
-          started_at: active.started_at.strftime("%Y-%m-%d %H:%M:%S")
-        }
-      end
-
-      last_action_status_from_log(project)
-    end
-
-    def last_action_status_from_log(project)
-      return nil unless File.exist?(project.action_log_path)
-
-      content = File.read(project.action_log_path)
-      matches = content.to_enum(:scan, /^=== \[(.+?)\] ([a-z_]+) ===$/).map { Regexp.last_match }
-      last = matches.last
-      return nil unless last
-
-      action = last[2].to_sym
-      section = content[last.begin(0)..]
-      {
-        label: "#{KamalAction.label_for(action)} - #{action_status_label(project, section)}",
-        started_at: last[1]
-      }
-    rescue StandardError
-      nil
-    end
-
-    def action_status_label(project, section)
-      status_path = "#{project.action_log_path}.status"
-      if File.exist?(status_path)
-        return File.read(status_path).to_i.zero? ? "success" : "failed"
-      end
-
-      return "failed" if section.match?(/\bERROR\b|\bexit status:\s*[1-9]\d*\b|failed to/i)
-      return "success" if section.match?(/\bexit status 0\b|successful/i)
-
-      "unknown"
-    rescue StandardError
-      "unknown"
-    end
-
-    def action_result_label(action)
-      "#{action.label} - #{action.success? ? "success" : "failed"}"
-    end
-
-    def start_kamal_action(action_name, project_key, out: $stdout, err: $stderr)
-      return usage("Missing project key") if project_key.to_s.strip.empty?
-
-      project = find_app_project(project_key)
-      return failure("Unknown project: #{project_key}", err: err) unless project
-      return failure("Project does not have Kamal deployment: #{project.key}", err: err) unless project.apps_enabled?
-
-      actions = load_actions
-      active = actions[project.key]
-      if active
-        active.poll!
-        return failure("#{project.key} already has an active action: #{active.label}", err: err) unless active.done?
-
-        actions.delete(project.key)
-      end
-
-      action = KamalAction.new(
-        project_key: project.key,
-        project_name: project.name,
-        project_path: project.path,
-        action: action_name.to_sym
-      )
-      action.start!
-      actions[project.key] = action
-      save_actions(actions)
-      out.puts "Started #{action.label} for #{project.key}."
-      out.puts "Log: #{action.log_path}"
-      0
-    end
-
     def registry_projects
       require_relative "registry"
 
-      Registry.new.projects.map { |config| AppProject.new(config) }
+      Registry.new.projects.map { |config| Project.new(config) }
     end
 
     def update_project(project_key, opts, out: $stdout, err: $stderr)
@@ -1044,42 +814,10 @@ module HQ
         end.render
     end
 
-    def find_app_project(project_key)
-      registry_projects.find { |candidate| candidate.key == project_key.to_s }
-    end
-
-    def load_actions
-      return {} unless File.exist?(ACTIONS_FILE)
-
-      FileStore.read_json(ACTIONS_FILE, fallback: []).each_with_object({}) do |hash, actions|
-        action = KamalAction.from_hash(hash)
-        actions[action.project_key] = action
-      end
-    rescue StandardError => e
-      warn "Failed to load actions: #{e.message}"
-      {}
-    end
-
-    def save_actions(actions)
-      FileStore.write_json(ACTIONS_FILE, actions.values.map(&:to_hash))
-    end
-
     def usage(error = nil, err: $stderr)
       err.puts error if error
       err.puts USAGE
       error ? 64 : 0
-    end
-
-    def prompt_reference(project_key:)
-      command_lines = APP_COMMANDS.map do |command|
-        "- #{command.description}: `#{File.join(ROOT_DIR, "bin", "tycho")} #{format(command.usage_template, project_key:)}`"
-      end
-
-      [
-        "Available Tycho commands for projects with Kamal deployment:",
-        *command_lines,
-        "Use these commands only when the user explicitly asks you to operate deployment or maintenance."
-      ].join("\n")
     end
 
     def failure(message, err: $stderr)
