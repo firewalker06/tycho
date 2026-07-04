@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-06-20
+2026-07-04
 
 ## Strategic Direction
 
@@ -61,12 +61,11 @@ Key references:
 
 ## Current Focus
 
-**v0.6.0 release**: Tycho's current release packages Remote UI multiserver
-switching, skill autocomplete, quick agent switching, run summary visibility,
-attachment handling, source-checkout boot fixes, and Remote UI state
-preservation. After release, the next focus is formalizing specs, stabilizing
-install/update paths through Homebrew checks, and continuing browser/TUI smoke
-verification.
+**v0.7.0 release**: Tycho's current release packages OpenCode harness support,
+Remote Sessions daemon mode, Remote UI agent-switcher shortcuts, attachment and
+PR diff fixes, and removal of the app orchestration surface. After release, the
+next focus is stabilizing install/update paths through Homebrew checks,
+hardening harness compatibility, and continuing browser/TUI smoke verification.
 
 ## Roadmap
 
