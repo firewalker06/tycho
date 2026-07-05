@@ -233,6 +233,10 @@ module HQ
       return ok(service.archive_agents(body)) if method == "POST" && parts == ["agents", "archive"]
       return ok(projects: service.projects) if method == "GET" && parts == ["projects"]
       return created(project: service.create_welcome_project) if method == "POST" && parts == ["setup", "welcome"]
+      return ok(setup: service.refresh_harnesses) if method == "POST" && parts == ["setup", "harnesses", "refresh"]
+      if %w[PATCH PUT].include?(method) && parts.length == 4 && parts[0, 2] == ["setup", "harnesses"] && parts[3] == "catalog"
+        return ok(setup: service.update_harness_catalog(parts[2], body))
+      end
       return ok(hidden: service.hidden_settings) if method == "GET" && parts == ["settings", "hidden"]
       return ok(hidden: service.update_hidden_setting(body)) if %w[PATCH PUT].include?(method) && parts == ["settings", "hidden"]
       return ok(setup: service.setup) if method == "GET" && parts == ["setup"]
@@ -1164,6 +1168,22 @@ module HQ
       }
     end
 
+    def refresh_harnesses
+      HarnessCatalog.clear_cache!
+      @registry.load!
+      @projects = @registry.projects
+      setup
+    end
+
+    def update_harness_catalog(harness_key, attrs)
+      @registry.update_harness_catalog!(harness_key, attrs)
+      HarnessCatalog.clear_cache!
+      @projects = @registry.projects
+      setup
+    rescue ConfigError => e
+      raise Error.new(e.message)
+    end
+
     def create_welcome_project
       existing = @projects.find { |project| project.key == Onboarding::WELCOME_PROJECT_KEY }
       if existing
@@ -1874,7 +1894,7 @@ module HQ
     end
 
     def harness_resolver_payload(name, resolution)
-      resolver_payload(name, resolution).merge(HarnessCatalog.for_builtin(name, resolution))
+      merge_harness_catalog_config(name, resolver_payload(name, resolution).merge(HarnessCatalog.for_builtin(name, resolution)))
     end
 
     def custom_harness_payload(config)
@@ -1894,7 +1914,41 @@ module HQ
         adapter: config.adapter,
         path: resolution&.path,
         source: resolution&.source
-      }.merge(HarnessCatalog.for_custom(config))
+      }.merge(merge_harness_catalog_config(config.key, HarnessCatalog.for_custom(config)))
+    end
+
+    def merge_harness_catalog_config(name, payload)
+      config = @registry.harness_catalog(name)
+      return payload unless config
+
+      source = [payload[:catalog_source], "hq.yml custom catalog"].compact.reject(&:empty?).join(" + ")
+      payload.merge(
+        model_suggestions: merge_model_suggestions(payload[:model_suggestions], config.models),
+        reasoning_effort_suggestions: merge_effort_suggestions(payload[:reasoning_effort_suggestions], config.reasoning_efforts),
+        configured_model_suggestions: config.models,
+        configured_reasoning_effort_suggestions: config.reasoning_efforts,
+        catalog_source: source
+      )
+    end
+
+    def merge_model_suggestions(existing, configured)
+      suggestions = Array(existing).dup
+      seen = suggestions.each_with_object({}) do |item, memo|
+        value = item.is_a?(Hash) ? item[:value].to_s : item.to_s
+        memo[value] = true
+      end
+      Array(configured).each do |model|
+        value = model.to_s.strip
+        next if value.empty? || seen[value]
+
+        suggestions << { value: value, label: value }
+        seen[value] = true
+      end
+      suggestions
+    end
+
+    def merge_effort_suggestions(existing, configured)
+      (Array(existing) + Array(configured)).map { |value| value.to_s.strip.downcase }.reject(&:empty?).uniq
     end
 
     def executable_detail(resolution)

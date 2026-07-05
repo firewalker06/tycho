@@ -28,6 +28,7 @@ module ManagedAgentTest
     assert_legacy_run_commands_backfill_model_and_reasoning_effort
     assert_model_and_reasoning_effort_arguments_apply_to_harnesses
     assert_start_records_missing_harness_without_spawning
+    assert_external_process_environment_removes_ruby_loader_state
     assert_agent_runner_warns_when_command_cannot_execute
     puts "managed_agent_test: ok"
   end
@@ -755,6 +756,26 @@ module ManagedAgentTest
       assert(output.include?("failed to execute #{missing_command.inspect}"),
              "expected missing command warning in runner output")
     end
+  end
+
+  def assert_external_process_environment_removes_ruby_loader_state
+    agent = HQ::ManagedAgent.new(
+      key: "env-agent",
+      name: "Env Agent",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.pwd,
+      prompt: "System prompt",
+      agent: "claude"
+    )
+
+    env = agent.send(:external_process_environment, "BUNDLE_GEMFILE" => "/custom/Gemfile", "CUSTOM" => "1")
+
+    assert(env["BUNDLE_BIN_PATH"].nil?, "expected Bundler bin path to be cleared for harnesses")
+    assert(env["RUBYOPT"].nil?, "expected Ruby loader options to be cleared for harnesses")
+    assert(env["GEM_HOME"].nil?, "expected Ruby gem home to be cleared for harnesses")
+    assert(env["BUNDLE_GEMFILE"] == "/custom/Gemfile", "expected explicit harness env to remain authoritative")
+    assert(env["CUSTOM"] == "1", "expected explicit harness env to be preserved")
   end
 
   def assert_start_records_missing_harness_without_spawning

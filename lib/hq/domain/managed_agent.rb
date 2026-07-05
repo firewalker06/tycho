@@ -350,7 +350,7 @@ module HQ
 
       log_file = File.open(@log_path, "a")
       @pid = spawn(
-        environment.merge("TYCHO_STATUS_PATH" => status_path),
+        external_process_environment(environment).merge("TYCHO_STATUS_PATH" => status_path),
         RbConfig.ruby, "-e", agent_runner_script, *command,
         chdir: @workspace, out: log_file, err: %i[child out], pgroup: true
       )
@@ -874,6 +874,18 @@ module HQ
         end
         exit(status)
       RUBY
+    end
+
+    def external_process_environment(environment)
+      {
+        "BUNDLE_BIN_PATH" => nil,
+        "BUNDLE_GEMFILE" => nil,
+        "BUNDLER_VERSION" => nil,
+        "GEM_HOME" => nil,
+        "GEM_PATH" => nil,
+        "RUBYLIB" => nil,
+        "RUBYOPT" => nil
+      }.merge(environment)
     end
 
     def last_message_file_path

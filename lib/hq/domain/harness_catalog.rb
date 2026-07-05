@@ -10,7 +10,12 @@ require_relative "executable_resolver"
 module HQ
   module HarnessCatalog
     REASONING_EFFORT_ORDER = %w[minimal low medium high xhigh max].freeze
-    CLAUDE_MODEL_SUGGESTIONS = %w[default best sonnet opus haiku opusplan].freeze
+    CLAUDE_MODEL_SUGGESTIONS = %w[
+      claude-fable-5
+      claude-opus-4-8
+      claude-sonnet-5
+      claude-haiku-4-5
+    ].freeze
     CLAUDE_REASONING_EFFORTS = %w[low medium high xhigh max].freeze
     COMMAND_TIMEOUT = 2
 
@@ -50,6 +55,10 @@ module HQ
 
     def catalog_cache
       @catalog_cache ||= {}
+    end
+
+    def clear_cache!
+      catalog_cache.clear
     end
 
     def codex_catalog(resolution)

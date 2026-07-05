@@ -56,7 +56,8 @@ module HQ
     DEFAULT_PATH = HQ.default_config_path
     DEFAULT_ARCHIVED_BASENAME = "hq.archived.yml"
 
-    attr_reader :path, :projects, :groups, :remote_servers, :system_prompts_path, :custom_harnesses
+    attr_reader :path, :projects, :groups, :remote_servers, :system_prompts_path, :custom_harnesses,
+                :harness_catalogs
 
     def initialize(path: HQ.env_present("CONFIG_PATH", DEFAULT_PATH), system_prompts_path: nil)
       @path = File.expand_path(path)
@@ -76,6 +77,7 @@ module HQ
       data = load_yaml(@path)
       @system_prompts = load_yaml(@system_prompts_path, optional: true)
       @custom_harnesses = build_custom_harnesses(data["custom_harnesses"])
+      @harness_catalogs = build_harness_catalogs(data["harness_catalogs"])
       @groups = build_groups(data["groups"])
       @remote_servers = build_remote_servers(data["remote_servers"])
       HQ.custom_harnesses = @custom_harnesses
@@ -249,6 +251,36 @@ module HQ
       project
     end
 
+    def update_harness_catalog!(harness_key, attrs)
+      key = harness_key.to_s.strip.downcase
+      raise ConfigError, "Missing harness key" if key.empty?
+      unless HQ.supported_harness?(key)
+        raise ConfigError, "Unsupported harness #{key.inspect}. Supported: #{HQ.harness_keys.join(", ")}"
+      end
+
+      data = load_yaml(@path)
+      catalogs = data["harness_catalogs"].is_a?(Hash) ? data["harness_catalogs"] : {}
+      entry = catalogs[key].is_a?(Hash) ? catalogs[key].dup : {}
+      entry["models"] = normalize_catalog_values(attrs["models"] || attrs[:models], preserve_case: true)
+      entry["reasoning_efforts"] = normalize_catalog_values(
+        attrs["reasoning_efforts"] || attrs["reasoning_effort_suggestions"] || attrs[:reasoning_efforts],
+        preserve_case: false
+      )
+      entry.delete("models") if entry["models"].empty?
+      entry.delete("reasoning_efforts") if entry["reasoning_efforts"].empty?
+      entry.empty? ? catalogs.delete(key) : catalogs[key] = entry
+      data["harness_catalogs"] = catalogs
+      data.delete("harness_catalogs") if catalogs.empty?
+
+      write_yaml(@path, data)
+      load!
+      harness_catalog(key)
+    end
+
+    def harness_catalog(harness_key)
+      @harness_catalogs[harness_key.to_s.strip.downcase]
+    end
+
     def archive_project!(project_key, archived_path: nil)
       data = load_yaml(@path)
       projects = Array(data["projects"])
@@ -310,6 +342,25 @@ module HQ
         end
 
         config
+      end
+    end
+
+    def build_harness_catalogs(raw_catalogs)
+      return {} unless raw_catalogs.is_a?(Hash)
+
+      raw_catalogs.each_with_object({}) do |(raw_key, raw_entry), catalogs|
+        key = raw_key.to_s.strip.downcase
+        next if key.empty?
+
+        entry = raw_entry.is_a?(Hash) ? raw_entry : {}
+        catalogs[key] = HarnessCatalogConfig.new(
+          key: key,
+          models: normalize_catalog_values(entry["models"] || entry["model_suggestions"], preserve_case: true),
+          reasoning_efforts: normalize_catalog_values(
+            entry["reasoning_efforts"] || entry["reasoning_effort_suggestions"],
+            preserve_case: false
+          )
+        )
       end
     end
 
@@ -468,6 +519,13 @@ module HQ
     def normalize_reasoning_effort(value)
       text = value.to_s.strip.downcase
       text.empty? ? nil : text
+    end
+
+    def normalize_catalog_values(values, preserve_case:)
+      Array(values).flat_map { |value| value.to_s.lines }.map do |value|
+        text = value.to_s.strip
+        preserve_case ? text : text.downcase
+      end.reject(&:empty?).uniq
     end
 
     def normalize_agent(agent)

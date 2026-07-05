@@ -1410,9 +1410,29 @@ select {
   padding: 2px 2px 0;
 }
 
+.section-label > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
 .section-label strong {
   font-size: 13px;
   text-transform: uppercase;
+}
+
+.readiness-section-label {
+  align-items: flex-start;
+}
+
+.harness-refresh-button {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.harness-refresh-button.loading .ui-icon {
+  animation: running-indicator-spin 0.9s linear infinite;
 }
 
 .schedule-section-label {
@@ -2040,6 +2060,66 @@ select {
   min-height: 42px;
   padding: 11px 12px;
   cursor: pointer;
+}
+
+.harness-details {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.harness-details > summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.harness-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.harness-details > summary > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.harness-detail-body {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  padding: 10px;
+}
+
+.harness-catalog-form {
+  display: grid;
+  gap: 10px;
+}
+
+.harness-catalog-form label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.harness-catalog-form textarea {
+  min-height: 74px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.harness-catalog-form button {
+  justify-self: start;
 }
 
 .detail-card-body,

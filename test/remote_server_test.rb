@@ -31,6 +31,8 @@ module RemoteServerTest
     assert_remote_hidden_settings_filter_projects_and_agents
     assert_remote_schedule_routes
     assert_remote_setup_payload_includes_readiness
+    assert_remote_harness_catalogs_are_configurable
+    assert_remote_setup_refreshes_harness_catalogs
     assert_remote_setup_uses_shared_executable_resolution
     assert_remote_welcome_onboarding_creates_project
     assert_remote_setup_warns_when_public_url_has_no_token
@@ -1311,11 +1313,74 @@ module RemoteServerTest
       assert(setup.dig(:counts, :archived_projects) == 1, "expected archived project count")
       assert(setup[:harnesses].map { |item| item[:name] }.sort == %w[claude claude-wrapper codex opencode],
              "expected harness readiness entries")
+      claude = setup[:harnesses].find { |item| item[:name] == "claude" }
+      claude_models = Array(claude[:model_suggestions]).map { |item| item[:value] }
+      assert(claude_models == %w[claude-fable-5 claude-opus-4-8 claude-sonnet-5 claude-haiku-4-5],
+             "expected Claude readiness to expose only current Anthropic model aliases")
       assert(setup[:tools].map { |item| item[:name] }.sort == %w[tailscale],
              "expected optional tool readiness entries")
       assert(setup.dig(:schema, :valid) == true, "expected valid result schema")
       assert(setup.dig(:config, :prompt_template_count) == 1, "expected prompt template count")
       assert(setup[:safety].any? { |line| line.include?("Running agents") }, "expected safety defaults")
+    end
+  end
+
+  def assert_remote_harness_catalogs_are_configurable
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      server = HQ::RemoteServer.new
+
+      response = server.send(
+        :route,
+        service,
+        "PATCH",
+        "/setup/harnesses/claude/catalog",
+        {
+          "models" => ["claude-custom-1", "claude-custom-1", " gateway/model "],
+          "reasoning_efforts" => ["TURBO", "low", ""]
+        },
+        nil
+      )
+      claude = response.dig(:body, :setup, :harnesses).find { |item| item[:name] == "claude" }
+      model_values = Array(claude[:model_suggestions]).map { |item| item[:value] }
+
+      assert(model_values.include?("claude-custom-1"), "expected saved custom model to appear in readiness")
+      assert(model_values.include?("gateway/model"), "expected custom model names to be stripped")
+      assert(claude[:configured_model_suggestions] == ["claude-custom-1", "gateway/model"],
+             "expected setup to expose persisted custom model rows")
+      assert(claude[:configured_reasoning_effort_suggestions] == %w[turbo low],
+             "expected setup to expose persisted custom effort rows")
+      assert(claude[:reasoning_effort_suggestions].include?("turbo"),
+             "expected custom effort to merge into readiness suggestions")
+      assert(claude[:catalog_source].include?("hq.yml custom catalog"),
+             "expected catalog source to mention custom config")
+
+      persisted = YAML.safe_load(File.read(registry.path), aliases: true)
+      assert(persisted.dig("harness_catalogs", "claude", "models") == ["claude-custom-1", "gateway/model"],
+             "expected custom model rows to persist in hq.yml")
+      assert(persisted.dig("harness_catalogs", "claude", "reasoning_efforts") == %w[turbo low],
+             "expected custom effort rows to persist in hq.yml")
+    end
+  end
+
+  def assert_remote_setup_refreshes_harness_catalogs
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      server = HQ::RemoteServer.new
+
+      HQ::HarnessCatalog.catalog_cache[:sentinel] = true
+      response = server.send(:route, service, "POST", "/setup/harnesses/refresh", {}, nil)
+
+      assert(response[:status] == 200, "expected harness refresh route to return ok")
+      assert(!HQ::HarnessCatalog.catalog_cache.key?(:sentinel), "expected harness refresh to clear cached catalogs")
+      assert(response.dig(:body, :setup, :harnesses).map { |item| item[:name] }.include?("codex"),
+             "expected harness refresh to return fresh setup readiness")
     end
   end
 
@@ -2539,6 +2604,27 @@ module RemoteServerTest
            "expected Remote restart readiness to sit inside Automation readiness")
     assert(js[:body].index("Remote restart") < js[:body].index("Configuration"),
            "expected Remote restart readiness to render before Configuration")
+    assert(js[:body].include?("Refresh harness catalogs"),
+           "expected Settings More menu to expose harness catalog refresh")
+    assert(js[:body].include?("data-refresh-harnesses"), "expected Settings to wire harness catalog refresh")
+    assert(js[:body].include?("function renderHarnessDetails") &&
+           js[:body].include?('class="harness-details"'),
+           "expected Settings to expose collapsible harness detail rows")
+    assert(js[:body].include?("state.harnessCatalogRefreshing") &&
+           js[:body].include?('loading ? "loaderPinwheel" : "rotateCcw"') &&
+           js[:body].include?('loading ? "disabled" : ""'),
+           "expected harness refresh button to show loading state and disable while refreshing")
+    assert(js[:body].include?('apiPost("/setup/harnesses/refresh"'),
+           "expected Remote UI harness refresh action to call the refresh endpoint")
+    assert(js[:body].include?("Harness refresh unsupported by this server; rechecked status"),
+           "expected Remote UI harness refresh to tolerate older servers")
+    assert(js[:body].include?("data-harness-catalog-form") &&
+           js[:body].include?('name="models"') &&
+           js[:body].include?('name="reasoning_efforts"') &&
+           js[:body].include?("function saveHarnessCatalog") &&
+           js[:body].include?('apiPatch(`/setup/harnesses/${encodeURIComponent(harness)}/catalog`') &&
+           js[:body].include?("Harness catalog editing unsupported by this server"),
+           "expected Settings to edit and save custom harness model catalogs")
     assert(js[:body].include?("Recheck status"), "expected Settings More menu to expose readiness refresh")
     assert(js[:body].include?("function restartRemoteServer"), "expected Remote UI to handle Remote restarts")
     assert(js[:body].include?('apiPost("/server/restart"'),

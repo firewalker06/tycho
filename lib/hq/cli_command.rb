@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "open3"
 require "rbconfig"
 
 require "dry/cli"
@@ -70,7 +71,7 @@ module HQ
         desc "Create a new agent for a project"
         argument :project_key, required: true, desc: "Project key"
         argument :prompt, required: true, desc: "Initial prompt for the agent"
-        option :model, desc: "Model override (e.g. claude-opus-4-5)"
+        option :model, desc: "Model override (e.g. claude-opus-4-8)"
         option :harness, desc: "Agent harness override (e.g. claude, codex, opencode)"
         option :name, desc: "Agent name override"
         option :template, desc: "Template key to use (defaults to project's first template)"
@@ -280,6 +281,29 @@ module HQ
         prefix.register "reload", ScheduleReload
       end
 
+      class Debug < Dry::CLI::Command
+        desc "Run diagnostics"
+
+        def call(**)
+          exit CLICommand.usage("Missing debug command", err: err)
+        end
+      end
+
+      class DebugClaude < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Run Claude diagnostics through Tycho's harness process path"
+        option :run_agent, type: :boolean, default: false, desc: "Create and run a disposable Claude managed agent"
+        usage_template "debug claude [--run-agent]"
+
+        def call(**opts)
+          exit CLICommand.debug_claude(opts, out: out, err: err)
+        end
+      end
+
+      register "debug", Debug do |prefix|
+        prefix.register "claude", DebugClaude
+      end
     end
 
     PROJECT_COMMANDS = [
@@ -304,6 +328,9 @@ module HQ
       Commands::ScheduleResume,
       Commands::ScheduleReload
     ].freeze
+    DEBUG_COMMANDS = [
+      Commands::DebugClaude
+    ].freeze
     COMMAND_NAME = "tycho"
     RUNTIME_COMMANDS = [
       "  #{COMMAND_NAME} serve [daemon] [--host 127.0.0.1] [--port 7373]",
@@ -320,6 +347,7 @@ module HQ
         "  #{COMMAND_NAME} #{format(template, project_key: "<project-key>", agent_key: "<agent-key>", prompt: "<prompt>", message: "<message>")}"
       },
       *SCHEDULE_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, schedule_key: "<schedule-key>")}" },
+      *DEBUG_COMMANDS.map { |command| "  #{COMMAND_NAME} #{command.usage_template}" },
       "",
       "Run without a command to open the interactive Tycho TUI."
     ].join("\n").freeze
@@ -378,10 +406,184 @@ module HQ
       1
     end
 
+    def debug_claude(opts = {}, out: $stdout, err: $stderr)
+      return debug_claude_agent(out: out, err: err) if opts[:run_agent]
+
+      require_relative "domain/executable_resolver"
+      require_relative "domain/managed_agent"
+
+      resolution = ExecutableResolver.resolve_tool("claude")
+      unless resolution.available?
+        return failure("Claude executable not found. Set TYCHO_CLAUDE_BIN or install claude.", err: err)
+      end
+
+      command = [resolution.command, "auth", "status"]
+      stdout, stderr, status = Open3.capture3(
+        diagnostic_harness_environment,
+        RbConfig.ruby, "-e", diagnostic_runner_script, *command,
+        chdir: Dir.pwd
+      )
+
+      out.puts "Tycho Claude auth diagnostic"
+      out.puts "Claude executable: #{resolution.command} (#{resolution.source})"
+      out.puts "Runner: #{RbConfig.ruby} -e <tycho harness runner>"
+      out.puts "Command: #{command.join(" ")}"
+      out.puts
+      out.puts "Relevant parent environment:"
+      rows = diagnostic_environment_rows
+      if rows.empty?
+        out.puts "  (none)"
+      else
+        rows.each { |key, value| out.puts "  #{key}=#{value}" }
+      end
+      out.puts
+      out.puts "Harness environment overrides:"
+      diagnostic_harness_environment_rows(diagnostic_harness_environment).each do |key, value|
+        out.puts "  #{key}=#{value}"
+      end
+      out.puts
+      out.puts "stdout:"
+      out.puts stdout.to_s.empty? ? "  (empty)" : indent(stdout)
+      out.puts
+      out.puts "stderr:"
+      out.puts stderr.to_s.empty? ? "  (empty)" : indent(stderr)
+      out.puts
+      out.puts "Exit status: #{status.exitstatus}"
+      status.success? ? 0 : status.exitstatus.to_i
+    rescue StandardError => e
+      failure("Failed to run Claude auth diagnostic: #{e.class}: #{e.message}", err: err)
+    end
+
+    def debug_claude_agent(out: $stdout, err: $stderr)
+      require_relative "registry"
+      require_relative "harness_registry"
+
+      registry = Registry.new
+      project = debug_project(registry)
+      return failure("No project available for Claude debug agent.", err: err) unless project
+      return failure("Claude harness is not available in this Tycho configuration.", err: err) unless HQ.supported_harness?("claude")
+
+      agent_store = AgentStore.new(registry.projects)
+      agent = agent_store.create_from_template(project, "custom")
+      agent.update!(
+        name: "Claude debug agent",
+        template_key: agent.template_key,
+        workspace: agent.workspace,
+        prompt: "Reply with OK",
+        agent: "claude",
+        model: nil,
+        reasoning_effort: nil
+      )
+      agent_store.ensure_project_context_prompt!(agent, project)
+
+      agents = agent_store.load
+      agents.unshift(agent)
+      agent_store.save(agents)
+
+      started = agent.start!
+      save_agent_in_store(agent)
+
+      out.puts "Tycho Claude managed-agent diagnostic"
+      out.puts "Agent: #{agent.key}"
+      out.puts "Project: #{agent.project_key}"
+      out.puts "Harness: #{agent.agent}"
+      out.puts "Model: #{agent.model || "(claude default)"}"
+      out.puts "Reasoning effort: #{agent.reasoning_effort || "(claude default)"}"
+      out.puts "Log: #{agent.raw_log_path}"
+
+      unless started && agent.pid
+        out.puts "Status: start failed"
+        return 1
+      end
+
+      out.puts "Started: pid #{agent.pid}"
+      wait_for_debug_agent(agent)
+      save_agent_in_store(agent)
+
+      out.puts "Final status: #{agent.status}"
+      out.puts "Exit code: #{agent.last_exit_code.nil? ? "n/a" : agent.last_exit_code}"
+      out.puts "Summary: #{agent.last_summary}"
+      agent.status == "succeeded" ? 0 : 1
+    rescue StandardError => e
+      failure("Failed to run Claude managed-agent diagnostic: #{e.class}: #{e.message}", err: err)
+    end
+
     def registry_projects
       require_relative "registry"
 
       Registry.new.projects.map { |config| Project.new(config) }
+    end
+
+    def debug_project(registry)
+      projects = registry.projects
+      cwd = File.expand_path(Dir.pwd)
+      projects.find { |project| project.key == "tycho" } ||
+        projects.find { |project| File.expand_path(project.path.to_s) == cwd } ||
+        projects.first
+    end
+
+    def wait_for_debug_agent(agent, timeout: 20)
+      deadline = Time.now + timeout.to_f
+      while agent.running? && Time.now < deadline
+        sleep 0.2
+      end
+      agent.poll!
+      agent
+    end
+
+    def diagnostic_runner_script
+      <<~RUBY
+        result = system(*ARGV)
+        child = $?
+        exit(child ? child.exitstatus.to_i : (result ? 0 : 1))
+      RUBY
+    end
+
+    def diagnostic_harness_environment
+      agent = ManagedAgent.new(
+        key: "diagnostic",
+        name: "Diagnostic",
+        project_key: "diagnostic",
+        template_key: "custom",
+        workspace: Dir.pwd,
+        prompt: "diagnostic",
+        agent: "claude"
+      )
+      agent.send(:external_process_environment, {})
+    end
+
+    def diagnostic_environment_rows
+      ENV.keys
+        .select { |key| diagnostic_environment_key?(key) }
+        .sort
+        .map { |key| [key, diagnostic_environment_value(key)] }
+    end
+
+    def diagnostic_harness_environment_rows(env)
+      env.keys
+        .select { |key| diagnostic_environment_key?(key) }
+        .sort
+        .map { |key| [key, env[key].nil? ? "(unset)" : diagnostic_environment_value(key, env[key])] }
+    end
+
+    def diagnostic_environment_key?(key)
+      key.start_with?("ANTHROPIC", "CLAUDE", "AWS", "GOOGLE", "VERTEX", "BEDROCK") ||
+        %w[BUNDLE_BIN_PATH BUNDLE_GEMFILE BUNDLER_VERSION GEM_HOME GEM_PATH RUBYLIB RUBYOPT TYCHO_CLAUDE_BIN].include?(key)
+    end
+
+    def diagnostic_environment_value(key, raw_value = ENV[key])
+      value = raw_value.to_s
+      return "(empty)" if value.empty?
+
+      if key.match?(/KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/i)
+        "(set, #{value.length} chars)"
+      else
+        value
+      end
+    end
+
+    def indent(text, prefix = "  ")
+      text.to_s.each_line.map { |line| "#{prefix}#{line}" }.join
     end
 
     def update_project(project_key, opts, out: $stdout, err: $stderr)

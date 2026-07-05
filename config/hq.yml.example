@@ -20,8 +20,13 @@
 # provider-specific behavior. The execution command must accept Claude CLI flags
 # because Tycho appends --print, --output-format stream-json, --json-schema, and
 # session flags around the prompt.
+#
+# Harness catalogs are optional UI suggestions for model and effort pickers.
+# They are additive to Tycho's discovered/default catalogs and are not
+# validation allowlists.
 
 custom_harnesses: []
+harness_catalogs: {}
 groups: {}
 projects: []
 
@@ -31,6 +36,15 @@ projects: []
 # - key: claude-wrapper
 #   adapter: claude
 #   execution_command: "/Users/you/bin/claude-wrapper"
+#
+# harness_catalogs:
+#   claude:
+#     models:
+#       - claude-sonnet-5
+#       - my-gateway/claude
+#     reasoning_efforts:
+#       - low
+#       - high
 
 # Example projects:
 #
