@@ -4,6 +4,14 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.7.2 - 2026-07-05
+
+### Notable Releases
+
+- Add authenticated peer debugging endpoints for managed agents, including
+  bounded raw/memory/app log tails, memory event counts, dry-run memory capture
+  parsing, and explicit memory rebuild from raw logs.
+
 ## 0.7.1 - 2026-07-05
 
 ### Notable Releases

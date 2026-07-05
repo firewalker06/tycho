@@ -259,6 +259,14 @@ module HQ
         return ok(agent: service.update_agent(key, body)) if %w[PATCH PUT].include?(method) && tail.empty?
         return ok(service.archive_agent(key)) if method == "DELETE" && tail.empty?
         return ok(conversation: service.conversation(key)) if method == "GET" && tail == ["conversation"]
+        return ok(debug: service.agent_debug(key)) if method == "GET" && tail == ["debug"]
+        return ok(log: service.agent_log(key, request&.query_params || {})) if method == "GET" && tail == ["logs"]
+        if method == "POST" && tail == ["memory", "capture", "dry-run"]
+          return ok(memory_capture: service.agent_memory_capture_dry_run(key))
+        end
+        if method == "POST" && tail == ["memory", "rebuild"]
+          return ok(memory_rebuild: service.rebuild_agent_memory(key))
+        end
         return ok(pull_requests: service.agent_pull_requests(key)) if method == "GET" && tail == ["pull-requests"]
         return ok(service.refresh_agent_pull_requests(key)) if method == "POST" && tail == ["pull-requests", "refresh"]
         if tail.length == 3 && tail.first == "pull-requests" && tail[2] == "diff"
@@ -794,6 +802,81 @@ module HQ
 
     def agent(key)
       agent_payload(find_agent!(key))
+    end
+
+    def agent_debug(key)
+      agent = find_agent!(key)
+      memory_events = AgentMemory.new(agent).events
+      {
+        agent: agent_payload(agent),
+        run: agent_run_debug_payload(agent),
+        files: agent_debug_files(agent),
+        memory: {
+          exists: File.exist?(agent.memory_path),
+          event_count: memory_events.length,
+          event_types: count_values(memory_events.map { |event| event["type"].to_s.empty? ? "unknown" : event["type"].to_s }),
+          conversation_event_count: memory_events.count { |event| %w[system_prompt user_message assistant_message].include?(event["type"]) },
+          assistant_message_count: memory_events.count { |event| event["type"] == "assistant_message" },
+          run_summary_count: memory_events.count { |event| event["type"] == "run_summary" },
+          last_event: memory_events.last
+        },
+        recent_app_log: filtered_log_tail(LOG_FILE, agent.key, 50)
+      }
+    end
+
+    def agent_log(key, params)
+      agent = find_agent!(key)
+      type = params.fetch("type", "raw").to_s
+      tail = bounded_tail(params["tail"], default: 200, max: 1_000)
+      path = agent_log_path(agent, type)
+      {
+        agent_key: agent.key,
+        type: type,
+        path: path,
+        exists: File.file?(path),
+        tail: type == "app" ? filtered_log_tail(path, agent.key, tail) : file_tail(path, tail)
+      }
+    end
+
+    def agent_memory_capture_dry_run(key)
+      agent = find_agent!(key)
+      lines = current_agent_run_lines(agent)
+      conversation, system = Parser.parse_stream(lines, agent_type: agent.agent)
+      assistant_messages = conversation.select { |entry| entry.role == "assistant" }
+      tool_entries = system.reject { |entry| entry.type == :usage }
+      usage_entries = system.select { |entry| entry.type == :usage }
+      {
+        agent_key: agent.key,
+        raw_log_path: agent.raw_log_path,
+        raw_log_exists: File.exist?(agent.raw_log_path),
+        current_run_line_count: lines.length,
+        conversation_entry_count: conversation.length,
+        assistant_message_count: assistant_messages.length,
+        system_entry_count: system.length,
+        tool_entry_count: tool_entries.length,
+        usage_entry_count: usage_entries.length,
+        would_append_run_summary: !agent.last_summary.to_s.strip.empty?,
+        summary: agent.last_summary,
+        status: agent.effective_status
+      }
+    rescue StandardError => e
+      {
+        agent_key: key.to_s,
+        error: e.message,
+        error_class: e.class.name
+      }
+    end
+
+    def rebuild_agent_memory(key)
+      agent = find_agent!(key)
+      written = AgentChatLog.new(agent).rebuild_memory_from_raw_log!
+      raise Error.new("Unable to rebuild memory from raw log", status: 422) unless written
+
+      {
+        agent_key: agent.key,
+        memory_path: agent.memory_path,
+        event_count: written
+      }
     end
 
     def agent_pull_requests(key)
@@ -1680,6 +1763,126 @@ module HQ
 
     def load_agents_with_events
       @agent_store.load_with_poll_events
+    end
+
+    def agent_run_debug_payload(agent)
+      run = agent.last_run
+      {
+        count: agent.run_count,
+        last: run ? run.to_hash : nil,
+        pid: agent.pid,
+        running: agent.running?,
+        started_at: agent.started_at&.iso8601,
+        finished_at: agent.finished_at&.iso8601,
+        last_exit_code: agent.last_exit_code,
+        effective_status: agent.effective_status,
+        summary: agent.last_summary,
+        session_id: agent.session_id.to_s.empty? ? nil : agent.session_id
+      }
+    end
+
+    def agent_debug_files(agent)
+      {
+        raw: file_debug_payload(agent.raw_log_path),
+        memory: file_debug_payload(agent.memory_path),
+        conversation: file_debug_payload(agent.conversation_log_path),
+        system: file_debug_payload(agent.system_log_path),
+        status: file_debug_payload(agent_private_log_path(agent, :status_file_path)),
+        last_message: file_debug_payload(agent_private_log_path(agent, :last_message_file_path)),
+        attachments: file_debug_payload(agent.attachments_path)
+      }
+    end
+
+    def file_debug_payload(path)
+      exists = File.exist?(path)
+      payload = {
+        path: path,
+        exists: exists
+      }
+      return payload unless exists
+
+      stat = File.stat(path)
+      payload.merge(
+        size_bytes: stat.size,
+        mtime: stat.mtime.iso8601
+      )
+    rescue StandardError => e
+      {
+        path: path,
+        exists: false,
+        error: e.message
+      }
+    end
+
+    def agent_log_path(agent, type)
+      case type
+      when "raw"
+        agent.raw_log_path
+      when "memory"
+        agent.memory_path
+      when "conversation"
+        agent.conversation_log_path
+      when "system"
+        agent.system_log_path
+      when "status"
+        agent_private_log_path(agent, :status_file_path)
+      when "last_message"
+        agent_private_log_path(agent, :last_message_file_path)
+      when "attachments"
+        agent.attachments_path
+      when "app"
+        LOG_FILE
+      else
+        raise Error.new("Unknown agent log type: #{type}", status: 400)
+      end
+    end
+
+    def agent_private_log_path(agent, method_name)
+      agent.send(method_name)
+    end
+
+    def bounded_tail(value, default:, max:)
+      count = value.to_i
+      count = default unless count.positive?
+      [count, max].min
+    end
+
+    def file_tail(path, count)
+      return [] unless File.file?(path)
+
+      File.readlines(path, chomp: true).last(count).map { |line| redact_log_line(line) }
+    rescue StandardError
+      []
+    end
+
+    def filtered_log_tail(path, agent_key, count)
+      key = agent_key.to_s
+      file_tail(path, [count * 5, 1_000].min).select { |line| line.include?(key) }.last(count)
+    end
+
+    def redact_log_line(line)
+      line.to_s
+          .gsub(/(Authorization:\s*Bearer\s+)[^\s]+/i, "\\1[REDACTED]")
+          .gsub(/(Bearer\s+)[A-Za-z0-9._~+\/=-]{12,}/, "\\1[REDACTED]")
+          .gsub(/(token["'=:\s]+)[A-Za-z0-9._~+\/=-]{12,}/i, "\\1[REDACTED]")
+    end
+
+    def count_values(values)
+      values.each_with_object(Hash.new(0)) { |value, result| result[value] += 1 }.sort.to_h
+    end
+
+    def current_agent_run_lines(agent)
+      return [] unless File.exist?(agent.raw_log_path)
+
+      lines = File.readlines(agent.raw_log_path, chomp: true)
+      marker = agent.started_at ? "=== [#{agent.started_at.strftime("%Y-%m-%d %H:%M:%S")}] start ===" : nil
+      index = marker ? lines.rindex(marker) : nil
+      index ||= lines.rindex { |line| line.start_with?("=== [") }
+      return lines unless index
+
+      lines[(index + 1)..] || []
+    rescue StandardError
+      []
     end
 
     def save_agent(target)

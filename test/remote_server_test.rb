@@ -24,6 +24,7 @@ module RemoteServerTest
     assert_remote_prompt_accepts_uploaded_attachments
     assert_remote_prompt_start_accepts_dash_prefixed_message
     assert_remote_agent_conversation_includes_run_summary
+    assert_remote_agent_debug_endpoints
     assert_remote_project_payloads_include_status_and_detail
     assert_remote_project_git_diff_payload
     assert_remote_project_update_route_edits_metadata
@@ -897,6 +898,69 @@ module RemoteServerTest
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
       replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+    end
+  end
+
+  def assert_remote_agent_debug_endpoints
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      server = HQ::RemoteServer.new
+      old_log_file = replace_constant(HQ, :LOG_FILE, File.join(dir, "hq.log"))
+
+      created = service.create_agent(
+        "project_key" => "web",
+        "template_key" => "custom",
+        "name" => "Debug Agent",
+        "prompt" => "Work remotely.",
+        "agent" => "codex"
+      )
+      agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+      started_at = Time.now
+      raw_lines = [
+        "=== [#{started_at.strftime("%Y-%m-%d %H:%M:%S")}] start ===",
+        JSON.generate("type" => "item.completed", "item" => { "type" => "agent_message", "text" => "Debug reply." })
+      ]
+      File.write(agent.raw_log_path, "#{raw_lines.join("\n")}\n")
+      File.write(HQ::LOG_FILE, "token=super-secret-token-value #{agent.key} Memory capture failed\n")
+      memory = HQ::AgentMemory.new(agent)
+      memory.append_user_message!("Debug prompt.", created_at: Time.now)
+      memory.append_run_summary!(summary: "Debug summary.", status: "succeeded", created_at: Time.now)
+
+      debug = service.agent_debug(agent.key)
+      assert(debug.dig(:memory, :event_types, "user_message") == 1,
+             "expected agent debug to count user memory events")
+      assert(debug.dig(:memory, :event_types, "run_summary") == 1,
+             "expected agent debug to count run summary memory events")
+      assert(debug.dig(:memory, :event_types, "system_prompt").to_i.positive?,
+             "expected agent debug to count seed system prompt memory events")
+      assert(debug.dig(:files, :raw, :exists), "expected agent debug to expose raw log metadata")
+      assert(debug[:recent_app_log].first.include?("[REDACTED]"), "expected agent debug app log tail to redact tokens")
+
+      request = HQ::RemoteServer.const_get(:Request).new(
+        method: "GET",
+        path: "/agents/#{agent.key}/logs",
+        query: "type=memory&tail=5",
+        headers: {},
+        body: ""
+      )
+      log_response = server.send(:route, service, "GET", "/agents/#{agent.key}/logs", {}, request)
+      assert(log_response.dig(:body, :log, :type) == "memory", "expected agent log route to honor type")
+      assert(log_response.dig(:body, :log, :tail).any? { |line| line.include?("Debug summary.") },
+             "expected agent log route to return bounded memory tail")
+
+      dry_run = service.agent_memory_capture_dry_run(agent.key)
+      assert(dry_run[:current_run_line_count] == 1, "expected dry-run capture to inspect current raw run")
+      assert(dry_run[:assistant_message_count] == 1, "expected dry-run capture to count assistant messages")
+
+      FileUtils.rm_f(agent.memory_path)
+      rebuilt = service.rebuild_agent_memory(agent.key)
+      assert(rebuilt[:event_count].positive?, "expected memory rebuild endpoint to write events")
+      assert(File.exist?(agent.memory_path), "expected memory rebuild endpoint to create memory jsonl")
+    ensure
+      replace_constant(HQ, :LOG_FILE, old_log_file) if old_log_file
     end
   end
 
