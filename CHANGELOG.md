@@ -4,6 +4,26 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.7.1 - 2026-07-05
+
+### Notable Releases
+
+- Add configurable harness model and effort catalogs in `hq.yml`, with Remote UI
+  editing and persisted custom suggestions merged into discovered harness
+  catalogs.
+- Add Remote UI harness catalog refresh controls and detailed harness readiness
+  rows for model, effort, command, source, path, and auth-provider inspection.
+- Update Claude model suggestions to use Anthropic documentation aliases and
+  remove Tycho-only convenience aliases.
+
+### Others
+
+- Add `tycho debug claude` diagnostics, including a managed-agent path with
+  `--run-agent`, for comparing Claude auth status with real Tycho agent runs.
+- Clear Ruby/Bundler loader environment variables before spawning external
+  harness commands so source-checkout Bundler state does not leak into Claude or
+  wrapper processes.
+
 ## 0.7.0 - 2026-07-04
 
 ### Notable Releases
