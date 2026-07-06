@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "utf8_text"
+
 module HQ
   module LogFileReader
     module_function
@@ -32,9 +34,7 @@ module HQ
     end
 
     def normalize_text(data)
-      data.to_s
-          .force_encoding(Encoding::UTF_8)
-          .encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: "\uFFFD")
+      Utf8Text.normalize(data)
     end
   end
 end

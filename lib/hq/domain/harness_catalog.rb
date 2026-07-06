@@ -5,6 +5,7 @@ require "open3"
 require "timeout"
 
 require_relative "../harness_registry"
+require_relative "../utf8_text"
 require_relative "executable_resolver"
 
 module HQ
@@ -168,7 +169,7 @@ module HQ
       end
       return nil unless status.success?
 
-      JSON.parse(out)
+      JSON.parse(Utf8Text.normalize(out, replacement: "?"))
     rescue StandardError
       nil
     end
@@ -195,7 +196,7 @@ module HQ
 
       out.lines.filter_map do |line|
         text = line.strip
-        next if text.empty? || text.match?(/\A(provider|name)\b/i)
+        next if text.empty? || text.start_with?("─", "-") || text.match?(/\A(provider|name)\b/i)
 
         text.split(/\s+/).first
       end.uniq
@@ -209,7 +210,7 @@ module HQ
           out, _err, status = Open3.capture3(*command)
         end
       end
-      status.success? ? out : ""
+      status.success? ? Utf8Text.normalize(out, replacement: "?") : ""
     rescue StandardError
       ""
     end

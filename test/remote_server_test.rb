@@ -5,6 +5,7 @@ require "fileutils"
 require "stringio"
 require "rbconfig"
 require "base64"
+require "open3"
 
 require_relative "../lib/hq/remote_server"
 require_relative "../lib/hq/serve_command"
@@ -35,6 +36,7 @@ module RemoteServerTest
     assert_remote_harness_catalogs_are_configurable
     assert_remote_setup_refreshes_harness_catalogs
     assert_remote_setup_uses_shared_executable_resolution
+    assert_remote_setup_handles_utf8_harness_output_under_ascii_external
     assert_remote_welcome_onboarding_creates_project
     assert_remote_setup_warns_when_public_url_has_no_token
     assert_remote_server_restart_route_schedules_restart
@@ -1484,6 +1486,46 @@ module RemoteServerTest
         assert(opencode[:reasoning_effort_suggestions].include?("high"),
                "expected OpenCode readiness to expose variant suggestions")
       end
+    end
+  end
+
+  def assert_remote_setup_handles_utf8_harness_output_under_ascii_external
+    with_remote_temp_store do |dir|
+      home = File.join(dir, "home")
+      bin_dir = File.join(dir, "bin")
+      logs_dir = File.join(dir, "logs")
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p([home, bin_dir, logs_dir])
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      write_opencode_with_table_output(File.join(bin_dir, "opencode"))
+
+      script = <<~RUBY
+        require "json"
+        require "hq/remote_server"
+
+        registry = HQ::Registry.new(path: ARGV.fetch(0), system_prompts_path: ARGV.fetch(1))
+        setup = HQ::RemoteService.new(registry: registry).setup
+        body = JSON.pretty_generate(setup: setup)
+        raise "expected OpenCode auth provider in setup payload" unless body.include?("anthropic")
+
+        puts body.bytesize
+      RUBY
+      env = {
+        "LC_ALL" => "C",
+        "LANG" => "C",
+        "HOME" => home,
+        "PATH" => bin_dir,
+        "TYCHO_LOGS_ROOT" => logs_dir,
+        "TYCHO_CLAUDE_BIN" => nil,
+        "TYCHO_CODEX_BIN" => nil,
+        "TYCHO_OPENCODE_BIN" => File.join(bin_dir, "opencode")
+      }
+      out, err, status = Open3.capture3(env, RbConfig.ruby, "-Ilib", "-e", script,
+                                        registry.path, registry.system_prompts_path)
+
+      assert(status.success?,
+             "expected setup payload to serialize under US-ASCII defaults, stdout=#{out.inspect}, stderr=#{err.inspect}")
     end
   end
 
@@ -3735,6 +3777,26 @@ module RemoteServerTest
   def write_test_executable(path)
     FileUtils.mkdir_p(File.dirname(path))
     File.write(path, "#!/bin/sh\nexit 0\n")
+    File.chmod(0o755, path)
+  end
+
+  def write_opencode_with_table_output(path)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, <<~SH)
+      #!/bin/sh
+      if [ "$1" = "models" ]; then
+        printf 'Provider MODEL\\n'
+        printf 'opencode/model-test\\n'
+        exit 0
+      fi
+      if [ "$1" = "auth" ] && [ "$2" = "list" ]; then
+        printf 'Provider Status\\n'
+        printf '\\342\\224\\200\\342\\224\\200\\n'
+        printf 'anthropic logged-in\\n'
+        exit 0
+      fi
+      exit 0
+    SH
     File.chmod(0o755, path)
   end
 
