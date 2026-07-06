@@ -4,6 +4,15 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.7.4 - 2026-07-06
+
+### Bug Fixes
+
+- Launch custom Claude-compatible harnesses directly instead of through a Ruby
+  runner, and move leading `env KEY=value` assignments into the child process
+  environment so native wrappers such as `mairu` are not interpreted as Ruby
+  source files.
+
 ## 0.7.3 - 2026-07-06
 
 ### Bug Fixes
