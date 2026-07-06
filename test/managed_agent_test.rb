@@ -17,6 +17,7 @@ module ManagedAgentTest
     assert_cli_status_finalizes_unpolled_dead_pid
     assert_start_reconciles_session_after_restart
     assert_fallback_summary_uses_assistant_message_not_tool_json
+    assert_utf8_raw_log_captures_memory_under_ascii_default_external
     assert_opencode_fallback_summary_uses_text_event_not_prompt
     assert_structured_output_summary_beats_later_agent_message
     assert_claude_scalar_json_structured_output_normalizes
@@ -435,6 +436,67 @@ module ManagedAgentTest
       assert(summary == "OK",
              "OpenCode fallback summary should prefer text event, got #{summary.inspect}")
     end
+  end
+
+  def assert_utf8_raw_log_captures_memory_under_ascii_default_external
+    old_default_external = Encoding.default_external
+    Encoding.default_external = Encoding::US_ASCII
+
+    Dir.mktmpdir("hq-managed-agent-utf8-log-test") do |dir|
+      log_path = File.join(dir, "utf8.raw.log")
+      started_at = Time.parse("2026-07-05 17:29:13")
+      finished_at = started_at + 30
+      line = JSON.generate(
+        "type" => "item.completed",
+        "item" => {
+          "type" => "agent_message",
+          "text" => "Résumé captured"
+        }
+      )
+      File.binwrite(
+        log_path,
+        [
+          "=== [#{started_at.strftime("%Y-%m-%d %H:%M:%S")}] start ===",
+          "workspace=#{dir}",
+          "prompt=USER:",
+          "Tell me about café highlights.",
+          line
+        ].join("\n") + "\n"
+      )
+
+      run = HQ::ManagedAgent::AgentRun.new(
+        started_at: started_at,
+        finished_at: finished_at,
+        exit_code: 0,
+        status: "succeeded",
+        log_path: log_path,
+        command: "codex test"
+      )
+      agent = HQ::ManagedAgent.new(
+        key: "utf8-log-demo",
+        name: "UTF-8 Log Demo",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "Tell me about café highlights.",
+        agent: "codex",
+        started_at: started_at,
+        finished_at: finished_at,
+        last_exit_code: 0,
+        runs: [run],
+        log_path: log_path
+      )
+
+      summary = agent.build_summary!
+      assert(summary == "Résumé captured", "expected UTF-8 assistant summary, got #{summary.inspect}")
+
+      agent.send(:capture_run_memory!, run)
+      assistant = HQ::AgentMemory.new(agent).events.find { |event| event["type"] == "assistant_message" }
+      assert(assistant && assistant["content"] == "Résumé captured",
+             "expected UTF-8 assistant memory event, got #{assistant.inspect}")
+    end
+  ensure
+    Encoding.default_external = old_default_external if old_default_external
   end
 
   def assert_structured_output_summary_beats_later_agent_message

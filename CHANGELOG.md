@@ -4,6 +4,14 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.7.3 - 2026-07-06
+
+### Bug Fixes
+
+- Read raw agent logs as UTF-8 bytes and write managed-agent memory JSONL as
+  UTF-8, so non-ASCII Codex output still captures assistant messages and run
+  summaries when Ruby's default external encoding is ASCII.
+
 ## 0.7.2 - 2026-07-05
 
 ### Notable Releases

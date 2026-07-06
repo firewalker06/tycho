@@ -9,6 +9,7 @@ require_relative "agent_result_normalizer"
 require_relative "agent_structured_result"
 require_relative "executable_resolver"
 require_relative "../harness_registry"
+require_relative "../log_file_reader"
 require_relative "../parser"
 require_relative "agent_chat_log"
 require_relative "process_liveness"
@@ -956,7 +957,7 @@ module HQ
     def summarize_from_log
       return nil unless File.exist?(@log_path)
 
-      tail = File.readlines(@log_path).last(60).map(&:strip)
+      tail = LogFileReader.tail_lines(@log_path, 60).map(&:strip)
       relevant = tail.reject do |line|
         line.empty? ||
           line.start_with?("===") ||
@@ -1349,7 +1350,7 @@ module HQ
     def last_run_log_lines
       return [] unless File.exist?(@log_path)
 
-      lines = File.readlines(@log_path, chomp: true)
+      lines = LogFileReader.read_lines(@log_path, chomp: true)
       start_index = lines.rindex { |line| line.start_with?("=== [") }
       return [] unless start_index
 
@@ -1413,11 +1414,7 @@ module HQ
     end
 
     def read_log_tail_lines
-      File.open(@log_path, "r") do |file|
-        window = [file.size, 512 * 1024].min
-        file.seek(-window, IO::SEEK_END) if window.positive?
-        file.read.to_s.lines(chomp: true)
-      end
+      LogFileReader.read_tail_window_lines(@log_path, max_bytes: 512 * 1024, chomp: true)
     end
 
     def capture_run_memory!(run)

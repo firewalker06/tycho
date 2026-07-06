@@ -8,6 +8,7 @@ require "socket"
 require "uri"
 
 require_relative "harness_registry"
+require_relative "log_file_reader"
 require_relative "registry"
 require_relative "remote_ui"
 require_relative "terminal_qr"
@@ -1850,7 +1851,7 @@ module HQ
     def file_tail(path, count)
       return [] unless File.file?(path)
 
-      File.readlines(path, chomp: true).last(count).map { |line| redact_log_line(line) }
+      LogFileReader.tail_lines(path, count, chomp: true).map { |line| redact_log_line(line) }
     rescue StandardError
       []
     end
@@ -1874,7 +1875,7 @@ module HQ
     def current_agent_run_lines(agent)
       return [] unless File.exist?(agent.raw_log_path)
 
-      lines = File.readlines(agent.raw_log_path, chomp: true)
+      lines = LogFileReader.read_lines(agent.raw_log_path, chomp: true)
       marker = agent.started_at ? "=== [#{agent.started_at.strftime("%Y-%m-%d %H:%M:%S")}] start ===" : nil
       index = marker ? lines.rindex(marker) : nil
       index ||= lines.rindex { |line| line.start_with?("=== [") }

@@ -6,6 +6,7 @@ require "time"
 
 require_relative "attachment_normalizer"
 require_relative "file_store"
+require_relative "../log_file_reader"
 
 module HQ
   class AgentMemory
@@ -367,7 +368,7 @@ module HQ
 
     def write_events!(events)
       FileUtils.mkdir_p(File.dirname(path))
-      File.open(path, "w") do |file|
+      File.open(path, "w:UTF-8") do |file|
         events.each { |event| file.puts(JSON.generate(event.compact)) }
       end
     end
@@ -377,7 +378,7 @@ module HQ
     def read_events
       return [] unless exists?
 
-      File.readlines(path, chomp: true).filter_map do |line|
+      LogFileReader.read_lines(path, chomp: true).filter_map do |line|
         next if line.to_s.strip.empty?
 
         event = JSON.parse(line)
@@ -391,7 +392,7 @@ module HQ
 
     def append_event!(event)
       FileUtils.mkdir_p(File.dirname(path))
-      File.open(path, "a") { |file| file.puts(JSON.generate(event.compact)) }
+      File.open(path, "a:UTF-8") { |file| file.puts(JSON.generate(event.compact)) }
     rescue StandardError
       nil
     end

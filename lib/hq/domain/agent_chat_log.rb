@@ -3,6 +3,7 @@
 require "time"
 
 require_relative "agent_memory"
+require_relative "../log_file_reader"
 require_relative "../parser"
 
 module HQ
@@ -197,7 +198,7 @@ module HQ
     end
 
     def current_run_lines(raw_path)
-      lines = File.readlines(raw_path, chomp: true)
+      lines = LogFileReader.read_lines(raw_path, chomp: true)
       start_index = lines.rindex { |line| line.start_with?("=== [") }
       return lines unless start_index
 
@@ -315,7 +316,7 @@ module HQ
     def split_raw_log_into_runs(raw_path)
       runs = []
       current = nil
-      File.foreach(raw_path) do |line|
+      LogFileReader.foreach_line(raw_path) do |line|
         if (match = line.match(REBUILD_START_RE))
           runs << current if current
           current = { started_at: Time.parse(match[:ts]), lines: [] }
