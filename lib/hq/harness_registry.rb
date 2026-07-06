@@ -25,7 +25,29 @@ module HQ
       parts
     end
 
+    def resolved_execution(path: ENV.fetch("PATH", ""))
+      parts = resolved_command_parts(path:)
+      env, command = split_env_prefix(parts)
+      { command: command, env: env }
+    end
+
     private
+
+    def split_env_prefix(parts)
+      return [{}, parts] unless parts.first == "env"
+
+      env = {}
+      index = 1
+      while index < parts.length && parts[index].include?("=")
+        key, value = parts[index].split("=", 2)
+        env[key] = value
+        index += 1
+      end
+
+      return [{}, parts] if index >= parts.length
+
+      [env, parts[index..]]
+    end
 
     def executable_index(parts)
       return nil if parts.empty?

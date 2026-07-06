@@ -30,6 +30,7 @@ module ManagedAgentTest
     assert_model_and_reasoning_effort_arguments_apply_to_harnesses
     assert_start_records_missing_harness_without_spawning
     assert_external_process_environment_removes_ruby_loader_state
+    assert_start_spawns_harness_without_ruby_runner_parent
     assert_agent_runner_warns_when_command_cannot_execute
     puts "managed_agent_test: ok"
   end
@@ -840,6 +841,60 @@ module ManagedAgentTest
     assert(env["CUSTOM"] == "1", "expected explicit harness env to be preserved")
   end
 
+  def assert_start_spawns_harness_without_ruby_runner_parent
+    old_harnesses = HQ.custom_harnesses
+    Dir.mktmpdir("hq-direct-harness-test") do |dir|
+      harness = File.join(dir, "direct-harness")
+      File.write(harness, <<~SH)
+        #!/bin/sh
+        parent_args="$(ps -p "$PPID" -o args=)"
+        case "$parent_args" in
+          *" -e "*)
+            echo "ruby-wrapper-parent: $parent_args"
+            exit 42
+            ;;
+          *)
+            echo "direct-parent"
+            exit 0
+            ;;
+        esac
+      SH
+      File.chmod(0o755, harness)
+      HQ.custom_harnesses = [
+        HQ::HarnessConfig.new(
+          key: "direct-wrapper",
+          adapter: "claude",
+          execution_command: ["env", "FOO=bar", harness]
+        )
+      ]
+      agent = HQ::ManagedAgent.new(
+        key: "direct-wrapper-agent",
+        name: "Direct Wrapper Agent",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "System prompt",
+        agent: "direct-wrapper",
+        log_path: File.join(dir, "direct.raw.log")
+      )
+
+      agent.start!
+      30.times do
+        break unless agent.running?
+
+        sleep 0.1
+        agent.poll!
+      end
+      agent.poll!
+
+      log = File.read(agent.log_path)
+      assert(agent.last_exit_code == 0, "expected direct harness to exit cleanly, log: #{log}")
+      assert(log.include?("direct-parent"), "expected harness process not to be parented by ruby -e runner")
+    end
+  ensure
+    HQ.custom_harnesses = old_harnesses if defined?(old_harnesses)
+  end
+
   def assert_start_records_missing_harness_without_spawning
     old_logs_dir = nil
     Dir.mktmpdir("hq-missing-harness-test") do |dir|
@@ -1048,6 +1103,29 @@ module ManagedAgentTest
            "expected custom Claude-compatible wrapper to keep its prefix model and append agent-level override")
     assert(argument_after(wrapper_command, "--effort") == "high",
            "expected custom Claude-compatible wrapper to include --effort")
+
+    HQ.custom_harnesses = [
+      HQ::HarnessConfig.new(
+        key: "env-wrapper",
+        adapter: "claude",
+        execution_command: ["env", "AWS_REGION=us-east-1", "CLAUDE_CODE_USE_BEDROCK=1", "claude-wrapper"]
+      )
+    ]
+    env_wrapper = HQ::ManagedAgent.new(
+      key: "env-wrapper-agent",
+      name: "Env Wrapper Agent",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "System prompt",
+      agent: "env-wrapper",
+      model: "sonnet"
+    )
+    env_execution = env_wrapper.send(:build_command)
+    assert(env_execution[:command].first == "claude-wrapper",
+           "expected custom harness env prefix to be removed from command")
+    assert(env_execution[:env] == { "AWS_REGION" => "us-east-1", "CLAUDE_CODE_USE_BEDROCK" => "1" },
+           "expected custom harness env prefix to become child process environment")
   ensure
     HQ.custom_harnesses = old_harnesses if defined?(old_harnesses)
   end

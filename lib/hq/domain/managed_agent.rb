@@ -351,12 +351,12 @@ module HQ
 
       log_file = File.open(@log_path, "a")
       @pid = spawn(
-        external_process_environment(environment).merge("TYCHO_STATUS_PATH" => status_path),
-        RbConfig.ruby, "-e", agent_runner_script, *command,
+        external_process_environment(environment),
+        *command,
         chdir: @workspace, out: log_file, err: %i[child out], pgroup: true
       )
       log_file.close
-      Process.detach(@pid)
+      monitor_agent_process(@pid, status_path)
       HQ.logger.info("Agent") { "Started #{@key} (pid=#{@pid})" }
       @runs << AgentRun.new(
         started_at: @started_at,
@@ -550,9 +550,16 @@ module HQ
 
     def claude_command_prefix
       custom = HQ.custom_harness(@agent)
-      return custom.resolved_command_parts if custom
+      return custom.resolved_execution.fetch(:command) if custom
 
       [claude_executable]
+    end
+
+    def claude_command_environment
+      custom = HQ.custom_harness(@agent)
+      return custom.resolved_execution.fetch(:env) if custom
+
+      {}
     end
 
     def update!(name:, template_key:, workspace:, prompt:, sandbox_mode: @sandbox_mode, agent: @agent,
@@ -758,6 +765,7 @@ module HQ
         prompt: prompt,
         codex_executable: codex_executable,
         claude_command_prefix: claude_command_prefix,
+        claude_command_environment: claude_command_environment,
         opencode_executable: opencode_executable,
         last_message_file_path: last_message_file_path,
         result_schema_path: AGENT_RESULT_SCHEMA,
@@ -875,6 +883,18 @@ module HQ
         end
         exit(status)
       RUBY
+    end
+
+    def monitor_agent_process(pid, status_path)
+      waiter = Process.detach(pid)
+      Thread.new do
+        status = waiter.value
+        begin
+          File.write(status_path, status.exitstatus.to_i.to_s)
+        rescue StandardError
+          nil
+        end
+      end
     end
 
     def external_process_environment(environment)

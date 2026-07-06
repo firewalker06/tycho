@@ -23,6 +23,7 @@ module RegistryTest
     assert_registry_loads_custom_claude_harnesses
     assert_registry_persists_remote_servers
     assert_custom_harness_resolves_executable_after_env_assignments
+    assert_custom_harness_extracts_env_assignments_for_execution
     assert_registry_rejects_unsupported_custom_harness_adapters
     assert_agent_store_prepends_project_tool_system_prompt
     assert_agent_store_backfills_project_tool_system_prompt
@@ -314,6 +315,28 @@ module RegistryTest
       assert(harness.resolved_command_parts(path: bin_dir) ==
              ["env", "AWS_REGION=us-east-1", executable, "--profile", "demo"],
              "expected custom harness to resolve the command after env assignments")
+    end
+  end
+
+  def assert_custom_harness_extracts_env_assignments_for_execution
+    Dir.mktmpdir("hq-harness-env-test") do |dir|
+      bin_dir = File.join(dir, "bin")
+      FileUtils.mkdir_p(bin_dir)
+      executable = File.join(bin_dir, "wrapped-claude")
+      File.write(executable, "#!/bin/sh\n")
+      File.chmod(0o755, executable)
+
+      harness = HQ::HarnessConfig.new(
+        key: "wrapped",
+        adapter: "claude",
+        execution_command: ["env", "AWS_REGION=us-east-1", "CLAUDE_CODE_USE_BEDROCK=1", "wrapped-claude", "--profile", "demo"]
+      )
+      execution = harness.resolved_execution(path: bin_dir)
+
+      assert(execution[:command] == [executable, "--profile", "demo"],
+             "expected executable command to omit env prefix and assignments")
+      assert(execution[:env] == { "AWS_REGION" => "us-east-1", "CLAUDE_CODE_USE_BEDROCK" => "1" },
+             "expected env prefix assignments to move into execution environment")
     end
   end
 

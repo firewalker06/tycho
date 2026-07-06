@@ -4,6 +4,7 @@ module HQ
   class AgentCommandBuilder
     def initialize(agent:, harness_adapter:, workspace:, sandbox_mode:, model:, reasoning_effort:,
                    session_id:, session_bootstrapped:, prompt:, codex_executable:, claude_command_prefix:,
+                   claude_command_environment: {},
                    opencode_executable:, last_message_file_path:, result_schema_path:, claude_result_schema:)
       @agent = agent
       @harness_adapter = harness_adapter
@@ -16,6 +17,7 @@ module HQ
       @prompt = prompt
       @codex_executable = codex_executable
       @claude_command_prefix = claude_command_prefix
+      @claude_command_environment = claude_command_environment
       @opencode_executable = opencode_executable
       @last_message_file_path = last_message_file_path
       @result_schema_path = result_schema_path
@@ -31,7 +33,12 @@ module HQ
     end
 
     def interactive
-      return build_interactive_claude_like_command(command_prefix: @claude_command_prefix) if claude_like_agent?
+      if claude_like_agent?
+        return build_interactive_claude_like_command(
+          command_prefix: @claude_command_prefix,
+          env: @claude_command_environment
+        )
+      end
       return build_interactive_codex_command if codex_agent?
       return build_interactive_opencode_command if opencode_agent?
 
@@ -76,7 +83,7 @@ module HQ
     end
 
     def build_claude_command
-      build_claude_like_command(command_prefix: @claude_command_prefix)
+      build_claude_like_command(command_prefix: @claude_command_prefix, env: @claude_command_environment)
     end
 
     def build_opencode_command
