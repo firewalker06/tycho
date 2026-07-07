@@ -1294,6 +1294,7 @@ def selected_screen_items
 
       target_agent = nil
       command = nil
+      name_only = false
 
       if @agent_editor.mode == :create
         agent = @agent_store.create_from_template(@agent_editor.project, attrs[:template_key])
@@ -1321,14 +1322,22 @@ def selected_screen_items
         @agents.unshift(agent)
         target_agent = agent
       else
-        @agent_editor.agent.update!(**attrs)
-        target_agent = @agent_editor.agent
+        agent = @agent_editor.agent
+        other_keys = %i[template_key workspace prompt sandbox_mode agent model reasoning_effort]
+        if other_keys.all? { |k| attrs[k].to_s == agent.public_send(k).to_s }
+          agent.rename!(attrs[:name])
+          target_agent = agent
+          name_only = true
+        else
+          agent.update!(**attrs)
+          target_agent = agent
+        end
       end
 
-      @agents = sort_agents(@agents)
+      @agents = sort_agents(@agents) unless name_only
       @selected[:agents] = @agents.index(target_agent) || 0
       save_agents!
-      rebuild_agent_index!
+      rebuild_agent_index! unless name_only
 
       if @agent_editor.mode == :create
         @screen = :agents

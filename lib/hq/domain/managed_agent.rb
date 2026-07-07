@@ -562,6 +562,10 @@ module HQ
       {}
     end
 
+    def rename!(name)
+      @name = name
+    end
+
     def update!(name:, template_key:, workspace:, prompt:, sandbox_mode: @sandbox_mode, agent: @agent,
                 model: @model, reasoning_effort: @reasoning_effort)
       @name = name

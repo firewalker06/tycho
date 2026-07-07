@@ -1488,8 +1488,14 @@ module HQ
       raise Error.new("Agent is running", status: 409) if target.running?
 
       project = find_project!(target.project_key)
-      target.update!(**agent_attrs(target, attrs, project: project, creating: false))
-      @agent_store.ensure_project_context_prompt!(target, project)
+      resolved = agent_attrs(target, attrs, project: project, creating: false)
+      other_keys = %i[template_key workspace prompt sandbox_mode agent model reasoning_effort]
+      if other_keys.all? { |k| resolved[k].to_s == target.public_send(k).to_s }
+        target.rename!(resolved[:name])
+      else
+        target.update!(**resolved)
+        @agent_store.ensure_project_context_prompt!(target, project)
+      end
       save_agent(target)
       agent_payload(target)
     end
