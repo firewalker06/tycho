@@ -420,6 +420,16 @@ module RemoteServerTest
       File.write(File.join(workspace, "docs/notes.md"), "# Notes\n\n- Check attachment viewer\n")
       file_uri_notes_path = File.join(workspace, "docs/file-uri-notes.md")
       File.write(file_uri_notes_path, "# File URI Notes\n\n- Render this from a file URL\n")
+      ruby_path = File.join(workspace, "scripts/runner.rb")
+      js_path = File.join(workspace, "web/app.js")
+      extensionless_path = File.join(workspace, "docs/README")
+      binary_text_path = File.join(workspace, "docs/payload.txt")
+      FileUtils.mkdir_p(File.dirname(ruby_path))
+      FileUtils.mkdir_p(File.dirname(js_path))
+      File.write(ruby_path, "puts \"plain Ruby attachment\"\n")
+      File.write(js_path, "console.log(\"plain JavaScript attachment\");\n")
+      File.write(extensionless_path, "Plain extensionless attachment\n")
+      File.binwrite(binary_text_path, "\x00\x01tycho-binary-payload".b)
       image_path = File.join(workspace, "tmp/screenshot.png")
       image_bytes = Base64.decode64(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
@@ -467,17 +477,53 @@ module RemoteServerTest
         },
         created_at: Time.parse("2026-04-05 17:59:00")
       )
+      memory.append_attachment!(
+        {
+          "kind" => "document",
+          "title" => "Ruby runner",
+          "url" => ruby_path
+        },
+        created_at: Time.parse("2026-04-05 17:59:10")
+      )
+      memory.append_attachment!(
+        {
+          "kind" => "document",
+          "title" => "JavaScript app",
+          "url" => js_path
+        },
+        created_at: Time.parse("2026-04-05 17:59:15")
+      )
+      memory.append_attachment!(
+        {
+          "kind" => "document",
+          "title" => "Extensionless notes",
+          "url" => extensionless_path
+        },
+        created_at: Time.parse("2026-04-05 17:59:20")
+      )
+      memory.append_attachment!(
+        {
+          "kind" => "document",
+          "title" => "Binary text name",
+          "url" => binary_text_path
+        },
+        created_at: Time.parse("2026-04-05 17:59:30")
+      )
 
       payload = service.agent(created[:key])
       attachments = payload[:attachments]
       assert(attachments.map { |item| item["title"] } == [
+        "Binary text name",
+        "Extensionless notes",
+        "JavaScript app",
+        "Ruby runner",
         "UI screenshot",
         "File URI notes",
         "Markdown notes",
         "Release checklist",
         "Implementation PR"
       ], "expected Remote agent payload to expose newest attachments first")
-      assert(attachments.map { |item| item["type"] } == %w[file file file file link],
+      assert(attachments.map { |item| item["type"] } == %w[file file file file file file file file link],
              "expected Remote agent payload to expose normalized file/link attachments")
       assert(attachments.all? { |item| item["id"].to_s.length == 20 },
              "expected Remote agent payload to expose stable attachment IDs")
@@ -490,10 +536,28 @@ module RemoteServerTest
       assert(attachments.find { |item| item["title"] == "Implementation PR" }["description"] == "Generated implementation PR.",
              "expected Remote agent payload to include attachment descriptions")
       list_payload = service.agents.find { |item| item[:key] == created[:key] }
-      assert(list_payload[:attachments].length == 5,
+      assert(list_payload[:attachments].length == 9,
              "expected Remote agents list payload to include attachments for detail rendering")
       assert(!list_payload[:updated_at].to_s.empty?,
              "expected Remote agents list payload to expose last update time for compact list metadata")
+      ruby_attachment = service.attachment(attachments.find { |item| item["title"] == "Ruby runner" }["id"])
+      assert(ruby_attachment["format"] == "text", "expected Ruby source attachments to render as plain text")
+      assert(ruby_attachment["content"].include?("plain Ruby attachment"),
+             "expected Ruby source attachment viewer content")
+      js_attachment = service.attachment(attachments.find { |item| item["title"] == "JavaScript app" }["id"])
+      assert(js_attachment["format"] == "text", "expected JavaScript source attachments to render as plain text")
+      assert(js_attachment["content"].include?("plain JavaScript attachment"),
+             "expected JavaScript source attachment viewer content")
+      extensionless_attachment = service.attachment(attachments.find { |item| item["title"] == "Extensionless notes" }["id"])
+      assert(extensionless_attachment["format"] == "text",
+             "expected extensionless plain text attachments to render as plain text")
+      assert(extensionless_attachment["content"].include?("Plain extensionless attachment"),
+             "expected extensionless plain text attachment viewer content")
+      binary_text_attachment = service.attachment(attachments.find { |item| item["title"] == "Binary text name" }["id"])
+      assert(binary_text_attachment["format"] == "binary",
+             "expected binary attachments to stay download-only even with a text extension")
+      assert(!binary_text_attachment.key?("content"),
+             "expected binary attachments not to expose preview content")
       plain_attachment = service.attachment(attachments.find { |item| item["title"] == "Release checklist" }["id"])
       assert(plain_attachment["format"] == "text", "expected txt documents to render as plain text")
       assert(plain_attachment["content"].include?("Plain release checklist"),
@@ -2334,6 +2398,8 @@ module RemoteServerTest
            "expected Summary attachments to render as block rows")
     assert(css[:body].include?(".attachment-text-viewer"), "expected Attachment detail to style plain text")
     assert(css[:body].include?(".attachment-image-viewer"), "expected Attachment detail to style image previews")
+    assert(css[:body].include?(".code-viewer") && css[:body].include?(".code-line::before"),
+           "expected Attachment detail to style syntax-highlighted text previews with line numbers")
     assert(css[:body].include?(".agent-attachment-shell"),
            "expected Agent detail to replace the conversation with an attachment viewer")
     assert(!css[:body].include?(".agent-view-switch"),
@@ -3232,8 +3298,12 @@ module RemoteServerTest
            "expected Agent summary markdown to use focused page styling")
     assert(js[:body].include?("function renderMarkdownRoute"),
            "expected markdown parser load completion to re-render active markdown routes")
-    assert(!js[:body].include?("CODE_LANGUAGE_BY_EXTENSION"),
-           "expected syntax metadata inference to remain out of the attachment viewer")
+    assert(js[:body].include?("CODE_LANGUAGE_BY_EXTENSION"),
+           "expected text attachments to infer syntax languages from file extensions")
+    assert(js[:body].include?("function renderCodeAttachment"),
+           "expected text attachments to render with the code attachment viewer")
+    assert(js[:body].include?("https://cdn.jsdelivr.net/npm/prismjs@"),
+           "expected code highlighting to lazy-load Prism from a pinned CDN URL")
     assert(js[:body].include?("https://cdn.jsdelivr.net/npm/marked@"),
            "expected markdown rendering to lazy-load marked from a pinned CDN URL")
     assert(js[:body].include?("https://cdn.jsdelivr.net/npm/dompurify@"),

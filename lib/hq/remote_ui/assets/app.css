@@ -3159,6 +3159,106 @@ select {
   white-space: pre-wrap;
 }
 
+.code-viewer {
+  counter-reset: code-line;
+  min-width: 0;
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, var(--panel-soft));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 86%, black);
+  padding: 0;
+  color: var(--text);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.code-viewer code {
+  display: block;
+  min-width: max-content;
+  padding: 10px 0;
+}
+
+.code-line {
+  display: block;
+  min-height: 1.55em;
+  padding-right: 14px;
+}
+
+.code-line::before {
+  counter-increment: code-line;
+  content: counter(code-line);
+  display: inline-block;
+  position: sticky;
+  left: 0;
+  width: 4ch;
+  margin-right: 12px;
+  border-right: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  background: color-mix(in srgb, var(--bg) 91%, black);
+  color: var(--muted);
+  text-align: right;
+  padding: 0 10px 0 6px;
+  user-select: none;
+}
+
+.code-viewer .token.comment,
+.code-viewer .token.prolog,
+.code-viewer .token.doctype,
+.code-viewer .token.cdata {
+  color: var(--muted);
+}
+
+.code-viewer .token.punctuation {
+  color: color-mix(in srgb, var(--text) 78%, var(--muted));
+}
+
+.code-viewer .token.property,
+.code-viewer .token.tag,
+.code-viewer .token.constant,
+.code-viewer .token.symbol,
+.code-viewer .token.deleted {
+  color: var(--pink);
+}
+
+.code-viewer .token.boolean,
+.code-viewer .token.number {
+  color: var(--yellow);
+}
+
+.code-viewer .token.selector,
+.code-viewer .token.attr-name,
+.code-viewer .token.string,
+.code-viewer .token.char,
+.code-viewer .token.builtin,
+.code-viewer .token.inserted {
+  color: var(--ok);
+}
+
+.code-viewer .token.operator,
+.code-viewer .token.entity,
+.code-viewer .token.url,
+.code-viewer .token.variable {
+  color: var(--info);
+}
+
+.code-viewer .token.atrule,
+.code-viewer .token.attr-value,
+.code-viewer .token.function,
+.code-viewer .token.class-name {
+  color: var(--accent);
+}
+
+.code-viewer .token.keyword {
+  color: var(--accent);
+}
+
+.code-viewer .token.regex,
+.code-viewer .token.important {
+  color: var(--warning);
+}
+
 .agent-summary-markdown-viewer,
 .agent-summary-fallback {
   max-width: 72ch;

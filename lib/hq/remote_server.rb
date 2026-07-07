@@ -730,6 +730,7 @@ module HQ
 
   class RemoteService
     ATTACHMENT_CONTENT_LIMIT = 512 * 1024
+    ATTACHMENT_TEXT_SNIFF_LIMIT = 64 * 1024
     IMAGE_CONTENT_TYPES = {
       ".gif" => "image/gif",
       ".heic" => "image/heic",
@@ -2390,7 +2391,7 @@ module HQ
       payload["id"] = attachment_id(agent, attachment)
       payload["agent_key"] = agent.key
       payload["type"] = AttachmentNormalizer.link_attachment?(payload) ? "link" : "file"
-      payload["format"] = attachment_format(payload)
+      payload["format"] = attachment_format(payload, workspace: agent.workspace)
       if payload["type"] == "file"
         payload["blob_path"] = "/attachments/#{payload["id"]}/blob"
         attach_file_version_metadata!(payload, agent)
@@ -2437,17 +2438,42 @@ module HQ
       raise Error.new("Attachment not found", status: 404)
     end
 
-    def attachment_format(attachment)
+    def attachment_format(attachment, workspace: nil)
       return "link" if AttachmentNormalizer.link_attachment?(attachment)
 
       target = AttachmentNormalizer.attachment_target(attachment).downcase
       mime_type = attachment["mime_type"].to_s.downcase
       return "image" if mime_type.start_with?("image/") || target.match?(/\.(avif|gif|heic|jpe?g|png|svg|webp)\z/)
+
+      path = attachment_file_path(attachment, workspace) unless workspace.to_s.empty?
+      if path && File.file?(path)
+        plain_text = plain_text_file?(path)
+        return "markdown" if target.match?(/\.(md|markdown)(?:[?#].*)?\z/) && plain_text
+        return plain_text ? "text" : "binary"
+      end
+
       return "markdown" if target.match?(/\.(md|markdown)(?:[?#].*)?\z/)
       return "text" if mime_type.start_with?("text/") ||
+                       mime_type.match?(/\Aapplication\/(json|x-ndjson)\z/) ||
                        target.match?(/\.(csv|json|jsonl|log|txt|tsv)(?:[?#].*)?\z/)
 
       "binary"
+    end
+
+    def plain_text_file?(path)
+      sample = File.open(path, "rb") { |file| file.read(ATTACHMENT_TEXT_SNIFF_LIMIT) }.to_s
+      return true if sample.empty?
+      return false if sample.include?("\x00")
+
+      utf8 = sample.dup.force_encoding(Encoding::UTF_8)
+      return false unless utf8.valid_encoding?
+
+      control_bytes = sample.bytes.count do |byte|
+        byte < 32 && ![9, 10, 12, 13, 27].include?(byte)
+      end
+      control_bytes <= [sample.bytesize / 100, 8].max
+    rescue SystemCallError
+      false
     end
 
     def attachment_file_path(attachment, workspace)
