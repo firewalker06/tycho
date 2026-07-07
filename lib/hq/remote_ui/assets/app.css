@@ -17,11 +17,6 @@
   --accent-contrast: #282a36;
   --shadow: 0 14px 32px rgba(0, 0, 0, 0.32);
   --safe-area-top: env(safe-area-inset-top, 0px);
-  --ipad-header-control-space: 0px;
-}
-
-html.ipad-standalone {
-  --ipad-header-control-space: 60px;
 }
 
 * {
@@ -213,7 +208,7 @@ h3 {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px 10px calc(12px + var(--ipad-header-control-space));
+  padding: 10px 12px;
 }
 
 .header-row > #back-button {

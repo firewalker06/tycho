@@ -2255,14 +2255,6 @@ module RemoteServerTest
     assert(css[:body].include?("color-scheme: dark"), "expected Remote UI CSS to use the Dracula dark scheme")
     assert(css[:body].include?("--safe-area-top: env(safe-area-inset-top, 0px);"),
            "expected Remote UI to reserve iOS top safe-area space")
-    assert(css[:body].include?("--ipad-header-control-space: 0px;"),
-           "expected Remote UI to default iPad standalone control spacing off")
-    assert(css[:body].include?("html.ipad-standalone"),
-           "expected Remote UI to reserve space for iPad standalone window controls")
-    assert(css[:body].include?("--ipad-header-control-space: 60px;"),
-           "expected Remote UI to reserve compact iPad standalone window control spacing")
-    assert(css[:body].include?("padding: 10px 12px 10px calc(12px + var(--ipad-header-control-space));"),
-           "expected header rows to keep content clear of iPad left-side controls")
     assert(css[:body].include?("padding-top: var(--safe-area-top);"),
            "expected Remote UI headers to absorb iOS safe-area top padding")
     assert(css[:body].include?("top: 0;"),
@@ -2995,12 +2987,6 @@ module RemoteServerTest
            "expected the Remote UI to use the Badging API when available")
     assert(js[:body].include?("navigator.clearAppBadge"),
            "expected the Remote UI to clear the PWA app badge when unread agents clear")
-    assert(js[:body].include?("function syncPlatformClasses"),
-           "expected the Remote UI to detect platform display mode classes")
-    assert(js[:body].include?("navigator.standalone === true"),
-           "expected iPad standalone detection to cover Apple home-screen apps")
-    assert(js[:body].include?("ipad-standalone"),
-           "expected iPad standalone detection to toggle the header spacing class")
     assert(js[:body].include?("function toggleUnreadPanel"),
            "expected the Remote UI logo to toggle an agent switcher popup")
     assert(js[:body].include?("function openUnreadPanelFromKeyboard"),
