@@ -2392,7 +2392,9 @@ select {
 .message-group {
   width: calc(100% - 28px);
   margin-right: 28px;
-  overflow: hidden;
+  overflow: visible;
+  border-color: color-mix(in srgb, var(--border) 76%, transparent);
+  box-shadow: none;
 }
 
 .message-group > summary {
@@ -2404,7 +2406,7 @@ select {
   padding: 9px 12px;
   color: var(--muted);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -2435,15 +2437,40 @@ select {
 }
 
 .message-group-body {
-  display: grid;
-  gap: 8px;
-  padding: 0 10px 10px;
+  display: block;
+  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  padding: 0;
 }
 
 .message-group .message {
   width: 100%;
   margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   box-shadow: none;
+  padding: 8px 12px;
+}
+
+.message-group .message + .message {
+  border-top: 1px solid color-mix(in srgb, var(--border) 44%, transparent);
+}
+
+.message-group .message-role {
+  gap: 5px;
+  color: color-mix(in srgb, var(--muted) 82%, transparent);
+  font-size: 11px;
+}
+
+.message-group .message-role .ui-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.message-group .message-content {
+  color: color-mix(in srgb, var(--text) 76%, var(--muted));
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 .message.user {
@@ -2709,6 +2736,44 @@ select {
 
 .summary-message-open {
   justify-self: start;
+}
+
+.turn-completed-message-content {
+  display: block;
+  white-space: normal;
+}
+
+.turn-completed-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  gap: 8px 14px;
+}
+
+.turn-completed-metric {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.turn-completed-metric strong {
+  min-width: 0;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--text) 88%, var(--muted));
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+}
+
+.turn-completed-metric span,
+.turn-completed-empty {
+  color: color-mix(in srgb, var(--muted) 82%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-transform: uppercase;
 }
 
 .summary-attachment-menu {

@@ -37,6 +37,8 @@ module MemoryEntriesTest
     assert_agent_entries
     assert_skill_entries
     assert_structured_output_entries
+    assert_long_capture_summary_is_not_truncated
+    assert_long_rebuild_summary_is_not_truncated
     puts "memory_entries_test: ok"
   end
 
@@ -92,12 +94,29 @@ module MemoryEntriesTest
   def assert_structured_output_entries
     call, result = capture_summaries("structuredoutput")
 
-    # compact_system_summary truncates to 200 chars with a "..." tail; pin
-    # the exact stored string so any change in truncation length is loud.
     expected_call = "StructuredOutput: success — Reviewed demo change. Parser fixtures use synthetic data only. " \
                     "Report written to /tmp/hq-public-review.md and opened for user."
     assert_summary(call, "StructuredOutput", expected_call)
     assert_summary(result, "StructuredOutput", "tool result: Structured output provided successfully")
+  end
+
+  def assert_long_capture_summary_is_not_truncated
+    Dir.mktmpdir("hq-memory-entries-long-capture") do |dir|
+      agent = build_agent(dir, File.join(dir, "agent.raw.log"), Time.now, "long")
+      line = "x" * 260
+      entry = HQ::Parser::SystemEntry.new(type: :tool_call, content: line, tool_name: "Bash")
+      summary = agent.send(:compact_system_summary, entry)
+
+      assert(summary == "Bash: #{line}", "expected capture summary to keep full text, got #{summary.inspect}")
+    end
+  end
+
+  def assert_long_rebuild_summary_is_not_truncated
+    line = "y" * 260
+    entry = HQ::Parser::SystemEntry.new(type: :tool_call, content: line, tool_name: "Bash")
+    summary = HQ::AgentChatLog.new(Object.new).send(:compact_rebuild_summary, entry)
+
+    assert(summary == "Bash: #{line}", "expected rebuild summary to keep full text, got #{summary.inspect}")
   end
 
   # -- helpers --

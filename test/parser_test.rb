@@ -27,6 +27,9 @@ module ParserTest
     assert_opencode_permission_denied_stream
     assert_opencode_resume_stream
     assert_chat_blocks_use_sequence_for_equal_timestamps
+    assert_codex_turn_completed_usage_metadata
+    assert_claude_result_usage_metadata
+    assert_opencode_step_finish_usage_metadata
     puts "parser_test: ok"
   end
 
@@ -175,6 +178,65 @@ module ParserTest
            "expected equal-timestamp blocks to use metadata sequence, got #{blocks.map(&:kind).inspect}")
     assert(blocks.last.metadata["summary_id"] == "summary-2",
            "expected summary metadata to survive chat block composition")
+  end
+
+  def assert_codex_turn_completed_usage_metadata
+    lines = [
+      '{"type":"turn.completed","usage":{"input_tokens":13283428,"cached_input_tokens":12080128,"output_tokens":51480,"reasoning_output_tokens":12370}}'
+    ]
+    _conversation, system = HQ::Parser.parse_stream(lines, agent_type: "codex")
+    usage = system.find { |entry| entry.type == :usage }
+    blocks = HQ::Parser.compose_chat_blocks([], system)
+    summary = blocks.find { |block| block.kind == :summary }
+
+    assert(usage.content.include?("12370 reasoning output"),
+           "expected Codex usage content to include reasoning tokens, got #{usage.content.inspect}")
+    assert(usage.metadata["usage"]["cached_input_tokens"] == 12_080_128,
+           "expected Codex usage metadata to keep full usage payload, got #{usage.metadata.inspect}")
+    assert(summary.metadata["event_type"] == "turn.completed",
+           "expected Codex summary block to retain turn.completed metadata, got #{summary.metadata.inspect}")
+    assert(summary.metadata["usage"]["reasoning_output_tokens"] == 12_370,
+           "expected Codex summary metadata to expose reasoning tokens, got #{summary.metadata.inspect}")
+  end
+
+  def assert_claude_result_usage_metadata
+    lines = [
+      '{"type":"result","subtype":"success","duration_ms":26054,"duration_api_ms":24747,"ttft_ms":19457,"num_turns":2,"total_cost_usd":3.39366625,"usage":{"input_tokens":2,"cache_creation_input_tokens":537245,"cache_read_input_tokens":0,"output_tokens":1435,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}}'
+    ]
+    _conversation, system = HQ::Parser.parse_stream(lines, agent_type: "claude")
+    usage = system.find { |entry| entry.type == :usage }
+    blocks = HQ::Parser.compose_chat_blocks([], system)
+    summary = blocks.find { |block| block.kind == :summary }
+
+    assert(usage.metadata["event_type"] == "result",
+           "expected Claude usage metadata to identify result events, got #{usage.metadata.inspect}")
+    assert(usage.metadata["usage"]["cache_creation_input_tokens"] == 537_245,
+           "expected Claude usage metadata to keep cache creation tokens, got #{usage.metadata.inspect}")
+    assert(usage.metadata["duration_api_ms"] == 24_747,
+           "expected Claude usage metadata to keep API duration, got #{usage.metadata.inspect}")
+    assert(summary.metadata["event_type"] == "result",
+           "expected Claude summary block to retain result metadata, got #{summary.metadata.inspect}")
+    assert(summary.metadata["total_cost_usd"] == 3.39366625,
+           "expected Claude summary metadata to expose total cost, got #{summary.metadata.inspect}")
+  end
+
+  def assert_opencode_step_finish_usage_metadata
+    lines = [
+      '{"type":"step_finish","timestamp":1783439777672,"sessionID":"ses_fixture","part":{"id":"prt_fixture","reason":"tool-calls","type":"step-finish","tokens":{"total":11952,"input":11753,"output":151,"reasoning":48,"cache":{"write":7,"read":11}},"cost":0.00170114}}'
+    ]
+    _conversation, system = HQ::Parser.parse_stream(lines, agent_type: "opencode")
+    usage = system.find { |entry| entry.type == :usage }
+    blocks = HQ::Parser.compose_chat_blocks([], system)
+    summary = blocks.find { |block| block.kind == :summary }
+
+    assert(usage.content.include?("11952 total"),
+           "expected OpenCode usage content to include total tokens, got #{usage.content.inspect}")
+    assert(usage.metadata["event_type"] == "step_finish",
+           "expected OpenCode usage metadata to identify step_finish events, got #{usage.metadata.inspect}")
+    assert(usage.metadata["usage"]["cache_creation_input_tokens"] == 7,
+           "expected OpenCode usage metadata to normalize cache write tokens, got #{usage.metadata.inspect}")
+    assert(summary.metadata["usage"]["reasoning_output_tokens"] == 48,
+           "expected OpenCode summary metadata to expose reasoning tokens, got #{summary.metadata.inspect}")
   end
 
   def parse_fixture(name)

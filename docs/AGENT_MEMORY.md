@@ -71,12 +71,13 @@ raw.log  ──Parser.parse_stream──▶  conversation, system entries
 `SystemEntry`, extracts the first non-empty content line, and prepends
 the tool name:
 
-- `tool_call`: `"<ToolName>: <first line>"` (truncated to 200 chars).
-- `tool_result`: `"tool result: <first line>"` (truncated to 200).
+- `tool_call`: `"<ToolName>: <first line>"`.
+- `tool_result`: `"tool result: <first line>"`.
 
 This is why per-tool body formatters in the parser matter: the *first
 line* of the parser's tool_call body is what becomes the persisted
-summary.
+summary. These stored summary strings are not length-capped; if the
+first line is long, `memory.jsonl` keeps it in full.
 
 ## Memory bootstrap at agent creation
 

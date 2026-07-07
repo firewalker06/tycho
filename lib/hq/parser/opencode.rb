@@ -75,21 +75,45 @@ module HQ
 
         input_tokens = usage&.dig("input_tokens") || usage&.dig("input") || usage&.dig("prompt_tokens")
         output_tokens = usage&.dig("output_tokens") || usage&.dig("output") || usage&.dig("completion_tokens")
+        reasoning_tokens = usage&.dig("reasoning_output_tokens") || usage&.dig("reasoning")
+        total_tokens = usage&.dig("total_tokens") || usage&.dig("total")
+        cache = usage&.dig("cache").is_a?(Hash) ? usage["cache"] : {}
+        cache_write_tokens = usage&.dig("cache_creation_input_tokens") || usage&.dig("cache_write_input_tokens") || cache["write"]
+        cache_read_tokens = usage&.dig("cache_read_input_tokens") || cache["read"]
         cost = event["total_cost_usd"] || event["cost"] || part["cost"] || usage&.dig("cost")
         turns = event["num_turns"] || event["turns"]
         duration = event["duration_ms"] || event["duration"]
 
         parts = []
         parts << "$#{format("%.4f", cost)}" if cost
+        parts << "#{total_tokens} total" if total_tokens
         parts << "#{input_tokens} input" if input_tokens
+        parts << "#{cache_write_tokens} cache write" if cache_write_tokens
+        parts << "#{cache_read_tokens} cache read" if cache_read_tokens
         parts << "#{output_tokens} output" if output_tokens
+        parts << "#{reasoning_tokens} reasoning output" if reasoning_tokens
         parts << "#{turns} turns" if turns
         parts << "#{duration}ms" if duration
         return if parts.empty?
 
+        normalized_usage = usage ? usage.dup : {}
+        normalized_usage["total_tokens"] = total_tokens if total_tokens
+        normalized_usage["input_tokens"] = input_tokens if input_tokens
+        normalized_usage["cache_creation_input_tokens"] = cache_write_tokens if cache_write_tokens
+        normalized_usage["cache_read_input_tokens"] = cache_read_tokens if cache_read_tokens
+        normalized_usage["output_tokens"] = output_tokens if output_tokens
+        normalized_usage["reasoning_output_tokens"] = reasoning_tokens if reasoning_tokens
+
         metadata = event_metadata(event)
+        metadata["event_type"] = event["type"].to_s
+        metadata["reason"] = part["reason"] if part["reason"]
+        metadata["usage"] = normalized_usage unless normalized_usage.empty?
+        metadata["total_tokens"] = total_tokens if total_tokens
         metadata["input_tokens"] = input_tokens if input_tokens
+        metadata["cache_creation_input_tokens"] = cache_write_tokens if cache_write_tokens
+        metadata["cache_read_input_tokens"] = cache_read_tokens if cache_read_tokens
         metadata["output_tokens"] = output_tokens if output_tokens
+        metadata["reasoning_output_tokens"] = reasoning_tokens if reasoning_tokens
         metadata["total_cost_usd"] = cost if cost
         metadata["num_turns"] = turns if turns
         metadata["duration_ms"] = duration if duration

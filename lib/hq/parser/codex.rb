@@ -122,19 +122,27 @@ module HQ
         input_tokens = usage["input_tokens"]
         cached_tokens = usage["cached_input_tokens"]
         output_tokens = usage["output_tokens"]
+        reasoning_tokens = usage["reasoning_output_tokens"]
 
         parts = []
         parts << "#{input_tokens} input" if input_tokens
         parts << "#{cached_tokens} cached" if cached_tokens
         parts << "#{output_tokens} output" if output_tokens
+        parts << "#{reasoning_tokens} reasoning output" if reasoning_tokens
 
         system << SystemEntry.new(
           type: :usage,
           content: "tokens: #{parts.join(", ")}",
           timestamp: Time.now,
           tool_name: nil,
-          metadata: { "output_tokens" => output_tokens, "input_tokens" => input_tokens,
-                      "cached_input_tokens" => cached_tokens }
+          metadata: {
+            "event_type" => "turn.completed",
+            "usage" => usage,
+            "output_tokens" => output_tokens,
+            "input_tokens" => input_tokens,
+            "cached_input_tokens" => cached_tokens,
+            "reasoning_output_tokens" => reasoning_tokens
+          }
         )
       end
 

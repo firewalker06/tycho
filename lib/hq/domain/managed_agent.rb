@@ -1554,18 +1554,18 @@ module HQ
                   else
                     label
                   end
-        truncate_memory_text(summary)
+        memory_summary_text(summary)
       when :tool_result
         first_line = entry.content.to_s.lines.map(&:strip).find { |line| !line.empty? }
-        truncate_memory_text(first_line ? "tool result: #{first_line}" : nil)
+        memory_summary_text(first_line ? "tool result: #{first_line}" : nil)
       end
     end
 
-    def truncate_memory_text(text, limit = 200)
+    def memory_summary_text(text)
       value = text.to_s.strip
       return nil if value.empty?
 
-      value.length > limit ? "#{value[0, limit - 3]}..." : value
+      value
     end
 
     def canonical_json_value(value)

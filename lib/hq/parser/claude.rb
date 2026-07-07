@@ -101,11 +101,24 @@ module HQ
         cost = event["total_cost_usd"]
         output_tokens = usage.is_a?(Hash) ? usage["output_tokens"] : nil
 
-        meta = {}
+        meta = { "event_type" => "result" }
+        meta["subtype"] = event["subtype"] if event["subtype"]
+        meta["is_error"] = event["is_error"] unless event["is_error"].nil?
+        meta["api_error_status"] = event["api_error_status"] if event["api_error_status"]
         meta["total_cost_usd"] = cost if cost
+        meta["usage"] = usage if usage.is_a?(Hash)
+        meta["input_tokens"] = usage["input_tokens"] if usage.is_a?(Hash) && usage["input_tokens"]
+        meta["cache_creation_input_tokens"] = usage["cache_creation_input_tokens"] if usage.is_a?(Hash) && usage["cache_creation_input_tokens"]
+        meta["cache_read_input_tokens"] = usage["cache_read_input_tokens"] if usage.is_a?(Hash) && usage["cache_read_input_tokens"]
         meta["output_tokens"] = output_tokens if output_tokens
         meta["num_turns"] = event["num_turns"] if event["num_turns"]
         meta["duration_ms"] = event["duration_ms"] if event["duration_ms"]
+        meta["duration_api_ms"] = event["duration_api_ms"] if event["duration_api_ms"]
+        meta["ttft_ms"] = event["ttft_ms"] if event["ttft_ms"]
+        meta["ttft_stream_ms"] = event["ttft_stream_ms"] if event["ttft_stream_ms"]
+        meta["time_to_request_ms"] = event["time_to_request_ms"] if event["time_to_request_ms"]
+        meta["terminal_reason"] = event["terminal_reason"] if event["terminal_reason"]
+        meta["stop_reason"] = event["stop_reason"] if event["stop_reason"]
         meta["session_id"] = event["session_id"] if event["session_id"]
 
         summary_parts = []

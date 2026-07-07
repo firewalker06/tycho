@@ -2363,6 +2363,20 @@ module RemoteServerTest
            "expected internal chat messages to render in collapsed groups")
     assert(css[:body].include?(".message-group > summary"),
            "expected collapsed chat groups to expose a summary row")
+    assert(css[:body].include?(".message-group {\n  width: calc(100% - 28px);\n  margin-right: 28px;\n  overflow: visible;"),
+           "expected Agent activity groups to keep copy menus visible outside the unified box")
+    assert(css[:body].include?(".message-group .message + .message"),
+           "expected Agent activity rows to use horizontal separators instead of nested cards")
+    assert(css[:body].include?(".message-group .message-role {\n  gap: 5px;\n  color: color-mix(in srgb, var(--muted) 82%, transparent);"),
+           "expected Agent activity roles to use subtle text")
+    assert(css[:body].include?(".message-group .message-content {\n  color: color-mix(in srgb, var(--text) 76%, var(--muted));\n  font-size: 14px;"),
+           "expected Agent activity rows to use readable subtle text")
+    assert(css[:body].include?(".turn-completed-metrics"),
+           "expected Codex turn completion metrics to have dedicated layout")
+    assert(css[:body].include?(".turn-completed-message-content {\n  display: block;\n  white-space: normal;"),
+           "expected usage metric rows to avoid inherited pre-wrap blank lines")
+    assert(css[:body].include?(".turn-completed-metric strong"),
+           "expected Codex turn completion metrics to style compact values")
     assert(css[:body].include?(".attachment-flyout"), "expected Agent detail to style attachment flyouts")
     assert(css[:body].include?(".attachment-item"), "expected Agent detail attachments to render as rows")
     assert(css[:body].include?(".attachment-main"), "expected Agent detail attachment rows to separate links from actions")
@@ -3354,10 +3368,29 @@ module RemoteServerTest
            "expected stale summary attachment growl copy")
     assert(js[:body].include?("<details class=\"message-group\""),
            "expected Agent detail internal groups to be collapsed by default")
+    assert(js[:body].include?("function renderCodexTurnCompletedContent"),
+           "expected Codex turn completion summaries to render parsed metrics")
+    assert(js[:body].include?("function agentUsageSummaryBlock") &&
+           js[:body].include?('"result"'),
+           "expected Claude result summaries to render parsed metrics")
+    assert(js[:body].include?("function opencodeStepFinishBlock") &&
+           js[:body].include?('"step_finish"'),
+           "expected OpenCode step_finish summaries to render parsed metrics")
+    assert(js[:body].include?("formatCurrencyMetric") &&
+           js[:body].include?("formatDurationMetric"),
+           "expected Claude result metrics to include cost and duration formatting")
+    assert(js[:body].include?("formatCompactMetricNumber"),
+           "expected Codex usage metrics to use compact number formatting")
+    assert(js[:body].include?("codexTurnCompletedCopyText") &&
+           js[:body].include?('`${metric.copyLabel}: ${metric.fullValue}`'),
+           "expected Codex turn completion copy text to include full metric labels")
     assert(js[:body].include?("iconSvg(\"squareUserRound\")"),
            "expected user chat labels to render the square-user-round icon")
     assert(js[:body].include?("iconSvg(\"botMessageSquare\")"),
            "expected assistant chat labels to render the bot-message-square icon")
+    assert(js[:body].include?("checkCheck") &&
+           js[:body].include?('return iconSvg("checkCheck")'),
+           "expected usage completion labels to render the Lucide check-check icon")
     assert(js[:body].include?("iconSvg(\"hammer\")"),
            "expected tool chat labels to render the hammer icon")
     assert(js[:body].include?("function replaceView"), "expected UI JavaScript to centralize view replacement")
@@ -3886,7 +3919,7 @@ module RemoteServerTest
     deadline = Time.now + timeout
     loop do
       payload = service.agent(key)
-      return payload unless payload[:status] == "running"
+      return payload if %w[succeeded failed stopped blocked].include?(payload[:status].to_s)
       raise "expected agent #{key} to finish within #{timeout}s" if Time.now >= deadline
 
       sleep 0.05

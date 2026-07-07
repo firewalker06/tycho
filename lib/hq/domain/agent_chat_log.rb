@@ -416,18 +416,18 @@ module HQ
                   else
                     label
                   end
-        truncate_rebuild_text(summary)
+        rebuild_summary_text(summary)
       when :tool_result
         first_line = entry.content.to_s.lines.map(&:strip).find { |line| !line.empty? }
-        truncate_rebuild_text(first_line ? "tool result: #{first_line}" : nil)
+        rebuild_summary_text(first_line ? "tool result: #{first_line}" : nil)
       end
     end
 
-    def truncate_rebuild_text(text, limit = 200)
+    def rebuild_summary_text(text)
       value = text.to_s.strip
       return nil if value.empty?
 
-      value.length > limit ? "#{value[0, limit - 3]}..." : value
+      value
     end
   end
 end

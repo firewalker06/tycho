@@ -187,7 +187,12 @@ module HQ
       flush_summary = lambda do
         next if summary_group.empty?
 
-        blocks << ChatBlock.new(kind: :summary, role: nil, content: summarize_system_group(summary_group))
+        blocks << ChatBlock.new(
+          kind: :summary,
+          role: nil,
+          content: summarize_system_group(summary_group),
+          metadata: system_summary_metadata(summary_group)
+        )
         summary_group = []
       end
 
@@ -201,6 +206,14 @@ module HQ
             content: entry.content,
             tool_name: entry.tool_name,
             metadata: entry.metadata
+          )
+        when :usage
+          flush_summary.call
+          blocks << ChatBlock.new(
+            kind: :summary,
+            role: nil,
+            content: summarize_system_group([entry]),
+            metadata: system_summary_metadata([entry])
           )
         when :run_summary
           flush_summary.call
@@ -219,6 +232,28 @@ module HQ
 
       flush_summary.call
       blocks
+    end
+
+    def system_summary_metadata(entries)
+      return nil if entries.empty?
+
+      if entries.length == 1
+        entry = entries.first
+        metadata = entry.metadata.is_a?(Hash) ? entry.metadata.dup : {}
+        metadata["summary_entry_type"] = entry.type.to_s
+        return metadata
+      end
+
+      {
+        "summary_entries" => entries.map do |entry|
+          {
+            "type" => entry.type.to_s,
+            "content" => entry.content.to_s,
+            "tool_name" => entry.tool_name,
+            "metadata" => entry.metadata
+          }.compact
+        end
+      }
     end
 
     def summarize_system_group(entries)
