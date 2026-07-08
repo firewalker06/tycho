@@ -3384,6 +3384,8 @@ module RemoteServerTest
     assert(js[:body].include?("codexTurnCompletedCopyText") &&
            js[:body].include?('`${metric.copyLabel}: ${metric.fullValue}`'),
            "expected Codex turn completion copy text to include full metric labels")
+    assert(js[:body].include?("return metrics.filter(Boolean);"),
+           "expected usage summary metrics to discard unavailable optional metrics before copy text rendering")
     assert(js[:body].include?("iconSvg(\"squareUserRound\")"),
            "expected user chat labels to render the square-user-round icon")
     assert(js[:body].include?("iconSvg(\"botMessageSquare\")"),
