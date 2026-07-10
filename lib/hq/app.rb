@@ -1095,7 +1095,7 @@ def selected_screen_items
       return [self, nil] if agent.running?
 
       agent.archive_logs!
-      reconcile_archived_schedule_agent(agent.key)
+      reconcile_archived_schedule_agent(agent)
       @agents.delete(agent)
       save_agents!
       rebuild_agent_index!
@@ -1108,8 +1108,8 @@ def selected_screen_items
       [self, nil]
     end
 
-    def reconcile_archived_schedule_agent(agent_key)
-      Scheduler.new(registry: @registry).reconcile_archived_agent!(agent_key)
+    def reconcile_archived_schedule_agent(agent)
+      Scheduler.new(registry: @registry).reconcile_archived_agent!(agent.key, archived_agent: agent)
     rescue StandardError
       false
     end
@@ -1195,7 +1195,7 @@ def selected_screen_items
       destination = project.archive_logs!
       @agents_by_project[project.key].each do |agent|
         agent.archive_logs!
-        reconcile_archived_schedule_agent(agent.key)
+        reconcile_archived_schedule_agent(agent)
       end
       @agents.reject! { |agent| agent.project_key == project.key }
       save_agents!
@@ -1450,6 +1450,8 @@ def selected_screen_items
     end
 
     def mark_agent_unread_if_needed(agent)
+      return if agent.respond_to?(:no_action_needed?) && agent.no_action_needed?
+
       if agent_chat_visible_for?(agent)
         agent.mark_read!
       else

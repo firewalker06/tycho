@@ -288,7 +288,7 @@ module HQ
           inner_width = [dialog_width - 4, 10].max
 
           title = delete_dialog_title_style.render("Delete agent?")
-          question = "Are you sure you want to delete #{agent.name}?"
+          question = "Are you sure you want to delete #{agent_display_name(agent)}?"
           excerpt_lines = @delete_confirm.excerpt.lines.map(&:chomp).map do |line|
             Bubbles::ANSI.cut_string(line, 0, inner_width)
           end
@@ -362,7 +362,7 @@ module HQ
           inner_width = [dialog_width - 4, 10].max
 
           title = delete_dialog_title_style.render("Agent cloned")
-          question = "Archive #{old_agent.name} now?"
+          question = "Archive #{agent_display_name(old_agent)} now?"
           summary_lines = @clone_confirm.summary.lines.map(&:chomp).map do |line|
             Bubbles::ANSI.cut_string(line, 0, inner_width)
           end
@@ -379,7 +379,7 @@ module HQ
             :left,
             title,
             "",
-            "Created #{new_agent.name} with fresh logs.",
+            "Created #{agent_display_name(new_agent)} with fresh logs.",
             question,
             "",
             summary_block,
@@ -454,7 +454,7 @@ module HQ
 
           body = sections.compact.join("\n")
           {
-            title: "#{project_label} #{Styles::MARKERS[:cursor]} #{icon_label(:agent, agent)}",
+            title: "#{project_label} #{Styles::MARKERS[:cursor]} #{icon_label(agent_icon_key(agent), agent_display_name(agent))}",
             body: body
           }
         end
@@ -536,6 +536,14 @@ module HQ
           [max_inner_lines - 2, 1].max
         end
 
+        def agent_display_name(agent)
+          agent.respond_to?(:display_name) ? agent.display_name.to_s : agent.name.to_s
+        end
+
+        def agent_icon_key(agent)
+          agent.respond_to?(:scheduled?) && agent.scheduled? ? :schedule : :agent
+        end
+
         def agent_list_items(max_lines: nil)
           width = list_content_width
           return empty_agent_list_items(width) if @agents.empty?
@@ -554,7 +562,7 @@ module HQ
             selected = index == @selected[:agents]
             status_icon = styled_agent_status_icon(agent.status, spinner: true)
             name_budget = [width - 6, 1].max
-            label = icon_label(:agent, truncate(agent.name.to_s, name_budget))
+            label = icon_label(agent_icon_key(agent), truncate(agent_display_name(agent), name_budget))
             cursor = selected ? Styles::MARKERS[:cursor] : " "
             unread_marker = agent.unread? ? Styles::MARKERS[:unread] : " "
             row = " #{cursor}#{unread_marker} #{status_icon} #{label}"
@@ -928,7 +936,7 @@ module HQ
         def detail_hero_block(agent, project)
           width = detail_content_width
           lines = []
-          name_line = "#{Styles::ICONS[:agent]}  #{agent.name}"
+          name_line = "#{Styles::ICONS[agent_icon_key(agent)]}  #{agent_display_name(agent)}"
           status = styled_agent_status(agent.status, spinner: true)
           status_width = visible_width(status)
           name_budget = [width - status_width - 2, 10].max
@@ -1188,7 +1196,7 @@ module HQ
           lines = []
           status = styled_agent_status(agent.status, spinner: true)
           status_width = visible_width(status)
-          name_line = "#{Styles::ICONS[:agent]}  #{agent.name}"
+          name_line = "#{Styles::ICONS[agent_icon_key(agent)]}  #{agent_display_name(agent)}"
           width = detail_content_width
           name_budget = [width - status_width - 2, 10].max
           name_line = truncate_display(name_line, name_budget)

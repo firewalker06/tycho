@@ -67,15 +67,9 @@ module HQ
       was_paused = state.paused?
       state.mark_scheduled!
       state.next_due_at = schedule.next_due_after(now)
-      if was_stopped
-        agents = load_agents
-        retire_previous_session!(schedule, state, agents, now:)
-        publish("schedule.resumed", schedule, state, reason: "stopped")
-        persist(agents, states, dry_run: false)
-        return { status: :resumed, schedule: schedule_payload(schedule, state) }
-      end
-
-      publish("schedule.resumed", schedule, state, reason: was_paused ? "paused" : "manual")
+      state.resumed_at = now if was_stopped || was_paused
+      reason = was_stopped ? "stopped" : (was_paused ? "paused" : "manual")
+      publish("schedule.resumed", schedule, state, reason: reason)
       store.save(states)
       { status: :resumed, schedule: schedule_payload(schedule, state) }
     end
@@ -90,7 +84,7 @@ module HQ
       result
     end
 
-    def reconcile_archived_agent!(agent_key, now: Time.now)
+    def reconcile_archived_agent!(agent_key, archived_agent: nil, now: Time.now)
       key = agent_key.to_s
       return false if key.empty?
 
@@ -101,6 +95,7 @@ module HQ
         state = store.state_for(states, schedule.key)
         next unless state.last_target_key.to_s == key
 
+        preserve_archived_agent_system_message!(schedule, archived_agent)
         reconcile_archived_agent_state!(schedule, state, key, now:)
         changed = true
       end
@@ -121,12 +116,6 @@ module HQ
         ensure_next_due!(schedule, state, now:)
         next unless runnable?(schedule, state)
         next unless state.next_due_at && state.next_due_at <= now
-
-        if missed_due?(state, now) && schedule.missed_policy == "skip_missed"
-          skip_schedule(schedule, state, now:, reason: "missed")
-          totals[:skipped] += 1
-          next
-        end
 
         result = dispatch_schedule(schedule, state, agents, now:, dry_run:)
         totals[result.fetch(:status)] += 1 if totals.key?(result.fetch(:status))
@@ -160,6 +149,7 @@ module HQ
         stopped: state.stopped?,
         project_key: schedule.project_key,
         agent_name: schedule.agent_name,
+        system_message: schedule.system_message,
         cron: schedule.cron,
         timezone: schedule.timezone,
         message_source: schedule.message_source,
@@ -194,18 +184,17 @@ module HQ
     end
 
     def runnable?(schedule, state)
-      schedule.enabled? && state.scheduled?
-    end
-
-    def missed_due?(state, now)
-      state.next_due_at && state.next_due_at < now - MISSED_GRACE_SECONDS
+      state.scheduled?
     end
 
     def dispatch_schedule(schedule, state, agents, now:, dry_run: false)
       target = last_agent(state, agents)
       running = target&.running?
-      if running && schedule.overlap_policy != "parallel"
+      if running
         return handle_overlap(schedule, state, now:, dry_run:)
+      end
+      if target && agent_needs_operator?(target)
+        return hold_schedule_for_operator(schedule, state, target, now:)
       end
       if interactive_scheduled_session?(schedule, state, target)
         return skip_schedule_result(schedule, state, now:, reason: "interactive")
@@ -218,22 +207,15 @@ module HQ
         }
       end
 
-      archive_previous_agent!(schedule, state, agents) unless running
       message = schedule.message_text.to_s.strip
       raise ScheduleRegistry::Error, "Schedule #{schedule.key.inspect} has empty message" if message.empty?
 
-      project = project_for(schedule)
-      agent = @agent_store.create_scheduled(
-        project,
-        schedule_key: schedule.key,
-        name: schedule.agent_name,
-        message: message,
-        existing_agents: agents
-      )
-      agent.start!
-      agents.unshift(agent)
-
+      agent = target || build_scheduled_agent(schedule, agents)
       due_at = state.next_due_at || now
+      @agent_store.add_scheduled_message!(agent, schedule_key: schedule.key, message: message, due_at: due_at)
+      agent.start!
+      agents.unshift(agent) unless target
+
       state.last_due_at = due_at
       state.last_started_at = agent.started_at || now
       state.last_finished_at = nil
@@ -242,6 +224,7 @@ module HQ
       state.last_target_kind = "agent"
       state.last_target_key = agent.key
       state.next_due_at = schedule.next_due_after(now)
+      state.resumed_at = nil
       state.run_count = state.run_count.to_i + 1
       publish("schedule.started", schedule, state, agent_key: agent.key)
 
@@ -265,19 +248,22 @@ module HQ
     end
 
     def handle_overlap(schedule, state, now:, dry_run:)
-      case schedule.overlap_policy
-      when "queue"
-        state.last_status = "queued"
-        publish("schedule.skipped", schedule, state, reason: "queued")
-        { status: :queued, schedule: schedule_payload(schedule, state) }
-      else
-        skip_schedule(schedule, state, now:, reason: "overlap")
-        { status: :skipped, schedule: schedule_payload(schedule, state) }
-      end
+      skip_schedule(schedule, state, now:, reason: "overlap")
+      { status: :skipped, schedule: schedule_payload(schedule, state) }
     end
 
     def skip_schedule_result(schedule, state, now:, reason:)
       skip_schedule(schedule, state, now:, reason:)
+      { status: :skipped, schedule: schedule_payload(schedule, state) }
+    end
+
+    def hold_schedule_for_operator(schedule, state, agent, now:)
+      state.last_status = agent.status
+      state.last_error = agent.last_summary
+      state.last_finished_at ||= agent.finished_at || now
+      state.mark_stopped!(now:)
+      notify_schedule_input_required(schedule, state, agent, now:)
+      publish("schedule.stopped", schedule, state, agent_key: agent.key, reason: "input_required")
       { status: :skipped, schedule: schedule_payload(schedule, state) }
     end
 
@@ -290,18 +276,15 @@ module HQ
       publish("schedule.skipped", schedule, state, reason:)
     end
 
-    def archive_previous_agent!(schedule, state, agents)
-      return unless schedule.archive_previous_agent?
-      return if state.last_target_key.to_s.empty?
-
-      target = agents.find { |agent| agent.key == state.last_target_key }
-      return unless target
-      return if target.running?
-
-      archive_path = target.archive_logs!
-      agents.reject! { |agent| agent.key == target.key }
-      state.previous_target_key = target.key
-      publish("schedule.agent_archived", schedule, state, agent_key: target.key, archive_path:)
+    def build_scheduled_agent(schedule, agents)
+      project = project_for(schedule)
+      @agent_store.create_scheduled(
+        project,
+        schedule_key: schedule.key,
+        name: schedule.agent_name,
+        system_message: schedule.system_message,
+        existing_agents: agents
+      )
     end
 
     def reconcile_archived_agent_state!(schedule, state, agent_key, now:)
@@ -316,24 +299,13 @@ module HQ
               reason: "manual_archive")
     end
 
-    def retire_previous_session!(schedule, state, agents, now:)
-      return if state.last_target_key.to_s.empty?
+    def preserve_archived_agent_system_message!(schedule, archived_agent)
+      return false unless archived_agent
+      return false unless schedule.system_message.to_s.strip.empty?
 
-      target = agents.find { |agent| agent.key == state.last_target_key }
-      return unless target
-
-      target.retire_for_archive! if target.respond_to?(:retire_for_archive!)
-      archive_path = target.archive_logs!
-      agents.reject! { |agent| agent.key == target.key }
-      state.previous_target_key = target.key
-      state.last_target_key = nil
-      state.last_target_kind = nil
-      state.last_finished_at ||= now
-      publish("schedule.agent_archived", schedule, state,
-              agent_key: target.key,
-              target_key: target.key,
-              archive_path: archive_path,
-              reason: "resume_stopped_schedule")
+      schedule_registry.persist_system_message(schedule.key, archived_agent.prompt)
+    rescue ScheduleRegistry::Error
+      false
     end
 
     def last_agent(state, agents)
@@ -345,13 +317,18 @@ module HQ
     def interactive_scheduled_session?(schedule, state, agent)
       return false unless schedule.archive_previous_agent?
       return false unless agent
-      return false unless state.last_started_at
+      boundary = [state.last_started_at, state.resumed_at].compact.max
+      return false unless boundary
 
       !agent.latest_user_message_after(
-        state.last_started_at,
+        boundary,
         ignored_metadata: { "scheduled_prompt" => true },
         inclusive: true
       ).to_s.strip.empty?
+    end
+
+    def agent_needs_operator?(agent)
+      (agent.status == "awaiting-input" && agent.latest_inquiry) || agent.status == "blocked"
     end
 
     def reconcile_completed_runs!(schedules, states, agents, now:)
@@ -371,6 +348,8 @@ module HQ
         state.last_finished_at = agent.finished_at || now
         if agent.status == "succeeded"
           handle_success(schedule, state, agent, now:)
+        elsif agent_needs_operator?(agent)
+          handle_input_required(schedule, state, agent, now:)
         else
           handle_failure(schedule, state, agent, now:)
         end
@@ -379,8 +358,14 @@ module HQ
 
     def handle_success(schedule, state, agent, now:)
       recovering = !!state.failure_started_at
-      state.last_status = "succeeded"
+      no_action = agent.no_action_needed?
+      state.last_status = no_action ? "no_action_needed" : "succeeded"
       state.last_error = nil
+      if no_action
+        state.failure_started_at = nil
+        publish("schedule.completed", schedule, state, agent_key: agent.key, status: agent.effective_status)
+        return
+      end
       if recovering
         notify_schedule_recovery(schedule, state, agent, now:)
         state.recovery_notified_at = now
@@ -392,6 +377,15 @@ module HQ
         state.first_success_notified_at = now
       end
       publish("schedule.completed", schedule, state, agent_key: agent.key, status: agent.status)
+    end
+
+    def handle_input_required(schedule, state, agent, now:)
+      state.last_status = agent.status
+      state.last_error = agent.last_summary
+      state.failure_started_at ||= now
+      state.mark_stopped!(now:)
+      notify_schedule_input_required(schedule, state, agent, now:)
+      publish("schedule.stopped", schedule, state, agent_key: agent.key, reason: "input_required")
     end
 
     def handle_failure(schedule, state, agent, now:)
@@ -417,6 +411,23 @@ module HQ
         body: "#{schedule.name}: #{error || agent&.last_summary || state.last_error || "failed"}. Schedule stopped.",
         tag: "hq:schedule:#{schedule.key}:failure",
         url: agent ? "/#agent/#{agent.key}" : "/#setup"
+      }
+      send_schedule_push(id, payload, urgency: "high", ttl: 3600)
+    end
+
+    def notify_schedule_input_required(schedule, state, agent, now:)
+      id = [
+        "schedule",
+        schedule.key,
+        "input-required",
+        state.last_target_key,
+        state.last_finished_at&.iso8601 || now.iso8601
+      ].join(":")
+      payload = {
+        title: "Schedule needs input",
+        body: "#{schedule.name}: #{agent.last_summary || state.last_error || "waiting for operator input"}. Schedule stopped.",
+        tag: "hq:schedule:#{schedule.key}:input-required",
+        url: "/#agent/#{agent.key}"
       }
       send_schedule_push(id, payload, urgency: "high", ttl: 3600)
     end

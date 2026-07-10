@@ -77,10 +77,13 @@ module HQ
 
     FINAL_OUTPUT_CHECKLIST = "For `summary`, write a concise operator-facing Markdown summary of the outcome, " \
                              "key changes or findings, blockers, and next steps in 1-3 short paragraphs or bullets. " \
+                             "Use `status: no_action_needed` when the requested check completed successfully " \
+                             "and there is nothing for the operator or agent to act on. " \
                              "Before final structured output, check whether this run created or referenced a PR, " \
                              "plan, review, report, markdown file, image, or other durable artifact. " \
                              "If yes, include it in `attachments`: use `type: file` with `path` for local files, " \
                              "or `type: link` with an http(s) `url` for web links."
+    LEGACY_SCHEDULED_NAME_PREFIX = "[Scheduled]"
 
     def self.with_final_output_checklist(prompt)
       text = prompt.to_s.rstrip
@@ -260,6 +263,14 @@ module HQ
       text.empty? ? nil : text
     end
 
+    def self.display_name_for(name, scheduled: false)
+      text = name.to_s
+      return text unless scheduled
+
+      stripped = text.sub(/\A#{Regexp.escape(LEGACY_SCHEDULED_NAME_PREFIX)}\s*/, "")
+      stripped.empty? ? text : stripped
+    end
+
     private_class_method :launch_settings_from_runs, :split_command, :model_from_command,
                          :reasoning_effort_from_command, :command_option_parts,
                          :reasoning_effort_from_config, :unquote_argument,
@@ -300,6 +311,14 @@ module HQ
 
     def unread?
       @unread
+    end
+
+    def scheduled?
+      @template_key.to_s == "scheduled"
+    end
+
+    def display_name
+      self.class.display_name_for(@name, scheduled: scheduled?)
     end
 
     def mark_unread!
@@ -668,6 +687,7 @@ module HQ
       case effective_status
       when "running" then "in progress"
       when "success", "succeeded" then "success"
+      when "no_action_needed" then "no action"
       when "input_required" then "awaiting input"
       when "partial" then "partial"
       when "blocked" then "blocked"
@@ -719,6 +739,10 @@ module HQ
       return cached unless cached.empty?
 
       last_run&.status
+    end
+
+    def no_action_needed?
+      effective_status == "no_action_needed"
     end
 
     def last_activity_at

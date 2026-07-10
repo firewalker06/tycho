@@ -8,7 +8,6 @@ require_relative "../ui/rendering/styles"
 module HQ
   class AgentStore
     PALETTE_SIZE = HQ::UI::Rendering::Styles::CHAT_BORDER_PALETTE.length
-    SCHEDULED_NAME_PREFIX = "[Scheduled]"
     PollEvent = Struct.new(:agent_key, :from_status, :to_status, :run_count, keyword_init: true)
 
     def initialize(projects)
@@ -33,14 +32,16 @@ module HQ
         agent.poll!
         changed = true if before_hash != agent.to_hash
         if was_running && !running_for_poll_event?(agent)
-          agent.mark_unread!
-          changed = true
-          events << PollEvent.new(
-            agent_key: agent.key,
-            from_status: "running",
-            to_status: agent.status,
-            run_count: agent.run_count
-          )
+          unless agent.no_action_needed?
+            agent.mark_unread!
+            changed = true
+            events << PollEvent.new(
+              agent_key: agent.key,
+              from_status: "running",
+              to_status: agent.status,
+              run_count: agent.run_count
+            )
+          end
         end
         changed = backfill_project_context_prompt!(agent) || changed
         agent
@@ -84,11 +85,11 @@ module HQ
       agent
     end
 
-    def create_scheduled(project, schedule_key:, name:, message:, existing_agents: load)
+    def create_scheduled(project, schedule_key:, name:, system_message: nil, existing_agents: load)
       suffix = next_suffix(project.key, existing_agents)
       key = "#{project.key}-agent-#{suffix}"
       now = Time.now
-      prompt = ""
+      prompt = scheduled_system_prompt(schedule_key:, name:, system_message:)
       system_messages = system_messages_for(project, prompt)
       agent = ManagedAgent.new(
         key: key,
@@ -106,14 +107,19 @@ module HQ
         color_index: next_color_index(existing_agents)
       )
       seed_memory_system_prompts!(agent, project, prompt)
-      agent.add_user_message!(
-        ManagedAgent.with_final_output_checklist(message),
-        metadata: {
-          "schedule_key" => schedule_key,
-          "scheduled_prompt" => true
-        }
-      )
       agent
+    end
+
+    def add_scheduled_message!(agent, schedule_key:, message:, due_at: nil)
+      metadata = {
+        "schedule_key" => schedule_key,
+        "scheduled_prompt" => true,
+        "scheduled_due_at" => due_at&.iso8601
+      }.compact
+      agent.add_user_message!(
+        message,
+        metadata: metadata
+      )
     end
 
     def clone_agent(agent, existing_agents: load)
@@ -180,10 +186,23 @@ module HQ
 
     def scheduled_agent_name(project, schedule_key:, name:)
       label = name.to_s.strip
-      label = "#{project.name} #{schedule_key}" if label.empty?
-      return label if label == SCHEDULED_NAME_PREFIX || label.start_with?("#{SCHEDULED_NAME_PREFIX} ")
+      label.empty? ? "#{project.name} #{schedule_key}" : ManagedAgent.display_name_for(label, scheduled: true)
+    end
 
-      "#{SCHEDULED_NAME_PREFIX} #{label}"
+    def scheduled_system_prompt(schedule_key:, name:, system_message: nil)
+      custom = system_message.to_s.strip
+      return custom unless custom.empty?
+
+      label = name.to_s.strip
+      title = label.empty? ? schedule_key.to_s : "#{label} (#{schedule_key})"
+      [
+        "This managed agent is owned by the Tycho schedule #{title}.",
+        "Treat each scheduled user message as one recurring run in the same long-lived session.",
+        "Use prior session context when it helps, but make each run's outcome clear and operator-facing.",
+        "Use structured status `no_action_needed` when the scheduled check completed and there is nothing to act on.",
+        "Use structured status `success` only when you completed a concrete action or produced a requested deliverable.",
+        "If you need human input, ask a precise structured inquiry and stop instead of guessing."
+      ].join("\n")
     end
 
     def template_for(project, template_key)

@@ -35,7 +35,7 @@ module HQ
     :key, :status, :enabled, :paused_at, :last_due_at, :last_started_at, :last_finished_at,
     :last_status, :last_error, :last_target_kind, :last_target_key, :previous_target_key,
     :next_due_at, :run_count, :skip_count, :first_success_notified_at, :failure_started_at,
-    :recovery_notified_at,
+    :recovery_notified_at, :resumed_at,
     keyword_init: true
   ) do
     OPERATOR_STATUSES = %w[scheduled paused stopped].freeze
@@ -69,7 +69,8 @@ module HQ
         skip_count: hash["skip_count"].to_i,
         first_success_notified_at: parse_time(hash["first_success_notified_at"]),
         failure_started_at: parse_time(hash["failure_started_at"]),
-        recovery_notified_at: parse_time(hash["recovery_notified_at"])
+        recovery_notified_at: parse_time(hash["recovery_notified_at"]),
+        resumed_at: parse_time(hash["resumed_at"])
       )
     end
 
@@ -118,7 +119,8 @@ module HQ
         "skip_count" => skip_count.to_i,
         "first_success_notified_at" => first_success_notified_at&.iso8601,
         "failure_started_at" => failure_started_at&.iso8601,
-        "recovery_notified_at" => recovery_notified_at&.iso8601
+        "recovery_notified_at" => recovery_notified_at&.iso8601,
+        "resumed_at" => resumed_at&.iso8601
       }.compact
     end
 

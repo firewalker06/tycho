@@ -6,6 +6,7 @@ require "stringio"
 require "rbconfig"
 require "base64"
 require "open3"
+require "yaml"
 
 require_relative "../lib/hq/remote_server"
 require_relative "../lib/hq/serve_command"
@@ -118,7 +119,7 @@ module RemoteServerTest
               message: "Run maintenance."
       YAML
       service = HQ::RemoteService.new(registry: registry)
-      archive_reconciles_status = lambda do |agent_key:, status:, enabled:, paused_at: nil|
+      archive_reconciles_status = lambda do |agent_key:, status:, enabled:, paused_at: nil, expected_system_message: nil|
         state = HQ::ScheduleState.new(
           key: "weekday",
           status: status,
@@ -143,6 +144,12 @@ module RemoteServerTest
         assert(updated.last_error == "interactive", "expected Remote archive to preserve stop reason")
         assert(updated.last_target_key.nil?, "expected Remote archive to clear stale target")
         assert(updated.previous_target_key == agent_key, "expected Remote archive to keep previous target")
+        if expected_system_message
+          config = YAML.safe_load_file(HQ::SCHEDULES_FILE)
+          system_message = config.dig("schedules", 0, "target", "system_message")
+          assert(system_message == expected_system_message,
+                 "expected Remote archive to persist the scheduled session system message")
+        end
       end
 
       stopped_agent = service.create_agent(
@@ -155,7 +162,8 @@ module RemoteServerTest
       archive_reconciles_status.call(
         agent_key: stopped_agent[:key],
         status: "stopped",
-        enabled: true
+        enabled: true,
+        expected_system_message: "Work remotely."
       )
 
       paused_agent = service.create_agent(
@@ -1351,6 +1359,7 @@ module RemoteServerTest
                               "timezone" => "UTC",
                               "project_key" => "web",
                               "agent_name" => "Daily Agent",
+                              "system_message" => "Daily system context.",
                               "message_source" => "inline",
                               "message" => "Check the project.",
                               "policy" => {
@@ -1362,7 +1371,10 @@ module RemoteServerTest
       assert(created[:status] == 201, "expected schedule create route")
       assert(created.dig(:body, :schedule, :key) == "daily", "expected created schedule payload")
       assert(created.dig(:body, :schedule, :project_key) == "web", "expected created schedule project")
-      assert(created.dig(:body, :schedule, :policy, "overlap") == "queue", "expected created schedule policy")
+      assert(created.dig(:body, :schedule, :system_message) == "Daily system context.",
+             "expected created schedule system message")
+      assert(created.dig(:body, :schedule, :policy, "overlap") == "skip",
+             "expected schedule policy to use the fixed overlap default")
 
       updated = server.send(:route, service, "PATCH", "/schedules/daily", {
                               "key" => "daily",
@@ -1370,16 +1382,27 @@ module RemoteServerTest
                               "cron" => "30 11 * * 1-5",
                               "timezone" => "local",
                               "project_key" => "web",
+                              "system_message" => "Updated system context.",
                               "message_source" => "inline",
                               "message" => "Check weekdays.",
                               "policy" => {
-                                "overlap" => "skip",
-                                "missed" => "run_once_on_start",
-                                "archive_previous_agent" => true
+                                "overlap" => "queue",
+                                "missed" => "skip_missed",
+                                "archive_previous_agent" => false
                               }
                             }, nil)
       assert(updated.dig(:body, :schedule, :name) == "Daily check edited", "expected schedule update route")
       assert(updated.dig(:body, :schedule, :cron) == "30 11 * * 1-5", "expected updated schedule cron")
+      assert(updated.dig(:body, :schedule, :system_message) == "Updated system context.",
+             "expected updated schedule system message")
+      assert(updated.dig(:body, :schedule, :policy) == {
+        "overlap" => "skip",
+        "missed" => "run_once_on_start",
+        "archive_previous_agent" => true
+      }, "expected schedule update to ignore removed advanced policy options")
+      stored_daily = YAML.safe_load_file(HQ::SCHEDULES_FILE).fetch("schedules").find { |item| item["key"] == "daily" }
+      assert(!stored_daily.key?("enabled"), "expected schedule saves to drop enabled config")
+      assert(!stored_daily.key?("policy"), "expected schedule saves to drop policy config")
 
       paused = server.send(:route, service, "POST", "/schedules/weekday/pause", {}, nil)
       assert(paused.dig(:body, :schedule, :paused), "expected schedule pause route")
@@ -2063,8 +2086,18 @@ module RemoteServerTest
         workspace: workspace,
         started_at: started_at
       )
-      HQ::AgentStore.new([]).save([input_agent, finished_agent])
-      [input_agent, finished_agent].each do |agent|
+      no_action_agent = stale_running_agent(
+        key: "web-agent-3",
+        name: "Web no action",
+        workspace: workspace,
+        started_at: started_at,
+        structured_result: {
+          "status" => "no_action_needed",
+          "summary" => "Checked pull requests. Nothing needs action."
+        }
+      )
+      HQ::AgentStore.new([]).save([input_agent, finished_agent, no_action_agent])
+      [input_agent, finished_agent, no_action_agent].each do |agent|
         File.write(File.join(HQ::AGENT_LOGS_DIR, "#{agent.key}.status"), "0")
       end
 
@@ -2090,6 +2123,18 @@ module RemoteServerTest
              "expected finalized input-required agent to be marked unread")
       assert(agents.find { |agent| agent[:key] == "web-agent-2" }[:unread],
              "expected finalized Codex agent to be marked unread")
+      no_action_payload = agents.find { |agent| agent[:key] == "web-agent-3" }
+      assert(no_action_payload[:last_result] == "no action", "expected no-action agent to expose no-action label")
+      assert(!no_action_payload[:unread], "expected no-action agent to stay read")
+      forged_no_action_event = HQ::AgentStore::PollEvent.new(
+        agent_key: "web-agent-3",
+        from_status: "running",
+        to_status: "succeeded",
+        run_count: 1
+      )
+      no_action_result = service.send(:dispatch_agent_push_events, [forged_no_action_event], agents: HQ::AgentStore.new([]).load)
+      assert(no_action_result[:events].zero?, "expected no-action events to be ignored by push dispatch")
+      assert(notifier.payloads.length == 2, "expected forged no-action event not to send a push payload")
       read_payload = service.mark_agent_read("web-agent-2")
       assert(!read_payload[:unread], "expected explicit reading mutation to clear unread state")
       read_agent = service.agents.find { |agent| agent[:key] == "web-agent-2" }
@@ -2813,6 +2858,9 @@ module RemoteServerTest
            "expected Remote UI to expose scheduler daemon controls")
     assert(js[:body].include?("calendarCheck2"),
            "expected Remote UI schedule surfaces to use the calendar-check-2 icon")
+    assert(js[:body].include?("function agentIconName") &&
+           js[:body].include?("? \"calendarCheck2\" : \"robot\""),
+           "expected Remote UI scheduled agent rows to use the schedule icon")
     assert(js[:body].include?('class="schedule-details" data-state-key="schedule-now-details"'),
            "expected Remote UI schedule rows to be collapsed by default")
     assert(js[:body].include?("schedule-disclosure"),
@@ -2833,6 +2881,9 @@ module RemoteServerTest
            "expected Remote UI schedule rows to expose edit and delete controls")
     assert(js[:body].include?("data-edit-schedule-message"),
            "expected file-backed schedule rows to expose message editing")
+    assert(js[:body].include?("form.dataset.pendingFormKey") &&
+           js[:body].include?("delete form.dataset.pendingFormKey"),
+           "expected Remote UI pending forms to clear the original key after navigation")
     assert(js[:body].include?("function renderScheduleForm"),
            "expected Remote UI to render schedule create/edit forms")
     assert(js[:body].include?("function renderScheduleMessageForm"),
@@ -2845,6 +2896,11 @@ module RemoteServerTest
            "expected Remote UI schedule message forms to have a dedicated submit target")
     assert(js[:body].include?("function scheduleFormPayload"),
            "expected Remote UI to serialize schedule form payloads")
+    assert(!js[:body].include?("schedule-overlap") &&
+           !js[:body].include?("schedule-missed") &&
+           !js[:body].include?('name="archive_previous_agent"') &&
+           !js[:body].include?('name="enabled"'),
+           "expected Remote UI schedule form to omit removed advanced scheduling options")
     assert(js[:body].include?('apiPost("/schedules", payload)'),
            "expected Remote UI to call the schedule create endpoint")
     assert(js[:body].include?('apiPatch(`/schedules/${encodeURIComponent(scheduleKey)}`, payload)'),

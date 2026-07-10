@@ -196,7 +196,7 @@ module HQ
             align_chat_bubble(chat_message_style.render(rendered))
           when "assistant"
             wrapped = fade_token_usage(format_chat_message_content(content, role))
-            name_tag = assistant_name_tag_style.render(agent.name.to_s)
+            name_tag = assistant_name_tag_style.render(agent_display_name(agent))
             body = assistant_message_style.render(wrapped)
             rendered = show_header ? "#{name_tag}\n#{body}" : body
             align_chat_bubble(chat_message_style.render(rendered))
@@ -388,7 +388,7 @@ module HQ
 
           case role
           when "user" then "You"
-          when "assistant" then agent.name.to_s
+          when "assistant" then agent_display_name(agent)
           else role.upcase
           end
         end
@@ -398,9 +398,13 @@ module HQ
 
           case role
           when "user" then "User Message"
-          when "assistant" then "#{agent.name} Message"
+          when "assistant" then "#{agent_display_name(agent)} Message"
           else "#{role.upcase} Message"
           end
+        end
+
+        def agent_display_name(agent)
+          agent.respond_to?(:display_name) ? agent.display_name.to_s : agent.name.to_s
         end
 
         def chat_tool_group_item(blocks)

@@ -47,6 +47,7 @@ module RenderingTest
     assert_list_sidebar_scrolls_to_selected_agent
     assert_agent_unread_cursor_and_chat_clear
     assert_finished_agent_poll_marks_unread
+    assert_no_action_agent_poll_stays_read
     assert_exited_agent_poll_marks_unread_after_status_turns_idle
     assert_omnisearch_empty_query_lists_unread_agents
     assert_omnisearch_reindexes_when_unread_agent_appears
@@ -478,6 +479,24 @@ module RenderingTest
     app.send(:poll_agents!)
 
     assert(agent.unread?, "expected unseen agent to become unread when a run finishes")
+  end
+
+  def assert_no_action_agent_poll_stays_read
+    app = app_with_default_agent(width: 120, height: 30)
+    agent = app.instance_variable_get(:@agents).first
+    agent.define_singleton_method(:status) { @fake_status || "running" }
+    agent.define_singleton_method(:poll!) do
+      @structured_result = {
+        "status" => "no_action_needed",
+        "summary" => "Checked the schedule. Nothing needs action."
+      }
+      @fake_status = "succeeded"
+    end
+    agent.define_singleton_method(:build_summary!) { nil }
+
+    app.send(:poll_agents!)
+
+    assert(!agent.unread?, "expected no-action agent to stay read after poll")
   end
 
   def assert_exited_agent_poll_marks_unread_after_status_turns_idle

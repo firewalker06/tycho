@@ -1620,19 +1620,83 @@ select {
   justify-items: end;
   gap: 6px;
   min-width: 0;
-  max-width: 260px;
+  max-width: 390px;
 }
 
 .schedule-row-actions {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
 
 .schedule-row-actions button {
   min-height: 34px;
-  min-width: 98px;
+  min-width: 0;
+}
+
+.schedule-row-actions > button:not(.schedule-run-button, .schedule-toggle-button, .schedule-session-button) {
+  min-width: 88px;
+}
+
+.schedule-run-button,
+.schedule-toggle-button,
+.schedule-session-button {
+  padding: 0 10px;
+}
+
+.schedule-action-menu {
+  position: relative;
+}
+
+.schedule-action-menu > summary {
+  display: inline-grid;
+  width: 36px;
+  height: 34px;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+  place-items: center;
+}
+
+.schedule-action-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.schedule-action-menu[open] > summary,
+.schedule-action-menu > summary:hover,
+.schedule-action-menu > summary:focus-visible {
+  background: var(--panel-soft);
+}
+
+.schedule-action-menu > summary .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.schedule-action-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 25;
+  min-width: 190px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 98%, transparent);
+  box-shadow: var(--shadow);
+  padding: 6px;
+}
+
+.schedule-action-popover .more-menu {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
 }
 
 @media (max-width: 560px) {
@@ -1655,6 +1719,10 @@ select {
     grid-column: 2;
     grid-row: 2;
     max-width: 100%;
+  }
+
+  .schedule-row-actions {
+    justify-content: flex-start;
   }
 }
 

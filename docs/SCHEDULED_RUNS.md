@@ -10,9 +10,9 @@ type: reference
 
 Tycho scheduled runs are driven by `tycho schedule daemon`. Definitions live in `~/.tycho/config/schedules.yml`, mutable runtime state lives in `~/.tycho/logs/schedules.json`, daemon heartbeat state lives in `~/.tycho/logs/scheduler_daemon.json`, and cron syntax is validated before any long-running scheduler loop starts. The TUI and Remote UI are management surfaces, but neither owns the clock.
 
-The current scope is intentionally narrow: schedules create fresh managed agents only. There are no shell commands, agent-template selections, existing-agent resumes, or agent clones. Each due run creates a brand-new agent with fresh context, starts it through the existing `ManagedAgent` path, and archives the previous schedule-created agent for that schedule before the next repetitive run.
+The current scope is intentionally narrow: schedules own one persistent managed agent session each. There are no shell commands, agent-template selections, ad hoc existing-agent targets, or agent clones. The first due run creates the schedule-owned agent; later due runs append a scheduled user message to that same agent and start another `ManagedAgent` run so native Codex/Claude/OpenCode session resume can preserve context.
 
-Prompt input is limited to inline text in `~/.tycho/config/schedules.yml` or a file under `~/.tycho/schedules/`. On failure, stop the schedule and notify via web push. On success, notify only on the first successful run and the first successful run after a prior failure; both success notifications should include the next scheduled run time.
+Each schedule has two editable prompt fields: a system message for the schedule-owned agent session, and a run message sent as the next user message each time the schedule runs. The Remote UI edits both in one schedule form and saves the run message inline in `~/.tycho/config/schedules.yml`; legacy `message_file` schedules still load, but saving them from the Remote UI converts them to inline run messages. On failure or required human input, stop the schedule and notify via web push. On success, notify only on the first successful run and the first successful run after a prior failure; both success notifications should include the next scheduled run time.
 
 ## Current Decisions
 
@@ -23,16 +23,18 @@ Prompt input is limited to inline text in `~/.tycho/config/schedules.yml` or a f
 - Validation: fail fast on invalid cron syntax, invalid project references, and invalid prompt file paths.
 - Runtime state: persist mutable schedule state separately from config under `~/.tycho/logs/schedules.json`.
 - Daemon state: persist `tycho schedule daemon` heartbeat and last tick metadata under `~/.tycho/logs/scheduler_daemon.json`.
-- Target scope: agent-only. Each run creates a brand-new managed agent with fresh context.
+- Target scope: agent-only. Each schedule owns one managed agent and each run resumes that schedule session.
 - Unsupported commands: `shell`, `agent_template`, `agent_existing`, and `agent_clone`.
-- Prompt sources: only inline text or files under `~/.tycho/schedules/`.
-- Scheduled prompts always include the final-output attachment checklist so created or referenced durable artifacts are reported in `attachments`.
-- Scheduled agent display names are prefixed with `[Scheduled]` and do not include the internal agent-key number.
-- Retention: archive the previous schedule-created agent for a repeating schedule before creating the next one.
-- Interactive protection: stop the schedule instead of archiving when the previous scheduled agent has a later user message.
-- Failure management: stop the schedule and notify via web push when a scheduled job fails.
+- Prompt fields: system message plus run message in one schedule form.
+- Run-message source: Remote UI saves inline text in `~/.tycho/config/schedules.yml`; legacy file-backed schedules are read-compatible and convert to inline when saved from the form.
+- Scheduled execution prompts include the final-output attachment checklist so created or referenced durable artifacts are reported in `attachments`; the stored scheduled user message stays clean to avoid repeated checklist buildup in persistent memory.
+- Scheduled agent display names do not include a text prefix; UI surfaces distinguish them with the schedule icon.
+- Retention: keep the schedule-owned agent active across runs unless the operator explicitly archives it.
+- Interactive protection: stop the schedule when the schedule-owned agent has a later non-scheduled user message; resuming records an acknowledgement boundary so earlier operator messages do not immediately stop the schedule again.
+- Failure and input management: stop the schedule and notify via web push when a scheduled job fails, blocks, or requires human input.
 - Schedule statuses: schedules expose `scheduled`, `paused`, or `stopped` as operator-facing state. Last run details stay in `last_status` and `last_error`.
-- Resume behavior: resuming a stopped schedule archives any previous active scheduled session and waits until the next scheduled run.
+- No-action outcomes: scheduled agents should return structured status `no_action_needed` when a recurring check completes and finds nothing to act on. Tycho records that as the schedule's last outcome but does not mark the agent unread or send success/push notifications.
+- Resume behavior: resuming a stopped schedule keeps the schedule-owned session, records a resume boundary, and waits until the next scheduled run.
 - Success notifications: notify only on first success and first success after failure, including the next scheduled run time.
 
 ## Current Design
@@ -53,47 +55,42 @@ Schedules support exactly one target type:
 
 `agent`:
 
-- Creates a brand-new managed agent for `project_key`.
+- Creates or reuses the schedule-owned managed agent for `project_key`.
 - Uses the project's path and default agent harness from `~/.tycho/config/hq.yml`.
 - Does not select a project agent template.
-- Seeds the scheduled text as the agent's instruction.
-- Names the managed agent from `target.name`, falling back to the schedule name or key, with a `[Scheduled]` prefix.
+- Seeds the schedule system message once, then appends the run message as a user message for each due run.
+- Names the managed agent from `target.name`, falling back to the schedule name or key, without adding a text prefix.
 - Starts the agent through `ManagedAgent#start!`.
-- Archives the previous schedule-created agent for the same schedule before creating the next repetitive run.
-- Keeps session context fresh and avoids stale native agent sessions.
+- Reuses the same native session when the harness exposes a persisted `session_id`.
+- Keeps schedule context continuous across runs and avoids creating a fragmented agent list.
 
 An agent can technically be prompted to run local commands, but schedules should not model shell commands as their own target type.
 
-### Prompt Sources
+### Prompt Fields
 
-`inline`:
+`system_message`:
 
-- Store `message` directly in `~/.tycho/config/schedules.yml`.
-- Pros: simplest to read and edit, no extra files, good for short recurring instructions.
-- Cons: YAML gets noisy for long prompts, quoting multiline text is easy to mangle, and reuse across schedules is weak.
+- Stable schedule-owned agent context.
+- Used when Tycho creates the schedule session.
+- Defaults to Tycho's generated recurring-session contract when omitted.
 
-`file`:
+`message`:
 
-- Store `message_file: schedules/weekday-maintenance.md` and load the file at dispatch time or daemon reload.
-- Pros: best for long prompts, easy to review as Markdown, keeps schedule config compact.
-- Cons: another path to validate, missing file behavior must be clear, and UI editing becomes more complex.
-- Constraint: the path must stay inside `~/.tycho/schedules/`; reject absolute paths, `..`, and anything that resolves outside that directory.
+- Store the message sent each run directly in `~/.tycho/config/schedules.yml` as `message`.
+- Sent as the user message every time the schedule runs.
+- Remote UI edits this inline in the main schedule form.
 
-Do not support prompt references yet. They are convenient, but they reintroduce template coupling and make schedule behavior less local to `~/.tycho/config/schedules.yml` plus `schedules/`.
+`message_file`:
 
-### Schedule Policies
+- Legacy read-compatible source for existing schedules.
+- Remote UI loads the file content into the main schedule form and saves it back as inline `message`.
 
-Overlap:
+### Fixed Runtime Semantics
 
-- `skip`: if the previous target is still running, record skipped and compute the next due time.
-- `queue`: run once after the current run finishes.
-- `parallel`: allow another run. This should be rare and probably disabled in v1 because fresh agents can still compete for the same workspace.
-
-Missed runs:
-
-- `skip_missed`: if Tycho was offline, schedule only the next future run.
-- `run_once_on_start`: if one or more due times were missed, run one catch-up.
-- `run_all_missed`: likely not needed for Tycho because agent runs can be expensive.
+- Pause and resume are the schedule on/off controls.
+- If the schedule-owned agent is still running when a run is due, Tycho skips that due time and computes the next one.
+- If Tycho was offline or late, Tycho runs once when it observes the due schedule, then computes the next future due time.
+- If a human has interacted with the schedule-owned session, Tycho stops the schedule until the operator resumes it.
 
 Time zones:
 
@@ -123,7 +120,7 @@ Schedule status:
 - `stopped`: Tycho stopped the schedule because continuing is unsafe or impossible, such as a failed run, blocked/input-required result, start error, or interactive protection.
 - Paused and stopped schedules prevent subsequent scheduled jobs.
 - Resuming a paused schedule marks it scheduled and recomputes the next due time.
-- Resuming a stopped schedule marks it scheduled, archives any previous active scheduled session for that schedule, and waits until the next scheduled run.
+- Resuming a stopped schedule marks it scheduled, keeps the previous active scheduled session, records `resumed_at`, and waits until the next scheduled run.
 - Archiving a session for a `stopped` or `paused` schedule returns it to `scheduled` for future job execution.
 
 Success notifications:
@@ -148,20 +145,17 @@ Definition fields:
 schedules:
   - key: weekday-maintenance
     name: Weekday maintenance
-    enabled: true
     cron: "0 9 * * 1-5"
     timezone: local
     target:
       type: agent
       project_key: tycho
       name: Tycho scheduled maintenance
-      message_source: file
-      message_file: schedules/weekday-maintenance.md
-    policy:
-      overlap: skip
-      missed: run_once_on_start
-      retain_runs: 20
-      archive_previous_agent: true
+      system_message: |
+        You are the long-lived scheduled maintenance agent for Tycho.
+        Keep context across runs and ask for human input when needed.
+      message: |
+        Run the weekday maintenance check and report the outcome.
 ```
 
 Runtime fields:
@@ -179,13 +173,14 @@ Runtime fields:
   "last_error": null,
   "last_target_kind": "agent",
   "last_target_key": "tycho-agent-8",
-  "previous_target_key": "tycho-agent-7",
+  "previous_target_key": null,
   "next_due_at": "2026-05-19T09:00:00+07:00",
   "run_count": 12,
   "skip_count": 1,
   "first_success_notified_at": "2026-05-01T09:05:00+07:00",
   "failure_started_at": null,
-  "recovery_notified_at": "2026-05-18T09:07:00+07:00"
+  "recovery_notified_at": "2026-05-18T09:07:00+07:00",
+  "resumed_at": null
 }
 ```
 
@@ -262,6 +257,7 @@ Remote UI:
 - Show a compact Schedules card in the Now view, not only a Setup diagnostic.
 - Show daemon status, PID, and last tick in the card header.
 - Show configured schedules with next run, linked project, status, and a dependency-free humanized cron cadence.
+- Link each schedule row to its schedule-owned agent session when one exists.
 - Support pause/resume/manual run/reload through the JSON API and Remote UI controls.
 - Support daemon start/stop/restart through a Remote UI supervisor that launches the existing `tycho schedule daemon` process separately from `tycho serve`.
 - Preserve mobile ergonomics: schedule details should be readable without requiring terminal access.

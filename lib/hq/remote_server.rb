@@ -1514,7 +1514,7 @@ module HQ
       target.start! if truthy?(attrs["start"])
 
       archive_path = source.archive_logs! if archive_source
-      schedule_reconciled = reconcile_archived_schedule_agent(source.key) if archive_source
+      schedule_reconciled = reconcile_archived_schedule_agent(source) if archive_source
       next_agents = current.reject { |agent| agent.key == target.key || (archive_source && agent.key == source.key) }
       next_agents.unshift(target)
       save_agents(sort_agents(next_agents))
@@ -1541,7 +1541,7 @@ module HQ
       raise Error.new("Agent is running", status: 409) if target.running?
 
       archive_path = target.archive_logs!
-      schedule_reconciled = reconcile_archived_schedule_agent(target.key)
+      schedule_reconciled = reconcile_archived_schedule_agent(target)
       remaining = load_all_agents.reject { |agent| agent.key == target.key }
       save_agents(remaining)
       {
@@ -1578,7 +1578,7 @@ module HQ
         archived << {
           agent_key: target.key,
           archive_path: target.archive_logs!,
-          schedule_reconciled: reconcile_archived_schedule_agent(target.key)
+          schedule_reconciled: reconcile_archived_schedule_agent(target)
         }
       rescue StandardError => e
         failed << { agent_key: key, error: e.message }
@@ -1595,8 +1595,8 @@ module HQ
       }
     end
 
-    def reconcile_archived_schedule_agent(agent_key)
-      scheduler.reconcile_archived_agent!(agent_key)
+    def reconcile_archived_schedule_agent(agent)
+      scheduler.reconcile_archived_agent!(agent.key, archived_agent: agent)
     rescue StandardError
       false
     end
@@ -1957,6 +1957,8 @@ module HQ
     end
 
     def agent_push_payload(agent, unread_count:)
+      return nil if agent.respond_to?(:no_action_needed?) && agent.no_action_needed?
+
       status = agent.status
       if status == "awaiting-input"
         event = "input_required"
@@ -1969,7 +1971,7 @@ module HQ
       end
 
       group_count = [unread_count.to_i, 1].max
-      body = "#{agent.name}: #{truncate(agent.last_summary, 120)}"
+      body = "#{agent.display_name}: #{truncate(agent.last_summary, 120)}"
       body = "#{body} (#{group_count} unread agents)" if group_count > 1
 
       {
@@ -2050,7 +2052,7 @@ module HQ
     def recent_agent_payload(agent)
       {
         key: agent.key,
-        name: agent.name,
+        name: agent.display_name,
         status: agent.status,
         last_result: agent.last_result_label,
         summary: agent.last_summary,
@@ -2338,9 +2340,10 @@ module HQ
     def agent_payload(agent)
       {
         key: agent.key,
-        name: agent.name,
+        name: agent.display_name,
         project_key: agent.project_key,
         template_key: agent.template_key,
+        scheduled: agent.scheduled?,
         workspace: agent.workspace,
         prompt: agent.prompt,
         sandbox_mode: agent.sandbox_mode,

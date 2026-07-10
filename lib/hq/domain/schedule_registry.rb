@@ -106,7 +106,7 @@ module HQ
 
   ScheduleDefinition = Struct.new(
     :key, :name, :enabled, :cron, :timezone, :project_key, :agent_name,
-    :message_source, :message, :message_file, :message_path, :policy,
+    :system_message, :message_source, :message, :message_file, :message_path, :policy,
     keyword_init: true
   ) do
     def cron_expression
@@ -114,7 +114,7 @@ module HQ
     end
 
     def enabled?
-      enabled != false
+      true
     end
 
     def local_time(time)
@@ -132,15 +132,15 @@ module HQ
     end
 
     def overlap_policy
-      policy.fetch("overlap", "skip").to_s
+      "skip"
     end
 
     def missed_policy
-      policy.fetch("missed", "run_once_on_start").to_s
+      "run_once_on_start"
     end
 
     def archive_previous_agent?
-      policy.fetch("archive_previous_agent", true) != false
+      true
     end
   end
 
@@ -208,6 +208,29 @@ module HQ
       true
     end
 
+    def persist_system_message(key, system_message)
+      message = system_message.to_s.strip
+      return false if message.empty?
+
+      data = load_yaml
+      entries = schedule_entries(data)
+      index = entries.index { |entry| entry.is_a?(Hash) && entry["key"].to_s == key.to_s }
+      raise Error, "Unknown schedule: #{key}" unless index
+
+      entry = entries[index]
+      target = stringify_keys(entry["target"] || {})
+      return false if target["system_message"].to_s.strip == message
+
+      target["system_message"] = message
+      entry["target"] = target
+      entries[index] = entry
+      validated = validate_entries!(entries)
+      data["schedules"] = entries
+      write_yaml(data)
+      @schedules = validated
+      true
+    end
+
     private
 
     def load_schedules
@@ -253,13 +276,14 @@ module HQ
 
       entry["key"] = key.to_s.empty? ? clean_string(values["key"], fallback: entry["key"]) : key.to_s
       assign_clean_string(entry, "name", values, fallback: entry["name"])
-      assign_bool(entry, "enabled", values, fallback: entry.key?("enabled") ? entry["enabled"] : true)
+      entry.delete("enabled")
       assign_clean_string(entry, "cron", values, fallback: entry["cron"])
       assign_clean_string(entry, "timezone", values, fallback: entry["timezone"] || "local")
 
       target["type"] = "agent"
       assign_clean_string(target, "project_key", values, fallback: target["project_key"])
       assign_clean_string(target, "name", values, source_key: "agent_name", fallback: target["name"])
+      assign_clean_string(target, "system_message", values, fallback: target["system_message"])
       source = clean_string(values["message_source"], fallback: target["message_source"])
       source = target["message_file"].to_s.empty? ? "inline" : "file" if source.to_s.empty?
       target["message_source"] = source
@@ -273,14 +297,7 @@ module HQ
       end
       entry["target"] = target
 
-      policy = stringify_keys(entry["policy"] || {})
-      policy_values = stringify_keys(values["policy"] || {})
-      %w[overlap missed].each do |field|
-        assign_clean_string(policy, field, policy_values, fallback: policy[field])
-      end
-      assign_bool(policy, "archive_previous_agent", policy_values,
-                  fallback: policy.key?("archive_previous_agent") ? policy["archive_previous_agent"] : true)
-      entry["policy"] = policy
+      entry.delete("policy")
       entry
     end
 
@@ -343,6 +360,7 @@ module HQ
         timezone: timezone,
         project_key: project_key,
         agent_name: optional_string(target["name"], fallback: entry["name"] || key),
+        system_message: optional_string(target["system_message"], fallback: nil),
         message_source: source,
         message: message,
         message_file: message_file,
@@ -402,18 +420,11 @@ module HQ
 
     def normalize_policy!(key, value)
       policy = value.is_a?(Hash) ? value.transform_keys(&:to_s) : {}
-      validate_choice!(key, policy, "overlap", %w[skip queue parallel], default: "skip")
-      validate_choice!(key, policy, "missed", %w[skip_missed run_once_on_start run_all_missed],
-                       default: "run_once_on_start")
-      policy["archive_previous_agent"] = true unless policy.key?("archive_previous_agent")
-      policy
-    end
-
-    def validate_choice!(key, policy, field, allowed, default:)
-      value = policy.fetch(field, default).to_s
-      raise Error, "Schedule #{key.inspect} policy.#{field} must be one of #{allowed.join(", ")}" unless allowed.include?(value)
-
-      policy[field] = value
+      {
+        "overlap" => "skip",
+        "missed" => "run_once_on_start",
+        "archive_previous_agent" => true
+      }
     end
 
     def required_string(hash, field, label:)

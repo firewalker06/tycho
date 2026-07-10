@@ -19,13 +19,16 @@ module SchedulerTest
     with_stubbed_agent_start do
       assert_schedule_registry_validates_scope_and_prompt_paths
       assert_schedule_store_tracks_daemon_state
-      assert_scheduler_run_creates_fresh_agent_and_archives_previous
+      assert_scheduler_run_reuses_schedule_agent_session
+      assert_archived_schedule_session_promotes_prompt_to_schedule
       assert_scheduler_stops_interactive_scheduled_agent_until_resume
+      assert_schedule_waits_for_human_input
     end
     assert_schedule_daemon_supervisor_spawns_external_daemon
     assert_bin_schedule_list_lists_configured_schedules
     assert_bin_hq_schedule_daemon_runs_once
     assert_bin_hq_schedule_resume_updates_next_run
+    assert_no_action_scheduled_agent_stays_quiet
     assert_failed_scheduled_agent_stops_and_notifies
     puts "scheduler_test: ok"
   end
@@ -100,7 +103,58 @@ module SchedulerTest
     end
   end
 
-  def assert_scheduler_run_creates_fresh_agent_and_archives_previous
+  def assert_scheduler_run_reuses_schedule_agent_session
+    with_temp_runtime do |dir|
+      registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: weekday
+            cron: "0 9 * * 1-5"
+            target:
+              type: agent
+              project_key: web
+              name: Weekday maintenance
+              system_message: "Stable schedule system context."
+              message: "Run maintenance."
+      YAML
+      scheduler = build_scheduler(registry, schedule_path)
+      first = scheduler.run_now("weekday")
+      raise "expected schedule to start, got #{first.inspect}" unless first[:agent]
+
+      first_agent = first.fetch(:agent)
+
+      agents = read_agents
+      assert(agents.map(&:key) == [first_agent.key], "expected first scheduled agent to be active")
+      assert(first_agent.name == "Weekday maintenance",
+             "expected scheduled agent name to avoid a text prefix or numeric suffix")
+      assert(HQ::ManagedAgent.display_name_for("[Scheduled] Weekday maintenance", scheduled: true) == "Weekday maintenance",
+             "expected scheduled display names to strip the legacy text prefix")
+      assert(File.exist?(first_agent.raw_log_path), "expected stubbed agent start to write a raw log")
+      memory = File.read(first_agent.memory_path)
+      assert(memory.include?("Run maintenance."), "expected scheduled message to be written to agent memory")
+      assert(memory.include?("Stable schedule system context."),
+             "expected scheduled agent memory to include the configured schedule system prompt")
+      refute(memory.include?(HQ::ManagedAgent::FINAL_OUTPUT_CHECKLIST),
+             "expected stored scheduled message to avoid duplicating the final attachment checklist")
+      raw_log = File.read(first_agent.raw_log_path)
+      assert(raw_log.include?(HQ::ManagedAgent::FINAL_OUTPUT_CHECKLIST),
+             "expected execution prompt to include the final attachment checklist")
+
+      second = scheduler.run_now("weekday")
+      raise "expected second schedule run to start, got #{second.inspect}" unless second[:agent]
+
+      second_agent = second.fetch(:agent)
+      agents = read_agents
+      assert(second_agent.key == first_agent.key, "expected second run to reuse the schedule-owned agent")
+      assert(agents.map(&:key) == [first_agent.key], "expected one active scheduled agent")
+      assert(second_agent.name == "Weekday maintenance",
+             "expected scheduled agent name to stay suffix-free")
+      assert(second_agent.run_count == 2, "expected reused scheduled agent to record a second run")
+      archived = Dir.glob(File.join(HQ::AGENT_ARCHIVE_DIR, "**", File.basename(first_agent.raw_log_path)))
+      assert(archived.empty?, "expected repeating schedules to preserve the persistent session")
+    end
+  end
+
+  def assert_archived_schedule_session_promotes_prompt_to_schedule
     with_temp_runtime do |dir|
       registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
         schedules:
@@ -114,28 +168,36 @@ module SchedulerTest
       YAML
       scheduler = build_scheduler(registry, schedule_path)
       first = scheduler.run_now("weekday")
-      raise "expected schedule to start, got #{first.inspect}" unless first[:agent]
-
       first_agent = first.fetch(:agent)
+      custom_system_message = "Operator adjusted scheduled system context."
+      first_agent.update!(
+        name: first_agent.name,
+        template_key: first_agent.template_key,
+        workspace: first_agent.workspace,
+        prompt: custom_system_message,
+        sandbox_mode: first_agent.sandbox_mode,
+        agent: first_agent.agent,
+        model: first_agent.model,
+        reasoning_effort: first_agent.reasoning_effort
+      )
+      projects = registry.projects.map { |config| HQ::Project.new(config) }
+      HQ::AgentStore.new(projects).save([first_agent])
 
-      agents = read_agents
-      assert(agents.map(&:key) == [first_agent.key], "expected first scheduled agent to be active")
-      assert(first_agent.name == "[Scheduled] Weekday maintenance",
-             "expected scheduled agent name to be prefixed without numeric suffix")
-      assert(File.exist?(first_agent.raw_log_path), "expected stubbed agent start to write a raw log")
-      memory = File.read(first_agent.memory_path)
-      assert(memory.include?("Run maintenance."), "expected scheduled message to be written to agent memory")
-      assert(memory.include?(HQ::ManagedAgent::FINAL_OUTPUT_CHECKLIST),
-             "expected scheduled message to include the final attachment checklist")
+      first_agent.archive_logs!
+      assert(scheduler.reconcile_archived_agent!(first_agent.key, archived_agent: first_agent),
+             "expected archive reconciliation to update the scheduled state")
+      HQ::AgentStore.new(projects).save([])
 
-      second = scheduler.run_now("weekday")
+      persisted = YAML.safe_load_file(schedule_path)
+      target = persisted.fetch("schedules").fetch(0).fetch("target")
+      assert(target.fetch("system_message") == custom_system_message,
+             "expected archived session system prompt to be persisted on the schedule")
+
+      second = build_scheduler(registry, schedule_path).run_now("weekday")
       second_agent = second.fetch(:agent)
-      agents = read_agents
-      assert(agents.map(&:key) == [second_agent.key], "expected second run to replace active scheduled agent")
-      assert(second_agent.name == "[Scheduled] Weekday maintenance",
-             "expected replacement scheduled agent name to stay suffix-free")
-      archived = Dir.glob(File.join(HQ::AGENT_ARCHIVE_DIR, "**", File.basename(first_agent.raw_log_path)))
-      assert(!archived.empty?, "expected previous scheduled agent logs to be archived")
+      memory = File.read(second_agent.memory_path)
+      assert(memory.include?(custom_system_message),
+             "expected recreated scheduled session to use the persisted system message")
     end
   end
 
@@ -197,12 +259,48 @@ module SchedulerTest
              "expected resume to wait until the next schedule, got #{state.next_due_at&.iso8601}")
       assert(state.last_status == "skipped", "expected resume to preserve last-run diagnostics")
       assert(state.last_error == "interactive", "expected resume to preserve the interactive skip reason")
-      assert(state.last_target_key.nil?, "expected resume not to start or track a replacement scheduled agent")
-      assert(state.previous_target_key == first_agent.key, "expected resume to archive the previous scheduled agent")
+      assert(state.last_target_key == first_agent.key, "expected resume to retain the schedule session")
+      assert(state.resumed_at, "expected resume to record an interaction boundary")
       agents = read_agents
-      assert(agents.empty?, "expected resume to archive the previous agent without starting a new one")
+      assert(agents.map(&:key) == [first_agent.key], "expected resume to keep the persistent schedule agent")
       archived = Dir.glob(File.join(HQ::AGENT_ARCHIVE_DIR, "**", File.basename(first_agent.raw_log_path)))
-      assert(!archived.empty?, "expected resume to archive previous scheduled logs")
+      assert(archived.empty?, "expected resume not to archive the persistent schedule session")
+    end
+  end
+
+  def assert_schedule_waits_for_human_input
+    with_temp_runtime do |dir|
+      registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: weekday
+            cron: "0 9 * * 1-5"
+            target:
+              type: agent
+              project_key: web
+              name: Weekday maintenance
+              message: "Run maintenance."
+      YAML
+      scheduler = build_scheduler(registry, schedule_path)
+      first = scheduler.run_now("weekday")
+      agent = first.fetch(:agent)
+      agent.structured_result = {
+        "status" => "input_required",
+        "summary" => "Need operator input.",
+        "inquiry" => {
+          "message" => "Which branch should be checked?",
+          "fields" => []
+        }
+      }
+      agent.last_run.status = "input_required"
+      projects = registry.projects.map { |config| HQ::Project.new(config) }
+      HQ::AgentStore.new(projects).save([agent])
+
+      scheduler.tick(now: Time.now + 60)
+      state = HQ::ScheduleStore.new.load.fetch("weekday")
+      assert(state.stopped?, "expected input-required schedule to stop until the operator resumes")
+      assert(state.last_status == "awaiting-input", "expected schedule to preserve the agent attention status")
+      assert(state.last_target_key == agent.key, "expected schedule to keep the input-required session linked")
+      assert(read_agents.map(&:key) == [agent.key], "expected input-required session to remain active")
     end
   end
 
@@ -292,6 +390,70 @@ module SchedulerTest
       assert(!state.key?("paused_at"), "expected resume to clear paused_at")
       assert(next_due_at > command_started_at,
              "expected resume to recompute next_due_at, got #{next_due_at.iso8601}")
+    end
+  end
+
+  def assert_no_action_scheduled_agent_stays_quiet
+    with_temp_runtime do |dir|
+      registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: weekday
+            cron: "0 9 * * 1-5"
+            target:
+              type: agent
+              project_key: web
+              message: "Review pull requests."
+      YAML
+      projects = registry.projects.map { |config| HQ::Project.new(config) }
+      completed = HQ::ManagedAgent.new(
+        key: "web-agent-1",
+        name: "PR review",
+        project_key: "web",
+        template_key: "scheduled",
+        workspace: File.join(dir, "workspace"),
+        prompt: "",
+        started_at: Time.now - 120,
+        finished_at: Time.now - 60,
+        last_exit_code: 0,
+        structured_result: {
+          "status" => "no_action_needed",
+          "summary" => "Checked open pull requests. No review action needed."
+        },
+        runs: [
+          HQ::ManagedAgent::AgentRun.new(
+            started_at: Time.now - 120,
+            finished_at: Time.now - 60,
+            exit_code: 0,
+            status: "no_action_needed",
+            log_path: File.join(HQ::AGENT_LOGS_DIR, "no-action.raw.log"),
+            command: "test"
+          )
+        ]
+      )
+      HQ::AgentStore.new(projects).save([completed])
+
+      store = HQ::ScheduleStore.new
+      store.save(
+        "weekday" => HQ::ScheduleState.new(
+          key: "weekday",
+          enabled: true,
+          last_status: "started",
+          last_target_kind: "agent",
+          last_target_key: completed.key,
+          next_due_at: Time.now + 3600,
+          failure_started_at: Time.now - 300
+        )
+      )
+      notifier = FakeNotifier.new
+      scheduler = build_scheduler(registry, schedule_path, web_push_notifier: notifier)
+      scheduler.tick
+      state = store.load.fetch("weekday")
+
+      assert(state.scheduled?, "expected no-action schedule to stay scheduled")
+      assert(state.last_status == "no_action_needed", "expected schedule state to record no-action outcome")
+      assert(state.last_error.nil?, "expected no-action outcome to clear schedule errors")
+      assert(state.failure_started_at.nil?, "expected no-action outcome to clear failure tracking")
+      assert(notifier.payloads.empty?, "expected no-action outcome to avoid schedule push notifications")
     end
   end
 
@@ -458,7 +620,10 @@ module SchedulerTest
     HQ::ManagedAgent.define_method(:start!) do
       now = Time.now
       FileUtils.mkdir_p(File.dirname(raw_log_path))
-      File.write(raw_log_path, "scheduled test run\n")
+      File.open(raw_log_path, "a") do |file|
+        file.puts "scheduled test run"
+        file.puts "prompt=#{send(:prompt_for_execution)}"
+      end
       @started_at = now
       @finished_at = now
       @last_exit_code = 0
@@ -487,6 +652,10 @@ module SchedulerTest
 
   def assert(condition, message)
     raise message unless condition
+  end
+
+  def refute(condition, message)
+    raise message if condition
   end
 
   def assert_raises(error_class, message)

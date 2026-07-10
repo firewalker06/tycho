@@ -88,6 +88,7 @@ module HQ
           "completed" => { label: "done", style: :success },
           "succeeded" => { label: "done", style: :success },
           "success" => { label: "done", style: :success },
+          "no_action_needed" => { label: "no action", style: :dim },
           "error" => { label: "error", style: :fail },
           "failed" => { label: "error", style: :fail },
           "stopped" => { label: "stopped", style: :maintenance },
@@ -102,6 +103,7 @@ module HQ
           case status.to_s
           when "running" then Styles::STATUS_ICONS[:running]
           when "succeeded", "success", "completed" then Styles::STATUS_ICONS[:succeeded]
+          when "no_action_needed" then Styles::STATUS_ICONS[:dim]
           when "failed", "error" then Styles::STATUS_ICONS[:failed]
           when "stopped" then Styles::STATUS_ICONS[:stopped]
           when "awaiting-input", "input_required" then Styles::STATUS_ICONS[:awaiting_input]

@@ -20,6 +20,7 @@ module HQ
           prompt: "\u{f0477}",
           workspace: "\u{f0770}",
           session: "\u{f0306}",
+          schedule: "\u{f0150}",
           log: "\u{f4ed}",
           sandbox: "\u{f0494}",
           template: "\u{f02d6}",
