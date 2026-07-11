@@ -477,6 +477,7 @@ bundle exec ruby test/rendering_test.rb
 ## Documentation
 
 - `docs/PROJECT_STATUS.md`: current roadmap and architectural decisions.
+- `docs/SYSTEM_PROMPT_AUDIT.md`: when Tycho introduces system and automatic prompt context, the exact content, purpose, and known contract gaps.
 - `docs/REMOTE_SERVER.md`: Remote Sessions API and Remote UI behavior.
 - `docs/SCHEDULED_RUNS.md`: scheduled-agent design, policies, and runtime state.
 - `docs/GOTCHAS.md`: operational pitfalls.

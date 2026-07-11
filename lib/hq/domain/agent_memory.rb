@@ -182,7 +182,7 @@ module HQ
       nil
     end
 
-    def append_system_prompt!(content, created_at: Time.now)
+    def append_system_prompt!(content, created_at: Time.now, prompt_role: nil)
       text = content.to_s
       return if text.empty?
 
@@ -190,11 +190,43 @@ module HQ
         "type" => "system_prompt",
         "content" => text,
         "created_at" => created_at.iso8601,
-        "pinned" => true
+        "pinned" => true,
+        "metadata" => prompt_role.to_s.empty? ? nil : { "prompt_role" => prompt_role.to_s }
       )
     end
 
-    def prepend_system_prompt_once!(content, created_at: Time.now)
+    def replace_system_prompt!(previous_content, content, created_at: Time.now)
+      previous_text = previous_content.to_s
+      text = content.to_s
+      return if text.empty?
+
+      events = read_events
+      matching_indexes = events.each_index.select do |index|
+        event = events[index]
+        event["type"] == "system_prompt" && event.dig("metadata", "prompt_role") == "base"
+      end
+      matching_indexes = events.each_index.select do |index|
+        event = events[index]
+        event["type"] == "system_prompt" && event["content"].to_s == previous_text
+      end if matching_indexes.empty?
+      return append_system_prompt!(text, created_at:, prompt_role: "base") if matching_indexes.empty?
+
+      replacement_index = matching_indexes.last
+      next_events = events.each_with_index.filter_map do |event, index|
+        next event unless matching_indexes.include?(index)
+        next unless index == replacement_index
+
+        event.merge(
+          "content" => text,
+          "created_at" => created_at.iso8601,
+          "pinned" => true,
+          "metadata" => { "prompt_role" => "base" }
+        )
+      end
+      write_events!(next_events)
+    end
+
+    def prepend_system_prompt_once!(content, created_at: Time.now, prompt_role: nil)
       text = content.to_s
       return false if text.empty?
 
@@ -205,7 +237,8 @@ module HQ
         "type" => "system_prompt",
         "content" => text,
         "created_at" => created_at.iso8601,
-        "pinned" => true
+        "pinned" => true,
+        "metadata" => prompt_role.to_s.empty? ? nil : { "prompt_role" => prompt_role.to_s }
       }
       FileUtils.mkdir_p(File.dirname(path))
       File.open(path, "w") do |file|
@@ -610,6 +643,18 @@ module HQ
     end
 
     def requested_field_labels(inquiry)
+      fields = inquiry["fields"]
+      if fields.is_a?(Array)
+        labels = fields.filter_map do |field|
+          next unless field.is_a?(Hash)
+
+          label = field["label"].to_s.strip
+          label = field["key"].to_s.strip if label.empty?
+          label unless label.empty?
+        end
+        return labels unless labels.empty?
+      end
+
       schema = inquiry["requested_schema"]
       return [] unless schema.is_a?(Hash)
 

@@ -123,7 +123,9 @@ accuracy. Token budget grows linearly with agent age in this regime;
 the expectation is that `session_id` is captured on the first run and
 Regime B takes over from run 2 onward.
 
-That blob is piped to Claude/Codex on stdin.
+The command builders append that blob as the harness prompt argument: after
+`--` for Codex, as the final positional argument for Claude-compatible
+harnesses, and as the `opencode run` message argument for OpenCode.
 
 ### Regime B — native resume active
 

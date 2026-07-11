@@ -4,7 +4,7 @@
   "properties": {
     "status": {
       "type": "string",
-      "enum": ["success", "partial", "failed", "blocked", "input_required"]
+      "enum": ["success", "no_action_needed", "partial", "failed", "blocked", "input_required"]
     },
     "summary": {
       "type": "string",

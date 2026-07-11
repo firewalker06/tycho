@@ -19,6 +19,7 @@ Key references:
 
 - [CLAUDE.md](../CLAUDE.md) — architecture, file layout, runtime behavior, coding style.
 - [GOTCHAS.md](./GOTCHAS.md) — known operational pitfalls.
+- [SYSTEM_PROMPT_AUDIT.md](./SYSTEM_PROMPT_AUDIT.md) — inventory of system prompts and automatically injected managed-agent context, including lifecycle timing and known contract gaps.
 - [research/charm-ruby.md](./research/charm-ruby.md) — Bubbletea/Lipgloss/Bubbles Ruby usage notes.
 - [research/logging-architecture.md](./research/logging-architecture.md) — `HQ.logger` design.
 - [research/claude-json-schema-research.md](./research/claude-json-schema-research.md) and [research/codex-json-schema-research.md](./research/codex-json-schema-research.md) — agent stream formats.

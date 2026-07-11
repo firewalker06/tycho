@@ -148,7 +148,7 @@ module HQ
 
       @messages.unshift(AgentMessage.new(role: "system", content: text, created_at:))
       trim_messages!
-      memory_store.prepend_system_prompt_once!(text, created_at:)
+      memory_store.prepend_system_prompt_once!(text, created_at:, prompt_role: "project_context")
       true
     end
 
@@ -587,6 +587,7 @@ module HQ
 
     def update!(name:, template_key:, workspace:, prompt:, sandbox_mode: @sandbox_mode, agent: @agent,
                 model: @model, reasoning_effort: @reasoning_effort)
+      previous_prompt = @prompt
       @name = name
       @template_key = template_key
       @workspace = workspace
@@ -596,7 +597,7 @@ module HQ
       @model = normalize_model(model)
       @reasoning_effort = normalize_reasoning_effort(reasoning_effort)
       reset_base_prompt!
-      memory_store.append_system_prompt!(@prompt, created_at: Time.now)
+      memory_store.replace_system_prompt!(previous_prompt, @prompt, created_at: Time.now)
       HQ.hooks.publish("agent.updated",
                        agent_key: @key,
                        project_key: @project_key,
@@ -1235,7 +1236,11 @@ module HQ
       return if items.empty?
       return if memory_store.exists?
 
-      items.each do |message|
+      base_system_index = items.rindex do |message|
+        candidate = message.is_a?(AgentMessage) ? message : AgentMessage.from_hash(message)
+        candidate.role.to_s == "system"
+      end
+      items.each_with_index do |message, index|
         message = message.is_a?(AgentMessage) ? message : AgentMessage.from_hash(message)
         text = message.content.to_s
         next if text.strip.empty?
@@ -1243,7 +1248,8 @@ module HQ
         created_at = message.created_at || @created_at || Time.now
         case message.role.to_s
         when "system"
-          memory_store.append_system_prompt!(text, created_at: created_at)
+          prompt_role = index == base_system_index ? "base" : "project_context"
+          memory_store.append_system_prompt!(text, created_at: created_at, prompt_role:)
         when "user"
           attachments = message.metadata.is_a?(Hash) ? message.metadata["attachments"] : nil
           memory_store.append_user_message!(text, created_at: created_at, attachments:)

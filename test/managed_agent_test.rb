@@ -24,6 +24,7 @@ module ManagedAgentTest
     assert_opencode_assistant_json_structured_output_normalizes
     assert_final_output_checklist_is_ephemeral_execution_context
     assert_agent_result_schema_describes_summary
+    assert_agent_updates_replace_the_prior_base_prompt
     assert_initial_user_message_attachments_seed_memory
     assert_model_and_reasoning_effort_persist_and_update
     assert_legacy_run_commands_backfill_model_and_reasoning_effort
@@ -753,9 +754,85 @@ module ManagedAgentTest
     schema_path = File.expand_path("../config/schemas/agent_result.json", __dir__)
     schema = JSON.parse(File.read(schema_path))
     description = schema.dig("properties", "summary", "description").to_s
+    statuses = schema.dig("properties", "status", "enum")
 
     assert(description.include?("Remote UI Summary page"),
            "agent result schema should describe how to write the summary field")
+    assert(statuses.include?("no_action_needed"),
+           "canonical agent result schema should allow no_action_needed")
+
+    agent = HQ::ManagedAgent.new(
+      key: "schema-statuses",
+      name: "Schema Statuses",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "System prompt",
+      agent: "claude"
+    )
+    claude_schema = JSON.parse(agent.send(:compact_claude_result_schema))
+    claude_statuses = claude_schema.dig("properties", "status", "enum")
+    assert(claude_statuses.include?("no_action_needed"),
+           "Claude compact result schema should allow no_action_needed")
+  end
+
+  def assert_agent_updates_replace_the_prior_base_prompt
+    Dir.mktmpdir("hq-managed-agent-prompt-replacement-test") do |dir|
+      created_at = Time.now
+      agent = HQ::ManagedAgent.new(
+        key: "prompt-replacement",
+        name: "Prompt Replacement",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "Original base prompt",
+        agent: "codex",
+        log_path: File.join(dir, "prompt-replacement.raw.log"),
+        messages: [
+          HQ::ManagedAgent::AgentMessage.new(
+            role: "system",
+            content: "Project:\n- Key: demo\n- Name: Demo\n- Path: #{dir}",
+            created_at:
+          ),
+          HQ::ManagedAgent::AgentMessage.new(role: "system", content: "Original base prompt", created_at:)
+        ]
+      )
+
+      agent.update!(
+        name: agent.name,
+        template_key: agent.template_key,
+        workspace: agent.workspace,
+        prompt: "Replacement base prompt",
+        sandbox_mode: agent.sandbox_mode,
+        agent: agent.agent,
+        model: agent.model,
+        reasoning_effort: agent.reasoning_effort
+      )
+
+      prompt = agent.send(:composed_prompt)
+      assert(prompt.include?("Project:\n- Key: demo"),
+             "agent update should preserve project context")
+      assert(!prompt.include?("Original base prompt"),
+             "agent update should remove the prior base prompt from cold replay")
+      assert(prompt.scan("Replacement base prompt").length == 1,
+             "agent update should retain exactly one replacement base prompt")
+
+      agent.update!(
+        name: agent.name,
+        template_key: agent.template_key,
+        workspace: agent.workspace,
+        prompt: "Final base prompt",
+        sandbox_mode: agent.sandbox_mode,
+        agent: agent.agent,
+        model: agent.model,
+        reasoning_effort: agent.reasoning_effort
+      )
+      next_prompt = agent.send(:composed_prompt)
+      assert(!next_prompt.include?("Original base prompt") && !next_prompt.include?("Replacement base prompt"),
+             "repeated agent updates should retire every prior active base prompt")
+      assert(next_prompt.scan("Final base prompt").length == 1,
+             "repeated agent updates should retain exactly one final base prompt")
+    end
   end
 
   def assert_initial_user_message_attachments_seed_memory

@@ -37,6 +37,7 @@ module MemoryEntriesTest
     assert_agent_entries
     assert_skill_entries
     assert_structured_output_entries
+    assert_normalized_inquiry_fields_are_listed_before_legacy_schema_fields
     assert_long_capture_summary_is_not_truncated
     assert_long_rebuild_summary_is_not_truncated
     puts "memory_entries_test: ok"
@@ -98,6 +99,51 @@ module MemoryEntriesTest
                     "Report written to /tmp/hq-public-review.md and opened for user."
     assert_summary(call, "StructuredOutput", expected_call)
     assert_summary(result, "StructuredOutput", "tool result: Structured output provided successfully")
+  end
+
+  def assert_normalized_inquiry_fields_are_listed_before_legacy_schema_fields
+    Dir.mktmpdir("hq-memory-inquiry-fields-test") do |dir|
+      agent = build_agent(dir, File.join(dir, "agent.raw.log"), Time.now, "inquiry")
+      memory = HQ::AgentMemory.new(agent)
+      context = memory.send(
+        :format_inquiry_context,
+        "metadata" => {
+          "inquiry" => {
+            "message" => "Choose a release target.",
+            "fields" => [
+              { "key" => "environment", "label" => "Environment" },
+              { "key" => "notes", "label" => "" }
+            ],
+            "requested_schema" => {
+              "properties" => {
+                "legacy" => { "title" => "Legacy field" }
+              }
+            }
+          }
+        }
+      )
+
+      assert(context.include?("Requested fields: Environment, notes"),
+             "normalized inquiry fields should provide labels before the legacy schema fallback")
+      assert(!context.include?("Legacy field"),
+             "legacy requested_schema fields should not override normalized inquiry fields")
+
+      legacy_context = memory.send(
+        :format_inquiry_context,
+        "metadata" => {
+          "inquiry" => {
+            "message" => "Provide legacy input.",
+            "requested_schema" => {
+              "properties" => {
+                "legacy" => { "title" => "Legacy field" }
+              }
+            }
+          }
+        }
+      )
+      assert(legacy_context.include?("Requested fields: Legacy field"),
+             "legacy requested_schema fields should remain available as a fallback")
+    end
   end
 
   def assert_long_capture_summary_is_not_truncated

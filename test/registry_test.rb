@@ -396,6 +396,12 @@ module RegistryTest
              "expected first system message to include workspace path")
       assert(system_messages[1].content == "Work on web.",
              "expected second system message to be the selected template prompt")
+      memory_system_prompts = HQ::AgentMemory.new(agent).events.select { |event| event["type"] == "system_prompt" }
+      assert(memory_system_prompts.map { |event| event["content"] } == system_messages.map(&:content),
+             "expected agent creation to seed each system prompt exactly once in memory")
+      assert(memory_system_prompts.map { |event| event.dig("metadata", "prompt_role") } ==
+             %w[project_context base],
+             "expected system prompts to retain distinct project-context and base roles")
       conversation_roles = agent.conversation_messages.map(&:role)
       assert(conversation_roles.first(2) == %w[system system],
              "expected chat conversation to render both leading system messages")

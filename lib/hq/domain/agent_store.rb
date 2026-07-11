@@ -219,11 +219,11 @@ module HQ
     def seed_memory_system_prompts!(agent, project, prompt)
       created_at = agent.created_at || Time.now
       memory = HQ::AgentMemory.new(agent)
-      [project_context_prompt(project), prompt.to_s].each do |text|
-        next if text.to_s.strip.empty?
+      return if memory.exists?
 
-        memory.append_system_prompt!(text, created_at: created_at)
-      end
+      project_context = project_context_prompt(project)
+      memory.append_system_prompt!(project_context, created_at:, prompt_role: "project_context")
+      memory.append_system_prompt!(prompt.to_s, created_at:, prompt_role: "base") unless prompt.to_s.strip.empty?
     rescue StandardError
       nil
     end
