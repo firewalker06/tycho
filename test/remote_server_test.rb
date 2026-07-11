@@ -2260,8 +2260,11 @@ module RemoteServerTest
     assert(response[:body].include?("header-more-button"), "expected root shell to expose header More actions")
     assert(response[:body].include?('id="header-more-panel"'), "expected root shell to expose the header More menu panel")
     assert(response[:body].include?('id="header-more-badge"'), "expected root shell to expose the header More badge")
-    assert(response[:body].include?('id="quick-agent-fab"'), "expected root shell to expose Quick Agent launch")
-    assert(response[:body].include?('id="quick-agent-dialog"'), "expected root shell to expose Quick Agent modal")
+    assert(response[:body].include?('id="quick-agent-fab"'), "expected root shell to expose New agent launch")
+    assert(response[:body].include?('class="quick-agent-fab-label"'),
+           "expected the New agent launch to expose a contextual text label")
+    assert(response[:body].include?('id="quick-agent-dialog"'), "expected root shell to expose New agent modal")
+    assert(response[:body].include?('aria-label="New agent"'), "expected the create-agent dialog to use consistent naming")
     assert(response[:body].include?('data-tab="settings"'), "expected root shell to expose Settings navigation")
     assert(response[:body].include?("<span>Settings</span>"), "expected root shell to label setup navigation as Settings")
     assert(!response[:body].include?('data-tab="search"'), "expected root shell to remove Search navigation")
@@ -2517,6 +2520,8 @@ module RemoteServerTest
            "expected Remote UI to style the Quick Agent floating action button")
     assert(css[:body].include?(".quick-agent-dialog"),
            "expected Remote UI to style the Quick Agent modal")
+    assert(css[:body].include?("--touch-target: 44px") && css[:body].include?("--control-height: 44px"),
+           "expected audited Remote UI controls to share accessible sizing tokens")
     assert(css[:body].include?(".top-actions .search-box"),
            "expected Agents tab search to flex inside the action row")
     assert(css[:body].include?(".top-actions {\n  flex-wrap: nowrap;"),
@@ -2621,6 +2626,10 @@ module RemoteServerTest
            helpers_js[:body].include?("function attachmentBlobPath"),
            "expected Remote UI attachment target primitives to live in the helper asset")
     js = server.send(:route_ui, "/ui.js")
+    assert(js[:body].include?('<span>Create and run</span>') && js[:body].include?('type="submit"'),
+           "expected Quick Agent to expose a visible primary submit action")
+    assert(js[:body].include?("Create without running") && js[:body].include?('class="secondary-submit-menu"'),
+           "expected create-only agent submission to live behind a secondary option")
     assert(js[:content_type].include?("javascript"), "expected /ui.js to return JavaScript")
     assert(js[:body].include?("DEFAULT_REFRESH_INTERVALS"), "expected UI JavaScript to define refresh defaults")
     assert(js[:body].include?("window.TychoRemoteHelpers"),
@@ -2685,8 +2694,16 @@ module RemoteServerTest
            "expected Agent detail to render structured inquiry forms")
     assert(js[:body].include?('id="inquiry-form" class="inquiry-form"'),
            "expected inquiry answers to use a dedicated form")
-    assert(js[:body].include?("I have reviewed this answer and want to send it."),
+    assert(js[:body].include?("Send these answers to the agent."),
            "expected inquiry confirmation copy to stay concise")
+    assert(js[:body].include?('data-inquiry-validation') && js[:body].include?("function syncViewControls"),
+           "expected inquiry answers to expose live validation before submission")
+    assert(js[:body].include?("agentDetailFullViewMode") && js[:body].include?("data-toggle-agent-detail-full-view"),
+           "expected focused Summary and Attachment pages to support full view")
+    assert(js[:body].include?("agentDetailWideMode") && js[:body].include?("data-toggle-agent-detail-wide"),
+           "expected desktop focused views to support adjustable pane emphasis")
+    assert(js[:body].include?('class="focused-composer"') && js[:body].include?("Continue conversation"),
+           "expected mobile focused views to collapse the follow-up composer")
     assert(js[:body].include?('iconSvg("badgeQuestionMark")'),
            "expected inquiry prompt banners to render a badge question icon")
     assert(js[:body].include?('class="inquiry-mark"'),
@@ -2809,6 +2826,13 @@ module RemoteServerTest
            "expected Settings push section to expose an in-page menu target")
     assert(js[:body].include?('data-scroll-settings-section="settings-push-notifications"'),
            "expected Settings More menu to jump to push notifications")
+    assert(js[:body].include?('class="settings-section-nav"') &&
+           js[:body].include?('aria-current=') &&
+           js[:body].include?("function syncSettingsSectionNav"),
+           "expected Settings to keep a sticky in-page section navigator with active-section feedback")
+    assert(css[:body].include?("position: sticky") &&
+           css[:body].include?("scroll-margin-top: calc(var(--app-header-height"),
+           "expected Settings section jumps to remain visible below the sticky header and navigator")
     assert(js[:body].include?("function renderHiddenSettings"),
            "expected Settings screen to expose a dedicated Hidden settings page")
     assert(js[:body].include?('apiGet("/settings/hidden")'),
@@ -2825,7 +2849,7 @@ module RemoteServerTest
            "expected Settings readiness to include Remote restart status")
     assert(js[:body].index("Automation readiness") < js[:body].index("Remote restart"),
            "expected Remote restart readiness to sit inside Automation readiness")
-    assert(js[:body].index("Remote restart") < js[:body].index("Configuration"),
+    assert(js[:body].index("Remote restart") < js[:body].index('<div class="section-label"><strong>Configuration</strong>'),
            "expected Remote restart readiness to render before Configuration")
     assert(js[:body].include?("Refresh harness catalogs"),
            "expected Settings More menu to expose harness catalog refresh")
@@ -2856,6 +2880,8 @@ module RemoteServerTest
            "expected Remote UI to poll until restart comes back online")
     assert(js[:body].include?("data-scheduler-action"),
            "expected Remote UI to expose scheduler daemon controls")
+    assert(js[:body].include?('schedule?.message_source === "file"'),
+           "expected inline schedules to avoid unavailable message-file requests")
     assert(js[:body].include?("calendarCheck2"),
            "expected Remote UI schedule surfaces to use the calendar-check-2 icon")
     assert(js[:body].include?("function agentIconName") &&
@@ -3139,6 +3165,21 @@ module RemoteServerTest
     assert(!js[:body].include?("Start run"), "expected Agent detail to omit redundant Start run")
     assert(js[:body].include?("function syncAgentDockLayout"),
            "expected Agent detail dock height to update page padding")
+    assert(js[:body].include?('copyableKv("Session ID", agent.session_id || "n/a")'),
+           "expected Conversation settings to expose a copyable native session ID")
+    assert(js[:body].include?("renderAgentWorkspace(agent, blocks, {") &&
+           css[:body].include?(".agent-workspace.conversation-only"),
+           "expected desktop conversations to keep the composer in the workspace flow")
+    assert(css[:body].include?("grid-template-columns: 144px minmax(0, 1fr)") &&
+           !css[:body].include?("left: calc(50% - 690px)"),
+           "expected desktop primary navigation to use an uncropped shell column")
+    assert(js[:body].include?('els.nav.classList.toggle("subpage-nav", subpage)') &&
+           css[:body].include?(".bottom-nav.subpage-nav") &&
+           css[:body].include?(".app-shell:has(> .bottom-nav:not(.hidden))"),
+           "expected wide-screen primary navigation to persist across detail routes")
+    assert(css[:body].include?("margin-top: var(--safe-area-top)") &&
+           css[:body].include?("grid-row: 1 / span 2"),
+           "expected the wide-screen sidebar top to align with the header")
     assert(js[:body].include?('els.header.classList.remove("header-hidden")'),
            "expected detail header rendering to clear stale hidden state")
     assert(js[:body].include?("function syncDetailHeaderLayout"),

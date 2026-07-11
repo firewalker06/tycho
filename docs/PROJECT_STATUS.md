@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-07-09
+2026-07-11
 
 ## Strategic Direction
 
@@ -50,6 +50,8 @@ Key references:
 | Logging | Centralized `HQ.logger` (stdlib `Logger`), daily rotation, 7-day retention | Single sink for lifecycle, config, process, and silently-rescued errors |
 | Skill discovery | Enumerate SKILL.md from `~/.claude/skills` + workspace `.claude/skills` (Claude-compatible harnesses) and `~/.codex/skills` + `~/.agents/skills` + workspace `.agents/skills` (Codex) | Per-agent trigger character (`/` vs `$`) surfaced in the chat composer |
 | Remote Sessions | Local JSON API and web UI via `tycho serve`; Tailscale auto-bind; terminal QR startup URL | Remote clients can inspect and control managed agents through the same `AgentStore` / `ManagedAgent` paths as the TUI |
+| Remote UI responsive shell | Mobile keeps bottom navigation; wide desktop uses a wider content frame with side navigation; creation actions live in the header and focused detail/form routes remove unrelated global actions | Prevent fixed controls from obscuring content, use desktop space effectively, and keep page actions contextual across mobile, tablet, and desktop |
+| Remote UI control sizing | Shared 44 px control and touch-target tokens, 16 px mobile form text, visible focus states, and explicit validation/status text | Avoid mobile auto-zoom, undersized targets, color-only state, and inconsistent action geometry |
 | Remote multiserver broker | Configured `remote_servers` let one Remote UI switch between local and peer `tycho serve` instances through backend proxy routes | Browser clients stay connected to one origin; peer credentials remain server-side; each view and mutation is scoped to the selected server |
 | Scheduled runs | Dedicated `tycho schedule daemon`, definitions in `~/.tycho/config/schedules.yml`, runtime state in `~/.tycho/logs/schedules.json`, validated standard cron syntax | Scheduled work should continue independently from the TUI and Remote UI while still reusing existing agent execution paths |
 | Schedule daemon freshness | `tycho schedule daemon` writes heartbeat state to `~/.tycho/logs/scheduler_daemon.json`; UI surfaces derive running/stale/stopped from heartbeat age and process liveness, and report untracked running daemons without heartbeat state | Users need to know whether cron work is actually ticking, not only whether definitions are valid |
@@ -61,11 +63,11 @@ Key references:
 
 ## Current Focus
 
-**v0.7.0 release**: Tycho's current release packages OpenCode harness support,
-Remote Sessions daemon mode, Remote UI agent-switcher shortcuts, attachment and
-PR diff fixes, and removal of the app orchestration surface. After release, the
-next focus is stabilizing install/update paths through Homebrew checks,
-hardening harness compatibility, and continuing browser/TUI smoke verification.
+**Remote UI stabilization**: the cross-route design audit is implemented across
+the responsive shell, contextual navigation/actions, forms, inquiry submission,
+Settings, conversations, diffs, summaries, and attachment reading. The next
+focus is stabilizing install/update paths through Homebrew checks, hardening
+harness compatibility, and continuing browser/TUI smoke verification.
 
 ## Roadmap
 
@@ -178,7 +180,7 @@ hardening harness compatibility, and continuing browser/TUI smoke verification.
 - [x] Add Remote JSON API schedule list/run/pause/resume/reload
 - [x] Show schedules and daemon freshness in the TUI and Remote UI Now view
 - [ ] Add TUI schedule management
-- [ ] Add Remote UI schedule management
+- [x] Add Remote UI schedule management
 
 ### Omnisearch
 
@@ -257,9 +259,13 @@ hardening harness compatibility, and continuing browser/TUI smoke verification.
 - [x] Remote UI skill discovery for chat insertion
 - [x] Browser push subscription/test-notification foundation, with HTTPS MagicDNS support and HTTP MagicDNS warnings ([WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.md))
 - [x] Automatic browser push notifications when agents require response or finish
-- [ ] Dedicated mobile structured inquiry submission UI
+- [x] Dedicated mobile structured inquiry submission UI
+- [x] Responsive desktop/mobile shell with persistent, header-aligned in-shell desktop navigation across top-level and detail routes, consistently named New agent action, shared control sizing, and fixed-region safe-area handling
+- [x] Sticky Settings section navigator over one continuous page and copyable native session ID in Conversation Settings
+- [x] In-flow desktop conversation composer with resize-aware mobile content reservation
+- [x] Focused Summary/Attachment full-view controls and compact mobile follow-up composer
 - [ ] Dedicated mobile activity/log detail page
-- [ ] Full mobile agent create/edit form
+- [x] Full mobile agent create/edit form
 
 ## Known Issues
 

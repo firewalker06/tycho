@@ -210,6 +210,13 @@ def write_smoke_script(path)
         if (agentPrompt !== "$review ") {
           throw new Error(`Agent form skill autocomplete failed: ${JSON.stringify(agentPrompt)}`);
         }
+        if (await page.locator("#quick-agent-fab").isVisible()) {
+          throw new Error("Quick Agent header action should be hidden on focused forms");
+        }
+        const agentNameFontSize = await page.locator("#agent-name").evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
+        if (agentNameFontSize < 16) {
+          throw new Error(`Mobile form input is below zoom-safe size: ${agentNameFontSize}px`);
+        }
 
         await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
         await page.waitForSelector("#quick-agent-fab:not(.hidden)", { state: "visible", timeout: 10_000 });
@@ -221,6 +228,14 @@ def write_smoke_script(path)
         const quickPrompt = await page.locator("#quick-agent-prompt").inputValue();
         if (quickPrompt !== "$review ") {
           throw new Error(`Quick Agent skill autocomplete failed: ${JSON.stringify(quickPrompt)}`);
+        }
+        const quickSubmit = page.locator("#quick-agent-form button[type='submit']");
+        if (!(await quickSubmit.isVisible())) {
+          throw new Error("Quick Agent primary submit action was not visible");
+        }
+        const quickSubmitBox = await quickSubmit.boundingBox();
+        if (!quickSubmitBox || quickSubmitBox.y + quickSubmitBox.height > 844) {
+          throw new Error(`Quick Agent submit action is outside mobile viewport: ${JSON.stringify(quickSubmitBox)}`);
         }
 
         if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
