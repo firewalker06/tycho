@@ -24,7 +24,7 @@ module ManagedAgentTest
     assert_opencode_assistant_json_structured_output_normalizes
     assert_final_output_checklist_is_ephemeral_execution_context
     assert_response_style_applies_to_cold_and_resumed_runs
-    assert_response_style_can_be_disabled_and_is_fingerprinted
+    assert_response_style_can_be_disabled_and_run_session_is_recorded
     assert_agent_result_schema_describes_summary
     assert_no_action_status_conflicts_are_normalized
     assert_agent_updates_replace_the_prior_base_prompt
@@ -69,7 +69,7 @@ module ManagedAgentTest
            "expected a native resumed run not to replay the base prompt")
   end
 
-  def assert_response_style_can_be_disabled_and_is_fingerprinted
+  def assert_response_style_can_be_disabled_and_run_session_is_recorded
     agent = HQ::ManagedAgent.new(
       key: "unstyled-agent",
       name: "Unstyled",
@@ -84,13 +84,12 @@ module ManagedAgentTest
     assert(agent.to_hash["response_style"] == false,
            "expected an explicit response style opt-out to persist")
 
-    digest = HQ::ResponseStylePolicy.digest("Precise prose")
     run = HQ::ManagedAgent::AgentRun.from_hash(
       "status" => "success",
-      "response_style_sha256" => digest
+      "session_id" => "session-123"
     )
-    assert(run.to_hash["response_style_sha256"] == digest,
-           "expected the response style fingerprint to round-trip with a run")
+    assert(run.to_hash["session_id"] == "session-123",
+           "expected the harness session id to round-trip with a run")
   end
 
   def assert_new_agents_use_unique_log_stems
@@ -183,6 +182,8 @@ module ManagedAgentTest
       assert(saved["last_exit_code"] == 0, "expected CLI status to persist finalized exit code")
       assert(saved["summary"] == "CLI_STATUS_DONE", "expected CLI status to persist finalized summary")
       assert(saved["session_id"] == "ses_cli_status", "expected CLI status to persist OpenCode session id")
+      assert(saved.dig("runs", 0, "session_id") == "ses_cli_status",
+             "expected the finalized run to record the session id emitted by the harness")
       assert(saved.dig("runs", 0, "finished_at"), "expected CLI status to persist run finish time")
     end
   ensure

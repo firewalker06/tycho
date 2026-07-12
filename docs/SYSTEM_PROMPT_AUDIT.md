@@ -202,7 +202,7 @@ Continue from the current HQ managed-agent state.
 
 **Default content:** The shipped policy asks the harness to lead with the outcome, use simple accurate words, active verbs, concrete details, logical flow, and a natural human voice; remove filler and repetition; revise once; and stop when the point has landed. It explicitly defers to technical precision, required terminology, formats, code, commands, schemas, quotations, and a user-requested genre or tone. The exact text is canonical in [`config/response_style.md.example`](../config/response_style.md.example).
 
-**Purpose:** Give all harnesses a shared default for operator-facing prose while keeping task content, memory, and structured-output requirements separate. Each run records `response_style_sha256` in its raw-log header and persisted run metadata for auditability.
+**Purpose:** Give all harnesses a shared default for operator-facing prose while keeping task content, memory, and structured-output requirements separate. Persisted run metadata records the native harness `session_id` captured from the run, rather than a fingerprint of the policy text.
 
 **Source:** `ResponseStylePolicy`, `ManagedAgent#with_execution_guidance`, and registry project/template `response_style` resolution.
 

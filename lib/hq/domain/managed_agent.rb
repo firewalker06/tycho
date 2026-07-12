@@ -50,7 +50,7 @@ module HQ
     end
 
     AgentRun = Struct.new(
-      :started_at, :finished_at, :exit_code, :status, :log_path, :command, :response_style_sha256,
+      :started_at, :finished_at, :exit_code, :status, :log_path, :command, :session_id,
       keyword_init: true
     ) do
       def self.from_hash(hash)
@@ -61,7 +61,7 @@ module HQ
           status: hash["status"],
           log_path: hash["log_path"],
           command: hash["command"],
-          response_style_sha256: hash["response_style_sha256"]
+          session_id: hash["session_id"]
         )
       end
 
@@ -74,7 +74,7 @@ module HQ
           "log_path" => log_path,
           "command" => command
         }
-        result["response_style_sha256"] = response_style_sha256 unless response_style_sha256.to_s.empty?
+        result["session_id"] = session_id unless session_id.to_s.empty?
         result
       end
     end
@@ -352,7 +352,6 @@ module HQ
         @session_bootstrapped = false
       end
       response_style_text = resolved_response_style
-      response_style_sha256 = ResponseStylePolicy.digest(response_style_text)
       prompt_text = prompt_for_execution(response_style: response_style_text)
       execution = build_command
       command = execution.fetch(:command)
@@ -378,7 +377,6 @@ module HQ
         file.puts "=== [#{@started_at.strftime("%Y-%m-%d %H:%M:%S")}] start ==="
         file.puts "workspace=#{@workspace}"
         file.puts "session_id=#{@session_id}" unless @session_id.to_s.empty?
-        file.puts "response_style_sha256=#{response_style_sha256}" if response_style_sha256
         file.puts "prompt=#{prompt_text}"
         file.puts
       end
@@ -397,7 +395,7 @@ module HQ
         status: "running",
         log_path: @log_path,
         command: Shellwords.join(command),
-        response_style_sha256: response_style_sha256
+        session_id: @session_id
       )
       @structured_result = nil
       @summary = nil
@@ -984,6 +982,7 @@ module HQ
       run.exit_code = @last_exit_code
       run.status = status
       capture_session_id!
+      run.session_id = @session_id unless @session_id.to_s.empty?
       build_summary!
       capture_run_memory!(run)
       add_assistant_message!(@summary) if @summary

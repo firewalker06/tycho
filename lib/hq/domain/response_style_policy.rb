@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "digest"
-
 require_relative "constants"
 
 module HQ
@@ -18,13 +16,6 @@ module HQ
     rescue StandardError => e
       HQ.logger.warn("ResponseStylePolicy") { "Failed to load #{path}: #{e.class} - #{e.message}" }
       ""
-    end
-
-    def digest(content)
-      text = content.to_s.strip
-      return nil if text.empty?
-
-      Digest::SHA256.hexdigest(text)
     end
 
     def default_path
