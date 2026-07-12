@@ -491,9 +491,14 @@ module HQ
 
     def running?
       return false unless @pid
+      return false if completed_status_available?
       return false unless ProcessLiveness.alive?(@pid)
 
       own_process_group?(@pid)
+    end
+
+    def completed_status_available?
+      status_file_paths.any? { |path| File.file?(path) }
     end
 
     def own_process_group?(pid)

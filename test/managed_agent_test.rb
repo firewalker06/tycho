@@ -13,6 +13,7 @@ module ManagedAgentTest
 
   def run!
     assert_new_agents_use_unique_log_stems
+    assert_completed_status_overrides_live_pid
     assert_start_finalizes_unpolled_previous_run
     assert_cli_status_finalizes_unpolled_dead_pid
     assert_start_reconciles_session_after_restart
@@ -125,6 +126,31 @@ module ManagedAgentTest
     end
   ensure
     replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
+  end
+
+  def assert_completed_status_overrides_live_pid
+    old_logs_dir = nil
+    Dir.mktmpdir("hq-managed-agent-status-test") do |dir|
+      logs_dir = File.join(dir, "agents")
+      FileUtils.mkdir_p(logs_dir)
+      old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, logs_dir)
+      agent = HQ::ManagedAgent.new(
+        key: "demo-agent-status",
+        name: "Demo",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "Test"
+      )
+      live_process_group = Process.getpgrp
+      agent.instance_variable_set(:@pid, live_process_group)
+      File.write(agent.send(:status_file_path), "0")
+
+      assert(!agent.running?,
+             "expected an authoritative completion status to override a live or reused pid")
+    ensure
+      replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
+    end
   end
 
   def assert_cli_status_finalizes_unpolled_dead_pid
