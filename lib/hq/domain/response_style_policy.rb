@@ -22,5 +22,10 @@ module HQ
       configured = HQ.env_present("RESPONSE_STYLE_PATH")
       File.expand_path(configured || HQ.default_response_style_path)
     end
+
+    def path
+      configured = HQ.env_present("RESPONSE_STYLE_PATH")
+      File.expand_path(configured || File.join(HQ::USER_CONFIG_DIR, "response_style.md"))
+    end
   end
 end

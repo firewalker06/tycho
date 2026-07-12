@@ -139,7 +139,7 @@ Home-screen launches are treated as normal browser sessions, but mobile browsers
 
 The top-level mobile tabs are `Now`, `Agents`, and `Settings`. Agents is the canonical project-and-agent workspace: it filters agents and project metadata, keeps zero-agent projects reachable for first-agent creation, and links to project detail routes. Legacy `#search`, `#projects`, and `#setup` hashes are redirected to the closest surviving tab. Detail routes use hash navigation such as `#agent/{key}`, `#project/{key}`, and `#project/{key}/action/{action}`. The footer nav is fixed on top-level routes, hides while scrolling down, shows again while scrolling up, and is hidden on detail subpages.
 
-Settings → Configuration includes an editor for the global response-style policy. It reads and writes `~/.tycho/config/response_style.md` by default, or `TYCHO_RESPONSE_STYLE_PATH` when configured. Saves use Tycho's atomic file store and retain the previous file as `response_style.md.bak`; focused edits survive polling refreshes.
+Settings → Configuration explains that response style is shared writing guidance for tone, clarity, and prose rather than task instructions. When the file is absent, the page offers **Add response style** instead of treating that state as an error. It reads and writes `~/.tycho/config/response_style.md` by default, or `TYCHO_RESPONSE_STYLE_PATH` when configured. Saves use Tycho's atomic file store and retain the previous file as `response_style.md.bak`; focused edits survive polling refreshes.
 
 ## Multiserver Broker
 
@@ -723,7 +723,7 @@ Remote UI can render a first-run screen without the normal header or footer.
 
 ### `GET /settings/response-style`
 
-Returns the active global response-style file as `response_style`, including its `path`, `content`, and UTF-8 byte count. The endpoint resolves `TYCHO_RESPONSE_STYLE_PATH` first and otherwise uses `~/.tycho/config/response_style.md`.
+Returns the active global response-style file as `response_style`, including its `path`, `content`, UTF-8 byte count, and `exists` state. A missing file returns an empty, addable configuration instead of an error. The endpoint resolves `TYCHO_RESPONSE_STYLE_PATH` first and otherwise uses `~/.tycho/config/response_style.md`.
 
 ### `PATCH /settings/response-style`
 

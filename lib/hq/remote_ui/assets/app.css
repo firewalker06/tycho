@@ -2206,6 +2206,34 @@ select {
   background: color-mix(in srgb, var(--panel) 78%, transparent);
 }
 
+.response-style-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.response-style-empty > div {
+  display: grid;
+  gap: 6px;
+}
+
+.response-style-empty p {
+  margin: 0;
+  max-width: 72ch;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.response-style-empty span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .response-style-form-heading,
 .response-style-form-footer {
   display: flex;
@@ -2236,7 +2264,8 @@ select {
 
 @media (max-width: 640px) {
   .response-style-form-heading,
-  .response-style-form-footer {
+  .response-style-form-footer,
+  .response-style-empty {
     align-items: stretch;
     flex-direction: column;
   }

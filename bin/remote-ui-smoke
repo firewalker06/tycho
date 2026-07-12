@@ -40,7 +40,6 @@ def write_fixture(dir)
         agent: codex
   YAML
   File.write(prompts_path, "---\ncustom: \"Check the workspace.\"\n")
-  File.write(response_style_path, "Lead with the result and write plainly.\n")
   File.write(schedules_path, "---\nschedules: []\n")
   skill_dir = File.join(workspace, ".agents", "skills", "review")
   FileUtils.mkdir_p(skill_dir)
@@ -232,6 +231,13 @@ def write_smoke_script(path)
         }
 
         await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
+        await page.waitForSelector("[data-testid='response-style-add']", { state: "visible", timeout: 10_000 });
+        const responseStyleExplanation = await page.locator("[data-testid='response-style-empty']").innerText();
+        if (!responseStyleExplanation.includes("shared writing guidance") ||
+            !responseStyleExplanation.includes("without changing the task or required output format")) {
+          throw new Error(`Response style explanation is incomplete: ${JSON.stringify(responseStyleExplanation)}`);
+        }
+        await page.click("[data-testid='response-style-add']");
         await page.waitForSelector("#response-style-input", { state: "visible", timeout: 10_000 });
         const responseStyleDraft = "Write with smoke-tested clarity. " + Date.now();
         await page.fill("#response-style-input", responseStyleDraft);

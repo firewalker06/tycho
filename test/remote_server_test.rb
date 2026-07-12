@@ -1313,7 +1313,6 @@ module RemoteServerTest
     with_remote_temp_store do |dir|
       path = File.join(dir, "config", "response_style.md")
       FileUtils.mkdir_p(File.dirname(path))
-      File.write(path, "Lead with the result.\n")
       with_env_values("TYCHO_RESPONSE_STYLE_PATH" => path) do
         workspace = File.join(dir, "workspace")
         write_project_workspace(workspace)
@@ -1323,8 +1322,21 @@ module RemoteServerTest
         fetched = server.send(:route, service, "GET", "/settings/response-style", {}, nil)
         assert(fetched.dig(:body, :response_style, :path) == path,
                "expected response style settings to expose the configured path")
-        assert(fetched.dig(:body, :response_style, :content) == "Lead with the result.\n",
-               "expected response style settings to read the current policy")
+        assert(fetched.dig(:body, :response_style, :exists) == false,
+               "expected a missing response style to be an addable empty state")
+
+        created_text = "Lead with the result.\n"
+        created = server.send(
+          :route,
+          service,
+          "PATCH",
+          "/settings/response-style",
+          { "content" => created_text },
+          nil
+        )
+        assert(created.dig(:body, :response_style, :exists) == true,
+               "expected saving the empty state to create a response style")
+        assert(File.read(path) == created_text, "expected response style creation to persist")
 
         updated_text = "Write plainly. Keep technical precision.\n"
         updated = server.send(
@@ -2925,6 +2937,11 @@ module RemoteServerTest
            js[:body].include?("function saveResponseStyle") &&
            js[:body].include?('apiPatch("/settings/response-style"'),
            "expected Settings to edit and save the global response style")
+    assert(js[:body].include?('data-testid="response-style-empty"') &&
+           js[:body].include?("Add response style") &&
+           js[:body].include?("shared writing guidance") &&
+           js[:body].include?("without changing the task or required output format"),
+           "expected Settings to explain response style and offer an add action when it is missing")
     assert(css[:body].include?(".response-style-form") &&
            css[:body].include?("min-height: 180px"),
            "expected the response style editor to have a readable responsive layout")

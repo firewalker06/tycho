@@ -1336,12 +1336,15 @@ module HQ
     end
 
     def response_style
-      path = ResponseStylePolicy.default_path
+      path = ResponseStylePolicy.path
+      return { path: path, content: "", bytes: 0, exists: false } unless File.exist?(path)
+
       content = FileStore.read_text(path)
       {
         path: path,
         content: content,
-        bytes: content.bytesize
+        bytes: content.bytesize,
+        exists: true
       }
     rescue StandardError => e
       raise Error.new("Unable to read response style: #{e.message}", status: 500)
@@ -1354,7 +1357,7 @@ module HQ
         raise Error.new("Response style must be 64 KB or smaller")
       end
 
-      FileStore.atomic_write(ResponseStylePolicy.default_path, content)
+      FileStore.atomic_write(ResponseStylePolicy.path, content)
       response_style
     rescue Error
       raise
