@@ -1354,6 +1354,13 @@ module RemoteServerTest
         assert(File.read("#{path}.bak") == "Lead with the result.\n",
                "expected response style update to retain a backup")
 
+        deleted = server.send(:route, service, "DELETE", "/settings/response-style", {}, nil)
+        assert(deleted.dig(:body, :response_style, :exists) == false,
+               "expected removing a response style to return the addable empty state")
+        assert(!File.exist?(path), "expected removing a response style to delete the configured file")
+        assert(File.read("#{path}.bak") == "Lead with the result.\n",
+               "expected removing a response style to retain its existing backup")
+
         begin
           server.send(:route, service, "PATCH", "/settings/response-style", { "content" => 123 }, nil)
           raise "expected non-string response style content to fail"
@@ -2942,12 +2949,18 @@ module RemoteServerTest
            js[:body].include?("Add response style") &&
            js[:body].include?("Edit response style") &&
            js[:body].include?('data-testid="response-style-excerpt"') &&
+           js[:body].include?('data-testid="response-style-delete"') &&
            js[:body].include?('replace(/\\s+/g, " ")') &&
            js[:body].include?('iconSvg("squarePen")') &&
+           js[:body].include?('iconSvg("trash2")') &&
            js[:body].include?('class="inline-icon-button" type="button" data-open-response-style') &&
            js[:body].include?("shared writing guidance") &&
            js[:body].include?("without changing the task or required output format"),
            "expected Settings to explain response style and show the correct add or edit action with an excerpt")
+    assert(js[:body].include?("function deleteResponseStyle()") &&
+           js[:body].include?('apiDelete("/settings/response-style")') &&
+           js[:body].include?("Managed agents will stop receiving this writing guidance"),
+           "expected configured response styles to expose a confirmed remove action")
     assert(js[:body].include?("if (!responseStyle.drafting)") &&
            js[:body].include?("data-cancel-response-style"),
            "expected the response style editor to stay collapsed until requested and support canceling")

@@ -245,6 +245,9 @@ module HQ
       if %w[PATCH PUT].include?(method) && parts == ["settings", "response-style"]
         return ok(response_style: service.update_response_style(body))
       end
+      if method == "DELETE" && parts == ["settings", "response-style"]
+        return ok(response_style: service.delete_response_style)
+      end
       return ok(setup: service.setup) if method == "GET" && parts == ["setup"]
       return ok(service.search_index) if method == "GET" && parts == ["search"]
       return accepted(schedule_restart!, headers: RESTART_CACHE_RESET_HEADERS) if method == "POST" && parts == ["server", "restart"]
@@ -1363,6 +1366,13 @@ module HQ
       raise
     rescue StandardError => e
       raise Error.new("Unable to save response style: #{e.message}", status: 500)
+    end
+
+    def delete_response_style
+      FileUtils.rm_f(ResponseStylePolicy.path)
+      response_style
+    rescue StandardError => e
+      raise Error.new("Unable to remove response style: #{e.message}", status: 500)
     end
 
     def push_config

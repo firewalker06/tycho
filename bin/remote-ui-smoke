@@ -240,6 +240,9 @@ def write_smoke_script(path)
         if (!responseStyleExplanation.includes("Add response style")) {
           throw new Error(`Missing response style should show an add action: ${JSON.stringify(responseStyleExplanation)}`);
         }
+        if (await page.locator("[data-testid='response-style-delete']").count()) {
+          throw new Error("Missing response style should not show a remove action");
+        }
         await page.click("[data-testid='response-style-action']");
         await page.waitForSelector("#response-style-input", { state: "visible", timeout: 10_000 });
         await page.click("[data-cancel-response-style]");
@@ -275,6 +278,7 @@ def write_smoke_script(path)
         if (!responseStyleSummary.includes("Edit response style") || !responseStyleSummary.includes(responseStyleDraft)) {
           throw new Error(`Configured response style summary is incomplete: ${JSON.stringify(responseStyleSummary)}`);
         }
+        await page.waitForSelector("[data-testid='response-style-delete']", { state: "visible", timeout: 10_000 });
         await page.click("[data-testid='response-style-action']");
         await page.waitForSelector("#response-style-input", { state: "visible", timeout: 10_000 });
         const savedResponseStyle = await page.locator("#response-style-input").inputValue();

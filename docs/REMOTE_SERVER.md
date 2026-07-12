@@ -141,7 +141,7 @@ Home-screen launches are treated as normal browser sessions, but mobile browsers
 
 The top-level mobile tabs are `Now`, `Agents`, and `Settings`. Agents is the canonical project-and-agent workspace: it filters agents and project metadata, keeps zero-agent projects reachable for first-agent creation, and links to project detail routes. Legacy `#search`, `#projects`, and `#setup` hashes are redirected to the closest surviving tab. Detail routes use hash navigation such as `#agent/{key}`, `#project/{key}`, and `#project/{key}/action/{action}`. The footer nav is fixed on top-level routes, hides while scrolling down, shows again while scrolling up, and is hidden on detail subpages.
 
-Settings → Configuration explains that response style is shared writing guidance for tone, clarity, and prose rather than task instructions. The editor stays collapsed behind **Add response style** whether or not a policy already exists; opening it prefills existing content, while saving or canceling returns to the compact summary. It reads and writes `~/.tycho/config/response_style.md` by default, or `TYCHO_RESPONSE_STYLE_PATH` when configured. Saves use Tycho's atomic file store and retain the previous file as `response_style.md.bak`; focused edits survive polling refreshes.
+Settings → Configuration explains that response style is shared writing guidance for tone, clarity, and prose rather than task instructions. A missing policy stays collapsed behind **Add response style**. Once saved, the compact summary shows an excerpt, **Edit response style**, and a trash action that removes the global policy after confirmation. Opening the editor prefills existing content, while saving or canceling returns to the compact summary. It reads and writes `~/.tycho/config/response_style.md` by default, or `TYCHO_RESPONSE_STYLE_PATH` when configured. Saves use Tycho's atomic file store and retain the previous file as `response_style.md.bak`; focused edits survive polling refreshes.
 
 ## Multiserver Broker
 
@@ -730,6 +730,10 @@ Returns the active global response-style file as `response_style`, including its
 ### `PATCH /settings/response-style`
 
 Atomically replaces the global response-style file from a JSON `content` string and returns the saved `response_style` payload. Content may be empty and is limited to 64 KB. The previous file is retained with a `.bak` suffix.
+
+### `DELETE /settings/response-style`
+
+Removes the configured global response-style file and returns the empty `response_style` payload. An existing `.bak` file is retained for manual recovery.
 
 ### `POST /setup/welcome`
 

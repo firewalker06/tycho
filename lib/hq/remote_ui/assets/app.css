@@ -2221,6 +2221,12 @@ select {
   gap: 6px;
 }
 
+.response-style-summary > .response-style-summary-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .response-style-summary p {
   margin: 0;
   max-width: 72ch;
@@ -2288,6 +2294,10 @@ select {
   .response-style-form-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .response-style-summary > .response-style-summary-actions {
+    align-self: flex-start;
   }
 }
 
