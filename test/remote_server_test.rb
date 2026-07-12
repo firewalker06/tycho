@@ -2937,11 +2937,14 @@ module RemoteServerTest
            js[:body].include?("function saveResponseStyle") &&
            js[:body].include?('apiPatch("/settings/response-style"'),
            "expected Settings to edit and save the global response style")
-    assert(js[:body].include?('data-testid="response-style-empty"') &&
+    assert(js[:body].include?('data-testid="response-style-summary"') &&
            js[:body].include?("Add response style") &&
            js[:body].include?("shared writing guidance") &&
            js[:body].include?("without changing the task or required output format"),
            "expected Settings to explain response style and offer an add action when it is missing")
+    assert(js[:body].include?("if (!responseStyle.drafting)") &&
+           js[:body].include?("data-cancel-response-style"),
+           "expected the response style editor to stay collapsed until requested and support canceling")
     assert(css[:body].include?(".response-style-form") &&
            css[:body].include?("min-height: 180px"),
            "expected the response style editor to have a readable responsive layout")

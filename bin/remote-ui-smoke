@@ -232,11 +232,15 @@ def write_smoke_script(path)
 
         await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
         await page.waitForSelector("[data-testid='response-style-add']", { state: "visible", timeout: 10_000 });
-        const responseStyleExplanation = await page.locator("[data-testid='response-style-empty']").innerText();
+        const responseStyleExplanation = await page.locator("[data-testid='response-style-summary']").innerText();
         if (!responseStyleExplanation.includes("shared writing guidance") ||
             !responseStyleExplanation.includes("without changing the task or required output format")) {
           throw new Error(`Response style explanation is incomplete: ${JSON.stringify(responseStyleExplanation)}`);
         }
+        await page.click("[data-testid='response-style-add']");
+        await page.waitForSelector("#response-style-input", { state: "visible", timeout: 10_000 });
+        await page.click("[data-cancel-response-style]");
+        await page.waitForSelector("[data-testid='response-style-add']", { state: "visible", timeout: 10_000 });
         await page.click("[data-testid='response-style-add']");
         await page.waitForSelector("#response-style-input", { state: "visible", timeout: 10_000 });
         const responseStyleDraft = "Write with smoke-tested clarity. " + Date.now();
@@ -252,12 +256,18 @@ def write_smoke_script(path)
         }
         await page.click("[data-testid='response-style-save']");
         await page.waitForFunction(
-          (expected) => document.querySelector("#response-style-input")?.value === expected &&
+          () => document.querySelector("[data-testid='response-style-add']") &&
+            !document.querySelector("#response-style-input") &&
             document.querySelector("#growl")?.textContent === "Response style saved",
-          responseStyleDraft,
+          null,
           { timeout: 10_000 }
         );
         await page.reload({ waitUntil: "networkidle" });
+        await page.waitForSelector("[data-testid='response-style-add']", { state: "visible", timeout: 10_000 });
+        if (await page.locator("#response-style-input").count()) {
+          throw new Error("Configured response style editor should be collapsed by default");
+        }
+        await page.click("[data-testid='response-style-add']");
         await page.waitForSelector("#response-style-input", { state: "visible", timeout: 10_000 });
         const savedResponseStyle = await page.locator("#response-style-input").inputValue();
         if (savedResponseStyle !== responseStyleDraft) {
