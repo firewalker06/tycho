@@ -4,6 +4,7 @@ require_relative "constants"
 require_relative "file_store"
 require_relative "managed_agent"
 require_relative "../ui/rendering/styles"
+require "securerandom"
 
 module HQ
   class AgentStore
@@ -76,7 +77,8 @@ module HQ
     def create_from_template(project, template_key)
       existing = load
       suffix = next_suffix(project.key, existing)
-      key = "#{project.key}-agent-#{suffix}"
+      now = Time.now
+      key = next_agent_key(project.key, existing, now:)
       template = template_for(project, template_key)
       agent = ManagedAgent.new(
         key: key,
@@ -85,6 +87,7 @@ module HQ
         template_key: template.key,
         workspace: project.path,
         prompt: template.prompt,
+        created_at: now,
         sandbox_mode: template.sandbox_mode,
         agent: template.agent,
         model: template.model,
@@ -98,9 +101,8 @@ module HQ
     end
 
     def create_scheduled(project, schedule_key:, name:, system_message: nil, existing_agents: load)
-      suffix = next_suffix(project.key, existing_agents)
-      key = "#{project.key}-agent-#{suffix}"
       now = Time.now
+      key = next_agent_key(project.key, existing_agents, now:)
       prompt = scheduled_system_prompt(schedule_key:, name:, system_message:)
       system_messages = system_messages_for(project, prompt)
       agent = ManagedAgent.new(
@@ -136,8 +138,8 @@ module HQ
     end
 
     def clone_agent(agent, existing_agents: load)
-      suffix = next_suffix(agent.project_key, existing_agents)
-      key = "#{agent.project_key}-agent-#{suffix}"
+      now = Time.now
+      key = next_agent_key(agent.project_key, existing_agents, now:)
       ManagedAgent.new(
         key: key,
         name: agent.name,
@@ -145,6 +147,7 @@ module HQ
         template_key: agent.template_key,
         workspace: agent.workspace,
         prompt: agent.prompt,
+        created_at: now,
         sandbox_mode: agent.sandbox_mode,
         agent: agent.agent,
         model: agent.model,
@@ -195,7 +198,20 @@ module HQ
         match = agent.key.match(/^#{Regexp.escape(project_key)}-agent-(\d+)$/)
         match[1].to_i if match
       end
-      (prefixes.max || 0) + 1
+      project_count = agents.count { |agent| agent.project_key == project_key }
+      [prefixes.max || 0, project_count].max + 1
+    end
+
+    def next_agent_key(project_key, agents, now: Time.now)
+      timestamp = now.utc.strftime("%Y%m%d-%H%M%S-%6N")
+      base = "#{project_key}-agent-#{timestamp}"
+      existing_keys = agents.map(&:key)
+      return base unless existing_keys.include?(base)
+
+      loop do
+        candidate = "#{base}-#{SecureRandom.hex(3)}"
+        return candidate unless existing_keys.include?(candidate)
+      end
     end
 
     def scheduled_agent_name(project, schedule_key:, name:)

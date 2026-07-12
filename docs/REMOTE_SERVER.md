@@ -135,6 +135,8 @@ http://127.0.0.1:7373/
 
 The UI is plain server-served HTML/CSS/JavaScript, with no frontend build step or JavaScript package dependencies. It uses the existing JSON endpoints, stores the optional bearer token in browser local storage, and sends it as `Authorization: Bearer ...` for API requests.
 
+New managed agents use timestamp-based keys such as `web-agent-20260712-120501-123456`. Existing numeric keys remain valid and load unchanged.
+
 Home-screen launches are treated as normal browser sessions, but mobile browsers can be more aggressive about reusing an old app shell. The root UI references `/ui.css` and `/ui.js` with a content digest query string, and `POST /server/restart` is the explicit cache-reset path: the restart response sends cache-reset headers, the browser clears Cache Storage when available, and the UI reloads itself with a restart query string after the replacement server responds to setup requests.
 
 The top-level mobile tabs are `Now`, `Agents`, and `Settings`. Agents is the canonical project-and-agent workspace: it filters agents and project metadata, keeps zero-agent projects reachable for first-agent creation, and links to project detail routes. Legacy `#search`, `#projects`, and `#setup` hashes are redirected to the closest surviving tab. Detail routes use hash navigation such as `#agent/{key}`, `#project/{key}`, and `#project/{key}/action/{action}`. The footer nav is fixed on top-level routes, hides while scrolling down, shows again while scrolling up, and is hidden on detail subpages.

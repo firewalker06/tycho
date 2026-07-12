@@ -27,8 +27,20 @@ module RegistryTest
     assert_custom_harness_extracts_env_assignments_for_execution
     assert_registry_rejects_unsupported_custom_harness_adapters
     assert_agent_store_prepends_project_tool_system_prompt
+    assert_agent_store_timestamp_keys_avoid_exact_collisions
     assert_agent_store_backfills_project_tool_system_prompt
     puts "registry_test: ok"
+  end
+
+  def assert_agent_store_timestamp_keys_avoid_exact_collisions
+    store = HQ::AgentStore.new([])
+    now = Time.utc(2026, 7, 12, 12, 5, 1, 123_456)
+    base = "web-agent-20260712-120501-123456"
+    existing_agent = Struct.new(:key).new(base)
+
+    generated = store.send(:next_agent_key, "web", [existing_agent], now: now)
+    assert(generated.match?(/\A#{Regexp.escape(base)}-[0-9a-f]{6}\z/),
+           "expected an exact timestamp collision to gain a short random suffix")
   end
 
   def assert_registry_resolves_response_style_inheritance
@@ -422,6 +434,8 @@ module RegistryTest
       web, docs = registry.projects
 
       agent = HQ::AgentStore.new(registry.projects).create_from_template(web, "custom")
+      assert(agent.key.match?(/\Aweb-agent-\d{8}-\d{6}-\d{6}(?:-[0-9a-f]{6})?\z/),
+             "expected generated agent keys to use a timestamp instead of an incremental suffix")
       system_messages = agent.messages.select { |message| message.role == "system" }
       assert(system_messages.length == 2, "expected project context and template prompt to be separate system messages")
       assert(system_messages[0].content.include?("Project:"),
@@ -441,6 +455,7 @@ module RegistryTest
              "expected chat conversation to render both leading system messages")
 
       project_agent = HQ::AgentStore.new(registry.projects).create_from_template(HQ::Project.new(web), "custom")
+      assert(project_agent.key != agent.key, "expected timestamp agent keys to remain unique")
       project_context = project_agent.messages.select { |message| message.role == "system" }.first.content
       assert(project_context.include?("Project:"),
              "expected Project-created agents to include project context")

@@ -931,14 +931,15 @@ module HQ
     end
 
     def monitor_agent_process(pid, status_path)
-      waiter = Process.detach(pid)
       Thread.new do
-        status = waiter.value
+        _waited_pid, status = Process.wait2(pid)
         begin
           File.write(status_path, status.exitstatus.to_i.to_s)
         rescue StandardError
           nil
         end
+      rescue Errno::ECHILD
+        nil
       end
     end
 

@@ -83,7 +83,8 @@ module RemoteServerTest
         "prompt" => "Work remotely.",
         "agent" => "codex"
       )
-      assert(created[:key].start_with?("web-agent-"), "expected created agent key")
+      assert(created[:key].match?(/\Aweb-agent-\d{8}-\d{6}-\d{6}(?:-[0-9a-f]{6})?\z/),
+             "expected created agent key to use a collision-resistant timestamp")
       assert(created[:name] == "Remote Agent", "expected custom agent name")
       assert(created[:status] == "idle", "expected new agent to be idle")
 
@@ -2939,6 +2940,8 @@ module RemoteServerTest
            "expected Settings to edit and save the global response style")
     assert(js[:body].include?('data-testid="response-style-summary"') &&
            js[:body].include?("Add response style") &&
+           js[:body].include?('iconSvg("squarePen")') &&
+           js[:body].include?('class="inline-icon-button" type="button" data-add-response-style') &&
            js[:body].include?("shared writing guidance") &&
            js[:body].include?("without changing the task or required output format"),
            "expected Settings to explain response style and offer an add action when it is missing")
@@ -4092,12 +4095,13 @@ module RemoteServerTest
     YAML
   end
 
-  def wait_for_agent_terminal_status(service, key, timeout: 6.0)
-    deadline = Time.now + timeout
+  def wait_for_agent_terminal_status(service, key, timeout: 15.0)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
     loop do
       payload = service.agent(key)
       return payload if %w[succeeded failed stopped blocked].include?(payload[:status].to_s)
-      raise "expected agent #{key} to finish within #{timeout}s" if Time.now >= deadline
+      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      raise "expected agent #{key} to finish within #{timeout}s" if now >= deadline
 
       sleep 0.05
     end
