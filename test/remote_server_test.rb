@@ -32,6 +32,7 @@ module RemoteServerTest
     assert_remote_project_update_route_edits_metadata
     assert_remote_agent_model_and_effort_payloads
     assert_remote_hidden_settings_filter_projects_and_agents
+    assert_remote_response_style_settings
     assert_remote_schedule_routes
     assert_remote_setup_payload_includes_readiness
     assert_remote_harness_catalogs_are_configurable
@@ -1305,6 +1306,48 @@ module RemoteServerTest
              "expected group hidden setting to persist to hq.yml")
       assert(persisted["projects"].find { |project| project["key"] == "docs" }["hidden"] == true,
              "expected project hidden setting to persist to hq.yml")
+    end
+  end
+
+  def assert_remote_response_style_settings
+    with_remote_temp_store do |dir|
+      path = File.join(dir, "config", "response_style.md")
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, "Lead with the result.\n")
+      with_env_values("TYCHO_RESPONSE_STYLE_PATH" => path) do
+        workspace = File.join(dir, "workspace")
+        write_project_workspace(workspace)
+        service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
+        server = HQ::RemoteServer.new
+
+        fetched = server.send(:route, service, "GET", "/settings/response-style", {}, nil)
+        assert(fetched.dig(:body, :response_style, :path) == path,
+               "expected response style settings to expose the configured path")
+        assert(fetched.dig(:body, :response_style, :content) == "Lead with the result.\n",
+               "expected response style settings to read the current policy")
+
+        updated_text = "Write plainly. Keep technical precision.\n"
+        updated = server.send(
+          :route,
+          service,
+          "PATCH",
+          "/settings/response-style",
+          { "content" => updated_text },
+          nil
+        )
+        assert(updated.dig(:body, :response_style, :content) == updated_text,
+               "expected response style update to return saved content")
+        assert(File.read(path) == updated_text, "expected response style update to persist atomically")
+        assert(File.read("#{path}.bak") == "Lead with the result.\n",
+               "expected response style update to retain a backup")
+
+        begin
+          server.send(:route, service, "PATCH", "/settings/response-style", { "content" => 123 }, nil)
+          raise "expected non-string response style content to fail"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 400, "expected invalid response style content to return a bad request")
+        end
+      end
     end
   end
 
@@ -2877,6 +2920,14 @@ module RemoteServerTest
            js[:body].include?('apiPatch(`/setup/harnesses/${encodeURIComponent(harness)}/catalog`') &&
            js[:body].include?("Harness catalog editing unsupported by this server"),
            "expected Settings to edit and save custom harness model catalogs")
+    assert(js[:body].include?('data-testid="response-style-form"') &&
+           js[:body].include?('data-testid="response-style-input"') &&
+           js[:body].include?("function saveResponseStyle") &&
+           js[:body].include?('apiPatch("/settings/response-style"'),
+           "expected Settings to edit and save the global response style")
+    assert(css[:body].include?(".response-style-form") &&
+           css[:body].include?("min-height: 180px"),
+           "expected the response style editor to have a readable responsive layout")
     assert(js[:body].include?("Recheck status"), "expected Settings More menu to expose readiness refresh")
     assert(js[:body].include?("function restartRemoteServer"), "expected Remote UI to handle Remote restarts")
     assert(js[:body].include?('apiPost("/server/restart"'),

@@ -2197,6 +2197,56 @@ select {
   justify-self: start;
 }
 
+.response-style-form {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+}
+
+.response-style-form-heading,
+.response-style-form-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.response-style-form-heading > div {
+  display: grid;
+  gap: 2px;
+}
+
+.response-style-form-heading span,
+.response-style-form-footer > span,
+.response-style-form label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.response-style-form textarea {
+  min-height: 180px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .response-style-form-heading,
+  .response-style-form-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .response-style-form-footer button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
 .detail-card-body,
 .kv-grid {
   display: grid;

@@ -166,6 +166,8 @@ every cold and resumed execution. Set `response_style` on a project or
 structured prompt template to replace the global text, or set it to `false` to
 disable the policy for that scope. Explicit output formats, schemas, code,
 quotations, and user-requested genres take precedence over this default.
+The global file can be edited from **Settings → Configuration** in Remote UI;
+Tycho saves it atomically to `~/.tycho/config/response_style.md` by default.
 
 Real config files, `.env`, runtime logs, and generated agent artifacts are
 gitignored. Keep secrets and machine-specific paths out of committed files.

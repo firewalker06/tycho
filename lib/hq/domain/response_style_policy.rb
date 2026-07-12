@@ -19,7 +19,8 @@ module HQ
     end
 
     def default_path
-      File.expand_path(HQ.env_present("RESPONSE_STYLE_PATH", HQ.default_response_style_path))
+      configured = HQ.env_present("RESPONSE_STYLE_PATH")
+      File.expand_path(configured || HQ.default_response_style_path)
     end
   end
 end

@@ -26,6 +26,7 @@ require_relative "domain/harness_catalog"
 require_relative "domain/push_notification_store"
 require_relative "domain/push_subscription_store"
 require_relative "domain/pull_request_diff"
+require_relative "domain/response_style_policy"
 require_relative "domain/schedule_daemon_supervisor"
 require_relative "domain/scheduler"
 require_relative "domain/skill_discovery"
@@ -240,6 +241,10 @@ module HQ
       end
       return ok(hidden: service.hidden_settings) if method == "GET" && parts == ["settings", "hidden"]
       return ok(hidden: service.update_hidden_setting(body)) if %w[PATCH PUT].include?(method) && parts == ["settings", "hidden"]
+      return ok(response_style: service.response_style) if method == "GET" && parts == ["settings", "response-style"]
+      if %w[PATCH PUT].include?(method) && parts == ["settings", "response-style"]
+        return ok(response_style: service.update_response_style(body))
+      end
       return ok(setup: service.setup) if method == "GET" && parts == ["setup"]
       return ok(service.search_index) if method == "GET" && parts == ["search"]
       return accepted(schedule_restart!, headers: RESTART_CACHE_RESET_HEADERS) if method == "POST" && parts == ["server", "restart"]
@@ -1328,6 +1333,33 @@ module HQ
 
       reload_projects_from_registry!
       hidden_settings
+    end
+
+    def response_style
+      path = ResponseStylePolicy.default_path
+      content = FileStore.read_text(path)
+      {
+        path: path,
+        content: content,
+        bytes: content.bytesize
+      }
+    rescue StandardError => e
+      raise Error.new("Unable to read response style: #{e.message}", status: 500)
+    end
+
+    def update_response_style(attrs)
+      content = attrs["content"]
+      raise Error.new("Response style content must be a string") unless content.is_a?(String)
+      if content.bytesize > 65_536
+        raise Error.new("Response style must be 64 KB or smaller")
+      end
+
+      FileStore.atomic_write(ResponseStylePolicy.default_path, content)
+      response_style
+    rescue Error
+      raise
+    rescue StandardError => e
+      raise Error.new("Unable to save response style: #{e.message}", status: 500)
     end
 
     def push_config

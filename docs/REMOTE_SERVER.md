@@ -139,6 +139,8 @@ Home-screen launches are treated as normal browser sessions, but mobile browsers
 
 The top-level mobile tabs are `Now`, `Agents`, and `Settings`. Agents is the canonical project-and-agent workspace: it filters agents and project metadata, keeps zero-agent projects reachable for first-agent creation, and links to project detail routes. Legacy `#search`, `#projects`, and `#setup` hashes are redirected to the closest surviving tab. Detail routes use hash navigation such as `#agent/{key}`, `#project/{key}`, and `#project/{key}/action/{action}`. The footer nav is fixed on top-level routes, hides while scrolling down, shows again while scrolling up, and is hidden on detail subpages.
 
+Settings → Configuration includes an editor for the global response-style policy. It reads and writes `~/.tycho/config/response_style.md` by default, or `TYCHO_RESPONSE_STYLE_PATH` when configured. Saves use Tycho's atomic file store and retain the previous file as `response_style.md.bak`; focused edits survive polling refreshes.
+
 ## Multiserver Broker
 
 One Remote UI can switch between the local `tycho serve` instance and configured peer Remote servers. The browser still talks only to the server that served the UI; that local server brokers requests to the selected peer. This avoids browser CORS and lets the local broker apply either server-side configured peer credentials or browser-local peer credentials.
@@ -718,6 +720,14 @@ Returns Remote UI readiness metadata: local URL, public Tailscale/MagicDNS URL, 
 
 When no projects are configured, the payload includes onboarding metadata so the
 Remote UI can render a first-run screen without the normal header or footer.
+
+### `GET /settings/response-style`
+
+Returns the active global response-style file as `response_style`, including its `path`, `content`, and UTF-8 byte count. The endpoint resolves `TYCHO_RESPONSE_STYLE_PATH` first and otherwise uses `~/.tycho/config/response_style.md`.
+
+### `PATCH /settings/response-style`
+
+Atomically replaces the global response-style file from a JSON `content` string and returns the saved `response_style` payload. Content may be empty and is limited to 64 KB. The previous file is retained with a `.bak` suffix.
 
 ### `POST /setup/welcome`
 

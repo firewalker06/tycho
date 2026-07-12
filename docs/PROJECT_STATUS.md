@@ -257,6 +257,7 @@ harness compatibility, and continuing browser/TUI smoke verification.
 - [x] Archive one agent (`DELETE /agents/{key}` or `POST /agents/{key}/archive`) or bulk archive idle agents (`POST /agents/archive`)
 - [x] Project list/detail endpoints and mobile project detail screens
 - [x] Remote setup/readiness endpoint and Settings screen
+- [x] Remote Settings editor for the global `response_style.md` policy with atomic persistence and backup
 - [x] Client-side Remote UI filtering across agents and projects
 - [x] Remote UI skill discovery for chat insertion
 - [x] Browser push subscription/test-notification foundation, with HTTPS MagicDNS support and HTTP MagicDNS warnings ([WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.md))
