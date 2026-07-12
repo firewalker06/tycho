@@ -11,6 +11,7 @@
 #   agent   (optional) managed-agent backend: "codex", "claude", or a custom_harnesses key
 #   model   (optional) default model string for new managed agents
 #   reasoning_effort (optional) default effort string for new managed agents
+#   response_style (optional) custom response guidance, or false to disable the global policy
 #   hidden  (optional) true hides the project and its agents; false overrides a hidden group
 #
 # Groups can define shared metadata by display name. Missing hidden settings are
@@ -60,6 +61,7 @@ projects: []
 #   agent: codex
 #   model: gpt-5.1-codex-max
 #   reasoning_effort: high
+#   response_style: default
 #
 # - key: notes
 #   name: Notes

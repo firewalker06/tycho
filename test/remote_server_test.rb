@@ -1474,6 +1474,11 @@ module RemoteServerTest
              "expected optional tool readiness entries")
       assert(setup.dig(:schema, :valid) == true, "expected valid result schema")
       assert(setup.dig(:config, :prompt_template_count) == 1, "expected prompt template count")
+      schedule_prompt_template = setup.dig(:config, :schedule_system_message_template).to_s
+      assert(schedule_prompt_template.include?("%{title}"),
+             "expected setup payload to expose a title-aware schedule system message template")
+      assert(schedule_prompt_template.include?("did not complete a requested change, answer, commit, review, or deliverable"),
+             "expected schedule template to share strict no-action guidance")
       assert(setup[:safety].any? { |line| line.include?("Running agents") }, "expected safety defaults")
     end
   end
@@ -2903,6 +2908,8 @@ module RemoteServerTest
            "expected Remote UI schedule rows to distinguish manual runs from pause/resume toggles")
     assert(js[:body].include?("data-new-schedule"),
            "expected Remote UI to expose schedule creation")
+    assert(js[:body].include?("state.setup?.config?.schedule_system_message_template"),
+           "expected Remote UI schedule defaults to consume the backend-provided template")
     assert(js[:body].include?("data-edit-schedule") && js[:body].include?("data-delete-schedule"),
            "expected Remote UI schedule rows to expose edit and delete controls")
     assert(js[:body].include?("data-edit-schedule-message"),

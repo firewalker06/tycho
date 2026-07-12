@@ -33,7 +33,8 @@ Each schedule has two editable prompt fields: a system message for the schedule-
 - Interactive protection: stop the schedule when the schedule-owned agent has a later non-scheduled user message; resuming records an acknowledgement boundary so earlier operator messages do not immediately stop the schedule again.
 - Failure and input management: stop the schedule and notify via web push when a scheduled job fails, blocks, or requires human input.
 - Schedule statuses: schedules expose `scheduled`, `paused`, or `stopped` as operator-facing state. Last run details stay in `last_status` and `last_error`.
-- No-action outcomes: scheduled agents should return structured status `no_action_needed` when a recurring check completes and finds nothing to act on. Tycho records that as the schedule's last outcome but does not mark the agent unread or send success/push notifications.
+- No-action outcomes: scheduled agents should return structured status `no_action_needed` only when a successful observational check finds no new condition requiring action and completes no requested action or deliverable. Completed changes, answers, commits, reviews, and deliverables use `success` even when no next step remains. Tycho records a no-action result as the schedule's last outcome but does not mark the agent unread or send success/push notifications.
+- Schedule prompt parity: the backend exposes one title-aware schedule system-message template through `/setup`; the Remote UI consumes it and keeps an equivalent compatibility fallback for older servers.
 - Resume behavior: resuming a stopped schedule keeps the schedule-owned session, records a resume boundary, and waits until the next scheduled run.
 - Success notifications: notify only on first success and first success after failure, including the next scheduled run time.
 

@@ -53,6 +53,7 @@ The setup script should respect the same executable overrides that Tycho uses:
 | `TYCHO_CONFIG_DIR` | Override default user config directory |
 | `TYCHO_CONFIG_PATH` | Override project registry path |
 | `TYCHO_SYSTEM_PROMPTS_PATH` | Override system prompt template path |
+| `TYCHO_RESPONSE_STYLE_PATH` | Override global response style policy path |
 | `TYCHO_SCHEDULES_PATH` | Override scheduled-agent config path |
 | `TYCHO_SCHEDULES_ROOT` | Override schedule message file root |
 | `TYCHO_HOOKS_PATH` | Override global hooks config path |
@@ -95,6 +96,7 @@ bin/setup --profile all
    and missing sample config files:
    - `config/hq.yml.example` to `~/.tycho/config/hq.yml`
    - `config/system_prompts.yml.example` to `~/.tycho/config/system_prompts.yml`
+   - `config/response_style.md.example` to `~/.tycho/config/response_style.md`
    - `config/schedules.yml.example` to `~/.tycho/config/schedules.yml`
    - `config/hooks.example.yml` to `~/.tycho/config/hooks.yml`
 3. Check optional CLIs and print a feature readiness summary.

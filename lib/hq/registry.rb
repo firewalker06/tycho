@@ -17,6 +17,7 @@ module HQ
     :agent,
     :model,
     :reasoning_effort,
+    :response_style,
     keyword_init: true
   )
   GroupConfig = Struct.new(:name, :hidden, keyword_init: true)
@@ -43,6 +44,7 @@ module HQ
     :agent,
     :model,
     :reasoning_effort,
+    :response_style,
     :agent_templates,
     :hooks,
     :pr_url,
@@ -381,6 +383,7 @@ module HQ
           agent: normalize_agent(project["agent"]),
           model: normalize_model(project["model"]),
           reasoning_effort: normalize_reasoning_effort(project["reasoning_effort"]),
+          response_style: normalize_response_style(project["response_style"]),
           agent_templates: build_agent_templates(
             project,
             project_key: key,
@@ -440,6 +443,7 @@ module HQ
       project_agent = normalize_agent(project["agent"])
       project_model = normalize_model(project["model"])
       project_reasoning_effort = normalize_reasoning_effort(project["reasoning_effort"])
+      project_response_style = normalize_response_style(project["response_style"])
 
       built_templates = templates.map.with_index(1) do |template, index|
         prompt = resolve_template_prompt(
@@ -459,6 +463,9 @@ module HQ
           model: normalize_model(template.key?("model") ? template["model"] : project_model),
           reasoning_effort: normalize_reasoning_effort(
             template.key?("reasoning_effort") ? template["reasoning_effort"] : project_reasoning_effort
+          ),
+          response_style: normalize_response_style(
+            template.key?("response_style") ? template["response_style"] : project_response_style
           )
         )
       end
@@ -519,6 +526,16 @@ module HQ
     def normalize_reasoning_effort(value)
       text = value.to_s.strip.downcase
       text.empty? ? nil : text
+    end
+
+    def normalize_response_style(value)
+      return false if value == false
+
+      text = value.to_s.strip
+      return nil if text.empty? || text.casecmp("default").zero?
+      return false if %w[none disabled off false].include?(text.downcase)
+
+      text
     end
 
     def normalize_catalog_values(values, preserve_case:)

@@ -23,7 +23,10 @@ module ManagedAgentTest
     assert_claude_scalar_json_structured_output_normalizes
     assert_opencode_assistant_json_structured_output_normalizes
     assert_final_output_checklist_is_ephemeral_execution_context
+    assert_response_style_applies_to_cold_and_resumed_runs
+    assert_response_style_can_be_disabled_and_is_fingerprinted
     assert_agent_result_schema_describes_summary
+    assert_no_action_status_conflicts_are_normalized
     assert_agent_updates_replace_the_prior_base_prompt
     assert_initial_user_message_attachments_seed_memory
     assert_model_and_reasoning_effort_persist_and_update
@@ -34,6 +37,60 @@ module ManagedAgentTest
     assert_start_spawns_harness_without_ruby_runner_parent
     assert_agent_runner_warns_when_command_cannot_execute
     puts "managed_agent_test: ok"
+  end
+
+  def assert_response_style_applies_to_cold_and_resumed_runs
+    style = "Lead with evidence and stop when the point has landed."
+    agent = HQ::ManagedAgent.new(
+      key: "styled-agent",
+      name: "Styled",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "Inspect the project.",
+      response_style: style
+    )
+
+    cold_prompt = agent.send(:prompt_for_execution)
+    assert(cold_prompt.include?("RESPONSE STYLE:\n#{style}"),
+           "expected response style guidance on a cold run")
+    assert(cold_prompt.index(style) < cold_prompt.index(HQ::ManagedAgent::FINAL_OUTPUT_CHECKLIST),
+           "expected response style before structured final-output guidance")
+
+    resumed = HQ::ManagedAgent.from_hash(agent.to_hash.merge(
+      "session_id" => "codex-session",
+      "session_bootstrapped" => true,
+      "runs" => [{ "finished_at" => Time.now.iso8601, "status" => "success" }]
+    ))
+    resume_prompt = resumed.send(:prompt_for_execution)
+    assert(resume_prompt.include?("RESPONSE STYLE:\n#{style}"),
+           "expected response style guidance on a native resumed run")
+    assert(!resume_prompt.include?("Inspect the project."),
+           "expected a native resumed run not to replay the base prompt")
+  end
+
+  def assert_response_style_can_be_disabled_and_is_fingerprinted
+    agent = HQ::ManagedAgent.new(
+      key: "unstyled-agent",
+      name: "Unstyled",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "Inspect the project.",
+      response_style: false
+    )
+    assert(!agent.send(:prompt_for_execution).include?("RESPONSE STYLE:"),
+           "expected response_style false to disable global guidance")
+    assert(agent.to_hash["response_style"] == false,
+           "expected an explicit response style opt-out to persist")
+
+    digest = HQ::ResponseStylePolicy.digest("Precise prose")
+    run = HQ::ManagedAgent::AgentRun.from_hash(
+      "status" => "success",
+      "response_style_sha256" => digest
+    )
+    assert(run.to_hash["response_style_sha256"] == digest,
+           "expected the response style fingerprint to round-trip with a run")
   end
 
   def assert_new_agents_use_unique_log_stems
@@ -688,6 +745,10 @@ module ManagedAgentTest
       checklist = HQ::ManagedAgent::FINAL_OUTPUT_CHECKLIST
       assert(checklist.include?("For `summary`, write a concise operator-facing Markdown summary"),
              "final output guidance should explain the summary field")
+      assert(checklist.include?("did not complete a requested change, answer, commit, review, or deliverable"),
+             "final output guidance should distinguish no-op checks from completed work")
+      assert(checklist.include?("quiet outcome that suppresses operator unread and push notifications"),
+             "final output guidance should disclose the quiet no-action consequence")
       log_path = File.join(dir, "checklist.raw.log")
 
       agent = HQ::ManagedAgent.new(
@@ -755,12 +816,17 @@ module ManagedAgentTest
     schema = JSON.parse(File.read(schema_path))
     description = schema.dig("properties", "summary", "description").to_s
     statuses = schema.dig("properties", "status", "enum")
+    status_description = schema.dig("properties", "status", "description").to_s
 
     assert(description.include?("Remote UI Summary page"),
            "agent result schema should describe how to write the summary field")
     assert(statuses.include?("no_action_needed"),
            "canonical agent result schema should allow no_action_needed")
+    assert(status_description.include?("observational or recurring check") &&
+           status_description.include?("quiet outcome"),
+           "canonical status schema should define no-action semantics and consequences")
 
+    old_schema_path = replace_constant(HQ, :AGENT_RESULT_SCHEMA, schema_path)
     agent = HQ::ManagedAgent.new(
       key: "schema-statuses",
       name: "Schema Statuses",
@@ -774,6 +840,48 @@ module ManagedAgentTest
     claude_statuses = claude_schema.dig("properties", "status", "enum")
     assert(claude_statuses.include?("no_action_needed"),
            "Claude compact result schema should allow no_action_needed")
+    assert(claude_schema.dig("properties", "status", "description") == status_description,
+           "Claude compact result schema should inherit canonical status guidance")
+  ensure
+    replace_constant(HQ, :AGENT_RESULT_SCHEMA, old_schema_path) if old_schema_path
+  end
+
+  def assert_no_action_status_conflicts_are_normalized
+    normalizer = HQ::AgentResultNormalizer.new(workspace: Dir.tmpdir)
+
+    no_op = normalizer.normalize_structured_result(
+      "status" => "no_action_needed",
+      "summary" => "Checked open pull requests. No new or changed PR needs review."
+    )
+    assert(no_op["status"] == "no_action_needed",
+           "legitimate observational no-op checks should retain no_action_needed")
+
+    completed_work = normalizer.normalize_structured_result(
+      "status" => "no_action_needed",
+      "summary" => "Implemented the requested prompt changes and committed the result."
+    )
+    assert(completed_work["status"] == "success",
+           "no-action results that explicitly report completed work should normalize to success")
+
+    inquiry = normalizer.normalize_structured_result(
+      "status" => "no_action_needed",
+      "summary" => "Need operator confirmation before continuing.",
+      "inquiry" => {
+        "message" => "Proceed with deployment?",
+        "fields" => [
+          {
+            "key" => "proceed",
+            "label" => "Proceed",
+            "description" => nil,
+            "input_type" => "boolean",
+            "required" => true,
+            "options" => nil
+          }
+        ]
+      }
+    )
+    assert(inquiry["status"] == "input_required",
+           "no-action results with a structured inquiry should normalize to input_required")
   end
 
   def assert_agent_updates_replace_the_prior_base_prompt

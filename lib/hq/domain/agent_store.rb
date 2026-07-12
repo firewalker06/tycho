@@ -8,7 +8,18 @@ require_relative "../ui/rendering/styles"
 module HQ
   class AgentStore
     PALETTE_SIZE = HQ::UI::Rendering::Styles::CHAT_BORDER_PALETTE.length
+    SCHEDULE_SYSTEM_PROMPT_TEMPLATE = [
+      "This managed agent is owned by the Tycho schedule %{title}.",
+      "Treat each scheduled user message as one recurring run in the same long-lived session.",
+      "Use prior session context when it helps, but make each run's outcome clear and operator-facing.",
+      ManagedAgent::NO_ACTION_STATUS_GUIDANCE,
+      "If you need human input, ask a precise structured inquiry and stop instead of guessing."
+    ].join("\n")
     PollEvent = Struct.new(:agent_key, :from_status, :to_status, :run_count, keyword_init: true)
+
+    def self.scheduled_system_prompt_template
+      SCHEDULE_SYSTEM_PROMPT_TEMPLATE
+    end
 
     def initialize(projects)
       @projects = projects
@@ -78,6 +89,7 @@ module HQ
         agent: template.agent,
         model: template.model,
         reasoning_effort: template.reasoning_effort,
+        response_style: template.response_style,
         messages: system_messages_for(project, template.prompt),
         color_index: next_color_index(existing)
       )
@@ -102,6 +114,7 @@ module HQ
         agent: project.respond_to?(:agent) ? project.agent : project.config.agent,
         model: project.respond_to?(:model) ? project.model : project.config.model,
         reasoning_effort: project.respond_to?(:reasoning_effort) ? project.reasoning_effort : project.config.reasoning_effort,
+        response_style: project.respond_to?(:response_style) ? project.response_style : project.config.response_style,
         messages: system_messages,
         created_at: now,
         color_index: next_color_index(existing_agents)
@@ -136,6 +149,7 @@ module HQ
         agent: agent.agent,
         model: agent.model,
         reasoning_effort: agent.reasoning_effort,
+        response_style: agent.response_style,
         skills: agent.skills,
         color_index: next_color_index(existing_agents)
       )
@@ -195,14 +209,7 @@ module HQ
 
       label = name.to_s.strip
       title = label.empty? ? schedule_key.to_s : "#{label} (#{schedule_key})"
-      [
-        "This managed agent is owned by the Tycho schedule #{title}.",
-        "Treat each scheduled user message as one recurring run in the same long-lived session.",
-        "Use prior session context when it helps, but make each run's outcome clear and operator-facing.",
-        "Use structured status `no_action_needed` when the scheduled check completed and there is nothing to act on.",
-        "Use structured status `success` only when you completed a concrete action or produced a requested deliverable.",
-        "If you need human input, ask a precise structured inquiry and stop instead of guessing."
-      ].join("\n")
+      format(self.class.scheduled_system_prompt_template, title:)
     end
 
     def template_for(project, template_key)

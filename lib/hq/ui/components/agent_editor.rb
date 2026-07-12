@@ -114,7 +114,8 @@ module HQ
           sandbox_mode: template.sandbox_mode,
           agent: @selected_harness,
           model: empty_to_nil(@model_input.value),
-          reasoning_effort: empty_to_nil(@reasoning_effort_input.value&.downcase)
+          reasoning_effort: empty_to_nil(@reasoning_effort_input.value&.downcase),
+          response_style: template.response_style
         }
       end
 

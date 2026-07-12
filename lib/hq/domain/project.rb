@@ -45,6 +45,10 @@ module HQ
       @config.agent_templates
     end
 
+    def response_style
+      @config.response_style
+    end
+
     def pr_url
       @config.pr_url
     end

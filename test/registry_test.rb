@@ -17,6 +17,7 @@ module RegistryTest
   def run!
     assert_registry_loads_system_prompts_from_sibling_config
     assert_registry_loads_model_and_effort_defaults
+    assert_registry_resolves_response_style_inheritance
     assert_registry_ignores_hq_env_aliases
     assert_registry_uses_tycho_home_defaults
     assert_registry_resolves_hidden_groups_and_project_overrides
@@ -28,6 +29,39 @@ module RegistryTest
     assert_agent_store_prepends_project_tool_system_prompt
     assert_agent_store_backfills_project_tool_system_prompt
     puts "registry_test: ok"
+  end
+
+  def assert_registry_resolves_response_style_inheritance
+    Dir.mktmpdir("hq-registry-response-style-test") do |dir|
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      File.write(config_path, <<~YAML)
+        projects:
+          - key: demo
+            name: Demo
+            path: #{File.join(dir, "demo")}
+            response_style: Project prose policy.
+      YAML
+      File.write(prompts_path, <<~YAML)
+        inherited: Inherit the project style.
+        overridden:
+          prompt: Use a template-specific style.
+          response_style: Evidence first.
+        disabled:
+          prompt: Preserve raw output.
+          response_style: false
+      YAML
+
+      project = HQ::Registry.new(path: config_path).projects.fetch(0)
+      templates = project.agent_templates.to_h { |template| [template.key, template] }
+      assert(project.response_style == "Project prose policy.", "expected project response style to load")
+      assert(templates.fetch("inherited").response_style == "Project prose policy.",
+             "expected a template to inherit its project response style")
+      assert(templates.fetch("overridden").response_style == "Evidence first.",
+             "expected template response style to override its project")
+      assert(templates.fetch("disabled").response_style == false,
+             "expected a template to disable response style guidance")
+    end
   end
 
   def assert_registry_loads_system_prompts_from_sibling_config

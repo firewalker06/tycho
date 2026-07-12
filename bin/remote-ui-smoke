@@ -29,6 +29,7 @@ def write_fixture(dir)
 
   config_path = File.join(config_dir, "hq.yml")
   prompts_path = File.join(config_dir, "system_prompts.yml")
+  response_style_path = File.join(config_dir, "response_style.md")
   schedules_path = File.join(config_dir, "schedules.yml")
   File.write(config_path, <<~YAML)
     ---
@@ -39,6 +40,7 @@ def write_fixture(dir)
         agent: codex
   YAML
   File.write(prompts_path, "---\ncustom: \"Check the workspace.\"\n")
+  File.write(response_style_path, "Lead with the result and write plainly.\n")
   File.write(schedules_path, "---\nschedules: []\n")
   skill_dir = File.join(workspace, ".agents", "skills", "review")
   FileUtils.mkdir_p(skill_dir)
@@ -52,6 +54,7 @@ def write_fixture(dir)
   {
     config_path: config_path,
     prompts_path: prompts_path,
+    response_style_path: response_style_path,
     schedules_path: schedules_path,
     logs_dir: File.join(dir, "logs")
   }
@@ -218,6 +221,16 @@ def write_smoke_script(path)
           throw new Error(`Mobile form input is below zoom-safe size: ${agentNameFontSize}px`);
         }
 
+        await page.goto(`${baseUrl}/ui#schedule/new?project=web`, { waitUntil: "networkidle" });
+        await page.waitForSelector("#schedule-system-message", { state: "visible", timeout: 10_000 });
+        const scheduleSystemMessage = await page.locator("#schedule-system-message").inputValue();
+        if (!scheduleSystemMessage.includes("did not complete a requested change, answer, commit, review, or deliverable")) {
+          throw new Error(`Schedule system message is missing strict no-action guidance: ${JSON.stringify(scheduleSystemMessage)}`);
+        }
+        if (!scheduleSystemMessage.includes("quiet outcome that suppresses operator unread and push notifications")) {
+          throw new Error(`Schedule system message is missing quiet-outcome guidance: ${JSON.stringify(scheduleSystemMessage)}`);
+        }
+
         await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
         await page.waitForSelector("#quick-agent-fab:not(.hidden)", { state: "visible", timeout: 10_000 });
         await page.click("#quick-agent-fab");
@@ -262,6 +275,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   env = {
     "TYCHO_CONFIG_PATH" => fixture.fetch(:config_path),
     "TYCHO_SYSTEM_PROMPTS_PATH" => fixture.fetch(:prompts_path),
+    "TYCHO_RESPONSE_STYLE_PATH" => fixture.fetch(:response_style_path),
     "TYCHO_SCHEDULES_PATH" => fixture.fetch(:schedules_path),
     "TYCHO_LOGS_ROOT" => fixture.fetch(:logs_dir),
     "TYCHO_REMOTE_TOKEN" => ""

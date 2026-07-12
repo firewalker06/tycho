@@ -2041,6 +2041,7 @@ module HQ
           agent: template.agent,
           model: template.model,
           reasoning_effort: template.reasoning_effort,
+          response_style: template.response_style,
           sandbox_mode: template.sandbox_mode,
           skill_trigger: SkillDiscovery.trigger_for(template.agent),
           prompt: template.prompt,
@@ -2194,6 +2195,7 @@ module HQ
         path: @registry.path,
         system_prompts_path: @registry.system_prompts_path,
         prompt_template_count: prompt_template_count,
+        schedule_system_message_template: AgentStore.scheduled_system_prompt_template,
         active_projects: @projects.length,
         archived_projects: archived_project_count
       }
@@ -2269,7 +2271,8 @@ module HQ
         sandbox_mode: sandbox_mode,
         agent: agent,
         model: model.empty? ? nil : model,
-        reasoning_effort: reasoning_effort.empty? ? nil : reasoning_effort
+        reasoning_effort: reasoning_effort.empty? ? nil : reasoning_effort,
+        response_style: template.response_style
       }
     end
 
@@ -2350,6 +2353,7 @@ module HQ
         agent: agent.agent,
         model: agent.model,
         reasoning_effort: agent.reasoning_effort,
+        response_style: agent.response_style,
         status: agent.status,
         running: agent.running?,
         unread: agent.unread?,

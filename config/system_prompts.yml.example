@@ -11,6 +11,7 @@
 #   agent: claude
 #   model: sonnet
 #   reasoning_effort: xhigh
+#   response_style: "Write compact review findings with evidence first."
 #   prompt: Review %{project_name}.
 
 custom: ""

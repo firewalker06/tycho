@@ -44,6 +44,10 @@ module HQ
     ensure_user_config_file("system_prompts.yml", "system_prompts.yml.example")
   end
 
+  def self.default_response_style_path
+    ensure_user_config_file("response_style.md", "response_style.md.example")
+  end
+
   def self.default_schedules_path
     ensure_user_config_file("schedules.yml", "schedules.yml.example")
   end
