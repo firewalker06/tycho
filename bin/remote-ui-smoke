@@ -231,17 +231,20 @@ def write_smoke_script(path)
         }
 
         await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
-        await page.waitForSelector("[data-testid='response-style-add']", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector("[data-testid='response-style-action']", { state: "visible", timeout: 10_000 });
         const responseStyleExplanation = await page.locator("[data-testid='response-style-summary']").innerText();
         if (!responseStyleExplanation.includes("shared writing guidance") ||
             !responseStyleExplanation.includes("without changing the task or required output format")) {
           throw new Error(`Response style explanation is incomplete: ${JSON.stringify(responseStyleExplanation)}`);
         }
-        await page.click("[data-testid='response-style-add']");
+        if (!responseStyleExplanation.includes("Add response style")) {
+          throw new Error(`Missing response style should show an add action: ${JSON.stringify(responseStyleExplanation)}`);
+        }
+        await page.click("[data-testid='response-style-action']");
         await page.waitForSelector("#response-style-input", { state: "visible", timeout: 10_000 });
         await page.click("[data-cancel-response-style]");
-        await page.waitForSelector("[data-testid='response-style-add']", { state: "visible", timeout: 10_000 });
-        await page.click("[data-testid='response-style-add']");
+        await page.waitForSelector("[data-testid='response-style-action']", { state: "visible", timeout: 10_000 });
+        await page.click("[data-testid='response-style-action']");
         await page.waitForSelector("#response-style-input", { state: "visible", timeout: 10_000 });
         const responseStyleDraft = "Write with smoke-tested clarity. " + Date.now();
         await page.fill("#response-style-input", responseStyleDraft);
@@ -256,18 +259,23 @@ def write_smoke_script(path)
         }
         await page.click("[data-testid='response-style-save']");
         await page.waitForFunction(
-          () => document.querySelector("[data-testid='response-style-add']") &&
+          () => document.querySelector("[data-testid='response-style-action']")?.textContent.includes("Edit response style") &&
+            document.querySelector("[data-testid='response-style-excerpt']") &&
             !document.querySelector("#response-style-input") &&
             document.querySelector("#growl")?.textContent === "Response style saved",
           null,
           { timeout: 10_000 }
         );
         await page.reload({ waitUntil: "networkidle" });
-        await page.waitForSelector("[data-testid='response-style-add']", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector("[data-testid='response-style-action']", { state: "visible", timeout: 10_000 });
         if (await page.locator("#response-style-input").count()) {
           throw new Error("Configured response style editor should be collapsed by default");
         }
-        await page.click("[data-testid='response-style-add']");
+        const responseStyleSummary = await page.locator("[data-testid='response-style-summary']").innerText();
+        if (!responseStyleSummary.includes("Edit response style") || !responseStyleSummary.includes(responseStyleDraft)) {
+          throw new Error(`Configured response style summary is incomplete: ${JSON.stringify(responseStyleSummary)}`);
+        }
+        await page.click("[data-testid='response-style-action']");
         await page.waitForSelector("#response-style-input", { state: "visible", timeout: 10_000 });
         const savedResponseStyle = await page.locator("#response-style-input").inputValue();
         if (savedResponseStyle !== responseStyleDraft) {

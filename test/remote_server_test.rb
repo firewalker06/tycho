@@ -2940,16 +2940,21 @@ module RemoteServerTest
            "expected Settings to edit and save the global response style")
     assert(js[:body].include?('data-testid="response-style-summary"') &&
            js[:body].include?("Add response style") &&
+           js[:body].include?("Edit response style") &&
+           js[:body].include?('data-testid="response-style-excerpt"') &&
+           js[:body].include?('replace(/\\s+/g, " ")') &&
            js[:body].include?('iconSvg("squarePen")') &&
-           js[:body].include?('class="inline-icon-button" type="button" data-add-response-style') &&
+           js[:body].include?('class="inline-icon-button" type="button" data-open-response-style') &&
            js[:body].include?("shared writing guidance") &&
            js[:body].include?("without changing the task or required output format"),
-           "expected Settings to explain response style and offer an add action when it is missing")
+           "expected Settings to explain response style and show the correct add or edit action with an excerpt")
     assert(js[:body].include?("if (!responseStyle.drafting)") &&
            js[:body].include?("data-cancel-response-style"),
            "expected the response style editor to stay collapsed until requested and support canceling")
     assert(css[:body].include?(".response-style-form") &&
-           css[:body].include?("min-height: 180px"),
+           css[:body].include?("min-height: 180px") &&
+           css[:body].include?("p.response-style-excerpt") &&
+           css[:body].include?("color: var(--text)"),
            "expected the response style editor to have a readable responsive layout")
     assert(js[:body].include?("Recheck status"), "expected Settings More menu to expose readiness refresh")
     assert(js[:body].include?("function restartRemoteServer"), "expected Remote UI to handle Remote restarts")

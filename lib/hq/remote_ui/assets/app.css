@@ -2229,6 +2229,10 @@ select {
   line-height: 1.5;
 }
 
+.response-style-summary p.response-style-excerpt {
+  color: var(--text);
+}
+
 .response-style-summary span {
   color: var(--muted);
   font-size: 12px;
