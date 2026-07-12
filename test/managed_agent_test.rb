@@ -286,6 +286,15 @@ module ManagedAgentTest
              "session_id should be preserved across restart")
       assert(agent.runs.first.status != "running",
              "the prior run should have been finalized, not left as running")
+
+      status_path = agent.send(:status_file_path)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2.0
+      until File.exist?(status_path)
+        raise "replacement run did not write its status file" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+        sleep 0.01
+      end
+      agent.poll!
     end
   ensure
     replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
