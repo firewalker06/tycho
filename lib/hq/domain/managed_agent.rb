@@ -108,14 +108,14 @@ module HQ
     attr_reader :key, :name, :project_key, :template_key, :workspace, :prompt, :created_at, :started_at,
                 :finished_at, :pid, :last_exit_code, :log_path, :runs, :sandbox_mode, :agent, :messages, :skills,
                 :model, :reasoning_effort, :response_style, :session_id, :session_bootstrapped, :color_index, :summary,
-                :structured_result
+                :structured_result, :schedule_key
     attr_writer :summary, :structured_result
 
     def initialize(key:, name:, project_key:, template_key:, workspace:, prompt:, created_at: nil, started_at: nil,
                    finished_at: nil, pid: nil, last_exit_code: nil, log_path: nil, runs: nil,
                    stop_requested_at: nil, sandbox_mode: "danger-full-access", agent: "codex", messages: nil,
                    model: nil, reasoning_effort: nil, response_style: nil, skills: nil, unread: false, session_id: nil,
-                   session_bootstrapped: nil, color_index: nil, summary: nil, structured_result: nil)
+                   session_bootstrapped: nil, color_index: nil, summary: nil, structured_result: nil, schedule_key: nil)
       @key = key
       @name = name
       @project_key = project_key
@@ -144,6 +144,7 @@ module HQ
       @color_index = color_index.is_a?(Integer) ? color_index : nil
       @structured_result = structured_result.is_a?(Hash) ? structured_result : nil
       @summary = summary.is_a?(String) && !summary.empty? ? summary : nil
+      @schedule_key = normalize_schedule_key(schedule_key)
     end
 
     def color_index=(value)
@@ -200,7 +201,8 @@ module HQ
         session_bootstrapped: hash["session_bootstrapped"],
         color_index: hash["color_index"],
         summary: hash["summary"],
-        structured_result: hash["structured_result"]
+        structured_result: hash["structured_result"],
+        schedule_key: hash["schedule_key"]
       )
     end
 
@@ -321,6 +323,7 @@ module HQ
       result["color_index"] = @color_index unless @color_index.nil?
       result["summary"] = @summary unless @summary.to_s.empty?
       result["structured_result"] = @structured_result if @structured_result.is_a?(Hash) && !@structured_result.empty?
+      result["schedule_key"] = @schedule_key unless @schedule_key.to_s.empty?
       result
     end
 
@@ -330,6 +333,10 @@ module HQ
 
     def scheduled?
       @template_key.to_s == "scheduled"
+    end
+
+    def associate_schedule!(schedule_key)
+      @schedule_key = normalize_schedule_key(schedule_key)
     end
 
     def display_name
@@ -1415,6 +1422,11 @@ module HQ
     end
 
     def normalize_model(value)
+      text = value.to_s.strip
+      text.empty? ? nil : text
+    end
+
+    def normalize_schedule_key(value)
       text = value.to_s.strip
       text.empty? ? nil : text
     end

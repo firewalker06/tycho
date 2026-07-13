@@ -126,6 +126,16 @@ module SchedulerTest
       assert(agents.map(&:key) == [first_agent.key], "expected first scheduled agent to be active")
       assert(first_agent.name == "Weekday maintenance",
              "expected scheduled agent name to avoid a text prefix or numeric suffix")
+      assert(first_agent.schedule_key == "weekday",
+             "expected scheduled agent to retain its owning schedule key")
+      assert(agents.first.schedule_key == "weekday",
+             "expected the owning schedule key to persist with the agent")
+      persisted = JSON.parse(File.read(HQ::AGENTS_FILE)).first
+      persisted.delete("schedule_key")
+      File.write(HQ::AGENTS_FILE, JSON.pretty_generate([persisted]))
+      backfilled = HQ::AgentStore.new(registry.projects.map { |config| HQ::Project.new(config) }).load.first
+      assert(backfilled.schedule_key == "weekday",
+             "expected legacy scheduled agents to backfill their owning schedule key")
       assert(HQ::ManagedAgent.display_name_for("[Scheduled] Weekday maintenance", scheduled: true) == "Weekday maintenance",
              "expected scheduled display names to strip the legacy text prefix")
       assert(File.exist?(first_agent.raw_log_path), "expected stubbed agent start to write a raw log")

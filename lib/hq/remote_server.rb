@@ -2413,6 +2413,7 @@ module HQ
         project_key: agent.project_key,
         template_key: agent.template_key,
         scheduled: agent.scheduled?,
+        schedule_key: agent.schedule_key,
         workspace: agent.workspace,
         prompt: agent.prompt,
         sandbox_mode: agent.sandbox_mode,

@@ -3,6 +3,7 @@
 require_relative "constants"
 require_relative "file_store"
 require_relative "managed_agent"
+require_relative "schedule_store"
 require_relative "../ui/rendering/styles"
 require "securerandom"
 
@@ -36,9 +37,14 @@ module HQ
 
       changed = false
       events = []
+      schedule_keys = schedule_keys_by_agent
       agents = Array(FileStore.read_json(AGENTS_FILE, fallback: [])).map do |hash|
         agent = ManagedAgent.from_hash(hash)
         changed = true if hash != agent.to_hash
+        if agent.schedule_key.nil? && schedule_keys.key?(agent.key)
+          agent.associate_schedule!(schedule_keys.fetch(agent.key))
+          changed = true
+        end
         before_hash = agent.to_hash
         was_running = running_for_poll_event?(agent)
         agent.poll!
@@ -119,13 +125,15 @@ module HQ
         response_style: project.respond_to?(:response_style) ? project.response_style : project.config.response_style,
         messages: system_messages,
         created_at: now,
-        color_index: next_color_index(existing_agents)
+        color_index: next_color_index(existing_agents),
+        schedule_key: schedule_key
       )
       seed_memory_system_prompts!(agent, project, prompt)
       agent
     end
 
     def add_scheduled_message!(agent, schedule_key:, message:, due_at: nil)
+      agent.associate_schedule!(schedule_key)
       metadata = {
         "schedule_key" => schedule_key,
         "scheduled_prompt" => true,
@@ -163,6 +171,13 @@ module HQ
     end
 
     private
+
+    def schedule_keys_by_agent
+      ScheduleStore.new.load.each_with_object({}) do |(schedule_key, state), result|
+        agent_key = state.last_target_key.to_s
+        result[agent_key] = schedule_key unless agent_key.empty?
+      end
+    end
 
     # Pick the palette slot least represented among existing agents. Ties broken
     # by lowest index so the first N agents fill 0..N-1 deterministically.

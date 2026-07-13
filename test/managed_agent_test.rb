@@ -208,10 +208,13 @@ module ManagedAgentTest
       )
       File.write(HQ::AGENTS_FILE, JSON.pretty_generate([agent.to_hash]))
 
-      code = HQ::CLICommand.agent_status("demo-agent-1", out: StringIO.new, err: StringIO.new)
+      output = StringIO.new
+      code = HQ::CLICommand.agent_status("demo-agent-1", out: output, err: StringIO.new)
       saved = JSON.parse(File.read(HQ::AGENTS_FILE)).first
 
       assert(code == 0, "expected CLI agent status to succeed")
+      assert(output.string.include?("Schedule key") && output.string.include?("n/a"),
+             "expected CLI agent status to show an empty schedule association")
       assert(saved["last_exit_code"] == 0, "expected CLI status to persist finalized exit code")
       assert(saved["summary"] == "CLI_STATUS_DONE", "expected CLI status to persist finalized summary")
       assert(saved["session_id"] == "ses_cli_status", "expected CLI status to persist OpenCode session id")

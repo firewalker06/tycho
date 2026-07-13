@@ -695,6 +695,7 @@ module HQ
         ["Key", agent.key],
         ["Name", agent.name],
         ["Project", agent.project_key],
+        ["Schedule key", agent.schedule_key || "n/a"],
         ["Harness", agent.agent],
         ["Model", agent.model || "(project default)"],
         ["Status", agent.status],
