@@ -32,6 +32,7 @@ Gem::Specification.new do |spec|
                  SECURITY.md
                  config/hooks.example.yml
                  config/hq.yml.example
+                 config/response_style.md.example
                  config/schedules.yml.example
                  config/schemas/agent_result.json
                  config/system_prompts.yml.example

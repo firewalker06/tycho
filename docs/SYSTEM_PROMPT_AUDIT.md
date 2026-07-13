@@ -2,7 +2,7 @@
 name: SYSTEM_PROMPT_AUDIT
 description: Inventory of Tycho-authored system prompts and automatically injected managed-agent prompt context
 type: audit
-last_audited: 2026-07-11
+last_audited: 2026-07-12
 ---
 
 # System Prompt and Automatic Prompt Injection Audit
@@ -15,17 +15,18 @@ It does not attempt to inventory instructions owned by Codex, Claude, OpenCode, 
 
 ## Executive Summary
 
-Tycho does not use a harness-native system-message API. On a cold or non-resumable run, it reads `memory.jsonl`, renders every retained entry into one text argument with role headers (`SYSTEM:`, `USER:`, and `ASSISTANT:`), appends an ephemeral final-output checklist, and supplies that string to the selected harness. On a native resumed run, it normally sends only the latest user message plus the same checklist and relies on the harness session for earlier context.
+Tycho does not use a harness-native system-message API. On a cold or non-resumable run, it reads `memory.jsonl`, renders every retained entry into one text argument with role headers (`SYSTEM:`, `USER:`, and `ASSISTANT:`), appends the current response-style policy and an ephemeral final-output checklist, and supplies that string to the selected harness. On a native resumed run, it normally sends only the latest user message plus the same execution-time guidance and relies on the harness session for earlier context.
 
 The stable system context at agent creation is two separate pinned memory events: generated project identity followed by the selected template or schedule system message. Additional history-derived context can be injected on cold replay: unresolved inquiry context, tool summaries, run summaries, and attachment locations.
 
-The audit originally found two high-priority contract mismatches and three lower-priority clarity risks. Follow-up work on 2026-07-11 resolved all but the Remote UI/backend schedule-default mismatch:
+The audit originally found two high-priority contract mismatches and three lower-priority clarity risks. Follow-up work on 2026-07-11 and 2026-07-12 resolved them, including a later focused `no_action_needed` status-classification ambiguity:
 
 1. Resolved: `no_action_needed` is now allowed by the canonical schema and inherited by Claude's compact schema.
-2. The Remote UI pre-fills a four-line default schedule system message, while the backend generates a six-line default. Saving the pre-filled UI value makes it a custom message and omits the backend's explicit `no_action_needed` and `success` status rules.
+2. Resolved: the Remote UI now consumes the backend-provided schedule system-message template, with an equivalent compatibility fallback.
 3. Resolved: editing an agent now replaces matching prior base-prompt events in `memory.jsonl`, deduplicating identical prior copies while preserving project context.
 4. Resolved: prompt transport and unsliced cold-replay documentation now match the command builders.
 5. Resolved: outstanding inquiry reminders read normalized `fields` labels first and retain `requested_schema.properties` as a legacy fallback.
+6. Resolved: global guidance now classifies what happened during the run, contrasts `no_action_needed` with `success`, discloses quiet-notification behavior, and is reinforced by schema descriptions and result normalization.
 
 ## End-to-End Introduction Order
 
@@ -36,8 +37,9 @@ For a newly created, non-resumed agent, effective prompt order is:
 3. Outstanding inquiry context, when an inquiry is unresolved.
 4. Persisted user, assistant, tool-summary, and run-summary events in memory order.
 5. Attachment-use instructions immediately after each user message that has attachments.
-6. Ephemeral final-output checklist.
-7. Harness structured-output schema, supplied separately as a CLI option where supported.
+6. Ephemeral response-style policy.
+7. Ephemeral final-output checklist.
+8. Harness structured-output schema, supplied separately as a CLI option where supported.
 
 `ManagedAgent#composed_prompt` renders items 1–5 as:
 
@@ -52,7 +54,7 @@ ASSISTANT:
 <assistant content>
 ```
 
-On native resume, items 1–5 are normally not replayed. Tycho sends the latest user message after the previous run boundary, or the continuation fallback, then appends item 6. The harness's native session is expected to retain the earlier context. The schema remains attached where the command builder supports it.
+On native resume, items 1–5 are normally not replayed. Tycho sends the latest user message after the previous run boundary, or the continuation fallback, then appends items 6–7. The harness's native session is expected to retain the earlier context. The schema remains attached where the command builder supports it.
 
 ## Prompt Inventory
 
@@ -115,21 +117,11 @@ Project:
 This managed agent is owned by the Tycho schedule <name and/or key>.
 Treat each scheduled user message as one recurring run in the same long-lived session.
 Use prior session context when it helps, but make each run's outcome clear and operator-facing.
-Use structured status `no_action_needed` when the scheduled check completed and there is nothing to act on.
-Use structured status `success` only when you completed a concrete action or produced a requested deliverable.
+Choose `status: no_action_needed` only for a successful observational or recurring check where no new condition required action and you did not complete a requested change, answer, commit, review, or deliverable. Use `status: success` when you completed any requested action or produced the requested result, even if nothing remains to do afterward. `no_action_needed` is a quiet outcome that suppresses operator unread and push notifications, so do not use it as a synonym for "finished" or "no next steps."
 If you need human input, ask a precise structured inquiry and stop instead of guessing.
 ```
 
-**Remote UI pre-filled content:**
-
-```text
-This managed agent is owned by the Tycho schedule <label or key>.
-Treat each run message as one recurring run in the same long-lived session.
-Use prior session context when it helps, but make each run's outcome clear and operator-facing.
-If you need human input, ask a precise structured inquiry and stop instead of guessing.
-```
-
-Because the Remote UI submits its pre-filled value, schedules created there usually use the four-line UI version as a custom system message instead of triggering the six-line backend default.
+**Remote UI pre-filled content:** The Remote `/setup` payload exposes this backend template with a `%{title}` placeholder. The UI substitutes the visible schedule label/key and uses an equivalent local fallback only for compatibility with older servers.
 
 **Purpose:** Define recurring-session semantics, distinguish no-op checks from completed actions, and require structured escalation rather than guessing.
 
@@ -204,21 +196,31 @@ Continue from the current HQ managed-agent state.
 
 **Source:** `ManagedAgent#prompt_for_execution`.
 
-### 9. Ephemeral final-output checklist
+### 9. Ephemeral response-style policy
+
+**Introduced:** At every execution, cold or resumed, after task/session context and before the final-output checklist. Tycho loads the current `~/.tycho/config/response_style.md` (or `TYCHO_RESPONSE_STYLE_PATH`) at execution time, so existing native sessions receive policy updates without memory migration. A project may replace the global text with `response_style`; a structured prompt template may override the project, and either scope may set `response_style: false` to opt out.
+
+**Default content:** The shipped policy asks the harness to lead with the outcome, use simple accurate words, active verbs, concrete details, logical flow, and a natural human voice; remove filler and repetition; revise once; and stop when the point has landed. It explicitly defers to technical precision, required terminology, formats, code, commands, schemas, quotations, and a user-requested genre or tone. The exact text is canonical in [`config/response_style.md.example`](../config/response_style.md.example).
+
+**Purpose:** Give all harnesses a shared default for operator-facing prose while keeping task content, memory, and structured-output requirements separate. Persisted run metadata records the native harness `session_id` captured from the run, rather than a fingerprint of the policy text.
+
+**Source:** `ResponseStylePolicy`, `ManagedAgent#with_execution_guidance`, and registry project/template `response_style` resolution.
+
+### 10. Ephemeral final-output checklist
 
 **Introduced:** At the end of every execution prompt, cold or resumed, immediately before command construction. It is not stored in `memory.jsonl`, so it does not accumulate across runs. Exact substring detection avoids appending it twice if the incoming prompt already contains the full checklist.
 
 **Content:**
 
 ```text
-For `summary`, write a concise operator-facing Markdown summary of the outcome, key changes or findings, blockers, and next steps in 1-3 short paragraphs or bullets. Use `status: no_action_needed` when the requested check completed successfully and there is nothing for the operator or agent to act on. Before final structured output, check whether this run created or referenced a PR, plan, review, report, markdown file, image, or other durable artifact. If yes, include it in `attachments`: use `type: file` with `path` for local files, or `type: link` with an http(s) `url` for web links.
+For `summary`, write a concise operator-facing Markdown summary of the outcome, key changes or findings, blockers, and next steps in 1-3 short paragraphs or bullets. Choose `status: no_action_needed` only for a successful observational or recurring check where no new condition required action and you did not complete a requested change, answer, commit, review, or deliverable. Use `status: success` when you completed any requested action or produced the requested result, even if nothing remains to do afterward. `no_action_needed` is a quiet outcome that suppresses operator unread and push notifications, so do not use it as a synonym for "finished" or "no next steps." Before final structured output, check whether this run created or referenced a PR, plan, review, report, markdown file, image, or other durable artifact. If yes, include it in `attachments`: use `type: file` with `path` for local files, or `type: link` with an http(s) `url` for web links.
 ```
 
 **Purpose:** Standardize operator summaries, suppress false-positive work notifications for healthy no-op checks, and preserve durable outputs as structured attachments.
 
 **Source:** `ManagedAgent::FINAL_OUTPUT_CHECKLIST`, `.with_final_output_checklist`, and `#prompt_for_execution`.
 
-### 10. Structured-output schema controls
+### 11. Structured-output schema controls
 
 **Introduced:** Separately from prompt text by `AgentCommandBuilder`:
 
@@ -245,15 +247,15 @@ For `summary`, write a concise operator-facing Markdown summary of the outcome, 
 
 ## Lifecycle Matrix
 
-| Event | Project context | Base template / schedule system | History-derived context | Final checklist | Schema |
-|---|---|---|---|---|---|
-| Normal agent creation | Persisted once | Persisted once | None yet | Not until run | Not until run |
-| Scheduled agent creation | Persisted once | Custom or generated schedule context, persisted once | First run message is persisted as user text | Added only at execution | Harness-dependent |
-| Cold/non-resumed run | Replayed | Replayed with the current replacement base prompt | Entire promptable memory replayed | Added | Codex/Claude enforced; OpenCode none |
-| Native resumed run | Not resent by Tycho | Not resent by Tycho | Latest user message only; attachment block may be included | Added | Claude enforced; resumed Codex not enforced; OpenCode none |
-| Agent edit | Existing context retained | Matching prior base-prompt copies replaced by one new pinned event | Existing non-prompt history retained | Added on next run | Harness-dependent |
-| Legacy-agent load | Backfilled if exact current project block is absent | Existing prompt retained | Existing memory retained | Added on next run | Harness-dependent |
-| Clone | Fresh project context | Cloned/current prompt becomes fresh system event | Source conversation is not copied | Added on first clone run | Harness-dependent |
+| Event | Project context | Base template / schedule system | History-derived context | Response style | Final checklist | Schema |
+|---|---|---|---|---|---|---|
+| Normal agent creation | Persisted once | Persisted once | None yet | Resolved, not persisted to memory | Not until run | Not until run |
+| Scheduled agent creation | Persisted once | Custom or generated schedule context, persisted once | First run message is persisted as user text | Project setting inherited | Added only at execution | Harness-dependent |
+| Cold/non-resumed run | Replayed | Replayed with the current replacement base prompt | Entire promptable memory replayed | Added | Added | Codex/Claude enforced; OpenCode none |
+| Native resumed run | Not resent by Tycho | Not resent by Tycho | Latest user message only; attachment block may be included | Added | Added | Claude enforced; resumed Codex not enforced; OpenCode none |
+| Agent edit | Existing context retained | Matching prior base-prompt copies replaced by one new pinned event | Existing non-prompt history retained | Current template setting applied | Added on next run | Harness-dependent |
+| Legacy-agent load | Backfilled if exact current project block is absent | Existing prompt retained | Existing memory retained | Global default unless configured later | Added on next run | Harness-dependent |
+| Clone | Fresh project context | Cloned/current prompt becomes fresh system event | Source conversation is not copied | Source setting copied | Added on first clone run | Harness-dependent |
 
 ## Findings and Recommended Follow-up
 
@@ -263,11 +265,11 @@ For `summary`, write a concise operator-facing Markdown summary of the outcome, 
 
 **Resolution:** Added the enum value and regression coverage for both canonical and compact Claude schemas.
 
-### High: Remote UI and backend schedule defaults diverge
+### Resolved: Remote UI and backend schedule defaults share one contract
 
-The Remote UI default omits both status-selection rules and slightly changes the recurring-message wording. Because the UI sends the pre-filled value, the backend treats it as custom and never applies its more complete default.
+The Remote UI reads `config.schedule_system_message_template` from the backend setup payload and substitutes the schedule title. Its older-server fallback mirrors the same recurring-session and status guidance.
 
-**Recommended action:** Expose one backend-generated default through the schedule API or duplicate the exact six-line contract with a regression test that compares UI and backend output.
+**Resolution:** Added the setup payload field, UI consumption, compatibility fallback, API regression coverage, and browser verification.
 
 ### Resolved: Agent edits replace prior base-prompt copies
 
@@ -286,6 +288,81 @@ The Remote UI default omits both status-selection rules and slightly changes the
 The outstanding-inquiry reminder now reads labels from canonical `inquiry.fields`, falls back from an empty label to the field key, and uses legacy `inquiry.requested_schema.properties` only when normalized labels are unavailable.
 
 **Resolution:** Added normalized-first and legacy-fallback regression coverage.
+
+## Focused Audit: `no_action_needed`
+
+### Intended Runtime Meaning
+
+`no_action_needed` is a successful, quiet outcome for an observational check that found no new condition requiring intervention. The canonical example is a recurring PR-review run that inspected the current set and found no new or changed PR to review.
+
+It is not intended as a synonym for “the task is finished” or “nothing remains after I completed the work.” A completed implementation, requested answer, commit, generated asset, or other requested deliverable should use `success`, even when there are no remaining next steps.
+
+This distinction matters operationally. When Tycho receives `no_action_needed`, it:
+
+- shows the result as `no action`;
+- does not mark the managed agent unread;
+- suppresses agent push notifications;
+- records a scheduled run as `no_action_needed` without first-success or recovery notification;
+- clears schedule failure tracking as a healthy outcome.
+
+A false `no_action_needed` can therefore hide meaningful completed work from the operator.
+
+### Current Prompt Text
+
+Every managed-agent execution, scheduled or interactive, ends with this global instruction from `ManagedAgent::FINAL_OUTPUT_CHECKLIST`:
+
+```text
+Choose `status: no_action_needed` only for a successful observational or recurring check where no new condition required action and you did not complete a requested change, answer, commit, review, or deliverable. Use `status: success` when you completed any requested action or produced the requested result, even if nothing remains to do afterward. `no_action_needed` is a quiet outcome that suppresses operator unread and push notifications, so do not use it as a synonym for "finished" or "no next steps."
+```
+
+The rest of that checklist asks for a concise summary and attachment reporting.
+
+Backend-generated schedule sessions include the same guidance in their stable system message. The Remote `/setup` payload exposes that schedule template with a `%{title}` placeholder, and the Remote UI uses it for schedule creation and editing. Its compatibility fallback carries the same wording.
+
+The canonical JSON schema now describes the complete status decision rule and quiet consequence; Claude inherits that property in its compact schema. Result normalization preserves legitimate no-op checks, converts `no_action_needed` with a structured inquiry to `input_required`, and converts high-confidence completed-work summaries to `success`.
+
+### Observed Local Behavior
+
+A read-only scan of local agent raw logs on 2026-07-11 found 40 structured results with `status: no_action_needed`:
+
+- 31 were recurring PR-review checks reporting no new or changed review work. These match the intended meaning.
+- 9 completed concrete requests and are inconsistent with the intended meaning. They included implementation changes, visual/content changes, commits, a direct cron-expression answer, and an explicit “reply with OK” task.
+
+This sample is correlated—31 correct outcomes came from one long-lived scheduled review session—so the ratio is not a general model-quality metric. It does demonstrate that the current wording repeatedly produces the same classification error across multiple task types and sessions.
+
+### Root Causes Before Remediation
+
+1. **The rule tests the end state, not whether action occurred.** After successfully implementing or committing work, there is often “nothing for the operator or agent to act on.” The sentence therefore literally matches both `success` and `no_action_needed`.
+2. **“Requested check” is underspecified.** Models can treat audits, questions, reviews, implementation verification, and even arbitrary requests as checks.
+3. **The rule is global.** It is appended to every execution, including implementation, writing, image, commit, and question-answer tasks where a no-op outcome is usually inapplicable.
+4. **The contrast with `success` is inconsistent.** Only the backend schedule default explains that completed actions and deliverables are `success`; Remote UI schedules and ordinary agents do not receive that contrast.
+5. **The quiet consequence is hidden.** The model is not told that this status suppresses unread state and notifications, so it cannot account for the cost of a false classification.
+6. **The schema supplies choices without definitions.** An enum constrains spelling, not meaning. There are no per-status descriptions or conditional rules.
+7. **There is no semantic validation.** Tycho permits `no_action_needed` alongside attachments or other content and does not reject summaries that describe implemented changes or commits. An inquiry paired with this status is also schema-valid even though the states conflict operationally.
+8. **The name invites a “no further action” reading.** `no_action_needed` can naturally mean either “no action was necessary” or “no further action is necessary after completion.” Tycho intends only the first meaning for quiet checks.
+
+### Implemented Decision Rule
+
+Status selection should classify what happened during the run, in this order:
+
+1. Use `input_required` when human input is necessary to proceed.
+2. Use `blocked` when progress cannot continue without an external change and no immediate structured answer can resolve it.
+3. Use `failed` when the requested work or check failed.
+4. Use `partial` when meaningful requested work was completed but required work remains.
+5. Use `success` when the run completed a requested action, change, answer, commit, review, or deliverable.
+6. Use `no_action_needed` only when the task was observational/checking in nature, the check completed successfully, and it found no new condition requiring action. It must not be selected merely because completed work leaves no next step.
+
+An incidental report or log from a no-op check may still be attached. If producing the document, answer, or artifact was itself the requested deliverable, the status should be `success`.
+
+### Implemented Replacement Prompt
+
+```text
+Choose `status: no_action_needed` only for a successful observational or recurring check where no new condition required action and you did not complete a requested change, answer, commit, review, or deliverable. Use `status: success` when you completed any requested action or produced the requested result, even if nothing remains to do afterward. `no_action_needed` is a quiet outcome that suppresses operator unread and push notifications, so do not use it as a synonym for “finished” or “no next steps.”
+```
+
+This definition is now shared by the global final-output checklist, backend schedule template, Remote UI schedule defaults, and canonical status schema description. Result normalization also guards contradictory inquiries and high-confidence summaries beginning with completed-work verbs such as `implemented`, `committed`, `created`, `fixed`, or `deployed`.
+
+Residual risk remains: models can ignore instructions, older user-copied schema files may lack the new description, and the completed-work safeguard intentionally uses a narrow high-confidence pattern rather than trying to infer all task semantics from prose. The global execution checklist still carries the new rule on every run, including native resumes.
 
 ## Verification Notes
 

@@ -7,6 +7,7 @@ require_relative "agent_command_builder"
 require_relative "agent_memory"
 require_relative "agent_result_normalizer"
 require_relative "agent_structured_result"
+require_relative "response_style_policy"
 require_relative "executable_resolver"
 require_relative "../harness_registry"
 require_relative "../log_file_reader"
@@ -49,7 +50,7 @@ module HQ
     end
 
     AgentRun = Struct.new(
-      :started_at, :finished_at, :exit_code, :status, :log_path, :command,
+      :started_at, :finished_at, :exit_code, :status, :log_path, :command, :session_id, :response_style_source,
       keyword_init: true
     ) do
       def self.from_hash(hash)
@@ -59,12 +60,14 @@ module HQ
           exit_code: hash["exit_code"],
           status: hash["status"],
           log_path: hash["log_path"],
-          command: hash["command"]
+          command: hash["command"],
+          session_id: hash["session_id"],
+          response_style_source: hash["response_style_source"]
         )
       end
 
       def to_hash
-        {
+        result = {
           "started_at" => started_at&.iso8601,
           "finished_at" => finished_at&.iso8601,
           "exit_code" => exit_code,
@@ -72,13 +75,22 @@ module HQ
           "log_path" => log_path,
           "command" => command
         }
+        result["session_id"] = session_id unless session_id.to_s.empty?
+        result["response_style_source"] = response_style_source unless response_style_source.to_s.empty?
+        result
       end
     end
 
+    NO_ACTION_STATUS_GUIDANCE = "Choose `status: no_action_needed` only for a successful observational or " \
+                                "recurring check where no new condition required action and you did not complete " \
+                                "a requested change, answer, commit, review, or deliverable. Use `status: success` " \
+                                "when you completed any requested action or produced the requested result, even " \
+                                "if nothing remains to do afterward. `no_action_needed` is a quiet outcome that " \
+                                "suppresses operator unread and push notifications, so do not use it as a synonym " \
+                                "for \"finished\" or \"no next steps.\""
     FINAL_OUTPUT_CHECKLIST = "For `summary`, write a concise operator-facing Markdown summary of the outcome, " \
                              "key changes or findings, blockers, and next steps in 1-3 short paragraphs or bullets. " \
-                             "Use `status: no_action_needed` when the requested check completed successfully " \
-                             "and there is nothing for the operator or agent to act on. " \
+                             "#{NO_ACTION_STATUS_GUIDANCE} " \
                              "Before final structured output, check whether this run created or referenced a PR, " \
                              "plan, review, report, markdown file, image, or other durable artifact. " \
                              "If yes, include it in `attachments`: use `type: file` with `path` for local files, " \
@@ -95,14 +107,14 @@ module HQ
 
     attr_reader :key, :name, :project_key, :template_key, :workspace, :prompt, :created_at, :started_at,
                 :finished_at, :pid, :last_exit_code, :log_path, :runs, :sandbox_mode, :agent, :messages, :skills,
-                :model, :reasoning_effort, :session_id, :session_bootstrapped, :color_index, :summary,
+                :model, :reasoning_effort, :response_style, :session_id, :session_bootstrapped, :color_index, :summary,
                 :structured_result
     attr_writer :summary, :structured_result
 
     def initialize(key:, name:, project_key:, template_key:, workspace:, prompt:, created_at: nil, started_at: nil,
                    finished_at: nil, pid: nil, last_exit_code: nil, log_path: nil, runs: nil,
                    stop_requested_at: nil, sandbox_mode: "danger-full-access", agent: "codex", messages: nil,
-                   model: nil, reasoning_effort: nil, skills: nil, unread: false, session_id: nil,
+                   model: nil, reasoning_effort: nil, response_style: nil, skills: nil, unread: false, session_id: nil,
                    session_bootstrapped: nil, color_index: nil, summary: nil, structured_result: nil)
       @key = key
       @name = name
@@ -122,6 +134,7 @@ module HQ
       @agent = normalize_agent(agent)
       @model = normalize_model(model)
       @reasoning_effort = normalize_reasoning_effort(reasoning_effort)
+      @response_style = normalize_response_style(response_style)
       @messages = normalize_messages(messages)
       seed_memory_from_initial_messages!(messages)
       @skills = normalize_skills(skills)
@@ -180,6 +193,7 @@ module HQ
         agent: hash["agent"],
         model: model,
         reasoning_effort: reasoning_effort,
+        response_style: hash.key?("response_style") ? hash["response_style"] : nil,
         skills: hash["skills"],
         unread: hash["unread"],
         session_id: hash["session_id"],
@@ -299,6 +313,7 @@ module HQ
       }
       result["model"] = @model unless @model.to_s.empty?
       result["reasoning_effort"] = @reasoning_effort unless @reasoning_effort.to_s.empty?
+      result["response_style"] = @response_style unless @response_style.nil?
       unless @session_id.to_s.empty?
         result["session_id"] = @session_id
         result["session_bootstrapped"] = @session_bootstrapped
@@ -338,6 +353,9 @@ module HQ
         @session_id = SecureRandom.uuid
         @session_bootstrapped = false
       end
+      response_style_text = resolved_response_style
+      response_style_source = response_style_source_for(response_style_text)
+      prompt_text = prompt_for_execution(response_style: response_style_text)
       execution = build_command
       command = execution.fetch(:command)
       environment = execution.fetch(:env, {})
@@ -357,8 +375,6 @@ module HQ
       FileUtils.rm_f(status_path)
       FileUtils.rm_f(last_message_file_path)
       invalidate_derived_logs!
-      prompt_text = prompt_for_execution
-
       File.open(@log_path, "a") do |file|
         file.puts
         file.puts "=== [#{@started_at.strftime("%Y-%m-%d %H:%M:%S")}] start ==="
@@ -381,7 +397,9 @@ module HQ
         started_at: @started_at,
         status: "running",
         log_path: @log_path,
-        command: Shellwords.join(command)
+        command: Shellwords.join(command),
+        session_id: @session_id,
+        response_style_source: response_style_source
       )
       @structured_result = nil
       @summary = nil
@@ -477,9 +495,14 @@ module HQ
 
     def running?
       return false unless @pid
+      return false if completed_status_available?
       return false unless ProcessLiveness.alive?(@pid)
 
       own_process_group?(@pid)
+    end
+
+    def completed_status_available?
+      status_file_paths.any? { |path| File.file?(path) }
     end
 
     def own_process_group?(pid)
@@ -586,7 +609,7 @@ module HQ
     end
 
     def update!(name:, template_key:, workspace:, prompt:, sandbox_mode: @sandbox_mode, agent: @agent,
-                model: @model, reasoning_effort: @reasoning_effort)
+                model: @model, reasoning_effort: @reasoning_effort, response_style: @response_style)
       previous_prompt = @prompt
       @name = name
       @template_key = template_key
@@ -596,6 +619,7 @@ module HQ
       @agent = normalize_agent(agent)
       @model = normalize_model(model)
       @reasoning_effort = normalize_reasoning_effort(reasoning_effort)
+      @response_style = normalize_response_style(response_style)
       reset_base_prompt!
       memory_store.replace_system_prompt!(previous_prompt, @prompt, created_at: Time.now)
       HQ.hooks.publish("agent.updated",
@@ -606,7 +630,12 @@ module HQ
                        workspace: @workspace,
                        agent: @agent,
                        model: @model,
-                       reasoning_effort: @reasoning_effort)
+                       reasoning_effort: @reasoning_effort,
+                       response_style: @response_style)
+    end
+
+    def effective_response_style_source
+      response_style_source_for(resolved_response_style)
     end
 
     def add_user_message!(content, inquiry_id: nil, attachments: nil, metadata: nil)
@@ -802,8 +831,8 @@ module HQ
       )
     end
 
-    def build_command
-      command_builder.build
+    def build_command(prompt: prompt_for_execution)
+      command_builder(prompt:).build
     end
 
     def missing_executable_for(command)
@@ -915,14 +944,15 @@ module HQ
     end
 
     def monitor_agent_process(pid, status_path)
-      waiter = Process.detach(pid)
       Thread.new do
-        status = waiter.value
+        _waited_pid, status = Process.wait2(pid)
         begin
           File.write(status_path, status.exitstatus.to_i.to_s)
         rescue StandardError
           nil
         end
+      rescue Errno::ECHILD
+        nil
       end
     end
 
@@ -966,6 +996,7 @@ module HQ
       run.exit_code = @last_exit_code
       run.status = status
       capture_session_id!
+      run.session_id = @session_id unless @session_id.to_s.empty?
       build_summary!
       capture_run_memory!(run)
       add_assistant_message!(@summary) if @summary
@@ -1319,13 +1350,34 @@ module HQ
       lines.join("\n")
     end
 
-    def prompt_for_execution
-      return with_final_output_checklist(composed_prompt) unless native_resume?
+    def prompt_for_execution(response_style: resolved_response_style)
+      base_prompt = unless native_resume?
+                      composed_prompt
+                    else
+                      threshold = last_run&.finished_at || @finished_at || @started_at
+                      latest = memory_store.latest_user_message_after(threshold)
+                      latest.to_s.strip.empty? ? "Continue from the current HQ managed-agent state." : latest.to_s
+                    end
+      with_execution_guidance(base_prompt, response_style:)
+    end
 
-      threshold = last_run&.finished_at || @finished_at || @started_at
-      latest = memory_store.latest_user_message_after(threshold)
-      prompt = latest.to_s.strip.empty? ? "Continue from the current HQ managed-agent state." : latest.to_s
-      with_final_output_checklist(prompt)
+    def with_execution_guidance(prompt, response_style: resolved_response_style)
+      text = prompt.to_s.rstrip
+      unless response_style.to_s.empty? || text.include?(response_style.to_s)
+        text = [text, "RESPONSE STYLE:\n#{response_style}"].reject(&:empty?).join("\n\n")
+      end
+      with_final_output_checklist(text)
+    end
+
+    def resolved_response_style
+      ResponseStylePolicy.resolve(@response_style)
+    end
+
+    def response_style_source_for(resolved_style)
+      return "disabled" if resolved_style.to_s.empty?
+      return "custom" unless @response_style.nil?
+
+      "global"
     end
 
     def native_resume?
@@ -1369,6 +1421,13 @@ module HQ
 
     def normalize_reasoning_effort(value)
       text = value.to_s.strip.downcase
+      text.empty? ? nil : text
+    end
+
+    def normalize_response_style(value)
+      return false if value == false
+
+      text = value.to_s.strip
       text.empty? ? nil : text
     end
 

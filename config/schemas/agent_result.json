@@ -4,6 +4,7 @@
   "properties": {
     "status": {
       "type": "string",
+      "description": "Classify what happened during this run. Use input_required when human input is needed, blocked when an external change is required, failed when the work failed, partial when required work remains, and success when you completed a requested action, change, answer, commit, review, or deliverable. Use no_action_needed only for a successful observational or recurring check where no new condition required action and no requested action or deliverable was completed. no_action_needed is a quiet outcome that suppresses operator unread and push notifications; never use it merely because completed work leaves no next steps.",
       "enum": ["success", "no_action_needed", "partial", "failed", "blocked", "input_required"]
     },
     "summary": {

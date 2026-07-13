@@ -2197,6 +2197,110 @@ select {
   justify-self: start;
 }
 
+.response-style-form {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+}
+
+.response-style-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.response-style-summary > div {
+  display: grid;
+  gap: 6px;
+}
+
+.response-style-summary > .response-style-summary-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.response-style-summary p {
+  margin: 0;
+  max-width: 72ch;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.response-style-summary p.response-style-excerpt {
+  color: var(--text);
+}
+
+.response-style-summary span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.response-style-form-heading,
+.response-style-form-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.response-style-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.response-style-form-heading > div {
+  display: grid;
+  gap: 2px;
+}
+
+.response-style-form-heading span,
+.response-style-form-footer > span,
+.response-style-form label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.response-style-form textarea {
+  min-height: 180px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .response-style-form-heading,
+  .response-style-form-footer,
+  .response-style-summary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .response-style-form-footer button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .response-style-form-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .response-style-summary > .response-style-summary-actions {
+    align-self: flex-start;
+  }
+}
+
 .detail-card-body,
 .kv-grid {
   display: grid;

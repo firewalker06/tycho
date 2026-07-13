@@ -4,6 +4,8 @@ require_relative "attachment_normalizer"
 
 module HQ
   class AgentResultNormalizer
+    NO_ACTION_COMPLETED_WORK_PATTERN = /(?:\A|^\s*(?:[-*]\s+)?)(?:implemented|committed|created|generated|fixed|updated|changed|added|removed|wrote|answered|delivered|published|deployed)\b/i
+
     def initialize(workspace:)
       @workspace = workspace
     end
@@ -15,8 +17,9 @@ module HQ
       summary = parsed["summary"].to_s.strip
       return nil if status.empty? || summary.empty?
 
-      result = { "status" => status, "summary" => summary }
       inquiry = normalize_inquiry(parsed["inquiry"])
+      status = normalize_status(status, summary:, inquiry:)
+      result = { "status" => status, "summary" => summary }
       result["inquiry"] = inquiry if inquiry
       attachments = normalize_attachments(parsed["attachments"])
       result["attachments"] = attachments if attachments
@@ -80,6 +83,14 @@ module HQ
     end
 
     private
+
+    def normalize_status(status, summary:, inquiry:)
+      return status unless status == "no_action_needed"
+      return "input_required" if inquiry
+      return "success" if summary.match?(NO_ACTION_COMPLETED_WORK_PATTERN)
+
+      status
+    end
 
     def normalize_inquiry_fields(fields)
       items = Array(fields)

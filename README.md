@@ -161,6 +161,14 @@ projects:
 System prompt templates live beside the project registry as
 `system_prompts.yml`.
 
+Tycho also appends a cross-harness writing policy from `response_style.md` to
+every cold and resumed execution. Set `response_style` on a project or
+structured prompt template to replace the global text, or set it to `false` to
+disable the policy for that scope. Explicit output formats, schemas, code,
+quotations, and user-requested genres take precedence over this default.
+The global file can be edited from **Settings → Configuration** in Remote UI;
+Tycho saves it atomically to `~/.tycho/config/response_style.md` by default.
+
 Real config files, `.env`, runtime logs, and generated agent artifacts are
 gitignored. Keep secrets and machine-specific paths out of committed files.
 Runtime state and logs default to `~/.tycho/logs`.
@@ -173,6 +181,7 @@ Homebrew and source installs use the same user-scoped defaults:
 |---------|---------|
 | Project registry | `~/.tycho/config/hq.yml` |
 | System prompts | `~/.tycho/config/system_prompts.yml` |
+| Response style policy | `~/.tycho/config/response_style.md` |
 | Schedules | `~/.tycho/config/schedules.yml` |
 | Schedule prompt files | `~/.tycho/schedules/` |
 | Hooks | `~/.tycho/config/hooks.yml` |
@@ -196,6 +205,7 @@ Use the `TYCHO_` prefix for runtime overrides.
 | `TYCHO_CONFIG_DIR` | Override the default user config directory. |
 | `TYCHO_CONFIG_PATH` | Override the project registry path. |
 | `TYCHO_SYSTEM_PROMPTS_PATH` | Override the system prompt template path. |
+| `TYCHO_RESPONSE_STYLE_PATH` | Override the global response style policy path. |
 | `TYCHO_SCHEDULES_PATH` | Override scheduled-agent config path. |
 | `TYCHO_SCHEDULES_ROOT` | Override schedule message file root. |
 | `TYCHO_HOOKS_PATH` | Override global hooks config path. |
@@ -319,6 +329,9 @@ that prompt files stay inside `~/.tycho/schedules/`.
 Each run automatically appends Tycho's final-output attachment checklist to the
 scheduled prompt, so reports, Markdown files, PRs, reviews, images, and other
 durable artifacts should be returned in `attachments`.
+`no_action_needed` is reserved for successful observational checks where no new
+condition required action; completed changes, answers, commits, reviews, and
+deliverables use `success` even when no next step remains.
 
 Prompt tips for reliable schedules:
 

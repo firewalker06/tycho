@@ -4,11 +4,23 @@ require_relative "constants"
 require_relative "file_store"
 require_relative "managed_agent"
 require_relative "../ui/rendering/styles"
+require "securerandom"
 
 module HQ
   class AgentStore
     PALETTE_SIZE = HQ::UI::Rendering::Styles::CHAT_BORDER_PALETTE.length
+    SCHEDULE_SYSTEM_PROMPT_TEMPLATE = [
+      "This managed agent is owned by the Tycho schedule %{title}.",
+      "Treat each scheduled user message as one recurring run in the same long-lived session.",
+      "Use prior session context when it helps, but make each run's outcome clear and operator-facing.",
+      ManagedAgent::NO_ACTION_STATUS_GUIDANCE,
+      "If you need human input, ask a precise structured inquiry and stop instead of guessing."
+    ].join("\n")
     PollEvent = Struct.new(:agent_key, :from_status, :to_status, :run_count, keyword_init: true)
+
+    def self.scheduled_system_prompt_template
+      SCHEDULE_SYSTEM_PROMPT_TEMPLATE
+    end
 
     def initialize(projects)
       @projects = projects
@@ -65,7 +77,8 @@ module HQ
     def create_from_template(project, template_key)
       existing = load
       suffix = next_suffix(project.key, existing)
-      key = "#{project.key}-agent-#{suffix}"
+      now = Time.now
+      key = next_agent_key(project.key, existing, now:)
       template = template_for(project, template_key)
       agent = ManagedAgent.new(
         key: key,
@@ -74,10 +87,12 @@ module HQ
         template_key: template.key,
         workspace: project.path,
         prompt: template.prompt,
+        created_at: now,
         sandbox_mode: template.sandbox_mode,
         agent: template.agent,
         model: template.model,
         reasoning_effort: template.reasoning_effort,
+        response_style: template.response_style,
         messages: system_messages_for(project, template.prompt),
         color_index: next_color_index(existing)
       )
@@ -86,9 +101,8 @@ module HQ
     end
 
     def create_scheduled(project, schedule_key:, name:, system_message: nil, existing_agents: load)
-      suffix = next_suffix(project.key, existing_agents)
-      key = "#{project.key}-agent-#{suffix}"
       now = Time.now
+      key = next_agent_key(project.key, existing_agents, now:)
       prompt = scheduled_system_prompt(schedule_key:, name:, system_message:)
       system_messages = system_messages_for(project, prompt)
       agent = ManagedAgent.new(
@@ -102,6 +116,7 @@ module HQ
         agent: project.respond_to?(:agent) ? project.agent : project.config.agent,
         model: project.respond_to?(:model) ? project.model : project.config.model,
         reasoning_effort: project.respond_to?(:reasoning_effort) ? project.reasoning_effort : project.config.reasoning_effort,
+        response_style: project.respond_to?(:response_style) ? project.response_style : project.config.response_style,
         messages: system_messages,
         created_at: now,
         color_index: next_color_index(existing_agents)
@@ -123,8 +138,8 @@ module HQ
     end
 
     def clone_agent(agent, existing_agents: load)
-      suffix = next_suffix(agent.project_key, existing_agents)
-      key = "#{agent.project_key}-agent-#{suffix}"
+      now = Time.now
+      key = next_agent_key(agent.project_key, existing_agents, now:)
       ManagedAgent.new(
         key: key,
         name: agent.name,
@@ -132,10 +147,12 @@ module HQ
         template_key: agent.template_key,
         workspace: agent.workspace,
         prompt: agent.prompt,
+        created_at: now,
         sandbox_mode: agent.sandbox_mode,
         agent: agent.agent,
         model: agent.model,
         reasoning_effort: agent.reasoning_effort,
+        response_style: agent.response_style,
         skills: agent.skills,
         color_index: next_color_index(existing_agents)
       )
@@ -181,7 +198,20 @@ module HQ
         match = agent.key.match(/^#{Regexp.escape(project_key)}-agent-(\d+)$/)
         match[1].to_i if match
       end
-      (prefixes.max || 0) + 1
+      project_count = agents.count { |agent| agent.project_key == project_key }
+      [prefixes.max || 0, project_count].max + 1
+    end
+
+    def next_agent_key(project_key, agents, now: Time.now)
+      timestamp = now.utc.strftime("%Y%m%d-%H%M%S-%6N")
+      base = "#{project_key}-agent-#{timestamp}"
+      existing_keys = agents.map(&:key)
+      return base unless existing_keys.include?(base)
+
+      loop do
+        candidate = "#{base}-#{SecureRandom.hex(3)}"
+        return candidate unless existing_keys.include?(candidate)
+      end
     end
 
     def scheduled_agent_name(project, schedule_key:, name:)
@@ -195,14 +225,7 @@ module HQ
 
       label = name.to_s.strip
       title = label.empty? ? schedule_key.to_s : "#{label} (#{schedule_key})"
-      [
-        "This managed agent is owned by the Tycho schedule #{title}.",
-        "Treat each scheduled user message as one recurring run in the same long-lived session.",
-        "Use prior session context when it helps, but make each run's outcome clear and operator-facing.",
-        "Use structured status `no_action_needed` when the scheduled check completed and there is nothing to act on.",
-        "Use structured status `success` only when you completed a concrete action or produced a requested deliverable.",
-        "If you need human input, ask a precise structured inquiry and stop instead of guessing."
-      ].join("\n")
+      format(self.class.scheduled_system_prompt_template, title:)
     end
 
     def template_for(project, template_key)

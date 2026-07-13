@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-07-11
+2026-07-12
 
 ## Strategic Direction
 
@@ -38,6 +38,8 @@ Key references:
 | Config split | `~/.tycho/config/hq.yml` (active) + `~/.tycho/config/hq.archived.yml` (archived) | Archive without losing history; logs move to `~/.tycho/logs/projects/archived/` |
 | Agent transport | Codex JSON output; Claude-compatible `--output-format stream-json` | Streaming logs render incrementally in the chat viewport |
 | Agent model controls | Optional per-agent `model` and `reasoning_effort`, inherited from project/template config and passed as harness run arguments | Model catalogs change outside Tycho; use harness discovery for suggestions where available, keep free-form fallback everywhere, and keep provider-specific thinking budgets out of first-version scope |
+| Managed-agent identity | Generate keys as `<project>-agent-<UTC timestamp with microseconds>`, adding a short random suffix only on an exact collision; retain legacy numeric keys when loading existing state | Timestamp identities remain sortable and avoid key reuse when agents are created concurrently or archived across Tycho instances |
+| Cross-harness response style | Append the current `~/.tycho/config/response_style.md` policy to every cold and resumed run, with project/template override or opt-out; record the harness `session_id` on each run | Keep operator-facing prose consistent without coupling the policy to a harness-native role API or persisting it into conversation memory, while retaining the native session identity used for each run; explicit task formats remain higher priority |
 | Agent session strategy | Persist native Claude/Codex `session_id` per managed agent and resume after the first run; keep `memory.jsonl` as HQ's canonical transcript | Native resume recovers agent-side continuity and prompt-cache reuse. HQ only replays bounded `memory.jsonl` on first run or when no native session is known |
 | Agent log layout | New agents use a per-agent stem `<project-key>-<created-at>-<nonce>` for `.raw.log`, `.conversation.log`, `.system.log`, `.memory.jsonl`, `.attachments.json`, `.status`, and `.last_message.json`; legacy `<key>.raw.log` records remain readable | Raw stream + parsed conversation + tool/system events + canonical event log + durable artifact links without collisions when agent keys are reused after Remote/TUI archive timing differences |
 | Chat viewport rendering | Hybrid: `memory.jsonl` for history, `raw.log` tail for live streaming | User messages appear immediately (written to `memory.jsonl` on send); assistant turns commit on run finalization |
@@ -57,7 +59,7 @@ Key references:
 | Scheduled runs | Dedicated `tycho schedule daemon`, definitions in `~/.tycho/config/schedules.yml`, runtime state in `~/.tycho/logs/schedules.json`, validated standard cron syntax | Scheduled work should continue independently from the TUI and Remote UI while still reusing existing agent execution paths |
 | Schedule daemon freshness | `tycho schedule daemon` writes heartbeat state to `~/.tycho/logs/scheduler_daemon.json`; UI surfaces derive running/stale/stopped from heartbeat age and process liveness, and report untracked running daemons without heartbeat state | Users need to know whether cron work is actually ticking, not only whether definitions are valid |
 | Schedule command scope | Agent-only schedules; each schedule owns one persistent managed agent session and accepts only inline messages or files under `schedules/` | Preserve recurring context without adding arbitrary shell execution or loose existing-agent targets |
-| Schedule statuses | Schedules expose `scheduled`, `paused`, or `stopped`; last outcome and error reason are tracked separately, including quiet `no_action_needed` outcomes | Operators need a small action-oriented state model without losing diagnostic context or paging on healthy no-op checks |
+| Schedule statuses | Schedules expose `scheduled`, `paused`, or `stopped`; last outcome and error reason are tracked separately. `no_action_needed` is reserved for observational checks where no action was necessary, while completed actions and deliverables use `success` | Keep healthy no-op checks quiet without hiding meaningful completed work from unread state and notifications |
 | Schedule interactive protection | A due run stops with reason `interactive` when the schedule-owned agent has later user messages; resuming records an acknowledgement boundary and keeps the same session | User conversations in scheduled sessions must not be overwritten by the next cron tick, and recovery should be one explicit action |
 | Schedule management | Expose schedule list/detail/run/pause/resume/reload in both TUI and Remote UI | Interfaces should manage and observe schedules, but the daemon owns ticking, locks, missed-run policy, and dispatch |
 | Open-source license | MIT | Keep adoption simple while making contribution and reuse terms explicit |
@@ -256,6 +258,7 @@ harness compatibility, and continuing browser/TUI smoke verification.
 - [x] Archive one agent (`DELETE /agents/{key}` or `POST /agents/{key}/archive`) or bulk archive idle agents (`POST /agents/archive`)
 - [x] Project list/detail endpoints and mobile project detail screens
 - [x] Remote setup/readiness endpoint and Settings screen
+- [x] Remote Settings editor for the global `response_style.md` policy with atomic persistence and backup
 - [x] Client-side Remote UI filtering across agents and projects
 - [x] Remote UI skill discovery for chat insertion
 - [x] Browser push subscription/test-notification foundation, with HTTPS MagicDNS support and HTTP MagicDNS warnings ([WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.md))

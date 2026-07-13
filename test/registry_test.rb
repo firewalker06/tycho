@@ -17,6 +17,7 @@ module RegistryTest
   def run!
     assert_registry_loads_system_prompts_from_sibling_config
     assert_registry_loads_model_and_effort_defaults
+    assert_registry_resolves_response_style_inheritance
     assert_registry_ignores_hq_env_aliases
     assert_registry_uses_tycho_home_defaults
     assert_registry_resolves_hidden_groups_and_project_overrides
@@ -26,8 +27,53 @@ module RegistryTest
     assert_custom_harness_extracts_env_assignments_for_execution
     assert_registry_rejects_unsupported_custom_harness_adapters
     assert_agent_store_prepends_project_tool_system_prompt
+    assert_agent_store_timestamp_keys_avoid_exact_collisions
     assert_agent_store_backfills_project_tool_system_prompt
     puts "registry_test: ok"
+  end
+
+  def assert_agent_store_timestamp_keys_avoid_exact_collisions
+    store = HQ::AgentStore.new([])
+    now = Time.utc(2026, 7, 12, 12, 5, 1, 123_456)
+    base = "web-agent-20260712-120501-123456"
+    existing_agent = Struct.new(:key).new(base)
+
+    generated = store.send(:next_agent_key, "web", [existing_agent], now: now)
+    assert(generated.match?(/\A#{Regexp.escape(base)}-[0-9a-f]{6}\z/),
+           "expected an exact timestamp collision to gain a short random suffix")
+  end
+
+  def assert_registry_resolves_response_style_inheritance
+    Dir.mktmpdir("hq-registry-response-style-test") do |dir|
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      File.write(config_path, <<~YAML)
+        projects:
+          - key: demo
+            name: Demo
+            path: #{File.join(dir, "demo")}
+            response_style: Project prose policy.
+      YAML
+      File.write(prompts_path, <<~YAML)
+        inherited: Inherit the project style.
+        overridden:
+          prompt: Use a template-specific style.
+          response_style: Evidence first.
+        disabled:
+          prompt: Preserve raw output.
+          response_style: false
+      YAML
+
+      project = HQ::Registry.new(path: config_path).projects.fetch(0)
+      templates = project.agent_templates.to_h { |template| [template.key, template] }
+      assert(project.response_style == "Project prose policy.", "expected project response style to load")
+      assert(templates.fetch("inherited").response_style == "Project prose policy.",
+             "expected a template to inherit its project response style")
+      assert(templates.fetch("overridden").response_style == "Evidence first.",
+             "expected template response style to override its project")
+      assert(templates.fetch("disabled").response_style == false,
+             "expected a template to disable response style guidance")
+    end
   end
 
   def assert_registry_loads_system_prompts_from_sibling_config
@@ -388,6 +434,8 @@ module RegistryTest
       web, docs = registry.projects
 
       agent = HQ::AgentStore.new(registry.projects).create_from_template(web, "custom")
+      assert(agent.key.match?(/\Aweb-agent-\d{8}-\d{6}-\d{6}(?:-[0-9a-f]{6})?\z/),
+             "expected generated agent keys to use a timestamp instead of an incremental suffix")
       system_messages = agent.messages.select { |message| message.role == "system" }
       assert(system_messages.length == 2, "expected project context and template prompt to be separate system messages")
       assert(system_messages[0].content.include?("Project:"),
@@ -407,6 +455,7 @@ module RegistryTest
              "expected chat conversation to render both leading system messages")
 
       project_agent = HQ::AgentStore.new(registry.projects).create_from_template(HQ::Project.new(web), "custom")
+      assert(project_agent.key != agent.key, "expected timestamp agent keys to remain unique")
       project_context = project_agent.messages.select { |message| message.role == "system" }.first.content
       assert(project_context.include?("Project:"),
              "expected Project-created agents to include project context")

@@ -16,6 +16,7 @@ module RemoteServerTest
 
   def run!
     assert_remote_agent_lifecycle
+    assert_remote_agent_response_style_selection_is_independent
     assert_remote_archive_reconciles_scheduled_agent_state
     assert_remote_agent_bulk_archive
     assert_remote_agent_clone_archives_source_with_editable_name
@@ -32,6 +33,7 @@ module RemoteServerTest
     assert_remote_project_update_route_edits_metadata
     assert_remote_agent_model_and_effort_payloads
     assert_remote_hidden_settings_filter_projects_and_agents
+    assert_remote_response_style_settings
     assert_remote_schedule_routes
     assert_remote_setup_payload_includes_readiness
     assert_remote_harness_catalogs_are_configurable
@@ -82,7 +84,8 @@ module RemoteServerTest
         "prompt" => "Work remotely.",
         "agent" => "codex"
       )
-      assert(created[:key].start_with?("web-agent-"), "expected created agent key")
+      assert(created[:key].match?(/\Aweb-agent-\d{8}-\d{6}-\d{6}(?:-[0-9a-f]{6})?\z/),
+             "expected created agent key to use a collision-resistant timestamp")
       assert(created[:name] == "Remote Agent", "expected custom agent name")
       assert(created[:status] == "idle", "expected new agent to be idle")
 
@@ -101,6 +104,35 @@ module RemoteServerTest
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
       replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+    end
+  end
+
+  def assert_remote_agent_response_style_selection_is_independent
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      response_style_path = File.join(dir, "config", "response_style.md")
+      FileUtils.mkdir_p(File.dirname(response_style_path))
+      File.write(response_style_path, "Use the global response style.\n")
+
+      with_env_values("TYCHO_RESPONSE_STYLE_PATH" => response_style_path) do
+        service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
+        created = service.create_agent(
+          "project_key" => "web",
+          "template_key" => "custom",
+          "response_style_mode" => "disabled",
+          "name" => "Independent Style Agent",
+          "prompt" => "Use the custom prompt template.",
+          "agent" => "codex"
+        )
+        assert(created[:template_key] == "custom", "expected the prompt template to remain custom")
+        assert(created[:response_style] == false && created[:response_style_source] == "disabled",
+               "expected response style selection to be independent from the custom prompt template")
+
+        updated = service.update_agent(created[:key], "response_style_mode" => "global")
+        assert(updated[:response_style].nil? && updated[:response_style_source] == "global",
+               "expected a style-only edit to switch the agent back to the global response style")
+      end
     end
   end
 
@@ -1308,6 +1340,79 @@ module RemoteServerTest
     end
   end
 
+  def assert_remote_response_style_settings
+    with_remote_temp_store do |dir|
+      path = File.join(dir, "config", "response_style.md")
+      FileUtils.mkdir_p(File.dirname(path))
+      with_env_values("TYCHO_RESPONSE_STYLE_PATH" => path) do
+        workspace = File.join(dir, "workspace")
+        write_project_workspace(workspace)
+        service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
+        server = HQ::RemoteServer.new
+
+        fetched = server.send(:route, service, "GET", "/settings/response-style", {}, nil)
+        assert(fetched.dig(:body, :response_style, :path) == path,
+               "expected response style settings to expose the configured path")
+        assert(fetched.dig(:body, :response_style, :exists) == false,
+               "expected a missing response style to be an addable empty state")
+
+        created_text = "Lead with the result.\n"
+        created = server.send(
+          :route,
+          service,
+          "PATCH",
+          "/settings/response-style",
+          { "content" => created_text },
+          nil
+        )
+        assert(created.dig(:body, :response_style, :exists) == true,
+               "expected saving the empty state to create a response style")
+        assert(File.read(path) == created_text, "expected response style creation to persist")
+
+        agent = service.create_agent(
+          "project_key" => "web",
+          "template_key" => "custom",
+          "name" => "Styled Agent",
+          "prompt" => "Use the global style.",
+          "agent" => "codex"
+        )
+        assert(agent[:response_style_source] == "global",
+               "expected agents without an override to report the active global response style")
+
+        updated_text = "Write plainly. Keep technical precision.\n"
+        updated = server.send(
+          :route,
+          service,
+          "PATCH",
+          "/settings/response-style",
+          { "content" => updated_text },
+          nil
+        )
+        assert(updated.dig(:body, :response_style, :content) == updated_text,
+               "expected response style update to return saved content")
+        assert(File.read(path) == updated_text, "expected response style update to persist atomically")
+        assert(File.read("#{path}.bak") == "Lead with the result.\n",
+               "expected response style update to retain a backup")
+
+        deleted = server.send(:route, service, "DELETE", "/settings/response-style", {}, nil)
+        assert(deleted.dig(:body, :response_style, :exists) == false,
+               "expected removing a response style to return the addable empty state")
+        assert(!File.exist?(path), "expected removing a response style to delete the configured file")
+        assert(service.agent(agent[:key])[:response_style_source] == "disabled",
+               "expected agents without an override to report disabled when the global style is removed")
+        assert(File.read("#{path}.bak") == "Lead with the result.\n",
+               "expected removing a response style to retain its existing backup")
+
+        begin
+          server.send(:route, service, "PATCH", "/settings/response-style", { "content" => 123 }, nil)
+          raise "expected non-string response style content to fail"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 400, "expected invalid response style content to return a bad request")
+        end
+      end
+    end
+  end
+
   def assert_remote_schedule_routes
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
@@ -1474,6 +1579,11 @@ module RemoteServerTest
              "expected optional tool readiness entries")
       assert(setup.dig(:schema, :valid) == true, "expected valid result schema")
       assert(setup.dig(:config, :prompt_template_count) == 1, "expected prompt template count")
+      schedule_prompt_template = setup.dig(:config, :schedule_system_message_template).to_s
+      assert(schedule_prompt_template.include?("%{title}"),
+             "expected setup payload to expose a title-aware schedule system message template")
+      assert(schedule_prompt_template.include?("did not complete a requested change, answer, commit, review, or deliverable"),
+             "expected schedule template to share strict no-action guidance")
       assert(setup[:safety].any? { |line| line.include?("Running agents") }, "expected safety defaults")
     end
   end
@@ -2681,7 +2791,8 @@ module RemoteServerTest
            "expected Remote UI to expose copyable key/value rows")
     assert(js[:body].include?("kv-copy-button"),
            "expected copyable key/value rows to render a copy control")
-    assert(js[:body].include?('copyableKv("Raw log", agent.log_path)'),
+    assert(js[:body].include?('["Raw log", agent.log_path]') &&
+           js[:body].include?("settings.map(([label, value]) => copyableKv(label, value))"),
            "expected Conversation settings rows to be copyable")
     assert(js[:body].include?('copyableKv("Path", project.path)') &&
            js[:body].include?('copyableKv("Templates",'),
@@ -2872,6 +2983,50 @@ module RemoteServerTest
            js[:body].include?('apiPatch(`/setup/harnesses/${encodeURIComponent(harness)}/catalog`') &&
            js[:body].include?("Harness catalog editing unsupported by this server"),
            "expected Settings to edit and save custom harness model catalogs")
+    assert(js[:body].include?('data-testid="response-style-form"') &&
+           js[:body].include?('data-testid="response-style-input"') &&
+           js[:body].include?("function saveResponseStyle") &&
+           js[:body].include?('apiPatch("/settings/response-style"'),
+           "expected Settings to edit and save the global response style")
+    assert(js[:body].include?('data-testid="response-style-summary"') &&
+           js[:body].include?("Add response style") &&
+           js[:body].include?("Edit response style") &&
+           js[:body].include?('data-testid="response-style-excerpt"') &&
+           js[:body].include?('data-testid="response-style-delete"') &&
+           js[:body].include?('replace(/\\s+/g, " ")') &&
+           js[:body].include?('iconSvg("squarePen")') &&
+           js[:body].include?('iconSvg("trash2")') &&
+           js[:body].include?('class="inline-icon-button" type="button" data-open-response-style') &&
+           js[:body].include?("shared writing guidance") &&
+           js[:body].include?("without changing the task or required output format"),
+           "expected Settings to explain response style and show the correct add or edit action with an excerpt")
+    assert(js[:body].include?("function deleteResponseStyle()") &&
+           js[:body].include?('apiDelete("/settings/response-style")') &&
+           js[:body].include?("Managed agents will stop receiving this writing guidance"),
+           "expected configured response styles to expose a confirmed remove action")
+    assert(js[:body].include?('["Agent key", agent.key]') &&
+           js[:body].include?('["Model / reasoning", `${agent.model || "default"} / ${agent.reasoning_effort || "default"}`]') &&
+           !js[:body].include?('["Effort", agent.reasoning_effort') &&
+           !js[:body].include?('["Model", agent.model') &&
+           js[:body].include?('["Response style", responseStyleSourceLabel(agent.response_style_source)]') &&
+           js[:body].include?("left.localeCompare(right)") &&
+           !js[:body].include?('copyableKv("Exit", agent.last_exit_code'),
+           "expected Conversation settings to show the generated key and response style source alphabetically")
+    assert(js[:body].include?('id="agent-response-style"') &&
+           js[:body].include?('name="response_style_mode"') &&
+           js[:body].include?("Independent from Prompt Template") &&
+           js[:body].include?("function agentResponseStyleMode") &&
+           js[:body].include?("function applyAgentResponseStyleChoice") &&
+           js[:body].include?('response_style_mode: String(formData.get("response_style_mode")'),
+           "expected the agent form to select response style independently from Prompt Template")
+    assert(js[:body].include?("if (!responseStyle.drafting)") &&
+           js[:body].include?("data-cancel-response-style"),
+           "expected the response style editor to stay collapsed until requested and support canceling")
+    assert(css[:body].include?(".response-style-form") &&
+           css[:body].include?("min-height: 180px") &&
+           css[:body].include?("p.response-style-excerpt") &&
+           css[:body].include?("color: var(--text)"),
+           "expected the response style editor to have a readable responsive layout")
     assert(js[:body].include?("Recheck status"), "expected Settings More menu to expose readiness refresh")
     assert(js[:body].include?("function restartRemoteServer"), "expected Remote UI to handle Remote restarts")
     assert(js[:body].include?('apiPost("/server/restart"'),
@@ -2903,6 +3058,8 @@ module RemoteServerTest
            "expected Remote UI schedule rows to distinguish manual runs from pause/resume toggles")
     assert(js[:body].include?("data-new-schedule"),
            "expected Remote UI to expose schedule creation")
+    assert(js[:body].include?("state.setup?.config?.schedule_system_message_template"),
+           "expected Remote UI schedule defaults to consume the backend-provided template")
     assert(js[:body].include?("data-edit-schedule") && js[:body].include?("data-delete-schedule"),
            "expected Remote UI schedule rows to expose edit and delete controls")
     assert(js[:body].include?("data-edit-schedule-message"),
@@ -3165,7 +3322,7 @@ module RemoteServerTest
     assert(!js[:body].include?("Start run"), "expected Agent detail to omit redundant Start run")
     assert(js[:body].include?("function syncAgentDockLayout"),
            "expected Agent detail dock height to update page padding")
-    assert(js[:body].include?('copyableKv("Session ID", agent.session_id || "n/a")'),
+    assert(js[:body].include?('["Session ID", agent.session_id || "n/a"]'),
            "expected Conversation settings to expose a copyable native session ID")
     assert(js[:body].include?("renderAgentWorkspace(agent, blocks, {") &&
            css[:body].include?(".agent-workspace.conversation-only"),
@@ -4014,12 +4171,13 @@ module RemoteServerTest
     YAML
   end
 
-  def wait_for_agent_terminal_status(service, key, timeout: 6.0)
-    deadline = Time.now + timeout
+  def wait_for_agent_terminal_status(service, key, timeout: 15.0)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
     loop do
       payload = service.agent(key)
       return payload if %w[succeeded failed stopped blocked].include?(payload[:status].to_s)
-      raise "expected agent #{key} to finish within #{timeout}s" if Time.now >= deadline
+      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      raise "expected agent #{key} to finish within #{timeout}s" if now >= deadline
 
       sleep 0.05
     end

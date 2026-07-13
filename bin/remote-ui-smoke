@@ -29,6 +29,7 @@ def write_fixture(dir)
 
   config_path = File.join(config_dir, "hq.yml")
   prompts_path = File.join(config_dir, "system_prompts.yml")
+  response_style_path = File.join(config_dir, "response_style.md")
   schedules_path = File.join(config_dir, "schedules.yml")
   File.write(config_path, <<~YAML)
     ---
@@ -52,6 +53,7 @@ def write_fixture(dir)
   {
     config_path: config_path,
     prompts_path: prompts_path,
+    response_style_path: response_style_path,
     schedules_path: schedules_path,
     logs_dir: File.join(dir, "logs")
   }
@@ -168,6 +170,26 @@ def write_smoke_script(path)
         const value = await page.locator("#prompt-input").inputValue();
         if (value !== draft) throw new Error(`Composer draft was not preserved: ${JSON.stringify(value)}`);
 
+        await page.click("#header-more-button");
+        await page.waitForSelector("[data-toggle-agent-settings]", { state: "visible", timeout: 10_000 });
+        await page.click("[data-toggle-agent-settings]");
+        await page.waitForSelector("#agent-settings-panel:not(.hidden)", { state: "visible", timeout: 10_000 });
+        const conversationSettings = await page.locator("#agent-settings-panel").innerText();
+        if (!conversationSettings.includes(`Agent key\\n${agentKey}`) || !conversationSettings.includes("Response style\\nDisabled")) {
+          throw new Error(`Conversation settings are missing key or response style source: ${JSON.stringify(conversationSettings)}`);
+        }
+        if (!conversationSettings.includes("Model / reasoning\\ndefault / default")) {
+          throw new Error(`Conversation settings did not merge model and reasoning: ${JSON.stringify(conversationSettings)}`);
+        }
+        const conversationSettingLabels = await page.locator("#agent-settings-panel .kv > span").allTextContents();
+        const sortedConversationSettingLabels = [...conversationSettingLabels].sort((left, right) => left.localeCompare(right));
+        if (JSON.stringify(conversationSettingLabels) !== JSON.stringify(sortedConversationSettingLabels)) {
+          throw new Error(`Conversation settings are not alphabetical: ${JSON.stringify(conversationSettingLabels)}`);
+        }
+        if (conversationSettingLabels.includes("Exit")) {
+          throw new Error("Conversation settings should not show Exit");
+        }
+
         await page.fill("#prompt-input", "$rev");
         await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
         if (!(await page.locator("[data-skill-autocomplete-rescan]").isVisible())) {
@@ -210,12 +232,86 @@ def write_smoke_script(path)
         if (agentPrompt !== "$review ") {
           throw new Error(`Agent form skill autocomplete failed: ${JSON.stringify(agentPrompt)}`);
         }
+        const selectedPromptTemplate = await page.locator("#agent-template").inputValue();
+        const selectedResponseStyle = await page.locator("#agent-response-style").inputValue();
+        if (selectedPromptTemplate !== "custom" || selectedResponseStyle !== "global") {
+          throw new Error(`Prompt Template and Response Style are not independent: ${JSON.stringify({ selectedPromptTemplate, selectedResponseStyle })}`);
+        }
         if (await page.locator("#quick-agent-fab").isVisible()) {
           throw new Error("Quick Agent header action should be hidden on focused forms");
         }
         const agentNameFontSize = await page.locator("#agent-name").evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
         if (agentNameFontSize < 16) {
           throw new Error(`Mobile form input is below zoom-safe size: ${agentNameFontSize}px`);
+        }
+
+        await page.goto(`${baseUrl}/ui#schedule/new?project=web`, { waitUntil: "networkidle" });
+        await page.waitForSelector("#schedule-system-message", { state: "visible", timeout: 10_000 });
+        const scheduleSystemMessage = await page.locator("#schedule-system-message").inputValue();
+        if (!scheduleSystemMessage.includes("did not complete a requested change, answer, commit, review, or deliverable")) {
+          throw new Error(`Schedule system message is missing strict no-action guidance: ${JSON.stringify(scheduleSystemMessage)}`);
+        }
+        if (!scheduleSystemMessage.includes("quiet outcome that suppresses operator unread and push notifications")) {
+          throw new Error(`Schedule system message is missing quiet-outcome guidance: ${JSON.stringify(scheduleSystemMessage)}`);
+        }
+
+        await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
+        await page.waitForSelector("[data-testid='response-style-action']", { state: "visible", timeout: 10_000 });
+        const responseStyleExplanation = await page.locator("[data-testid='response-style-summary']").innerText();
+        if (!responseStyleExplanation.includes("shared writing guidance") ||
+            !responseStyleExplanation.includes("without changing the task or required output format")) {
+          throw new Error(`Response style explanation is incomplete: ${JSON.stringify(responseStyleExplanation)}`);
+        }
+        if (!responseStyleExplanation.includes("Add response style")) {
+          throw new Error(`Missing response style should show an add action: ${JSON.stringify(responseStyleExplanation)}`);
+        }
+        if (await page.locator("[data-testid='response-style-delete']").count()) {
+          throw new Error("Missing response style should not show a remove action");
+        }
+        await page.click("[data-testid='response-style-action']");
+        await page.waitForSelector("#response-style-input", { state: "visible", timeout: 10_000 });
+        await page.click("[data-cancel-response-style]");
+        await page.waitForSelector("[data-testid='response-style-action']", { state: "visible", timeout: 10_000 });
+        await page.click("[data-testid='response-style-action']");
+        await page.waitForSelector("#response-style-input", { state: "visible", timeout: 10_000 });
+        const responseStyleDraft = "Write with smoke-tested clarity. " + Date.now();
+        await page.fill("#response-style-input", responseStyleDraft);
+        await page.evaluate(async () => {
+          if (typeof refresh !== "function") throw new Error("refresh function is unavailable");
+          await refresh({ force: true, forceResponseStyle: true });
+        });
+        await page.waitForSelector("#response-style-input", { state: "visible", timeout: 10_000 });
+        const preservedResponseStyle = await page.locator("#response-style-input").inputValue();
+        if (preservedResponseStyle !== responseStyleDraft) {
+          throw new Error(`Response style draft was not preserved: ${JSON.stringify(preservedResponseStyle)}`);
+        }
+        await page.click("[data-testid='response-style-save']");
+        await page.waitForFunction(
+          () => document.querySelector("[data-testid='response-style-action']")?.textContent.includes("Edit response style") &&
+            document.querySelector("[data-testid='response-style-excerpt']") &&
+            !document.querySelector("#response-style-input") &&
+            document.querySelector("#growl")?.textContent === "Response style saved",
+          null,
+          { timeout: 10_000 }
+        );
+        await page.reload({ waitUntil: "networkidle" });
+        await page.waitForSelector("[data-testid='response-style-action']", { state: "visible", timeout: 10_000 });
+        if (await page.locator("#response-style-input").count()) {
+          throw new Error("Configured response style editor should be collapsed by default");
+        }
+        const responseStyleSummary = await page.locator("[data-testid='response-style-summary']").innerText();
+        if (!responseStyleSummary.includes("Edit response style") || !responseStyleSummary.includes(responseStyleDraft)) {
+          throw new Error(`Configured response style summary is incomplete: ${JSON.stringify(responseStyleSummary)}`);
+        }
+        await page.waitForSelector("[data-testid='response-style-delete']", { state: "visible", timeout: 10_000 });
+        if (await page.locator("[data-testid='response-style-active']").count()) {
+          throw new Error("Configured response style summary should not show an Active badge");
+        }
+        await page.click("[data-testid='response-style-action']");
+        await page.waitForSelector("#response-style-input", { state: "visible", timeout: 10_000 });
+        const savedResponseStyle = await page.locator("#response-style-input").inputValue();
+        if (savedResponseStyle !== responseStyleDraft) {
+          throw new Error(`Response style was not persisted: ${JSON.stringify(savedResponseStyle)}`);
         }
 
         await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
@@ -262,6 +358,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   env = {
     "TYCHO_CONFIG_PATH" => fixture.fetch(:config_path),
     "TYCHO_SYSTEM_PROMPTS_PATH" => fixture.fetch(:prompts_path),
+    "TYCHO_RESPONSE_STYLE_PATH" => fixture.fetch(:response_style_path),
     "TYCHO_SCHEDULES_PATH" => fixture.fetch(:schedules_path),
     "TYCHO_LOGS_ROOT" => fixture.fetch(:logs_dir),
     "TYCHO_REMOTE_TOKEN" => ""

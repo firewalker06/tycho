@@ -26,6 +26,7 @@ require_relative "domain/harness_catalog"
 require_relative "domain/push_notification_store"
 require_relative "domain/push_subscription_store"
 require_relative "domain/pull_request_diff"
+require_relative "domain/response_style_policy"
 require_relative "domain/schedule_daemon_supervisor"
 require_relative "domain/scheduler"
 require_relative "domain/skill_discovery"
@@ -240,6 +241,13 @@ module HQ
       end
       return ok(hidden: service.hidden_settings) if method == "GET" && parts == ["settings", "hidden"]
       return ok(hidden: service.update_hidden_setting(body)) if %w[PATCH PUT].include?(method) && parts == ["settings", "hidden"]
+      return ok(response_style: service.response_style) if method == "GET" && parts == ["settings", "response-style"]
+      if %w[PATCH PUT].include?(method) && parts == ["settings", "response-style"]
+        return ok(response_style: service.update_response_style(body))
+      end
+      if method == "DELETE" && parts == ["settings", "response-style"]
+        return ok(response_style: service.delete_response_style)
+      end
       return ok(setup: service.setup) if method == "GET" && parts == ["setup"]
       return ok(service.search_index) if method == "GET" && parts == ["search"]
       return accepted(schedule_restart!, headers: RESTART_CACHE_RESET_HEADERS) if method == "POST" && parts == ["server", "restart"]
@@ -1330,6 +1338,43 @@ module HQ
       hidden_settings
     end
 
+    def response_style
+      path = ResponseStylePolicy.path
+      return { path: path, content: "", bytes: 0, exists: false } unless File.exist?(path)
+
+      content = FileStore.read_text(path)
+      {
+        path: path,
+        content: content,
+        bytes: content.bytesize,
+        exists: true
+      }
+    rescue StandardError => e
+      raise Error.new("Unable to read response style: #{e.message}", status: 500)
+    end
+
+    def update_response_style(attrs)
+      content = attrs["content"]
+      raise Error.new("Response style content must be a string") unless content.is_a?(String)
+      if content.bytesize > 65_536
+        raise Error.new("Response style must be 64 KB or smaller")
+      end
+
+      FileStore.atomic_write(ResponseStylePolicy.path, content)
+      response_style
+    rescue Error
+      raise
+    rescue StandardError => e
+      raise Error.new("Unable to save response style: #{e.message}", status: 500)
+    end
+
+    def delete_response_style
+      FileUtils.rm_f(ResponseStylePolicy.path)
+      response_style
+    rescue StandardError => e
+      raise Error.new("Unable to remove response style: #{e.message}", status: 500)
+    end
+
     def push_config
       @web_push_notifier.config.merge(
         secure_context_required: true,
@@ -1489,8 +1534,8 @@ module HQ
 
       project = find_project!(target.project_key)
       resolved = agent_attrs(target, attrs, project: project, creating: false)
-      other_keys = %i[template_key workspace prompt sandbox_mode agent model reasoning_effort]
-      if other_keys.all? { |k| resolved[k].to_s == target.public_send(k).to_s }
+      other_keys = %i[template_key workspace prompt sandbox_mode agent model reasoning_effort response_style]
+      if other_keys.all? { |key_name| resolved[key_name] == target.public_send(key_name) }
         target.rename!(resolved[:name])
       else
         target.update!(**resolved)
@@ -2041,6 +2086,7 @@ module HQ
           agent: template.agent,
           model: template.model,
           reasoning_effort: template.reasoning_effort,
+          response_style: template.response_style,
           sandbox_mode: template.sandbox_mode,
           skill_trigger: SkillDiscovery.trigger_for(template.agent),
           prompt: template.prompt,
@@ -2194,6 +2240,7 @@ module HQ
         path: @registry.path,
         system_prompts_path: @registry.system_prompts_path,
         prompt_template_count: prompt_template_count,
+        schedule_system_message_template: AgentStore.scheduled_system_prompt_template,
         active_projects: @projects.length,
         archived_projects: archived_project_count
       }
@@ -2252,6 +2299,7 @@ module HQ
       agent = (attrs.key?("agent") ? attrs["agent"].to_s : target.agent.to_s).strip.downcase
       model = attrs.key?("model") ? attrs["model"].to_s.strip : target.model.to_s
       reasoning_effort = attrs.key?("reasoning_effort") ? attrs["reasoning_effort"].to_s.strip.downcase : target.reasoning_effort.to_s
+      response_style = agent_response_style_for(target, attrs, template:, creating:)
       workspace = project.path if workspace.empty? && creating
 
       raise Error.new("Name is required") if name.strip.empty?
@@ -2269,8 +2317,29 @@ module HQ
         sandbox_mode: sandbox_mode,
         agent: agent,
         model: model.empty? ? nil : model,
-        reasoning_effort: reasoning_effort.empty? ? nil : reasoning_effort
+        reasoning_effort: reasoning_effort.empty? ? nil : reasoning_effort,
+        response_style: response_style
       }
+    end
+
+    def agent_response_style_for(target, attrs, template:, creating:)
+      mode = attrs["response_style_mode"].to_s.strip.downcase
+      return template.response_style if mode.empty?
+
+      case mode
+      when "global"
+        nil
+      when "template"
+        template.response_style
+      when "disabled"
+        false
+      when "current"
+        raise Error.new("Current response style is unavailable for a new agent") if creating
+
+        target.response_style
+      else
+        raise Error.new("Unsupported response style mode: #{mode.inspect}")
+      end
     end
 
     def project_attrs(target, attrs)
@@ -2350,6 +2419,8 @@ module HQ
         agent: agent.agent,
         model: agent.model,
         reasoning_effort: agent.reasoning_effort,
+        response_style: agent.response_style,
+        response_style_source: agent.last_run&.response_style_source || agent.effective_response_style_source,
         status: agent.status,
         running: agent.running?,
         unread: agent.unread?,

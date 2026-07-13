@@ -142,6 +142,12 @@ tycho_system_prompts_path() {
   printf '%s\n' "${configured:-$(dirname "$(tycho_config_path)")/system_prompts.yml}"
 }
 
+tycho_response_style_path() {
+  local configured
+  configured="$(env_value RESPONSE_STYLE_PATH)"
+  printf '%s\n' "${configured:-$(tycho_config_dir)/response_style.md}"
+}
+
 tycho_schedules_path() {
   local configured
   configured="$(env_value SCHEDULES_PATH)"
@@ -497,6 +503,7 @@ main() {
   fi
   ensure_config_file "$(tycho_config_path)" "$ROOT_DIR/config/hq.yml.example"
   ensure_config_file "$(tycho_system_prompts_path)" "$ROOT_DIR/config/system_prompts.yml.example"
+  ensure_config_file "$(tycho_response_style_path)" "$ROOT_DIR/config/response_style.md.example"
   ensure_config_file "$(tycho_schedules_path)" "$ROOT_DIR/config/schedules.yml.example"
   ensure_config_file "$(tycho_hooks_path)" "$ROOT_DIR/config/hooks.example.yml"
 
