@@ -2993,7 +2993,6 @@ module RemoteServerTest
            js[:body].include?("Edit response style") &&
            js[:body].include?('data-testid="response-style-excerpt"') &&
            js[:body].include?('data-testid="response-style-delete"') &&
-           js[:body].include?('data-testid="response-style-active"') &&
            js[:body].include?('replace(/\\s+/g, " ")') &&
            js[:body].include?('iconSvg("squarePen")') &&
            js[:body].include?('iconSvg("trash2")') &&
@@ -3006,6 +3005,9 @@ module RemoteServerTest
            js[:body].include?("Managed agents will stop receiving this writing guidance"),
            "expected configured response styles to expose a confirmed remove action")
     assert(js[:body].include?('["Agent key", agent.key]') &&
+           js[:body].include?('["Model / reasoning", `${agent.model || "default"} / ${agent.reasoning_effort || "default"}`]') &&
+           !js[:body].include?('["Effort", agent.reasoning_effort') &&
+           !js[:body].include?('["Model", agent.model') &&
            js[:body].include?('["Response style", responseStyleSourceLabel(agent.response_style_source)]') &&
            js[:body].include?("left.localeCompare(right)") &&
            !js[:body].include?('copyableKv("Exit", agent.last_exit_code'),

@@ -178,6 +178,9 @@ def write_smoke_script(path)
         if (!conversationSettings.includes(`Agent key\\n${agentKey}`) || !conversationSettings.includes("Response style\\nDisabled")) {
           throw new Error(`Conversation settings are missing key or response style source: ${JSON.stringify(conversationSettings)}`);
         }
+        if (!conversationSettings.includes("Model / reasoning\\ndefault / default")) {
+          throw new Error(`Conversation settings did not merge model and reasoning: ${JSON.stringify(conversationSettings)}`);
+        }
         const conversationSettingLabels = await page.locator("#agent-settings-panel .kv > span").allTextContents();
         const sortedConversationSettingLabels = [...conversationSettingLabels].sort((left, right) => left.localeCompare(right));
         if (JSON.stringify(conversationSettingLabels) !== JSON.stringify(sortedConversationSettingLabels)) {
@@ -301,7 +304,9 @@ def write_smoke_script(path)
           throw new Error(`Configured response style summary is incomplete: ${JSON.stringify(responseStyleSummary)}`);
         }
         await page.waitForSelector("[data-testid='response-style-delete']", { state: "visible", timeout: 10_000 });
-        await page.waitForSelector("[data-testid='response-style-active']", { state: "visible", timeout: 10_000 });
+        if (await page.locator("[data-testid='response-style-active']").count()) {
+          throw new Error("Configured response style summary should not show an Active badge");
+        }
         await page.click("[data-testid='response-style-action']");
         await page.waitForSelector("#response-style-input", { state: "visible", timeout: 10_000 });
         const savedResponseStyle = await page.locator("#response-style-input").inputValue();
