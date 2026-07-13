@@ -1534,8 +1534,8 @@ module HQ
 
       project = find_project!(target.project_key)
       resolved = agent_attrs(target, attrs, project: project, creating: false)
-      other_keys = %i[template_key workspace prompt sandbox_mode agent model reasoning_effort]
-      if other_keys.all? { |k| resolved[k].to_s == target.public_send(k).to_s }
+      other_keys = %i[template_key workspace prompt sandbox_mode agent model reasoning_effort response_style]
+      if other_keys.all? { |key_name| resolved[key_name] == target.public_send(key_name) }
         target.rename!(resolved[:name])
       else
         target.update!(**resolved)
@@ -2299,6 +2299,7 @@ module HQ
       agent = (attrs.key?("agent") ? attrs["agent"].to_s : target.agent.to_s).strip.downcase
       model = attrs.key?("model") ? attrs["model"].to_s.strip : target.model.to_s
       reasoning_effort = attrs.key?("reasoning_effort") ? attrs["reasoning_effort"].to_s.strip.downcase : target.reasoning_effort.to_s
+      response_style = agent_response_style_for(target, attrs, template:, creating:)
       workspace = project.path if workspace.empty? && creating
 
       raise Error.new("Name is required") if name.strip.empty?
@@ -2317,8 +2318,28 @@ module HQ
         agent: agent,
         model: model.empty? ? nil : model,
         reasoning_effort: reasoning_effort.empty? ? nil : reasoning_effort,
-        response_style: template.response_style
+        response_style: response_style
       }
+    end
+
+    def agent_response_style_for(target, attrs, template:, creating:)
+      mode = attrs["response_style_mode"].to_s.strip.downcase
+      return template.response_style if mode.empty?
+
+      case mode
+      when "global"
+        nil
+      when "template"
+        template.response_style
+      when "disabled"
+        false
+      when "current"
+        raise Error.new("Current response style is unavailable for a new agent") if creating
+
+        target.response_style
+      else
+        raise Error.new("Unsupported response style mode: #{mode.inspect}")
+      end
     end
 
     def project_attrs(target, attrs)

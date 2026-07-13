@@ -229,6 +229,11 @@ def write_smoke_script(path)
         if (agentPrompt !== "$review ") {
           throw new Error(`Agent form skill autocomplete failed: ${JSON.stringify(agentPrompt)}`);
         }
+        const selectedPromptTemplate = await page.locator("#agent-template").inputValue();
+        const selectedResponseStyle = await page.locator("#agent-response-style").inputValue();
+        if (selectedPromptTemplate !== "custom" || selectedResponseStyle !== "global") {
+          throw new Error(`Prompt Template and Response Style are not independent: ${JSON.stringify({ selectedPromptTemplate, selectedResponseStyle })}`);
+        }
         if (await page.locator("#quick-agent-fab").isVisible()) {
           throw new Error("Quick Agent header action should be hidden on focused forms");
         }

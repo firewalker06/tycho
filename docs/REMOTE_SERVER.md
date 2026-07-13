@@ -143,6 +143,8 @@ The top-level mobile tabs are `Now`, `Agents`, and `Settings`. Agents is the can
 
 Settings → Configuration explains that response style is shared writing guidance for tone, clarity, and prose rather than task instructions. A missing policy stays collapsed behind **Add response style**. Once saved with non-empty guidance, the compact summary shows an **Active** badge, an excerpt, **Edit response style**, and a trash action that removes the global policy after confirmation. Opening the editor prefills existing content, while saving or canceling returns to the compact summary. Conversation Settings records whether the displayed agent run used the **Global**, **Custom**, or **Disabled** response-style source. It reads and writes `~/.tycho/config/response_style.md` by default, or `TYCHO_RESPONSE_STYLE_PATH` when configured. Saves use Tycho's atomic file store and retain the previous file as `response_style.md.bak`; focused edits survive polling refreshes.
 
+Agent create, edit, and clone forms select **Response style** independently beside **Prompt Template**. **Global** uses the active Settings policy even when the prompt template is named Custom, **Prompt template** uses a configured template override, and **Disabled** omits response-style guidance.
+
 ## Multiserver Broker
 
 One Remote UI can switch between the local `tycho serve` instance and configured peer Remote servers. The browser still talks only to the server that served the UI; that local server brokers requests to the selected peer. This avoids browser CORS and lets the local broker apply either server-side configured peer credentials or browser-local peer credentials.

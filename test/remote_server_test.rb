@@ -16,6 +16,7 @@ module RemoteServerTest
 
   def run!
     assert_remote_agent_lifecycle
+    assert_remote_agent_response_style_selection_is_independent
     assert_remote_archive_reconciles_scheduled_agent_state
     assert_remote_agent_bulk_archive
     assert_remote_agent_clone_archives_source_with_editable_name
@@ -103,6 +104,35 @@ module RemoteServerTest
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
       replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+    end
+  end
+
+  def assert_remote_agent_response_style_selection_is_independent
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      response_style_path = File.join(dir, "config", "response_style.md")
+      FileUtils.mkdir_p(File.dirname(response_style_path))
+      File.write(response_style_path, "Use the global response style.\n")
+
+      with_env_values("TYCHO_RESPONSE_STYLE_PATH" => response_style_path) do
+        service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
+        created = service.create_agent(
+          "project_key" => "web",
+          "template_key" => "custom",
+          "response_style_mode" => "disabled",
+          "name" => "Independent Style Agent",
+          "prompt" => "Use the custom prompt template.",
+          "agent" => "codex"
+        )
+        assert(created[:template_key] == "custom", "expected the prompt template to remain custom")
+        assert(created[:response_style] == false && created[:response_style_source] == "disabled",
+               "expected response style selection to be independent from the custom prompt template")
+
+        updated = service.update_agent(created[:key], "response_style_mode" => "global")
+        assert(updated[:response_style].nil? && updated[:response_style_source] == "global",
+               "expected a style-only edit to switch the agent back to the global response style")
+      end
     end
   end
 
@@ -2980,6 +3010,13 @@ module RemoteServerTest
            js[:body].include?("left.localeCompare(right)") &&
            !js[:body].include?('copyableKv("Exit", agent.last_exit_code'),
            "expected Conversation settings to show the generated key and response style source alphabetically")
+    assert(js[:body].include?('id="agent-response-style"') &&
+           js[:body].include?('name="response_style_mode"') &&
+           js[:body].include?("Independent from Prompt Template") &&
+           js[:body].include?("function agentResponseStyleMode") &&
+           js[:body].include?("function applyAgentResponseStyleChoice") &&
+           js[:body].include?('response_style_mode: String(formData.get("response_style_mode")'),
+           "expected the agent form to select response style independently from Prompt Template")
     assert(js[:body].include?("if (!responseStyle.drafting)") &&
            js[:body].include?("data-cancel-response-style"),
            "expected the response style editor to stay collapsed until requested and support canceling")
