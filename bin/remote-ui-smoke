@@ -170,6 +170,129 @@ def write_smoke_script(path)
         const value = await page.locator("#prompt-input").inputValue();
         if (value !== draft) throw new Error(`Composer draft was not preserved: ${JSON.stringify(value)}`);
 
+        const expandButtonGeometry = await page.locator(".composer-full-screen-button").evaluate((button) => {
+          const control = button.getBoundingClientRect();
+          const icon = button.querySelector(".ui-icon").getBoundingClientRect();
+          const style = getComputedStyle(button);
+          return {
+            centerDeltaX: Math.abs((control.left + control.width / 2) - (icon.left + icon.width / 2)),
+            centerDeltaY: Math.abs((control.top + control.height / 2) - (icon.top + icon.height / 2)),
+            borderWidths: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
+          };
+        });
+        if (expandButtonGeometry.centerDeltaX > 1 || expandButtonGeometry.centerDeltaY > 1 || expandButtonGeometry.borderWidths.some((width) => width !== "0px")) {
+          throw new Error(`Full-screen button icon is not centered and borderless: ${JSON.stringify(expandButtonGeometry)}`);
+        }
+
+        await page.click("[data-toggle-composer-full-screen]");
+        await page.waitForSelector("#composer.composer-full-screen", { state: "visible", timeout: 10_000 });
+        const modalRole = await page.locator("#composer").getAttribute("role");
+        const modalState = await page.locator("#composer").getAttribute("aria-modal");
+        const modalLabel = await page.locator("#composer").getAttribute("aria-label");
+        if (modalRole !== "dialog" || modalState !== "true" || modalLabel !== "Full-screen editor") {
+          throw new Error(`Full-screen composer modal metadata is incomplete: ${JSON.stringify({ modalRole, modalState, modalLabel })}`);
+        }
+        if (await page.locator(".composer-full-screen-header, .composer-draft-status, .composer-escape-hint").count()) {
+          throw new Error("Full-screen composer should only show an X close control, without a header or explanation");
+        }
+        const closeButtonGeometry = await page.locator(".composer-close-button").evaluate((button) => {
+          const control = button.getBoundingClientRect();
+          const icon = button.querySelector(".ui-icon").getBoundingClientRect();
+          const style = getComputedStyle(button);
+          return {
+            centerDeltaX: Math.abs((control.left + control.width / 2) - (icon.left + icon.width / 2)),
+            centerDeltaY: Math.abs((control.top + control.height / 2) - (icon.top + icon.height / 2)),
+            borderWidths: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
+          };
+        });
+        if (closeButtonGeometry.centerDeltaX > 1 || closeButtonGeometry.centerDeltaY > 1 || closeButtonGeometry.borderWidths.some((width) => width !== "0px")) {
+          throw new Error(`Close button icon is not centered and borderless: ${JSON.stringify(closeButtonGeometry)}`);
+        }
+        const backgroundInert = await page.locator("[data-agent-workspace]").evaluate((element) => element.inert);
+        if (!backgroundInert) throw new Error("Full-screen composer did not make its background inert");
+        await page.locator(".composer-close-button").focus();
+        await page.keyboard.press("Shift+Tab");
+        const shiftTabStayedInModal = await page.evaluate(() => Boolean(document.activeElement?.closest?.("#composer.composer-full-screen")));
+        if (!shiftTabStayedInModal) throw new Error("Shift+Tab escaped the full-screen composer");
+        await page.evaluate(async () => {
+          if (typeof refresh !== "function") throw new Error("refresh function is unavailable");
+          await refresh({ force: true, forceConversation: true });
+        });
+        await page.waitForSelector("#composer.composer-full-screen", { state: "visible", timeout: 10_000 });
+        const fullScreenValue = await page.locator("#prompt-input").inputValue();
+        if (fullScreenValue !== draft) {
+          throw new Error(`Full-screen composer draft was not preserved: ${JSON.stringify(fullScreenValue)}`);
+        }
+
+        const autosavedDraft = `${draft} autosaved`;
+        await page.fill("#prompt-input", autosavedDraft);
+        await page.waitForFunction((key) => !state.composerDraftSaveTimers.has(key), agentKey, { timeout: 10_000 });
+        await page.reload({ waitUntil: "networkidle" });
+        await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+        const reloadedDraft = await page.locator("#prompt-input").inputValue();
+        if (reloadedDraft !== autosavedDraft) throw new Error(`Autosaved draft did not survive reload: ${JSON.stringify(reloadedDraft)}`);
+        if (await page.locator("#composer.composer-full-screen").count()) {
+          throw new Error("Full-screen composer mode should not survive a page reload");
+        }
+
+        await page.click("[data-toggle-composer-full-screen]");
+        await page.waitForSelector("#composer.composer-full-screen", { state: "visible", timeout: 10_000 });
+        const fullScreenBox = await page.locator("#composer.composer-full-screen").boundingBox();
+        if (!fullScreenBox || fullScreenBox.x !== 0 || fullScreenBox.y !== 0 || fullScreenBox.width !== 390 || fullScreenBox.height !== 844) {
+          throw new Error(`Full-screen composer does not fill the mobile viewport: ${JSON.stringify(fullScreenBox)}`);
+        }
+        await page.keyboard.press("Escape");
+        await page.waitForSelector("#composer.composer-full-screen", { state: "detached", timeout: 10_000 });
+        const escapedValue = await page.locator("#prompt-input").inputValue();
+        if (escapedValue !== autosavedDraft) throw new Error(`Escape discarded the composer draft: ${JSON.stringify(escapedValue)}`);
+
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await page.click("[data-toggle-composer-full-screen]");
+        await page.waitForSelector("#composer.composer-full-screen", { state: "visible", timeout: 10_000 });
+        const desktopFullScreenBox = await page.locator("#composer.composer-full-screen").boundingBox();
+        if (!desktopFullScreenBox || desktopFullScreenBox.x !== 0 || desktopFullScreenBox.y !== 0 || desktopFullScreenBox.width !== 1280 || desktopFullScreenBox.height !== 800) {
+          throw new Error(`Full-screen composer does not fill the desktop viewport: ${JSON.stringify(desktopFullScreenBox)}`);
+        }
+        await page.keyboard.press("Escape");
+        await page.waitForSelector("#composer.composer-full-screen", { state: "detached", timeout: 10_000 });
+        await page.setViewportSize({ width: 390, height: 844 });
+
+        await page.click("[data-toggle-composer-full-screen]");
+        await page.waitForSelector("#composer.composer-full-screen", { state: "visible", timeout: 10_000 });
+        await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
+        await page.waitForSelector("#composer", { state: "detached", timeout: 10_000 });
+        await page.evaluate((key) => navigate({ type: "agent", key }), agentKey);
+        await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+        if (await page.locator("#composer.composer-full-screen").count()) {
+          throw new Error("Full-screen composer mode survived route navigation");
+        }
+
+        await page.evaluate((key) => {
+          state.pendingPromptAttachments[key] = Array.from({ length: 5 }, (_, index) => ({
+            id: `smoke-attachment-${index}`,
+            filename: `long-pending-attachment-${index}.txt`,
+            mimeType: "text/plain",
+            size: 1024 + index,
+            type: "file",
+          }));
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
+        await page.click("[data-toggle-composer-full-screen]");
+        await page.waitForSelector("#composer.composer-full-screen .pending-attachments", { state: "visible", timeout: 10_000 });
+        const pendingAttachmentsBox = await page.locator(".pending-attachments").boundingBox();
+        const attachmentPromptBox = await page.locator("#prompt-input").boundingBox();
+        if (!pendingAttachmentsBox || pendingAttachmentsBox.height > 240 || !attachmentPromptBox || attachmentPromptBox.height < 160) {
+          throw new Error(`Attachment-heavy editor layout is not bounded: ${JSON.stringify({ pendingAttachmentsBox, attachmentPromptBox })}`);
+        }
+        await page.keyboard.press("Escape");
+        await page.waitForSelector("#composer.composer-full-screen", { state: "detached", timeout: 10_000 });
+        await page.evaluate((key) => {
+          clearPendingAttachments(key);
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
+
         await page.click("#header-more-button");
         await page.waitForSelector("[data-toggle-agent-settings]", { state: "visible", timeout: 10_000 });
         await page.click("[data-toggle-agent-settings]");

@@ -4034,6 +4034,121 @@ select {
   gap: 8px;
 }
 
+.composer-content {
+  position: relative;
+  display: grid;
+  min-height: 0;
+  gap: 8px;
+}
+
+.composer-editor-shell {
+  position: relative;
+  display: grid;
+  min-height: 0;
+}
+
+.composer:not(.composer-full-screen) .composer-editor-shell #prompt-input {
+  padding-right: 54px;
+}
+
+.composer:not(.composer-full-screen) .composer-full-screen-button {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-grid;
+  width: 36px;
+  min-height: 36px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--muted);
+}
+
+.composer-full-screen-button .ui-icon,
+.composer-close-button .ui-icon {
+  display: block;
+  margin: 0;
+}
+
+body:has(.composer-full-screen) {
+  overflow: hidden;
+}
+
+.composer-full-screen {
+  position: fixed;
+  top: var(--composer-viewport-top, 0);
+  left: var(--composer-viewport-left, 0);
+  z-index: 30;
+  grid-template-rows: minmax(0, 1fr);
+  width: var(--composer-viewport-width, 100vw);
+  height: var(--composer-viewport-height, 100dvh);
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  background: var(--bg);
+}
+
+.composer-close-button {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  right: 10px;
+  z-index: 2;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.composer-full-screen .composer-content {
+  grid-template-rows: minmax(0, 1fr);
+  grid-auto-rows: max-content;
+  width: min(100%, 960px);
+  height: 100%;
+  margin: 0 auto;
+}
+
+.composer-full-screen #prompt-input {
+  min-height: 0;
+  max-height: none;
+  height: 100%;
+  field-sizing: fixed;
+  resize: none;
+  padding: 16px 58px 16px 16px;
+  line-height: 1.55;
+}
+
+.composer-full-screen .send-row {
+  align-self: end;
+}
+
+.composer-full-screen .pending-attachments {
+  max-height: min(28dvh, 240px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.composer-full-screen .skill-flyout,
+.composer-full-screen .attachment-flyout {
+  max-height: min(42dvh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 640px) {
+  .composer-full-screen {
+    padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .composer-close-button {
+    top: calc(16px + env(safe-area-inset-top, 0px));
+    right: 16px;
+  }
+
+  .composer-full-screen #prompt-input {
+    padding: 12px 58px 12px 12px;
+  }
+}
+
 .composer-drop-overlay {
   position: absolute;
   inset: 0;

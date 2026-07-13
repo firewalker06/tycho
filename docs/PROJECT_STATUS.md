@@ -267,6 +267,7 @@ harness compatibility, and continuing browser/TUI smoke verification.
 - [x] Responsive desktop/mobile shell with persistent, header-aligned in-shell desktop navigation across top-level and detail routes, consistently named New agent action, shared control sizing, and fixed-region safe-area handling
 - [x] Sticky Settings section navigator over one continuous page and copyable native session ID in Conversation Settings
 - [x] In-flow desktop conversation composer with resize-aware mobile content reservation
+- [x] Accessible full-screen Conversation editor with polling-safe autosaved drafts, focus containment, mobile visual-viewport sizing, and Escape-to-exit
 - [x] Focused Summary/Attachment full-view controls and compact mobile follow-up composer
 - [ ] Dedicated mobile activity/log detail page
 - [x] Full mobile agent create/edit form

@@ -3322,6 +3322,33 @@ module RemoteServerTest
     assert(!js[:body].include?("Start run"), "expected Agent detail to omit redundant Start run")
     assert(js[:body].include?("function syncAgentDockLayout"),
            "expected Agent detail dock height to update page padding")
+    assert(js[:body].include?("fullScreenComposerKeys") &&
+           js[:body].include?("data-toggle-composer-full-screen") &&
+           js[:body].include?("function setComposerFullScreen"),
+           "expected Conversation composer to support full-screen editing across polling renders")
+    assert(js[:body].include?('event.key === "Escape"') &&
+           css[:body].include?(".composer-full-screen #prompt-input"),
+           "expected the full-screen Conversation editor to provide keyboard exit and a viewport-filling prompt")
+    assert(js[:body].include?('role="dialog" aria-modal="true"') &&
+           js[:body].include?("function syncFullScreenComposerModal") &&
+           js[:body].include?("element.inert = active"),
+           "expected the full-screen Conversation editor to isolate an accessible modal")
+    assert(!js[:body].include?("composer-full-screen-header") &&
+           !js[:body].include?("composer-draft-status") &&
+           js[:body].include?("composer-close-button"),
+           "expected the full-screen Conversation editor to show only an X close control without explanatory chrome")
+    assert(css[:body].include?(".composer-full-screen-button .ui-icon") &&
+           css[:body].include?("place-items: center") &&
+           css[:body].include?("border: 0"),
+           "expected top-right composer controls to center their icons without borders")
+    assert(js[:body].include?("function trapFullScreenComposerFocus") &&
+           js[:body].include?("function queueComposerDraftSave") &&
+           js[:body].include?('window.addEventListener("pagehide", flushComposerDraftSaves)'),
+           "expected the full-screen Conversation editor to trap focus and save drafts continuously")
+    assert(js[:body].include?("state.fullScreenComposerKeys.clear()") &&
+           css[:body].include?("width: min(100%, 960px)") &&
+           css[:body].include?("--composer-viewport-height"),
+           "expected full-screen mode to clear on navigation and use a constrained visual-viewport layout")
     assert(js[:body].include?('["Session ID", agent.session_id || "n/a"]'),
            "expected Conversation settings to expose a copyable native session ID")
     assert(js[:body].include?("renderAgentWorkspace(agent, blocks, {") &&
