@@ -170,6 +170,23 @@ def write_smoke_script(path)
         const value = await page.locator("#prompt-input").inputValue();
         if (value !== draft) throw new Error(`Composer draft was not preserved: ${JSON.stringify(value)}`);
 
+        await page.click("#header-more-button");
+        await page.waitForSelector("[data-toggle-agent-settings]", { state: "visible", timeout: 10_000 });
+        await page.click("[data-toggle-agent-settings]");
+        await page.waitForSelector("#agent-settings-panel:not(.hidden)", { state: "visible", timeout: 10_000 });
+        const conversationSettings = await page.locator("#agent-settings-panel").innerText();
+        if (!conversationSettings.includes(`Agent key\\n${agentKey}`) || !conversationSettings.includes("Response style\\nDisabled")) {
+          throw new Error(`Conversation settings are missing key or response style source: ${JSON.stringify(conversationSettings)}`);
+        }
+        const conversationSettingLabels = await page.locator("#agent-settings-panel .kv > span").allTextContents();
+        const sortedConversationSettingLabels = [...conversationSettingLabels].sort((left, right) => left.localeCompare(right));
+        if (JSON.stringify(conversationSettingLabels) !== JSON.stringify(sortedConversationSettingLabels)) {
+          throw new Error(`Conversation settings are not alphabetical: ${JSON.stringify(conversationSettingLabels)}`);
+        }
+        if (conversationSettingLabels.includes("Exit")) {
+          throw new Error("Conversation settings should not show Exit");
+        }
+
         await page.fill("#prompt-input", "$rev");
         await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
         if (!(await page.locator("[data-skill-autocomplete-rescan]").isVisible())) {
@@ -279,6 +296,7 @@ def write_smoke_script(path)
           throw new Error(`Configured response style summary is incomplete: ${JSON.stringify(responseStyleSummary)}`);
         }
         await page.waitForSelector("[data-testid='response-style-delete']", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector("[data-testid='response-style-active']", { state: "visible", timeout: 10_000 });
         await page.click("[data-testid='response-style-action']");
         await page.waitForSelector("#response-style-input", { state: "visible", timeout: 10_000 });
         const savedResponseStyle = await page.locator("#response-style-input").inputValue();

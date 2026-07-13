@@ -1339,6 +1339,16 @@ module RemoteServerTest
                "expected saving the empty state to create a response style")
         assert(File.read(path) == created_text, "expected response style creation to persist")
 
+        agent = service.create_agent(
+          "project_key" => "web",
+          "template_key" => "custom",
+          "name" => "Styled Agent",
+          "prompt" => "Use the global style.",
+          "agent" => "codex"
+        )
+        assert(agent[:response_style_source] == "global",
+               "expected agents without an override to report the active global response style")
+
         updated_text = "Write plainly. Keep technical precision.\n"
         updated = server.send(
           :route,
@@ -1358,6 +1368,8 @@ module RemoteServerTest
         assert(deleted.dig(:body, :response_style, :exists) == false,
                "expected removing a response style to return the addable empty state")
         assert(!File.exist?(path), "expected removing a response style to delete the configured file")
+        assert(service.agent(agent[:key])[:response_style_source] == "disabled",
+               "expected agents without an override to report disabled when the global style is removed")
         assert(File.read("#{path}.bak") == "Lead with the result.\n",
                "expected removing a response style to retain its existing backup")
 
@@ -2749,7 +2761,8 @@ module RemoteServerTest
            "expected Remote UI to expose copyable key/value rows")
     assert(js[:body].include?("kv-copy-button"),
            "expected copyable key/value rows to render a copy control")
-    assert(js[:body].include?('copyableKv("Raw log", agent.log_path)'),
+    assert(js[:body].include?('["Raw log", agent.log_path]') &&
+           js[:body].include?("settings.map(([label, value]) => copyableKv(label, value))"),
            "expected Conversation settings rows to be copyable")
     assert(js[:body].include?('copyableKv("Path", project.path)') &&
            js[:body].include?('copyableKv("Templates",'),
@@ -2950,6 +2963,7 @@ module RemoteServerTest
            js[:body].include?("Edit response style") &&
            js[:body].include?('data-testid="response-style-excerpt"') &&
            js[:body].include?('data-testid="response-style-delete"') &&
+           js[:body].include?('data-testid="response-style-active"') &&
            js[:body].include?('replace(/\\s+/g, " ")') &&
            js[:body].include?('iconSvg("squarePen")') &&
            js[:body].include?('iconSvg("trash2")') &&
@@ -2961,6 +2975,11 @@ module RemoteServerTest
            js[:body].include?('apiDelete("/settings/response-style")') &&
            js[:body].include?("Managed agents will stop receiving this writing guidance"),
            "expected configured response styles to expose a confirmed remove action")
+    assert(js[:body].include?('["Agent key", agent.key]') &&
+           js[:body].include?('["Response style", responseStyleSourceLabel(agent.response_style_source)]') &&
+           js[:body].include?("left.localeCompare(right)") &&
+           !js[:body].include?('copyableKv("Exit", agent.last_exit_code'),
+           "expected Conversation settings to show the generated key and response style source alphabetically")
     assert(js[:body].include?("if (!responseStyle.drafting)") &&
            js[:body].include?("data-cancel-response-style"),
            "expected the response style editor to stay collapsed until requested and support canceling")
@@ -3264,7 +3283,7 @@ module RemoteServerTest
     assert(!js[:body].include?("Start run"), "expected Agent detail to omit redundant Start run")
     assert(js[:body].include?("function syncAgentDockLayout"),
            "expected Agent detail dock height to update page padding")
-    assert(js[:body].include?('copyableKv("Session ID", agent.session_id || "n/a")'),
+    assert(js[:body].include?('["Session ID", agent.session_id || "n/a"]'),
            "expected Conversation settings to expose a copyable native session ID")
     assert(js[:body].include?("renderAgentWorkspace(agent, blocks, {") &&
            css[:body].include?(".agent-workspace.conversation-only"),

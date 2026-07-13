@@ -57,6 +57,8 @@ module ManagedAgentTest
            "expected response style guidance on a cold run")
     assert(cold_prompt.index(style) < cold_prompt.index(HQ::ManagedAgent::FINAL_OUTPUT_CHECKLIST),
            "expected response style before structured final-output guidance")
+    assert(agent.effective_response_style_source == "custom",
+           "expected an explicit response style to report a custom source")
 
     resumed = HQ::ManagedAgent.from_hash(agent.to_hash.merge(
       "session_id" => "codex-session",
@@ -84,13 +86,18 @@ module ManagedAgentTest
            "expected response_style false to disable global guidance")
     assert(agent.to_hash["response_style"] == false,
            "expected an explicit response style opt-out to persist")
+    assert(agent.effective_response_style_source == "disabled",
+           "expected a response style opt-out to report a disabled source")
 
     run = HQ::ManagedAgent::AgentRun.from_hash(
       "status" => "success",
-      "session_id" => "session-123"
+      "session_id" => "session-123",
+      "response_style_source" => "global"
     )
     assert(run.to_hash["session_id"] == "session-123",
            "expected the harness session id to round-trip with a run")
+    assert(run.to_hash["response_style_source"] == "global",
+           "expected the response style source to round-trip with a run")
   end
 
   def assert_new_agents_use_unique_log_stems
@@ -302,6 +309,7 @@ module ManagedAgentTest
         { command: ["true"], env: {} }
       end
 
+      expected_response_style_source = agent.effective_response_style_source
       agent.start!
 
       assert(captured.first(2) == ["--resume", session_id],
@@ -310,6 +318,8 @@ module ManagedAgentTest
              "start! should flip session_bootstrapped to true via finalize_previous_run!")
       assert(agent.session_id == session_id,
              "session_id should be preserved across restart")
+      assert(agent.runs.last.response_style_source == expected_response_style_source,
+             "start! should record the effective response style source on the run")
       assert(agent.runs.first.status != "running",
              "the prior run should have been finalized, not left as running")
 

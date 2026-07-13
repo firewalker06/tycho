@@ -2399,6 +2399,7 @@ module HQ
         model: agent.model,
         reasoning_effort: agent.reasoning_effort,
         response_style: agent.response_style,
+        response_style_source: agent.last_run&.response_style_source || agent.effective_response_style_source,
         status: agent.status,
         running: agent.running?,
         unread: agent.unread?,

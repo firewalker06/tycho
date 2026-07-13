@@ -2227,6 +2227,17 @@ select {
   gap: 8px;
 }
 
+.response-style-summary-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.response-style-summary-heading .pill {
+  min-height: 22px;
+  padding-block: 1px;
+}
+
 .response-style-summary p {
   margin: 0;
   max-width: 72ch;

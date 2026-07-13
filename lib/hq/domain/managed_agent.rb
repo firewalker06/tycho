@@ -50,7 +50,7 @@ module HQ
     end
 
     AgentRun = Struct.new(
-      :started_at, :finished_at, :exit_code, :status, :log_path, :command, :session_id,
+      :started_at, :finished_at, :exit_code, :status, :log_path, :command, :session_id, :response_style_source,
       keyword_init: true
     ) do
       def self.from_hash(hash)
@@ -61,7 +61,8 @@ module HQ
           status: hash["status"],
           log_path: hash["log_path"],
           command: hash["command"],
-          session_id: hash["session_id"]
+          session_id: hash["session_id"],
+          response_style_source: hash["response_style_source"]
         )
       end
 
@@ -75,6 +76,7 @@ module HQ
           "command" => command
         }
         result["session_id"] = session_id unless session_id.to_s.empty?
+        result["response_style_source"] = response_style_source unless response_style_source.to_s.empty?
         result
       end
     end
@@ -352,6 +354,7 @@ module HQ
         @session_bootstrapped = false
       end
       response_style_text = resolved_response_style
+      response_style_source = response_style_source_for(response_style_text)
       prompt_text = prompt_for_execution(response_style: response_style_text)
       execution = build_command
       command = execution.fetch(:command)
@@ -395,7 +398,8 @@ module HQ
         status: "running",
         log_path: @log_path,
         command: Shellwords.join(command),
-        session_id: @session_id
+        session_id: @session_id,
+        response_style_source: response_style_source
       )
       @structured_result = nil
       @summary = nil
@@ -628,6 +632,10 @@ module HQ
                        model: @model,
                        reasoning_effort: @reasoning_effort,
                        response_style: @response_style)
+    end
+
+    def effective_response_style_source
+      response_style_source_for(resolved_response_style)
     end
 
     def add_user_message!(content, inquiry_id: nil, attachments: nil, metadata: nil)
@@ -1363,6 +1371,13 @@ module HQ
 
     def resolved_response_style
       ResponseStylePolicy.resolve(@response_style)
+    end
+
+    def response_style_source_for(resolved_style)
+      return "disabled" if resolved_style.to_s.empty?
+      return "custom" unless @response_style.nil?
+
+      "global"
     end
 
     def native_resume?
