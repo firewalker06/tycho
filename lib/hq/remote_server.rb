@@ -1492,8 +1492,10 @@ module HQ
       end
 
       answer = required_text(attrs, "answer", fallback: "prompt")
+      feedback = attrs["feedback"].to_s.strip
       attachments = import_prompt_attachments(target, attrs)
       target.add_user_message!(answer, inquiry_id: expected_id, attachments:)
+      target.add_user_message!(feedback, metadata: { "inquiry_feedback" => true }) unless feedback.empty?
       target.start! if truthy?(attrs["start"]) && !target.running?
       save_agent(target)
       { agent: agent_payload(target), conversation: conversation(target.key) }

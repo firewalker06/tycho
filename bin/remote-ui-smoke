@@ -157,6 +157,26 @@ def write_smoke_script(path)
       });
       page.on("pageerror", (error) => errors.push(error.message));
 
+      async function assertEditorExcludedFromRefresh(selector, label, focusSelector) {
+        if (focusSelector) await page.focus(focusSelector);
+        const result = await page.evaluate(({ selector, label }) => {
+          const editor = document.querySelector(selector);
+          if (!editor) return { sameNode: false, sameFocus: false, blurred: false };
+          editor.__tychoRefreshProbe = label;
+          state.renderedViewHtml = "";
+          let blurred = false;
+          const control = document.activeElement;
+          control?.addEventListener("blur", () => { blurred = true; }, { once: true });
+          render({ preserveLiveEditor: true });
+          return {
+            sameNode: document.querySelector(selector)?.__tychoRefreshProbe === label,
+            sameFocus: document.activeElement === control,
+            blurred,
+          };
+        }, { selector, label });
+        if (!result.sameNode || !result.sameFocus || result.blurred) throw new Error(`${label} did not remain stable during a polling render: ${JSON.stringify(result)}`);
+      }
+
       try {
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
@@ -169,6 +189,7 @@ def write_smoke_script(path)
 
         const value = await page.locator("#prompt-input").inputValue();
         if (value !== draft) throw new Error(`Composer draft was not preserved: ${JSON.stringify(value)}`);
+        await assertEditorExcludedFromRefresh("#composer:not(.composer-full-screen)", "Inline conversation form", "#prompt-input");
 
         const expandButtonGeometry = await page.locator(".composer-full-screen-button").evaluate((button) => {
           const control = button.getBoundingClientRect();
@@ -223,6 +244,7 @@ def write_smoke_script(path)
         if (fullScreenValue !== draft) {
           throw new Error(`Full-screen composer draft was not preserved: ${JSON.stringify(fullScreenValue)}`);
         }
+        await assertEditorExcludedFromRefresh("#composer.composer-full-screen", "Full-screen conversation form", "#prompt-input");
 
         const autosavedDraft = `${draft} autosaved`;
         await page.fill("#prompt-input", autosavedDraft);
@@ -314,6 +336,7 @@ def write_smoke_script(path)
         }
 
         await page.fill("#prompt-input", "$rev");
+        await page.evaluate(() => refreshSkillAutocomplete(document.querySelector("#prompt-input")));
         await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
         if (!(await page.locator("[data-skill-autocomplete-rescan]").isVisible())) {
           throw new Error("Skill autocomplete re-scan command was not visible");
@@ -345,6 +368,196 @@ def write_smoke_script(path)
         if (!dockBox || dockBox.y + dockBox.height > 844) {
           throw new Error(`Agent dock is outside mobile viewport: ${JSON.stringify(dockBox)}`);
         }
+
+        await page.evaluate((key) => {
+          closeSkillAutocomplete();
+          const agent = findAgent(key);
+          agent.latest_inquiry = {
+            id: "smoke-inquiry",
+            message: "Choose the next step.",
+            fields: [
+              { key: "next_step", label: "Next step", input_type: "textarea", required: true },
+              { key: "approved", label: "Approved", input_type: "boolean", required: false },
+            ],
+          };
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
+        await page.waitForSelector("#inquiry-form", { state: "visible", timeout: 10_000 });
+        const inquiryFieldLabels = await page.locator(".inquiry-fields > .inquiry-field > label").allTextContents();
+        if (inquiryFieldLabels.at(-1)?.trim() !== "Leave feedback Optional") {
+          throw new Error(`Leave feedback is not the last inquiry field: ${JSON.stringify(inquiryFieldLabels)}`);
+        }
+        const initialInquiryValidation = await page.evaluate(() => ({
+          disabled: document.querySelector("#inquiry-form button[type='submit']")?.disabled,
+          invalid: document.querySelector("[name='next_step']")?.getAttribute("aria-invalid"),
+          fieldError: document.querySelector("[data-inquiry-field='next_step'] [data-inquiry-field-error]")?.textContent,
+        }));
+        if (!initialInquiryValidation.disabled || initialInquiryValidation.invalid !== "true" || initialInquiryValidation.fieldError !== "Required") {
+          throw new Error(`Inquiry validation is not attached to the required field: ${JSON.stringify(initialInquiryValidation)}`);
+        }
+        await page.fill("[name='next_step']", "Ship the focused change.");
+        await page.selectOption("[name='approved']", "Yes");
+        await page.fill("#inquiry-feedback", "Keep the explanation short.");
+        await assertEditorExcludedFromRefresh("#inquiry-form:not(.inquiry-form-full-screen)", "Inline inquiry form", "#inquiry-feedback");
+        const structuredInquiryAnswer = await page.evaluate(() => JSON.parse(inquiryAnswerPayload(document.querySelector("#inquiry-form"))));
+        if (structuredInquiryAnswer.next_step !== "Ship the focused change." || structuredInquiryAnswer.approved !== true || Object.hasOwn(structuredInquiryAnswer, "feedback")) {
+          throw new Error(`Inquiry feedback leaked into the structured answer: ${JSON.stringify(structuredInquiryAnswer)}`);
+        }
+        await page.click("[data-toggle-inquiry-full-screen]");
+        await page.waitForSelector("#inquiry-form.inquiry-form-full-screen", { state: "visible", timeout: 10_000 });
+        const inquiryModalBox = await page.locator("#inquiry-form.inquiry-form-full-screen").boundingBox();
+        const inquiryModalRole = await page.locator("#inquiry-form").getAttribute("role");
+        const inquiryBackgroundInert = await page.locator("[data-agent-workspace]").evaluate((element) => element.inert);
+        if (!inquiryModalBox || inquiryModalBox.x !== 0 || inquiryModalBox.y !== 0 || inquiryModalBox.width !== 390 || inquiryModalBox.height !== 844 || inquiryModalRole !== "dialog" || !inquiryBackgroundInert) {
+          throw new Error(`Full-screen inquiry modal is incomplete: ${JSON.stringify({ inquiryModalBox, inquiryModalRole, inquiryBackgroundInert })}`);
+        }
+        await assertEditorExcludedFromRefresh("#inquiry-form.inquiry-form-full-screen", "Full-screen inquiry form", "#inquiry-feedback");
+        const inquiryLayout = await page.evaluate(() => ({
+          selectHeight: document.querySelector("#inquiry-form select")?.getBoundingClientRect().height,
+          cardHeights: Array.from(document.querySelectorAll("#inquiry-form .inquiry-field"), (field) => field.getBoundingClientRect().height),
+          footer: document.querySelector("#inquiry-form .inquiry-footer")?.getBoundingClientRect().toJSON(),
+        }));
+        if (inquiryLayout.selectHeight < 42 || inquiryLayout.selectHeight > 48 || Math.max(...inquiryLayout.cardHeights) > 180 || !inquiryLayout.footer || inquiryLayout.footer.y + inquiryLayout.footer.height > 844) {
+          throw new Error(`Full-screen inquiry controls are stretched or footer is unanchored: ${JSON.stringify(inquiryLayout)}`);
+        }
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await page.evaluate(() => syncFullScreenComposerViewport());
+        const desktopInquiryLayout = await page.evaluate(() => ({
+          modal: document.querySelector("#inquiry-form")?.getBoundingClientRect().toJSON(),
+          canvas: document.querySelector("#inquiry-form .inquiry-form-content")?.getBoundingClientRect().toJSON(),
+          close: document.querySelector("#inquiry-form .inquiry-close-button")?.getBoundingClientRect().toJSON(),
+        }));
+        const closeCanvasDelta = desktopInquiryLayout.canvas && desktopInquiryLayout.close
+          ? desktopInquiryLayout.canvas.x + desktopInquiryLayout.canvas.width - desktopInquiryLayout.close.x - desktopInquiryLayout.close.width
+          : null;
+        if (desktopInquiryLayout.modal?.width !== 1280 || desktopInquiryLayout.modal?.height !== 800 || desktopInquiryLayout.canvas?.width !== 960 || desktopInquiryLayout.canvas?.x !== 160 || closeCanvasDelta !== 8) {
+          throw new Error(`Full-screen inquiry canvas or close control is not centered: ${JSON.stringify({ desktopInquiryLayout, closeCanvasDelta })}`);
+        }
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.evaluate(() => {
+          state.renderedViewHtml = "";
+          render();
+        });
+        const preservedFeedback = await page.locator("#inquiry-feedback").inputValue();
+        if (preservedFeedback !== "Keep the explanation short.") {
+          throw new Error(`Full-screen inquiry feedback did not survive render: ${JSON.stringify(preservedFeedback)}`);
+        }
+        await page.keyboard.press("Escape");
+        await page.waitForSelector("#inquiry-form.inquiry-form-full-screen", { state: "detached", timeout: 10_000 });
+        await page.evaluate((key) => {
+          clearFormDraft(document.querySelector("#inquiry-form"));
+          const agent = findAgent(key);
+          agent.latest_inquiry = null;
+          state.fullScreenInquiryKeys.delete(key);
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
+        await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await page.evaluate((key) => {
+          const attachment = {
+            id: "smoke-attachment-menu",
+            agent_key: key,
+            type: "file",
+            title: "smoke.txt",
+            path: "/tmp/tycho-smoke/smoke.txt",
+            blob_path: "/attachments/smoke-attachment-menu/blob",
+            format: "text",
+            content: "Smoke attachment content",
+            content_mtime: "2026-07-13T08:00:00Z",
+          };
+          state.attachmentDetails[attachment.id] = attachment;
+          const agent = findAgent(key);
+          agent.attachments = [...(agent.attachments || []).filter((item) => item.id !== attachment.id), { ...attachment, content: undefined }];
+          clearTimeout(state.timer);
+          state.timer = null;
+          history.replaceState(null, "", routeHash({ type: "agentAttachment", key, attachmentId: attachment.id }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
+        const viewTriggerGeometry = await page.evaluate(() => {
+          const viewTrigger = document.querySelector("[data-focused-view-menu] > summary").getBoundingClientRect();
+          const pageContextTrigger = document.querySelector("#header-more-button").getBoundingClientRect();
+          const attachmentTrigger = document.querySelector("[data-attachment-viewer-menu] > summary").getBoundingClientRect();
+          const body = document.querySelector(".attachment-viewer .agent-attachment-body").getBoundingClientRect();
+          const actions = document.querySelector(".attachment-viewer-actions").getBoundingClientRect();
+          const header = document.querySelector(".attachment-viewer .section-label");
+          const headerRect = header.getBoundingClientRect();
+          const navigationBottom = document.querySelector(".agent-attachment-shell > .attachment-nav-drawer")?.getBoundingClientRect().bottom;
+          const viewerTop = document.querySelector(".agent-attachment-shell > .agent-attachment-viewer")?.getBoundingClientRect().top;
+          return {
+            viewRight: viewTrigger.right,
+            pageContextLeft: pageContextTrigger.left,
+            headerTopDelta: Math.abs(viewTrigger.top - pageContextTrigger.top),
+            viewMenuInHeader: Boolean(document.querySelector(".app-header [data-focused-view-menu]")),
+            viewMenuInAttachment: Boolean(document.querySelector(".agent-attachment-shell [data-focused-view-menu]")),
+            viewerGap: viewerTop - navigationBottom,
+            actionsTopInset: actions.top - body.top,
+            headerClearance: actions.left - headerRect.right,
+            headerText: header.textContent.trim(),
+            attachmentTriggerRight: attachmentTrigger.right,
+            bodyRight: body.right,
+          };
+        });
+        if (viewTriggerGeometry.viewRight > viewTriggerGeometry.pageContextLeft || viewTriggerGeometry.headerTopDelta > 1 || !viewTriggerGeometry.viewMenuInHeader || viewTriggerGeometry.viewMenuInAttachment || viewTriggerGeometry.viewerGap < 0 || viewTriggerGeometry.viewerGap > 12 || viewTriggerGeometry.actionsTopInset < 4 || viewTriggerGeometry.headerClearance < 4 || viewTriggerGeometry.headerText !== "File" || viewTriggerGeometry.attachmentTriggerRight !== viewTriggerGeometry.bodyRight) {
+          throw new Error(`Focused view menu is not beside the page context: ${JSON.stringify(viewTriggerGeometry)}`);
+        }
+
+        await page.click("[data-focused-view-menu] > summary");
+        const initialViewMenu = await page.evaluate(() => ({
+          labels: Array.from(document.querySelectorAll("[data-focused-view-menu] [role='menuitemradio'] strong"), (label) => label.textContent),
+          checked: Array.from(document.querySelectorAll("[data-focused-view-menu] [role='menuitemradio'][aria-checked='true'] strong"), (label) => label.textContent),
+          mode: document.querySelector("[data-focused-view-menu]")?.dataset.activeViewMode,
+          icon: document.querySelector("[data-focused-view-menu] > summary")?.dataset.viewIcon,
+          radioPlacement: (() => {
+            const item = document.querySelector("[data-focused-view-menu] [role='menuitemradio']");
+            const style = getComputedStyle(item, "::after");
+            return { column: style.gridColumnStart, row: style.gridRowStart };
+          })(),
+        }));
+        if (JSON.stringify(initialViewMenu.labels) !== JSON.stringify(["Balanced", "Widen detail", "Full view"]) || JSON.stringify(initialViewMenu.checked) !== JSON.stringify(["Balanced"]) || initialViewMenu.mode !== "balanced" || initialViewMenu.icon !== "columns2" || initialViewMenu.radioPlacement.column !== "3" || initialViewMenu.radioPlacement.row !== "1") {
+          throw new Error(`Focused view menu is not an exclusive balanced default: ${JSON.stringify(initialViewMenu)}`);
+        }
+        await page.click("[data-set-agent-detail-view][data-view-mode='wide']");
+        const wideView = await page.evaluate(() => ({
+          mode: document.querySelector("[data-focused-view-menu]")?.dataset.activeViewMode,
+          icon: document.querySelector("[data-focused-view-menu] > summary")?.dataset.viewIcon,
+          wide: document.querySelector("[data-agent-workspace]")?.classList.contains("agent-workspace-detail-wide"),
+          full: document.querySelector("[data-agent-workspace]")?.classList.contains("agent-workspace-full-view"),
+        }));
+        if (wideView.mode !== "wide" || wideView.icon !== "panelRightOpen" || !wideView.wide || wideView.full) {
+          throw new Error(`Widen detail did not become the exclusive active view: ${JSON.stringify(wideView)}`);
+        }
+        await page.click("[data-focused-view-menu] > summary");
+        await page.click("[data-set-agent-detail-view][data-view-mode='full']");
+        const fullView = await page.evaluate(() => ({
+          mode: document.querySelector("[data-focused-view-menu]")?.dataset.activeViewMode,
+          icon: document.querySelector("[data-focused-view-menu] > summary")?.dataset.viewIcon,
+          wide: document.querySelector("[data-agent-workspace]")?.classList.contains("agent-workspace-detail-wide"),
+          full: document.querySelector("[data-agent-workspace]")?.classList.contains("agent-workspace-full-view"),
+        }));
+        if (fullView.mode !== "full" || fullView.icon !== "maximize2" || fullView.wide || !fullView.full) {
+          throw new Error(`Full view did not become the exclusive active view: ${JSON.stringify(fullView)}`);
+        }
+        await page.click("[data-attachment-viewer-menu] > summary");
+        const attachmentMenu = await page.evaluate(() => ({
+          labels: Array.from(document.querySelectorAll("[data-attachment-viewer-menu] [role='menuitem'] strong"), (label) => label.textContent),
+          path: document.querySelector("[data-attachment-viewer-menu] [data-copy]")?.dataset.copy,
+          open: document.querySelector("[data-attachment-viewer-menu]")?.open,
+          bodyRight: document.querySelector(".attachment-viewer .agent-attachment-body")?.getBoundingClientRect().right,
+          triggerRight: document.querySelector("[data-attachment-viewer-menu] > summary")?.getBoundingClientRect().right,
+        }));
+        if (!attachmentMenu.open || attachmentMenu.path !== "/tmp/tycho-smoke/smoke.txt" || attachmentMenu.bodyRight !== attachmentMenu.triggerRight || !["Copy content", "Copy absolute path", "Download file", "Refresh cache", "Delete attachment"].every((label) => attachmentMenu.labels.includes(label))) {
+          throw new Error(`Attachment context menu is incomplete: ${JSON.stringify(attachmentMenu)}`);
+        }
+        await page.click(".app-header");
+        if (await page.locator("[data-attachment-viewer-menu]").getAttribute("open") !== null) {
+          throw new Error("Attachment context menu stayed open after an outside click");
+        }
+        await page.setViewportSize({ width: 390, height: 844 });
 
         await page.goto(`${baseUrl}/ui#project/web/agent/new`, { waitUntil: "networkidle" });
         await page.waitForSelector("#agent-prompt", { state: "visible", timeout: 10_000 });
@@ -443,7 +656,7 @@ def write_smoke_script(path)
         await page.waitForSelector("#quick-agent-prompt", { state: "visible", timeout: 10_000 });
         await page.fill("#quick-agent-prompt", "$rev");
         await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
-        await page.keyboard.press("Tab");
+        await page.press("#quick-agent-prompt", "Tab");
         const quickPrompt = await page.locator("#quick-agent-prompt").inputValue();
         if (quickPrompt !== "$review ") {
           throw new Error(`Quick Agent skill autocomplete failed: ${JSON.stringify(quickPrompt)}`);

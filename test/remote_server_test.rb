@@ -424,6 +424,7 @@ module RemoteServerTest
         created[:key],
         inquiry_id,
         "answer" => JSON.pretty_generate("next_step" => "Continue with the current session."),
+        "feedback" => "Prefer the smallest safe change.",
         "start" => false
       )
       assert(result[:conversation].any? { |message| message[:role] == "user" && message[:content].include?("current session") },
@@ -432,6 +433,13 @@ module RemoteServerTest
         message[:role] == "user" && message.dig(:metadata, "inquiry_response")
       end
       assert(inquiry_reply, "expected accepted inquiry answer to be marked as an inquiry response")
+      feedback_reply = result[:conversation].find do |message|
+        message[:role] == "user" && message.dig(:metadata, "inquiry_feedback")
+      end
+      assert(feedback_reply && feedback_reply[:content] == "Prefer the smallest safe change.",
+             "expected inquiry feedback to be recorded separately from the structured answer")
+      assert(!inquiry_reply[:content].include?("Prefer the smallest safe change."),
+             "expected inquiry feedback to stay outside the parsed structured answer")
       assert(result[:agent][:latest_inquiry].nil?, "expected accepted inquiry answer to clear the pending inquiry")
       response = HQ::AgentMemory.new(agent).events.reverse.find { |event| event["type"] == "inquiry_response" }
       assert(response.dig("metadata", "inquiry_id") == inquiry_id,
@@ -608,6 +616,12 @@ module RemoteServerTest
       newer_plain = service.agent(created[:key])[:attachments].find { |item| item["id"] == plain_attachment["id"] }
       assert(newer_plain["content_mtime"] != plain_attachment["content_mtime"],
              "expected agent attachment payloads to show when source files are newer than cached previews")
+      original_release_content = File.read(release_path)
+      File.write(release_path, "Updated release checklist\n")
+      refreshed_plain = service.attachment(plain_attachment["id"])
+      assert(refreshed_plain["content"].include?("Updated release checklist"),
+             "expected a refreshed attachment payload to re-read content from its source path")
+      File.write(release_path, original_release_content)
       markdown_attachment = service.attachment(attachments.find { |item| item["title"] == "Markdown notes" }["id"])
       assert(markdown_attachment["format"] == "markdown", "expected markdown documents to be marked for markdown rendering")
       assert(markdown_attachment["content"].include?("# Notes"), "expected markdown attachment content")
@@ -2368,6 +2382,7 @@ module RemoteServerTest
            "expected root JavaScript reference to be asset-versioned")
     assert(!response[:body].include?("project-edit-button"), "expected Project edit to live in the shared More menu")
     assert(response[:body].include?("header-more-button"), "expected root shell to expose header More actions")
+    assert(response[:body].include?('id="header-view-menu"'), "expected root shell to expose contextual view controls")
     assert(response[:body].include?('id="header-more-panel"'), "expected root shell to expose the header More menu panel")
     assert(response[:body].include?('id="header-more-badge"'), "expected root shell to expose the header More badge")
     assert(response[:body].include?('id="quick-agent-fab"'), "expected root shell to expose New agent launch")
@@ -2540,10 +2555,9 @@ module RemoteServerTest
     assert(css[:body].include?(".attachment-main"), "expected Agent detail attachment rows to separate links from actions")
     assert(css[:body].include?(".attachment-actions"), "expected Agent detail attachment rows to expose row actions")
     assert(css[:body].include?(".attachment-viewer-actions"), "expected Attachment detail to style refresh/delete actions")
-    assert(css[:body].include?(".attachment-content-copy-button") &&
-           css[:body].include?(".attachment-viewer-secondary-actions") &&
-           css[:body].include?(".attachment-viewer-icon-action"),
-           "expected Attachment detail actions to separate primary content copy from compact icon actions")
+    assert(css[:body].include?(".attachment-viewer-menu") &&
+           css[:body].include?(".attachment-viewer-menu-popover"),
+           "expected Attachment detail actions to use a compact context menu")
     assert(css[:body].include?(".attachment-nav-drawer"), "expected Attachment detail to style the navigation drawer")
     assert(css[:body].include?(".attachment-nav-item.active"), "expected Attachment detail navigation to highlight the current item")
     assert(css[:body].include?(".pending-attachments"), "expected Agent detail to style pending prompt attachments")
@@ -2803,16 +2817,37 @@ module RemoteServerTest
     assert(js[:body].include?("data-agent-dock"), "expected Agent detail composer to live in a dock")
     assert(js[:body].include?("function renderInquiryForm"),
            "expected Agent detail to render structured inquiry forms")
-    assert(js[:body].include?('id="inquiry-form" class="inquiry-form"'),
+    assert(js[:body].include?('id="inquiry-form" class="inquiry-form${'),
            "expected inquiry answers to use a dedicated form")
-    assert(js[:body].include?("Send these answers to the agent."),
-           "expected inquiry confirmation copy to stay concise")
+    assert(js[:body].include?("fullScreenInquiryKeys") &&
+           js[:body].include?("data-toggle-inquiry-full-screen") &&
+           css[:body].include?(".inquiry-form-full-screen"),
+           "expected inquiry answers to support full-screen editing")
+    assert(js[:body].include?("Leave feedback") &&
+           js[:body].include?('name="feedback"') &&
+           js[:body].include?("const feedback = String(new FormData(form).get(\"feedback\")"),
+           "expected every inquiry to end with optional unstructured feedback")
+    assert(!js[:body].include?("data-inquiry-confirm") &&
+           js[:body].include?('class="inquiry-footer"'),
+           "expected inquiry actions to use a direct anchored footer without redundant confirmation")
     assert(js[:body].include?('data-inquiry-validation') && js[:body].include?("function syncViewControls"),
            "expected inquiry answers to expose live validation before submission")
-    assert(js[:body].include?("agentDetailFullViewMode") && js[:body].include?("data-toggle-agent-detail-full-view"),
-           "expected focused Summary and Attachment pages to support full view")
-    assert(js[:body].include?("agentDetailWideMode") && js[:body].include?("data-toggle-agent-detail-wide"),
-           "expected desktop focused views to support adjustable pane emphasis")
+    assert(js[:body].include?("function syncInquiryFieldValidity") &&
+           js[:body].include?("data-inquiry-field-error") &&
+           css[:body].include?(".inquiry-field.invalid"),
+           "expected inquiry validation to identify the required field beside its control")
+    assert(css[:body].include?("align-content: start") &&
+           css[:body].include?("grid-auto-rows: max-content") &&
+           css[:body].include?("height: var(--control-height)"),
+           "expected full-screen inquiry fields and controls to keep natural heights")
+    assert(js[:body].include?("agentDetailViewMode") &&
+           js[:body].include?("data-set-agent-detail-view") &&
+           js[:body].include?('role="menuitemradio"'),
+           "expected focused Summary and Attachment layouts to use one exclusive view menu")
+    assert(js[:body].include?('{ value: "balanced", label: "Balanced", icon: "columns2" }') &&
+           js[:body].include?('{ value: "wide", label: "Widen detail", icon: "panelRightOpen" }') &&
+           js[:body].include?('{ value: "full", label: "Full view", icon: "maximize2" }'),
+           "expected each focused view mode to expose its own active trigger icon")
     assert(js[:body].include?('class="focused-composer"') && js[:body].include?("Continue conversation"),
            "expected mobile focused views to collapse the follow-up composer")
     assert(js[:body].include?('iconSvg("badgeQuestionMark")'),
@@ -3290,6 +3325,13 @@ module RemoteServerTest
     assert(js[:body].include?("openElements"), "expected polling snapshots to preserve floating control state")
     assert(js[:body].include?("renderedViewHtml"),
            "expected polling renders to skip unchanged Remote UI view HTML")
+    assert(js[:body].include?("render({ preserveLiveEditor: true });") &&
+           js[:body].include?("function liveEditorRefreshPlan") &&
+           js[:body].include?("function reconcileViewAroundEditor"),
+           "expected polling renders to reconcile around stable Conversation and inquiry forms")
+    assert(js[:body].include?("replaceSiblingsAroundEditor") &&
+           js[:body].include?('data-agent-running="${agentIsRunning(agent) ? "true" : "false"}"'),
+           "expected live editor reconciliation to preserve controls without hiding real agent state transitions")
     assert(js[:body].include?("scrollContainers"),
            "expected polling snapshots to preserve scroll positions for restored controls")
     assert(js[:body].include?("pageScroll"),
@@ -3417,29 +3459,31 @@ module RemoteServerTest
            "expected Attachment detail to support refreshing cached preview data")
     assert(js[:body].include?("function deleteAttachment"),
            "expected Attachment rows and detail to support deleting attachments")
-    assert(js[:body].include?("function attachmentRefreshAvailable"),
-           "expected Attachment detail to show refresh only when runtime content is newer")
-    assert(helpers_js[:body].include?("content_mtime"),
-           "expected Attachment refresh detection to compare source freshness metadata")
-    assert(js[:body].include?("data-refresh-attachment"),
-           "expected Attachment detail to expose a refresh action")
+    assert(js[:body].include?('const refresh = kind === "file" && id') &&
+           js[:body].include?('label: "Refresh cache"') &&
+           js[:body].include?("await ensureAttachment(id, true)"),
+           "expected every file Attachment detail to expose a forced cache refresh action")
+    assert(css[:body].include?(".agent-workspace-attachment.has-detail .agent-attachment-shell") &&
+           css[:body].include?("grid-template-rows: auto minmax(0, 1fr)") &&
+           js[:body].include?("function syncHeaderDetailViewRoute") &&
+           js[:body].include?("setHeaderDetailView(agent && kind ? renderAgentDetailViewMenu(agent, kind)"),
+           "expected Attachment navigation and viewer to use separate rows with the view menu in the page header")
     assert(js[:body].include?("data-delete-attachment"),
            "expected Attachment list and detail to expose delete actions")
-    assert(js[:body].include?('data-copy="${escapeAttr(target)}"'),
-           "expected Attachment detail to expose a copy path/link action")
-    assert(js[:body].include?('class="icon-button attachment-viewer-icon-action"') &&
-           js[:body].include?('<span class="sr-only">${escapeHtml(copyLabel)}</span>'),
-           "expected Attachment detail secondary copy action to render as an accessible icon button")
-    assert(js[:body].include?('attachmentKind(attachment) === "link" ? "Copy link" : "Copy path"'),
-           "expected Attachment detail copy action to label links and files clearly")
+    assert(js[:body].include?('label: kind === "file" ? "Copy absolute path" : "Copy link"') &&
+           js[:body].include?('data-copy="${escapeAttr(target)}"'),
+           "expected Attachment detail to expose explicit absolute-path and link copy actions")
+    assert(js[:body].include?('data-attachment-viewer-menu') &&
+           js[:body].include?('aria-label="Attachment actions"'),
+           "expected Attachment detail utilities to use an accessible ellipsis menu")
     assert(js[:body].include?("function copyAttachmentContent") &&
            js[:body].include?("function copyAttachmentImageToClipboard"),
            "expected Attachment detail to copy supported attachment content")
     assert(js[:body].include?("data-copy-attachment-content"),
            "expected Attachment detail to expose a content copy action")
-    assert(js[:body].include?("attachment-content-copy-button") &&
-           js[:body].include?("attachment-viewer-secondary-actions"),
-           "expected Attachment detail to keep content copy visually primary")
+    assert(js[:body].include?("data-close-attachment-viewer-menu") &&
+           js[:body].include?("function closeAttachmentViewerMenus"),
+           "expected Attachment detail menu actions and outside clicks to close the menu")
     assert(js[:body].include?('label = "Copy image"') &&
            js[:body].include?('label = attachment.content_truncated ? "Copy preview" : "Copy content"'),
            "expected Attachment detail content copy actions to label images, full text, and truncated previews clearly")
@@ -3549,7 +3593,7 @@ module RemoteServerTest
            "expected Remote UI to download attachments through authenticated fetch")
     assert(js[:body].include?("data-download-attachment"),
            "expected Remote UI attachment download controls to opt into authenticated downloads")
-    assert(js[:body].include?('<button class="icon-button attachment-viewer-icon-action" type="button" data-download-attachment=') &&
+    assert(js[:body].include?('attrs: `data-download-attachment="${escapeAttr(id)}"') &&
            !js[:body].include?('<a class="icon-button attachment-viewer-icon-action" href="${escapeAttr(download)}" data-download-attachment='),
            "expected Remote UI attachment detail downloads to use background button handlers instead of navigational links")
     assert(js[:body].include?("event.preventDefault();") &&

@@ -264,6 +264,9 @@ harness compatibility, and continuing browser/TUI smoke verification.
 - [x] Browser push subscription/test-notification foundation, with HTTPS MagicDNS support and HTTP MagicDNS warnings ([WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.md))
 - [x] Automatic browser push notifications when agents require response or finish
 - [x] Dedicated mobile structured inquiry submission UI
+- [x] Full-screen inquiry editor with trailing unstructured Leave feedback field
+- [x] Poll-safe inline and full-screen Conversation/inquiry forms that remain attached and focused during shell refreshes
+- [x] Attachment detail context menus with exclusive Balanced/Widen/Full layouts, content/path copy, and forced cache refresh
 - [x] Responsive desktop/mobile shell with persistent, header-aligned in-shell desktop navigation across top-level and detail routes, consistently named New agent action, shared control sizing, and fixed-region safe-area handling
 - [x] Sticky Settings section navigator over one continuous page and copyable native session ID in Conversation Settings
 - [x] In-flow desktop conversation composer with resize-aware mobile content reservation
