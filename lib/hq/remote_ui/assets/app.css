@@ -448,6 +448,86 @@ h3 {
   background: var(--panel-soft);
 }
 
+.header-schedule-menu {
+  display: inline-flex;
+}
+
+.header-schedule-control {
+  position: relative;
+  display: inline-flex;
+}
+
+.header-schedule-control > summary {
+  display: inline-grid;
+  width: 42px;
+  height: 42px;
+  min-height: 42px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  list-style: none;
+  place-items: center;
+}
+
+.header-schedule-control > summary::-webkit-details-marker {
+  display: none;
+}
+
+.header-schedule-control[open] > summary,
+.header-schedule-control > summary:hover,
+.header-schedule-control > summary:focus-visible {
+  background: var(--panel-soft);
+}
+
+.header-schedule-control.need > summary {
+  color: var(--warning);
+}
+
+.header-schedule-control.running > summary {
+  color: var(--accent);
+}
+
+.header-schedule-control.done > summary {
+  color: var(--ok);
+}
+
+.header-schedule-control.fail > summary {
+  color: var(--danger);
+}
+
+.header-schedule-control.info > summary {
+  color: var(--info);
+}
+
+.header-schedule-control > summary .ui-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.header-schedule-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 25;
+  width: max-content;
+  min-width: 220px;
+  max-width: min(80vw, 300px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 98%, transparent);
+  box-shadow: var(--shadow);
+  padding: 6px;
+}
+
+.header-schedule-popover .more-menu {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
 .header-more-badge {
   position: absolute;
   top: 2px;
@@ -1849,6 +1929,7 @@ select {
 
 .pill.info,
 .chip.info,
+.status-mark.info,
 .type-mark.info {
   color: var(--info);
 }

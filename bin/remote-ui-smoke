@@ -40,7 +40,17 @@ def write_fixture(dir)
         agent: codex
   YAML
   File.write(prompts_path, "---\ncustom: \"Check the workspace.\"\n")
-  File.write(schedules_path, "---\nschedules: []\n")
+  File.write(schedules_path, <<~YAML)
+    ---
+    schedules:
+      - key: smoke
+        name: Smoke schedule
+        cron: "0 9 * * 1-5"
+        target:
+          type: agent
+          project_key: web
+          message: "Exercise scheduled agent controls."
+  YAML
   skill_dir = File.join(workspace, ".agents", "skills", "review")
   FileUtils.mkdir_p(skill_dir)
   File.write(File.join(skill_dir, "SKILL.md"), "# Review\n")
@@ -99,6 +109,17 @@ def create_agent(base_url)
   JSON.parse(response.body).fetch("agent").fetch("key")
 end
 
+def associate_agent_schedule(logs_dir, agent_key)
+  agents_path = File.join(logs_dir, "managed_agents.json")
+  agents = JSON.parse(File.read(agents_path))
+  agent = agents.find { |item| item["key"] == agent_key }
+  raise "Failed to find smoke agent #{agent_key.inspect}" unless agent
+
+  agent["schedule_key"] = "smoke"
+  agent["template_key"] = "scheduled"
+  File.write(agents_path, JSON.pretty_generate(agents))
+end
+
 def chrome_path
   explicit = ENV["CHROME_PATH"].to_s
   return explicit unless explicit.empty?
@@ -146,6 +167,7 @@ def write_smoke_script(path)
     async function main() {
       const baseUrl = process.env.TYCHO_REMOTE_UI_URL;
       const agentKey = process.env.TYCHO_REMOTE_UI_AGENT_KEY;
+      const unscheduledAgentKey = `${agentKey}-unscheduled-smoke`;
       const chromePath = process.env.CHROME_PATH;
       const draft = "Remote UI smoke draft " + Date.now();
       const errors = [];
@@ -178,8 +200,137 @@ def write_smoke_script(path)
       }
 
       try {
+        const agentsRegressionPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+        const agentsRegressionErrors = [];
+        agentsRegressionPage.on("console", (message) => {
+          if (message.type() === "error") agentsRegressionErrors.push(message.text());
+        });
+        agentsRegressionPage.on("pageerror", (error) => agentsRegressionErrors.push(error.message));
+        await agentsRegressionPage.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
+        await agentsRegressionPage.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+        await agentsRegressionPage.evaluate(({ key, unscheduledKey }) => {
+          const agent = findAgent(key);
+          state.agents.push({
+            ...agent,
+            key: unscheduledKey,
+            name: "Unscheduled Smoke Agent",
+            schedule_key: null,
+            template_key: "custom",
+          });
+          navigate({ type: "tab", tab: "agents" });
+        }, { key: agentKey, unscheduledKey: unscheduledAgentKey });
+        await agentsRegressionPage.waitForTimeout(100);
+        if (agentsRegressionErrors.length) {
+          throw new Error(`Agents view browser errors: ${agentsRegressionErrors.join(" | ")}`);
+        }
+        await agentsRegressionPage.waitForSelector(`.agent-row[data-open-agent='${unscheduledAgentKey}']`, { state: "visible", timeout: 10_000 });
+        await agentsRegressionPage.close();
+
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector("#header-schedule-menu:not(.hidden)", { state: "visible", timeout: 10_000 });
+        const scheduleHeaderGeometry = await page.evaluate(() => {
+          const scheduleTrigger = document.querySelector("[data-header-schedule-menu] > summary").getBoundingClientRect();
+          const contextTrigger = document.querySelector("#header-more-button").getBoundingClientRect();
+          return {
+            scheduleRight: scheduleTrigger.right,
+            contextLeft: contextTrigger.left,
+            topDelta: Math.abs(scheduleTrigger.top - contextTrigger.top),
+          };
+        });
+        if (scheduleHeaderGeometry.scheduleRight > scheduleHeaderGeometry.contextLeft || scheduleHeaderGeometry.topDelta > 1) {
+          throw new Error(`Schedule menu is not beside the page context: ${JSON.stringify(scheduleHeaderGeometry)}`);
+        }
+        const scheduleStatusColors = await page.evaluate((key) => {
+          const agent = findAgent(key);
+          agent.last_result = "no action";
+          agent.status = "succeeded";
+          state.renderedViewHtml = "";
+          render();
+          const comparison = document.createElement("span");
+          comparison.className = "pill info";
+          document.body.append(comparison);
+          const iconColor = getComputedStyle(document.querySelector("[data-header-schedule-menu] > summary")).color;
+          const labelColor = getComputedStyle(comparison).color;
+          comparison.remove();
+          return { iconColor, labelColor };
+        }, agentKey);
+        if (scheduleStatusColors.iconColor !== scheduleStatusColors.labelColor) {
+          throw new Error(`Schedule icon does not match no-action status: ${JSON.stringify(scheduleStatusColors)}`);
+        }
+        await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
+        await page.waitForSelector(".agent-row[data-open-agent]", { state: "visible", timeout: 10_000 });
+        const scheduledAgentListStatus = await page.evaluate((key) => {
+          const row = Array.from(document.querySelectorAll(".agent-row[data-open-agent]")).find((item) => item.dataset.openAgent === key);
+          const icon = row?.querySelector(".status-mark");
+          const label = row?.querySelector(".pill.info");
+          return {
+            found: Boolean(row && icon && label),
+            scheduleIcon: Boolean(icon?.querySelector('path[d="M8 2v4"]')),
+            iconColor: icon ? getComputedStyle(icon).color : "",
+            labelColor: label ? getComputedStyle(label).color : "",
+          };
+        }, agentKey);
+        if (!scheduledAgentListStatus.found || !scheduledAgentListStatus.scheduleIcon || scheduledAgentListStatus.iconColor !== scheduledAgentListStatus.labelColor) {
+          throw new Error(`Scheduled agent list icon does not match no-action status: ${JSON.stringify(scheduledAgentListStatus)}`);
+        }
+        await page.evaluate((key) => {
+          scheduleForAgent(findAgent(key)).status = "stopped";
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
+        const stoppedAgentListIcon = await page.evaluate((key) => {
+          const row = Array.from(document.querySelectorAll(".agent-row[data-open-agent]")).find((item) => item.dataset.openAgent === key);
+          const icon = row?.querySelector(".status-mark");
+          return { found: Boolean(icon), failClass: icon?.classList.contains("fail") };
+        }, agentKey);
+        if (!stoppedAgentListIcon.found || !stoppedAgentListIcon.failClass) {
+          throw new Error(`Stopped schedule agent-list icon is not red: ${JSON.stringify(stoppedAgentListIcon)}`);
+        }
+        await page.evaluate((key) => {
+          scheduleForAgent(findAgent(key)).status = "scheduled";
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
+        await page.evaluate((key) => navigate({ type: "agent", key }), agentKey);
+        await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+        const stoppedScheduleColors = await page.evaluate((key) => {
+          const agent = findAgent(key);
+          const schedule = scheduleForAgent(agent);
+          schedule.status = "stopped";
+          state.renderedViewHtml = "";
+          render();
+          const comparison = document.createElement("span");
+          comparison.className = "pill fail";
+          document.body.append(comparison);
+          const control = document.querySelector("[data-header-schedule-menu]");
+          const result = {
+            failClass: control?.classList.contains("fail"),
+            iconColor: getComputedStyle(control?.querySelector("summary")).color,
+            stoppedColor: getComputedStyle(comparison).color,
+          };
+          comparison.remove();
+          return result;
+        }, agentKey);
+        if (!stoppedScheduleColors.failClass || stoppedScheduleColors.iconColor !== stoppedScheduleColors.stoppedColor) {
+          throw new Error(`Stopped schedule header icon is not red: ${JSON.stringify(stoppedScheduleColors)}`);
+        }
+        await page.evaluate((key) => {
+          scheduleForAgent(findAgent(key)).status = "scheduled";
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
+        await page.click("[data-header-schedule-menu] > summary");
+        await page.waitForSelector("[data-header-schedule-menu] [data-schedule-action='run']", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector("[data-header-schedule-menu] [data-schedule-action='pause']", { state: "visible", timeout: 10_000 });
+        if (!(await page.locator("[data-header-schedule-menu] [data-schedule-action='run'] path[d='M19 18h3']").count())) {
+          throw new Error("Header Run now action does not use the Lucide sport-shoe icon");
+        }
+        await page.click("[data-header-schedule-menu] [data-schedule-action='pause']");
+        await page.waitForSelector("[data-header-schedule-menu] [data-schedule-action='resume']", { state: "attached", timeout: 10_000 });
+        await page.click("[data-header-schedule-menu] > summary");
+        await page.waitForSelector("[data-header-schedule-menu] [data-schedule-action='resume']", { state: "visible", timeout: 10_000 });
+        await page.click("[data-header-schedule-menu] > summary");
         await page.fill("#prompt-input", draft);
         await page.evaluate(async () => {
           if (typeof refresh !== "function") throw new Error("refresh function is unavailable");
@@ -401,8 +552,8 @@ def write_smoke_script(path)
         await page.fill("#inquiry-feedback", "Keep the explanation short.");
         await assertEditorExcludedFromRefresh("#inquiry-form:not(.inquiry-form-full-screen)", "Inline inquiry form", "#inquiry-feedback");
         const structuredInquiryAnswer = await page.evaluate(() => JSON.parse(inquiryAnswerPayload(document.querySelector("#inquiry-form"))));
-        if (structuredInquiryAnswer.next_step !== "Ship the focused change." || structuredInquiryAnswer.approved !== true || Object.hasOwn(structuredInquiryAnswer, "feedback")) {
-          throw new Error(`Inquiry feedback leaked into the structured answer: ${JSON.stringify(structuredInquiryAnswer)}`);
+        if (structuredInquiryAnswer.next_step !== "Ship the focused change." || structuredInquiryAnswer.approved !== true || structuredInquiryAnswer.user_feedback !== "Keep the explanation short." || Object.hasOwn(structuredInquiryAnswer, "feedback")) {
+          throw new Error(`Inquiry feedback is missing from the structured answer: ${JSON.stringify(structuredInquiryAnswer)}`);
         }
         await page.click("[data-toggle-inquiry-full-screen]");
         await page.waitForSelector("#inquiry-form.inquiry-form-full-screen", { state: "visible", timeout: 10_000 });
@@ -450,10 +601,29 @@ def write_smoke_script(path)
           const agent = findAgent(key);
           agent.latest_inquiry = null;
           state.fullScreenInquiryKeys.delete(key);
+          state.conversations[key].blocks.push({
+            kind: "message",
+            role: "user",
+            content: JSON.stringify({ missed_context: "Captured context", personal_reflection: null }, null, 2),
+            metadata: { inquiry_response: true },
+            created_at: new Date().toISOString(),
+          });
           state.renderedViewHtml = "";
           render();
         }, agentKey);
         await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+        const inquiryResponseFields = await page.evaluate(() => {
+          const replies = Array.from(document.querySelectorAll(".message.inquiry-response"));
+          const reply = replies.at(-1);
+          return Array.from(reply?.querySelectorAll(".parsed-json-field") || [], (field) => ({
+            key: field.querySelector(".parsed-json-key")?.textContent,
+            value: field.querySelector(".parsed-json-value")?.textContent,
+          }));
+        });
+        const userFeedbackField = inquiryResponseFields.find((field) => field.key === "USER FEEDBACK");
+        if (userFeedbackField?.value !== "null") {
+          throw new Error(`Blank inquiry feedback is missing from the conversation result: ${JSON.stringify(inquiryResponseFields)}`);
+        }
 
         await page.setViewportSize({ width: 1280, height: 800 });
         await page.evaluate((key) => {
@@ -712,6 +882,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   begin
     wait_for_remote(base_url, log_path)
     agent_key = create_agent(base_url)
+    associate_agent_schedule(fixture.fetch(:logs_dir), agent_key)
     node_dir = File.join(dir, "node")
     install_playwright!(node_dir)
     script = File.join(node_dir, "remote-ui-smoke.js")

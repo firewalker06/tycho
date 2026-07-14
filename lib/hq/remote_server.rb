@@ -1493,9 +1493,10 @@ module HQ
 
       answer = required_text(attrs, "answer", fallback: "prompt")
       feedback = attrs["feedback"].to_s.strip
+      answer, feedback_embedded = inquiry_answer_with_feedback(answer, feedback, supplied: attrs.key?("feedback"))
       attachments = import_prompt_attachments(target, attrs)
       target.add_user_message!(answer, inquiry_id: expected_id, attachments:)
-      target.add_user_message!(feedback, metadata: { "inquiry_feedback" => true }) unless feedback.empty?
+      target.add_user_message!(feedback, metadata: { "inquiry_feedback" => true }) unless feedback_embedded || feedback.empty?
       target.start! if truthy?(attrs["start"]) && !target.running?
       save_agent(target)
       { agent: agent_payload(target), conversation: conversation(target.key) }
@@ -2393,6 +2394,18 @@ module HQ
       return "Please review the attached files." if attachments.any?
 
       raise Error.new("prompt is required")
+    end
+
+    def inquiry_answer_with_feedback(answer, feedback, supplied:)
+      parsed = JSON.parse(answer)
+      return [answer, false] unless parsed.is_a?(Hash)
+
+      if supplied || !parsed.key?("user_feedback")
+        parsed["user_feedback"] = feedback.empty? ? nil : feedback
+      end
+      [JSON.pretty_generate(parsed), true]
+    rescue JSON::ParserError
+      [answer, false]
     end
 
     def truthy?(value)

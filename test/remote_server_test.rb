@@ -433,13 +433,13 @@ module RemoteServerTest
         message[:role] == "user" && message.dig(:metadata, "inquiry_response")
       end
       assert(inquiry_reply, "expected accepted inquiry answer to be marked as an inquiry response")
+      parsed_inquiry_reply = JSON.parse(inquiry_reply[:content])
+      assert(parsed_inquiry_reply["user_feedback"] == "Prefer the smallest safe change.",
+             "expected inquiry feedback to be embedded in the structured conversation answer")
       feedback_reply = result[:conversation].find do |message|
         message[:role] == "user" && message.dig(:metadata, "inquiry_feedback")
       end
-      assert(feedback_reply && feedback_reply[:content] == "Prefer the smallest safe change.",
-             "expected inquiry feedback to be recorded separately from the structured answer")
-      assert(!inquiry_reply[:content].include?("Prefer the smallest safe change."),
-             "expected inquiry feedback to stay outside the parsed structured answer")
+      assert(feedback_reply.nil?, "expected embedded inquiry feedback not to create a duplicate conversation message")
       assert(result[:agent][:latest_inquiry].nil?, "expected accepted inquiry answer to clear the pending inquiry")
       response = HQ::AgentMemory.new(agent).events.reverse.find { |event| event["type"] == "inquiry_response" }
       assert(response.dig("metadata", "inquiry_id") == inquiry_id,
@@ -2383,6 +2383,8 @@ module RemoteServerTest
     assert(!response[:body].include?("project-edit-button"), "expected Project edit to live in the shared More menu")
     assert(response[:body].include?("header-more-button"), "expected root shell to expose header More actions")
     assert(response[:body].include?('id="header-view-menu"'), "expected root shell to expose contextual view controls")
+    assert(response[:body].include?('id="header-schedule-menu"'),
+           "expected root shell to expose contextual schedule controls")
     assert(response[:body].include?('id="header-more-panel"'), "expected root shell to expose the header More menu panel")
     assert(response[:body].include?('id="header-more-badge"'), "expected root shell to expose the header More badge")
     assert(response[:body].include?('id="quick-agent-fab"'), "expected root shell to expose New agent launch")
@@ -2448,6 +2450,13 @@ module RemoteServerTest
            "expected header More menus to expose badge styling")
     assert(css[:body].include?("#header-more-button") && css[:body].include?("border: 0;"),
            "expected the header More button to be borderless")
+    assert(css[:body].include?(".header-schedule-control") && css[:body].include?(".header-schedule-popover"),
+           "expected scheduled agent headers to expose a schedule action menu")
+    assert(css[:body].include?(".header-schedule-control.info > summary") &&
+           css[:body].include?("color: var(--info);"),
+           "expected scheduled agent header icons to match informational agent status")
+    assert(css[:body].include?(".status-mark.info"),
+           "expected informational agent list icons to match their status pills")
     assert(css[:body].include?(".growl"), "expected Remote UI to style growl notifications")
     assert(css[:body].include?(".agent-sort-menu"), "expected Remote UI to style agent sort dropdowns")
     assert(css[:body].include?(".agent-sort-trigger"), "expected Remote UI to style icon-only sort triggers")
@@ -2826,7 +2835,7 @@ module RemoteServerTest
     assert(js[:body].include?("Leave feedback") &&
            js[:body].include?('name="feedback"') &&
            js[:body].include?("const feedback = String(new FormData(form).get(\"feedback\")"),
-           "expected every inquiry to end with optional unstructured feedback")
+           "expected every inquiry to end with optional user feedback")
     assert(!js[:body].include?("data-inquiry-confirm") &&
            js[:body].include?('class="inquiry-footer"'),
            "expected inquiry actions to use a direct anchored footer without redundant confirmation")
@@ -3077,6 +3086,12 @@ module RemoteServerTest
     assert(js[:body].include?("function agentIconName") &&
            js[:body].include?("? \"calendarCheck2\" : \"robot\""),
            "expected Remote UI scheduled agent rows to use the schedule icon")
+    assert(js[:body].include?("function scheduledAgentIconStatusClass") &&
+           js[:body].include?("if (!schedule) return statusClass(agent);") &&
+           js[:body].include?('if (scheduleStatus === "stopped") return "fail";') &&
+           js[:body].include?('if (scheduleStatus === "paused"') &&
+           js[:body].include?('status-mark ${scheduledAgentIconStatusClass(agent)}'),
+           "expected stopped and paused schedules to override associated agent icon colors")
     assert(js[:body].include?('class="schedule-details" data-state-key="schedule-now-details"'),
            "expected Remote UI schedule rows to be collapsed by default")
     assert(js[:body].include?("schedule-disclosure"),
@@ -3091,6 +3106,15 @@ module RemoteServerTest
            "expected Remote UI to expose schedule run/pause/resume controls")
     assert(js[:body].include?("Run now") && js[:body].include?("schedule-toggle-button"),
            "expected Remote UI schedule rows to distinguish manual runs from pause/resume toggles")
+    assert(js[:body].include?("sportShoe") &&
+           js[:body].include?('${iconSvg("sportShoe")}<span>Run now</span>'),
+           "expected Remote UI Run now controls to use Lucide sport-shoe")
+    assert(js[:body].include?("function renderAgentScheduleMenu") &&
+           js[:body].include?('data-header-schedule-menu') &&
+           js[:body].include?('header-schedule-control ${scheduledAgentIconStatusClass(agent, schedule)}') &&
+           js[:body].include?('label: "Run now"') &&
+           js[:body].include?('const toggleAction = blocked ? "resume" : "pause"'),
+           "expected scheduled agent headers to expose run and pause/resume controls")
     assert(js[:body].include?("data-new-schedule"),
            "expected Remote UI to expose schedule creation")
     assert(js[:body].include?("state.setup?.config?.schedule_system_message_template"),
@@ -3529,6 +3553,9 @@ module RemoteServerTest
            "expected chat messages to render their own attachment rows")
     assert(js[:body].include?("function formatJsonObjectMessage"),
            "expected Remote UI to parse JSON object user replies for display")
+    assert(js[:body].include?("includeUserFeedback: inquiryResponseBlock(block)") &&
+           js[:body].include?('entries.push(["user_feedback", null])'),
+           "expected historical inquiry responses to show blank user feedback")
     assert(js[:body].include?("function inquiryResponseBlock"),
            "expected Remote UI to detect inquiry response messages")
     assert(js[:body].include?('return iconSvg("badgeQuestionMark")'),
