@@ -3341,6 +3341,9 @@ module RemoteServerTest
            "expected Summary to use route navigation instead of a dock toggle")
     assert(js[:body].include?("function renderAgentSummaryToggle"),
            "expected Summary toggle markup to be shared across agent views")
+    assert(js[:body].include?('kind = "project-diff";') &&
+           js[:body].include?('fullView: agentDetailViewMode(`${agent.key}:project-diff`) === "full"'),
+           "expected agent dirty diffs to share the focused detail layout menu")
     assert(js[:body].include?("function renderAgentFloatingActions"),
            "expected Agent detail floating actions to be reusable")
     assert(!js[:body].include?("function closeAgentSummary"), "expected Summary page to avoid outside-click panel handling")

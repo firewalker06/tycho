@@ -727,6 +727,74 @@ def write_smoke_script(path)
         if (await page.locator("[data-attachment-viewer-menu]").getAttribute("open") !== null) {
           throw new Error("Attachment context menu stayed open after an outside click");
         }
+
+        await page.evaluate((key) => {
+          history.replaceState(null, "", routeHash({ type: "agentSummary", key }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
+        await page.click("[data-focused-view-menu] > summary");
+        await page.click("[data-set-agent-detail-view][data-view-mode='full']");
+        const summaryFullView = await page.evaluate(() => ({
+          mode: document.querySelector("[data-focused-view-menu]")?.dataset.activeViewMode,
+          full: document.querySelector("[data-agent-workspace]")?.classList.contains("agent-workspace-full-view"),
+          summary: Boolean(document.querySelector("[data-agent-summary-page]")),
+        }));
+        if (summaryFullView.mode !== "full" || !summaryFullView.full || !summaryFullView.summary) {
+          throw new Error(`Summary did not retain the shared full-view layout: ${JSON.stringify(summaryFullView)}`);
+        }
+
+        await page.evaluate((key) => {
+          state.projectDiffs[projectDiffKey("web", "worktree")] = {
+            additions: 1,
+            branch: "main",
+            deletions: 0,
+            dirty: true,
+            dirty_files: 1,
+            files: [{
+              path: "lib/smoke.rb",
+              status: "modified",
+              additions: 1,
+              deletions: 0,
+              hunks: [{ header: "@@ -1 +1 @@", lines: [{ type: "added", content: "+smoke" }] }],
+            }],
+            head: "smoke",
+          };
+          history.replaceState(null, "", routeHash({ type: "projectDiff", key: "web", scope: "worktree", backTo: { type: "agent", key } }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
+        const dirtyDiffDefaultView = await page.evaluate(() => ({
+          mode: document.querySelector("[data-focused-view-menu]")?.dataset.activeViewMode,
+          diff: Boolean(document.querySelector(".agent-workspace-project-diff .diff-viewer")),
+          full: document.querySelector("[data-agent-workspace]")?.classList.contains("agent-workspace-full-view"),
+          wide: document.querySelector("[data-agent-workspace]")?.classList.contains("agent-workspace-detail-wide"),
+        }));
+        if (dirtyDiffDefaultView.mode !== "balanced" || !dirtyDiffDefaultView.diff || dirtyDiffDefaultView.full || dirtyDiffDefaultView.wide) {
+          throw new Error(`Dirty diff did not start in the shared balanced layout: ${JSON.stringify(dirtyDiffDefaultView)}`);
+        }
+        await page.click("[data-focused-view-menu] > summary");
+        await page.click("[data-set-agent-detail-view][data-view-mode='wide']");
+        const dirtyDiffWideView = await page.evaluate(() => ({
+          mode: document.querySelector("[data-focused-view-menu]")?.dataset.activeViewMode,
+          full: document.querySelector("[data-agent-workspace]")?.classList.contains("agent-workspace-full-view"),
+          wide: document.querySelector("[data-agent-workspace]")?.classList.contains("agent-workspace-detail-wide"),
+        }));
+        if (dirtyDiffWideView.mode !== "wide" || dirtyDiffWideView.full || !dirtyDiffWideView.wide) {
+          throw new Error(`Dirty diff did not switch to the shared wide layout: ${JSON.stringify(dirtyDiffWideView)}`);
+        }
+        await page.click("[data-focused-view-menu] > summary");
+        await page.click("[data-set-agent-detail-view][data-view-mode='full']");
+        const dirtyDiffFullView = await page.evaluate(() => ({
+          mode: document.querySelector("[data-focused-view-menu]")?.dataset.activeViewMode,
+          full: document.querySelector("[data-agent-workspace]")?.classList.contains("agent-workspace-full-view"),
+          wide: document.querySelector("[data-agent-workspace]")?.classList.contains("agent-workspace-detail-wide"),
+        }));
+        if (dirtyDiffFullView.mode !== "full" || !dirtyDiffFullView.full || dirtyDiffFullView.wide) {
+          throw new Error(`Dirty diff did not switch to the shared full layout: ${JSON.stringify(dirtyDiffFullView)}`);
+        }
         await page.setViewportSize({ width: 390, height: 844 });
 
         await page.goto(`${baseUrl}/ui#project/web/agent/new`, { waitUntil: "networkidle" });
