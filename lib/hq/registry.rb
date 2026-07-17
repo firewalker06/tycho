@@ -123,6 +123,12 @@ module HQ
       entry["group"] = attrs[:group].to_s unless attrs[:group].to_s.strip.empty?
       entry["path"] = attrs[:path].to_s
       entry["agent"] = attrs[:agent].to_s unless attrs[:agent].to_s.strip.empty?
+      %i[model reasoning_effort pr_url].each do |field|
+        value = attrs[field]
+        entry[field.to_s] = value.to_s unless value.to_s.strip.empty?
+      end
+      entry["response_style"] = attrs[:response_style] if attrs.key?(:response_style) && !attrs[:response_style].nil?
+      entry["hidden"] = attrs[:hidden] if attrs.key?(:hidden) && !attrs[:hidden].nil?
 
       group = entry["group"].to_s
       insert_index = nil
@@ -131,6 +137,7 @@ module HQ
         insert_index = last_in_group ? last_in_group + 1 : nil
       end
       insert_index ? projects.insert(insert_index, entry) : projects.push(entry)
+      validate_project_entries!(projects)
       data["projects"] = projects
       write_yaml(@path, data)
       load!
@@ -260,6 +267,7 @@ module HQ
       end
 
       if changed
+        validate_project_entries!(projects)
         write_yaml(@path, data)
         load!
         HQ.hooks.publish("project.updated", project_key: project_key.to_s, fields: attrs.keys.map(&:to_s))
@@ -337,6 +345,14 @@ module HQ
     end
 
     private
+
+    def validate_project_entries!(entries)
+      previous_projects = @projects
+      @projects = build_projects(entries)
+      validate!
+    ensure
+      @projects = previous_projects
+    end
 
     def build_groups(raw_groups)
       return {} unless raw_groups.is_a?(Hash)

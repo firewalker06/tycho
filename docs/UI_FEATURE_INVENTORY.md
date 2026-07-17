@@ -304,7 +304,12 @@ Running `bin/tycho` without a subcommand opens the TUI.
 Command surface:
 
 - `bin/tycho --help`.
-- `bin/tycho project update <project-key> --pr-url <url>`: update project PR metadata.
+- `bin/tycho project <project-key> [options]`: create a project using the current directory by default.
+- `bin/tycho project create <project-key> [options]`: explicit project creation form.
+- `bin/tycho project show <project-key> [--json]`: inspect normalized project configuration and Git metadata.
+- `bin/tycho project update <project-key> [options]`: update project defaults, metadata, response style, and visibility.
+- `bin/tycho project archive <project-key> [--json]`: archive the project, its managed agents, and their logs after rejecting active runs.
+- All project lifecycle commands accept `--json` for automation.
 
 
 ## Hooks And Automation

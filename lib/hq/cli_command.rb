@@ -33,28 +33,106 @@ module HQ
       end
 
       class Project < Dry::CLI::Command
-        desc "Manage project metadata"
+        extend CommandMetadata
 
-        def call(**)
-          exit CLICommand.usage("Missing project command", err: err)
+        desc "Manage project metadata"
+        argument :project_key, required: false, desc: "Project key for quick creation"
+        option :path, desc: "Project directory (defaults to the current directory)"
+        option :name, desc: "Display name (defaults to the directory name)"
+        option :group, desc: "Project group"
+        option :harness, desc: "Default agent harness"
+        option :agent, desc: "Alias for --harness"
+        option :model, desc: "Default model override"
+        option :reasoning_effort, desc: "Default reasoning effort"
+        option :response_style, desc: "Response style path, default, or disabled"
+        option :pr_url, desc: "Open pull request URL"
+        option :hidden, desc: "Visibility override: true, false, or inherit"
+        option :json, type: :boolean, default: false, desc: "Print JSON"
+        usage_template "project %{project_key} [options]"
+
+        def call(project_key: nil, **opts)
+          exit CLICommand.usage("Missing project command or project key", err: err) if project_key.to_s.empty?
+
+          exit CLICommand.create_project(project_key, opts, out: out, err: err)
+        end
+      end
+
+      class ProjectCreate < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Create a project"
+        argument :project_key, required: true, desc: "Project key"
+        option :path, desc: "Project directory (defaults to the current directory)"
+        option :name, desc: "Display name (defaults to the directory name)"
+        option :group, desc: "Project group"
+        option :harness, desc: "Default agent harness"
+        option :agent, desc: "Alias for --harness"
+        option :model, desc: "Default model override"
+        option :reasoning_effort, desc: "Default reasoning effort"
+        option :response_style, desc: "Response style path, default, or disabled"
+        option :pr_url, desc: "Open pull request URL"
+        option :hidden, desc: "Visibility override: true, false, or inherit"
+        option :json, type: :boolean, default: false, desc: "Print JSON"
+        usage_template "project create %{project_key} [options]"
+
+        def call(project_key:, **opts)
+          exit CLICommand.create_project(project_key, opts, out: out, err: err)
+        end
+      end
+
+      class ProjectShow < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Show project configuration"
+        argument :project_key, required: true, desc: "Project key"
+        option :json, type: :boolean, default: false, desc: "Print JSON"
+        usage_template "project show %{project_key} [--json]"
+
+        def call(project_key:, **opts)
+          exit CLICommand.show_project(project_key, opts, out: out, err: err)
         end
       end
 
       class ProjectUpdate < Dry::CLI::Command
         extend CommandMetadata
 
-        desc "Update project metadata fields"
+        desc "Update project configuration"
         argument :project_key, required: true, desc: "Project key"
+        option :name, desc: "Display name"
+        option :group, desc: "Project group (pass empty string to clear)"
+        option :harness, desc: "Default agent harness"
+        option :agent, desc: "Alias for --harness"
+        option :model, desc: "Default model override (pass empty string to clear)"
+        option :reasoning_effort, desc: "Default reasoning effort (pass empty string to clear)"
+        option :response_style, desc: "Response style path, default, or disabled"
         option :pr_url, desc: "Open pull request URL (pass empty string to clear)"
-        usage_template "project update %{project_key} --pr-url <url>"
+        option :hidden, desc: "Visibility override: true, false, or inherit"
+        option :json, type: :boolean, default: false, desc: "Print JSON"
+        usage_template "project update %{project_key} [options]"
 
         def call(project_key:, **opts)
           exit CLICommand.update_project(project_key, opts, out: out, err: err)
         end
       end
 
+      class ProjectArchive < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Archive a project and its managed agents"
+        argument :project_key, required: true, desc: "Project key"
+        option :json, type: :boolean, default: false, desc: "Print JSON"
+        usage_template "project archive %{project_key} [--json]"
+
+        def call(project_key:, **opts)
+          exit CLICommand.archive_project(project_key, opts, out: out, err: err)
+        end
+      end
+
       register "project", Project do |prefix|
+        prefix.register "create", ProjectCreate
+        prefix.register "show", ProjectShow
         prefix.register "update", ProjectUpdate
+        prefix.register "archive", ProjectArchive
       end
 
       class Agent < Dry::CLI::Command
@@ -307,7 +385,11 @@ module HQ
     end
 
     PROJECT_COMMANDS = [
-      Commands::ProjectUpdate
+      Commands::Project,
+      Commands::ProjectCreate,
+      Commands::ProjectShow,
+      Commands::ProjectUpdate,
+      Commands::ProjectArchive
     ].freeze
     AGENT_COMMANDS = [
       Commands::AgentCreate,
@@ -586,21 +668,229 @@ module HQ
       text.to_s.each_line.map { |line| "#{prefix}#{line}" }.join
     end
 
-    def update_project(project_key, opts, out: $stdout, err: $stderr)
+    def create_project(project_key, opts, out: $stdout, err: $stderr)
+      require_relative "registry"
+      require_relative "harness_registry"
+
+      key = project_key.to_s.strip
+      return failure("Project key is required", err: err) if key.empty?
+
+      path = opts[:path].to_s.strip
+      path = Dir.pwd if path.empty?
+      path = File.expand_path(path)
+      return failure("Project path does not exist: #{path}", err: err) unless File.directory?(path)
+
+      name = opts[:name].to_s.strip
+      name = File.basename(path) if name.empty?
+      name = key if name.empty? || name == File::SEPARATOR
+      harness = project_harness_option(opts, default: HQ.harness_keys.first)
+      attrs = {
+        key: key,
+        name: name,
+        path: path,
+        agent: harness
+      }
+      copy_project_option!(attrs, opts, :group)
+      copy_project_option!(attrs, opts, :model)
+      copy_project_option!(attrs, opts, :reasoning_effort)
+      copy_project_option!(attrs, opts, :pr_url)
+      attrs[:response_style] = project_response_style_option(opts[:response_style]) if opts.key?(:response_style)
+      attrs[:hidden] = project_hidden_option(opts[:hidden]) if opts.key?(:hidden)
+
+      registry = Registry.new
+      registry.add_project!(attrs)
+      config = registry.projects.find { |project| project.key == key }
+      payload = project_config_payload(config)
+      print_project_result(payload, json: opts[:json], out: out, action: "Created")
+      0
+    rescue StandardError => e
+      failure("Failed to create #{project_key}: #{e.message}", err: err)
+    end
+
+    def show_project(project_key, opts = {}, out: $stdout, err: $stderr)
       require_relative "registry"
 
+      registry = Registry.new
+      config = registry.projects.find { |project| project.key == project_key.to_s }
+      return failure("Unknown project: #{project_key}", err: err) unless config
+
+      print_project_result(project_config_payload(config), json: opts[:json], out: out)
+      0
+    rescue StandardError => e
+      failure("Failed to show #{project_key}: #{e.message}", err: err)
+    end
+
+    def update_project(project_key, opts, out: $stdout, err: $stderr)
+      require_relative "registry"
+      require_relative "harness_registry"
+
       attrs = {}
-      attrs[:pr_url] = opts[:pr_url] if opts.key?(:pr_url)
-      return failure("No fields to update (pass --pr-url)", err: err) if attrs.empty?
+      %i[name group model reasoning_effort pr_url].each { |field| copy_project_option!(attrs, opts, field) }
+      attrs[:agent] = project_harness_option(opts) if opts.key?(:harness) || opts.key?(:agent)
+      attrs[:response_style] = project_response_style_option(opts[:response_style]) if opts.key?(:response_style)
+      attrs[:hidden] = project_hidden_option(opts[:hidden]) if opts.key?(:hidden)
+      return failure("No fields to update", err: err) if attrs.empty?
 
       registry = Registry.new
       updated = registry.update_project!(project_key, attrs)
       return failure("Unknown project: #{project_key}", err: err) unless updated
 
-      out.puts "Updated #{project_key}: #{attrs.map { |k, v| "#{k}=#{v.to_s.empty? ? "(cleared)" : v}" }.join(", ")}"
+      config = registry.projects.find { |project| project.key == project_key.to_s }
+      print_project_result(project_config_payload(config), json: opts[:json], out: out, action: "Updated")
       0
     rescue StandardError => e
       failure("Failed to update #{project_key}: #{e.message}", err: err)
+    end
+
+    def archive_project(project_key, opts = {}, out: $stdout, err: $stderr)
+      require_relative "registry"
+
+      registry = Registry.new
+      config = registry.projects.find { |candidate| candidate.key == project_key.to_s }
+      return failure("Unknown project: #{project_key}", err: err) unless config
+
+      project = Project.new(config)
+      store = AgentStore.new(registry.projects)
+      agents = store.load
+      project_agents = agents.select { |agent| agent.project_key == project.key }
+      running = project_agents.select(&:running?)
+      unless running.empty?
+        return failure("Project #{project.key} has running agents: #{running.map(&:key).join(", ")}", err: err)
+      end
+
+      payload = project_config_payload(config)
+      archived_config = registry.archive_project!(project.key)
+      return failure("Unknown project: #{project_key}", err: err) unless archived_config
+
+      project_archive = project.archive_logs!
+      scheduler = Scheduler.new(registry: registry)
+      agent_archives = project_agents.filter_map do |agent|
+        archive_path = agent.archive_logs!
+        begin
+          scheduler.reconcile_archived_agent!(agent.key, archived_agent: agent)
+        rescue StandardError
+          nil
+        end
+        archive_path
+      end
+      store.save(agents.reject { |agent| agent.project_key == project.key })
+
+      result = {
+        project: payload,
+        archived_agent_keys: project_agents.map(&:key),
+        project_log_archive: project_archive,
+        agent_log_archives: agent_archives
+      }
+      if opts[:json]
+        out.puts JSON.pretty_generate(result)
+      else
+        out.puts "Archived project #{project.key}"
+        out.puts "Project logs: #{project_archive}" if project_archive
+        out.puts "Archived agents: #{project_agents.map(&:key).join(", ")}" unless project_agents.empty?
+      end
+      0
+    rescue StandardError => e
+      failure("Failed to archive #{project_key}: #{e.message}", err: err)
+    end
+
+    def copy_project_option!(attrs, opts, field)
+      return unless opts.key?(field)
+
+      value = opts[field]
+      value = nil if value.is_a?(String) && value.strip.empty?
+      attrs[field] = value
+    end
+
+    def project_harness_option(opts, default: nil)
+      harness = opts[:harness].to_s.strip.downcase
+      agent = opts[:agent].to_s.strip.downcase
+      if !harness.empty? && !agent.empty? && harness != agent
+        raise ArgumentError, "--harness and --agent must match when both are provided"
+      end
+
+      selected = harness.empty? ? agent : harness
+      selected = default.to_s if selected.empty?
+      unless HQ.supported_harness?(selected)
+        raise ArgumentError, "Unsupported harness #{selected.inspect}. Supported: #{HQ.harness_keys.join(", ")}"
+      end
+      selected
+    end
+
+    def project_response_style_option(value)
+      text = value.to_s.strip
+      return nil if text.empty? || %w[default global inherit].include?(text.downcase)
+      return false if %w[none disabled off false].include?(text.downcase)
+
+      text
+    end
+
+    def project_hidden_option(value)
+      case value.to_s.strip.downcase
+      when "true", "yes", "on", "1", "hidden" then true
+      when "false", "no", "off", "0", "visible" then false
+      when "inherit", "default", "nil", "null", "" then nil
+      else
+        raise ArgumentError, "--hidden must be true, false, or inherit"
+      end
+    end
+
+    def project_config_payload(config)
+      project = Project.new(config)
+      project.refresh_metadata!
+      {
+        key: project.key,
+        name: project.name,
+        group: project.group.empty? ? nil : project.group,
+        path: project.path,
+        harness: config.agent,
+        model: config.model,
+        reasoning_effort: config.reasoning_effort,
+        response_style: config.response_style,
+        pr_url: config.pr_url,
+        hidden: project.hidden?,
+        hidden_override: config.hidden_config,
+        visibility_source: project.visibility_source,
+        git: {
+          branch: project.branch,
+          commit: project.commit_hash,
+          dirty_files: project.dirty_files
+        }
+      }
+    end
+
+    def print_project_result(payload, json:, out:, action: nil)
+      return out.puts(JSON.pretty_generate(payload)) if json
+
+      out.puts "#{action} project #{payload.fetch(:key)}" if action
+      rows = [
+        ["Key", payload[:key]],
+        ["Name", payload[:name]],
+        ["Group", payload[:group] || "(none)"],
+        ["Path", payload[:path]],
+        ["Harness", payload[:harness]],
+        ["Model", payload[:model] || "(harness default)"],
+        ["Reasoning effort", payload[:reasoning_effort] || "(harness default)"],
+        ["Response style", project_response_style_label(payload[:response_style])],
+        ["PR URL", payload[:pr_url] || "(none)"],
+        ["Visibility", payload[:hidden] ? "hidden (#{payload[:visibility_source]})" : "visible (#{payload[:visibility_source]})"],
+        ["Branch", payload.dig(:git, :branch) || "n/a"],
+        ["Commit", payload.dig(:git, :commit) || "n/a"],
+        ["Dirty files", payload.dig(:git, :dirty_files).to_i.to_s]
+      ]
+      table = Lipgloss::Table.new
+        .rows(rows)
+        .border_style(Lipgloss::Style.new.foreground(COLORS[:accent_alt]))
+        .style_func(rows: rows.length, columns: 2) { |_row, column|
+          column.zero? ? Lipgloss::Style.new.bold(true).foreground(COLORS[:notice]) : Lipgloss::Style.new.foreground(COLORS[:text])
+        }
+      out.puts table.render
+    end
+
+    def project_response_style_label(value)
+      return "disabled" if value == false
+      return "global default" if value.nil?
+
+      value.to_s
     end
 
     def create_agent(project_key, prompt, opts, out: $stdout, err: $stderr)

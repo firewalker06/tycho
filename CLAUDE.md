@@ -38,6 +38,7 @@ Runtime artifacts are written to `~/.tycho/logs/`, including `hq.log` (applicati
 bundle install
 bin/tycho
 bundle exec bin/tycho
+bundle exec bin/tycho project <key> [options]
 bin/test
 bundle exec ruby -c bin/tycho
 bundle exec ruby test/registry_test.rb

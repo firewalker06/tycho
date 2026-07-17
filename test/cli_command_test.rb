@@ -2,19 +2,100 @@
 
 require "fileutils"
 require "json"
+require "open3"
+require "rbconfig"
 require "stringio"
 require "tmpdir"
+require "yaml"
 
 require_relative "../lib/hq/cli_command"
 require_relative "../lib/hq/domain/managed_agent"
 
 module CLICommandTest
+  ROOT = File.expand_path("..", __dir__)
+  EXECUTABLE = File.join(ROOT, "bin", "tycho")
+
   module_function
 
   def run!
+    assert_project_commands_manage_full_lifecycle
     assert_debug_claude_is_listed_in_usage
     assert_debug_claude_run_agent_uses_claude_defaults
     puts "cli_command_test: ok"
+  end
+
+  def assert_project_commands_manage_full_lifecycle
+    Dir.mktmpdir("hq-cli-project-test") do |dir|
+      workspace = File.join(dir, "workspace")
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      logs_root = File.join(dir, "logs")
+      FileUtils.mkdir_p(workspace)
+      File.write(config_path, "projects: []\n")
+      File.write(prompts_path, "{}\n")
+      env = {
+        "TYCHO_CONFIG_PATH" => config_path,
+        "TYCHO_SYSTEM_PROMPTS_PATH" => prompts_path,
+        "TYCHO_LOGS_ROOT" => logs_root
+      }
+
+      created = run_tycho(env, "project", "demo", "--path", workspace, "--name", "Demo Project",
+                          "--group", "Core", "--harness", "codex", "--model", "gpt-test",
+                          "--reasoning-effort", "high", "--response-style", "disabled",
+                          "--pr-url", "https://github.com/example/demo/pull/7", "--hidden", "true", "--json")
+      assert(created.fetch(:status).success?, "expected shorthand project creation to succeed: #{created.fetch(:stderr)}")
+      created_payload = JSON.parse(created.fetch(:stdout))
+      assert(created_payload["key"] == "demo", "expected created project key")
+      assert(created_payload["path"] == workspace, "expected created project path")
+      assert(created_payload["harness"] == "codex", "expected created project harness")
+      assert(created_payload["response_style"] == false, "expected disabled response style")
+      assert(created_payload["hidden"] == true, "expected hidden project override")
+
+      shown = run_tycho(env, "project", "show", "demo", "--json")
+      assert(shown.fetch(:status).success?, "expected project show to succeed: #{shown.fetch(:stderr)}")
+      shown_payload = JSON.parse(shown.fetch(:stdout))
+      assert(shown_payload["model"] == "gpt-test", "expected project show to expose model")
+      assert(shown_payload["pr_url"].end_with?("/pull/7"), "expected project show to expose PR URL")
+
+      updated = run_tycho(env, "project", "update", "demo", "--name", "Demo Updated", "--group=",
+                          "--model=", "--reasoning-effort", "low", "--response-style", "default",
+                          "--pr-url=", "--hidden", "inherit", "--json")
+      assert(updated.fetch(:status).success?, "expected project update to succeed: #{updated.fetch(:stderr)}")
+      updated_payload = JSON.parse(updated.fetch(:stdout))
+      assert(updated_payload["name"] == "Demo Updated", "expected updated project name")
+      assert(updated_payload["group"].nil?, "expected project group to clear")
+      assert(updated_payload["model"].nil?, "expected project model to clear")
+      assert(updated_payload["reasoning_effort"] == "low", "expected project effort to update")
+      assert(updated_payload["response_style"].nil?, "expected response style to return to global default")
+      assert(updated_payload["pr_url"].nil?, "expected PR URL to clear")
+      assert(updated_payload["hidden_override"].nil?, "expected visibility to inherit")
+
+      explicit = run_tycho(env, "project", "create", "explicit", "--path", workspace, "--json")
+      assert(explicit.fetch(:status).success?, "expected explicit project create to succeed: #{explicit.fetch(:stderr)}")
+      assert(JSON.parse(explicit.fetch(:stdout))["key"] == "explicit", "expected explicit project create key")
+      agent_created = run_tycho(env, "agent", "create", "explicit", "Check this project")
+      assert(agent_created.fetch(:status).success?, "expected project fixture agent creation to succeed")
+      agent_key = JSON.parse(File.read(File.join(logs_root, "managed_agents.json"))).fetch(0).fetch("key")
+      explicit_archived = run_tycho(env, "project", "archive", "explicit", "--json")
+      assert(explicit_archived.fetch(:status).success?, "expected project archive with agents to succeed")
+      assert(JSON.parse(explicit_archived.fetch(:stdout)).fetch("archived_agent_keys") == [agent_key],
+             "expected project archive to include managed agents")
+      assert(JSON.parse(File.read(File.join(logs_root, "managed_agents.json"))).empty?,
+             "expected project archive to remove managed agents from active state")
+
+      archived = run_tycho(env, "project", "archive", "demo", "--json")
+      assert(archived.fetch(:status).success?, "expected project archive to succeed: #{archived.fetch(:stderr)}")
+      archived_payload = JSON.parse(archived.fetch(:stdout))
+      assert(archived_payload.dig("project", "key") == "demo", "expected archived project payload")
+      active = YAML.safe_load_file(config_path, aliases: true).fetch("projects")
+      archived_config = YAML.safe_load_file(File.join(dir, "hq.archived.yml"), aliases: true).fetch("projects")
+      assert(active.none? { |project| project["key"] == "demo" }, "expected archived project to leave active config")
+      assert(archived_config.any? { |project| project["key"] == "demo" }, "expected archived project config")
+
+      missing = run_tycho(env, "project", "show", "demo", "--json")
+      assert(!missing.fetch(:status).success?, "expected archived project to be absent from project show")
+      assert(missing.fetch(:stderr).include?("Unknown project: demo"), "expected clear missing-project error")
+    end
   end
 
   def assert_debug_claude_is_listed_in_usage
@@ -102,6 +183,11 @@ module CLICommandTest
     HQ::ManagedAgent.define_method(:start!, original_start) if original_start
     HQ::ManagedAgent.define_method(:poll!, original_poll) if original_poll
     HQ::ManagedAgent.define_method(:running?, original_running) if original_running
+  end
+
+  def run_tycho(env, *args)
+    stdout, stderr, status = Open3.capture3(env, RbConfig.ruby, EXECUTABLE, *args, chdir: ROOT)
+    { stdout: stdout, stderr: stderr, status: status }
   end
 
   def with_env(values)

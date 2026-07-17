@@ -244,6 +244,32 @@ Bind explicitly to localhost:
 tycho serve --host 127.0.0.1 --port 7373
 ```
 
+Manage projects without opening the TUI:
+
+```bash
+# Quick creation uses the current directory and derives the display name.
+tycho project my-workspace
+
+# The explicit form accepts the same options.
+tycho project create my-workspace \
+  --path ~/Code/my-workspace \
+  --name "My Workspace" \
+  --group Personal \
+  --harness codex \
+  --model gpt-5.5 \
+  --reasoning-effort medium
+
+tycho project show my-workspace
+tycho project update my-workspace --group Work --model=""
+tycho project archive my-workspace
+```
+
+Create and update also accept `--response-style`, `--pr-url`, and a
+`--hidden=true|false|inherit` visibility override. Add `--json` to any project
+command for script-friendly output. Archive rejects projects with running
+agents; otherwise it moves the project configuration and logs to their normal
+archive locations and archives all managed agents owned by the project.
+
 Connect one Remote UI to multiple Tycho servers by adding `remote_servers` to
 `~/.tycho/config/hq.yml`:
 

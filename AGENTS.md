@@ -15,6 +15,7 @@ Runtime artifacts are written to `~/.tycho/logs/`, including app state files suc
 - `bin/tycho`: start the TUI locally.
 - `bundle exec bin/tycho`: run through Bundler when debugging gem resolution issues.
 - `bundle exec bin/tycho serve [--host 127.0.0.1] [--port 7373]`: start the local Remote Sessions JSON API and web UI for managed-agent control.
+- `bundle exec bin/tycho project <key> [options]` and `project create|show|update|archive`: manage project configuration from the CLI.
 - `bundle exec bin/tycho schedule [list|daemon --once|daemon --dry-run]`: list schedules, run the scheduled-agent daemon, or run a single scheduler tick.
 - `bin/test`: run the public CI-equivalent Ruby syntax and regression suite.
 - `bin/remote-ui-smoke`: start a throwaway Remote UI server with temp config/log roots, create a fixture agent, and run a Chrome/Playwright smoke check for composer refresh preservation and mobile dock layout.
