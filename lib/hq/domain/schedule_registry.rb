@@ -106,7 +106,8 @@ module HQ
 
   ScheduleDefinition = Struct.new(
     :key, :name, :enabled, :cron, :timezone, :project_key, :agent_name,
-    :system_message, :message_source, :message, :message_file, :message_path, :policy,
+    :agent_key, :system_message, :message_source, :message, :message_file, :message_path,
+    :ends_at, :policy,
     keyword_init: true
   ) do
     def cron_expression
@@ -141,6 +142,10 @@ module HQ
 
     def archive_previous_agent?
       true
+    end
+
+    def expired?(time = Time.now)
+      ends_at && time >= ends_at
     end
   end
 
@@ -279,10 +284,12 @@ module HQ
       entry.delete("enabled")
       assign_clean_string(entry, "cron", values, fallback: entry["cron"])
       assign_clean_string(entry, "timezone", values, fallback: entry["timezone"] || "local")
+      assign_clean_string(entry, "ends_at", values, fallback: entry["ends_at"])
 
       target["type"] = "agent"
       assign_clean_string(target, "project_key", values, fallback: target["project_key"])
       assign_clean_string(target, "name", values, source_key: "agent_name", fallback: target["name"])
+      assign_clean_string(target, "agent_key", values, fallback: target["agent_key"])
       assign_clean_string(target, "system_message", values, fallback: target["system_message"])
       source = clean_string(values["message_source"], fallback: target["message_source"])
       source = target["message_file"].to_s.empty? ? "inline" : "file" if source.to_s.empty?
@@ -346,6 +353,7 @@ module HQ
       validate_cron!(key, cron)
       timezone = entry.fetch("timezone", "local").to_s
       validate_timezone!(key, timezone)
+      ends_at = optional_time!(entry["ends_at"], label: "schedule #{key.inspect} ends_at")
 
       project_key = required_string(target, "project_key", label: "schedule #{key.inspect} target")
       project_for!(key, project_key)
@@ -360,11 +368,13 @@ module HQ
         timezone: timezone,
         project_key: project_key,
         agent_name: optional_string(target["name"], fallback: entry["name"] || key),
+        agent_key: optional_string(target["agent_key"], fallback: nil),
         system_message: optional_string(target["system_message"], fallback: nil),
         message_source: source,
         message: message,
         message_file: message_file,
         message_path: message_path,
+        ends_at: ends_at,
         policy: policy
       )
     end
@@ -437,6 +447,15 @@ module HQ
     def optional_string(value, fallback:)
       text = value.to_s.strip
       text.empty? ? fallback.to_s : text
+    end
+
+    def optional_time!(value, label:)
+      text = value.to_s.strip
+      return nil if text.empty?
+
+      Time.iso8601(text)
+    rescue ArgumentError
+      raise Error, "#{label} must be an ISO 8601 timestamp"
     end
 
   end

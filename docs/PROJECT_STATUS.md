@@ -57,6 +57,7 @@ Key references:
 | Remote UI control sizing | Shared 44 px control and touch-target tokens, 16 px mobile form text, visible focus states, and explicit validation/status text | Avoid mobile auto-zoom, undersized targets, color-only state, and inconsistent action geometry |
 | Remote multiserver broker | Configured `remote_servers` let one Remote UI switch between local and peer `tycho serve` instances through backend proxy routes | Browser clients stay connected to one origin; peer credentials remain server-side; each view and mutation is scoped to the selected server |
 | Scheduled runs | Dedicated `tycho schedule daemon`, definitions in `~/.tycho/config/schedules.yml`, runtime state in `~/.tycho/logs/schedules.json`, validated standard cron syntax | Scheduled work should continue independently from the TUI and Remote UI while still reusing existing agent execution paths |
+| Temporary session loops | Remote UI can adopt an idle conversation as a normal recurring schedule, run it immediately with schedule context, and stop it at a configured cutoff | Review-waiting sessions need lightweight polling without losing their existing context or creating a separate agent |
 | Schedule daemon freshness | `tycho schedule daemon` writes heartbeat state to `~/.tycho/logs/scheduler_daemon.json`; UI surfaces derive running/stale/stopped from heartbeat age and process liveness, and report untracked running daemons without heartbeat state | Users need to know whether cron work is actually ticking, not only whether definitions are valid |
 | Schedule command scope | Agent-only schedules; each schedule owns one persistent managed agent session and accepts only inline messages or files under `schedules/` | Preserve recurring context without adding arbitrary shell execution or loose existing-agent targets |
 | Schedule statuses | Schedules expose `scheduled`, `paused`, or `stopped`; last outcome and error reason are tracked separately. `no_action_needed` is reserved for observational checks where no action was necessary, while completed actions and deliverables use `success` | Keep healthy no-op checks quiet without hiding meaningful completed work from unread state and notifications |
@@ -184,6 +185,7 @@ harness compatibility, and continuing browser/TUI smoke verification.
 - [x] Show schedules and daemon freshness in the TUI and Remote UI Now view
 - [ ] Add TUI schedule management
 - [x] Add Remote UI schedule management
+- [x] Add configurable Remote UI session loops with prompt templates and end-of-day expiry
 
 ### Omnisearch
 

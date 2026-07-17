@@ -241,6 +241,10 @@ module HQ
       end
       return ok(hidden: service.hidden_settings) if method == "GET" && parts == ["settings", "hidden"]
       return ok(hidden: service.update_hidden_setting(body)) if %w[PATCH PUT].include?(method) && parts == ["settings", "hidden"]
+      return ok(session_loops: service.session_loop_settings) if method == "GET" && parts == ["settings", "session-loops"]
+      if %w[PATCH PUT].include?(method) && parts == ["settings", "session-loops"]
+        return ok(session_loops: service.update_session_loop_settings(body))
+      end
       return ok(response_style: service.response_style) if method == "GET" && parts == ["settings", "response-style"]
       if %w[PATCH PUT].include?(method) && parts == ["settings", "response-style"]
         return ok(response_style: service.update_response_style(body))
@@ -267,6 +271,7 @@ module HQ
         return ok(agent: service.agent(key)) if method == "GET" && tail.empty?
         return ok(agent: service.update_agent(key, body)) if %w[PATCH PUT].include?(method) && tail.empty?
         return ok(service.archive_agent(key)) if method == "DELETE" && tail.empty?
+        return created(service.create_agent_loop(key, body)) if method == "POST" && tail == ["loop-schedule"]
         return ok(conversation: service.conversation(key)) if method == "GET" && tail == ["conversation"]
         return ok(debug: service.agent_debug(key)) if method == "GET" && tail == ["debug"]
         return ok(log: service.agent_log(key, request&.query_params || {})) if method == "GET" && tail == ["logs"]
@@ -994,6 +999,82 @@ module HQ
       raise Error.new(e.message, status: 400)
     end
 
+    def create_agent_loop(key, attrs)
+      now = Time.now
+      agents = load_all_agents
+      agent = agents.find { |candidate| candidate.key == key.to_s }
+      raise Error.new("Unknown agent: #{key}", status: 404) unless agent
+      raise Error.new("Stop the running agent before starting a loop", status: 409) if agent.running?
+      unless agent.schedule_key.to_s.empty?
+        raise Error.new("Agent #{key} already belongs to schedule #{agent.schedule_key}", status: 409)
+      end
+
+      interval = Integer(attrs["interval_minutes"].to_s, 10)
+      unless interval.between?(1, 59)
+        raise Error.new("Loop interval must be between 1 and 59 minutes", status: 400)
+      end
+      ends_at = Time.iso8601(required_text(attrs, "ends_at", fallback: "ends_at"))
+      raise Error.new("Loop end time must be in the future", status: 400) unless ends_at > now
+
+      schedule_key = required_text(attrs, "schedule_key", fallback: "schedule_key").strip
+      name = attrs["name"].to_s.strip
+      name = "Loop #{agent.name || agent.key}" if name.empty?
+      message = required_text(attrs, "message", fallback: "message").strip
+      system_message = @agent_store.schedule_system_prompt(
+        schedule_key: schedule_key,
+        name: name
+      )
+      created = schedule_registry.create(
+        "key" => schedule_key,
+        "name" => name,
+        "cron" => "*/#{interval} * * * *",
+        "timezone" => "local",
+        "ends_at" => ends_at.iso8601,
+        "project_key" => agent.project_key,
+        "agent_name" => agent.name,
+        "agent_key" => agent.key,
+        "system_message" => system_message,
+        "message_source" => "inline",
+        "message" => message
+      )
+      @agent_store.adopt_schedule!(
+        agent,
+        schedule_key: schedule_key,
+        name: name,
+        system_message: system_message,
+        created_at: now
+      )
+
+      store = ScheduleStore.new
+      states = store.load
+      state = store.state_for(states, created.key)
+      state.mark_scheduled!
+      state.last_target_kind = "agent"
+      state.last_target_key = agent.key
+      state.next_due_at = now
+      state.resumed_at = now
+      store.save(states)
+      save_agents(sort_agents(agents))
+
+      result = scheduler.run_now(created.key, now: now)
+      if result.fetch(:status) == :failed
+        raise Error.new(result.fetch(:error), status: 409)
+      end
+      unless result.fetch(:status) == :started
+        raise Error.new("Loop schedule did not start: #{result.fetch(:status)}", status: 409)
+      end
+
+      {
+        schedule: result.fetch(:schedule),
+        agent: agent_payload(result.fetch(:agent)),
+        daemon: ensure_loop_schedule_daemon
+      }
+    rescue ArgumentError, TypeError
+      raise Error.new("Loop interval and end time must be valid", status: 400)
+    rescue ScheduleRegistry::Error => e
+      raise Error.new(e.message, status: 400)
+    end
+
     def update_schedule(key, attrs)
       schedule_registry.update(key, attrs)
       schedule(key)
@@ -1336,6 +1417,16 @@ module HQ
 
       reload_projects_from_registry!
       hidden_settings
+    end
+
+    def session_loop_settings
+      @registry.session_loop_settings
+    end
+
+    def update_session_loop_settings(attrs)
+      @registry.update_session_loop_settings!(attrs)
+    rescue ConfigError => e
+      raise Error.new(e.message, status: 400)
     end
 
     def response_style
@@ -1732,6 +1823,15 @@ module HQ
         push_notification_store: @push_notification_store,
         web_push_notifier: @web_push_notifier
       )
+    end
+
+    def ensure_loop_schedule_daemon
+      daemon = schedule_daemon
+      return daemon if %w[running stale untracked].include?(daemon[:status].to_s)
+
+      schedule_daemon_supervisor.start!(interval: nil, dry_run: false).fetch(:daemon)
+    rescue ScheduleDaemonSupervisor::Error => e
+      { status: "stopped", error: e.message }
     end
 
     def schedule_registry
@@ -2244,6 +2344,7 @@ module HQ
         system_prompts_path: @registry.system_prompts_path,
         prompt_template_count: prompt_template_count,
         schedule_system_message_template: AgentStore.scheduled_system_prompt_template,
+        session_loop_settings: @registry.session_loop_settings,
         active_projects: @projects.length,
         archived_projects: archived_project_count
       }

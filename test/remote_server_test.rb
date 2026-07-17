@@ -34,6 +34,7 @@ module RemoteServerTest
     assert_remote_agent_model_and_effort_payloads
     assert_remote_hidden_settings_filter_projects_and_agents
     assert_remote_response_style_settings
+    assert_remote_session_loop_settings
     assert_remote_schedule_routes
     assert_remote_setup_payload_includes_readiness
     assert_remote_harness_catalogs_are_configurable
@@ -62,6 +63,40 @@ module RemoteServerTest
     assert_server_daemonizes_after_startup_to_log
     assert_server_prints_request_logs
     puts "remote_server_test: ok"
+  end
+
+  def assert_remote_session_loop_settings
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      server = HQ::RemoteServer.new
+
+      fetched = server.send(:route, service, "GET", "/settings/session-loops", {}, nil)
+      assert(fetched.dig(:body, :session_loops, :interval_minutes) == 10,
+             "expected session loop settings route to expose defaults")
+
+      updated = server.send(:route, service, "PATCH", "/settings/session-loops", {
+                              "interval_minutes" => 12,
+                              "end_time" => "19:45",
+                              "prompt_templates" => [
+                                {
+                                  "key" => "review-watch",
+                                  "name" => "Review watch",
+                                  "prompt" => "Check for actionable PR feedback."
+                                }
+                              ]
+                            }, nil)
+      assert(updated.dig(:body, :session_loops, :interval_minutes) == 12,
+             "expected session loop settings update route")
+      assert(service.setup.dig(:config, :session_loop_settings, :end_time) == "19:45",
+             "expected setup payload to expose saved session loop settings")
+      persisted = YAML.safe_load_file(registry.path)
+      assert(persisted.dig("session_loops", "prompt_templates", 0, "prompt") ==
+             "Check for actionable PR feedback.",
+             "expected session loop settings to persist in hq.yml")
+    end
   end
 
   def assert_remote_agent_lifecycle
@@ -1522,6 +1557,65 @@ module RemoteServerTest
       stored_daily = YAML.safe_load_file(HQ::SCHEDULES_FILE).fetch("schedules").find { |item| item["key"] == "daily" }
       assert(!stored_daily.key?("enabled"), "expected schedule saves to drop enabled config")
       assert(!stored_daily.key?("policy"), "expected schedule saves to drop policy config")
+
+      loop_agent = service.create_agent(
+        "project_key" => "web",
+        "template_key" => "custom",
+        "name" => "Review session",
+        "prompt" => "Work on the open pull request.",
+        "agent" => "codex"
+      )
+      loop_ends_at = Time.now + 3_600
+      begin
+        server.send(:route, service, "POST", "/agents/#{loop_agent[:key]}/loop-schedule", {
+                      "schedule_key" => "daily",
+                      "name" => "Duplicate loop",
+                      "interval_minutes" => 10,
+                      "ends_at" => loop_ends_at.iso8601,
+                      "message" => "Check for reviews."
+                    }, nil)
+        raise "expected duplicate loop schedule key to fail"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 400, "expected duplicate loop schedule key to return a bad request")
+      end
+      untouched_agent = service.send(:load_all_agents).find { |item| item.key == loop_agent[:key] }
+      assert(untouched_agent.schedule_key.to_s.empty?,
+             "expected invalid loop creation to leave the existing session unscheduled")
+      schedule_prompts = HQ::AgentMemory.new(untouched_agent).events.select do |event|
+        event["type"] == "system_prompt" && event.dig("metadata", "prompt_role") == "schedule"
+      end
+      assert(schedule_prompts.empty?, "expected invalid loop creation not to alter session memory")
+
+      loop_response = with_stubbed_agent_start do
+        server.send(:route, service, "POST", "/agents/#{loop_agent[:key]}/loop-schedule", {
+                      "schedule_key" => "review-loop",
+                      "name" => "Review loop",
+                      "interval_minutes" => 10,
+                      "ends_at" => loop_ends_at.iso8601,
+                      "message" => "Check for new PR reviews and address actionable feedback."
+                    }, nil)
+      end
+      assert(loop_response[:status] == 201, "expected agent loop creation route")
+      assert(loop_response.dig(:body, :schedule, :target_agent_key) == loop_agent[:key],
+             "expected loop schedule to target the existing session")
+      assert(loop_response.dig(:body, :schedule, :cron) == "*/10 * * * *",
+             "expected loop interval to become a normal cron schedule")
+      assert(loop_response.dig(:body, :schedule, :ends_at) == loop_ends_at.iso8601,
+             "expected loop schedule to retain its end time")
+      assert(loop_response.dig(:body, :agent, :schedule_key) == "review-loop",
+             "expected the existing session to gain the loop schedule association")
+      assert(daemon_supervisor.calls.include?([:start, nil, false]),
+             "expected loop creation to start a stopped scheduler daemon")
+      stored_loop = YAML.safe_load_file(HQ::SCHEDULES_FILE).fetch("schedules").find do |item|
+        item["key"] == "review-loop"
+      end
+      assert(stored_loop.dig("target", "agent_key") == loop_agent[:key],
+             "expected loop target session to persist in schedules.yml")
+      assert(stored_loop.dig("target", "system_message").include?("owned by the Tycho schedule"),
+             "expected loop schedule to persist the normal schedule system prompt")
+      loop_state = HQ::ScheduleStore.new.load.fetch("review-loop")
+      assert(loop_state.last_target_key == loop_agent[:key] && loop_state.run_count == 1,
+             "expected the immediate first loop run to use the existing session")
 
       paused = server.send(:route, service, "POST", "/schedules/weekday/pause", {}, nil)
       assert(paused.dig(:body, :schedule, :paused), "expected schedule pause route")
@@ -3117,6 +3211,18 @@ module RemoteServerTest
            "expected scheduled agent headers to expose run and pause/resume controls")
     assert(js[:body].include?("data-new-schedule"),
            "expected Remote UI to expose schedule creation")
+    assert(js[:body].include?('label: "Loop session"') &&
+           js[:body].include?("function renderAgentLoopForm") &&
+           js[:body].include?('id="agent-loop-form"') &&
+           js[:body].include?('apiPost(`/agents/${encodeURIComponent(agentKey)}/loop-schedule`, payload)'),
+           "expected conversation context menus to create quick session loops")
+    assert(js[:body].include?('id="session-loop-settings-form"') &&
+           js[:body].include?('apiPatch("/settings/session-loops"') &&
+           js[:body].include?("data-session-loop-template-row"),
+           "expected General Settings to configure loop defaults and prompt templates")
+    assert(helpers_js[:body].include?('return { type: "agentLoop", key: parts[1] };') &&
+           helpers_js[:body].include?('if (route.type === "agentLoop") return `#agent/${encodeURIComponent(route.key)}/loop`;'),
+           "expected session loop forms to have a stable agent route")
     assert(js[:body].include?("state.setup?.config?.schedule_system_message_template"),
            "expected Remote UI schedule defaults to consume the backend-provided template")
     assert(js[:body].include?("data-edit-schedule") && js[:body].include?("data-delete-schedule"),
@@ -3156,8 +3262,9 @@ module RemoteServerTest
     assert(js[:body].include?('class="schedule-row-title"') &&
            js[:body].include?('<span class="pill ${className}">${escapeHtml(scheduleStatusLabel(schedule))}</span>'),
            "expected Remote UI schedule status labels to render inline with the title")
-    assert(js[:body].include?("return `${project} / ${next} / ${humanizeCron(schedule.cron)}`;"),
-           "expected Remote UI schedule rows to omit last outcome from the compact subtext")
+    assert(js[:body].include?("const ends = schedule.ends_at") &&
+           js[:body].include?("return `${project} / ${next}${ends} / ${humanizeCron(schedule.cron)}`;"),
+           "expected Remote UI schedule rows to show optional loop expiry without last outcome")
     assert(!js[:body].include?("last ${schedule.last_status}"),
            "expected Remote UI schedule rows not to render last status text")
     assert(js[:body].include?("MagicDNS push requires Tailscale HTTPS"),
@@ -4218,6 +4325,31 @@ module RemoteServerTest
     return if system("git", "-C", workspace, *args, out: File::NULL, err: File::NULL)
 
     raise "git #{args.join(" ")} failed"
+  end
+
+  def with_stubbed_agent_start
+    original = HQ::ManagedAgent.instance_method(:start!)
+    HQ::ManagedAgent.define_method(:start!) do
+      now = Time.now
+      FileUtils.mkdir_p(File.dirname(raw_log_path))
+      File.write(raw_log_path, "prompt=#{send(:prompt_for_execution)}\n")
+      @started_at = now
+      @finished_at = now
+      @last_exit_code = 0
+      @pid = nil
+      @runs << HQ::ManagedAgent::AgentRun.new(
+        started_at: now,
+        finished_at: now,
+        exit_code: 0,
+        status: "succeeded",
+        log_path: raw_log_path,
+        command: "stubbed"
+      )
+      self
+    end
+    yield
+  ensure
+    HQ::ManagedAgent.define_method(:start!, original)
   end
 
   def write_test_executable(path)

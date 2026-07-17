@@ -23,6 +23,7 @@ module RegistryTest
     assert_registry_resolves_hidden_groups_and_project_overrides
     assert_registry_loads_custom_claude_harnesses
     assert_registry_persists_remote_servers
+    assert_registry_persists_session_loop_settings
     assert_custom_harness_resolves_executable_after_env_assignments
     assert_custom_harness_extracts_env_assignments_for_execution
     assert_registry_rejects_unsupported_custom_harness_adapters
@@ -30,6 +31,44 @@ module RegistryTest
     assert_agent_store_timestamp_keys_avoid_exact_collisions
     assert_agent_store_backfills_project_tool_system_prompt
     puts "registry_test: ok"
+  end
+
+  def assert_registry_persists_session_loop_settings
+    Dir.mktmpdir("hq-session-loop-settings-test") do |dir|
+      config_path = File.join(dir, "hq.yml")
+      File.write(config_path, <<~YAML)
+        projects:
+          - key: web
+            name: Web
+            path: #{File.join(dir, "web")}
+      YAML
+
+      registry = HQ::Registry.new(path: config_path)
+      defaults = registry.session_loop_settings
+      assert(defaults[:interval_minutes] == 10, "expected ten-minute session loop default")
+      assert(defaults[:end_time] == "23:59", "expected end-of-day session loop default")
+      assert(defaults[:prompt_templates].any? { |template| template[:key] == "pull-request-review" },
+             "expected a pull-request review loop template")
+
+      updated = registry.update_session_loop_settings!(
+        "interval_minutes" => 15,
+        "end_time" => "18:30",
+        "prompt_templates" => [
+          { "name" => "Review watch", "prompt" => "Check the PR for actionable reviews." }
+        ]
+      )
+      assert(updated[:interval_minutes] == 15, "expected configured loop interval")
+      assert(updated[:end_time] == "18:30", "expected configured loop end time")
+      assert(updated[:prompt_templates].first[:key] == "review-watch",
+             "expected prompt template keys to derive from names")
+
+      persisted = YAML.safe_load_file(config_path)
+      assert(persisted.dig("session_loops", "interval_minutes") == 15,
+             "expected loop settings to persist in hq.yml")
+      assert(persisted.dig("session_loops", "prompt_templates", 0, "prompt") ==
+             "Check the PR for actionable reviews.",
+             "expected loop prompt templates to persist in hq.yml")
+    end
   end
 
   def assert_agent_store_timestamp_keys_avoid_exact_collisions

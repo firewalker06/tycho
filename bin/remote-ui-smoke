@@ -8,6 +8,7 @@ require "open3"
 require "rbconfig"
 require "socket"
 require "tempfile"
+require "time"
 require "tmpdir"
 require "timeout"
 require "uri"
@@ -31,6 +32,7 @@ def write_fixture(dir)
   prompts_path = File.join(config_dir, "system_prompts.yml")
   response_style_path = File.join(config_dir, "response_style.md")
   schedules_path = File.join(config_dir, "schedules.yml")
+  fake_codex_path = File.join(dir, "fake-codex")
   File.write(config_path, <<~YAML)
     ---
     projects:
@@ -51,6 +53,8 @@ def write_fixture(dir)
           project_key: web
           message: "Exercise scheduled agent controls."
   YAML
+  File.write(fake_codex_path, "#!/bin/sh\nexit 0\n")
+  File.chmod(0o755, fake_codex_path)
   skill_dir = File.join(workspace, ".agents", "skills", "review")
   FileUtils.mkdir_p(skill_dir)
   File.write(File.join(skill_dir, "SKILL.md"), "# Review\n")
@@ -65,6 +69,7 @@ def write_fixture(dir)
     prompts_path: prompts_path,
     response_style_path: response_style_path,
     schedules_path: schedules_path,
+    fake_codex_path: fake_codex_path,
     logs_dir: File.join(dir, "logs")
   }
 end
@@ -118,6 +123,23 @@ def associate_agent_schedule(logs_dir, agent_key)
   agent["schedule_key"] = "smoke"
   agent["template_key"] = "scheduled"
   File.write(agents_path, JSON.pretty_generate(agents))
+end
+
+def mark_schedule_daemon_running(logs_dir, pid)
+  FileUtils.mkdir_p(logs_dir)
+  now = Time.now.iso8601
+  File.write(
+    File.join(logs_dir, "scheduler_daemon.json"),
+    JSON.pretty_generate(
+      "pid" => pid,
+      "mode" => "daemon",
+      "dry_run" => false,
+      "interval" => 30,
+      "started_at" => now,
+      "last_tick_started_at" => now,
+      "last_tick_finished_at" => now
+    )
+  )
 end
 
 def chrome_path
@@ -831,6 +853,26 @@ def write_smoke_script(path)
 
         await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
         await page.waitForSelector("[data-testid='response-style-action']", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector("#session-loop-default-interval", { state: "visible", timeout: 10_000 });
+        const loopDefaults = {
+          interval: await page.locator("#session-loop-default-interval").inputValue(),
+          endTime: await page.locator("#session-loop-default-end-time").inputValue(),
+          templateName: await page.locator("[data-session-loop-template-row] [name='template_name']").inputValue(),
+        };
+        if (loopDefaults.interval !== "10" || loopDefaults.endTime !== "23:59" || loopDefaults.templateName !== "Wait for PR review") {
+          throw new Error(`Session loop settings defaults are incomplete: ${JSON.stringify(loopDefaults)}`);
+        }
+        const loopTemplatePrompt = "Check for smoke-test review feedback and address anything actionable.";
+        await page.fill("#session-loop-default-interval", "11");
+        await page.fill("#session-loop-default-end-time", "22:30");
+        await page.fill("[data-session-loop-template-row] [name='template_prompt']", loopTemplatePrompt);
+        await page.click("#session-loop-settings-form button[type='submit']");
+        await page.waitForFunction(
+          () => document.querySelector("#growl")?.textContent === "Session loop settings saved" &&
+            document.querySelector("#session-loop-default-interval")?.value === "11",
+          null,
+          { timeout: 10_000 }
+        );
         const responseStyleExplanation = await page.locator("[data-testid='response-style-summary']").innerText();
         if (!responseStyleExplanation.includes("shared writing guidance") ||
             !responseStyleExplanation.includes("without changing the task or required output format")) {
@@ -908,6 +950,55 @@ def write_smoke_script(path)
           throw new Error(`Quick Agent submit action is outside mobile viewport: ${JSON.stringify(quickSubmitBox)}`);
         }
 
+        await page.evaluate(() => closeQuickAgent());
+        const loopAgentKey = await page.evaluate(async () => {
+          const data = await apiPost("/agents", {
+            project_key: "web",
+            template_key: "custom",
+            name: "Review Loop Smoke Agent",
+            prompt: "Work on the open pull request.",
+            agent: "codex",
+          });
+          return data.agent.key;
+        });
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(loopAgentKey)}`, { waitUntil: "networkidle" });
+        await page.waitForSelector("#header-more-button:not(.hidden)", { state: "visible", timeout: 10_000 });
+        await page.click("#header-more-button");
+        await page.waitForSelector(`[data-loop-agent='${loopAgentKey}']`, { state: "visible", timeout: 10_000 });
+        await page.click(`[data-loop-agent='${loopAgentKey}']`);
+        await page.waitForSelector("#agent-loop-form", { state: "visible", timeout: 10_000 });
+        const loopFormDefaults = {
+          interval: await page.locator("#agent-loop-interval").inputValue(),
+          template: await page.locator("#agent-loop-template").inputValue(),
+          message: await page.locator("#agent-loop-message").inputValue(),
+          endsAt: await page.locator("#agent-loop-ends-at").inputValue(),
+        };
+        if (loopFormDefaults.interval !== "11" || loopFormDefaults.template !== "" || loopFormDefaults.message !== "") {
+          throw new Error(`Session loop form did not use saved defaults with an empty prompt: ${JSON.stringify(loopFormDefaults)}`);
+        }
+        if (new Date(loopFormDefaults.endsAt).getTime() <= Date.now()) {
+          throw new Error(`Session loop default end time is not in the future: ${JSON.stringify(loopFormDefaults.endsAt)}`);
+        }
+        await page.selectOption("#agent-loop-template", "pull-request-review");
+        const selectedLoopPrompt = await page.locator("#agent-loop-message").inputValue();
+        if (selectedLoopPrompt !== loopTemplatePrompt) {
+          throw new Error(`Session loop prompt template did not fill the preview: ${JSON.stringify(selectedLoopPrompt)}`);
+        }
+        const loopScheduleKey = await page.locator("#agent-loop-form [name='schedule_key']").inputValue();
+        await page.click("#agent-loop-form button[type='submit']");
+        await page.waitForSelector("#header-schedule-menu:not(.hidden)", { state: "visible", timeout: 10_000 });
+        const loopSchedule = await page.evaluate((key) => state.schedules.find((schedule) => schedule.key === key), loopScheduleKey);
+        if (!loopSchedule || loopSchedule.target_agent_key !== loopAgentKey || loopSchedule.cron !== "*/11 * * * *" || !loopSchedule.ends_at) {
+          throw new Error(`Created session loop is not a normal expiring schedule: ${JSON.stringify(loopSchedule)}`);
+        }
+        await page.evaluate(() => navigate({ type: "tab", tab: "now" }));
+        await page.waitForSelector("[data-state-key='schedule-now-details']", { state: "visible", timeout: 10_000 });
+        await page.evaluate(() => { document.querySelector("[data-state-key='schedule-now-details']").open = true; });
+        const scheduleRowText = await page.evaluate((key) => document.querySelector(`[data-schedule-key='${key}']`)?.closest(".schedule-row")?.innerText || "", loopScheduleKey);
+        if (!scheduleRowText.includes("Review Loop Smoke Agent") || !scheduleRowText.includes("ends")) {
+          throw new Error(`Session loop is missing from the Schedules list: ${JSON.stringify(scheduleRowText)}`);
+        }
+
         if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
         console.log("remote-ui-smoke: ok");
       } finally {
@@ -935,6 +1026,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     "TYCHO_RESPONSE_STYLE_PATH" => fixture.fetch(:response_style_path),
     "TYCHO_SCHEDULES_PATH" => fixture.fetch(:schedules_path),
     "TYCHO_LOGS_ROOT" => fixture.fetch(:logs_dir),
+    "TYCHO_CODEX_BIN" => fixture.fetch(:fake_codex_path),
     "TYCHO_REMOTE_TOKEN" => ""
   }
 
@@ -949,6 +1041,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
 
   begin
     wait_for_remote(base_url, log_path)
+    mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key = create_agent(base_url)
     associate_agent_schedule(fixture.fetch(:logs_dir), agent_key)
     node_dir = File.join(dir, "node")

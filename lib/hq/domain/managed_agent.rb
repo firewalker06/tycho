@@ -166,6 +166,17 @@ module HQ
       true
     end
 
+    def ensure_schedule_context_prompt!(content, created_at: Time.now)
+      text = content.to_s.strip
+      return false if text.empty?
+      return false if @messages.any? { |message| message.role == "system" && message.content.to_s == text }
+
+      @messages << AgentMessage.new(role: "system", content: text, created_at:)
+      trim_messages!
+      memory_store.append_system_prompt!(text, created_at:, prompt_role: "schedule")
+      true
+    end
+
     def self.from_hash(hash)
       runs = Array(hash["runs"]).map { |run| AgentRun.from_hash(run) }
       launch_settings = launch_settings_from_runs(runs)

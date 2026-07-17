@@ -170,6 +170,17 @@ module HQ
       agent.ensure_project_context_prompt!(project_context_prompt(project), created_at: agent.created_at || Time.now)
     end
 
+    def adopt_schedule!(agent, schedule_key:, name:, system_message: nil, created_at: Time.now)
+      prompt = schedule_system_prompt(schedule_key:, name:, system_message:)
+      agent.associate_schedule!(schedule_key)
+      agent.ensure_schedule_context_prompt!(prompt, created_at:)
+      prompt
+    end
+
+    def schedule_system_prompt(schedule_key:, name:, system_message: nil)
+      scheduled_system_prompt(schedule_key:, name:, system_message:)
+    end
+
     private
 
     def schedule_keys_by_agent

@@ -149,6 +149,8 @@ Structured inquiry forms use the same full-screen interaction and always end wit
 
 Scheduled agent conversations show a calendar-check control beside the header context menu. Its menu exposes **Run now**, **Pause** or **Resume** according to current schedule state, and **Edit schedule** without requiring a trip back to Now. Run actions use the Lucide sport-shoe icon consistently in the header and schedule list. Associated-agent icons normally follow the agent result color, while stopped schedules override them to red and paused schedules to warning yellow.
 
+An idle, unscheduled conversation can become a temporary loop from **More → Loop session**. The prefilled form defaults to the configured interval and end-of-day cutoff, keeps its run prompt empty until the user chooses or writes one, and lets a configured prompt template fill the editable preview. Saving adopts the existing conversation as a normal schedule, adds the standard schedule system prompt, runs it immediately, and starts the scheduler daemon when needed. The loop then appears in Now with the other schedules and stops after its cutoff.
+
 Attachment detail views group utility actions under an ellipsis menu. File attachments expose separate **Copy content** (when supported), **Copy absolute path**, **Download file**, and **Refresh cache** actions alongside delete; link attachments expose **Copy link**. Refresh cache always re-reads file content and image previews from the source path. The page header places a view menu beside the page context menu; it selects exactly one layout—**Balanced**, **Widen detail**, or **Full view**—and its trigger icon reflects the active layout.
 
 Agent create, edit, and clone forms select **Response style** independently beside **Prompt Template**. **Global** uses the active Settings policy even when the prompt template is named Custom, **Prompt template** uses a configured template override, and **Disabled** omits response-style guidance.
@@ -169,6 +171,18 @@ remote_servers:
     name: Laptop
     url: http://laptop.tailnet-name.ts.net:7373
     token_env: TYCHO_LAPTOP_REMOTE_TOKEN
+```
+
+Configure the Loop session defaults and reusable prompts in Settings → Automation, or directly in `~/.tycho/config/hq.yml`:
+
+```yaml
+session_loops:
+  interval_minutes: 10
+  end_time: "23:59"
+  prompt_templates:
+    - key: pull-request-review
+      name: Wait for PR review
+      prompt: Check the pull request for approvals, reviews, and comments. Address actionable feedback, run the relevant checks, and update the pull request. If nobody has acted, return no_action_needed.
 ```
 
 `key` must be stable and URL-safe. `url` must be an `http` or `https` base URL without embedded credentials. Prefer `token_env` over inline `token` outside local development. The synthetic `local` server is always present and cannot be redefined in config.
@@ -318,6 +332,9 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `POST` | `/agents/{key}/stop` | Send `TERM` to one running agent. |
 | `POST` | `/agents/{key}/clone` | Clone one managed agent, optionally archiving the source. |
 | `POST` | `/agents/{key}/archive` | Archive one idle managed agent. |
+| `POST` | `/agents/{key}/loop-schedule` | Adopt one idle agent as a temporary recurring schedule and run it immediately. |
+| `GET` | `/settings/session-loops` | Read Loop session interval, cutoff, and prompt-template defaults. |
+| `PATCH` | `/settings/session-loops` | Save Loop session defaults in `hq.yml`. |
 | `GET` | `/push/config` | Read browser push readiness and VAPID public key. |
 | `POST` | `/push/subscriptions` | Save or refresh one browser push subscription. |
 | `DELETE` | `/push/subscriptions` | Disable one browser push subscription. |
@@ -744,6 +761,18 @@ Atomically replaces the global response-style file from a JSON `content` string 
 ### `DELETE /settings/response-style`
 
 Removes the configured global response-style file and returns the empty `response_style` payload. An existing `.bak` file is retained for manual recovery.
+
+### `GET /settings/session-loops`
+
+Returns the default `interval_minutes`, local `end_time`, and editable prompt templates used by the Remote UI Loop session form.
+
+### `PATCH /settings/session-loops`
+
+Validates and saves Loop session defaults in `hq.yml`. Intervals must be between 1 and 59 minutes, cutoff times use `HH:MM`, and every template requires a name and prompt.
+
+### `POST /agents/{key}/loop-schedule`
+
+Adopts an idle, unscheduled managed agent as a normal schedule whose target includes that agent key. The request supplies a unique schedule key and name, interval, future ISO-8601 cutoff, and run message. Tycho appends the standard schedule system prompt to the existing session before the immediate first run, records the schedule in `schedules.yml`, and ensures the scheduler daemon is active for later runs. The schedule expires to `stopped` after its cutoff.
 
 ### `POST /setup/welcome`
 

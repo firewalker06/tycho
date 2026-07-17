@@ -7,10 +7,12 @@
 #     enabled: true
 #     cron: "0 9 * * 1-5"
 #     timezone: local
+#     ends_at: "2026-07-16T23:59:00+07:00" # optional
 #     target:
 #       type: agent
 #       project_key: tycho
 #       name: Tycho scheduled maintenance
+#       agent_key: existing-agent-key # optional; adopts an existing session
 #       message_source: file
 #       message_file: schedules/weekday-maintenance.md
 #     policy:

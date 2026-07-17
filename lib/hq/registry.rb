@@ -57,9 +57,22 @@ module HQ
   class Registry
     DEFAULT_PATH = HQ.default_config_path
     DEFAULT_ARCHIVED_BASENAME = "hq.archived.yml"
+    DEFAULT_SESSION_LOOP_SETTINGS = {
+      interval_minutes: 10,
+      end_time: "23:59",
+      prompt_templates: [
+        {
+          key: "pull-request-review",
+          name: "Wait for PR review",
+          prompt: "Check the open pull request for new approvals, reviews, or comments. " \
+                  "Address any actionable feedback, run the relevant checks, and update the pull request. " \
+                  "If nothing requires action, return no_action_needed."
+        }
+      ]
+    }.freeze
 
     attr_reader :path, :projects, :groups, :remote_servers, :system_prompts_path, :custom_harnesses,
-                :harness_catalogs
+                :harness_catalogs, :session_loop_settings
 
     def initialize(path: HQ.env_present("CONFIG_PATH", DEFAULT_PATH), system_prompts_path: nil)
       @path = File.expand_path(path)
@@ -80,6 +93,7 @@ module HQ
       @system_prompts = load_yaml(@system_prompts_path, optional: true)
       @custom_harnesses = build_custom_harnesses(data["custom_harnesses"])
       @harness_catalogs = build_harness_catalogs(data["harness_catalogs"])
+      @session_loop_settings = build_session_loop_settings(data["session_loops"])
       @groups = build_groups(data["groups"])
       @remote_servers = build_remote_servers(data["remote_servers"])
       HQ.custom_harnesses = @custom_harnesses
@@ -283,6 +297,25 @@ module HQ
       @harness_catalogs[harness_key.to_s.strip.downcase]
     end
 
+    def update_session_loop_settings!(attrs)
+      settings = build_session_loop_settings(attrs, configured: true)
+      data = load_yaml(@path)
+      data["session_loops"] = {
+        "interval_minutes" => settings.fetch(:interval_minutes),
+        "end_time" => settings.fetch(:end_time),
+        "prompt_templates" => settings.fetch(:prompt_templates).map do |template|
+          {
+            "key" => template.fetch(:key),
+            "name" => template.fetch(:name),
+            "prompt" => template.fetch(:prompt)
+          }
+        end
+      }
+      write_yaml(@path, data)
+      load!
+      @session_loop_settings
+    end
+
     def archive_project!(project_key, archived_path: nil)
       data = load_yaml(@path)
       projects = Array(data["projects"])
@@ -363,6 +396,55 @@ module HQ
             preserve_case: false
           )
         )
+      end
+    end
+
+    def build_session_loop_settings(raw_settings, configured: false)
+      settings = raw_settings.is_a?(Hash) ? raw_settings : {}
+      use_defaults = !configured && !raw_settings.is_a?(Hash)
+      interval = settings["interval_minutes"] || settings[:interval_minutes]
+      interval = DEFAULT_SESSION_LOOP_SETTINGS.fetch(:interval_minutes) if interval.to_s.strip.empty?
+      interval = Integer(interval.to_s, 10)
+      unless interval.between?(1, 59)
+        raise ConfigError, "Session loop interval_minutes must be between 1 and 59"
+      end
+
+      end_time = (settings["end_time"] || settings[:end_time]).to_s.strip
+      end_time = DEFAULT_SESSION_LOOP_SETTINGS.fetch(:end_time) if end_time.empty?
+      unless end_time.match?(/\A(?:[01]\d|2[0-3]):[0-5]\d\z/)
+        raise ConfigError, "Session loop end_time must use HH:MM in 24-hour local time"
+      end
+
+      raw_templates = settings.key?("prompt_templates") ? settings["prompt_templates"] : settings[:prompt_templates]
+      raw_templates = DEFAULT_SESSION_LOOP_SETTINGS.fetch(:prompt_templates) if use_defaults || raw_templates.nil?
+      templates = normalize_session_loop_templates(raw_templates)
+      {
+        interval_minutes: interval,
+        end_time: end_time,
+        prompt_templates: templates
+      }
+    rescue ArgumentError, TypeError
+      raise ConfigError, "Session loop interval_minutes must be an integer between 1 and 59"
+    end
+
+    def normalize_session_loop_templates(raw_templates)
+      seen = {}
+      Array(raw_templates).filter_map.with_index do |raw_template, index|
+        next unless raw_template.is_a?(Hash)
+
+        name = (raw_template["name"] || raw_template[:name]).to_s.strip
+        prompt = (raw_template["prompt"] || raw_template[:prompt]).to_s.strip
+        next if name.empty? && prompt.empty?
+        raise ConfigError, "Session loop prompt template ##{index + 1} requires a name" if name.empty?
+        raise ConfigError, "Session loop prompt template #{name.inspect} requires a prompt" if prompt.empty?
+
+        key = (raw_template["key"] || raw_template[:key]).to_s.strip.downcase
+        key = name.downcase.gsub(/[^a-z0-9]+/, "-").gsub(/\A-+|-+\z/, "") if key.empty?
+        key = "template-#{index + 1}" if key.empty?
+        raise ConfigError, "Duplicate session loop prompt template key #{key.inspect}" if seen[key]
+
+        seen[key] = true
+        { key: key, name: name, prompt: prompt }
       end
     end
 

@@ -39,7 +39,11 @@ module HQ
       changed = false
       rows = schedules.map do |schedule|
         state = store.state_for(states, schedule.key)
-        changed = ensure_next_due!(schedule, state, now:) || changed
+        changed = if expire_schedule!(schedule, state, now:)
+                    true
+                  else
+                    ensure_next_due!(schedule, state, now:) || changed
+                  end
         schedule_payload(schedule, state)
       end
       store.save(states) if changed
@@ -63,6 +67,11 @@ module HQ
       schedule = find_schedule!(key)
       states = store.load
       state = store.state_for(states, schedule.key)
+      if schedule.expired?(now)
+        expire_schedule!(schedule, state, now:)
+        store.save(states)
+        raise ScheduleRegistry::Error, "Schedule #{schedule.key.inspect} ended at #{schedule.ends_at.iso8601}"
+      end
       was_stopped = state.stopped?
       was_paused = state.paused?
       state.mark_scheduled!
@@ -78,6 +87,10 @@ module HQ
       schedule = find_schedule!(key)
       states = store.load
       state = store.state_for(states, schedule.key)
+      if expire_schedule!(schedule, state, now:)
+        store.save(states)
+        return { status: :skipped, schedule: schedule_payload(schedule, state) }
+      end
       agents = load_agents
       result = dispatch_schedule(schedule, state, agents, now:, dry_run:)
       persist(agents, states, dry_run:)
@@ -113,6 +126,8 @@ module HQ
 
       schedules.each do |schedule|
         state = store.state_for(states, schedule.key)
+        next if expire_schedule!(schedule, state, now:)
+
         ensure_next_due!(schedule, state, now:)
         next unless runnable?(schedule, state)
         next unless state.next_due_at && state.next_due_at <= now
@@ -149,12 +164,14 @@ module HQ
         stopped: state.stopped?,
         project_key: schedule.project_key,
         agent_name: schedule.agent_name,
+        target_agent_key: schedule.agent_key,
         system_message: schedule.system_message,
         cron: schedule.cron,
         timezone: schedule.timezone,
         message_source: schedule.message_source,
         message: schedule.message,
         message_file: schedule.message_file,
+        ends_at: schedule.ends_at&.iso8601,
         policy: schedule.policy,
         next_due_at: state.next_due_at&.iso8601,
         last_status: state.last_status,
@@ -183,12 +200,24 @@ module HQ
       true
     end
 
+    def expire_schedule!(schedule, state, now:)
+      return false unless schedule.expired?(now)
+      return false if state.stopped? && state.last_status.to_s == "expired"
+
+      state.mark_stopped!(now:)
+      state.next_due_at = nil
+      state.last_status = "expired"
+      state.last_error = nil
+      publish("schedule.expired", schedule, state, agent_key: state.last_target_key)
+      true
+    end
+
     def runnable?(schedule, state)
       state.scheduled?
     end
 
     def dispatch_schedule(schedule, state, agents, now:, dry_run: false)
-      target = last_agent(state, agents)
+      target = last_agent(schedule, state, agents)
       running = target&.running?
       if running
         return handle_overlap(schedule, state, now:, dry_run:)
@@ -308,10 +337,12 @@ module HQ
       false
     end
 
-    def last_agent(state, agents)
-      return nil if state.last_target_key.to_s.empty?
+    def last_agent(schedule, state, agents)
+      key = state.last_target_key.to_s
+      key = schedule.agent_key.to_s if key.empty?
+      return nil if key.empty?
 
-      agents.find { |agent| agent.key == state.last_target_key }
+      agents.find { |agent| agent.key == key }
     end
 
     def interactive_scheduled_session?(schedule, state, agent)
@@ -334,7 +365,7 @@ module HQ
     def reconcile_completed_runs!(schedules, states, agents, now:)
       schedules.each do |schedule|
         state = store.state_for(states, schedule.key)
-        agent = last_agent(state, agents)
+        agent = last_agent(schedule, state, agents)
         next unless agent
 
         agent.poll!

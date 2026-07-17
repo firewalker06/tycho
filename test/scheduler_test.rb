@@ -20,6 +20,7 @@ module SchedulerTest
       assert_schedule_registry_validates_scope_and_prompt_paths
       assert_schedule_store_tracks_daemon_state
       assert_scheduler_run_reuses_schedule_agent_session
+      assert_scheduler_adopts_existing_session_and_expires_loop
       assert_archived_schedule_session_promotes_prompt_to_schedule
       assert_scheduler_stops_interactive_scheduled_agent_until_resume
       assert_schedule_waits_for_human_input
@@ -31,6 +32,68 @@ module SchedulerTest
     assert_no_action_scheduled_agent_stays_quiet
     assert_failed_scheduled_agent_stops_and_notifies
     puts "scheduler_test: ok"
+  end
+
+  def assert_scheduler_adopts_existing_session_and_expires_loop
+    with_temp_runtime do |dir|
+      now = Time.new(2026, 7, 16, 14, 0, 0, "+07:00")
+      ends_at = now + 3_600
+      registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: review-loop
+            name: Review loop
+            cron: "*/10 * * * *"
+            timezone: local
+            ends_at: "#{ends_at.iso8601}"
+            target:
+              type: agent
+              project_key: web
+              agent_key: web-agent-existing
+              name: Existing review session
+              system_message: "Schedule basic context."
+              message: "Check for PR reviews."
+      YAML
+      project = HQ::Project.new(registry.projects.fetch(0))
+      agent = HQ::ManagedAgent.new(
+        key: "web-agent-existing",
+        name: "Existing review session",
+        project_key: "web",
+        template_key: "custom",
+        workspace: project.path,
+        prompt: "Original session prompt.",
+        agent: "codex"
+      )
+      agent.ensure_schedule_context_prompt!("Schedule basic context.", created_at: now)
+      agent.associate_schedule!("review-loop")
+      HQ::AgentStore.new([project]).save([agent])
+
+      scheduler = build_scheduler(registry, schedule_path)
+      started = scheduler.run_now("review-loop", now: now)
+      assert(started.fetch(:agent).key == agent.key, "expected loop to adopt the existing session")
+      assert(started.dig(:schedule, :ends_at) == ends_at.iso8601, "expected loop expiry in schedule payload")
+
+      loaded = read_agents.fetch(0)
+      assert(loaded.schedule_key == "review-loop", "expected adopted session to retain its schedule association")
+      events = HQ::AgentMemory.new(loaded).events
+      schedule_context = events.find do |event|
+        event["type"] == "system_prompt" && event.dig("metadata", "prompt_role") == "schedule"
+      end
+      assert(schedule_context&.fetch("content") == "Schedule basic context.",
+             "expected the normal schedule context before the first loop run")
+      assert(File.read(loaded.raw_log_path).include?("Schedule basic context."),
+             "expected the first adopted-session run prompt to include schedule context")
+      scheduled_message = events.find do |event|
+        event["type"] == "user_message" && event.dig("metadata", "scheduled_prompt") == true
+      end
+      assert(scheduled_message&.fetch("content") == "Check for PR reviews.",
+             "expected the loop prompt to be recorded as a scheduled run")
+
+      scheduler.tick(now: ends_at + 1)
+      expired = HQ::ScheduleStore.new.load.fetch("review-loop")
+      assert(expired.stopped?, "expected an ended loop schedule to stop")
+      assert(expired.last_status == "expired", "expected an ended loop to record expiry")
+      assert(expired.next_due_at.nil?, "expected an ended loop to clear its next run")
+    end
   end
 
   def assert_schedule_registry_validates_scope_and_prompt_paths
