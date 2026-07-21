@@ -1,8 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
-require "open3"
-require "timeout"
+require "tempfile"
 
 require_relative "../harness_registry"
 require_relative "../utf8_text"
@@ -19,6 +18,7 @@ module HQ
     ].freeze
     CLAUDE_REASONING_EFFORTS = %w[low medium high xhigh max].freeze
     COMMAND_TIMEOUT = 2
+    OPENCODE_COMMAND_TIMEOUT = 6
 
     module_function
 
@@ -141,14 +141,8 @@ module HQ
     end
 
     def claude_help_efforts(command)
-      _out, err, status = nil
-      out = ""
-      with_quiet_open3_timeout do
-        Timeout.timeout(COMMAND_TIMEOUT) do
-          out, err, status = Open3.capture3(command, "--help")
-        end
-      end
-      return [] unless status.success?
+      out, err, success = capture_command_output([command, "--help"])
+      return [] unless success
 
       text = "#{out}\n#{err}"
       match = text.match(/--effort\s+<[^>]+>.*?\(([^)]+)\)/m)
@@ -160,14 +154,8 @@ module HQ
     end
 
     def capture_json(command)
-      out = ""
-      status = nil
-      with_quiet_open3_timeout do
-        Timeout.timeout(COMMAND_TIMEOUT) do
-          out, _err, status = Open3.capture3(*command)
-        end
-      end
-      return nil unless status.success?
+      out, _err, success = capture_command_output(command)
+      return nil unless success
 
       JSON.parse(Utf8Text.normalize(out, replacement: "?"))
     rescue StandardError
@@ -175,11 +163,11 @@ module HQ
     end
 
     def opencode_model_rows(command)
-      out = capture_stdout([command, "models"])
+      out = capture_stdout([command, "models"], timeout: OPENCODE_COMMAND_TIMEOUT)
       return [] if out.to_s.empty?
 
       out.lines.filter_map do |line|
-        text = line.strip
+        text = strip_terminal_control(line).strip
         next if text.empty? || text.start_with?("Provider", "MODEL", "─", "-")
 
         value = text.split(/\s+/).find { |part| part.include?("/") }
@@ -191,36 +179,73 @@ module HQ
     end
 
     def opencode_auth_providers(command)
-      out = capture_stdout([command, "auth", "list"])
+      out = capture_stdout([command, "auth", "list"], timeout: OPENCODE_COMMAND_TIMEOUT)
       return [] if out.to_s.empty?
 
       out.lines.filter_map do |line|
-        text = line.strip
-        next if text.empty? || text.start_with?("─", "-") || text.match?(/\A(provider|name)\b/i)
+        text = strip_terminal_control(line).strip
+        text = text.sub(/\A[●○◐◯]\s*/, "")
+        next if text.empty? || text.start_with?("┌", "│", "└", "─", "-") || text.match?(/\A(provider|name)\b/i)
 
-        text.split(/\s+/).first
+        text.split(/\s+/).first&.downcase
       end.uniq
     end
 
-    def capture_stdout(command)
-      out = ""
-      status = nil
-      with_quiet_open3_timeout do
-        Timeout.timeout(COMMAND_TIMEOUT) do
-          out, _err, status = Open3.capture3(*command)
-        end
-      end
-      status.success? ? Utf8Text.normalize(out, replacement: "?") : ""
+    def capture_stdout(command, timeout: COMMAND_TIMEOUT)
+      out, _err, success = capture_command_output(command, timeout:)
+      success ? Utf8Text.normalize(out, replacement: "?") : ""
     rescue StandardError
       ""
     end
 
-    def with_quiet_open3_timeout
-      previous = Thread.report_on_exception
-      Thread.report_on_exception = false
-      yield
+    def capture_command_output(command, timeout: COMMAND_TIMEOUT)
+      stdout = Tempfile.new("tycho-harness-catalog-out")
+      stderr = Tempfile.new("tycho-harness-catalog-err")
+      pid = Process.spawn(*command, out: stdout.path, err: stderr.path, pgroup: true)
+      deadline = Time.now + timeout
+      status = nil
+      timed_out = false
+
+      loop do
+        _done, status = Process.waitpid2(pid, Process::WNOHANG)
+        break if status
+        break if Time.now >= deadline
+
+        sleep 0.05
+      end
+
+      unless status
+        timed_out = true
+        status = terminate_process_group(pid)
+        _done, status = Process.waitpid2(pid) unless status
+      end
+
+      stdout.rewind
+      stderr.rewind
+      [stdout.read, stderr.read, status.success? && !timed_out]
     ensure
-      Thread.report_on_exception = previous
+      stdout&.close!
+      stderr&.close!
+    end
+
+    def terminate_process_group(pid)
+      Process.kill("TERM", -pid)
+      deadline = Time.now + 0.5
+      loop do
+        _done, status = Process.waitpid2(pid, Process::WNOHANG)
+        return status if status
+        break if Time.now >= deadline
+
+        sleep 0.05
+      end
+      Process.kill("KILL", -pid)
+      nil
+    rescue Errno::ESRCH, Errno::ECHILD
+      nil
+    end
+
+    def strip_terminal_control(text)
+      text.to_s.gsub(/\e\[[0-9;?]*[ -\/]*[@-~]/, "")
     end
 
     def sort_efforts(values)

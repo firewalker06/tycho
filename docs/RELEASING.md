@@ -83,10 +83,22 @@ validation.
 ## Homebrew Tap
 
 Tycho's public tap is `firewalker06/homebrew-tycho`.
+Its authoritative bottle workflow is documented in the tap's
+[`docs/RELEASING.md`](https://github.com/firewalker06/homebrew-tycho/blob/main/docs/RELEASING.md).
+The tap uses `brew test-bot` to build bottle artifacts and the `pr-pull`
+pull-request label to publish them. Do not merge the formula PR manually before
+the publish workflow runs.
 
 After the GitHub release exists:
 
-1. Download the release tarball and calculate its SHA-256:
+1. Confirm the upstream tag is visible:
+
+   ```sh
+   git ls-remote --tags https://github.com/firewalker06/tycho.git \
+     "refs/tags/v<next-version>*"
+   ```
+
+2. Download the release tarball and calculate its SHA-256:
 
    ```sh
    curl -L -o tycho-v<next-version>.tar.gz \
@@ -94,25 +106,59 @@ After the GitHub release exists:
    shasum -a 256 tycho-v<next-version>.tar.gz
    ```
 
-2. Update `Formula/tycho.rb` in the tap:
+3. Create a branch such as `tycho-<next-version>` in the tap and update
+   `Formula/tycho.rb`:
 
    ```ruby
    url "https://github.com/firewalker06/tycho/archive/refs/tags/v<next-version>.tar.gz"
    sha256 "..."
    ```
 
-3. Verify the formula locally when Homebrew is available:
+   Use commit subject `tycho <next-version>`.
+
+4. Validate the formula from the installed tap checkout:
 
    ```sh
-   brew install --build-from-source --verbose ./Formula/tycho.rb
-   brew test tycho
+   cd "$(brew --repository firewalker06/tycho)"
+   brew audit --strict --online firewalker06/tycho/tycho
+   brew install --build-from-source firewalker06/tycho/tycho
+   brew test firewalker06/tycho/tycho
+   brew uninstall firewalker06/tycho/tycho
    ```
 
    The formula test should include `tycho doctor`. On Intel macOS bottles this
    confirms the Ruby Lipgloss compatibility backend is selected and the native
    Lipgloss extension is not loaded into the Bubbletea process.
 
-4. Push or merge the tap update.
+5. Push the branch, open a pull request in `firewalker06/homebrew-tycho`, and
+   wait for every `brew test-bot` job to pass. The standard matrix builds Apple
+   Silicon macOS and Linux bottles. The separate `macos-15-intel` job builds the
+   Intel macOS bottle; confirm its `bottles_macos-15-intel` artifact contains a
+   `sequoia` bottle before publishing.
+
+6. After all bottle jobs pass, have a trusted maintainer add the `pr-pull`
+   label to the formula pull request. The tap's `pull_request_target` workflow
+   has write access and will:
+
+   - download the bottle artifacts from the pull-request workflow;
+   - create or update the `tycho-<next-version>` GitHub Release;
+   - upload the bottle assets;
+   - merge the generated `bottle do` checksums into `Formula/tycho.rb`;
+   - push the result to the tap's `main` branch; and
+   - delete the pull-request branch when it belongs to the tap repository.
+
+   Only trusted maintainers should apply `pr-pull`. Confirm the tap has the
+   label and that GitHub Actions can write repository contents before relying
+   on this step.
+
+7. Verify the published bottle:
+
+   ```sh
+   brew update
+   brew reinstall firewalker06/tycho/tycho
+   brew test firewalker06/tycho/tycho
+   brew info firewalker06/tycho/tycho
+   ```
 
 ## Post-Release Verification
 

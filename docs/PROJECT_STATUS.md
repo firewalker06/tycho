@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-07-12
+2026-07-21
 
 ## Strategic Direction
 
@@ -68,11 +68,11 @@ Key references:
 
 ## Current Focus
 
-**Remote UI stabilization**: the cross-route design audit is implemented across
-the responsive shell, contextual navigation/actions, forms, inquiry submission,
-Settings, conversations, diffs, summaries, and attachment reading. The next
-focus is stabilizing install/update paths through Homebrew checks, hardening
-harness compatibility, and continuing browser/TUI smoke verification.
+**v0.8 release**: the Remote UI stabilization work, project lifecycle CLI,
+session loops, persistent scheduled sessions, and cross-harness response style
+are complete. Codex 0.144.6, Claude Code 2.1.216, and OpenCode 1.18.4 pass cold
+and resumed managed-agent validation. The remaining work is to merge, publish,
+and verify the 0.8.0 packages and Homebrew bottles.
 
 ## Roadmap
 
@@ -148,13 +148,25 @@ harness compatibility, and continuing browser/TUI smoke verification.
 - [x] Publish public Homebrew tap formula
 - [x] Add README screenshots for TUI and Remote UI workflows
 
+### v0.8 — Remote Workflows and Release Hardening ✓
+
+- [x] Add project lifecycle commands with JSON output
+- [x] Add persistent scheduled sessions and temporary Remote UI session loops
+- [x] Add global and scoped cross-harness response-style policy
+- [x] Complete the responsive Remote UI design remediation and full-screen
+      conversation workflows
+- [x] Validate Codex 0.144.6, Claude Code 2.1.216, and OpenCode 1.18.4 cold and
+      resumed sessions
+- [x] Bound harness catalog probes and normalize OpenCode catalog output
+- [x] Document the Homebrew bottle `pr-pull` publishing workflow
+
 ## Features Candidates
 
 ### Release Hardening
 
 - [ ] Formalize specs
-- [ ] Stabilize install/update paths through Homebrew checks
-- [ ] Continue browser/TUI smoke verification
+- [x] Stabilize source packaging and pre-release browser/TUI checks
+- [ ] Publish and verify the 0.8.0 Homebrew bottles
 
 ### Model And Effort Arguments
 

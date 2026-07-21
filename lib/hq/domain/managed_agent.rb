@@ -1373,7 +1373,8 @@ module HQ
                       composed_prompt
                     else
                       threshold = last_run&.finished_at || @finished_at || @started_at
-                      latest = memory_store.latest_user_message_after(threshold)
+                      threshold = Time.at(threshold.to_i) if threshold
+                      latest = memory_store.latest_user_message_after(threshold, inclusive: true)
                       latest.to_s.strip.empty? ? "Continue from the current HQ managed-agent state." : latest.to_s
                     end
       with_execution_guidance(base_prompt, response_style:)
