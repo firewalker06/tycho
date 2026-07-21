@@ -25,6 +25,7 @@ module ManagedAgentTest
     assert_opencode_assistant_json_structured_output_normalizes
     assert_final_output_checklist_is_ephemeral_execution_context
     assert_response_style_applies_to_cold_and_resumed_runs
+    assert_native_resume_includes_same_second_follow_up
     assert_response_style_can_be_disabled_and_run_session_is_recorded
     assert_agent_result_schema_describes_summary
     assert_no_action_status_conflicts_are_normalized
@@ -70,6 +71,43 @@ module ManagedAgentTest
            "expected response style guidance on a native resumed run")
     assert(!resume_prompt.include?("Inspect the project."),
            "expected a native resumed run not to replay the base prompt")
+  end
+
+  def assert_native_resume_includes_same_second_follow_up
+    old_logs_dir = nil
+    Dir.mktmpdir("hq-managed-agent-resume-prompt-test") do |dir|
+      logs_dir = File.join(dir, "agents")
+      FileUtils.mkdir_p(logs_dir)
+      old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, logs_dir)
+      finished_at = Time.parse("2026-07-18T13:09:48+07:00") + 0.75
+      follow_up = "Resume immediately with this same-second follow-up."
+      agent = HQ::ManagedAgent.new(
+        key: "same-second-resume",
+        name: "Same second resume",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "Cold prompt",
+        agent: "opencode",
+        session_id: "ses_same_second",
+        runs: [HQ::ManagedAgent::AgentRun.new(
+          started_at: finished_at - 5,
+          finished_at: finished_at,
+          exit_code: 0,
+          status: "success",
+          command: "opencode run"
+        )]
+      )
+      agent.send(:memory_store).append_user_message!(follow_up, created_at: finished_at)
+
+      prompt = agent.send(:prompt_for_execution)
+      assert(prompt.include?(follow_up),
+             "expected native resume prompt to include follow-up created at the prior finish timestamp")
+      assert(!prompt.include?("Continue from the current HQ managed-agent state."),
+             "expected same-second follow-up to replace generic resume prompt")
+    end
+  ensure
+    replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
   end
 
   def assert_response_style_can_be_disabled_and_run_session_is_recorded

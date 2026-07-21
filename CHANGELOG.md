@@ -4,6 +4,43 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.8.0 - 2026-07-21
+
+### Highlights
+
+- Add `tycho project` commands to create, inspect, update, and archive projects.
+  Use `--json` in scripts.
+- Add session loops in Remote UI to rerun an agent until a set time.
+- Keep scheduled runs in the same agent session so they retain conversation
+  context.
+- Add response-style to set your agent tone. For example: "Use the simplest
+  accurate words, active verbs, and concrete details." (#49)
+- Add a full-screen conversation editor that keeps drafts during refresh and
+  works on mobile.
+
+### Other changes
+
+- Improve Remote UI navigation, forms, conversations, summaries, diffs, and
+  attachments on desktop and mobile.
+- Add controls to run, pause, resume, and edit an agent schedule.
+- Let inquiry replies include optional written feedback.
+- Add attachment menus, refreshed previews, focused summary and file views, and
+  a smaller mobile reply box.
+- Add side-by-side and unified views for uncommitted Git changes.
+- Improve run activity, token usage, attachment previews, schedule status, and
+  agent renaming.
+- Use `no_action_needed` only when a check finds nothing to do.
+
+### Fixes
+
+- Pass agent prompts safely so prompt text is not read as command-line options.
+- Fix copying usage details when a value is missing.
+- Remove extra header spacing on standalone iPads.
+- Stop model and authentication checks from hanging when an agent CLI does not
+  respond.
+- Read models and authentication details from OpenCode 1.18.4 reliably.
+- Keep follow-up messages sent in the same second an agent run finishes.
+
 ## 0.7.4 - 2026-07-06
 
 ### Bug Fixes
