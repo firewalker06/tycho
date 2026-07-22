@@ -248,6 +248,24 @@ def write_smoke_script(path)
         await agentsRegressionPage.waitForSelector(`.agent-row[data-open-agent='${unscheduledAgentKey}']`, { state: "visible", timeout: 10_000 });
         await agentsRegressionPage.close();
 
+        const prContextPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+        await prContextPage.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
+        await prContextPage.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+        await prContextPage.evaluate((key) => {
+          const agent = findAgent(key);
+          agent.attachments = [
+            ...(agent.attachments || []),
+            { kind: "pull_request", title: "Example PR", url: "https://github.com/example/web/pull/123" },
+          ];
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
+        await prContextPage.click("#header-more-button");
+        await prContextPage.waitForSelector(`[data-open-agent-pr-diffs='${agentKey}']`, { state: "visible", timeout: 10_000 });
+        await prContextPage.click(`[data-open-agent-pr-diffs='${agentKey}']`);
+        await prContextPage.waitForSelector(".agent-pr-diff-shell", { state: "visible", timeout: 10_000 });
+        await prContextPage.close();
+
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
         await page.waitForSelector("#header-schedule-menu:not(.hidden)", { state: "visible", timeout: 10_000 });
@@ -488,6 +506,12 @@ def write_smoke_script(path)
           render();
         }, agentKey);
 
+        await page.click("#header-more-button");
+        await page.waitForSelector("[data-create-agent='web']", { state: "visible", timeout: 10_000 });
+        await page.click("[data-create-agent='web']");
+        await page.waitForSelector("#agent-form[data-mode='create'][data-project-key='web']", { state: "visible", timeout: 10_000 });
+        await page.evaluate((key) => navigate({ type: "agent", key }), agentKey);
+        await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
         await page.click("#header-more-button");
         await page.waitForSelector("[data-toggle-agent-settings]", { state: "visible", timeout: 10_000 });
         await page.click("[data-toggle-agent-settings]");

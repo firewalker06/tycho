@@ -3000,6 +3000,13 @@ module RemoteServerTest
            "expected Conversation settings to be available from the More menu")
     assert(js[:body].include?("Open project"),
            "expected Conversation More menu project navigation to use a verb label")
+    assert(js[:body].include?('label: "New agent"') &&
+           js[:body].include?('attrs: `data-create-agent="${escapeAttr(agent.project_key)}"`'),
+           "expected Conversation More menu to create agents in the current project")
+    assert(js[:body].include?('label: "PR Diffs"') &&
+           js[:body].include?("pullRequestCount > 0") &&
+           js[:body].include?('attrs: `data-open-agent-pr-diffs="${escapeAttr(agent.key)}"`'),
+           "expected Conversation More menu to expose available pull request diffs")
     assert(helpers_js[:body].include?('back_to=${encodeURIComponent(value)}'),
            "expected Project links opened from agents to carry a back_to crumb")
     assert(js[:body].include?("function setAgentSettings"), "expected Agent metadata to move into header settings")
