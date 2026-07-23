@@ -947,6 +947,8 @@ module HQ
           if result.nil?
             warn "failed to execute \#{ARGV.first.inspect} (exit 127)"
             127
+          elsif child&.signaled?
+            128 + child.termsig.to_i
           else
             child ? child.exitstatus.to_i : (result ? 0 : 1)
           end
@@ -970,13 +972,20 @@ module HQ
       Thread.new do
         _waited_pid, status = Process.wait2(pid)
         begin
-          File.write(status_path, status.exitstatus.to_i.to_s)
+          File.write(status_path, process_exit_code(status).to_s)
         rescue StandardError
           nil
         end
       rescue Errno::ECHILD
         nil
       end
+    end
+
+    def process_exit_code(status)
+      return 1 unless status
+      return 128 + status.termsig.to_i if status.signaled?
+
+      status.exitstatus.to_i
     end
 
     def external_process_environment(environment)
