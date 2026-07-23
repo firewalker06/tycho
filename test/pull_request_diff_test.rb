@@ -7,6 +7,7 @@ module PullRequestDiffTest
 
   def run!
     assert_github_provider_fetches_current_diff_not_commit_patch
+    assert_github_provider_normalizes_utf8_cli_output
     assert_previous_diff_snapshots_are_not_fresh
     assert_legacy_snapshots_are_not_fresh
     puts "pull_request_diff_test: ok"
@@ -59,6 +60,34 @@ module PullRequestDiffTest
 
     assert(!HQ::PullRequestDiff.snapshot_summary(previous, metadata:)["fresh"],
            "expected previous diff-format snapshots to be stale so bad cached patch snapshots refetch")
+  end
+
+  def assert_github_provider_normalizes_utf8_cli_output
+    provider = Class.new(HQ::PullRequestDiff::GitHubProvider) do
+      private
+
+      def gh_output(*args)
+        output = if args.first == "api"
+                   "{\"title\":\"Fix \xE2\x80\x94 metadata\",\"head\":{},\"base\":{}}"
+                 else
+                   "diff --git a/caf\xC3\xA9.rb b/caf\xC3\xA9.rb\n"
+                 end
+        output.b.force_encoding(Encoding::US_ASCII)
+      end
+    end.new
+    reference = HQ::PullRequestDiff::Reference.new(
+      repository: "example/web",
+      number: 123,
+      url: "https://github.com/example/web/pull/123"
+    )
+
+    metadata = provider.metadata(reference)
+    diff, = provider.patch(reference)
+
+    assert(metadata["title"] == "Fix \u2014 metadata",
+           "expected GitHub metadata bytes to normalize as UTF-8 under US-ASCII defaults")
+    assert(diff.include?("caf\u00E9.rb"),
+           "expected GitHub diff bytes to normalize as UTF-8 under US-ASCII defaults")
   end
 
   def assert_legacy_snapshots_are_not_fresh

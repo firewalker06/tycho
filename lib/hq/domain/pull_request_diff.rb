@@ -92,22 +92,26 @@ module HQ
       end
 
       def patch(reference)
-        output = gh_output(
+        output = utf8_output(gh_output(
           "pr", "diff", reference.number.to_s,
           "--repo", reference.repository,
           "--color", "never"
-        )
+        ))
         truncated = output.bytesize > MAX_PATCH_BYTES
         output = output.byteslice(0, MAX_PATCH_BYTES).to_s if truncated
-        [output.scrub, truncated]
+        [output, truncated]
       end
 
       private
 
       def gh_json(path)
-        JSON.parse(gh_output("api", path))
+        JSON.parse(utf8_output(gh_output("api", path)))
       rescue JSON::ParserError
         raise Error.new("GitHub returned invalid JSON", status: 502)
+      end
+
+      def utf8_output(output)
+        output.to_s.dup.force_encoding(Encoding::UTF_8).scrub
       end
 
       def gh_output(*args)
