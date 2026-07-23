@@ -35,6 +35,8 @@ module ManagedAgentTest
     assert_legacy_run_commands_backfill_model_and_reasoning_effort
     assert_model_and_reasoning_effort_arguments_apply_to_harnesses
     assert_start_records_missing_harness_without_spawning
+    assert_poll_stops_stale_unstructured_output
+    assert_poll_preserves_stale_structured_output
     assert_external_process_environment_removes_ruby_loader_state
     assert_start_spawns_harness_without_ruby_runner_parent
     assert_agent_runner_warns_when_command_cannot_execute
@@ -1090,6 +1092,87 @@ module ManagedAgentTest
       assert(File.read(status_path) == "127", "expected runner status file to record 127")
       assert(output.include?("failed to execute #{missing_command.inspect}"),
              "expected missing command warning in runner output")
+    end
+  end
+
+  def assert_poll_stops_stale_unstructured_output
+    with_stale_output_agent("Waiting for interactive setup") do |agent|
+      pid = agent.pid
+      agent.poll!
+      wait_for_process_exit(pid)
+
+      assert(!agent.running?, "expected stale unstructured output to be stopped")
+      assert(agent.status == "stopped",
+             "expected stale unstructured output to finalize as stopped, got #{agent.status.inspect}")
+      assert(agent.latest_inquiry.nil?, "expected automatic stop not to synthesize an inquiry")
+      assert(agent.last_summary.include?("no structured agent output"),
+             "expected the automatic stop summary to explain the missing JSON output")
+    end
+  end
+
+  def assert_poll_preserves_stale_structured_output
+    with_stale_output_agent('{"type":"system","session_id":"structured-session"}') do |agent|
+      agent.poll!
+
+      assert(agent.running?, "expected a process with structured output to keep running")
+    end
+  end
+
+  def with_stale_output_agent(output)
+    old_harnesses = HQ.custom_harnesses
+    Dir.mktmpdir("hq-direct-output-timeout-test") do |dir|
+      harness = File.join(dir, "direct-output-harness")
+      File.write(harness, <<~SH)
+        #!/bin/sh
+        echo '#{output}'
+        sleep 30
+      SH
+      File.chmod(0o755, harness)
+      HQ.custom_harnesses = [
+        HQ::HarnessConfig.new(
+          key: "direct-output",
+          adapter: "claude",
+          execution_command: [harness]
+        )
+      ]
+      agent = HQ::ManagedAgent.new(
+        key: "direct-output-agent",
+        name: "Direct Output Agent",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "System prompt",
+        agent: "direct-output",
+        response_style: false,
+        log_path: File.join(dir, "direct-output.raw.log")
+      )
+
+      agent.start!
+      deadline = Time.now + 5
+      sleep 0.05 until File.exist?(agent.raw_log_path) &&
+                       File.read(agent.raw_log_path).include?(output) ||
+                       Time.now >= deadline
+      stale_at = Time.now - HQ::ManagedAgent::DIRECT_OUTPUT_IDLE_TIMEOUT_SECONDS - 5
+      File.utime(stale_at, stale_at, agent.raw_log_path)
+      yield agent
+    ensure
+      agent&.retire_for_archive! if agent&.running?
+    end
+  ensure
+    HQ.custom_harnesses = old_harnesses
+  end
+
+  def wait_for_process_exit(pid, timeout: 2.0)
+    return unless pid
+
+    deadline = Time.now + timeout
+    loop do
+      Process.kill(0, pid)
+      break if Time.now >= deadline
+
+      sleep 0.05
+    rescue Errno::ESRCH, Errno::EPERM
+      break
     end
   end
 

@@ -96,6 +96,8 @@ module HQ
                              "If yes, include it in `attachments`: use `type: file` with `path` for local files, " \
                              "or `type: link` with an http(s) `url` for web links."
     LEGACY_SCHEDULED_NAME_PREFIX = "[Scheduled]"
+    DIRECT_OUTPUT_IDLE_TIMEOUT_SECONDS = 5 * 60
+    PROCESS_OUTPUT_MARKER = "=== process output ==="
 
     def self.with_final_output_checklist(prompt)
       text = prompt.to_s.rstrip
@@ -400,6 +402,7 @@ module HQ
         file.puts "session_id=#{@session_id}" unless @session_id.to_s.empty?
         file.puts "prompt=#{prompt_text}"
         file.puts
+        file.puts PROCESS_OUTPUT_MARKER
       end
 
       log_file = File.open(@log_path, "a")
@@ -458,10 +461,12 @@ module HQ
 
     def poll!
       return unless @pid
+      stop_stale_direct_output_wait! if running?
       return if running?
 
       @finished_at ||= Time.now
       @last_exit_code = read_exit_code
+      @last_exit_code ||= 143 if @stop_requested_at
       finalize_latest_run!
       HQ.logger.info("Agent") { "#{@key} exited (code=#{@last_exit_code})" }
       @pid = nil
@@ -1152,6 +1157,61 @@ module HQ
       while running? && Time.now < deadline
         sleep 0.05
       end
+    end
+
+    def stop_stale_direct_output_wait!(now: Time.now)
+      reason = stale_direct_output_wait(now:)
+      return false unless reason
+
+      @stop_requested_at = now
+      append_direct_output_stop_marker!(reason)
+      signal_process_group("TERM")
+      wait_until_not_running(1.0)
+      if running?
+        signal_process_group("KILL")
+        wait_until_not_running(0.5)
+      end
+      true
+    end
+
+    def stale_direct_output_wait(now:)
+      return nil if awaiting_input? || latest_inquiry
+      return nil unless File.file?(@log_path)
+
+      idle_for = now - File.mtime(@log_path)
+      return nil if idle_for < DIRECT_OUTPUT_IDLE_TIMEOUT_SECONDS
+
+      direct_output_wait_reason
+    rescue StandardError
+      nil
+    end
+
+    def direct_output_wait_reason
+      lines = process_output_lines
+      return nil if lines.any? { |line| agent_json_event?(line) }
+
+      "no structured agent output"
+    end
+
+    def process_output_lines
+      lines = last_run_log_lines.last(120).map(&:to_s)
+      marker_index = lines.rindex(PROCESS_OUTPUT_MARKER)
+      marker_index ? lines[(marker_index + 1)..] : lines
+    end
+
+    def agent_json_event?(line)
+      event = parse_json_line(line.to_s.strip)
+      event.is_a?(Hash) && !event["type"].to_s.empty?
+    end
+
+    def append_direct_output_stop_marker!(reason)
+      File.open(@log_path, "a") do |file|
+        file.puts
+        file.puts "Tycho stopped this run after #{reason} stayed idle for " \
+                  "#{DIRECT_OUTPUT_IDLE_TIMEOUT_SECONDS} seconds."
+      end
+    rescue StandardError
+      nil
     end
 
     def finalize_retired_run!
