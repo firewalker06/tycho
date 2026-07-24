@@ -334,6 +334,8 @@ module HQ
       case path
       when "/", "/ui", "/ui/"
         ui_asset("text/html; charset=utf-8", RemoteUI.index)
+      when "/design-system", "/design-system/"
+        ui_asset("text/html; charset=utf-8", RemoteUI.design_system_index)
       when "/ui.css"
         ui_asset("text/css; charset=utf-8", RemoteUI.css)
       when "/ui-helpers.js"
@@ -372,6 +374,8 @@ module HQ
         "/",
         "/ui",
         "/ui/",
+        "/design-system",
+        "/design-system/",
         "/ui.css",
         "/ui-helpers.js",
         "/ui.js",

@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en" data-asset-version="<%= HQ::RemoteUI.asset_version %>">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#282a36">
+    <title>Tycho Design System</title>
+    <link rel="stylesheet" href="/ui.css?v=<%= HQ::RemoteUI.asset_version %>">
+  </head>
+  <body>
+    <main class="ds-page ds-stack" style="--ds-stack-gap: var(--ds-space-6)">
+      <header class="ds-stack" style="--ds-stack-gap: var(--ds-space-2)">
+        <span class="ds-badge" data-intent="info">Internal preview</span>
+        <h1 class="ds-heading" data-level="1">Tycho Design System</h1>
+        <p class="ds-text">Dense, explicit controls for supervising long-running agents without losing context.</p>
+      </header>
+
+      <section class="ds-stack" aria-labelledby="preview-foundations">
+        <h2 id="preview-foundations" class="ds-heading" data-level="2">Foundations</h2>
+        <div class="ds-grid" style="--ds-grid-min: 10rem">
+          <% [
+            ["Canvas", "var(--ds-background-canvas)"],
+            ["Raised", "var(--ds-background-surface-raised)"],
+            ["Brand", "var(--ds-action-brand)"],
+            ["Information", "var(--ds-feedback-info)"],
+            ["Success", "var(--ds-feedback-success)"],
+            ["Warning", "var(--ds-feedback-warning)"],
+            ["Danger", "var(--ds-feedback-danger)"]
+          ].each do |label, value| %>
+            <div class="ds-surface ds-stack" style="--ds-stack-gap: var(--ds-space-2)">
+              <span aria-hidden="true" style="display:block;height:3rem;border-radius:var(--ds-radius-md);background:<%= value %>"></span>
+              <strong><%= label %></strong>
+              <code class="ds-code"><%= value %></code>
+            </div>
+          <% end %>
+        </div>
+      </section>
+
+      <section class="ds-stack" aria-labelledby="preview-actions">
+        <h2 id="preview-actions" class="ds-heading" data-level="2">Actions</h2>
+        <div class="ds-surface ds-cluster">
+          <button class="ds-button" data-variant="brand" type="button">Run agent</button>
+          <button class="ds-button" type="button">Edit settings</button>
+          <button class="ds-button" data-variant="danger" type="button">Archive</button>
+          <button class="ds-button" type="button" data-loading="true">
+            <span class="ds-spinner" aria-hidden="true"></span>
+            <span>Starting</span>
+          </button>
+          <button class="ds-button" type="button" disabled>Unavailable</button>
+          <button class="ds-button ds-icon-button" type="button" aria-label="More actions">•••</button>
+        </div>
+      </section>
+
+      <section class="ds-stack" aria-labelledby="preview-status">
+        <h2 id="preview-status" class="ds-heading" data-level="2">Product status</h2>
+        <div class="ds-surface ds-cluster" aria-label="Semantic status examples">
+          <span class="ds-badge ds-status" data-intent="neutral">Idle</span>
+          <span class="ds-badge ds-status" data-intent="info">No action</span>
+          <span class="ds-badge ds-status" data-intent="active">Running</span>
+          <span class="ds-badge ds-status" data-intent="warning">Answer required</span>
+          <span class="ds-badge ds-status" data-intent="success">Succeeded</span>
+          <span class="ds-badge ds-status" data-intent="danger">Blocked</span>
+        </div>
+        <p class="ds-text" data-tone="muted">Labels carry the state; color and adjacent product icons reinforce it.</p>
+      </section>
+
+      <section class="ds-stack" aria-labelledby="preview-overlays">
+        <h2 id="preview-overlays" class="ds-heading" data-level="2">Menu overlay</h2>
+        <div class="ds-surface ds-stack" style="--ds-stack-gap: var(--ds-space-3)">
+          <p class="ds-text">Product positioning stays local; the shared surface owns elevation, boundary, and layering.</p>
+          <div class="ds-overlay-surface" data-overlay-kind="menu" role="menu" aria-label="Example agent actions" style="position:relative;width:min(100%,20rem)">
+            <div class="more-menu">
+              <button class="more-menu-item single-line" type="button" role="menuitem">
+                <strong>View project</strong>
+              </button>
+              <button class="more-menu-item single-line" type="button" role="menuitem">
+                <strong>Edit agent</strong>
+              </button>
+              <span class="more-menu-separator" role="separator" aria-hidden="true"></span>
+              <button class="more-menu-item single-line danger" type="button" role="menuitem">
+                <strong>Archive agent</strong>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="ds-stack" aria-labelledby="preview-fields">
+        <h2 id="preview-fields" class="ds-heading" data-level="2">Fields</h2>
+        <form class="ds-surface ds-stack" data-ds-form="lifecycle" aria-label="Agent example form">
+          <div class="ds-grid">
+            <div class="ds-field">
+              <label class="ds-field__label" for="preview-name">Agent name</label>
+              <input class="ds-input" id="preview-name" value="Release verifier" aria-describedby="preview-name-help">
+              <span class="ds-field__description" id="preview-name-help">Shown in queues, notifications, and conversation headers.</span>
+            </div>
+            <div class="ds-field">
+              <label class="ds-field__label" for="preview-workspace">Workspace</label>
+              <input class="ds-input" id="preview-workspace" value="/workspace/tycho" readonly>
+              <span class="ds-field__description">Read-only values use a dashed boundary.</span>
+            </div>
+            <div class="ds-field">
+              <label class="ds-field__label" for="preview-harness">Harness</label>
+              <select class="ds-input" id="preview-harness">
+                <option>codex</option>
+                <option>claude</option>
+              </select>
+              <span class="ds-field__description">Native selection behavior with shared control geometry.</span>
+            </div>
+          </div>
+          <div class="ds-field">
+            <label class="ds-field__label" for="preview-prompt">Prompt</label>
+            <textarea class="ds-input" id="preview-prompt" aria-invalid="true" aria-describedby="preview-prompt-error"></textarea>
+            <span class="ds-field__error" id="preview-prompt-error">Enter the work this agent should perform.</span>
+          </div>
+          <div class="ds-cluster" data-collapse="mobile">
+            <button class="ds-button" data-variant="brand" type="submit">Create and run</button>
+            <button class="ds-button" type="button">Cancel</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="ds-stack" aria-labelledby="preview-feedback">
+        <h2 id="preview-feedback" class="ds-heading" data-level="2">Feedback and realistic states</h2>
+        <div class="ds-grid">
+          <div class="ds-alert" role="status">
+            <div><strong class="ds-alert__title">Agent is running</strong>Logs and conversation refresh automatically.</div>
+          </div>
+          <div class="ds-alert" data-intent="warning" role="status">
+            <div><strong class="ds-alert__title">Decision required</strong>The agent is waiting for a release strategy.</div>
+          </div>
+          <div class="ds-alert" data-intent="danger" role="alert">
+            <div><strong class="ds-alert__title">Run failed</strong>Open activity details before retrying.</div>
+          </div>
+          <div class="ds-alert" data-intent="success" role="status">
+            <div><strong class="ds-alert__title">Run complete</strong>All requested checks passed.</div>
+          </div>
+        </div>
+        <div class="ds-empty-state">
+          <strong>No agents need attention</strong>
+          <span>Running work and recent outcomes will appear here.</span>
+        </div>
+      </section>
+
+      <section class="ds-stack" aria-labelledby="preview-inquiry">
+        <h2 id="preview-inquiry" class="ds-heading" data-level="2">Inquiry decision</h2>
+        <form class="ds-surface ds-stack" data-ds-form="inquiry" aria-label="Agent inquiry example" aria-describedby="preview-inquiry-status">
+          <div class="ds-alert" data-intent="warning" role="status">
+            <div><strong class="ds-alert__title">Decision required</strong>Choose at least one deployment environment before the agent continues.</div>
+          </div>
+          <div class="ds-field ds-surface">
+            <div class="ds-field__label" id="preview-environments-label">Environments <span class="ds-badge" data-intent="warning">Required</span></div>
+            <span class="ds-field__description" id="preview-environments-description">Select every environment included in this release.</span>
+            <div class="ds-stack" role="group" aria-labelledby="preview-environments-label" aria-describedby="preview-environments-description" aria-errormessage="preview-environments-error" aria-invalid="true">
+              <label class="ds-cluster"><input type="checkbox"> Staging</label>
+              <label class="ds-cluster"><input type="checkbox"> Production</label>
+            </div>
+            <span class="ds-field__error" id="preview-environments-error">Choose at least one environment.</span>
+          </div>
+          <p class="ds-field__error" id="preview-inquiry-status" role="status" aria-live="polite">Environments is required.</p>
+          <div class="ds-cluster" data-collapse="mobile">
+            <button class="ds-button" data-variant="brand" type="submit" disabled>Send answer</button>
+          </div>
+        </form>
+      </section>
+    </main>
+  </body>
+</html>

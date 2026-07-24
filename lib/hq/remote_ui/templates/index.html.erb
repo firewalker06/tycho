@@ -45,7 +45,7 @@
           <div class="header-actions">
             <div id="header-view-menu" class="header-view-menu hidden"></div>
             <div id="header-schedule-menu" class="header-schedule-menu hidden"></div>
-            <button id="header-more-button" class="icon-button hidden" type="button" aria-label="More actions" title="More actions" aria-expanded="false" aria-controls="header-more-panel">
+            <button id="header-more-button" class="icon-button hidden" type="button" aria-label="More actions" title="More actions" aria-haspopup="menu" aria-expanded="false" aria-controls="header-more-panel">
               <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24">
                 <circle cx="12" cy="12" r="1"></circle>
                 <circle cx="19" cy="12" r="1"></circle>
@@ -64,8 +64,8 @@
             <button id="save-token-button" type="button">Save</button>
           </div>
         </form>
-        <section id="unread-agents-panel" class="unread-agents-panel hidden" aria-label="Agent switcher"></section>
-        <section id="header-more-panel" class="header-more-panel hidden" aria-label="More actions"></section>
+        <section id="unread-agents-panel" class="unread-agents-panel ds-overlay-surface hidden" aria-label="Agent switcher" data-overlay-surface="agent-switcher"></section>
+        <section id="header-more-panel" class="header-more-panel ds-overlay-surface hidden" aria-label="More actions" data-overlay-surface="header-more" data-overlay-kind="menu"></section>
         <section id="agent-settings-panel" class="agent-settings-panel hidden" aria-label="Conversation settings"></section>
       </header>
 

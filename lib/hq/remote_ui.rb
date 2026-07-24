@@ -8,6 +8,8 @@ module HQ
   class RemoteUI
     ROOT = File.expand_path("remote_ui", __dir__)
     TEMPLATE_PATH = File.join(ROOT, "templates", "index.html.erb")
+    DESIGN_SYSTEM_TEMPLATE_PATH = File.join(ROOT, "templates", "design_system.html.erb")
+    DESIGN_SYSTEM_CSS_PATH = File.join(ROOT, "assets", "design_system.css")
     CSS_PATH = File.join(ROOT, "assets", "app.css")
     HELPERS_JS_PATH = File.join(ROOT, "assets", "app_helpers.js")
     JS_PATH = File.join(ROOT, "assets", "app.js")
@@ -28,6 +30,8 @@ module HQ
     }.freeze
     ASSET_VERSION_PATHS = [
       TEMPLATE_PATH,
+      DESIGN_SYSTEM_TEMPLATE_PATH,
+      DESIGN_SYSTEM_CSS_PATH,
       CSS_PATH,
       HELPERS_JS_PATH,
       JS_PATH,
@@ -50,8 +54,12 @@ module HQ
       ERB.new(File.read(TEMPLATE_PATH)).result(binding)
     end
 
+    def self.design_system_index
+      ERB.new(File.read(DESIGN_SYSTEM_TEMPLATE_PATH)).result(binding)
+    end
+
     def self.css
-      File.read(CSS_PATH)
+      [File.read(DESIGN_SYSTEM_CSS_PATH), File.read(CSS_PATH)].join("\n")
     end
 
     def self.js

@@ -2544,6 +2544,9 @@ module RemoteServerTest
     assert(response[:body].include?('id="header-schedule-menu"'),
            "expected root shell to expose contextual schedule controls")
     assert(response[:body].include?('id="header-more-panel"'), "expected root shell to expose the header More menu panel")
+    assert(response[:body].include?('data-overlay-surface="header-more"') &&
+           response[:body].include?('aria-haspopup="menu"'),
+           "expected the header More menu to use the shared overlay contract")
     assert(response[:body].include?('id="header-more-badge"'), "expected root shell to expose the header More badge")
     assert(response[:body].include?('id="quick-agent-fab"'), "expected root shell to expose New agent launch")
     assert(response[:body].include?('class="quick-agent-fab-label"'),
@@ -2559,6 +2562,29 @@ module RemoteServerTest
       assert(!response[:body].include?(glyph), "expected root shell to avoid text icon glyph #{glyph.inspect}")
     end
     assert(!response[:body].include?("refresh-button"), "expected root shell to omit the header refresh button")
+
+    design_system_request = HQ::RemoteServer.const_get(:Request).new(
+      method: "GET",
+      path: "/design-system",
+      headers: {},
+      body: ""
+    )
+    assert(server.send(:ui_request?, design_system_request),
+           "expected /design-system to be recognized as a public UI route")
+    design_system = server.send(:route_ui, "/design-system")
+    assert(design_system[:content_type].include?("text/html"),
+           "expected /design-system to return HTML")
+    assert(design_system[:body].include?("Tycho Design System"),
+           "expected the design-system preview to identify itself")
+    assert(design_system[:body].include?('class="ds-button" data-variant="brand"'),
+           "expected the design-system preview to include a semantic primary action")
+    assert(design_system[:body].include?('aria-describedby="preview-prompt-error"'),
+           "expected the design-system preview to connect invalid fields and errors")
+    assert(design_system[:body].include?("Menu overlay") &&
+           design_system[:body].include?('class="ds-overlay-surface"'),
+           "expected the design-system preview to document menu overlays")
+    assert(design_system[:body].match?(%r{href="/ui\.css\?v=[0-9a-f]{12}"}),
+           "expected the design-system preview stylesheet to be asset-versioned")
 
     service_worker = server.send(:route_ui, "/service-worker.js")
     assert(service_worker[:content_type].include?("javascript"), "expected service worker route to return JavaScript")
@@ -2582,6 +2608,43 @@ module RemoteServerTest
 
     css = server.send(:route_ui, "/ui.css")
     assert(css[:content_type].include?("text/css"), "expected /ui.css to return CSS")
+    %w[
+      --ds-background-canvas
+      --ds-text-primary
+      --ds-action-brand
+      --ds-feedback-danger
+      --ds-focus-ring
+      --ds-touch-target
+      --ds-z-dialog
+    ].each do |token|
+      assert(css[:body].include?(token), "expected Remote UI CSS to expose semantic token #{token}")
+    end
+    %w[
+      .ds-stack
+      .ds-cluster
+      .ds-grid
+      .ds-surface
+      .ds-button
+      .ds-icon-button
+      .ds-field
+      .ds-input
+      .ds-alert
+      .ds-badge
+      .ds-spinner
+      .ds-skeleton
+      .ds-empty-state
+      .ds-overlay-surface
+    ].each do |selector|
+      assert(css[:body].include?(selector), "expected Remote UI CSS to include #{selector}")
+    end
+    assert(css[:body].include?(".ds-status") &&
+           css[:body].include?('.ds-badge[data-intent="active"]') &&
+           css[:body].include?('.ds-badge[data-intent="neutral"]'),
+           "expected shared badges to cover the complete product status taxonomy")
+    assert(css[:body].include?("@media (prefers-reduced-motion: reduce)"),
+           "expected shared motion to respect reduced-motion preferences")
+    assert(css[:body].include?("@media (forced-colors: active)"),
+           "expected shared controls to retain boundaries in forced-colors mode")
     %w[#282a36 #f8f8f2 #bd93f9 #ff79c6].each do |color|
       assert(css[:body].include?(color), "expected Remote UI CSS to include Dracula color #{color}")
     end
@@ -2917,6 +2980,48 @@ module RemoteServerTest
            helpers_js[:body].include?("function attachmentBlobPath"),
            "expected Remote UI attachment target primitives to live in the helper asset")
     js = server.send(:route_ui, "/ui.js")
+    assert(js[:body].include?("function statusIntent") &&
+           js[:body].include?("function statusBadge") &&
+           js[:body].include?("function statusMarkAttributes") &&
+           js[:body].include?('need: "warning"') &&
+           js[:body].include?('running: "active"') &&
+           js[:body].include?('done: "success"') &&
+           js[:body].include?('fail: "danger"'),
+           "expected one semantic mapping for legacy product status classes")
+    assert(js[:body].scan("statusBadge(").length >= 25 &&
+           js[:body].scan("statusMarkAttributes(").length >= 15,
+           "expected representative agent, schedule, setup, project, and diff states to use the semantic status contract")
+    assert(js[:body].include?('response-style-form ds-surface ds-stack'),
+           "expected Response style to use the shared surface and layout primitives")
+    assert(js[:body].include?('class="ds-input" id="response-style-input"') &&
+           js[:body].include?('aria-describedby="response-style-help"'),
+           "expected Response style to use the shared field contract")
+    assert(js[:body].include?('class="notice need ds-alert"') &&
+           js[:body].include?('data-intent="danger" role="alert"'),
+           "expected Response style failures to use the shared danger alert")
+    %w[agent-form project-form schedule-form schedule-message-form].each do |form_id|
+      assert(js[:body].include?("id=\"#{form_id}\"") &&
+             js[:body].match?(/id="#{Regexp.escape(form_id)}"[^>]*data-ds-form="lifecycle"/),
+             "expected #{form_id} to use the lifecycle form contract")
+    end
+    %w[
+      agent-template-help
+      agent-response-style-help
+      schedule-key-help
+      schedule-cron-help
+      schedule-ends-at-help
+      schedule-system-message-help
+      schedule-message-help
+      schedule-message-content-help
+    ].each do |description_id|
+      assert(js[:body].include?("aria-describedby=\"#{description_id}\"") &&
+             js[:body].include?("id=\"#{description_id}\""),
+             "expected lifecycle form help #{description_id} to be programmatically connected")
+    end
+    assert(js[:body].scan('class="field-card ds-field ds-surface"').length >= 20,
+           "expected lifecycle fields to use shared field and surface contracts")
+    assert(js[:body].scan('data-variant="brand" type="submit"').length >= 7,
+           "expected lifecycle primary submits to use the semantic brand action")
     assert(js[:body].include?('<span>Create and run</span>') && js[:body].include?('type="submit"'),
            "expected Quick Agent to expose a visible primary submit action")
     assert(js[:body].include?("Create without running") && js[:body].include?('class="secondary-submit-menu"'),
@@ -3003,6 +3108,19 @@ module RemoteServerTest
            js[:body].include?("data-inquiry-field-error") &&
            css[:body].include?(".inquiry-field.invalid"),
            "expected inquiry validation to identify the required field beside its control")
+    assert(js[:body].include?('data-ds-form="inquiry"') &&
+           js[:body].include?('class="field-card inquiry-field ds-field ds-surface"') &&
+           js[:body].include?('class="ds-input"') &&
+           js[:body].include?('data-variant="brand" type="submit"'),
+           "expected inquiry decisions to use shared field, surface, input, and action contracts")
+    assert(js[:body].include?('role="group" data-inquiry-control data-inquiry-multi=') &&
+           js[:body].include?('aria-labelledby="${escapeAttr(relationships.labelId || "")}"') &&
+           js[:body].include?('aria-errormessage=') &&
+           js[:body].include?('field.querySelector("[data-inquiry-control]")'),
+           "expected multi-select inquiries to expose one labelled group with programmatic errors")
+    assert(js[:body].include?('id="inquiry-validation"') &&
+           js[:body].include?('aria-live="polite" aria-atomic="true"'),
+           "expected inquiry readiness changes to be announced atomically")
     assert(css[:body].include?("align-content: start") &&
            css[:body].include?("grid-auto-rows: max-content") &&
            css[:body].include?("height: var(--control-height)"),
@@ -3040,6 +3158,16 @@ module RemoteServerTest
            "expected Settings More menu to preserve open state across same-route refreshes")
     assert(js[:body].include?("headerMoreBadge"),
            "expected header More menus to expose a discoverability badge")
+    assert(js[:body].include?("function rememberOverlayFocus") &&
+           js[:body].include?("function restoreOverlayFocus") &&
+           js[:body].include?("function closeDetailsOverlays"),
+           "expected non-modal overlays to share focus and peer-dismissal behavior")
+    assert(js[:body].include?("function moveOverlayMenuFocus") &&
+           js[:body].include?('["ArrowDown", "ArrowUp", "Home", "End"]') &&
+           js[:body].include?("closeHeaderMore({ restoreFocus: true })"),
+           "expected menus to support arrow navigation and Escape focus restoration")
+    assert(js[:body].scan("data-overlay-menu").length >= 6,
+           "expected representative details menus to adopt the overlay interaction contract")
     assert(helpers_js[:body].include?("function parseBackToRoute"),
            "expected Project routes to parse return crumbs")
     assert(helpers_js[:body].include?("function routeBackQuery"),
@@ -3205,7 +3333,7 @@ module RemoteServerTest
            js[:body].include?('replace(/\\s+/g, " ")') &&
            js[:body].include?('iconSvg("squarePen")') &&
            js[:body].include?('iconSvg("trash2")') &&
-           js[:body].include?('class="inline-icon-button" type="button" data-open-response-style') &&
+           js[:body].include?('class="inline-icon-button ds-button" type="button" data-open-response-style') &&
            js[:body].include?("shared writing guidance") &&
            js[:body].include?("without changing the task or required output format"),
            "expected Settings to explain response style and show the correct add or edit action with an excerpt")
@@ -3336,7 +3464,7 @@ module RemoteServerTest
     assert(js[:body].include?('apiPatch(`/schedules/${encodeURIComponent(scheduleKey)}/message`, payload)'),
            "expected Remote UI to call the schedule message update endpoint")
     assert(js[:body].include?('class="schedule-row-title"') &&
-           js[:body].include?('<span class="pill ${className}">${escapeHtml(scheduleStatusLabel(schedule))}</span>'),
+           js[:body].include?('statusBadge(titleFromKey(scheduleStatusLabel(schedule)), className)'),
            "expected Remote UI schedule status labels to render inline with the title")
     assert(js[:body].include?("const ends = schedule.ends_at") &&
            js[:body].include?("return `${project} / ${next}${ends} / ${humanizeCron(schedule.cron)}`;"),
@@ -3659,9 +3787,9 @@ module RemoteServerTest
            "expected Agent detail read marking to use a guarded dwell timer")
     assert(js[:body].include?("/reading"),
            "expected Agent detail read state to use the reading endpoint")
-    assert(js[:body].include?('if (agent.unread) return "unread";'),
+    assert(js[:body].include?('if (agent.unread) return "Unread";'),
            "expected unread agents to show unread as the visible status before final run status")
-    assert(js[:body].scan('<span class="pill need">Unread</span>').length >= 1,
+    assert(js[:body].scan('statusBadge("Unread", "need")').length >= 1,
            "expected agent list surfaces to render explicit Unread pills")
     assert(js[:body].include?("function shouldAutoScrollAgentConversation"),
            "expected Agent detail to auto-scroll only when conversation content changes")

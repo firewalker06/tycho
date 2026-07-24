@@ -272,6 +272,37 @@ def write_smoke_script(path)
         if (await agentsRegressionPage.locator("#unread-agent-search").inputValue() !== "" || await agentsRegressionPage.locator(".switcher-agent-row").count() !== 2) {
           throw new Error("Clear search did not restore the agent switcher list");
         }
+        await agentsRegressionPage.press("#unread-agent-search", "Escape");
+        await agentsRegressionPage.waitForSelector("#unread-agents-panel", { state: "hidden", timeout: 10_000 });
+        await agentsRegressionPage.waitForFunction(
+          () => document.activeElement === document.querySelector("#header-mark"),
+          null,
+          { timeout: 10_000 }
+        );
+
+        await agentsRegressionPage.evaluate(() => navigate({ type: "tab", tab: "agents" }));
+        await agentsRegressionPage.waitForSelector("[data-agent-sort-menu] > summary", { state: "visible", timeout: 10_000 });
+        await agentsRegressionPage.click("[data-agent-sort-menu] > summary");
+        await agentsRegressionPage.waitForFunction(
+          () => Boolean(document.activeElement?.dataset?.agentSortChoice),
+          null,
+          { timeout: 10_000 }
+        );
+        const firstSortChoice = await agentsRegressionPage.evaluate(() => document.activeElement?.dataset?.agentSortChoice);
+        await agentsRegressionPage.keyboard.press("ArrowDown");
+        const secondSortChoice = await agentsRegressionPage.evaluate(() => document.activeElement?.dataset?.agentSortChoice);
+        if (!secondSortChoice || secondSortChoice === firstSortChoice) {
+          throw new Error("Agent sort menu ArrowDown did not move focus");
+        }
+        await agentsRegressionPage.keyboard.press("Escape");
+        await agentsRegressionPage.waitForFunction(
+          () => (
+            !document.querySelector("[data-agent-sort-menu]")?.open &&
+            document.activeElement === document.querySelector("[data-agent-sort-menu] > summary")
+          ),
+          null,
+          { timeout: 10_000 }
+        );
         await agentsRegressionPage.close();
 
         const prContextPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -559,6 +590,11 @@ def write_smoke_script(path)
           throw new Error("Conversation settings should not show Exit");
         }
 
+        await page.evaluate(() => {
+          if (state.agentSettingsOpen) toggleAgentSettings();
+        });
+        await page.waitForSelector("#agent-settings-panel", { state: "hidden", timeout: 10_000 });
+        await page.click("#prompt-input");
         await page.fill("#prompt-input", "$rev");
         await page.evaluate(() => refreshSkillAutocomplete(document.querySelector("#prompt-input")));
         await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
@@ -601,6 +637,7 @@ def write_smoke_script(path)
             message: "Choose the next step.",
             fields: [
               { key: "next_step", label: "Next step", input_type: "textarea", required: true },
+              { key: "environments", label: "Environments", description: "Choose at least one target.", input_type: "multi_select", required: true, options: ["Staging", "Production"] },
               { key: "approved", label: "Approved", input_type: "boolean", required: false },
             ],
           };
@@ -621,11 +658,26 @@ def write_smoke_script(path)
           throw new Error(`Inquiry validation is not attached to the required field: ${JSON.stringify(initialInquiryValidation)}`);
         }
         await page.fill("[name='next_step']", "Ship the focused change.");
+        const multiSelectValidation = await page.evaluate(() => {
+          const group = document.querySelector("[data-inquiry-multi='environments']");
+          const errorId = group?.getAttribute("aria-errormessage");
+          const labelId = group?.getAttribute("aria-labelledby");
+          return {
+            invalid: group?.getAttribute("aria-invalid"),
+            error: errorId ? document.getElementById(errorId)?.textContent : "",
+            label: labelId ? document.getElementById(labelId)?.textContent?.trim() : "",
+            describedBy: group?.getAttribute("aria-describedby"),
+          };
+        });
+        if (multiSelectValidation.invalid !== "true" || multiSelectValidation.error !== "Required" || multiSelectValidation.label !== "Environments Required" || !multiSelectValidation.describedBy) {
+          throw new Error(`Multi-select inquiry validation is not attached to its accessible group: ${JSON.stringify(multiSelectValidation)}`);
+        }
+        await page.check("[name='environments'][value='Staging']");
         await page.selectOption("[name='approved']", "Yes");
         await page.fill("#inquiry-feedback", "Keep the explanation short.");
         await assertEditorExcludedFromRefresh("#inquiry-form:not(.inquiry-form-full-screen)", "Inline inquiry form", "#inquiry-feedback");
         const structuredInquiryAnswer = await page.evaluate(() => JSON.parse(inquiryAnswerPayload(document.querySelector("#inquiry-form"))));
-        if (structuredInquiryAnswer.next_step !== "Ship the focused change." || structuredInquiryAnswer.approved !== true || structuredInquiryAnswer.user_feedback !== "Keep the explanation short." || Object.hasOwn(structuredInquiryAnswer, "feedback")) {
+        if (structuredInquiryAnswer.next_step !== "Ship the focused change." || structuredInquiryAnswer.environments?.[0] !== "Staging" || structuredInquiryAnswer.approved !== true || structuredInquiryAnswer.user_feedback !== "Keep the explanation short." || Object.hasOwn(structuredInquiryAnswer, "feedback")) {
           throw new Error(`Inquiry feedback is missing from the structured answer: ${JSON.stringify(structuredInquiryAnswer)}`);
         }
         await page.click("[data-toggle-inquiry-full-screen]");

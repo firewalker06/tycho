@@ -58,6 +58,7 @@ Key references:
 | Remote Sessions | Local JSON API and web UI via `tycho serve`; Tailscale auto-bind; terminal QR startup URL | Remote clients can inspect and control managed agents through the same `AgentStore` / `ManagedAgent` paths as the TUI |
 | Remote UI responsive shell | Mobile keeps bottom navigation; wide desktop uses a wider content frame with side navigation; creation actions live in the header and focused detail/form routes remove unrelated global actions | Prevent fixed controls from obscuring content, use desktop space effectively, and keep page actions contextual across mobile, tablet, and desktop |
 | Remote UI control sizing | Shared 44 px control and touch-target tokens, 16 px mobile form text, visible focus states, and explicit validation/status text | Avoid mobile auto-zoom, undersized targets, color-only state, and inconsistent action geometry |
+| Remote UI design system | Keep a no-build internal system: semantic `--ds-*` tokens and reusable CSS components in `design_system.css`, product composition in `app.css`, and a static `/design-system` preview; migrate routes incrementally | Match the existing Ruby/vanilla-JS deployment, preserve behavior, make foundations governable, and avoid a framework or package rewrite |
 | Remote multiserver broker | Configured `remote_servers` let one Remote UI switch between local and peer `tycho serve` instances through backend proxy routes | Browser clients stay connected to one origin; peer credentials remain server-side; each view and mutation is scoped to the selected server |
 | Scheduled runs | Dedicated `tycho schedule daemon`, definitions in `~/.tycho/config/schedules.yml`, runtime state in `~/.tycho/logs/schedules.json`, validated standard cron syntax | Scheduled work should continue independently from the TUI and Remote UI while still reusing existing agent execution paths |
 | Temporary session loops | Remote UI can adopt an idle conversation as a normal recurring schedule, run it immediately with schedule context, and stop it at a configured cutoff | Review-waiting sessions need lightweight polling without losing their existing context or creating a separate agent |
@@ -75,7 +76,14 @@ Key references:
 session loops, persistent scheduled sessions, and cross-harness response style
 are complete. Codex 0.144.6, Claude Code 2.1.216, and OpenCode 1.18.4 pass cold
 and resumed managed-agent validation. The remaining work is to merge, publish,
-and verify the 0.8.0 packages and Homebrew bottles.
+and verify the 0.8.0 packages and Homebrew bottles. The first Remote UI design
+system increment now provides semantic foundations, a component preview, and a
+Settings Response style migration. Agent, project, schedule, and schedule-message
+lifecycle forms and structured inquiry decisions now use the same field, input,
+surface, error, and action contracts. Agent, schedule, project, setup, and diff
+health now map through one six-intent status taxonomy. Primary non-modal menus
+now share overlay layering, peer and outside dismissal, arrow navigation, Escape
+handling, and focus restoration without replacing native details/dialog behavior.
 
 ## Roadmap
 
