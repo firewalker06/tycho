@@ -84,6 +84,8 @@ surface, error, and action contracts. Agent, schedule, project, setup, and diff
 health now map through one six-intent status taxonomy. Primary non-modal menus
 now share overlay layering, peer and outside dismissal, arrow navigation, Escape
 handling, and focus restoration without replacing native details/dialog behavior.
+Consequential Remote UI actions now use one native-dialog confirmation contract
+with explicit consequences, safe initial focus, and trigger focus restoration.
 
 ## Roadmap
 

@@ -1028,6 +1028,30 @@ def write_smoke_script(path)
         if (await page.locator("[data-testid='response-style-active']").count()) {
           throw new Error("Configured response style summary should not show an Active badge");
         }
+        await page.click("[data-testid='response-style-delete']");
+        await page.waitForSelector("#confirmation-dialog[open]", { state: "visible", timeout: 10_000 });
+        const confirmationState = await page.evaluate(() => ({
+          title: document.querySelector("#confirmation-title")?.textContent,
+          description: document.querySelector("#confirmation-description")?.textContent,
+          cancelFocused: document.activeElement?.hasAttribute("data-confirmation-cancel"),
+          confirmLabel: document.querySelector("[data-confirmation-accept]")?.textContent,
+        }));
+        if (!confirmationState.title?.includes("Remove the global response style") ||
+            !confirmationState.description?.includes("Existing agent transcripts and results are not changed") ||
+            !confirmationState.cancelFocused ||
+            confirmationState.confirmLabel !== "Remove response style") {
+          throw new Error(`Response style confirmation contract is incomplete: ${JSON.stringify(confirmationState)}`);
+        }
+        await page.keyboard.press("Escape");
+        await page.waitForSelector("#confirmation-dialog", { state: "hidden", timeout: 10_000 });
+        await page.waitForFunction(
+          () => document.activeElement?.matches("[data-testid='response-style-delete']"),
+          null,
+          { timeout: 10_000 }
+        );
+        if (!(await page.locator("[data-testid='response-style-delete']").isVisible())) {
+          throw new Error("Cancelling response style removal changed the saved value");
+        }
         await page.click("[data-testid='response-style-action']");
         await page.waitForSelector("#response-style-input", { state: "visible", timeout: 10_000 });
         const savedResponseStyle = await page.locator("#response-style-input").inputValue();

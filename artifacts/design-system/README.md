@@ -22,6 +22,7 @@ The baseline settings capture was taken before the isolated project fixture was 
 - `implementation/design-system-components-1440x900.png` — `/design-system`, default component states.
 - `implementation/settings-default-1440x900.png` — `#settings`, initial/loading state.
 - `implementation/settings-response-style-edit-390x844.png` — `#settings`, Response style editor open.
+- `implementation/settings-response-style-confirmation-390x844.png` — destructive confirmation with safe initial focus, explicit consequence copy, and mobile action layout.
 - `implementation/agent-create-390x844.png` and `agent-create-1440x900.png` — agent lifecycle form at mobile and desktop widths.
 - `implementation/project-edit-390x844.png` — project lifecycle form at mobile width.
 - `implementation/schedule-create-390x844.png` — schedule lifecycle form at mobile width.

@@ -181,6 +181,30 @@ The global More menu and agent switcher use the same focus-origin helpers becaus
 
 Use this contract for action and exclusive-selection menus. Do not use it for persistent disclosure sections, form expanders, tooltips, or full-screen editors.
 
+### Confirmation dialog
+
+`confirmAction` is the single contract for consequential actions that need an explicit second step. It renders a native `dialog` with `ds-confirmation-dialog` anatomy and returns a promise resolving to the operator’s choice.
+
+API:
+
+- `title`: a concrete question naming the object or system.
+- `description`: the consequence, what remains, and any recovery boundary.
+- `confirmLabel`: the exact action, never a generic “Yes”.
+- `cancelLabel`: defaults to “Cancel”.
+- `intent`: `danger` for destructive actions or `warning` for disruptive but recoverable actions.
+
+Behavior:
+
+- Cancel receives initial focus so Enter cannot immediately trigger destruction.
+- Escape, backdrop click, and Cancel resolve false.
+- The explicit action resolves true.
+- The native dialog traps focus and makes the rest of the page inert.
+- Closing restores focus to the invoking control when it still exists.
+- At mobile widths, actions use full-width 44px controls without horizontal overflow.
+- A native `window.confirm` fallback remains only for browsers without `dialog.showModal`.
+
+Use a confirmation when an action removes data, archives multiple objects, stops automation, or interrupts the server. Do not add it to reversible navigation, local form cancellation, or removal of an unsaved attachment from a draft. The dedicated agent archive page remains product-specific because it offers “Clone instead” and shows the full source-agent context.
+
 ## Representative migration
 
 Settings → Response style is the first vertical slice:
@@ -200,6 +224,8 @@ The third wave migrates structured inquiries. Text, number, select, multiline, a
 The fourth wave introduces the product status taxonomy and migrates agent lists/switchers, schedules, project health, setup readiness, notification readiness, and diff freshness/file states. Display labels are consistently humanized while persisted/API state values remain unchanged.
 
 The fifth wave centralizes non-modal overlays. Header, schedule, sort, view-layout, summary-attachment, and attachment-action menus now share focus origins, peer dismissal, Escape restoration, arrow navigation, and the semantic dropdown layer without replacing their product positioning or native details behavior.
+
+The sixth wave replaces scattered browser confirmations with the shared native-dialog contract for response-style removal, peer-server removal, scheduler restart/stop, bulk archive, schedule deletion, attachment deletion, and Remote restart. Titles name the target, descriptions state what changes and what remains, and action labels describe the consequence.
 
 ## Accessibility and responsive rules
 

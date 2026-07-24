@@ -2,7 +2,7 @@
 
 ## Current adoption
 
-The system is loaded on every Remote UI route. Migrated product areas now include Settings → Response style, agent/project/schedule lifecycle forms, structured inquiries, representative agent/schedule/project/setup/diff statuses, and the primary non-modal menu overlays. The preview route exercises all first-release components.
+The system is loaded on every Remote UI route. Migrated product areas now include Settings → Response style, agent/project/schedule lifecycle forms, structured inquiries, representative agent/schedule/project/setup/diff statuses, primary non-modal menu overlays, and consequential confirmation flows. The preview route exercises all first-release components.
 
 Classification:
 
@@ -49,10 +49,11 @@ Current baseline:
 
 - 6 representative product form/decision surfaces migrated.
 - 7 menu families use the shared overlay surface or interaction contract.
+- 7 destructive or disruptive action families use the shared confirmation dialog.
 - 1 preview route added.
 - Shared system loaded on all routes.
 - Legacy aliases remain; broad route migration is incomplete.
 
 ## Next implementation wave
 
-Define the reusable confirmation-flow pattern next while keeping destructive actions explicit. The current native `confirm` calls and in-page archive confirmation should be inventoried before selecting a dialog contract. Remaining legacy metadata pills can move independently because they do not encode health or urgency.
+Define composite form-page and settings-section patterns next, using the migrated lifecycle and Response style surfaces as evidence. The dedicated agent archive page remains product-specific because its clone alternative cannot fit a binary confirmation contract. Remaining legacy metadata pills can move independently because they do not encode health or urgency.

@@ -512,6 +512,60 @@ textarea.ds-input {
   z-index: var(--ds-z-dropdown);
 }
 
+.ds-confirmation-dialog {
+  width: min(100% - (2 * var(--ds-space-4)), 30rem);
+  max-width: none;
+  max-height: calc(100dvh - (2 * var(--ds-space-4)));
+  border: 0;
+  background: transparent;
+  color: var(--ds-text-primary);
+  padding: 0;
+}
+
+.ds-confirmation-dialog::backdrop {
+  background: var(--ds-background-backdrop);
+}
+
+.ds-confirmation-dialog__panel {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--ds-space-3);
+  border: var(--ds-border-width) solid var(--ds-border-strong);
+  border-radius: var(--ds-radius-lg);
+  background: var(--ds-background-overlay);
+  box-shadow: var(--ds-shadow-overlay);
+  padding: var(--ds-space-4);
+}
+
+.ds-confirmation-dialog__mark {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border: var(--ds-border-width) solid currentColor;
+  border-radius: var(--ds-radius-pill);
+  color: var(--ds-feedback-danger);
+  font-weight: var(--ds-weight-bold);
+}
+
+.ds-confirmation-dialog[data-intent="warning"] .ds-confirmation-dialog__mark {
+  color: var(--ds-feedback-warning);
+}
+
+.ds-confirmation-dialog__content {
+  display: grid;
+  gap: var(--ds-space-2);
+  min-width: 0;
+}
+
+.ds-confirmation-dialog__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--ds-space-2);
+}
+
 :where(.ds-button, .ds-input, .ds-icon-button, .ds-link):focus-visible {
   outline: var(--ds-focus-width) solid var(--ds-focus-ring);
   outline-offset: var(--ds-focus-offset);
@@ -550,6 +604,15 @@ textarea.ds-input {
   .ds-cluster[data-collapse="mobile"] > .ds-button {
     width: 100%;
   }
+
+  .ds-confirmation-dialog__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ds-confirmation-dialog__actions > .ds-button {
+    width: 100%;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -572,7 +635,8 @@ textarea.ds-input {
   .ds-input,
   .ds-surface,
   .ds-alert,
-  .ds-overlay-surface {
+  .ds-overlay-surface,
+  .ds-confirmation-dialog__panel {
     border-color: CanvasText;
   }
 }

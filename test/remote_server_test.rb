@@ -2553,6 +2553,10 @@ module RemoteServerTest
            "expected the New agent launch to expose a contextual text label")
     assert(response[:body].include?('id="quick-agent-dialog"'), "expected root shell to expose New agent modal")
     assert(response[:body].include?('aria-label="New agent"'), "expected the create-agent dialog to use consistent naming")
+    assert(response[:body].include?('id="confirmation-dialog"') &&
+           response[:body].include?('aria-labelledby="confirmation-title"') &&
+           response[:body].include?('aria-describedby="confirmation-description"'),
+           "expected the root shell to expose the shared labeled confirmation dialog")
     assert(response[:body].include?('data-tab="settings"'), "expected root shell to expose Settings navigation")
     assert(response[:body].include?("<span>Settings</span>"), "expected root shell to label setup navigation as Settings")
     assert(!response[:body].include?('data-tab="search"'), "expected root shell to remove Search navigation")
@@ -2583,6 +2587,9 @@ module RemoteServerTest
     assert(design_system[:body].include?("Menu overlay") &&
            design_system[:body].include?('class="ds-overlay-surface"'),
            "expected the design-system preview to document menu overlays")
+    assert(design_system[:body].include?("Confirmation flow") &&
+           design_system[:body].include?("ds-confirmation-dialog__panel"),
+           "expected the design-system preview to document consequential confirmations")
     assert(design_system[:body].match?(%r{href="/ui\.css\?v=[0-9a-f]{12}"}),
            "expected the design-system preview stylesheet to be asset-versioned")
 
@@ -2634,6 +2641,7 @@ module RemoteServerTest
       .ds-skeleton
       .ds-empty-state
       .ds-overlay-surface
+      .ds-confirmation-dialog
     ].each do |selector|
       assert(css[:body].include?(selector), "expected Remote UI CSS to include #{selector}")
     end
@@ -3168,6 +3176,20 @@ module RemoteServerTest
            "expected menus to support arrow navigation and Escape focus restoration")
     assert(js[:body].scan("data-overlay-menu").length >= 6,
            "expected representative details menus to adopt the overlay interaction contract")
+    assert(js[:body].include?("function confirmAction") &&
+           js[:body].include?("function settleConfirmation") &&
+           js[:body].include?('dialog.querySelector("[data-confirmation-cancel]")?.focus'),
+           "expected consequential actions to share a safely focused native-dialog contract")
+    assert(js[:body].include?('els.confirmationDialog.addEventListener("cancel"') &&
+           js[:body].include?("settleConfirmation(false)") &&
+           js[:body].include?("settleConfirmation(true)"),
+           "expected confirmation Escape, cancel, backdrop, and acceptance behavior")
+    assert(js[:body].scan("window.confirm").length == 1,
+           "expected window.confirm to remain only as the unsupported-browser fallback")
+    assert(js[:body].include?('confirmLabel: "Remove response style"') &&
+           js[:body].include?('confirmLabel: "Delete schedule"') &&
+           js[:body].include?('confirmLabel: "Delete attachment"'),
+           "expected representative destructive workflows to use explicit confirmation labels")
     assert(helpers_js[:body].include?("function parseBackToRoute"),
            "expected Project routes to parse return crumbs")
     assert(helpers_js[:body].include?("function routeBackQuery"),

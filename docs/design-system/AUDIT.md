@@ -82,6 +82,7 @@ Authentication is a local operator model, not a role/permission matrix. No produ
 | bespoke flex/grid wrappers | all routes | repeated gap and collapse rules | `ds-stack`, `ds-cluster`, `ds-grid` | Adopt in new and touched markup |
 | quick-agent native dialog | global creation | modal behavior must remain complete | documented product dialog pattern | Keep native dialog and browser-owned focus behavior |
 | details menus/flyouts | navigation and readers | keyboard/focus behavior varies | shared overlay surface and interaction contract backed by native details | Primary menu families migrated; product flyouts remain local |
+| native browser confirmations | settings, schedules, attachments, bulk archive | generic labels, browser-dependent presentation, no consequence structure | native `dialog` confirmation contract | Direct replacement; agent archive remains a richer product page |
 | conversation, diff, attachment, shell | product-specific | high behavior/regression risk | product patterns consuming tokens/components | Intentionally product-specific |
 
 Priority score considered frequency, user impact, accessibility risk, maintenance cost, and migration feasibility. Foundations, actions, fields, surfaces, and alerts are the first release because they occur everywhere and can be adopted without changing business logic.
