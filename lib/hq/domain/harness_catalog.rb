@@ -1,10 +1,9 @@
 # frozen_string_literal: true
 
 require "json"
-require "tempfile"
-
 require_relative "../harness_registry"
 require_relative "../utf8_text"
+require_relative "command_runner"
 require_relative "executable_resolver"
 
 module HQ
@@ -199,49 +198,8 @@ module HQ
     end
 
     def capture_command_output(command, timeout: COMMAND_TIMEOUT)
-      stdout = Tempfile.new("tycho-harness-catalog-out")
-      stderr = Tempfile.new("tycho-harness-catalog-err")
-      pid = Process.spawn(*command, out: stdout.path, err: stderr.path, pgroup: true)
-      deadline = Time.now + timeout
-      status = nil
-      timed_out = false
-
-      loop do
-        _done, status = Process.waitpid2(pid, Process::WNOHANG)
-        break if status
-        break if Time.now >= deadline
-
-        sleep 0.05
-      end
-
-      unless status
-        timed_out = true
-        status = terminate_process_group(pid)
-        _done, status = Process.waitpid2(pid) unless status
-      end
-
-      stdout.rewind
-      stderr.rewind
-      [stdout.read, stderr.read, status.success? && !timed_out]
-    ensure
-      stdout&.close!
-      stderr&.close!
-    end
-
-    def terminate_process_group(pid)
-      Process.kill("TERM", -pid)
-      deadline = Time.now + 0.5
-      loop do
-        _done, status = Process.waitpid2(pid, Process::WNOHANG)
-        return status if status
-        break if Time.now >= deadline
-
-        sleep 0.05
-      end
-      Process.kill("KILL", -pid)
-      nil
-    rescue Errno::ESRCH, Errno::ECHILD
-      nil
+      result = CommandRunner.capture(command, timeout:)
+      [result.stdout, result.stderr, result.success?]
     end
 
     def strip_terminal_control(text)

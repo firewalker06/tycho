@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-07-21
+2026-07-24
 
 ## Strategic Direction
 
@@ -37,6 +37,8 @@ Key references:
 | Default data root | `~/.tycho` for config, schedule prompts, runtime state, and logs | Source and packaged installs should never write runtime data into the repository or Homebrew Cellar by default |
 | Config split | `~/.tycho/config/hq.yml` (active) + `~/.tycho/config/hq.archived.yml` (archived) | Archive without losing history; logs move to `~/.tycho/logs/projects/archived/` |
 | Project lifecycle CLI | `tycho project KEY` plus explicit create/show/update/archive commands, with normalized human or JSON output | Project registration and maintenance should be automatable without duplicating config rules or opening the TUI |
+| Multi-file lifecycle writes | `FileTransaction` snapshots config/state files and runs compensating log moves around project archival and session-loop creation | A failed downstream step must restore project, agent, schedule, memory, and log state instead of leaving a partially completed lifecycle operation |
+| External command capture | `CommandRunner` owns bounded process-group execution for harness discovery and GitHub CLI calls | One process owner preserves signal exit status and avoids `Timeout` closing Open3 streams while reader threads are active |
 | Agent transport | Codex JSON output; Claude-compatible `--output-format stream-json` | Streaming logs render incrementally in the chat viewport |
 | Agent model controls | Optional per-agent `model` and `reasoning_effort`, inherited from project/template config and passed as harness run arguments | Model catalogs change outside Tycho; use harness discovery for suggestions where available, keep free-form fallback everywhere, and keep provider-specific thinking budgets out of first-version scope |
 | Managed-agent identity | Generate keys as `<project>-agent-<UTC timestamp with microseconds>`, adding a short random suffix only on an exact collision; retain legacy numeric keys when loading existing state | Timestamp identities remain sortable and avoid key reuse when agents are created concurrently or archived across Tycho instances |
@@ -59,6 +61,7 @@ Key references:
 | Remote multiserver broker | Configured `remote_servers` let one Remote UI switch between local and peer `tycho serve` instances through backend proxy routes | Browser clients stay connected to one origin; peer credentials remain server-side; each view and mutation is scoped to the selected server |
 | Scheduled runs | Dedicated `tycho schedule daemon`, definitions in `~/.tycho/config/schedules.yml`, runtime state in `~/.tycho/logs/schedules.json`, validated standard cron syntax | Scheduled work should continue independently from the TUI and Remote UI while still reusing existing agent execution paths |
 | Temporary session loops | Remote UI can adopt an idle conversation as a normal recurring schedule, run it immediately with schedule context, and stop it at a configured cutoff | Review-waiting sessions need lightweight polling without losing their existing context or creating a separate agent |
+| Run cost provenance | Persist harness and model on each managed-agent run; raw-log cost rebuilds use that per-run metadata and leave legacy runs unpriced when provenance is missing | Historical estimates must not silently apply the agent's current model price to older runs |
 | Schedule daemon freshness | `tycho schedule daemon` writes heartbeat state to `~/.tycho/logs/scheduler_daemon.json`; UI surfaces derive running/stale/stopped from heartbeat age and process liveness, and report untracked running daemons without heartbeat state | Users need to know whether cron work is actually ticking, not only whether definitions are valid |
 | Schedule command scope | Agent-only schedules; each schedule owns one persistent managed agent session and accepts only inline messages or files under `schedules/` | Preserve recurring context without adding arbitrary shell execution or loose existing-agent targets |
 | Schedule statuses | Schedules expose `scheduled`, `paused`, or `stopped`; last outcome and error reason are tracked separately. `no_action_needed` is reserved for observational checks where no action was necessary, while completed actions and deliverables use `success` | Keep healthy no-op checks quiet without hiding meaningful completed work from unread state and notifications |
@@ -288,6 +291,7 @@ and verify the 0.8.0 packages and Homebrew bottles.
 - [x] In-flow desktop conversation composer with resize-aware mobile content reservation
 - [x] Accessible full-screen Conversation editor with polling-safe autosaved drafts, focus containment, mobile visual-viewport sizing, and Escape-to-exit
 - [x] Focused Summary/Attachment full-view controls and compact mobile follow-up composer
+- [x] Finalized-run estimated session-cost snapshots on latest and historical Summary pages, including Codex token-delta estimates from an auditable OpenAI model rate card, explicit rebuild backfill, and no startup log scan
 - [ ] Dedicated mobile activity/log detail page
 - [x] Full mobile agent create/edit form
 

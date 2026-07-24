@@ -246,6 +246,32 @@ def write_smoke_script(path)
           throw new Error(`Agents view browser errors: ${agentsRegressionErrors.join(" | ")}`);
         }
         await agentsRegressionPage.waitForSelector(`.agent-row[data-open-agent='${unscheduledAgentKey}']`, { state: "visible", timeout: 10_000 });
+        await agentsRegressionPage.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
+        await agentsRegressionPage.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+        await agentsRegressionPage.click("#header-mark");
+        await agentsRegressionPage.waitForSelector("#unread-agent-search", { state: "visible", timeout: 10_000 });
+        await agentsRegressionPage.waitForFunction(
+          () => document.activeElement === document.querySelector("#unread-agent-search"),
+          null,
+          { timeout: 10_000 }
+        );
+        await agentsRegressionPage.locator("#unread-agent-search").evaluate((input) => { input.__tychoSearchNodeProbe = true; });
+        await agentsRegressionPage.fill("#unread-agent-search", "unscheduled");
+        const switcherSearchNodeStable = await agentsRegressionPage.locator("#unread-agent-search").evaluate((input) => input.__tychoSearchNodeProbe === true);
+        if (!switcherSearchNodeStable) throw new Error("Agent switcher search replaced its focused input while typing");
+        await agentsRegressionPage.waitForSelector(`[data-open-agent='${unscheduledAgentKey}']`, { state: "visible", timeout: 10_000 });
+        if (await agentsRegressionPage.locator(".switcher-agent-row").count() !== 1) {
+          throw new Error("Agent switcher search did not filter the agent list");
+        }
+        await agentsRegressionPage.press("#unread-agent-search", "Escape");
+        if (await agentsRegressionPage.locator("#unread-agent-search").inputValue() !== "" || await agentsRegressionPage.locator(".switcher-agent-row").count() !== 2) {
+          throw new Error("Escape did not clear the agent switcher search");
+        }
+        await agentsRegressionPage.fill("#unread-agent-search", "unscheduled");
+        await agentsRegressionPage.click("[data-clear-unread-agent-search]");
+        if (await agentsRegressionPage.locator("#unread-agent-search").inputValue() !== "" || await agentsRegressionPage.locator(".switcher-agent-row").count() !== 2) {
+          throw new Error("Clear search did not restore the agent switcher list");
+        }
         await agentsRegressionPage.close();
 
         const prContextPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -264,6 +290,7 @@ def write_smoke_script(path)
         await prContextPage.waitForSelector(`[data-open-agent-pr-diffs='${agentKey}']`, { state: "visible", timeout: 10_000 });
         await prContextPage.click(`[data-open-agent-pr-diffs='${agentKey}']`);
         await prContextPage.waitForSelector(".agent-pr-diff-shell", { state: "visible", timeout: 10_000 });
+        await prContextPage.waitForSelector(".agent-pr-diff-shell .empty-state", { state: "visible", timeout: 10_000 });
         await prContextPage.close();
 
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
@@ -775,6 +802,7 @@ def write_smoke_script(path)
         }
 
         await page.evaluate((key) => {
+          findAgent(key).cost_snapshot = { amount_usd: 1.25, coverage: "partial" };
           history.replaceState(null, "", routeHash({ type: "agentSummary", key }));
           state.renderedRouteKey = null;
           state.renderedViewHtml = "";
@@ -786,8 +814,9 @@ def write_smoke_script(path)
           mode: document.querySelector("[data-focused-view-menu]")?.dataset.activeViewMode,
           full: document.querySelector("[data-agent-workspace]")?.classList.contains("agent-workspace-full-view"),
           summary: Boolean(document.querySelector("[data-agent-summary-page]")),
+          cost: document.querySelector("[data-agent-summary-page]")?.innerText,
         }));
-        if (summaryFullView.mode !== "full" || !summaryFullView.full || !summaryFullView.summary) {
+        if (summaryFullView.mode !== "full" || !summaryFullView.full || !summaryFullView.summary || !summaryFullView.cost.includes("$1.25+")) {
           throw new Error(`Summary did not retain the shared full-view layout: ${JSON.stringify(summaryFullView)}`);
         }
 

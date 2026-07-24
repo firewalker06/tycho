@@ -23,6 +23,10 @@ module ManagedAgentTest
     assert_structured_output_summary_beats_later_agent_message
     assert_claude_scalar_json_structured_output_normalizes
     assert_opencode_assistant_json_structured_output_normalizes
+    assert_completed_run_persists_cost_snapshot
+    assert_memory_rebuild_backfills_cost_snapshots
+    assert_memory_rebuild_prices_codex_token_deltas
+    assert_memory_rebuild_uses_each_runs_recorded_model
     assert_final_output_checklist_is_ephemeral_execution_context
     assert_response_style_applies_to_cold_and_resumed_runs
     assert_native_resume_includes_same_second_follow_up
@@ -41,6 +45,171 @@ module ManagedAgentTest
     assert_start_spawns_harness_without_ruby_runner_parent
     assert_agent_runner_warns_when_command_cannot_execute
     puts "managed_agent_test: ok"
+  end
+
+  def assert_completed_run_persists_cost_snapshot
+    Dir.mktmpdir("hq-managed-agent-cost-snapshot-test") do |dir|
+      started_at = Time.utc(2026, 7, 22, 10, 0, 0)
+      finished_at = started_at + 10
+      log_path = File.join(dir, "cost.raw.log")
+      File.write(log_path, <<~LOG)
+        === [#{started_at.strftime("%Y-%m-%d %H:%M:%S")}] start ===
+        {"type":"result","total_cost_usd":1.25,"usage":{"input_tokens":10,"output_tokens":5},"session_id":"cost-session"}
+      LOG
+      run = HQ::ManagedAgent::AgentRun.new(
+        started_at: started_at,
+        finished_at: finished_at,
+        exit_code: 0,
+        status: "success",
+        log_path: log_path,
+        command: "claude --print",
+        session_id: "cost-session"
+      )
+      agent = HQ::ManagedAgent.new(
+        key: "cost-snapshot-agent",
+        name: "Cost snapshot",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "Prompt",
+        agent: "claude",
+        session_id: "cost-session",
+        session_bootstrapped: true,
+        started_at: started_at,
+        finished_at: finished_at,
+        log_path: log_path,
+        runs: [run],
+        summary: "Completed"
+      )
+
+      agent.send(:capture_run_memory!, run)
+      snapshot = agent.cost_snapshot
+      summary = HQ::AgentMemory.new(agent).events.find { |event| event["type"] == "run_summary" }
+      restored = HQ::ManagedAgent.from_hash(agent.to_hash)
+
+      assert(snapshot["amount_usd"] == 1.25, "expected the completed run to update session cost")
+      assert(summary.dig("metadata", "cost_snapshot", "amount_usd") == 1.25,
+             "expected the run summary to keep its cost snapshot")
+      assert(restored.cost_snapshot == snapshot, "expected the agent-level cost snapshot to persist")
+    end
+  end
+
+  def assert_memory_rebuild_backfills_cost_snapshots
+    Dir.mktmpdir("hq-managed-agent-cost-rebuild-test") do |dir|
+      log_path = File.join(dir, "cost-rebuild.raw.log")
+      File.write(log_path, <<~LOG)
+        === [2026-07-22 10:00:00] start ===
+        session_id=rebuild-session
+        {"type":"result","total_cost_usd":1.25,"usage":{"input_tokens":10,"output_tokens":5},"session_id":"rebuild-session"}
+        === [2026-07-22 10:05:00] start ===
+        session_id=rebuild-session
+        {"type":"result","total_cost_usd":0.75,"usage":{"input_tokens":12,"output_tokens":6},"session_id":"rebuild-session"}
+      LOG
+      agent = HQ::ManagedAgent.new(
+        key: "cost-rebuild-agent",
+        name: "Cost rebuild",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "Prompt",
+        agent: "claude",
+        session_id: "rebuild-session",
+        log_path: log_path
+      )
+
+      written = HQ::AgentChatLog.new(agent).rebuild_memory_from_raw_log!
+      summaries = HQ::AgentMemory.new(agent).events.select { |event| event["type"] == "run_summary" }
+
+      assert(written && written.positive?, "expected memory rebuild to write events")
+      assert(agent.cost_snapshot["amount_usd"] == 2.0, "expected memory rebuild to restore the session total")
+      assert(summaries.map { |event| event.dig("metadata", "cost_snapshot", "amount_usd") } == [1.25, 2.0],
+             "expected rebuilt run summaries to keep as-of cost snapshots")
+    end
+  end
+
+  def assert_memory_rebuild_prices_codex_token_deltas
+    Dir.mktmpdir("hq-managed-agent-codex-cost-rebuild-test") do |dir|
+      log_path = File.join(dir, "codex-cost-rebuild.raw.log")
+      File.write(log_path, <<~LOG)
+        === [2026-07-22 10:00:00] start ===
+        {"type":"thread.started","thread_id":"codex-rebuild-session"}
+        {"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":40,"output_tokens":20,"reasoning_output_tokens":5}}
+        === [2026-07-22 10:05:00] start ===
+        {"type":"thread.started","thread_id":"codex-rebuild-session"}
+        {"type":"turn.completed","usage":{"input_tokens":175,"cached_input_tokens":90,"output_tokens":32,"reasoning_output_tokens":8}}
+      LOG
+      agent = HQ::ManagedAgent.new(
+        key: "codex-cost-rebuild-agent",
+        name: "Codex cost rebuild",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "Prompt",
+        agent: "codex",
+        model: "gpt-5.5",
+        session_id: "codex-rebuild-session",
+        log_path: log_path,
+        runs: [
+          HQ::ManagedAgent::AgentRun.new(
+            status: "succeeded", session_id: "codex-rebuild-session", agent: "codex", model: "gpt-5.5"
+          ),
+          HQ::ManagedAgent::AgentRun.new(
+            status: "succeeded", session_id: "codex-rebuild-session", agent: "codex", model: "gpt-5.5"
+          )
+        ]
+      )
+
+      written = HQ::AgentChatLog.new(agent).rebuild_memory_from_raw_log!
+      summaries = HQ::AgentMemory.new(agent).events.select { |event| event["type"] == "run_summary" }
+      amounts = summaries.map { |event| event.dig("metadata", "cost_snapshot", "amount_usd") }
+
+      assert(written && written.positive?, "expected Codex memory rebuild to write events")
+      assert((agent.cost_snapshot["amount_usd"] - 0.00143).abs < 0.000_000_001,
+             "expected Codex memory rebuild to price cumulative token deltas")
+      assert((amounts[0] - 0.00092).abs < 0.000_000_001,
+             "expected the first rebuilt Codex summary cost")
+      assert((amounts[1] - 0.00143).abs < 0.000_000_001,
+             "expected the second rebuilt Codex summary session cost")
+    end
+  end
+
+  def assert_memory_rebuild_uses_each_runs_recorded_model
+    Dir.mktmpdir("hq-managed-agent-cost-model-rebuild-test") do |dir|
+      log_path = File.join(dir, "codex-model-cost-rebuild.raw.log")
+      File.write(log_path, <<~LOG)
+        === [2026-07-22 10:00:00] start ===
+        {"type":"thread.started","thread_id":"codex-model-session"}
+        {"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":40,"output_tokens":20}}
+        === [2026-07-22 10:05:00] start ===
+        {"type":"thread.started","thread_id":"codex-model-session"}
+        {"type":"turn.completed","usage":{"input_tokens":175,"cached_input_tokens":90,"output_tokens":32}}
+      LOG
+      runs = [
+        HQ::ManagedAgent::AgentRun.new(
+          started_at: Time.utc(2026, 7, 22, 10, 0, 0), status: "succeeded",
+          session_id: "codex-model-session", agent: "codex", model: "gpt-5.4"
+        ),
+        HQ::ManagedAgent::AgentRun.new(
+          started_at: Time.utc(2026, 7, 22, 10, 5, 0), status: "succeeded",
+          session_id: "codex-model-session", agent: "codex", model: "gpt-5.5"
+        )
+      ]
+      agent = HQ::ManagedAgent.new(
+        key: "codex-model-cost-rebuild-agent", name: "Codex model cost rebuild",
+        project_key: "demo", template_key: "custom", workspace: dir, prompt: "Prompt",
+        agent: "codex", model: "gpt-5.5", session_id: "codex-model-session",
+        log_path: log_path, runs: runs
+      )
+
+      HQ::AgentChatLog.new(agent).rebuild_memory_from_raw_log!
+      summaries = HQ::AgentMemory.new(agent).events.select { |event| event["type"] == "run_summary" }
+      amounts = summaries.map { |event| event.dig("metadata", "cost_snapshot", "amount_usd") }
+
+      assert((amounts.fetch(0) - 0.00046).abs < 0.000_000_001,
+             "expected the first rebuilt run to use its recorded GPT-5.4 price")
+      assert((amounts.fetch(1) - 0.00097).abs < 0.000_000_001,
+             "expected the second rebuilt run to use its recorded GPT-5.5 price")
+    end
   end
 
   def assert_response_style_applies_to_cold_and_resumed_runs
@@ -366,14 +535,13 @@ module ManagedAgentTest
       assert(agent.runs.first.status != "running",
              "the prior run should have been finalized, not left as running")
 
-      status_path = agent.send(:status_file_path)
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2.0
-      until File.exist?(status_path)
-        raise "replacement run did not write its status file" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
-
+      while agent.running?
+        raise "replacement run did not finish" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
         sleep 0.01
       end
       agent.poll!
+      assert(agent.last_exit_code == 0, "expected replacement run exit status")
     end
   ensure
     replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
@@ -1104,6 +1272,7 @@ module ManagedAgentTest
       assert(!agent.running?, "expected stale unstructured output to be stopped")
       assert(agent.status == "stopped",
              "expected stale unstructured output to finalize as stopped, got #{agent.status.inspect}")
+      assert(agent.last_exit_code == 143, "expected stopped process to preserve its SIGTERM exit status")
       assert(agent.latest_inquiry.nil?, "expected automatic stop not to synthesize an inquiry")
       assert(agent.last_summary.include?("no structured agent output"),
              "expected the automatic stop summary to explain the missing JSON output")

@@ -762,6 +762,34 @@ h3 {
   min-width: 0;
 }
 
+.unread-panel-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.unread-panel-search .search-box {
+  background: var(--bg);
+}
+
+.unread-panel-search .search-box input {
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+}
+
+.unread-panel-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.unread-panel-search > .icon-button {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+}
+
 .unread-agents-panel .agent-row {
   box-shadow: none;
 }
@@ -5200,7 +5228,7 @@ body:has(.inquiry-form-full-screen) {
 
 .summary-outcome-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 8px;
 }
 
@@ -5440,23 +5468,50 @@ body:has(.inquiry-form-full-screen) {
 
 .session-loop-settings-form {
   display: grid;
-  gap: 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 66%, transparent);
-  padding-bottom: 18px;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
 }
 
-.session-loop-settings-form > .section-label {
-  margin: 0;
+.session-loop-settings-form .form-section-heading {
+  padding-right: 0;
+  padding-left: 0;
+}
+
+.session-loop-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.session-loop-field > input,
+.session-loop-template-row > input,
+.session-loop-template-row > textarea {
+  width: 100%;
+}
+
+.session-loop-settings-form .field-label,
+.session-loop-settings-form .field-hint {
+  font-size: 12px;
 }
 
 .session-loop-template-list {
   display: grid;
-  gap: 10px;
+  gap: 0;
 }
 
 .session-loop-template-row {
   display: grid;
   gap: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
+  padding: 12px 0;
+}
+
+.session-loop-template-row:first-child {
+  border-top: 0;
+  padding-top: 0;
 }
 
 .session-loop-template-heading {
@@ -5473,10 +5528,27 @@ body:has(.inquiry-form-full-screen) {
   color: var(--danger);
 }
 
+.session-loop-settings-form [data-add-session-loop-template] {
+  justify-self: start;
+}
+
+.session-loop-settings-actions {
+  justify-content: flex-end;
+}
+
 @media (max-width: 640px) {
   .agent-loop-timing-grid,
   .session-loop-default-grid {
     grid-template-columns: 1fr;
+  }
+
+  .session-loop-settings-form {
+    margin-bottom: calc(var(--mobile-nav-height, 70px) + 24px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .session-loop-settings-actions .inline-icon-button {
+    width: 100%;
+    justify-content: center;
   }
 }
 

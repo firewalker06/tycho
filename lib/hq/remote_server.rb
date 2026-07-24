@@ -886,6 +886,7 @@ module HQ
       agent = find_agent!(key)
       written = AgentChatLog.new(agent).rebuild_memory_from_raw_log!
       raise Error.new("Unable to rebuild memory from raw log", status: 422) unless written
+      save_agent(agent)
 
       {
         agent_key: agent.key,
@@ -1004,65 +1005,17 @@ module HQ
       agents = load_all_agents
       agent = agents.find { |candidate| candidate.key == key.to_s }
       raise Error.new("Unknown agent: #{key}", status: 404) unless agent
-      raise Error.new("Stop the running agent before starting a loop", status: 409) if agent.running?
-      unless agent.schedule_key.to_s.empty?
-        raise Error.new("Agent #{key} already belongs to schedule #{agent.schedule_key}", status: 409)
-      end
 
       interval = Integer(attrs["interval_minutes"].to_s, 10)
-      unless interval.between?(1, 59)
-        raise Error.new("Loop interval must be between 1 and 59 minutes", status: 400)
-      end
       ends_at = Time.iso8601(required_text(attrs, "ends_at", fallback: "ends_at"))
-      raise Error.new("Loop end time must be in the future", status: 400) unless ends_at > now
-
       schedule_key = required_text(attrs, "schedule_key", fallback: "schedule_key").strip
       name = attrs["name"].to_s.strip
       name = "Loop #{agent.name || agent.key}" if name.empty?
       message = required_text(attrs, "message", fallback: "message").strip
-      system_message = @agent_store.schedule_system_prompt(
-        schedule_key: schedule_key,
-        name: name
+      result = scheduler.create_agent_loop!(
+        agent:, agents: sort_agents(agents), schedule_key:, name:, interval_minutes: interval,
+        ends_at:, message:, now:
       )
-      created = schedule_registry.create(
-        "key" => schedule_key,
-        "name" => name,
-        "cron" => "*/#{interval} * * * *",
-        "timezone" => "local",
-        "ends_at" => ends_at.iso8601,
-        "project_key" => agent.project_key,
-        "agent_name" => agent.name,
-        "agent_key" => agent.key,
-        "system_message" => system_message,
-        "message_source" => "inline",
-        "message" => message
-      )
-      @agent_store.adopt_schedule!(
-        agent,
-        schedule_key: schedule_key,
-        name: name,
-        system_message: system_message,
-        created_at: now
-      )
-
-      store = ScheduleStore.new
-      states = store.load
-      state = store.state_for(states, created.key)
-      state.mark_scheduled!
-      state.last_target_kind = "agent"
-      state.last_target_key = agent.key
-      state.next_due_at = now
-      state.resumed_at = now
-      store.save(states)
-      save_agents(sort_agents(agents))
-
-      result = scheduler.run_now(created.key, now: now)
-      if result.fetch(:status) == :failed
-        raise Error.new(result.fetch(:error), status: 409)
-      end
-      unless result.fetch(:status) == :started
-        raise Error.new("Loop schedule did not start: #{result.fetch(:status)}", status: 409)
-      end
 
       {
         schedule: result.fetch(:schedule),
@@ -1071,6 +1024,8 @@ module HQ
       }
     rescue ArgumentError, TypeError
       raise Error.new("Loop interval and end time must be valid", status: 400)
+    rescue Scheduler::LoopStartError => e
+      raise Error.new(e.message, status: 409)
     rescue ScheduleRegistry::Error => e
       raise Error.new(e.message, status: 400)
     end
@@ -2552,6 +2507,7 @@ module HQ
         last_exit_code: agent.last_exit_code,
         last_result: agent.last_result_label,
         summary: agent.last_summary,
+        cost_snapshot: agent.cost_snapshot,
         latest_inquiry: inquiry_payload(agent),
         attachments: attachment_payloads(agent),
         skills: agent.skills,

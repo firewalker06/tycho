@@ -160,6 +160,21 @@ the structured result via `normalize_structured_result_payload`
 summaries are not stored anywhere — only the latest run's summary is
 ever surfaced.
 
+`ManagedAgent#cost_snapshot` is a separate persisted cache for the native
+session's estimated cost through the latest finalized run. It is deliberately
+not recomputed at boot. Finalization folds the current run's normalized usage
+events into the prior snapshot, saves the latest value in
+`managed_agents.json`, and copies that as-of value into the run's
+`run_summary` memory metadata. Claude-compatible harnesses contribute their
+reported per-run estimate, OpenCode contributes the sum of `step_finish`
+costs, and Codex prices cumulative token deltas with the embedded official
+OpenAI standard API rate card. Each `AgentRun` persists the harness and model
+used for that run so an explicit raw-log rebuild cannot price older usage with
+the agent's current model. Codex snapshots persist the selected model,
+input/cached-input/output prices, source URL, and price date beside the token
+counters. Unknown models and incomplete telemetry remain untracked. A running
+agent continues to show the previous finalized snapshot.
+
 `build_summary!` is invoked from two places, and each is followed by
 a save so the new value reaches `managed_agents.json`:
 
@@ -215,6 +230,12 @@ Caveats:
   `@structured_result["inquiry"]` via `build_summary!`, so the
   inquiry form will reappear after a rebuild if the last run was
   awaiting input.
+
+The explicit rebuild also folds every raw-log run into cost snapshots and
+stores each as-of value on its synthetic `run_summary`. This is the backfill
+path for agents created before cost tracking; legacy Codex runs without
+per-run model provenance remain unpriced rather than receiving the current
+model's rate. Startup remains O(1).
 
 ## See also
 

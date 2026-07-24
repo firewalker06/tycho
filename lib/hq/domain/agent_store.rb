@@ -23,6 +23,15 @@ module HQ
       SCHEDULE_SYSTEM_PROMPT_TEMPLATE
     end
 
+    def self.schedule_system_prompt(schedule_key:, name:, system_message: nil)
+      custom = system_message.to_s.strip
+      return custom unless custom.empty?
+
+      label = name.to_s.strip
+      title = label.empty? ? schedule_key.to_s : "#{label} (#{schedule_key})"
+      format(scheduled_system_prompt_template, title:)
+    end
+
     def initialize(projects)
       @projects = projects
     end
@@ -171,14 +180,10 @@ module HQ
     end
 
     def adopt_schedule!(agent, schedule_key:, name:, system_message: nil, created_at: Time.now)
-      prompt = schedule_system_prompt(schedule_key:, name:, system_message:)
+      prompt = scheduled_system_prompt(schedule_key:, name:, system_message:)
       agent.associate_schedule!(schedule_key)
       agent.ensure_schedule_context_prompt!(prompt, created_at:)
       prompt
-    end
-
-    def schedule_system_prompt(schedule_key:, name:, system_message: nil)
-      scheduled_system_prompt(schedule_key:, name:, system_message:)
     end
 
     private
@@ -246,12 +251,7 @@ module HQ
     end
 
     def scheduled_system_prompt(schedule_key:, name:, system_message: nil)
-      custom = system_message.to_s.strip
-      return custom unless custom.empty?
-
-      label = name.to_s.strip
-      title = label.empty? ? schedule_key.to_s : "#{label} (#{schedule_key})"
-      format(self.class.scheduled_system_prompt_template, title:)
+      self.class.schedule_system_prompt(schedule_key:, name:, system_message:)
     end
 
     def template_for(project, template_key)

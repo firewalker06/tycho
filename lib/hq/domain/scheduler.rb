@@ -4,6 +4,7 @@ require "time"
 
 require_relative "../registry"
 require_relative "agent_store"
+require_relative "file_transaction"
 require_relative "project"
 require_relative "push_notification_store"
 require_relative "schedule_registry"
@@ -12,6 +13,7 @@ require_relative "web_push_notifier"
 
 module HQ
   class Scheduler
+    LoopStartError = Class.new(StandardError)
     DEFAULT_INTERVAL = 30
     MISSED_GRACE_SECONDS = 60
 
@@ -95,6 +97,56 @@ module HQ
       result = dispatch_schedule(schedule, state, agents, now:, dry_run:)
       persist(agents, states, dry_run:)
       result
+    end
+
+    def create_agent_loop!(agent:, agents:, schedule_key:, name:, interval_minutes:, ends_at:, message:, now: Time.now)
+      raise LoopStartError, "Stop the running agent before starting a loop" if agent.running?
+      unless agent.schedule_key.to_s.empty?
+        raise LoopStartError, "Agent #{agent.key} already belongs to schedule #{agent.schedule_key}"
+      end
+
+      interval = Integer(interval_minutes.to_s, 10)
+      raise ArgumentError, "Loop interval must be between 1 and 59 minutes" unless interval.between?(1, 59)
+      raise ArgumentError, "Loop end time must be in the future" unless ends_at > now
+
+      prompt = AgentStore.schedule_system_prompt(schedule_key:, name:)
+      FileTransaction.run([schedule_registry.path, store.path, AGENTS_FILE, agent.memory_path]) do
+        created = schedule_registry.create(
+          "key" => schedule_key,
+          "name" => name,
+          "cron" => "*/#{interval} * * * *",
+          "timezone" => "local",
+          "ends_at" => ends_at.iso8601,
+          "project_key" => agent.project_key,
+          "agent_name" => agent.name,
+          "agent_key" => agent.key,
+          "system_message" => prompt,
+          "message_source" => "inline",
+          "message" => message
+        )
+        @agent_store.adopt_schedule!(
+          agent, schedule_key:, name:, system_message: prompt, created_at: now
+        )
+        states = store.load
+        state = store.state_for(states, created.key)
+        state.mark_scheduled!
+        state.last_target_kind = "agent"
+        state.last_target_key = agent.key
+        state.next_due_at = now
+        state.resumed_at = now
+        store.save(states)
+        @agent_store.save(agents)
+
+        result = run_now(created.key, now:)
+        if result.fetch(:status) == :failed
+          raise LoopStartError, result.fetch(:error)
+        end
+        unless result.fetch(:status) == :started
+          raise LoopStartError, "Loop schedule did not start: #{result.fetch(:status)}"
+        end
+
+        result
+      end
     end
 
     def reconcile_archived_agent!(agent_key, archived_agent: nil, now: Time.now)

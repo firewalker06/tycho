@@ -14,6 +14,7 @@ require_relative "../log_file_reader"
 require_relative "../parser"
 require_relative "agent_chat_log"
 require_relative "process_liveness"
+require_relative "agent_cost_snapshot"
 require "digest"
 require "securerandom"
 require "shellwords"
@@ -51,18 +52,22 @@ module HQ
 
     AgentRun = Struct.new(
       :started_at, :finished_at, :exit_code, :status, :log_path, :command, :session_id, :response_style_source,
+      :agent, :model,
       keyword_init: true
     ) do
       def self.from_hash(hash)
+        command = hash["command"]
         new(
           started_at: ManagedAgent.parse_time(hash["started_at"]),
           finished_at: ManagedAgent.parse_time(hash["finished_at"]),
           exit_code: hash["exit_code"],
           status: hash["status"],
           log_path: hash["log_path"],
-          command: hash["command"],
+          command: command,
           session_id: hash["session_id"],
-          response_style_source: hash["response_style_source"]
+          response_style_source: hash["response_style_source"],
+          agent: hash["agent"],
+          model: hash["model"]
         )
       end
 
@@ -77,6 +82,8 @@ module HQ
         }
         result["session_id"] = session_id unless session_id.to_s.empty?
         result["response_style_source"] = response_style_source unless response_style_source.to_s.empty?
+        result["agent"] = agent unless agent.to_s.empty?
+        result["model"] = model unless model.to_s.empty?
         result
       end
     end
@@ -110,14 +117,15 @@ module HQ
     attr_reader :key, :name, :project_key, :template_key, :workspace, :prompt, :created_at, :started_at,
                 :finished_at, :pid, :last_exit_code, :log_path, :runs, :sandbox_mode, :agent, :messages, :skills,
                 :model, :reasoning_effort, :response_style, :session_id, :session_bootstrapped, :color_index, :summary,
-                :structured_result, :schedule_key
-    attr_writer :summary, :structured_result
+                :structured_result, :schedule_key, :cost_snapshot
+    attr_writer :summary, :structured_result, :cost_snapshot
 
     def initialize(key:, name:, project_key:, template_key:, workspace:, prompt:, created_at: nil, started_at: nil,
                    finished_at: nil, pid: nil, last_exit_code: nil, log_path: nil, runs: nil,
                    stop_requested_at: nil, sandbox_mode: "danger-full-access", agent: "codex", messages: nil,
                    model: nil, reasoning_effort: nil, response_style: nil, skills: nil, unread: false, session_id: nil,
-                   session_bootstrapped: nil, color_index: nil, summary: nil, structured_result: nil, schedule_key: nil)
+                   session_bootstrapped: nil, color_index: nil, summary: nil, structured_result: nil, schedule_key: nil,
+                   cost_snapshot: nil)
       @key = key
       @name = name
       @project_key = project_key
@@ -147,6 +155,7 @@ module HQ
       @structured_result = structured_result.is_a?(Hash) ? structured_result : nil
       @summary = summary.is_a?(String) && !summary.empty? ? summary : nil
       @schedule_key = normalize_schedule_key(schedule_key)
+      @cost_snapshot = AgentCostSnapshot.normalize(cost_snapshot)
     end
 
     def color_index=(value)
@@ -215,7 +224,8 @@ module HQ
         color_index: hash["color_index"],
         summary: hash["summary"],
         structured_result: hash["structured_result"],
-        schedule_key: hash["schedule_key"]
+        schedule_key: hash["schedule_key"],
+        cost_snapshot: hash["cost_snapshot"]
       )
     end
 
@@ -337,6 +347,7 @@ module HQ
       result["summary"] = @summary unless @summary.to_s.empty?
       result["structured_result"] = @structured_result if @structured_result.is_a?(Hash) && !@structured_result.empty?
       result["schedule_key"] = @schedule_key unless @schedule_key.to_s.empty?
+      result["cost_snapshot"] = @cost_snapshot if @cost_snapshot.is_a?(Hash) && !@cost_snapshot.empty?
       result
     end
 
@@ -420,7 +431,9 @@ module HQ
         log_path: @log_path,
         command: Shellwords.join(command),
         session_id: @session_id,
-        response_style_source: response_style_source
+        response_style_source: response_style_source,
+        agent: @agent,
+        model: @model
       )
       @structured_result = nil
       @summary = nil
@@ -448,12 +461,7 @@ module HQ
     def retire_for_archive!(timeout: 1.0)
       if running?
         @stop_requested_at ||= Time.now
-        signal_process_group("TERM")
-        wait_until_not_running(timeout)
-        if running?
-          signal_process_group("KILL")
-          wait_until_not_running(0.5)
-        end
+        terminate_process_group!(term_timeout: timeout)
       end
 
       finalize_retired_run!
@@ -914,7 +922,9 @@ module HQ
         exit_code: @last_exit_code,
         status: "failed",
         log_path: @log_path,
-        command: Shellwords.join(command)
+        command: Shellwords.join(command),
+        agent: @agent,
+        model: @model
       )
       @structured_result = nil
       @summary = message
@@ -969,7 +979,7 @@ module HQ
     end
 
     def monitor_agent_process(pid, status_path)
-      Thread.new do
+      thread = Thread.new do
         _waited_pid, status = Process.wait2(pid)
         begin
           File.write(status_path, process_exit_code(status).to_s)
@@ -979,6 +989,8 @@ module HQ
       rescue Errno::ECHILD
         nil
       end
+      (@process_monitors ||= {})[pid] = thread
+      thread
     end
 
     def process_exit_code(status)
@@ -1009,6 +1021,9 @@ module HQ
     end
 
     def read_exit_code
+      if @pid && (monitor = @process_monitors&.delete(@pid))
+        monitor.join(0.5)
+      end
       path = status_file_paths.find { |candidate| File.exist?(candidate) }
       return nil unless path
 
@@ -1174,13 +1189,17 @@ module HQ
 
       @stop_requested_at = now
       append_direct_output_stop_marker!(reason)
-      signal_process_group("TERM")
-      wait_until_not_running(1.0)
-      if running?
-        signal_process_group("KILL")
-        wait_until_not_running(0.5)
-      end
+      terminate_process_group!(term_timeout: 1.0)
       true
+    end
+
+    def terminate_process_group!(term_timeout:, kill_timeout: 0.5)
+      signal_process_group("TERM")
+      wait_until_not_running(term_timeout)
+      return unless running?
+
+      signal_process_group("KILL")
+      wait_until_not_running(kill_timeout)
     end
 
     def stale_direct_output_wait(now:)
@@ -1625,6 +1644,8 @@ module HQ
 
     def capture_run_memory!(run)
       conversation, system = Parser.parse_stream(current_run_log_lines, agent_type: @agent)
+      usage_entries = system.select { |entry| entry.type == :usage }
+      @cost_snapshot = AgentCostSnapshot.advance(agent: self, run:, usage_entries:)
 
       conversation.each do |entry|
         next unless entry.role == "assistant"
@@ -1673,7 +1694,7 @@ module HQ
         summary: @summary,
         status: effective_status,
         created_at: run.finished_at || @finished_at || Time.now,
-        metadata: @structured_result
+        metadata: run_summary_metadata
       )
       HQ.hooks.publish("agent.memory.captured",
                        agent_key: @key,
@@ -1681,6 +1702,12 @@ module HQ
                        status: effective_status.to_s)
     rescue StandardError => e
       HQ.logger.error("Agent") { "Memory capture failed for #{@key}: #{e.message}" }
+    end
+
+    def run_summary_metadata
+      metadata = @structured_result.is_a?(Hash) ? @structured_result.dup : {}
+      metadata["cost_snapshot"] = @cost_snapshot if @cost_snapshot.is_a?(Hash) && !@cost_snapshot.empty?
+      metadata.empty? ? nil : metadata
     end
 
     def capture_session_id!

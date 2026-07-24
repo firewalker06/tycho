@@ -30,13 +30,16 @@ module CLICommandTest
       config_path = File.join(dir, "hq.yml")
       prompts_path = File.join(dir, "system_prompts.yml")
       logs_root = File.join(dir, "logs")
+      schedules_path = File.join(dir, "schedules.yml")
       FileUtils.mkdir_p(workspace)
       File.write(config_path, "projects: []\n")
       File.write(prompts_path, "{}\n")
+      File.write(schedules_path, "schedules: []\n")
       env = {
         "TYCHO_CONFIG_PATH" => config_path,
         "TYCHO_SYSTEM_PROMPTS_PATH" => prompts_path,
-        "TYCHO_LOGS_ROOT" => logs_root
+        "TYCHO_LOGS_ROOT" => logs_root,
+        "TYCHO_SCHEDULES_PATH" => schedules_path
       }
 
       created = run_tycho(env, "project", "demo", "--path", workspace, "--name", "Demo Project",
@@ -77,7 +80,8 @@ module CLICommandTest
       assert(agent_created.fetch(:status).success?, "expected project fixture agent creation to succeed")
       agent_key = JSON.parse(File.read(File.join(logs_root, "managed_agents.json"))).fetch(0).fetch("key")
       explicit_archived = run_tycho(env, "project", "archive", "explicit", "--json")
-      assert(explicit_archived.fetch(:status).success?, "expected project archive with agents to succeed")
+      assert(explicit_archived.fetch(:status).success?,
+             "expected project archive with agents to succeed: #{explicit_archived.fetch(:stderr)}")
       assert(JSON.parse(explicit_archived.fetch(:stdout)).fetch("archived_agent_keys") == [agent_key],
              "expected project archive to include managed agents")
       assert(JSON.parse(File.read(File.join(logs_root, "managed_agents.json"))).empty?,

@@ -74,6 +74,10 @@ module HQ
     attr_reader :path, :projects, :groups, :remote_servers, :system_prompts_path, :custom_harnesses,
                 :harness_catalogs, :session_loop_settings
 
+    def archived_projects_path
+      default_archived_path
+    end
+
     def initialize(path: HQ.env_present("CONFIG_PATH", DEFAULT_PATH), system_prompts_path: nil)
       @path = File.expand_path(path)
       default_prompts_path = if @path == File.expand_path(DEFAULT_PATH)

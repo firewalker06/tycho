@@ -21,6 +21,7 @@ module RemoteServerTest
     assert_remote_agent_bulk_archive
     assert_remote_agent_clone_archives_source_with_editable_name
     assert_remote_agent_payload_has_revision
+    assert_remote_agent_payload_has_cost_snapshot
     assert_remote_inquiry_payload_has_stable_id_and_guarded_answer
     assert_remote_agent_payload_includes_attachments
     assert_remote_agent_pull_request_diff_payload
@@ -65,6 +66,34 @@ module RemoteServerTest
     puts "remote_server_test: ok"
   end
 
+  def assert_remote_agent_payload_has_cost_snapshot
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      agent = HQ::ManagedAgent.new(
+        key: "cost-payload-agent",
+        name: "Cost payload",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: workspace,
+        prompt: "Prompt",
+        agent: "claude",
+        cost_snapshot: {
+          "currency" => "USD",
+          "amount_usd" => 2.5,
+          "coverage" => "complete",
+          "session_id" => "cost-session"
+        }
+      )
+
+      payload = service.send(:agent_payload, agent)
+      assert(payload.dig(:cost_snapshot, "amount_usd") == 2.5,
+             "expected remote agent payloads to expose the persisted cost snapshot")
+    end
+  end
+
   def assert_remote_session_loop_settings
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
@@ -85,6 +114,11 @@ module RemoteServerTest
                                   "key" => "review-watch",
                                   "name" => "Review watch",
                                   "prompt" => "Check for actionable PR feedback."
+                                },
+                                {
+                                  "key" => "release-watch",
+                                  "name" => "Release watch",
+                                  "prompt" => "Check release readiness.\nReport blockers only."
                                 }
                               ]
                             }, nil)
@@ -96,6 +130,9 @@ module RemoteServerTest
       assert(persisted.dig("session_loops", "prompt_templates", 0, "prompt") ==
              "Check for actionable PR feedback.",
              "expected session loop settings to persist in hq.yml")
+      assert(persisted.dig("session_loops", "prompt_templates", 1, "prompt") ==
+             "Check release readiness.\nReport blockers only.",
+             "expected session loop settings to persist each template prompt independently")
     end
   end
 
@@ -1585,6 +1622,33 @@ module RemoteServerTest
         event["type"] == "system_prompt" && event.dig("metadata", "prompt_role") == "schedule"
       end
       assert(schedule_prompts.empty?, "expected invalid loop creation not to alter session memory")
+
+      begin
+        with_stubbed_agent_start_error("loop start failed") do
+          server.send(:route, service, "POST", "/agents/#{loop_agent[:key]}/loop-schedule", {
+                        "schedule_key" => "broken-loop",
+                        "name" => "Broken loop",
+                        "interval_minutes" => 10,
+                        "ends_at" => loop_ends_at.iso8601,
+                        "message" => "Check for reviews."
+                      }, nil)
+        end
+        raise "expected failed loop start to return an error"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409, "expected failed loop start to return a conflict")
+      end
+      rolled_back_agent = service.send(:load_all_agents).find { |item| item.key == loop_agent[:key] }
+      rolled_back_schedules = YAML.safe_load_file(HQ::SCHEDULES_FILE).fetch("schedules")
+      assert(rolled_back_agent.schedule_key.to_s.empty?,
+             "expected failed loop start to restore the agent schedule association")
+      assert(rolled_back_schedules.none? { |item| item["key"] == "broken-loop" },
+             "expected failed loop start to remove the created schedule")
+      assert(!HQ::ScheduleStore.new.load.key?("broken-loop"),
+             "expected failed loop start to remove the created schedule state")
+      rolled_back_prompts = HQ::AgentMemory.new(rolled_back_agent).events.select do |event|
+        event["type"] == "system_prompt" && event.dig("metadata", "prompt_role") == "schedule"
+      end
+      assert(rolled_back_prompts.empty?, "expected failed loop start to restore agent memory")
 
       loop_response = with_stubbed_agent_start do
         server.send(:route, service, "POST", "/agents/#{loop_agent[:key]}/loop-schedule", {
@@ -3225,10 +3289,15 @@ module RemoteServerTest
            "expected conversation context menus to create quick session loops")
     assert(js[:body].include?('id="session-loop-settings-form"') &&
            js[:body].include?('apiPatch("/settings/session-loops"') &&
-           js[:body].include?("data-session-loop-template-row"),
+           js[:body].include?("data-session-loop-template-row") &&
+           js[:body].include?("session-loop-settings-actions") &&
+           js[:body].include?('data-state-key="session-loop-template:${escapeAttr(stateKey)}:prompt"'),
            "expected General Settings to configure loop defaults and prompt templates")
-    assert(helpers_js[:body].include?('return { type: "agentLoop", key: parts[1] };') &&
-           helpers_js[:body].include?('if (route.type === "agentLoop") return `#agent/${encodeURIComponent(route.key)}/loop`;'),
+    assert(css[:body].include?(".session-loop-settings-actions") &&
+           css[:body].include?("var(--mobile-nav-height, 70px) + 24px"),
+           "expected session loop settings save actions to remain reachable on mobile")
+    assert(helpers_js[:body].include?('{ type: "agentLoop", segment: "loop", statePrefix: "agent-loop" }') &&
+           helpers_js[:body].include?("function simpleAgentRouteValue"),
            "expected session loop forms to have a stable agent route")
     assert(js[:body].include?("state.setup?.config?.schedule_system_message_template"),
            "expected Remote UI schedule defaults to consume the backend-provided template")
@@ -3427,6 +3496,14 @@ module RemoteServerTest
            "expected a second Remote UI logo click to navigate to Now")
     assert(js[:body].include?("function renderUnreadAgentsPanel"),
            "expected agents to render in a header popup")
+    assert(js[:body].include?('id="unread-agent-search"') &&
+           js[:body].include?("function filterQuickSwitchAgents") &&
+           js[:body].include?("function focusUnreadPanelSearch"),
+           "expected the agent switcher to focus and filter through a search field")
+    assert(js[:body].include?("function clearUnreadPanelSearch") &&
+           js[:body].include?('data-clear-unread-agent-search') &&
+           js[:body].include?("if (state.unreadPanelQuery) clearUnreadPanelSearch();"),
+           "expected Escape and the clear button to reset agent switcher search")
     assert(js[:body].include?('classList.toggle("unread-panel-open"'),
            "expected the Remote UI logo to track the open unread popup state")
     assert(js[:body].include?("els.mark.addEventListener(\"click\", toggleUnreadPanel)"),
@@ -3831,6 +3908,17 @@ module RemoteServerTest
            "expected Summary attachment menus to close on outside clicks")
     assert(js[:body].include?("renderSummaryAttachmentList"),
            "expected detailed Summary pages to render attachment list blocks")
+    assert(js[:body].include?('kv("Est. Cost", sessionCostSnapshotText(summary.costSnapshot))'),
+           "expected detailed Summary pages to render the finalized session-cost snapshot")
+    assert(!js[:body].include?('kv("Completed", timeShort(summary.createdAt'),
+           "expected detailed Summary pages to avoid repeating the header timestamp")
+    assert(js[:body].include?('return "Untracked";'),
+           "expected missing Summary cost snapshots to use compact copy")
+    assert(js[:body].include?("function sessionCostSnapshotText") &&
+           js[:body].include?('snapshot.coverage === "partial"'),
+           "expected Summary cost formatting to distinguish partial tracking")
+    assert(js[:body].include?("costSnapshot: block.metadata?.cost_snapshot || null"),
+           "expected historical Summary pages to use their own cost snapshots")
     assert(js[:body].include?("Open attachment"),
            "expected Summary attachment menu items to remain individually accessible")
     assert(js[:body].include?("Attachment might have been removed."),
@@ -4354,6 +4442,14 @@ module RemoteServerTest
       )
       self
     end
+    yield
+  ensure
+    HQ::ManagedAgent.define_method(:start!, original)
+  end
+
+  def with_stubbed_agent_start_error(message)
+    original = HQ::ManagedAgent.instance_method(:start!)
+    HQ::ManagedAgent.define_method(:start!) { raise message }
     yield
   ensure
     HQ::ManagedAgent.define_method(:start!, original)

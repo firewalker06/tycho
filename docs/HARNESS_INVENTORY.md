@@ -1,6 +1,6 @@
 # Tycho Harness Functionality Inventory
 
-Date: 2026-06-26
+Date: 2026-07-22
 
 Scope: inventory Tycho's current Codex and Claude managed-agent harness behavior, then compare what additional CLI adapters can reuse, adapt, or must leave unsupported until verified. Cursor notes capture the earlier adapter study; OpenCode notes capture the next planned integration target.
 
@@ -11,6 +11,57 @@ Tycho's managed-agent system is not just a command launcher. A harness participa
 Cursor can fit the same high-level lifecycle, but it should be implemented as a third built-in adapter, not as a Claude-compatible custom harness. It has a Claude-like `stream-json` run mode, a Codex-like captured native session id, and its own command, sandbox, model, auth, skill, and parser contracts.
 
 OpenCode should also be a built-in adapter. It has a direct non-interactive `opencode run` surface, `--format json` raw event output, explicit session continuation flags, provider/model/agent catalogs, first-class permissions, MCP support, and local skills/commands concepts. The main unknown is not command construction; it is the exact JSON event schema Tycho should parse and how reliably OpenCode emits a session id/result summary in headless runs.
+
+## Session Cost Snapshots
+
+Tycho persists an estimated session-cost snapshot only after a managed-agent
+run finishes. Summary pages therefore show a stable value through the last
+finalized run rather than a live counter. Claude and Claude-compatible custom
+harnesses add the result's `total_cost_usd`; OpenCode adds every
+`step_finish.cost` in the run. These are harness estimates, not authoritative
+billing values. Each run records its harness and model for later rebuilds;
+legacy Codex runs without that provenance stay unpriced. Codex exposes
+cumulative token usage rather than a dollar
+amount, so Tycho calculates each finalized run from the delta against the prior
+snapshot:
+
+`((input - cached input) * input rate + cached input * cached rate + output * output rate) / 1,000,000`
+
+Reasoning tokens are already included in Codex's `output_tokens` and are not
+charged twice. The result is a standard OpenAI API list-price equivalent, not
+the operator's actual invoice or ChatGPT subscription charge. It excludes
+Priority/Fast multipliers, regional processing uplifts, tool-call fees, and
+long-context multipliers that cannot be inferred from Codex's aggregate turn
+telemetry.
+
+The embedded rate card comes from the [official OpenAI API pricing
+page](https://developers.openai.com/api/docs/pricing), checked on 2026-07-22.
+All values are USD per 1M tokens:
+
+| Model | Input | Cached input | Output |
+| --- | ---: | ---: | ---: |
+| `gpt-5.6-sol` | $5.00 | $0.50 | $30.00 |
+| `gpt-5.6-terra` | $2.50 | $0.25 | $15.00 |
+| `gpt-5.6-luna` | $1.00 | $0.10 | $6.00 |
+| `gpt-5.5` | $5.00 | $0.50 | $30.00 |
+| `gpt-5.4` | $2.50 | $0.25 | $15.00 |
+| `gpt-5.4-mini` | $0.75 | $0.075 | $4.50 |
+| `gpt-5.3-codex` | $1.75 | $0.175 | $14.00 |
+| `gpt-5.2`, `gpt-5.2-codex` | $1.75 | $0.175 | $14.00 |
+| `gpt-5.1`, `gpt-5.1-codex`, `gpt-5.1-codex-max` | $1.25 | $0.125 | $10.00 |
+| `gpt-5.1-codex-mini` | $0.25 | $0.025 | $2.00 |
+| `gpt-5`, `gpt-5-codex` | $1.25 | $0.125 | $10.00 |
+| `codex-mini-latest` | $1.50 | $0.375 | $6.00 |
+
+`gpt-5.6` resolves to `gpt-5.6-sol`; dated model snapshots resolve to their
+base model. Missing models or incomplete token telemetry stay untracked rather
+than using a guessed fallback price.
+
+The latest snapshot lives on the managed agent for O(1) startup and remote
+payload reads. Each `run_summary` memory event also receives its own copy, so a
+historical Summary route shows the amount as of that run. Explicit memory
+rebuild is the only historical backfill path; normal startup never scans raw
+logs.
 
 ## Current Harness Architecture
 

@@ -3,11 +3,10 @@
 require "digest"
 require "fileutils"
 require "json"
-require "open3"
 require "time"
-require "timeout"
 require "uri"
 
+require_relative "command_runner"
 require_relative "constants"
 require_relative "file_store"
 require_relative "git_diff"
@@ -115,20 +114,16 @@ module HQ
       end
 
       def gh_output(*args)
-        stdout = +""
-        stderr = +""
-        status = nil
         command = ["gh", *args]
-        Timeout.timeout(COMMAND_TIMEOUT) do
-          stdout, stderr, status = Open3.capture3(*command)
+        result = CommandRunner.capture(command, timeout: COMMAND_TIMEOUT)
+        if result.timed_out?
+          raise Error.new("GitHub CLI timed out while fetching PR diff metadata.", status: 504)
         end
-        raise Error.new(gh_error(stderr), status: 502) unless status.success?
+        raise Error.new(gh_error(result.stderr), status: 502) unless result.success?
 
-        stdout.to_s
+        result.stdout.to_s
       rescue Errno::ENOENT
         raise Error.new("GitHub CLI is not available; install or authenticate `gh` to refresh PR diffs.", status: 424)
-      rescue Timeout::Error
-        raise Error.new("GitHub CLI timed out while fetching PR diff metadata.", status: 504)
       end
 
       def gh_error(stderr)

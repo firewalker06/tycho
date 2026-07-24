@@ -8,6 +8,7 @@ require "dry/cli"
 require "lipgloss"
 
 require_relative "domain/project"
+require_relative "domain/project_archiver"
 require_relative "domain/file_store"
 require_relative "domain/scheduler"
 require_relative "domain/agent_store"
@@ -30,6 +31,21 @@ module HQ
           @usage_template = value if value
           @usage_template
         end
+
+        def project_mutation_options(create:)
+          option :path, desc: "Project directory (defaults to the current directory)" if create
+          option :name, desc: create ? "Display name (defaults to the directory name)" : "Display name"
+          option :group, desc: create ? "Project group" : "Project group (pass empty string to clear)"
+          option :harness, desc: "Default agent harness"
+          option :agent, desc: "Alias for --harness"
+          option :model, desc: create ? "Default model override" : "Default model override (pass empty string to clear)"
+          option :reasoning_effort,
+                 desc: create ? "Default reasoning effort" : "Default reasoning effort (pass empty string to clear)"
+          option :response_style, desc: "Response style path, default, or disabled"
+          option :pr_url, desc: create ? "Open pull request URL" : "Open pull request URL (pass empty string to clear)"
+          option :hidden, desc: "Visibility override: true, false, or inherit"
+          option :json, type: :boolean, default: false, desc: "Print JSON"
+        end
       end
 
       class Project < Dry::CLI::Command
@@ -37,17 +53,7 @@ module HQ
 
         desc "Manage project metadata"
         argument :project_key, required: false, desc: "Project key for quick creation"
-        option :path, desc: "Project directory (defaults to the current directory)"
-        option :name, desc: "Display name (defaults to the directory name)"
-        option :group, desc: "Project group"
-        option :harness, desc: "Default agent harness"
-        option :agent, desc: "Alias for --harness"
-        option :model, desc: "Default model override"
-        option :reasoning_effort, desc: "Default reasoning effort"
-        option :response_style, desc: "Response style path, default, or disabled"
-        option :pr_url, desc: "Open pull request URL"
-        option :hidden, desc: "Visibility override: true, false, or inherit"
-        option :json, type: :boolean, default: false, desc: "Print JSON"
+        project_mutation_options(create: true)
         usage_template "project %{project_key} [options]"
 
         def call(project_key: nil, **opts)
@@ -62,17 +68,7 @@ module HQ
 
         desc "Create a project"
         argument :project_key, required: true, desc: "Project key"
-        option :path, desc: "Project directory (defaults to the current directory)"
-        option :name, desc: "Display name (defaults to the directory name)"
-        option :group, desc: "Project group"
-        option :harness, desc: "Default agent harness"
-        option :agent, desc: "Alias for --harness"
-        option :model, desc: "Default model override"
-        option :reasoning_effort, desc: "Default reasoning effort"
-        option :response_style, desc: "Response style path, default, or disabled"
-        option :pr_url, desc: "Open pull request URL"
-        option :hidden, desc: "Visibility override: true, false, or inherit"
-        option :json, type: :boolean, default: false, desc: "Print JSON"
+        project_mutation_options(create: true)
         usage_template "project create %{project_key} [options]"
 
         def call(project_key:, **opts)
@@ -98,16 +94,7 @@ module HQ
 
         desc "Update project configuration"
         argument :project_key, required: true, desc: "Project key"
-        option :name, desc: "Display name"
-        option :group, desc: "Project group (pass empty string to clear)"
-        option :harness, desc: "Default agent harness"
-        option :agent, desc: "Alias for --harness"
-        option :model, desc: "Default model override (pass empty string to clear)"
-        option :reasoning_effort, desc: "Default reasoning effort (pass empty string to clear)"
-        option :response_style, desc: "Response style path, default, or disabled"
-        option :pr_url, desc: "Open pull request URL (pass empty string to clear)"
-        option :hidden, desc: "Visibility override: true, false, or inherit"
-        option :json, type: :boolean, default: false, desc: "Print JSON"
+        project_mutation_options(create: false)
         usage_template "project update %{project_key} [options]"
 
         def call(project_key:, **opts)
@@ -749,44 +736,23 @@ module HQ
       config = registry.projects.find { |candidate| candidate.key == project_key.to_s }
       return failure("Unknown project: #{project_key}", err: err) unless config
 
-      project = Project.new(config)
-      store = AgentStore.new(registry.projects)
-      agents = store.load
-      project_agents = agents.select { |agent| agent.project_key == project.key }
-      running = project_agents.select(&:running?)
-      unless running.empty?
-        return failure("Project #{project.key} has running agents: #{running.map(&:key).join(", ")}", err: err)
-      end
-
       payload = project_config_payload(config)
-      archived_config = registry.archive_project!(project.key)
-      return failure("Unknown project: #{project_key}", err: err) unless archived_config
-
-      project_archive = project.archive_logs!
-      scheduler = Scheduler.new(registry: registry)
-      agent_archives = project_agents.filter_map do |agent|
-        archive_path = agent.archive_logs!
-        begin
-          scheduler.reconcile_archived_agent!(agent.key, archived_agent: agent)
-        rescue StandardError
-          nil
-        end
-        archive_path
-      end
-      store.save(agents.reject { |agent| agent.project_key == project.key })
+      archived = ProjectArchiver.new(registry:).archive(project_key)
 
       result = {
         project: payload,
-        archived_agent_keys: project_agents.map(&:key),
-        project_log_archive: project_archive,
-        agent_log_archives: agent_archives
+        archived_agent_keys: archived.archived_agent_keys,
+        project_log_archive: archived.project_log_archive,
+        agent_log_archives: archived.agent_log_archives
       }
       if opts[:json]
         out.puts JSON.pretty_generate(result)
       else
-        out.puts "Archived project #{project.key}"
-        out.puts "Project logs: #{project_archive}" if project_archive
-        out.puts "Archived agents: #{project_agents.map(&:key).join(", ")}" unless project_agents.empty?
+        out.puts "Archived project #{project_key}"
+        out.puts "Project logs: #{archived.project_log_archive}" if archived.project_log_archive
+        unless archived.archived_agent_keys.empty?
+          out.puts "Archived agents: #{archived.archived_agent_keys.join(", ")}"
+        end
       end
       0
     rescue StandardError => e

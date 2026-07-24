@@ -1,13 +1,22 @@
 # frozen_string_literal: true
 
+require "json"
 require "time"
 
 require_relative "agent_memory"
+require_relative "agent_cost_snapshot"
 require_relative "../log_file_reader"
 require_relative "../parser"
 
 module HQ
   class AgentChatLog
+    RebuildCostRun = Struct.new(:session_id, :finished_at, :agent, :model, keyword_init: true)
+    RebuildCostAgent = Struct.new(:agent, :key, :model, :cost_snapshot, :runs, :finished_at, keyword_init: true) do
+      def run_count
+        runs.length
+      end
+    end
+
     def initialize(agent)
       @agent = agent
     end
@@ -45,7 +54,7 @@ module HQ
       runs = split_raw_log_into_runs(raw_path)
       return nil if runs.empty?
 
-      events = build_events_from_runs(runs)
+      events, cost_snapshot = build_events_from_runs(runs)
       memory = AgentMemory.new(@agent)
       existing_attachments = memory.attachments
       memory.write_events!(events)
@@ -55,6 +64,7 @@ module HQ
           created_at: parse_time(attachment["created_at"]) || Time.now
         )
       end
+      @agent.cost_snapshot = cost_snapshot if cost_snapshot
       events.length
     rescue StandardError => e
       HQ.logger.error("AgentChatLog") { "Rebuild failed for #{@agent.key}: #{e.message}" } if defined?(HQ.logger)
@@ -331,8 +341,17 @@ module HQ
     def build_events_from_runs(runs)
       events = []
       seen_system_prompts = {}
+      cost_agent = RebuildCostAgent.new(
+        agent: @agent.agent,
+        key: @agent.key,
+        model: @agent.model,
+        cost_snapshot: nil,
+        runs: [],
+        finished_at: @agent.finished_at
+      )
 
       runs.each_with_index do |run, run_index|
+        stored_run = stored_run_for_rebuild(run_index, runs.length)
         cursor = run[:started_at]
         conversation, system = Parser.parse_run(run[:lines], agent_type: @agent.agent)
 
@@ -364,6 +383,7 @@ module HQ
           end
         end
 
+        usage_entries = system.select { |entry| entry.type == :usage }
         system.each do |entry|
           cursor += 1
           if entry.type == :usage
@@ -393,15 +413,57 @@ module HQ
           }
         end
 
+        completed_at = cursor + 1
+        cost_run = RebuildCostRun.new(
+          session_id: rebuild_session_id(run[:lines]),
+          finished_at: completed_at,
+          agent: stored_run&.agent || @agent.agent,
+          model: stored_run&.model
+        )
+        cost_agent.runs << cost_run
+        cost_agent.finished_at = completed_at
+        cost_agent.cost_snapshot = AgentCostSnapshot.advance(
+          agent: cost_agent,
+          run: cost_run,
+          usage_entries: usage_entries
+        )
+
         events << {
           "type" => "run_summary",
           "content" => "(rebuilt from raw.log run ##{run_index + 1})",
           "status" => "success",
-          "created_at" => (cursor + 1).iso8601
+          "created_at" => completed_at.iso8601,
+          "metadata" => { "cost_snapshot" => cost_agent.cost_snapshot }
         }
       end
 
-      events
+      [events, cost_agent.cost_snapshot]
+    end
+
+    def stored_run_for_rebuild(index, raw_run_count)
+      offset = raw_run_count - @agent.runs.length
+      stored_index = index - offset
+      return nil if stored_index.negative?
+
+      @agent.runs[stored_index]
+    end
+
+    def rebuild_session_id(lines)
+      Array(lines).each do |line|
+        value = line.to_s[/\Asession_id=(.+)\z/, 1].to_s.strip
+        return value unless value.empty?
+
+        stripped = line.to_s.strip
+        next unless stripped.start_with?("{")
+
+        event = JSON.parse(stripped)
+        id = event["thread_id"] || event["session_id"] || event["sessionID"] || event["sessionId"] ||
+             event.dig("session", "id")
+        return id.to_s unless id.to_s.empty?
+      rescue JSON::ParserError
+        next
+      end
+      ""
     end
 
     def compact_rebuild_summary(entry)
