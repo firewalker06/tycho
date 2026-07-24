@@ -1471,8 +1471,21 @@ module ManagedAgentTest
       agent.poll!
 
       log = File.read(agent.log_path)
+      run = agent.last_run
+      restored_run = HQ::ManagedAgent::AgentRun.from_hash(run.to_hash)
       assert(agent.last_exit_code == 0, "expected direct harness to exit cleanly, log: #{log}")
       assert(log.include?("direct-parent"), "expected harness process not to be parented by ruby -e runner")
+      assert(run.log_start_offset.is_a?(Integer) && run.log_start_offset.positive?,
+             "expected the run to record its raw-log byte offset")
+      assert(restored_run.log_start_offset == run.log_start_offset,
+             "expected the raw-log byte offset to persist with the run")
+
+      agent.define_singleton_method(:read_log_tail_lines) do |**|
+        raise "offset reads should not scan the accumulated raw log"
+      end
+      run_lines = agent.send(:current_run_log_lines)
+      assert(run_lines.include?("direct-parent"),
+             "expected the persisted byte offset to read the completed run directly")
     end
   ensure
     HQ.custom_harnesses = old_harnesses if defined?(old_harnesses)

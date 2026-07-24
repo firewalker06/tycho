@@ -52,11 +52,13 @@ module HQ
 
     AgentRun = Struct.new(
       :started_at, :finished_at, :exit_code, :status, :log_path, :command, :session_id, :response_style_source,
-      :agent, :model,
+      :agent, :model, :log_start_offset,
       keyword_init: true
     ) do
       def self.from_hash(hash)
         command = hash["command"]
+        log_start_offset = hash["log_start_offset"]
+        log_start_offset = nil unless log_start_offset.is_a?(Integer) && log_start_offset >= 0
         new(
           started_at: ManagedAgent.parse_time(hash["started_at"]),
           finished_at: ManagedAgent.parse_time(hash["finished_at"]),
@@ -67,7 +69,8 @@ module HQ
           session_id: hash["session_id"],
           response_style_source: hash["response_style_source"],
           agent: hash["agent"],
-          model: hash["model"]
+          model: hash["model"],
+          log_start_offset: log_start_offset
         )
       end
 
@@ -84,6 +87,7 @@ module HQ
         result["response_style_source"] = response_style_source unless response_style_source.to_s.empty?
         result["agent"] = agent unless agent.to_s.empty?
         result["model"] = model unless model.to_s.empty?
+        result["log_start_offset"] = log_start_offset if log_start_offset.is_a?(Integer) && log_start_offset >= 0
         result
       end
     end
@@ -406,9 +410,11 @@ module HQ
       FileUtils.rm_f(status_path)
       FileUtils.rm_f(last_message_file_path)
       invalidate_derived_logs!
+      log_start_offset = nil
       File.open(@log_path, "a") do |file|
         file.puts
         file.puts "=== [#{@started_at.strftime("%Y-%m-%d %H:%M:%S")}] start ==="
+        log_start_offset = file.pos
         file.puts "workspace=#{@workspace}"
         file.puts "session_id=#{@session_id}" unless @session_id.to_s.empty?
         file.puts "prompt=#{prompt_text}"
@@ -433,7 +439,8 @@ module HQ
         session_id: @session_id,
         response_style_source: response_style_source,
         agent: @agent,
-        model: @model
+        model: @model,
+        log_start_offset: log_start_offset
       )
       @structured_result = nil
       @summary = nil
@@ -906,9 +913,11 @@ module HQ
       FileUtils.rm_f(last_message_file_path)
       invalidate_derived_logs!
 
+      log_start_offset = nil
       File.open(@log_path, "a") do |file|
         file.puts
         file.puts "=== [#{@started_at.strftime("%Y-%m-%d %H:%M:%S")}] start failed ==="
+        log_start_offset = file.pos
         file.puts "workspace=#{@workspace}"
         file.puts "session_id=#{@session_id}" unless @session_id.to_s.empty?
         file.puts "command=#{Shellwords.join(command)}"
@@ -924,7 +933,8 @@ module HQ
         log_path: @log_path,
         command: Shellwords.join(command),
         agent: @agent,
-        model: @model
+        model: @model,
+        log_start_offset: log_start_offset
       )
       @structured_result = nil
       @summary = message
@@ -1569,11 +1579,13 @@ module HQ
       AgentStructuredResult.from_log_lines(last_run_log_lines)
     end
 
-    # Walks raw.log to extract the lines belonging to the most recent
-    # `=== […] start ===` segment. Independent of @started_at so it works
-    # for agents loaded from disk after a restart.
+    # Reads the latest run from its persisted byte offset. Legacy runs fall
+    # back to the most recent `=== […] start ===` segment.
     def last_run_log_lines
       return [] unless File.exist?(@log_path)
+
+      offset_lines = run_log_lines_from_offset(last_run)
+      return offset_lines unless offset_lines.nil?
 
       lines = LogFileReader.read_lines(@log_path, chomp: true)
       start_index = lines.rindex { |line| line.start_with?("=== [") }
@@ -1628,8 +1640,11 @@ module HQ
     def current_run_log_lines
       return [] unless @started_at && File.exist?(@log_path)
 
-      marker = "=== [#{@started_at.strftime("%Y-%m-%d %H:%M:%S")}] start ==="
+      offset_lines = run_log_lines_from_offset(last_run)
+      return offset_lines unless offset_lines.nil?
+
       file_size = File.size(@log_path)
+      marker = "=== [#{@started_at.strftime("%Y-%m-%d %H:%M:%S")}] start ==="
       max_bytes = 512 * 1024
 
       loop do
@@ -1642,6 +1657,17 @@ module HQ
       end
     rescue StandardError
       []
+    end
+
+    def run_log_lines_from_offset(run)
+      return nil unless run
+
+      offset = run.log_start_offset
+      return nil unless offset.is_a?(Integer) && offset >= 0
+      return nil unless run.log_path.to_s.empty? || File.expand_path(run.log_path) == File.expand_path(@log_path)
+      return nil if offset > File.size(@log_path)
+
+      LogFileReader.read_lines_from_offset(@log_path, offset, chomp: true)
     end
 
     def read_log_tail_lines(max_bytes: 512 * 1024)

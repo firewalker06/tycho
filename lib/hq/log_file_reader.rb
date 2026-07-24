@@ -29,6 +29,19 @@ module HQ
       normalize_text(data).lines(chomp:)
     end
 
+    def read_lines_from_offset(path, offset, chomp: true)
+      return [] unless File.file?(path)
+      return [] unless offset.is_a?(Integer) && offset >= 0
+
+      data = File.open(path, "rb") do |file|
+        return [] if offset > file.size
+
+        file.seek(offset, IO::SEEK_SET)
+        file.read.to_s
+      end
+      normalize_text(data).lines(chomp:)
+    end
+
     def foreach_line(path, chomp: false)
       read_lines(path, chomp:).each { |line| yield line }
     end
