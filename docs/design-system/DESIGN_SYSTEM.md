@@ -276,6 +276,8 @@ The eighth wave migrates the Agents index to the searchable-collection contract.
 
 The ninth wave extracts the focused-route shell header used by project, agent, summary, attachment, and diff pages. Shared classes own its anatomy, title hierarchy, truncation, action spacing, and target size; existing route code still supplies text, back navigation, view controls, menus, fixed/sticky positioning, and split-reader behavior.
 
+The tenth wave migrates Settings server connection, browser-token recovery, and harness-catalog forms. Shared field anatomy now owns label hierarchy, input surfaces, programmatic descriptions, action alignment, and pending presentation. Remote peer actions form a vertical rail at the card edge so the peer identity retains a stable reading column. Custom model/effort fields sit inside a native, state-preserving disclosure; its collapsed summary shows configured values or “No custom values,” so hiding the editor never hides active overrides. Product code still owns peer validation, browser-only token persistence, catalog parsing, API compatibility fallbacks, and the server/harness grids.
+
 ## Accessibility and responsive rules
 
 Target: WCAG 2.2 AA.

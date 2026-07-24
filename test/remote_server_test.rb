@@ -3317,6 +3317,17 @@ module RemoteServerTest
            js[:body].include?("Remote token") &&
            js[:body].include?("tycho-peer"),
            "expected Settings to expose a named add-server form with token input and the 7374 peer default")
+    assert(js[:body].include?('id="server-connection-form" class="server-connection-form ds-form-layout" data-ds-form="settings"') &&
+           js[:body].include?('class="ds-input" id="server-name-input"') &&
+           js[:body].include?('class="ds-input" id="server-url-input"') &&
+           js[:body].include?('class="ds-input" id="server-token-input"') &&
+           js[:body].include?('class="server-connection-actions ds-form-actions"'),
+           "expected Add server to use the shared Settings form, field, input, and action contracts")
+    %w[server-name-input-help server-url-input-help server-token-input-help].each do |description_id|
+      assert(js[:body].include?("aria-describedby=\"#{description_id}\"") &&
+             js[:body].include?("id=\"#{description_id}\""),
+             "expected Add server help #{description_id} to be programmatically connected")
+    end
     assert(js[:body].include?('brokerPost("/servers"') &&
            js[:body].include?('token: String(token || "")') &&
            js[:body].include?("SERVER_TOKENS_STORAGE_KEY") &&
@@ -3336,10 +3347,15 @@ module RemoteServerTest
            js[:body].include?("function renderActiveServerTokenRecovery") &&
            js[:body].include?("Remote token required"),
            "expected Settings to let existing remote servers save a browser-local token")
+    assert(js[:body].include?('class="server-token-form ds-form-layout" data-ds-form="settings"') &&
+           js[:body].include?("Stored only in this browser and sent to the selected Remote server.") &&
+           js[:body].include?('class="primary inline-icon-button ds-button" data-variant="brand" type="submit"'),
+           "expected Remote token recovery to use the shared field, input, description, and semantic action contracts")
     assert(css[:body].include?(".remote-server-list-item > .detail-row > .server-row-actions") &&
-           css[:body].include?("grid-template-columns: repeat(3, minmax(0, 1fr))") &&
+           css[:body].include?("grid-template-columns: minmax(96px, 1fr)") &&
+           css[:body].include?("align-self: center") &&
            css[:body].include?(".remote-server-list-item .server-row-actions .inline-icon-button span"),
-           "expected remote server row actions to fit small screens")
+           "expected remote server row actions to form a centered vertical rail at small screens")
     assert(js[:body].include?("Restart the local Remote server to enable ad hoc peer switching"),
            "expected stale broker errors to explain that the local Remote server must be restarted")
     assert(!js[:body].include?("Connect local peer"),
@@ -3409,6 +3425,19 @@ module RemoteServerTest
            js[:body].include?('apiPatch(`/setup/harnesses/${encodeURIComponent(harness)}/catalog`') &&
            js[:body].include?("Harness catalog editing unsupported by this server"),
            "expected Settings to edit and save custom harness model catalogs")
+    assert(js[:body].include?("harness-catalog-form ds-form-layout") &&
+           js[:body].include?('data-ds-form="settings" data-harness-catalog-form=') &&
+           js[:body].include?("One model ID per line. Discovered models remain available.") &&
+           js[:body].include?("One reasoning-effort value per line.") &&
+           js[:body].include?('data-loading="${saving ? "true" : "false"}"') &&
+           js[:body].include?('aria-busy="${saving ? "true" : "false"}"'),
+           "expected harness catalogs to use described shared fields and expose pending state")
+    assert(js[:body].include?('class="harness-catalog-editor"') &&
+           js[:body].include?('data-state-key="harness-catalog-editor:') &&
+           js[:body].include?("configuredSummary") &&
+           js[:body].include?('configuredSummary || "No custom values"') &&
+           js[:body].include?('configuredCount ? `${configuredCount} configured` : "Optional"'),
+           "expected custom harness values to stay collapsed behind a stateful toggle with a visible value summary")
     assert(js[:body].include?('data-testid="response-style-form"') &&
            js[:body].include?('data-testid="response-style-input"') &&
            js[:body].include?("function saveResponseStyle") &&

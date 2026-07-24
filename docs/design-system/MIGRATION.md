@@ -2,7 +2,7 @@
 
 ## Current adoption
 
-The system is loaded on every Remote UI route. Migrated product areas now include Settings → Response style and Session loop controls, agent/project/schedule lifecycle forms, structured inquiries, the Agents searchable collection, focused project/agent/summary/attachment/diff headers, representative agent/schedule/project/setup/diff statuses, primary non-modal menu overlays, consequential confirmation flows, and shared form/Settings composite structure. The agent form progressively discloses lower-frequency runtime configuration while keeping its selected defaults visible. The preview route exercises all first-release components.
+The system is loaded on every Remote UI route. Migrated product areas now include Settings → Response style, Session loop, server connection/token, and harness-catalog controls; agent/project/schedule lifecycle forms; structured inquiries; the Agents searchable collection; focused project/agent/summary/attachment/diff headers; representative agent/schedule/project/setup/diff statuses; primary non-modal menu overlays; consequential confirmation flows; and shared form/Settings composite structure. The agent form progressively discloses lower-frequency runtime configuration while keeping its selected defaults visible. Harness catalog overrides use the same rule: fields collapse, configured values remain visible in the summary. The preview route exercises all first-release components.
 
 Classification:
 
@@ -53,10 +53,11 @@ Current baseline:
 - 5 lifecycle form families and the Settings route use shared composite structure; Session loop fields use the shared input contract.
 - 1 searchable collection exposes shared search geometry and explicit filtered-result feedback.
 - 5 focused route families use one detail-header anatomy and responsive contract.
+- 3 remaining Settings form families use shared labels, descriptions, inputs, actions, and pending semantics.
 - 1 preview route added.
 - Shared system loaded on all routes.
 - Legacy aliases remain; broad route migration is incomplete.
 
 ## Next implementation wave
 
-Normalize the remaining Settings connection/token and harness-catalog fields next, using the established field, input, pending, and alert contracts. Keep reader-specific diff, attachment, and conversation toolbars product-owned until another surface demonstrates the same action model. Extend searchable collections only after a second product collection demonstrates the same filtering and result-feedback needs.
+Classify and migrate remaining neutral metadata pills next without collapsing health, urgency, selection, or filter states into one badge API. Keep reader-specific diff, attachment, and conversation toolbars product-owned until another surface demonstrates the same action model. Extend searchable collections only after a second product collection demonstrates the same filtering and result-feedback needs.

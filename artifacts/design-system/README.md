@@ -24,6 +24,11 @@ The baseline settings capture was taken before the isolated project fixture was 
 - `implementation/settings-response-style-edit-390x844.png` — `#settings`, Response style editor open.
 - `implementation/settings-response-style-confirmation-390x844.png` — destructive confirmation with safe initial focus, explicit consequence copy, and mobile action layout.
 - `implementation/settings-section-navigation-390x844.png` — sticky, horizontally scrollable Settings navigation with Automation selected, its controlled panel visible, and Session loop controls using the shared input surface.
+- `implementation/settings-server-form-390x844.png` — mobile Add server flow with shared labels, described inputs, semantic action styling, and responsive single-column layout.
+- `implementation/settings-peer-actions-390x844.png` — peer server card with Switch to, Token, and Remove actions in a vertically centered right-hand rail with 44px targets.
+- `implementation/settings-harness-overrides-collapsed-1440x900.png` — empty custom model and effort editor collapsed by default.
+- `implementation/settings-harness-overrides-configured-1440x900.png` — collapsed custom model and effort editor retaining its configured values in the summary.
+- `implementation/settings-harness-catalog-1440x900.png` — expanded custom model and effort editor with described monospace fields, shared focus treatment, and aligned save action.
 - `implementation/agent-create-390x844.png` and `agent-create-1440x900.png` — agent lifecycle form at mobile and desktop widths.
 - `implementation/form-page-composite-390x844.png` and `form-page-composite-1440x900.png` — shared lifecycle form structure with product-specific mobile and desktop layout; lower-frequency agent configuration is collapsed under Advanced while its selected defaults remain visible.
 - `implementation/project-edit-390x844.png` — project lifecycle form at mobile width.
@@ -42,6 +47,7 @@ The baseline settings capture was taken before the isolated project fixture was 
 - `responsive/design-system-components-768x1024.png` — `/design-system`, tablet Playwright viewport, full page.
 - `accessibility/button-focus-visible.png` — brand button with focus-visible state.
 - `accessibility/detail-header-back-focus-390x844.png` — focused 44px Back action on a mobile project detail route.
+- `accessibility/settings-token-required-390x844.png` — required browser-token field after native validation moves focus to the described shared input.
 - `accessibility/inquiry-multiselect-error-390x844.png` — required multi-select group with focus, visible error text, and disabled submission.
 
 Animations were reduced for the Playwright component capture. Dynamic timestamps and real agent data were not used.

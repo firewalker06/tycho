@@ -1024,6 +1024,24 @@ textarea {
   justify-content: flex-end;
 }
 
+.remote-server-list-item > .detail-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.remote-server-list-item > .detail-row > .server-row-actions {
+  display: grid;
+  grid-template-columns: minmax(104px, 1fr);
+  align-self: center;
+  justify-self: end;
+}
+
+.remote-server-list-item .server-row-actions .inline-icon-button {
+  width: 100%;
+  min-height: var(--touch-target);
+  justify-content: center;
+}
+
 .server-connection-actions {
   justify-content: flex-end;
 }
@@ -1034,14 +1052,13 @@ textarea {
   }
 
   .remote-server-list-item > .detail-row {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr) minmax(96px, auto);
   }
 
   .remote-server-list-item > .detail-row > .server-row-actions {
-    grid-column: 1 / -1;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    width: 100%;
+    grid-column: 3;
+    grid-row: 1;
+    grid-template-columns: minmax(96px, 1fr);
   }
 
   .remote-server-list-item .server-row-actions .inline-icon-button {
@@ -2307,9 +2324,66 @@ select {
   padding: 10px;
 }
 
+.harness-catalog-editor {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 82%, var(--bg));
+}
+
+.harness-catalog-editor > summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--touch-target);
+  padding: 9px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.harness-catalog-editor > summary::-webkit-details-marker {
+  display: none;
+}
+
+.harness-catalog-editor > summary::before {
+  content: "›";
+  color: var(--accent);
+  font-size: 18px;
+  line-height: 1;
+  transform-origin: center;
+  transition: transform 140ms ease;
+}
+
+.harness-catalog-editor[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .harness-catalog-editor > summary::before {
+    transition: none;
+  }
+}
+
+.harness-catalog-editor > summary > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.harness-catalog-editor > summary > div > span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .harness-catalog-form {
   display: grid;
   gap: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  padding: 10px;
 }
 
 .harness-catalog-form label {
@@ -6063,8 +6137,41 @@ body:has(.inquiry-form-full-screen) {
   border-color: var(--ds-feedback-danger);
 }
 
+/* Settings form adapter.
+ * Server and harness forms retain product grids while shared field classes own
+ * label hierarchy, controls, descriptions, and action geometry.
+ */
+
+[data-ds-form="settings"] .ds-field__label {
+  color: var(--ds-text-primary);
+  font-size: var(--ds-font-size-2);
+  font-weight: var(--ds-weight-medium);
+}
+
+[data-ds-form="settings"] .ds-field__description {
+  color: var(--ds-text-muted);
+  font-size: var(--ds-font-size-1);
+  line-height: var(--ds-line-body);
+}
+
+[data-ds-form="settings"] .ds-input {
+  min-height: var(--ds-control-height-md);
+  border-color: var(--ds-border-default);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-background-canvas);
+  color: var(--ds-text-primary);
+}
+
+[data-ds-form="settings"].harness-catalog-form textarea.ds-input {
+  font-family: var(--ds-font-mono);
+}
+
 @media (max-width: 640px) {
   [data-ds-form="inquiry"] .ds-input {
+    font-size: 16px;
+  }
+
+  [data-ds-form="settings"] .ds-input {
     font-size: 16px;
   }
 }

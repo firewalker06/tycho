@@ -945,9 +945,10 @@ def write_smoke_script(path)
             overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
           };
         });
+        const minimumTouchTarget = 43.5;
         if (!detailHeader.title || !detailHeader.metadata || detailHeader.backLabel !== "Back" ||
-            detailHeader.backWidth < 44 || detailHeader.backHeight < 44 ||
-            detailHeader.triggers.some((target) => target.width < 44 || target.height < 44) ||
+            detailHeader.backWidth < minimumTouchTarget || detailHeader.backHeight < minimumTouchTarget ||
+            detailHeader.triggers.some((target) => target.width < minimumTouchTarget || target.height < minimumTouchTarget) ||
             detailHeader.overflow) {
           throw new Error(`Mobile detail header lost shared responsive behavior: ${JSON.stringify(detailHeader)}`);
         }
@@ -1003,6 +1004,36 @@ def write_smoke_script(path)
         await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
         await page.waitForSelector("[data-testid='response-style-action']", { state: "visible", timeout: 10_000 });
         await page.waitForSelector("#session-loop-default-interval", { state: "visible", timeout: 10_000 });
+        const serversSection = page.locator("[data-scroll-settings-section='settings-servers']");
+        await serversSection.click();
+        await page.waitForFunction(() => (
+          document.querySelector("[data-scroll-settings-section='settings-servers']")?.getAttribute("aria-current") === "location"
+        ));
+        await page.click("[data-toggle-server-form]");
+        await page.waitForSelector("#server-connection-form", { state: "visible", timeout: 10_000 });
+        const serverFormContract = await page.evaluate(() => {
+          const form = document.querySelector("#server-connection-form");
+          const inputs = Array.from(form?.querySelectorAll(".ds-input") || []);
+          const submit = form?.querySelector("button[type='submit']");
+          return {
+            sharedLayout: form?.classList.contains("ds-form-layout"),
+            fields: inputs.length,
+            described: inputs.every((input) => {
+              const id = input.getAttribute("aria-describedby");
+              return Boolean(id && document.getElementById(id));
+            }),
+            mobileFontSizes: inputs.map((input) => Number.parseFloat(getComputedStyle(input).fontSize)),
+            submitHeight: submit?.getBoundingClientRect().height,
+            overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        });
+        if (!serverFormContract.sharedLayout || serverFormContract.fields !== 3 ||
+            !serverFormContract.described || serverFormContract.mobileFontSizes.some((size) => size < 16) ||
+            serverFormContract.submitHeight < 44 || serverFormContract.overflow) {
+          throw new Error(`Settings Add server lost shared field behavior: ${JSON.stringify(serverFormContract)}`);
+        }
+        await page.click("[data-toggle-server-form]");
+
         const automationSection = page.locator("[data-scroll-settings-section='settings-automation']");
         await automationSection.click();
         await page.waitForFunction(() => (
@@ -1030,6 +1061,37 @@ def write_smoke_script(path)
         };
         if (loopDefaults.interval !== "10" || loopDefaults.endTime !== "23:59" || loopDefaults.templateName !== "Wait for PR review") {
           throw new Error(`Session loop settings defaults are incomplete: ${JSON.stringify(loopDefaults)}`);
+        }
+        const firstHarness = page.locator(".harness-details").first();
+        if (await firstHarness.count()) {
+          if (!(await firstHarness.evaluate((details) => details.open))) await firstHarness.locator(":scope > summary").click();
+          const catalogEditor = firstHarness.locator(".harness-catalog-editor");
+          const collapsedCatalog = await catalogEditor.evaluate((details) => ({
+            open: details.open,
+            summary: details.querySelector(":scope > summary")?.textContent.trim(),
+          }));
+          if (collapsedCatalog.open || !collapsedCatalog.summary.includes("No custom values")) {
+            throw new Error(`Empty harness overrides should start collapsed with a summary: ${JSON.stringify(collapsedCatalog)}`);
+          }
+          await catalogEditor.locator(":scope > summary").click();
+          const harnessFormContract = await firstHarness.locator("[data-harness-catalog-form]").evaluate((form) => {
+            const fields = Array.from(form.querySelectorAll("textarea.ds-input"));
+            return {
+              fields: fields.length,
+              described: fields.every((field) => {
+                const id = field.getAttribute("aria-describedby");
+                return Boolean(id && document.getElementById(id));
+              }),
+              monospace: fields.every((field) => getComputedStyle(field).fontFamily.includes("ui-monospace")),
+              busy: form.getAttribute("aria-busy"),
+              submitHeight: form.querySelector("button[type='submit']")?.getBoundingClientRect().height,
+            };
+          });
+          if (harnessFormContract.fields !== 2 || !harnessFormContract.described ||
+              !harnessFormContract.monospace || harnessFormContract.busy !== "false" ||
+              harnessFormContract.submitHeight < 44) {
+            throw new Error(`Harness catalog lost shared field behavior: ${JSON.stringify(harnessFormContract)}`);
+          }
         }
         const loopTemplatePrompt = "Check for smoke-test review feedback and address anything actionable.";
         await page.fill("#session-loop-default-interval", "11");
