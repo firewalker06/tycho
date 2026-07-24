@@ -100,9 +100,67 @@
         </div>
       </section>
 
+      <section class="ds-stack" aria-labelledby="preview-detail-header">
+        <h2 id="preview-detail-header" class="ds-heading" data-level="2">Detail header</h2>
+        <header class="ds-detail-header ds-surface">
+          <button class="ds-button ds-icon-button ds-detail-header__back" type="button" aria-label="Back to agents">←</button>
+          <div class="ds-detail-header__identity">
+            <span class="ds-badge" data-intent="active" aria-hidden="true">A</span>
+            <div class="ds-detail-header__text">
+              <h3 class="ds-detail-header__title">Release verification and deployment readiness</h3>
+              <p class="ds-detail-header__metadata">Tycho / running / codex</p>
+            </div>
+          </div>
+          <div class="ds-detail-header__actions">
+            <button class="ds-button ds-icon-button ds-detail-header__action" type="button" aria-label="Change detail layout">▥</button>
+            <button class="ds-button ds-icon-button ds-detail-header__action" type="button" aria-label="More detail actions">•••</button>
+          </div>
+        </header>
+      </section>
+
+      <section class="ds-stack" aria-labelledby="preview-section-navigation">
+        <h2 id="preview-section-navigation" class="ds-heading" data-level="2">Section navigation</h2>
+        <nav class="ds-section-nav" aria-label="Example settings sections">
+          <button type="button" aria-current="location">Connection</button>
+          <button type="button" aria-current="false">Automation</button>
+          <button type="button" aria-current="false">Configuration</button>
+        </nav>
+        <div class="ds-section-panel ds-surface">
+          <strong>Connection</strong>
+          <p class="ds-text">One selected section remains explicit while the navigation scrolls at narrow widths.</p>
+        </div>
+      </section>
+
+      <section class="ds-stack" aria-labelledby="preview-searchable-collection">
+        <h2 id="preview-searchable-collection" class="ds-heading" data-level="2">Searchable collection</h2>
+        <div class="ds-searchable-collection">
+          <div class="ds-collection-toolbar">
+            <label class="ds-search-field" for="preview-agent-search">
+              <span aria-hidden="true">⌕</span>
+              <input class="ds-search-field__input" id="preview-agent-search" type="search" value="release" aria-describedby="preview-agent-results">
+            </label>
+            <button class="ds-button ds-icon-button" type="button" aria-label="Sort agents">⇅</button>
+          </div>
+          <p class="ds-collection-summary" id="preview-agent-results" role="status">2 agents match “release”</p>
+          <div class="ds-collection-results">
+            <section class="ds-collection-group ds-surface" aria-label="Tycho agents">
+              <div class="ds-stack" style="--ds-stack-gap:var(--ds-space-2)">
+                <strong>Tycho</strong>
+                <span class="ds-text" data-tone="muted">Release verifier · Succeeded</span>
+                <span class="ds-text" data-tone="muted">Release notes · Answer required</span>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+
       <section class="ds-stack" aria-labelledby="preview-fields">
         <h2 id="preview-fields" class="ds-heading" data-level="2">Fields</h2>
-        <form class="ds-surface ds-stack" data-ds-form="lifecycle" aria-label="Agent example form">
+        <form class="ds-surface ds-form-layout" data-ds-form="lifecycle" aria-label="Agent example form">
+          <div class="ds-form-section-heading">
+            <strong>Configuration</strong>
+            <span>Identity and runtime</span>
+          </div>
           <div class="ds-grid">
             <div class="ds-field">
               <label class="ds-field__label" for="preview-name">Agent name</label>
@@ -128,7 +186,7 @@
             <textarea class="ds-input" id="preview-prompt" aria-invalid="true" aria-describedby="preview-prompt-error"></textarea>
             <span class="ds-field__error" id="preview-prompt-error">Enter the work this agent should perform.</span>
           </div>
-          <div class="ds-cluster" data-collapse="mobile">
+          <div class="ds-form-actions">
             <button class="ds-button" data-variant="brand" type="submit">Create and run</button>
             <button class="ds-button" type="button">Cancel</button>
           </div>

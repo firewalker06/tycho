@@ -2590,6 +2590,18 @@ module RemoteServerTest
     assert(design_system[:body].include?("Confirmation flow") &&
            design_system[:body].include?("ds-confirmation-dialog__panel"),
            "expected the design-system preview to document consequential confirmations")
+    assert(design_system[:body].include?("Detail header") &&
+           design_system[:body].include?('class="ds-detail-header ds-surface"') &&
+           design_system[:body].include?("ds-detail-header__metadata"),
+           "expected the design-system preview to document focused-route header anatomy")
+    assert(design_system[:body].include?("Section navigation") &&
+           design_system[:body].include?('class="ds-section-nav"') &&
+           design_system[:body].include?('class="ds-form-section-heading"'),
+           "expected the design-system preview to document shared composite structure")
+    assert(design_system[:body].include?("Searchable collection") &&
+           design_system[:body].include?('class="ds-search-field"') &&
+           design_system[:body].include?('class="ds-collection-summary"'),
+           "expected the design-system preview to document search and result-feedback structure")
     assert(design_system[:body].match?(%r{href="/ui\.css\?v=[0-9a-f]{12}"}),
            "expected the design-system preview stylesheet to be asset-versioned")
 
@@ -2642,6 +2654,25 @@ module RemoteServerTest
       .ds-empty-state
       .ds-overlay-surface
       .ds-confirmation-dialog
+      .ds-form-layout
+      .ds-form-section-heading
+      .ds-form-actions
+      .ds-section-nav
+      .ds-section-panel
+      .ds-detail-header
+      .ds-detail-header__back
+      .ds-detail-header__identity
+      .ds-detail-header__text
+      .ds-detail-header__title
+      .ds-detail-header__metadata
+      .ds-detail-header__actions
+      .ds-detail-header__action
+      .ds-searchable-collection
+      .ds-collection-toolbar
+      .ds-search-field
+      .ds-collection-summary
+      .ds-collection-results
+      .ds-collection-group
     ].each do |selector|
       assert(css[:body].include?(selector), "expected Remote UI CSS to include #{selector}")
     end
@@ -3009,9 +3040,12 @@ module RemoteServerTest
            "expected Response style failures to use the shared danger alert")
     %w[agent-form project-form schedule-form schedule-message-form].each do |form_id|
       assert(js[:body].include?("id=\"#{form_id}\"") &&
-             js[:body].match?(/id="#{Regexp.escape(form_id)}"[^>]*data-ds-form="lifecycle"/),
+             js[:body].match?(/id="#{Regexp.escape(form_id)}"[^>]*class="[^"]*ds-form-layout[^"]*"[^>]*data-ds-form="lifecycle"/),
              "expected #{form_id} to use the lifecycle form contract")
     end
+    assert(js[:body].scan("ds-form-section-heading").length >= 10 &&
+           js[:body].scan("ds-form-actions").length >= 8,
+           "expected lifecycle and Settings forms to share section-heading and action anatomy")
     %w[
       agent-template-help
       agent-response-style-help
@@ -3028,6 +3062,24 @@ module RemoteServerTest
     end
     assert(js[:body].scan('class="field-card ds-field ds-surface"').length >= 20,
            "expected lifecycle fields to use shared field and surface contracts")
+    assert(js[:body].include?('class="agent-advanced-config ds-surface"') &&
+           js[:body].include?("data-agent-advanced-summary") &&
+           js[:body].include?("function syncAgentAdvancedSummary"),
+           "expected agent runtime configuration to use a collapsed Advanced disclosure with a synchronized value summary")
+    %w[
+      session-loop-default-interval
+      session-loop-default-end-time
+      session-loop-template-name-
+      session-loop-template-prompt-
+    ].each do |control_id|
+      assert(js[:body].match?(/class="ds-input" id="#{Regexp.escape(control_id)}/),
+             "expected Session loop control #{control_id} to use the shared input color and state contract")
+    end
+    %w[session-loop-default-interval-help session-loop-default-end-time-help].each do |description_id|
+      assert(js[:body].include?("aria-describedby=\"#{description_id}\"") &&
+             js[:body].include?("id=\"#{description_id}\""),
+             "expected Session loop help #{description_id} to be programmatically connected")
+    end
     assert(js[:body].scan('data-variant="brand" type="submit"').length >= 7,
            "expected lifecycle primary submits to use the semantic brand action")
     assert(js[:body].include?('<span>Create and run</span>') && js[:body].include?('type="submit"'),
@@ -3296,10 +3348,25 @@ module RemoteServerTest
            "expected Settings push section to expose an in-page menu target")
     assert(js[:body].include?('data-scroll-settings-section="settings-push-notifications"'),
            "expected Settings More menu to jump to push notifications")
-    assert(js[:body].include?('class="settings-section-nav"') &&
+    assert(js[:body].include?('class="settings-section-nav ds-section-nav"') &&
+           js[:body].include?('class="settings-section-panel ds-section-panel"') &&
            js[:body].include?('aria-current=') &&
            js[:body].include?("function syncSettingsSectionNav"),
            "expected Settings to keep a sticky in-page section navigator with active-section feedback")
+    assert(response[:body].include?("ds-detail-header__back") &&
+           response[:body].include?("ds-detail-header__identity") &&
+           response[:body].include?("ds-detail-header__title") &&
+           response[:body].include?("ds-detail-header__metadata") &&
+           response[:body].include?("ds-detail-header__actions") &&
+           response[:body].include?("ds-detail-header__action") &&
+           js[:body].include?('classList.toggle("ds-detail-header", subpage && !onboarding)'),
+           "expected focused routes to activate the shared detail-header anatomy without changing shell behavior")
+    assert(js[:body].include?('class="ds-searchable-collection"') &&
+           js[:body].include?('class="search-box ds-search-field"') &&
+           js[:body].include?('id="agent-results-summary" role="status"') &&
+           js[:body].include?('aria-describedby="agent-results-summary"') &&
+           js[:body].include?("ds-collection-group ds-surface"),
+           "expected Agents to use the searchable collection and explicit result-feedback contract")
     assert(css[:body].include?("position: sticky") &&
            css[:body].include?("scroll-margin-top: calc(var(--app-header-height"),
            "expected Settings section jumps to remain visible below the sticky header and navigator")

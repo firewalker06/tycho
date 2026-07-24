@@ -606,6 +606,7 @@ def write_smoke_script(path)
           await refresh({ force: true, forceConversation: true });
         });
         await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector("[data-skill-autocomplete-index]", { state: "visible", timeout: 10_000 });
         const stillAutocompleting = await page.locator("#prompt-input").inputValue();
         if (stillAutocompleting !== "$rev") {
           throw new Error(`Autocomplete draft did not survive refresh: ${JSON.stringify(stillAutocompleting)}`);
@@ -924,10 +925,38 @@ def write_smoke_script(path)
         }
         await page.setViewportSize({ width: 390, height: 844 });
 
+        await page.goto(`${baseUrl}/ui#project/web`, { waitUntil: "networkidle" });
+        await page.waitForSelector(".header-row.ds-detail-header", { state: "visible", timeout: 10_000 });
+        const detailHeader = await page.evaluate(() => {
+          const header = document.querySelector(".header-row.ds-detail-header");
+          const back = header?.querySelector(".ds-detail-header__back");
+          const title = header?.querySelector(".ds-detail-header__title");
+          const metadata = header?.querySelector(".ds-detail-header__metadata");
+          const triggers = Array.from(header?.querySelectorAll(".ds-detail-header__action") || [])
+            .filter((node) => node.getClientRects().length)
+            .map((node) => ({ width: node.getBoundingClientRect().width, height: node.getBoundingClientRect().height }));
+          return {
+            title: title?.textContent.trim(),
+            metadata: metadata?.textContent.trim(),
+            backLabel: back?.getAttribute("aria-label"),
+            backWidth: back?.getBoundingClientRect().width,
+            backHeight: back?.getBoundingClientRect().height,
+            triggers,
+            overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        });
+        if (!detailHeader.title || !detailHeader.metadata || detailHeader.backLabel !== "Back" ||
+            detailHeader.backWidth < 44 || detailHeader.backHeight < 44 ||
+            detailHeader.triggers.some((target) => target.width < 44 || target.height < 44) ||
+            detailHeader.overflow) {
+          throw new Error(`Mobile detail header lost shared responsive behavior: ${JSON.stringify(detailHeader)}`);
+        }
+
         await page.goto(`${baseUrl}/ui#project/web/agent/new`, { waitUntil: "networkidle" });
         await page.waitForSelector("#agent-prompt", { state: "visible", timeout: 10_000 });
         await page.fill("#agent-prompt", "$rev");
         await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector("[data-skill-autocomplete-index]", { state: "visible", timeout: 10_000 });
         await page.keyboard.press("Tab");
         const agentPrompt = await page.locator("#agent-prompt").inputValue();
         if (agentPrompt !== "$review ") {
@@ -945,6 +974,21 @@ def write_smoke_script(path)
         if (agentNameFontSize < 16) {
           throw new Error(`Mobile form input is below zoom-safe size: ${agentNameFontSize}px`);
         }
+        const formComposite = await page.evaluate(() => {
+          const form = document.querySelector("#agent-form");
+          const heading = form?.querySelector(".ds-form-section-heading");
+          const actions = form?.querySelector(".ds-form-actions");
+          return {
+            layout: form?.classList.contains("ds-form-layout"),
+            display: form ? getComputedStyle(form).display : "",
+            headingDirection: heading ? getComputedStyle(heading).flexDirection : "",
+            actionPosition: actions ? getComputedStyle(actions).position : "",
+          };
+        });
+        if (!formComposite.layout || formComposite.display !== "grid" ||
+            formComposite.headingDirection !== "column" || formComposite.actionPosition !== "sticky") {
+          throw new Error(`Mobile lifecycle form lost shared composite behavior: ${JSON.stringify(formComposite)}`);
+        }
 
         await page.goto(`${baseUrl}/ui#schedule/new?project=web`, { waitUntil: "networkidle" });
         await page.waitForSelector("#schedule-system-message", { state: "visible", timeout: 10_000 });
@@ -959,6 +1003,26 @@ def write_smoke_script(path)
         await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
         await page.waitForSelector("[data-testid='response-style-action']", { state: "visible", timeout: 10_000 });
         await page.waitForSelector("#session-loop-default-interval", { state: "visible", timeout: 10_000 });
+        const automationSection = page.locator("[data-scroll-settings-section='settings-automation']");
+        await automationSection.click();
+        await page.waitForFunction(() => (
+          document.querySelector("[data-scroll-settings-section='settings-automation']")?.getAttribute("aria-current") === "location"
+        ));
+        const settingsComposite = await page.evaluate(() => {
+          const nav = document.querySelector(".settings-section-nav");
+          const button = document.querySelector("[data-scroll-settings-section='settings-automation']");
+          const panel = document.querySelector("#settings-panel-automation");
+          return {
+            sharedNav: nav?.classList.contains("ds-section-nav"),
+            current: button?.getAttribute("aria-current"),
+            controls: button?.getAttribute("aria-controls"),
+            sharedPanel: panel?.classList.contains("ds-section-panel"),
+          };
+        });
+        if (!settingsComposite.sharedNav || settingsComposite.current !== "location" ||
+            settingsComposite.controls !== "settings-panel-automation" || !settingsComposite.sharedPanel) {
+          throw new Error(`Settings lost shared section navigation behavior: ${JSON.stringify(settingsComposite)}`);
+        }
         const loopDefaults = {
           interval: await page.locator("#session-loop-default-interval").inputValue(),
           endTime: await page.locator("#session-loop-default-end-time").inputValue(),
@@ -1078,6 +1142,7 @@ def write_smoke_script(path)
         }
         await page.fill("#quick-agent-prompt", "$rev");
         await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector("[data-skill-autocomplete-index]", { state: "visible", timeout: 10_000 });
         await page.press("#quick-agent-prompt", "Tab");
         const quickPrompt = await page.locator("#quick-agent-prompt").inputValue();
         if (quickPrompt !== "$review ") {

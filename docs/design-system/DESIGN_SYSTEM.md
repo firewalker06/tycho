@@ -205,6 +205,49 @@ Behavior:
 
 Use a confirmation when an action removes data, archives multiple objects, stops automation, or interrupts the server. Do not add it to reversible navigation, local form cancellation, or removal of an unsaved attachment from a draft. The dedicated agent archive page remains product-specific because it offers “Clone instead” and shows the full source-agent context.
 
+### Form layout
+
+`ds-form-layout` supplies the shared grid boundary and 12px section rhythm for lifecycle forms. Product classes decide column count, spanning, sticky mobile actions, and feature-specific grouping.
+
+`ds-form-section-heading` pairs an operational section label with short scope copy. It spans the product grid, uses document-order text rather than a visual-only divider, and stacks at narrow widths. It does not create a heading element automatically; consumers choose the correct semantic heading level for the surrounding page.
+
+`ds-form-actions` aligns and wraps native actions with consistent spacing. Product patterns may make it sticky or change the mobile layout, but must preserve DOM order, explicit labels, disabled behavior, and at least 44px targets.
+
+Use this pattern for multi-section create/edit flows. A single compact field group should use `ds-field` inside `ds-surface` without adding form-page ceremony.
+
+The agent lifecycle form keeps its high-frequency identity, workspace, and instruction fields visible, then places prompt/runtime configuration in a native Advanced disclosure. Its closed summary lists the current template, response-style source, harness, model, and effort, so simplifying the form does not hide the defaults or make the available configuration opaque. The summary is synchronized after any advanced choice changes; the native controls keep their normal labels, submission behavior, and keyboard interaction.
+
+### Section navigation
+
+`ds-section-nav` is a horizontally scrollable set of in-page controls. The selected button uses `aria-current="location"`; each button needs `aria-controls` pointing to a `ds-section-panel`. Product code owns sticky positioning and the active-section observer because header offsets and route behavior are application concerns.
+
+`ds-section-panel` supplies a stable grid and section rhythm. It does not add a visual surface, landmark, heading, or scroll offset by itself; compose those according to the content.
+
+Keyboard behavior remains native button order. Selection must update `aria-current`, focus must remain visible when the row scrolls, and activating a control must move or reveal the named section without changing the route unexpectedly.
+
+### Detail header
+
+`ds-detail-header` is the shared shell header for focused project, agent, summary, attachment, and diff routes. Its fixed anatomy is:
+
+- `ds-detail-header__back`: a native button with an explicit accessible name.
+- `ds-detail-header__identity`: product mark plus the title/metadata block.
+- `ds-detail-header__text`, `__title`, and `__metadata`: one page `h1` and one compact context line with deterministic truncation.
+- `ds-detail-header__actions`: route-owned view, schedule, and overflow slots; each visible trigger uses `ds-detail-header__action`.
+
+The shared contract owns the three-column grid, minimum widths, type hierarchy, truncation, action spacing, and 44px targets. The Remote UI shell owns fixed versus sticky positioning, safe-area padding, scroll behavior, split-reader width, menu contents, and route history.
+
+Use it once at the top of a focused route. Keep the object name in the title and put project, state, branch, harness, or scope in the metadata line. Do not repeat the page title inside the reader body, turn metadata into an unlabeled action, or place primary form submission in the header.
+
+Keyboard behavior stays native: Back follows route history, contextual buttons remain in DOM order, and menus use the shared overlay interaction contract. Long titles and metadata truncate visually but remain complete in the DOM and accessible name. At narrow widths, identity yields space to the leading and action slots without causing horizontal page overflow.
+
+### Searchable collection
+
+`ds-searchable-collection` composes a `ds-collection-toolbar`, a concise result status, and `ds-collection-results`. `ds-search-field` owns the compound search-control boundary and visible focus; the native search input retains its built-in editing and clearing behavior. `ds-collection-group` provides a stable clipping boundary for product rows without prescribing their content or selection model.
+
+The result status must state the filtered count and current query, and the search input must reference it with `aria-describedby`. Product code owns filtering, sorting, grouping, empty-state copy, bulk selection, and row actions. Keep those behaviors outside the shared CSS contract because they differ by collection.
+
+Use this pattern when search changes an on-page collection immediately. Do not use it for command palettes, server-backed query builders, or a single static list that does not need result feedback.
+
 ## Representative migration
 
 Settings → Response style is the first vertical slice:
@@ -226,6 +269,12 @@ The fourth wave introduces the product status taxonomy and migrates agent lists/
 The fifth wave centralizes non-modal overlays. Header, schedule, sort, view-layout, summary-attachment, and attachment-action menus now share focus origins, peer dismissal, Escape restoration, arrow navigation, and the semantic dropdown layer without replacing their product positioning or native details behavior.
 
 The sixth wave replaces scattered browser confirmations with the shared native-dialog contract for response-style removal, peer-server removal, scheduler restart/stop, bulk archive, schedule deletion, attachment deletion, and Remote restart. Titles name the target, descriptions state what changes and what remains, and action labels describe the consequence.
+
+The seventh wave extracts composite structure already shared by agent, project, schedule, schedule-message, and loop forms plus Settings. Shared classes now own form rhythm, section headings, action alignment, in-page section selection, section-panel spacing, and Session loop input presentation; route CSS retains responsive columns, sticky action bars, header offsets, and feature-specific surfaces. The agent form uses progressive disclosure for lower-frequency runtime settings while exposing their selected defaults in the closed summary.
+
+The eighth wave migrates the Agents index to the searchable-collection contract. Search, sort, project grouping, bulk selection, empty states, and row navigation keep their existing product behavior; shared classes now own toolbar/search geometry, result spacing, and the visible result-count contract.
+
+The ninth wave extracts the focused-route shell header used by project, agent, summary, attachment, and diff pages. Shared classes own its anatomy, title hierarchy, truncation, action spacing, and target size; existing route code still supplies text, back navigation, view controls, menus, fixed/sticky positioning, and split-reader behavior.
 
 ## Accessibility and responsive rules
 

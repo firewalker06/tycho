@@ -26,26 +26,26 @@
     <div id="app" class="app-shell">
       <header class="app-header">
         <div class="header-row">
-          <button id="back-button" class="icon-button hidden" type="button" aria-label="Back" title="Back">
+          <button id="back-button" class="icon-button ds-detail-header__back hidden" type="button" aria-label="Back" title="Back">
             <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24">
               <path d="m12 19-7-7 7-7"></path>
               <path d="M19 12H5"></path>
             </svg>
             <span class="sr-only">Back</span>
           </button>
-          <div class="identity">
+          <div class="identity ds-detail-header__identity">
             <button id="header-mark" class="header-mark" type="button" aria-label="Open agent switcher" title="Open agent switcher" aria-expanded="false" aria-controls="unread-agents-panel">
               <img class="brand-logo" src="/remote-logo.png?v=<%= HQ::RemoteUI.asset_version %>" alt="">
             </button>
-            <div class="title-block">
-              <h1 id="screen-title">Tycho - Factorio for Agents</h1>
-              <p id="screen-subtitle">Connecting</p>
+            <div class="title-block ds-detail-header__text">
+              <h1 class="ds-detail-header__title" id="screen-title">Tycho - Factorio for Agents</h1>
+              <p class="ds-detail-header__metadata" id="screen-subtitle">Connecting</p>
             </div>
           </div>
-          <div class="header-actions">
+          <div class="header-actions ds-detail-header__actions">
             <div id="header-view-menu" class="header-view-menu hidden"></div>
             <div id="header-schedule-menu" class="header-schedule-menu hidden"></div>
-            <button id="header-more-button" class="icon-button hidden" type="button" aria-label="More actions" title="More actions" aria-haspopup="menu" aria-expanded="false" aria-controls="header-more-panel">
+            <button id="header-more-button" class="icon-button ds-detail-header__action hidden" type="button" aria-label="More actions" title="More actions" aria-haspopup="menu" aria-expanded="false" aria-controls="header-more-panel">
               <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24">
                 <circle cx="12" cy="12" r="1"></circle>
                 <circle cx="19" cy="12" r="1"></circle>

@@ -2182,22 +2182,12 @@ select {
   border-bottom-width: 0;
 }
 
-.agent-form {
-  display: grid;
-  gap: 12px;
-}
-
 .read-only-project-fields {
   padding-top: 12px;
 }
 
 .project-info-title {
   padding: 12px 12px 0;
-}
-
-.form-actions {
-  flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
 .archive-actions {
@@ -2394,12 +2384,6 @@ select {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-}
-
-.response-style-form-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .response-style-form-heading > div {
@@ -5225,25 +5209,88 @@ body:has(.inquiry-form-full-screen) {
   box-shadow: none;
 }
 
-.form-section-heading {
-  display: flex;
+.search-box.ds-search-field {
+  min-height: var(--ds-control-height-md);
+  padding: 0 var(--ds-space-3);
+}
+
+.search-box.ds-search-field .ds-search-field__input {
+  min-height: calc(var(--ds-control-height-md) - (2 * var(--ds-border-width)));
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.agent-advanced-config {
   grid-column: 1 / -1;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
   min-width: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
-  padding: 8px 2px 5px;
+  overflow: clip;
 }
 
-.form-section-heading strong {
-  font-size: 13px;
-  text-transform: uppercase;
+.agent-advanced-config > summary {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--ds-space-3);
+  min-height: var(--ds-touch-target);
+  padding: var(--ds-space-3);
+  cursor: pointer;
+  list-style: none;
 }
 
-.form-section-heading span {
-  color: var(--muted);
-  font-size: 12px;
+.agent-advanced-config > summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-advanced-config > summary::after {
+  content: "+";
+  grid-column: 3;
+  color: var(--ds-action-brand);
+  font-size: var(--ds-font-size-4);
+  line-height: 1;
+}
+
+.agent-advanced-config[open] > summary::after {
+  content: "−";
+}
+
+.agent-advanced-config > summary > span:first-child {
+  display: grid;
+  gap: var(--ds-space-1);
+}
+
+.agent-advanced-config > summary strong {
+  color: var(--ds-text-primary);
+  font-size: var(--ds-font-size-2);
+}
+
+.agent-advanced-config > summary small,
+.agent-advanced-summary {
+  color: var(--ds-text-muted);
+  font-size: var(--ds-font-size-1);
+  line-height: var(--ds-line-body);
+}
+
+.agent-advanced-summary {
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-advanced-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ds-space-3);
+  border-top: var(--ds-border-width) solid var(--ds-border-subtle);
+  padding: var(--ds-space-3);
+}
+
+.agent-advanced-fields > .field-card {
+  height: 100%;
+  box-shadow: none;
 }
 
 .agent-sort-option {
@@ -5452,42 +5499,11 @@ body:has(.inquiry-form-full-screen) {
 }
 
 .settings-section-nav {
-  display: grid;
   grid-template-columns: repeat(5, minmax(max-content, 1fr));
-  gap: 0;
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--panel) 98%, transparent);
-  padding: 3px;
-  scrollbar-width: thin;
-}
-
-.settings-section-nav button {
-  min-width: max-content;
-  min-height: var(--touch-target);
-  border-color: transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-}
-
-.settings-section-nav button:hover,
-.settings-section-nav button:focus-visible {
-  background: var(--panel-soft);
-  color: var(--text);
-}
-
-.settings-section-nav button[aria-current="location"] {
-  background: var(--accent-soft);
-  color: var(--accent);
+  display: grid;
 }
 
 .settings-section-panel {
-  display: grid;
-  align-content: start;
-  gap: 12px;
-  min-width: 0;
   scroll-margin-top: calc(var(--app-header-height, 64px) + 64px);
 }
 
@@ -5853,10 +5869,6 @@ body:has(.inquiry-form-full-screen) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .form-section-heading {
-    padding-top: 5px;
-  }
-
   .agent-form {
     gap: 10px;
   }
@@ -6004,6 +6016,26 @@ body:has(.inquiry-form-full-screen) {
 }
 
 @media (max-width: 640px) {
+  .agent-advanced-config > summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .agent-advanced-config > summary::after {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .agent-advanced-summary {
+    grid-column: 1 / -1;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .agent-advanced-fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ds-space-2);
+  }
+
   [data-ds-form="lifecycle"] .ds-input {
     font-size: 16px;
   }

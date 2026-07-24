@@ -86,6 +86,15 @@ now share overlay layering, peer and outside dismissal, arrow navigation, Escape
 handling, and focus restoration without replacing native details/dialog behavior.
 Consequential Remote UI actions now use one native-dialog confirmation contract
 with explicit consequences, safe initial focus, and trigger focus restoration.
+Lifecycle forms and Settings sections now share composite layout, section-heading,
+action, selection, and panel contracts while route-specific grids and sticky
+behavior remain local. Agent runtime defaults are summarized behind an Advanced
+disclosure, and Session loop controls now use the same input surface as other
+Remote UI forms. The Agents index now uses a searchable-collection contract with
+explicit filtered-result feedback while keeping its grouping, sort, and bulk
+behavior unchanged. Focused project, agent, summary, attachment, and diff routes
+share one detail-header anatomy while preserving route history, menus, and
+split-reader layout.
 
 ## Roadmap
 
