@@ -1629,17 +1629,23 @@ module HQ
       return [] unless @started_at && File.exist?(@log_path)
 
       marker = "=== [#{@started_at.strftime("%Y-%m-%d %H:%M:%S")}] start ==="
-      lines = read_log_tail_lines
-      start_index = lines.rindex(marker)
-      return [] unless start_index
+      file_size = File.size(@log_path)
+      max_bytes = 512 * 1024
 
-      lines[(start_index + 1)..] || []
+      loop do
+        lines = read_log_tail_lines(max_bytes:)
+        start_index = lines.rindex(marker)
+        return lines[(start_index + 1)..] || [] if start_index
+        return [] if max_bytes >= file_size
+
+        max_bytes = [max_bytes * 2, file_size].min
+      end
     rescue StandardError
       []
     end
 
-    def read_log_tail_lines
-      LogFileReader.read_tail_window_lines(@log_path, max_bytes: 512 * 1024, chomp: true)
+    def read_log_tail_lines(max_bytes: 512 * 1024)
+      LogFileReader.read_tail_window_lines(@log_path, max_bytes:, chomp: true)
     end
 
     def capture_run_memory!(run)

@@ -24,6 +24,7 @@ module ManagedAgentTest
     assert_claude_scalar_json_structured_output_normalizes
     assert_opencode_assistant_json_structured_output_normalizes
     assert_completed_run_persists_cost_snapshot
+    assert_large_completed_run_persists_cost_snapshot
     assert_memory_rebuild_backfills_cost_snapshots
     assert_memory_rebuild_prices_codex_token_deltas
     assert_memory_rebuild_uses_each_runs_recorded_model
@@ -91,6 +92,64 @@ module ManagedAgentTest
       assert(summary.dig("metadata", "cost_snapshot", "amount_usd") == 1.25,
              "expected the run summary to keep its cost snapshot")
       assert(restored.cost_snapshot == snapshot, "expected the agent-level cost snapshot to persist")
+    end
+  end
+
+  def assert_large_completed_run_persists_cost_snapshot
+    Dir.mktmpdir("hq-managed-agent-large-cost-snapshot-test") do |dir|
+      started_at = Time.utc(2026, 7, 24, 11, 18, 7)
+      finished_at = started_at + 81
+      log_path = File.join(dir, "large-cost.raw.log")
+      oversized_event = JSON.generate(
+        "type" => "assistant",
+        "message" => {
+          "role" => "assistant",
+          "content" => [{ "type" => "text", "text" => "x" * (512 * 1024) }]
+        },
+        "session_id" => "large-cost-session"
+      )
+      result_event = JSON.generate(
+        "type" => "result",
+        "subtype" => "success",
+        "total_cost_usd" => 0.927996,
+        "session_id" => "large-cost-session"
+      )
+      File.write(log_path, <<~LOG)
+        === [#{started_at.strftime("%Y-%m-%d %H:%M:%S")}] start ===
+        #{oversized_event}
+        #{result_event}
+      LOG
+      run = HQ::ManagedAgent::AgentRun.new(
+        started_at: started_at,
+        finished_at: finished_at,
+        exit_code: 0,
+        status: "success",
+        log_path: log_path,
+        command: "claude --print",
+        session_id: "large-cost-session"
+      )
+      agent = HQ::ManagedAgent.new(
+        key: "large-cost-snapshot-agent",
+        name: "Large cost snapshot",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "Prompt",
+        agent: "claude",
+        session_id: "large-cost-session",
+        session_bootstrapped: true,
+        started_at: started_at,
+        finished_at: finished_at,
+        log_path: log_path,
+        runs: [run],
+        summary: "Completed"
+      )
+
+      assert(File.size(log_path) > 512 * 1024, "expected the fixture to exceed the tail window")
+      agent.send(:capture_run_memory!, run)
+
+      assert(agent.cost_snapshot["amount_usd"] == 0.927996,
+             "expected a completed run larger than the tail window to retain its reported cost")
     end
   end
 
