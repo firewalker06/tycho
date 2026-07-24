@@ -1063,6 +1063,19 @@ def write_smoke_script(path)
         await page.waitForSelector("#quick-agent-fab:not(.hidden)", { state: "visible", timeout: 10_000 });
         await page.click("#quick-agent-fab");
         await page.waitForSelector("#quick-agent-prompt", { state: "visible", timeout: 10_000 });
+        await page.click("[data-quick-agent-toggle]");
+        await page.evaluate(() => quickAgentRerender({ effort: "high", advancedOpen: true }));
+        await page.waitForSelector("#quick-agent-effort", { state: "visible", timeout: 10_000 });
+        const initialQuickEffort = await page.locator("#quick-agent-effort").inputValue();
+        if (initialQuickEffort !== "high") {
+          throw new Error(`Quick Agent effort fixture did not inherit the project default: ${JSON.stringify(initialQuickEffort)}`);
+        }
+        await page.selectOption("#quick-agent-effort", "");
+        const changedQuickEffort = await page.locator("#quick-agent-effort").inputValue();
+        const changedQuickPill = await page.locator(".quick-agent-pill").textContent();
+        if (changedQuickEffort !== "" || changedQuickPill.includes("high")) {
+          throw new Error(`Quick Agent effort change did not update its visible value: ${JSON.stringify({ changedQuickEffort, changedQuickPill })}`);
+        }
         await page.fill("#quick-agent-prompt", "$rev");
         await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
         await page.press("#quick-agent-prompt", "Tab");
