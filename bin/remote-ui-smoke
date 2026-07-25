@@ -258,6 +258,19 @@ def write_smoke_script(path)
              !scheduleMenuGeometry.visibleBeyondCard)) {
           throw new Error(`Schedule action menu is clipped by its card: ${JSON.stringify(scheduleMenuGeometry)}`);
         }
+        await page.click("#header-more-button");
+        await page.waitForSelector("#header-more-panel:not(.hidden)", { state: "visible", timeout: 10_000 });
+        await page.evaluate(async () => {
+          await refresh({ force: true });
+        });
+        const headerMoreAfterRefresh = await page.evaluate(() => ({
+          open: state.headerMoreOpen,
+          expanded: document.querySelector("#header-more-button")?.getAttribute("aria-expanded"),
+          visible: !document.querySelector("#header-more-panel")?.classList.contains("hidden"),
+        }));
+        if (!headerMoreAfterRefresh.open || headerMoreAfterRefresh.expanded !== "true" || !headerMoreAfterRefresh.visible) {
+          throw new Error(`Polling refresh closed the Now context menu: ${JSON.stringify(headerMoreAfterRefresh)}`);
+        }
 
         const designSystemPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
         await designSystemPage.goto(`${baseUrl}/design-system`, { waitUntil: "networkidle" });
