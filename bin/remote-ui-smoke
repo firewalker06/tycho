@@ -285,6 +285,17 @@ def write_smoke_script(path)
         if (settingsShortcutRoute.type !== "tab" || settingsShortcutRoute.tab !== "settings") {
           throw new Error(`Context-menu Settings shortcut opened the wrong route: ${JSON.stringify(settingsShortcutRoute)}`);
         }
+        await page.click("#header-more-button");
+        await page.waitForSelector("#header-more-panel:not(.hidden)", { state: "visible", timeout: 10_000 });
+        const settingsHeaderMenuLabels = await page.locator("#header-more-panel [role='menuitem']").evaluateAll((items) => (
+          items.map((item) => item.querySelector("strong")?.textContent.trim())
+        ));
+        if (settingsHeaderMenuLabels.includes("Settings") ||
+            !settingsHeaderMenuLabels.includes("Push notifications") ||
+            !settingsHeaderMenuLabels.includes("Recheck status")) {
+          throw new Error(`Settings context menu lost its route-specific actions: ${JSON.stringify(settingsHeaderMenuLabels)}`);
+        }
+        await page.keyboard.press("Escape");
         await page.evaluate(() => navigate({ type: "tab", tab: "now" }));
         await page.waitForSelector("[data-state-key='schedule-now-details']", { state: "visible", timeout: 10_000 });
         const legacyActionContract = await page.evaluate(() => {
@@ -298,7 +309,9 @@ def write_smoke_script(path)
           ].join(",")));
           const visibleControls = controls.filter((control) => {
             const style = getComputedStyle(control);
-            return style.display !== "none" && style.visibility !== "hidden";
+            return style.display !== "none" &&
+              style.visibility !== "hidden" &&
+              control.getClientRects().length > 0;
           });
           const undersized = visibleControls
             .map((control) => ({
@@ -309,10 +322,10 @@ def write_smoke_script(path)
             .filter((control) => control.height < 44);
           return {
             count: controls.length,
-            shared: controls.every((control) => control.classList.contains("ds-button")),
+            shared: controls.every((control) => control.classList.contains("ui-button")),
             iconOnlyShared: controls
               .filter((control) => control.classList.contains("icon-button"))
-              .every((control) => control.classList.contains("ds-icon-button")),
+              .every((control) => control.classList.contains("ui-icon-button")),
             variantsMapped: controls.every((control) => (
               (!control.classList.contains("primary") || control.dataset.variant === "brand") &&
               (!control.classList.contains("danger") || control.dataset.variant === "danger")
@@ -331,7 +344,7 @@ def write_smoke_script(path)
 
         const designSystemPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
         await designSystemPage.goto(`${baseUrl}/design-system`, { waitUntil: "networkidle" });
-        const metadataBadgeContract = await designSystemPage.locator(".ds-metadata-badge").evaluateAll((badges) => ({
+        const metadataBadgeContract = await designSystemPage.locator(".ui-metadata-badge").evaluateAll((badges) => ({
           count: badges.length,
           metadataKind: badges.every((badge) => badge.getAttribute("data-kind") === "metadata"),
           noStatusIntent: badges.every((badge) => !badge.hasAttribute("data-intent")),
@@ -341,14 +354,14 @@ def write_smoke_script(path)
             !metadataBadgeContract.noStatusIntent || metadataBadgeContract.overflow) {
           throw new Error(`Metadata badge preview lost its neutral contract: ${JSON.stringify(metadataBadgeContract)}`);
         }
-        if (await designSystemPage.locator(".ds-status").count() < 6) {
+        if (await designSystemPage.locator(".ui-status").count() < 6) {
           throw new Error("Metadata badge preview no longer demonstrates the separate product status contract");
         }
         const feedbackContract = await designSystemPage.evaluate(() => {
-          const empty = document.querySelector('.ds-empty-state[data-state="empty"]');
-          const loading = document.querySelector('.ds-loading-state[data-state="loading"]');
+          const empty = document.querySelector('.ui-empty-state[data-state="empty"]');
+          const loading = document.querySelector('.ui-loading-state[data-state="loading"]');
           const staticAlerts = Array.from(document.querySelectorAll(
-            'section[aria-labelledby="preview-feedback"] .ds-alert'
+            'section[aria-labelledby="preview-feedback"] .ui-alert'
           ));
           return {
             emptyIsQuiet: Boolean(empty && !empty.hasAttribute("role") && !empty.hasAttribute("aria-live")),
@@ -394,8 +407,8 @@ def write_smoke_script(path)
         if (captureDir) {
           const productMetadataPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
           await productMetadataPage.goto(`${baseUrl}/ui#project/web`, { waitUntil: "networkidle" });
-          await productMetadataPage.waitForSelector("#view > .chip-row .ds-metadata-badge", { state: "visible", timeout: 10_000 });
-          const productMetadataContract = await productMetadataPage.locator("#view > .chip-row .ds-metadata-badge").evaluateAll((badges) => ({
+          await productMetadataPage.waitForSelector("#view > .chip-row .ui-metadata-badge", { state: "visible", timeout: 10_000 });
+          const productMetadataContract = await productMetadataPage.locator("#view > .chip-row .ui-metadata-badge").evaluateAll((badges) => ({
             count: badges.length,
             metadataKind: badges.every((badge) => badge.getAttribute("data-kind") === "metadata"),
             noStatusIntent: badges.every((badge) => !badge.hasAttribute("data-intent")),
@@ -413,7 +426,7 @@ def write_smoke_script(path)
 
           const actionControlsPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
           await actionControlsPage.goto(`${baseUrl}/ui#project/web`, { waitUntil: "networkidle" });
-          await actionControlsPage.waitForSelector(".agent-group-create.ds-button", { state: "visible", timeout: 10_000 });
+          await actionControlsPage.waitForSelector(".agent-group-create.ui-button", { state: "visible", timeout: 10_000 });
           const mobileActionContract = await actionControlsPage.evaluate(() => {
             const back = document.querySelector("#back-button");
             const more = document.querySelector("#header-more-button");
@@ -421,7 +434,7 @@ def write_smoke_script(path)
             const controls = [back, more, create].filter(Boolean);
             return {
               count: controls.length,
-              shared: controls.every((control) => control.classList.contains("ds-button")),
+              shared: controls.every((control) => control.classList.contains("ui-button")),
               targets: controls.every((control) => {
                 const rect = control.getBoundingClientRect();
                 return rect.width >= 44 && rect.height >= 44;
@@ -1163,13 +1176,13 @@ def write_smoke_script(path)
         await page.setViewportSize({ width: 390, height: 844 });
 
         await page.goto(`${baseUrl}/ui#project/web`, { waitUntil: "networkidle" });
-        await page.waitForSelector(".header-row.ds-detail-header", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector(".header-row.ui-detail-header", { state: "visible", timeout: 10_000 });
         const detailHeader = await page.evaluate(() => {
-          const header = document.querySelector(".header-row.ds-detail-header");
-          const back = header?.querySelector(".ds-detail-header__back");
-          const title = header?.querySelector(".ds-detail-header__title");
-          const metadata = header?.querySelector(".ds-detail-header__metadata");
-          const triggers = Array.from(header?.querySelectorAll(".ds-detail-header__action") || [])
+          const header = document.querySelector(".header-row.ui-detail-header");
+          const back = header?.querySelector(".ui-detail-header__back");
+          const title = header?.querySelector(".ui-detail-header__title");
+          const metadata = header?.querySelector(".ui-detail-header__metadata");
+          const triggers = Array.from(header?.querySelectorAll(".ui-detail-header__action") || [])
             .filter((node) => node.getClientRects().length)
             .map((node) => ({ width: node.getBoundingClientRect().width, height: node.getBoundingClientRect().height }));
           return {
@@ -1214,10 +1227,10 @@ def write_smoke_script(path)
         }
         const formComposite = await page.evaluate(() => {
           const form = document.querySelector("#agent-form");
-          const heading = form?.querySelector(".ds-form-section-heading");
-          const actions = form?.querySelector(".ds-form-actions");
+          const heading = form?.querySelector(".ui-form-section-heading");
+          const actions = form?.querySelector(".ui-form-actions");
           return {
-            layout: form?.classList.contains("ds-form-layout"),
+            layout: form?.classList.contains("ui-form-layout"),
             display: form ? getComputedStyle(form).display : "",
             headingDirection: heading ? getComputedStyle(heading).flexDirection : "",
             actionPosition: actions ? getComputedStyle(actions).position : "",
@@ -1259,8 +1272,25 @@ def write_smoke_script(path)
           ];
           render();
         });
+        await page.evaluate(() => {
+          state.activeServerKey = "design-peer";
+          render();
+        });
+        const localServerMenu = page.locator(".local-server-list-item [data-server-action-menu]");
+        await localServerMenu.locator("> summary").click();
+        const localServerActions = await localServerMenu.locator("[role='menuitem']").evaluateAll((items) => (
+          items.map((item) => item.querySelector("strong")?.textContent.trim())
+        ));
+        if (localServerActions.join(" | ") !== "Switch to") {
+          throw new Error(`Inactive local server lost its switch action: ${JSON.stringify(localServerActions)}`);
+        }
+        await page.keyboard.press("Escape");
+        await page.evaluate(() => {
+          state.activeServerKey = "local";
+          render();
+        });
         await page.waitForSelector("[data-server-action-menu]", { state: "visible", timeout: 10_000 });
-        const serverActionTrigger = page.locator("[data-server-action-menu] > summary");
+        const serverActionTrigger = page.locator(".remote-server-list-item [data-server-action-menu] > summary");
         const serverActionGeometry = await serverActionTrigger.evaluate((trigger) => {
           const box = trigger.getBoundingClientRect();
           const card = trigger.closest(".remote-server-list-item")?.getBoundingClientRect();
@@ -1334,17 +1364,17 @@ def write_smoke_script(path)
         }
         await page.keyboard.press("Escape");
         await page.waitForFunction(() => (
-          !document.querySelector("[data-server-action-menu]")?.open &&
-          document.activeElement === document.querySelector("[data-server-action-menu] > summary")
+          !document.querySelector(".remote-server-list-item [data-server-action-menu]")?.open &&
+          document.activeElement === document.querySelector(".remote-server-list-item [data-server-action-menu] > summary")
         ));
         await serverActionTrigger.click();
         await page.click("[data-toggle-server-token-form='design-peer']");
         await page.waitForSelector("[data-server-token-form='design-peer']", { state: "visible", timeout: 10_000 });
-        const reopenedServerActionTrigger = page.locator("[data-server-action-menu] > summary");
+        const reopenedServerActionTrigger = page.locator(".remote-server-list-item [data-server-action-menu] > summary");
         await reopenedServerActionTrigger.click();
         await page.click("[data-toggle-server-token-form='design-peer']");
         await page.waitForSelector("[data-server-token-form='design-peer']", { state: "hidden", timeout: 10_000 });
-        const removalServerActionTrigger = page.locator("[data-server-action-menu] > summary");
+        const removalServerActionTrigger = page.locator(".remote-server-list-item [data-server-action-menu] > summary");
         await removalServerActionTrigger.click();
         await page.click("[data-remove-server='design-peer']");
         await page.waitForSelector("#confirmation-dialog[open]", { state: "visible", timeout: 10_000 });
@@ -1361,16 +1391,16 @@ def write_smoke_script(path)
         await page.keyboard.press("Escape");
         await page.waitForFunction(() => (
           !document.querySelector("#confirmation-dialog")?.open &&
-          document.activeElement === document.querySelector("[data-server-action-menu] > summary")
+          document.activeElement === document.querySelector(".remote-server-list-item [data-server-action-menu] > summary")
         ));
         await page.click("[data-toggle-server-form]");
         await page.waitForSelector("#server-connection-form", { state: "visible", timeout: 10_000 });
         const serverFormContract = await page.evaluate(() => {
           const form = document.querySelector("#server-connection-form");
-          const inputs = Array.from(form?.querySelectorAll(".ds-input") || []);
+          const inputs = Array.from(form?.querySelectorAll(".ui-input") || []);
           const submit = form?.querySelector("button[type='submit']");
           return {
-            sharedLayout: form?.classList.contains("ds-form-layout"),
+            sharedLayout: form?.classList.contains("ui-form-layout"),
             fields: inputs.length,
             described: inputs.every((input) => {
               const id = input.getAttribute("aria-describedby");
@@ -1398,10 +1428,10 @@ def write_smoke_script(path)
           const button = document.querySelector("[data-scroll-settings-section='settings-automation']");
           const panel = document.querySelector("#settings-panel-automation");
           return {
-            sharedNav: nav?.classList.contains("ds-section-nav"),
+            sharedNav: nav?.classList.contains("ui-section-nav"),
             current: button?.getAttribute("aria-current"),
             controls: button?.getAttribute("aria-controls"),
-            sharedPanel: panel?.classList.contains("ds-section-panel"),
+            sharedPanel: panel?.classList.contains("ui-section-panel"),
           };
         });
         if (!settingsComposite.sharedNav || settingsComposite.current !== "location" ||
@@ -1429,7 +1459,7 @@ def write_smoke_script(path)
           }
           await catalogEditor.locator(":scope > summary").click();
           const harnessFormContract = await firstHarness.locator("[data-harness-catalog-form]").evaluate((form) => {
-            const fields = Array.from(form.querySelectorAll("textarea.ds-input"));
+            const fields = Array.from(form.querySelectorAll("textarea.ui-input"));
             return {
               fields: fields.length,
               described: fields.every((field) => {
@@ -1677,7 +1707,13 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       "CHROME_PATH" => browser
     }
     capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
-    smoke_env["TYCHO_REMOTE_UI_CAPTURE_DIR"] = File.expand_path(capture_dir, ROOT) unless capture_dir.empty?
+    unless capture_dir.empty?
+      expanded_capture_dir = File.expand_path(capture_dir, ROOT)
+      if expanded_capture_dir == ROOT || expanded_capture_dir.start_with?("#{ROOT}/")
+        raise "TYCHO_REMOTE_UI_CAPTURE_DIR must be outside the repository"
+      end
+      smoke_env["TYCHO_REMOTE_UI_CAPTURE_DIR"] = expanded_capture_dir
+    end
     command = ["node", script]
     out, err, status = Open3.capture3(smoke_env, *command, chdir: node_dir)
     puts out unless out.empty?

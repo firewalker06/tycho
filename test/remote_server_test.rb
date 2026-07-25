@@ -2580,34 +2580,34 @@ module RemoteServerTest
            "expected /design-system to return HTML")
     assert(design_system[:body].include?("Tycho Design System"),
            "expected the design-system preview to identify itself")
-    assert(design_system[:body].include?('class="ds-button" data-variant="brand"'),
+    assert(design_system[:body].include?('class="ui-button" data-variant="brand"'),
            "expected the design-system preview to include a semantic primary action")
     assert(design_system[:body].include?('aria-describedby="preview-prompt-error"'),
            "expected the design-system preview to connect invalid fields and errors")
     assert(design_system[:body].include?("Menu overlay") &&
-           design_system[:body].include?('class="ds-overlay-surface"'),
+           design_system[:body].include?('class="ui-overlay-surface"'),
            "expected the design-system preview to document menu overlays")
     assert(design_system[:body].include?("Confirmation flow") &&
-           design_system[:body].include?("ds-confirmation-dialog__panel"),
+           design_system[:body].include?("ui-confirmation-dialog__panel"),
            "expected the design-system preview to document consequential confirmations")
     assert(design_system[:body].include?("Detail header") &&
-           design_system[:body].include?('class="ds-detail-header ds-surface"') &&
-           design_system[:body].include?("ds-detail-header__metadata"),
+           design_system[:body].include?('class="ui-detail-header ui-surface"') &&
+           design_system[:body].include?("ui-detail-header__metadata"),
            "expected the design-system preview to document focused-route header anatomy")
     assert(design_system[:body].include?("Section navigation") &&
-           design_system[:body].include?('class="ds-section-nav"') &&
-           design_system[:body].include?('class="ds-form-section-heading"'),
+           design_system[:body].include?('class="ui-section-nav"') &&
+           design_system[:body].include?('class="ui-form-section-heading"'),
            "expected the design-system preview to document shared composite structure")
     assert(design_system[:body].include?("Searchable collection") &&
-           design_system[:body].include?('class="ds-search-field"') &&
-           design_system[:body].include?('class="ds-collection-summary"'),
+           design_system[:body].include?('class="ui-search-field"') &&
+           design_system[:body].include?('class="ui-collection-summary"'),
            "expected the design-system preview to document search and result-feedback structure")
     assert(design_system[:body].include?("Metadata badges") &&
-           design_system[:body].scan('class="ds-badge ds-metadata-badge"').length >= 5 &&
+           design_system[:body].scan('class="ui-badge ui-metadata-badge"').length >= 5 &&
            design_system[:body].include?("Health, urgency, progress, selection, and filtering"),
            "expected the design-system preview to distinguish metadata from product status")
-    assert(design_system[:body].include?('class="ds-empty-state" data-state="empty"') &&
-           design_system[:body].include?('class="ds-empty-state ds-loading-state tycho-loading-state"') &&
+    assert(design_system[:body].include?('class="ui-empty-state" data-state="empty"') &&
+           design_system[:body].include?('class="ui-empty-state ui-loading-state tycho-loading-state"') &&
            design_system[:body].include?('role="status" aria-live="polite" aria-atomic="true"'),
            "expected the design-system preview to distinguish empty and announced loading states")
     assert(design_system[:body].match?(%r{href="/ui\.css\?v=[0-9a-f]{12}"}),
@@ -2647,51 +2647,51 @@ module RemoteServerTest
       assert(css[:body].include?(token), "expected Remote UI CSS to expose semantic token #{token}")
     end
     %w[
-      .ds-stack
-      .ds-cluster
-      .ds-grid
-      .ds-surface
-      .ds-button
-      .ds-icon-button
-      .ds-field
-      .ds-input
-      .ds-alert
-      .ds-badge
-      .ds-metadata-badge
-      .ds-spinner
-      .ds-skeleton
-      .ds-empty-state
-      .ds-loading-state
-      .ds-overlay-surface
-      .ds-confirmation-dialog
-      .ds-form-layout
-      .ds-form-section-heading
-      .ds-form-actions
-      .ds-section-nav
-      .ds-section-panel
-      .ds-detail-header
-      .ds-detail-header__back
-      .ds-detail-header__identity
-      .ds-detail-header__text
-      .ds-detail-header__title
-      .ds-detail-header__metadata
-      .ds-detail-header__actions
-      .ds-detail-header__action
-      .ds-searchable-collection
-      .ds-collection-toolbar
-      .ds-search-field
-      .ds-collection-summary
-      .ds-collection-results
-      .ds-collection-group
+      .ui-stack
+      .ui-cluster
+      .ui-grid
+      .ui-surface
+      .ui-button
+      .ui-icon-button
+      .ui-field
+      .ui-input
+      .ui-alert
+      .ui-badge
+      .ui-metadata-badge
+      .ui-spinner
+      .ui-skeleton
+      .ui-empty-state
+      .ui-loading-state
+      .ui-overlay-surface
+      .ui-confirmation-dialog
+      .ui-form-layout
+      .ui-form-section-heading
+      .ui-form-actions
+      .ui-section-nav
+      .ui-section-panel
+      .ui-detail-header
+      .ui-detail-header__back
+      .ui-detail-header__identity
+      .ui-detail-header__text
+      .ui-detail-header__title
+      .ui-detail-header__metadata
+      .ui-detail-header__actions
+      .ui-detail-header__action
+      .ui-searchable-collection
+      .ui-collection-toolbar
+      .ui-search-field
+      .ui-collection-summary
+      .ui-collection-results
+      .ui-collection-group
     ].each do |selector|
       assert(css[:body].include?(selector), "expected Remote UI CSS to include #{selector}")
     end
-    assert(css[:body].include?(".ds-status") &&
-           css[:body].include?('.ds-badge[data-intent="active"]') &&
-           css[:body].include?('.ds-badge[data-intent="neutral"]'),
+    assert(css[:body].include?(".ui-status") &&
+           css[:body].include?('.ui-badge[data-intent="active"]') &&
+           css[:body].include?('.ui-badge[data-intent="neutral"]'),
            "expected shared badges to cover the complete product status taxonomy")
-    assert(css[:body].include?(".ds-metadata-badge") &&
-           css[:body].include?(".pill.ds-metadata-badge") &&
+    assert(css[:body].include?(".ui-metadata-badge") &&
+           css[:body].include?(".pill.ui-metadata-badge") &&
            css[:body].include?("var(--ds-background-surface-sunken)"),
            "expected neutral metadata badges to remain visually separate from semantic status")
     assert(css[:body].include?("@media (prefers-reduced-motion: reduce)"),
@@ -3055,21 +3055,21 @@ module RemoteServerTest
            "expected format, project, diff, and scheduler metadata to use neutral badges")
     assert(!js[:body].match?(/class="(?:pill|chip) (?:detail|info)"/),
            "expected factual pill and chip markup to use the metadata or status helpers")
-    assert(js[:body].include?('response-style-form ds-surface ds-stack'),
+    assert(js[:body].include?('response-style-form ui-surface ui-stack'),
            "expected Response style to use the shared surface and layout primitives")
-    assert(js[:body].include?('class="ds-input" id="response-style-input"') &&
+    assert(js[:body].include?('class="ui-input" id="response-style-input"') &&
            js[:body].include?('aria-describedby="response-style-help"'),
            "expected Response style to use the shared field contract")
-    assert(js[:body].include?('class="notice need ds-alert"') &&
+    assert(js[:body].include?('class="notice need ui-alert"') &&
            js[:body].include?('data-intent="danger" role="alert"'),
            "expected Response style failures to use the shared danger alert")
     %w[agent-form project-form schedule-form schedule-message-form].each do |form_id|
       assert(js[:body].include?("id=\"#{form_id}\"") &&
-             js[:body].match?(/id="#{Regexp.escape(form_id)}"[^>]*class="[^"]*ds-form-layout[^"]*"[^>]*data-ds-form="lifecycle"/),
+             js[:body].match?(/id="#{Regexp.escape(form_id)}"[^>]*class="[^"]*ui-form-layout[^"]*"[^>]*data-ds-form="lifecycle"/),
              "expected #{form_id} to use the lifecycle form contract")
     end
-    assert(js[:body].scan("ds-form-section-heading").length >= 10 &&
-           js[:body].scan("ds-form-actions").length >= 8,
+    assert(js[:body].scan("ui-form-section-heading").length >= 10 &&
+           js[:body].scan("ui-form-actions").length >= 8,
            "expected lifecycle and Settings forms to share section-heading and action anatomy")
     %w[
       agent-template-help
@@ -3085,9 +3085,9 @@ module RemoteServerTest
              js[:body].include?("id=\"#{description_id}\""),
              "expected lifecycle form help #{description_id} to be programmatically connected")
     end
-    assert(js[:body].scan('class="field-card ds-field ds-surface"').length >= 20,
+    assert(js[:body].scan('class="field-card ui-field ui-surface"').length >= 20,
            "expected lifecycle fields to use shared field and surface contracts")
-    assert(js[:body].include?('class="agent-advanced-config ds-surface"') &&
+    assert(js[:body].include?('class="agent-advanced-config ui-surface"') &&
            js[:body].include?("data-agent-advanced-summary") &&
            js[:body].include?("function syncAgentAdvancedSummary"),
            "expected agent runtime configuration to use a collapsed Advanced disclosure with a synchronized value summary")
@@ -3097,7 +3097,7 @@ module RemoteServerTest
       session-loop-template-name-
       session-loop-template-prompt-
     ].each do |control_id|
-      assert(js[:body].match?(/class="ds-input" id="#{Regexp.escape(control_id)}/),
+      assert(js[:body].match?(/class="ui-input" id="#{Regexp.escape(control_id)}/),
              "expected Session loop control #{control_id} to use the shared input color and state contract")
     end
     %w[session-loop-default-interval-help session-loop-default-end-time-help].each do |description_id|
@@ -3110,12 +3110,12 @@ module RemoteServerTest
     legacy_action_tags = [response[:body], js[:body]].join("\n").scan(
       /<(?:button|a)\b[^>]*class="[^"]*\b(?:primary|danger|inline-icon-button|icon-button|button-link)\b[^"]*"[^>]*>/
     )
-    assert(!legacy_action_tags.empty? && legacy_action_tags.all? { |tag| tag.include?("ds-button") },
+    assert(!legacy_action_tags.empty? && legacy_action_tags.all? { |tag| tag.include?("ui-button") },
            "expected every legacy action adapter to consume the shared button contract")
     legacy_action_tags.each do |tag|
       classes = tag[/class="([^"]+)"/, 1].to_s.split
       if classes.include?("icon-button")
-        assert(classes.include?("ds-icon-button"),
+        assert(classes.include?("ui-icon-button"),
                "expected legacy icon action to consume the shared icon-button contract: #{tag}")
       end
       if classes.include?("primary")
@@ -3214,8 +3214,8 @@ module RemoteServerTest
            css[:body].include?(".inquiry-field.invalid"),
            "expected inquiry validation to identify the required field beside its control")
     assert(js[:body].include?('data-ds-form="inquiry"') &&
-           js[:body].include?('class="field-card inquiry-field ds-field ds-surface"') &&
-           js[:body].include?('class="ds-input"') &&
+           js[:body].include?('class="field-card inquiry-field ui-field ui-surface"') &&
+           js[:body].include?('class="ui-input"') &&
            js[:body].include?('data-variant="brand" type="submit"'),
            "expected inquiry decisions to use shared field, surface, input, and action contracts")
     assert(js[:body].include?('role="group" data-inquiry-control data-inquiry-multi=') &&
@@ -3365,11 +3365,11 @@ module RemoteServerTest
            js[:body].include?("Remote token") &&
            js[:body].include?("tycho-peer"),
            "expected Settings to expose a named add-server form with token input and the 7374 peer default")
-    assert(js[:body].include?('id="server-connection-form" class="server-connection-form ds-form-layout" data-ds-form="settings"') &&
-           js[:body].include?('class="ds-input" id="server-name-input"') &&
-           js[:body].include?('class="ds-input" id="server-url-input"') &&
-           js[:body].include?('class="ds-input" id="server-token-input"') &&
-           js[:body].include?('class="server-connection-actions ds-form-actions"'),
+    assert(js[:body].include?('id="server-connection-form" class="server-connection-form ui-form-layout" data-ds-form="settings"') &&
+           js[:body].include?('class="ui-input" id="server-name-input"') &&
+           js[:body].include?('class="ui-input" id="server-url-input"') &&
+           js[:body].include?('class="ui-input" id="server-token-input"') &&
+           js[:body].include?('class="server-connection-actions ui-form-actions"'),
            "expected Add server to use the shared Settings form, field, input, and action contracts")
     %w[server-name-input-help server-url-input-help server-token-input-help].each do |description_id|
       assert(js[:body].include?("aria-describedby=\"#{description_id}\"") &&
@@ -3395,9 +3395,9 @@ module RemoteServerTest
            js[:body].include?("function renderActiveServerTokenRecovery") &&
            js[:body].include?("Remote token required"),
            "expected Settings to let existing remote servers save a browser-local token")
-    assert(js[:body].include?('class="server-token-form ds-form-layout" data-ds-form="settings"') &&
+    assert(js[:body].include?('class="server-token-form ui-form-layout" data-ds-form="settings"') &&
            js[:body].include?("Stored only in this browser and sent to the selected Remote server.") &&
-           js[:body].include?('class="primary inline-icon-button ds-button" data-variant="brand" type="submit"'),
+           js[:body].include?('class="primary inline-icon-button ui-button" data-variant="brand" type="submit"'),
            "expected Remote token recovery to use the shared field, input, description, and semantic action contracts")
     assert(css[:body].include?(".server-action-menu > summary") &&
            css[:body].include?("width: var(--touch-target)") &&
@@ -3420,30 +3420,31 @@ module RemoteServerTest
            "expected Settings to replace the URL-only peer form")
     assert(js[:body].include?('id="settings-push-notifications"'),
            "expected Settings to retain its push-notification controls")
-    assert(!js[:body].include?('data-scroll-settings-section="settings-push-notifications"'),
-           "expected the global More menu to omit its Settings-only push shortcut")
+    assert(js[:body].include?('data-scroll-settings-section="settings-push-notifications"') &&
+           js[:body].include?('key === "settings"'),
+           "expected the push shortcut to appear only in the Settings route menu")
     assert(js[:body].include?('label: "Settings"') &&
            js[:body].include?('attrs: "data-open-settings"') &&
            js[:body].include?('navigate({ type: "tab", tab: "settings" })'),
            "expected the global More menu to open Settings from its first action")
-    assert(js[:body].include?('class="settings-section-nav ds-section-nav"') &&
-           js[:body].include?('class="settings-section-panel ds-section-panel"') &&
+    assert(js[:body].include?('class="settings-section-nav ui-section-nav"') &&
+           js[:body].include?('class="settings-section-panel ui-section-panel"') &&
            js[:body].include?('aria-current=') &&
            js[:body].include?("function syncSettingsSectionNav"),
            "expected Settings to keep a sticky in-page section navigator with active-section feedback")
-    assert(response[:body].include?("ds-detail-header__back") &&
-           response[:body].include?("ds-detail-header__identity") &&
-           response[:body].include?("ds-detail-header__title") &&
-           response[:body].include?("ds-detail-header__metadata") &&
-           response[:body].include?("ds-detail-header__actions") &&
-           response[:body].include?("ds-detail-header__action") &&
-           js[:body].include?('classList.toggle("ds-detail-header", subpage && !onboarding)'),
+    assert(response[:body].include?("ui-detail-header__back") &&
+           response[:body].include?("ui-detail-header__identity") &&
+           response[:body].include?("ui-detail-header__title") &&
+           response[:body].include?("ui-detail-header__metadata") &&
+           response[:body].include?("ui-detail-header__actions") &&
+           response[:body].include?("ui-detail-header__action") &&
+           js[:body].include?('classList.toggle("ui-detail-header", subpage && !onboarding)'),
            "expected focused routes to activate the shared detail-header anatomy without changing shell behavior")
-    assert(js[:body].include?('class="ds-searchable-collection"') &&
-           js[:body].include?('class="search-box ds-search-field"') &&
+    assert(js[:body].include?('class="ui-searchable-collection"') &&
+           js[:body].include?('class="search-box ui-search-field"') &&
            js[:body].include?('id="agent-results-summary" role="status"') &&
            js[:body].include?('aria-describedby="agent-results-summary"') &&
-           js[:body].include?("ds-collection-group ds-surface"),
+           js[:body].include?("ui-collection-group ui-surface"),
            "expected Agents to use the searchable collection and explicit result-feedback contract")
     assert(css[:body].include?("position: sticky") &&
            css[:body].include?("scroll-margin-top: calc(var(--app-header-height"),
@@ -3487,7 +3488,7 @@ module RemoteServerTest
            js[:body].include?('apiPatch(`/setup/harnesses/${encodeURIComponent(harness)}/catalog`') &&
            js[:body].include?("Harness catalog editing unsupported by this server"),
            "expected Settings to edit and save custom harness model catalogs")
-    assert(js[:body].include?("harness-catalog-form ds-form-layout") &&
+    assert(js[:body].include?("harness-catalog-form ui-form-layout") &&
            js[:body].include?('data-ds-form="settings" data-harness-catalog-form=') &&
            js[:body].include?("One model ID per line. Discovered models remain available.") &&
            js[:body].include?("One reasoning-effort value per line.") &&
@@ -3513,7 +3514,7 @@ module RemoteServerTest
            js[:body].include?('replace(/\\s+/g, " ")') &&
            js[:body].include?('iconSvg("squarePen")') &&
            js[:body].include?('iconSvg("trash2")') &&
-           js[:body].include?('class="inline-icon-button ds-button" type="button" data-open-response-style') &&
+           js[:body].include?('class="inline-icon-button ui-button" type="button" data-open-response-style') &&
            js[:body].include?("shared writing guidance") &&
            js[:body].include?("without changing the task or required output format"),
            "expected Settings to explain response style and show the correct add or edit action with an excerpt")
@@ -3544,8 +3545,14 @@ module RemoteServerTest
            css[:body].include?("p.response-style-excerpt") &&
            css[:body].include?("color: var(--text)"),
            "expected the response style editor to have a readable responsive layout")
-    assert(!js[:body].include?("Recheck status"),
-           "expected the global More menu to omit its Settings-only readiness refresh")
+    assert(js[:body].include?('key === "settings"') &&
+           js[:body].include?('label: "Recheck status"') &&
+           js[:body].include?('label: "Push notifications"') &&
+           js[:body].include?('label: "Settings"'),
+           "expected the main More menu to separate global navigation from Settings-only actions")
+    assert(js[:body].include?("server.local && active") &&
+           js[:body].include?("...(!server.local ? ["),
+           "expected an inactive local server to remain switchable without remote-only actions")
     assert(js[:body].include?("function restartRemoteServer"), "expected Remote UI to handle Remote restarts")
     assert(js[:body].include?('apiPost("/server/restart"'),
            "expected Remote UI restart action to call the restart endpoint")
@@ -3743,7 +3750,7 @@ module RemoteServerTest
            "expected Skill toggle to be disabled while the agent is running")
     assert(js[:body].include?("function agentComposerAction"),
            "expected Agent detail composer action to switch by running state")
-    assert(js[:body].include?('class="danger ds-button" data-variant="danger" type="button" data-agent-action="stop" data-agent-key="${escapeAttr(agent.key)}">Stop agent'),
+    assert(js[:body].include?('class="danger ui-button" data-variant="danger" type="button" data-agent-action="stop" data-agent-key="${escapeAttr(agent.key)}">Stop agent'),
            "expected running agents to replace Send prompt with Stop agent")
     assert(js[:body].include?('enterkeyhint="enter"'),
            "expected Agent composer textarea to hint newline-capable keyboards")

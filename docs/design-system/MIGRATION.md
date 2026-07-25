@@ -29,7 +29,8 @@ Compatibility classes are allowed when they keep behavior selectors stable. Mark
 - New shared color declarations require a semantic token.
 - Review checks: component contract, native semantics, focus, 44px targets, 390px reflow, reduced motion, and route/browser evidence.
 - `test/remote_server_test.rb` asserts the asset, preview, semantic tokens, component selectors, and representative migration.
-- The component preview is a stable visual capture target.
+- The `/design-system` component preview is the canonical visual reference.
+- Generated screenshots belong outside the repository and are uploaded only as review attachments.
 
 No codemod is included because current markup is generated from many context-sensitive template strings; the mapping is not safe enough for mechanical replacement.
 
@@ -37,7 +38,7 @@ No codemod is included because current markup is generated from many context-sen
 
 Track per release:
 
-- Routes with at least one `ds-` component / total primary routes.
+- Routes with at least one `ui-` component / total primary routes.
 - Remaining legacy token references in `app.css`.
 - Remaining raw palette declarations outside token foundations.
 - Remaining `.primary`, `.danger`, and unclassified button occurrences in generated markup.
@@ -56,7 +57,7 @@ Current baseline:
 - 3 remaining Settings form families use shared labels, descriptions, inputs, actions, and pending semantics.
 - 15 factual metadata occurrences use one neutral badge contract; neutral product states remain in the status taxonomy.
 - Route-level loading states announce politely, settled empty states remain quiet, and migrated asynchronous failures announce assertively.
-- Every generated `primary`, `danger`, `inline-icon-button`, `icon-button`, and `button-link` action consumes `ds-button`; icon-only controls also consume `ds-icon-button`.
+- Every generated `primary`, `danger`, `inline-icon-button`, `icon-button`, and `button-link` action consumes `ui-button`; icon-only controls also consume `ui-icon-button`.
 - 1 preview route added.
 - Shared system loaded on all routes.
 - Legacy aliases remain; broad route migration is incomplete.
