@@ -1030,16 +1030,71 @@ textarea {
 }
 
 .remote-server-list-item > .detail-row > .server-row-actions {
-  display: grid;
-  grid-template-columns: minmax(104px, 1fr);
   align-self: center;
   justify-self: end;
 }
 
-.remote-server-list-item .server-row-actions .inline-icon-button {
-  width: 100%;
+.server-action-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.server-action-menu > summary {
+  display: inline-grid;
+  width: var(--touch-target);
+  height: var(--touch-target);
   min-height: var(--touch-target);
-  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  list-style: none;
+  place-items: center;
+}
+
+.server-action-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.server-action-menu[open] > summary,
+.server-action-menu > summary:hover,
+.server-action-menu > summary:focus-visible {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+.server-action-menu > summary .ui-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.server-action-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: var(--ds-z-dropdown);
+  width: max-content;
+  min-width: 190px;
+  max-width: min(80vw, 260px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 98%, transparent);
+  box-shadow: var(--shadow);
+  padding: 6px;
+}
+
+.server-action-popover .more-menu {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.server-action-popover .more-menu-item {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--touch-target);
 }
 
 .server-connection-actions {
@@ -1052,25 +1107,12 @@ textarea {
   }
 
   .remote-server-list-item > .detail-row {
-    grid-template-columns: auto minmax(0, 1fr) minmax(96px, auto);
+    grid-template-columns: auto minmax(0, 1fr) auto;
   }
 
   .remote-server-list-item > .detail-row > .server-row-actions {
     grid-column: 3;
     grid-row: 1;
-    grid-template-columns: minmax(96px, 1fr);
-  }
-
-  .remote-server-list-item .server-row-actions .inline-icon-button {
-    justify-content: center;
-    min-width: 0;
-    padding-inline: 8px;
-  }
-
-  .remote-server-list-item .server-row-actions .inline-icon-button span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .remote-server-list-item .server-token-form {
@@ -1979,6 +2021,14 @@ select {
   color: var(--info);
 }
 
+.pill.ds-metadata-badge,
+.chip.ds-metadata-badge {
+  border-color: var(--ds-border-subtle);
+  background: var(--ds-background-surface-sunken);
+  color: var(--ds-text-secondary);
+  font-weight: var(--ds-weight-regular);
+}
+
 .ds-status {
   background: color-mix(in srgb, currentColor 9%, var(--panel-soft));
   font-weight: var(--ds-weight-medium);
@@ -2279,6 +2329,10 @@ select {
 }
 
 .detail-card.schedule-card {
+  overflow: visible;
+}
+
+#settings-servers {
   overflow: visible;
 }
 

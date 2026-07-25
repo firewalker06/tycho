@@ -185,14 +185,19 @@ end
 def write_smoke_script(path)
   File.write(path, <<~JS)
     const { chromium } = require("playwright");
+    const fs = require("fs");
+    const path = require("path");
 
     async function main() {
       const baseUrl = process.env.TYCHO_REMOTE_UI_URL;
       const agentKey = process.env.TYCHO_REMOTE_UI_AGENT_KEY;
       const unscheduledAgentKey = `${agentKey}-unscheduled-smoke`;
       const chromePath = process.env.CHROME_PATH;
+      const captureDir = process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "";
       const draft = "Remote UI smoke draft " + Date.now();
       const errors = [];
+
+      if (captureDir) fs.mkdirSync(captureDir, { recursive: true });
 
       const browser = await chromium.launch({ executablePath: chromePath, headless: true });
       const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -252,6 +257,60 @@ def write_smoke_script(path)
             (scheduleMenuGeometry.popoverBottom > scheduleMenuGeometry.cardBottom &&
              !scheduleMenuGeometry.visibleBeyondCard)) {
           throw new Error(`Schedule action menu is clipped by its card: ${JSON.stringify(scheduleMenuGeometry)}`);
+        }
+
+        const designSystemPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+        await designSystemPage.goto(`${baseUrl}/design-system`, { waitUntil: "networkidle" });
+        const metadataBadgeContract = await designSystemPage.locator(".ds-metadata-badge").evaluateAll((badges) => ({
+          count: badges.length,
+          metadataKind: badges.every((badge) => badge.getAttribute("data-kind") === "metadata"),
+          noStatusIntent: badges.every((badge) => !badge.hasAttribute("data-intent")),
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        }));
+        if (metadataBadgeContract.count < 6 || !metadataBadgeContract.metadataKind ||
+            !metadataBadgeContract.noStatusIntent || metadataBadgeContract.overflow) {
+          throw new Error(`Metadata badge preview lost its neutral contract: ${JSON.stringify(metadataBadgeContract)}`);
+        }
+        if (await designSystemPage.locator(".ds-status").count() < 6) {
+          throw new Error("Metadata badge preview no longer demonstrates the separate product status contract");
+        }
+        if (captureDir) {
+          await designSystemPage.screenshot({
+            path: path.join(captureDir, "design-system-preview-390x844.png"),
+            fullPage: true,
+          });
+          await designSystemPage.setViewportSize({ width: 768, height: 1024 });
+          await designSystemPage.screenshot({
+            path: path.join(captureDir, "design-system-preview-768x1024.png"),
+            fullPage: true,
+          });
+          await designSystemPage.setViewportSize({ width: 1440, height: 900 });
+          await designSystemPage.screenshot({
+            path: path.join(captureDir, "design-system-preview-1440x900.png"),
+            fullPage: true,
+          });
+        }
+        await designSystemPage.close();
+
+        if (captureDir) {
+          const productMetadataPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+          await productMetadataPage.goto(`${baseUrl}/ui#project/web`, { waitUntil: "networkidle" });
+          await productMetadataPage.waitForSelector("#view > .chip-row .ds-metadata-badge", { state: "visible", timeout: 10_000 });
+          const productMetadataContract = await productMetadataPage.locator("#view > .chip-row .ds-metadata-badge").evaluateAll((badges) => ({
+            count: badges.length,
+            metadataKind: badges.every((badge) => badge.getAttribute("data-kind") === "metadata"),
+            noStatusIntent: badges.every((badge) => !badge.hasAttribute("data-intent")),
+            overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          }));
+          if (!productMetadataContract.count || !productMetadataContract.metadataKind ||
+              !productMetadataContract.noStatusIntent || productMetadataContract.overflow) {
+            throw new Error(`Project metadata badges lost their product contract: ${JSON.stringify(productMetadataContract)}`);
+          }
+          await productMetadataPage.screenshot({
+            path: path.join(captureDir, "project-metadata-badges-1440x900.png"),
+            fullPage: true,
+          });
+          await productMetadataPage.close();
         }
 
         const agentsRegressionPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -1041,6 +1100,123 @@ def write_smoke_script(path)
         await page.waitForFunction(() => (
           document.querySelector("[data-scroll-settings-section='settings-servers']")?.getAttribute("aria-current") === "location"
         ));
+        await page.evaluate(() => {
+          state.servers = [
+            ...(state.servers || []).filter((server) => server.key !== "design-peer"),
+            {
+              key: "design-peer",
+              name: "Design peer",
+              url: "http://127.0.0.1:7499",
+              local: false,
+              auth_configured: false,
+            },
+          ];
+          render();
+        });
+        await page.waitForSelector("[data-server-action-menu]", { state: "visible", timeout: 10_000 });
+        const serverActionTrigger = page.locator("[data-server-action-menu] > summary");
+        const serverActionGeometry = await serverActionTrigger.evaluate((trigger) => {
+          const box = trigger.getBoundingClientRect();
+          const card = trigger.closest(".remote-server-list-item")?.getBoundingClientRect();
+          return {
+            width: box.width,
+            height: box.height,
+            cardHeight: card?.height,
+            overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        });
+        if (serverActionGeometry.width < 44 || serverActionGeometry.height < 44 ||
+            serverActionGeometry.cardHeight > 110 || serverActionGeometry.overflow) {
+          throw new Error(`Peer server More action lost compact mobile geometry: ${JSON.stringify(serverActionGeometry)}`);
+        }
+        await serverActionTrigger.click();
+        await page.waitForSelector("[data-server-action-menu][open] .server-action-popover", { state: "visible", timeout: 10_000 });
+        await page.waitForFunction(() => (
+          document.activeElement?.matches("[data-server-action-menu] [role='menuitem']")
+        ));
+        const serverMenuGeometry = await page.locator("[data-server-action-menu]").evaluate((menu) => {
+          const popover = menu.querySelector(".server-action-popover");
+          const card = menu.closest("#settings-servers");
+          const popoverRect = popover?.getBoundingClientRect();
+          const cardRect = card?.getBoundingClientRect();
+          if (!popoverRect || !cardRect) return { found: false };
+          const sampleX = popoverRect.left + (popoverRect.width / 2);
+          const sampleY = Math.min(popoverRect.bottom - 2, cardRect.bottom + 8);
+          const hit = document.elementFromPoint(sampleX, sampleY);
+          return {
+            found: true,
+            popoverBottom: popoverRect.bottom,
+            cardBottom: cardRect.bottom,
+            cardOverflow: getComputedStyle(card).overflow,
+            visibleBeyondCard: popover.contains(hit),
+          };
+        });
+        if (!serverMenuGeometry.found ||
+            (serverMenuGeometry.popoverBottom > serverMenuGeometry.cardBottom &&
+             !serverMenuGeometry.visibleBeyondCard)) {
+          throw new Error(`Peer server More menu is clipped by the Settings card: ${JSON.stringify(serverMenuGeometry)}`);
+        }
+        const serverActionMenu = await page.locator("[data-server-action-menu] .more-menu").evaluate((menu) => ({
+          labels: Array.from(menu.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent.trim()),
+          roles: Array.from(menu.querySelectorAll("button")).every((item) => item.getAttribute("role") === "menuitem"),
+          focused: document.activeElement?.textContent.trim(),
+          itemHeights: Array.from(menu.querySelectorAll("button"))
+            .map((item) => item.getBoundingClientRect().height),
+          clippedLabels: Array.from(menu.querySelectorAll("button strong"))
+            .filter((label) => label.scrollWidth > label.clientWidth)
+            .map((label) => ({
+              text: label.textContent.trim(),
+              clientWidth: label.clientWidth,
+              scrollWidth: label.scrollWidth,
+            })),
+        }));
+        if (serverActionMenu.labels.join(" | ") !== "Switch to | Edit token | Remove server" ||
+            !serverActionMenu.roles || serverActionMenu.focused !== "Switch to" ||
+            serverActionMenu.itemHeights.some((height) => height < 44) ||
+            serverActionMenu.clippedLabels.length) {
+          throw new Error(`Peer server More menu lost its action contract: ${JSON.stringify(serverActionMenu)}`);
+        }
+        if (captureDir) {
+          await page.screenshot({
+            path: path.join(captureDir, "settings-peer-actions-390x844.png"),
+            fullPage: true,
+          });
+        }
+        await page.keyboard.press("ArrowDown");
+        if ((await page.evaluate(() => document.activeElement?.textContent.trim())) !== "Edit token") {
+          throw new Error("Peer server More menu did not move focus with ArrowDown");
+        }
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(() => (
+          !document.querySelector("[data-server-action-menu]")?.open &&
+          document.activeElement === document.querySelector("[data-server-action-menu] > summary")
+        ));
+        await serverActionTrigger.click();
+        await page.click("[data-toggle-server-token-form='design-peer']");
+        await page.waitForSelector("[data-server-token-form='design-peer']", { state: "visible", timeout: 10_000 });
+        const reopenedServerActionTrigger = page.locator("[data-server-action-menu] > summary");
+        await reopenedServerActionTrigger.click();
+        await page.click("[data-toggle-server-token-form='design-peer']");
+        await page.waitForSelector("[data-server-token-form='design-peer']", { state: "hidden", timeout: 10_000 });
+        const removalServerActionTrigger = page.locator("[data-server-action-menu] > summary");
+        await removalServerActionTrigger.click();
+        await page.click("[data-remove-server='design-peer']");
+        await page.waitForSelector("#confirmation-dialog[open]", { state: "visible", timeout: 10_000 });
+        const serverRemovalConfirmation = await page.evaluate(() => ({
+          title: document.querySelector("#confirmation-title")?.textContent,
+          description: document.querySelector("#confirmation-description")?.textContent,
+          cancelFocused: document.activeElement?.hasAttribute("data-confirmation-cancel"),
+        }));
+        if (serverRemovalConfirmation.title !== "Remove Design peer?" ||
+            !serverRemovalConfirmation.description?.includes("remote server and its data are not changed") ||
+            !serverRemovalConfirmation.cancelFocused) {
+          throw new Error(`Peer server removal confirmation is incomplete: ${JSON.stringify(serverRemovalConfirmation)}`);
+        }
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(() => (
+          !document.querySelector("#confirmation-dialog")?.open &&
+          document.activeElement === document.querySelector("[data-server-action-menu] > summary")
+        ));
         await page.click("[data-toggle-server-form]");
         await page.waitForSelector("#server-connection-form", { state: "visible", timeout: 10_000 });
         const serverFormContract = await page.evaluate(() => {
@@ -1299,7 +1475,6 @@ def write_smoke_script(path)
         if (!scheduleRowText.includes("Review Loop Smoke Agent") || !scheduleRowText.includes("ends")) {
           throw new Error(`Session loop is missing from the Schedules list: ${JSON.stringify(scheduleRowText)}`);
         }
-
         if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
         console.log("remote-ui-smoke: ok");
       } finally {
@@ -1355,6 +1530,8 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       "TYCHO_REMOTE_UI_AGENT_KEY" => agent_key,
       "CHROME_PATH" => browser
     }
+    capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
+    smoke_env["TYCHO_REMOTE_UI_CAPTURE_DIR"] = File.expand_path(capture_dir, ROOT) unless capture_dir.empty?
     command = ["node", script]
     out, err, status = Open3.capture3(smoke_env, *command, chdir: node_dir)
     puts out unless out.empty?

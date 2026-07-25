@@ -624,6 +624,13 @@ textarea.ds-input {
   color: var(--ds-text-muted);
 }
 
+.ds-metadata-badge {
+  border-color: var(--ds-border-subtle);
+  background: var(--ds-background-surface-sunken);
+  color: var(--ds-text-secondary);
+  font-weight: var(--ds-weight-regular);
+}
+
 .ds-alert {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

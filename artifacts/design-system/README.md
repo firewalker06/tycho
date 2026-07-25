@@ -1,12 +1,16 @@
 # Design-system visual evidence
 
-Captured: 2026-07-24  
-Application: Tycho Remote UI  
-Server: isolated `bin/tycho serve` fixture at `http://127.0.0.1:7487`  
-Authentication: local operator, `TYCHO_REMOTE_TOKEN` unset  
-Fixture: one local project for workflow captures; no real agents or production data  
-Browser: installed Google Chrome, headless; Playwright used for true mobile viewport, focus, and form-state captures  
-Worktree: local implementation worktree on the capture date
+- Captured: 2026-07-25
+- Application: Tycho Remote UI
+- Server: isolated `bin/remote-ui-smoke` fixture on a temporary loopback port
+- Authentication: local operator, `TYCHO_REMOTE_TOKEN` unset
+- Fixture: one local `web` project and managed smoke agent; no real agents or production data
+- Browser: installed Google Chrome, headless; Playwright used for true mobile viewport, focus, and form-state captures
+- Worktree: local implementation worktree on the capture date
+
+Reproduce the current preview and metadata captures with:
+
+`TYCHO_REMOTE_UI_CAPTURE_DIR=artifacts/design-system/implementation bin/remote-ui-smoke`
 
 ## Baseline
 
@@ -25,7 +29,7 @@ The baseline settings capture was taken before the isolated project fixture was 
 - `implementation/settings-response-style-confirmation-390x844.png` — destructive confirmation with safe initial focus, explicit consequence copy, and mobile action layout.
 - `implementation/settings-section-navigation-390x844.png` — sticky, horizontally scrollable Settings navigation with Automation selected, its controlled panel visible, and Session loop controls using the shared input surface.
 - `implementation/settings-server-form-390x844.png` — mobile Add server flow with shared labels, described inputs, semantic action styling, and responsive single-column layout.
-- `implementation/settings-peer-actions-390x844.png` — peer server card with Switch to, Token, and Remove actions in a vertically centered right-hand rail with 44px targets.
+- `implementation/settings-peer-actions-390x844.png` — peer server card with one 44px More trigger and an open contextual menu for switching, token editing, and removal.
 - `implementation/settings-harness-overrides-collapsed-1440x900.png` — empty custom model and effort editor collapsed by default.
 - `implementation/settings-harness-overrides-configured-1440x900.png` — collapsed custom model and effort editor retaining its configured values in the summary.
 - `implementation/settings-harness-catalog-1440x900.png` — expanded custom model and effort editor with described monospace fields, shared focus treatment, and aligned save action.
@@ -38,8 +42,9 @@ The baseline settings capture was taken before the isolated project fixture was 
 - `implementation/agents-searchable-collection-390x844.png` and `agents-searchable-collection-1440x900.png` — filtered Agents collection with visible result feedback, shared search focus, project grouping, and responsive toolbar geometry.
 - `implementation/detail-header-project-390x844.png` and `detail-header-project-1440x900.png` — focused project route using the shared Back, identity, title/metadata, and contextual-action anatomy.
 - `implementation/detail-header-agent-summary-1440x900.png` — focused agent summary retaining its view-layout and conversation action triggers inside the shared detail header.
+- `implementation/project-metadata-badges-1440x900.png` — project branch metadata using the neutral factual badge contract beside a semantic Clean status.
 - `implementation/agent-sort-menu-open-390x844.png` — shared menu overlay with a visible keyboard focus ring at mobile width.
-- `implementation/design-system-preview-390x844.png`, `design-system-preview-768x1024.png`, and `design-system-preview-1440x900.png` — current `/design-system` reference page including status, overlay, confirmation, detail-header, form, section-navigation, and searchable-collection contracts.
+- `implementation/design-system-preview-390x844.png`, `design-system-preview-768x1024.png`, and `design-system-preview-1440x900.png` — current `/design-system` reference page including separate metadata/status, overlay, confirmation, detail-header, form, section-navigation, and searchable-collection contracts.
 
 ## Responsive and accessibility
 

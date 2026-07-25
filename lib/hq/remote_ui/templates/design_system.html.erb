@@ -10,7 +10,7 @@
   <body>
     <main class="ds-page ds-stack" style="--ds-stack-gap: var(--ds-space-6)">
       <header class="ds-stack" style="--ds-stack-gap: var(--ds-space-2)">
-        <span class="ds-badge" data-intent="info">Internal preview</span>
+        <span class="ds-badge ds-metadata-badge" data-kind="metadata">Internal preview</span>
         <h1 class="ds-heading" data-level="1">Tycho Design System</h1>
         <p class="ds-text">Dense, explicit controls for supervising long-running agents without losing context.</p>
       </header>
@@ -62,6 +62,18 @@
           <span class="ds-badge ds-status" data-intent="danger">Blocked</span>
         </div>
         <p class="ds-text" data-tone="muted">Labels carry the state; color and adjacent product icons reinforce it.</p>
+      </section>
+
+      <section class="ds-stack" aria-labelledby="preview-metadata-badges">
+        <h2 id="preview-metadata-badges" class="ds-heading" data-level="2">Metadata badges</h2>
+        <div class="ds-surface ds-cluster" aria-label="Neutral metadata examples">
+          <span class="ds-badge ds-metadata-badge" data-kind="metadata">PR #482</span>
+          <span class="ds-badge ds-metadata-badge" data-kind="metadata">release/design-system</span>
+          <span class="ds-badge ds-metadata-badge" data-kind="metadata">6 templates</span>
+          <span class="ds-badge ds-metadata-badge" data-kind="metadata">Markdown</span>
+          <span class="ds-badge ds-metadata-badge" data-kind="metadata">pid 4317</span>
+        </div>
+        <p class="ds-text" data-tone="muted">Use neutral badges for compact facts. Health, urgency, progress, selection, and filtering use their own semantic contracts.</p>
       </section>
 
       <section class="ds-stack" aria-labelledby="preview-overlays">

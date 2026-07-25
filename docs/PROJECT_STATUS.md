@@ -96,9 +96,11 @@ behavior unchanged. Focused project, agent, summary, attachment, and diff routes
 share one detail-header anatomy while preserving route history, menus, and
 split-reader layout. Settings server connection, browser-token, and harness
 catalog forms now use the same described field, input, action, and pending
-contracts as other Remote UI forms. Remote peer actions align in a vertical
-card-edge rail, while custom catalog editors collapse without hiding configured
-model or effort values.
+contracts as other Remote UI forms. Remote peer actions now use one contextual
+More menu, while custom catalog editors collapse without hiding configured model
+or effort values. Compact factual metadata now uses one neutral badge
+contract across Settings, schedules, projects, diffs, and lifecycle forms;
+operational health, urgency, and progress remain in the semantic status taxonomy.
 
 ## Roadmap
 

@@ -2602,6 +2602,10 @@ module RemoteServerTest
            design_system[:body].include?('class="ds-search-field"') &&
            design_system[:body].include?('class="ds-collection-summary"'),
            "expected the design-system preview to document search and result-feedback structure")
+    assert(design_system[:body].include?("Metadata badges") &&
+           design_system[:body].scan('class="ds-badge ds-metadata-badge"').length >= 5 &&
+           design_system[:body].include?("Health, urgency, progress, selection, and filtering"),
+           "expected the design-system preview to distinguish metadata from product status")
     assert(design_system[:body].match?(%r{href="/ui\.css\?v=[0-9a-f]{12}"}),
            "expected the design-system preview stylesheet to be asset-versioned")
 
@@ -2649,6 +2653,7 @@ module RemoteServerTest
       .ds-input
       .ds-alert
       .ds-badge
+      .ds-metadata-badge
       .ds-spinner
       .ds-skeleton
       .ds-empty-state
@@ -2680,6 +2685,10 @@ module RemoteServerTest
            css[:body].include?('.ds-badge[data-intent="active"]') &&
            css[:body].include?('.ds-badge[data-intent="neutral"]'),
            "expected shared badges to cover the complete product status taxonomy")
+    assert(css[:body].include?(".ds-metadata-badge") &&
+           css[:body].include?(".pill.ds-metadata-badge") &&
+           css[:body].include?("var(--ds-background-surface-sunken)"),
+           "expected neutral metadata badges to remain visually separate from semantic status")
     assert(css[:body].include?("@media (prefers-reduced-motion: reduce)"),
            "expected shared motion to respect reduced-motion preferences")
     assert(css[:body].include?("@media (forced-colors: active)"),
@@ -3030,6 +3039,17 @@ module RemoteServerTest
     assert(js[:body].scan("statusBadge(").length >= 25 &&
            js[:body].scan("statusMarkAttributes(").length >= 15,
            "expected representative agent, schedule, setup, project, and diff states to use the semantic status contract")
+    assert(js[:body].include?("function metadataBadge") &&
+           js[:body].scan("metadataBadge(").length >= 16 &&
+           js[:body].include?('data-kind="metadata"'),
+           "expected compact factual metadata to use one neutral badge contract")
+    assert(js[:body].include?('metadataBadge("Markdown")') &&
+           js[:body].include?('metadataBadge(`PR #${project.pr_number}`, "chip")') &&
+           js[:body].include?('metadataBadge(diffScopeLabel(normalizedScope), "chip")') &&
+           js[:body].include?('metadataBadge(`pid ${daemon.pid}`)'),
+           "expected format, project, diff, and scheduler metadata to use neutral badges")
+    assert(!js[:body].match?(/class="(?:pill|chip) (?:detail|info)"/),
+           "expected factual pill and chip markup to use the metadata or status helpers")
     assert(js[:body].include?('response-style-form ds-surface ds-stack'),
            "expected Response style to use the shared surface and layout primitives")
     assert(js[:body].include?('class="ds-input" id="response-style-input"') &&
@@ -3304,8 +3324,11 @@ module RemoteServerTest
     assert(js[:body].include?("data-toggle-server-form") &&
            js[:body].include?("state.serverFormOpen ? renderAddServerForm() :") &&
            js[:body].include?("Switch to") &&
-           js[:body].include?("data-select-server"),
-           "expected Settings server switching to use list actions and a hidden add-server form")
+           js[:body].include?("data-select-server") &&
+           js[:body].include?("function renderServerActionsMenu") &&
+           js[:body].include?("data-server-action-menu") &&
+           js[:body].include?('data-overlay-key="server:'),
+           "expected Settings server switching to use a contextual peer menu and a hidden add-server form")
     assert(!js[:body].include?("function renderServerSelect") &&
            !js[:body].include?("data-server-select") &&
            !js[:body].include?("Active Tycho server"),
@@ -3351,11 +3374,21 @@ module RemoteServerTest
            js[:body].include?("Stored only in this browser and sent to the selected Remote server.") &&
            js[:body].include?('class="primary inline-icon-button ds-button" data-variant="brand" type="submit"'),
            "expected Remote token recovery to use the shared field, input, description, and semantic action contracts")
-    assert(css[:body].include?(".remote-server-list-item > .detail-row > .server-row-actions") &&
-           css[:body].include?("grid-template-columns: minmax(96px, 1fr)") &&
-           css[:body].include?("align-self: center") &&
-           css[:body].include?(".remote-server-list-item .server-row-actions .inline-icon-button span"),
-           "expected remote server row actions to form a centered vertical rail at small screens")
+    assert(css[:body].include?(".server-action-menu > summary") &&
+           css[:body].include?("width: var(--touch-target)") &&
+           css[:body].include?(".server-action-popover") &&
+           css[:body].include?("z-index: var(--ds-z-dropdown)") &&
+           css[:body].include?(".server-action-popover .more-menu") &&
+           css[:body].include?(".server-action-popover .more-menu-item") &&
+           css[:body].include?("#settings-servers") &&
+           css[:body].include?("overflow: visible"),
+           "expected remote server actions to use one touch-sized contextual menu")
+    assert(js[:body].include?('label: active ? "Active server" : "Switch to"') &&
+           js[:body].include?('label: tokenEditorOpen ? "Close token editor" : "Edit token"') &&
+           js[:body].include?('label: "Remove server"') &&
+           js[:body].include?("closeDetailsOverlay(removeServer.closest") &&
+           js[:body].include?("{ restoreFocus: true }"),
+           "expected the peer menu to preserve switching, token editing, destructive separation, and focus restoration")
     assert(js[:body].include?("Restart the local Remote server to enable ad hoc peer switching"),
            "expected stale broker errors to explain that the local Remote server must be restarted")
     assert(!js[:body].include?("Connect local peer"),

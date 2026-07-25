@@ -144,7 +144,13 @@ The marker and text communicate intent without color alone.
 
 ### Badge, spinner, skeleton, and empty state
 
-Badges label compact status; they do not replace full error or recovery copy. Spinners accompany a persistent text label. Skeletons are for predictable loading geometry and stop animating with reduced motion. Empty states state what is empty and, when useful, what to do next.
+Badges label compact facts or status; they do not replace full error or recovery copy. Spinners accompany a persistent text label. Skeletons are for predictable loading geometry and stop animating with reduced motion. Empty states state what is empty and, when useful, what to do next.
+
+### Metadata badge
+
+`ds-metadata-badge` is for compact factual context with no health, urgency, progress, selection, or filter meaning. Formats, counts, file sizes, commit identifiers, PR numbers, branches, diff scopes, process IDs, and timestamps belong here. Use ordinary secondary text when the fact is sentence-length or essential to comprehension.
+
+Generated Remote UI markup uses `metadataBadge(label, "pill" | "chip")`. The second argument preserves existing product geometry during migration; it is not a semantic variant. Metadata badges do not use `data-intent`, icons, live-region roles, or color to imply state.
 
 ### Product status
 
@@ -159,7 +165,7 @@ Badges label compact status; they do not replace full error or recovery copy. Sp
 | `success` | Healthy or completed state | Succeeded, scheduled, ready, clean, fresh |
 | `danger` | Failed, blocked, stopped, or invalid state | Blocked, failed, missing, stopped |
 
-Visible labels carry the meaning. Color is reinforcement. Product status icons remain `aria-hidden` when an adjacent badge supplies the text. Metadata such as a PID, branch, format, or item count is not a status and should use a neutral badge or ordinary text.
+Visible labels carry the meaning. Color is reinforcement. Product status icons remain `aria-hidden` when an adjacent badge supplies the text. Neutral product states such as Idle, Fixed, and Read only still use `ds-status`; factual context uses `ds-metadata-badge`.
 
 The migration keeps legacy `need`, `running`, `done`, `fail`, `info`, and `detail` classes as layout/color adapters. `statusIntent` is the single mapping to semantic intent; new code should not add another status-class vocabulary.
 
@@ -276,7 +282,7 @@ The eighth wave migrates the Agents index to the searchable-collection contract.
 
 The ninth wave extracts the focused-route shell header used by project, agent, summary, attachment, and diff pages. Shared classes own its anatomy, title hierarchy, truncation, action spacing, and target size; existing route code still supplies text, back navigation, view controls, menus, fixed/sticky positioning, and split-reader behavior.
 
-The tenth wave migrates Settings server connection, browser-token recovery, and harness-catalog forms. Shared field anatomy now owns label hierarchy, input surfaces, programmatic descriptions, action alignment, and pending presentation. Remote peer actions form a vertical rail at the card edge so the peer identity retains a stable reading column. Custom model/effort fields sit inside a native, state-preserving disclosure; its collapsed summary shows configured values or “No custom values,” so hiding the editor never hides active overrides. Product code still owns peer validation, browser-only token persistence, catalog parsing, API compatibility fallbacks, and the server/harness grids.
+The tenth wave migrates Settings server connection, browser-token recovery, and harness-catalog forms. Shared field anatomy now owns label hierarchy, input surfaces, programmatic descriptions, action alignment, and pending presentation. Remote peer actions use one 44px More trigger and the shared native-details menu contract; Switch to, Edit token, and Remove server remain available without reserving a permanent action rail. The destructive action is separated, Escape restores trigger focus, and removal still uses the shared confirmation dialog. Custom model/effort fields sit inside a native, state-preserving disclosure; its collapsed summary shows configured values or “No custom values,” so hiding the editor never hides active overrides. Product code still owns peer validation, browser-only token persistence, catalog parsing, API compatibility fallbacks, and the server/harness grids.
 
 ## Accessibility and responsive rules
 
