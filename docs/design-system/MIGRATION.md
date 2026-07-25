@@ -2,13 +2,13 @@
 
 ## Current adoption
 
-The system is loaded on every Remote UI route. Migrated product areas now include Settings → Response style, Session loop, server connection/token, and harness-catalog controls; agent/project/schedule lifecycle forms; structured inquiries; the Agents searchable collection; focused project/agent/summary/attachment/diff headers; representative agent/schedule/project/setup/diff statuses; primary non-modal menu overlays; consequential confirmation flows; and shared form/Settings composite structure. The agent form progressively discloses lower-frequency runtime configuration while keeping its selected defaults visible. Harness catalog overrides use the same rule: fields collapse, configured values remain visible in the summary. The preview route exercises all first-release components.
+The system is loaded on every Remote UI route. Migrated product areas now include Settings → Response style, Session loop, server connection/token, and harness-catalog controls; agent/project/schedule lifecycle forms; structured inquiries; the Agents searchable collection; focused project/agent/summary/attachment/diff headers; representative agent/schedule/project/setup/diff statuses; primary non-modal menu overlays; consequential confirmation flows; neutral factual badges; shared route-level loading, empty, and known-intent feedback states; all generated legacy action adapters; and shared form/Settings composite structure. The agent form progressively discloses lower-frequency runtime configuration while keeping its selected defaults visible. Harness catalog overrides use the same rule: fields collapse, configured values remain visible in the summary. The preview route exercises all first-release components.
 
 Classification:
 
 - Direct replacement: common buttons, icon buttons, fields, inputs, alerts, and non-interactive surfaces.
 - Small adapter: legacy button/surface classes that still carry route layout or JavaScript selectors.
-- Requires product decision: compact metadata hierarchy, tooltips, and product-specific full-screen overlays.
+- Requires product decision: tooltips and product-specific full-screen overlays.
 - Intentionally product-specific: app shell, conversation, composer, inquiry flow, diff/code reader, attachment reader.
 - Deprecated but supported: `--bg`, `--panel`, `--text`, `--muted`, `--border`, `--accent`, and intent aliases.
 - Out of scope for the first release: a standalone package, Storybook, light theme, RTL, chart/data-grid primitives.
@@ -29,7 +29,8 @@ Compatibility classes are allowed when they keep behavior selectors stable. Mark
 - New shared color declarations require a semantic token.
 - Review checks: component contract, native semantics, focus, 44px targets, 390px reflow, reduced motion, and route/browser evidence.
 - `test/remote_server_test.rb` asserts the asset, preview, semantic tokens, component selectors, and representative migration.
-- The component preview is a stable visual capture target.
+- The `/design-system` component preview is the canonical visual reference.
+- Generated screenshots belong outside the repository and are uploaded only as review attachments.
 
 No codemod is included because current markup is generated from many context-sensitive template strings; the mapping is not safe enough for mechanical replacement.
 
@@ -37,7 +38,7 @@ No codemod is included because current markup is generated from many context-sen
 
 Track per release:
 
-- Routes with at least one `ds-` component / total primary routes.
+- Routes with at least one `ui-` component / total primary routes.
 - Remaining legacy token references in `app.css`.
 - Remaining raw palette declarations outside token foundations.
 - Remaining `.primary`, `.danger`, and unclassified button occurrences in generated markup.
@@ -54,10 +55,13 @@ Current baseline:
 - 1 searchable collection exposes shared search geometry and explicit filtered-result feedback.
 - 5 focused route families use one detail-header anatomy and responsive contract.
 - 3 remaining Settings form families use shared labels, descriptions, inputs, actions, and pending semantics.
+- 15 factual metadata occurrences use one neutral badge contract; neutral product states remain in the status taxonomy.
+- Route-level loading states announce politely, settled empty states remain quiet, and migrated asynchronous failures announce assertively.
+- Every generated `primary`, `danger`, `inline-icon-button`, `icon-button`, and `button-link` action consumes `ui-button`; icon-only controls also consume `ui-icon-button`.
 - 1 preview route added.
 - Shared system loaded on all routes.
 - Legacy aliases remain; broad route migration is incomplete.
 
 ## Next implementation wave
 
-Classify and migrate remaining neutral metadata pills next without collapsing health, urgency, selection, or filter states into one badge API. Keep reader-specific diff, attachment, and conversation toolbars product-owned until another surface demonstrates the same action model. Extend searchable collections only after a second product collection demonstrates the same filtering and result-feedback needs.
+Audit remaining surface adapters and remove duplicate card visuals only after route-by-route comparison. Migrate a second searchable collection only if it demonstrates the same filtering and result-feedback needs. Keep reader-specific diff, attachment, and conversation toolbars product-owned until another surface demonstrates the same action model.

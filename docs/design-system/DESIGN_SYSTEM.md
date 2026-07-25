@@ -80,7 +80,7 @@ Dark Dracula is the only supported theme. A light theme is intentionally out of 
 
 ## Component conventions
 
-- Shared selectors use the `ds-` prefix. Product patterns keep product names.
+- Shared selectors use the `ui-` prefix. Product patterns keep product names.
 - Variants are semantic `data-variant`/`data-intent` values such as `brand`, `danger`, and `warning`.
 - Related controls use `small`, default, or `large`; do not expose pixel heights.
 - Native attributes remain the behavior contract: `disabled`, `readonly`, `required`, `aria-invalid`, and `aria-describedby`.
@@ -100,7 +100,7 @@ Dark Dracula is the only supported theme. A light theme is intentionally out of 
 
 Purpose: trigger an action or submit a form. Use links for navigation.
 
-API: `.ds-button`, optional `data-variant="brand|danger"`, `data-size="small|large"`, `data-loading="true"`, and `.ds-icon-button`.
+API: `.ui-button`, optional `data-variant="brand|danger"`, `data-size="small|large"`, `data-loading="true"`, and `.ui-icon-button`.
 
 States: default, hover, active, focus-visible, disabled, loading. Loading does not automatically disable behavior; the caller sets `disabled` while a request is pending.
 
@@ -108,13 +108,13 @@ Keyboard: native button/link behavior. Icon-only buttons require `aria-label`.
 
 Test matrix: all variants, disabled, loading, long label, 390px width, focus-visible, reduced motion.
 
-Migration: retain existing behavior classes/data attributes and add `.ds-button`; convert `primary` to `data-variant="brand"` and `danger` to `data-variant="danger"`.
+Migration: retain existing behavior classes/data attributes and add `.ui-button`; convert `primary` to `data-variant="brand"` and `danger` to `data-variant="danger"`. Every generated button or link that still carries the legacy `primary`, `danger`, `inline-icon-button`, `icon-button`, or `button-link` adapter now consumes this contract. Product-specific menu items, navigation tabs, reader controls without those adapters, and non-interactive loading labels retain their own contracts.
 
 ### Field and input
 
 Purpose: label a native input, select, or textarea and connect help/error content.
 
-Anatomy: `.ds-field`, `.ds-field__label`, `.ds-input`, optional description/error. Help and error nodes require IDs referenced by `aria-describedby`; errors pair with `aria-invalid="true"`.
+Anatomy: `.ui-field`, `.ui-field__label`, `.ui-input`, optional description/error. Help and error nodes require IDs referenced by `aria-describedby`; errors pair with `aria-invalid="true"`.
 
 States: default, focus-visible, disabled, read-only, invalid, long value. Textareas resize vertically.
 
@@ -126,7 +126,7 @@ Migration: replace the visual `field-card` wrapper only when its card boundary i
 
 Purpose: group related content. It is not interactive.
 
-API: `.ds-surface`, optional `data-elevation="raised"`. Product layout belongs on a second class or a layout primitive.
+API: `.ui-surface`, optional `data-elevation="raised"`. Product layout belongs on a second class or a layout primitive.
 
 Migration: add to `summary-card`, `detail-card`, and settings panels as they are touched; remove duplicate border/background declarations after the route is visually verified.
 
@@ -134,21 +134,37 @@ Migration: add to `summary-card`, `detail-card`, and settings panels as they are
 
 Purpose: communicate information, success, warning, or failure. Use `role="alert"` only for urgent errors introduced after page load; use `role="status"` for non-urgent async state.
 
-API: `.ds-alert`, `data-intent="success|warning|danger"`, `.ds-alert__title`.
+API: `.ui-alert`, `data-intent="success|warning|danger"`, `.ui-alert__title`.
 
 The marker and text communicate intent without color alone.
 
 ### Layout primitives
 
-`ds-stack`, `ds-cluster`, and `ds-grid` arrange children but do not supply product meaning. Customize gaps with local `--ds-*-gap` variables. `data-collapse="mobile"` changes a cluster to a vertical mobile action group.
+`ui-stack`, `ui-cluster`, and `ui-grid` arrange children but do not supply product meaning. Customize gaps with local `--ds-*-gap` variables. `data-collapse="mobile"` changes a cluster to a vertical mobile action group.
 
 ### Badge, spinner, skeleton, and empty state
 
-Badges label compact status; they do not replace full error or recovery copy. Spinners accompany a persistent text label. Skeletons are for predictable loading geometry and stop animating with reduced motion. Empty states state what is empty and, when useful, what to do next.
+Badges label compact facts or status; they do not replace full error or recovery copy. Spinners accompany a persistent text label. Skeletons are for predictable loading geometry and stop animating with reduced motion.
+
+`ui-empty-state` represents a settled absence, not loading or failure. It states what is empty and, when useful, what to do next. It has `data-state="empty"` and no live-region role by default, so normal polling does not repeatedly announce it.
+
+`ui-loading-state` extends the same stable surface for route-level work. It has `data-state="loading"`, a persistent text label, `role="status"`, `aria-live="polite"`, and `aria-atomic="true"`. The Tycho logo is decorative; the visible label supplies the accessible status. Prefer a spinner inside a control and the branded loading surface for a whole view.
+
+### Alert and recovery feedback
+
+`ui-alert` communicates information, success, warning, or danger through `data-intent`. Visual intent does not determine live-region behavior. Static guidance and restrictions do not receive a live role. A new asynchronous progress message uses a polite status; a new failure that requires attention uses `role="alert"`.
+
+Generated Remote UI markup uses `feedbackMessage(title, body, options)`. Titles and body text are escaped. `options.actions` accepts only trusted, application-owned markup and exists for recovery actions such as Stop agent; never pass server or user content through it. Set `announce: "polite"` or `announce: "assertive"` only when the message enters the page because state changed, not merely because polling rendered the same route again.
+
+### Metadata badge
+
+`ui-metadata-badge` is for compact factual context with no health, urgency, progress, selection, or filter meaning. Formats, counts, file sizes, commit identifiers, PR numbers, branches, diff scopes, process IDs, and timestamps belong here. Use ordinary secondary text when the fact is sentence-length or essential to comprehension.
+
+Generated Remote UI markup uses `metadataBadge(label, "pill" | "chip")`. The second argument preserves existing product geometry during migration; it is not a semantic variant. Metadata badges do not use `data-intent`, icons, live-region roles, or color to imply state.
 
 ### Product status
 
-`ds-status` extends the badge contract with six operational intents:
+`ui-status` extends the badge contract with six operational intents:
 
 | Intent | Meaning | Examples |
 | --- | --- | --- |
@@ -159,13 +175,13 @@ Badges label compact status; they do not replace full error or recovery copy. Sp
 | `success` | Healthy or completed state | Succeeded, scheduled, ready, clean, fresh |
 | `danger` | Failed, blocked, stopped, or invalid state | Blocked, failed, missing, stopped |
 
-Visible labels carry the meaning. Color is reinforcement. Product status icons remain `aria-hidden` when an adjacent badge supplies the text. Metadata such as a PID, branch, format, or item count is not a status and should use a neutral badge or ordinary text.
+Visible labels carry the meaning. Color is reinforcement. Product status icons remain `aria-hidden` when an adjacent badge supplies the text. Neutral product states such as Idle, Fixed, and Read only still use `ui-status`; factual context uses `ui-metadata-badge`.
 
 The migration keeps legacy `need`, `running`, `done`, `fail`, `info`, and `detail` classes as layout/color adapters. `statusIntent` is the single mapping to semantic intent; new code should not add another status-class vocabulary.
 
 ### Menu overlay
 
-`ds-overlay-surface` owns the semantic overlay background, boundary, elevation, and dropdown layer. Product classes continue to own anchoring, width, collision handling, and content layout.
+`ui-overlay-surface` owns the semantic overlay background, boundary, elevation, and dropdown layer. Product classes continue to own anchoring, width, collision handling, and content layout.
 
 Native `details` menus opt into the shared interaction contract with `data-overlay-menu` and a stable `data-overlay-key`. The trigger remains a direct `summary` with `aria-haspopup="menu"`; menu actions use `role="menuitem"` or `role="menuitemradio"`.
 
@@ -183,7 +199,7 @@ Use this contract for action and exclusive-selection menus. Do not use it for pe
 
 ### Confirmation dialog
 
-`confirmAction` is the single contract for consequential actions that need an explicit second step. It renders a native `dialog` with `ds-confirmation-dialog` anatomy and returns a promise resolving to the operator’s choice.
+`confirmAction` is the single contract for consequential actions that need an explicit second step. It renders a native `dialog` with `ui-confirmation-dialog` anatomy and returns a promise resolving to the operator’s choice.
 
 API:
 
@@ -207,32 +223,32 @@ Use a confirmation when an action removes data, archives multiple objects, stops
 
 ### Form layout
 
-`ds-form-layout` supplies the shared grid boundary and 12px section rhythm for lifecycle forms. Product classes decide column count, spanning, sticky mobile actions, and feature-specific grouping.
+`ui-form-layout` supplies the shared grid boundary and 12px section rhythm for lifecycle forms. Product classes decide column count, spanning, sticky mobile actions, and feature-specific grouping.
 
-`ds-form-section-heading` pairs an operational section label with short scope copy. It spans the product grid, uses document-order text rather than a visual-only divider, and stacks at narrow widths. It does not create a heading element automatically; consumers choose the correct semantic heading level for the surrounding page.
+`ui-form-section-heading` pairs an operational section label with short scope copy. It spans the product grid, uses document-order text rather than a visual-only divider, and stacks at narrow widths. It does not create a heading element automatically; consumers choose the correct semantic heading level for the surrounding page.
 
-`ds-form-actions` aligns and wraps native actions with consistent spacing. Product patterns may make it sticky or change the mobile layout, but must preserve DOM order, explicit labels, disabled behavior, and at least 44px targets.
+`ui-form-actions` aligns and wraps native actions with consistent spacing. Product patterns may make it sticky or change the mobile layout, but must preserve DOM order, explicit labels, disabled behavior, and at least 44px targets.
 
-Use this pattern for multi-section create/edit flows. A single compact field group should use `ds-field` inside `ds-surface` without adding form-page ceremony.
+Use this pattern for multi-section create/edit flows. A single compact field group should use `ui-field` inside `ui-surface` without adding form-page ceremony.
 
 The agent lifecycle form keeps its high-frequency identity, workspace, and instruction fields visible, then places prompt/runtime configuration in a native Advanced disclosure. Its closed summary lists the current template, response-style source, harness, model, and effort, so simplifying the form does not hide the defaults or make the available configuration opaque. The summary is synchronized after any advanced choice changes; the native controls keep their normal labels, submission behavior, and keyboard interaction.
 
 ### Section navigation
 
-`ds-section-nav` is a horizontally scrollable set of in-page controls. The selected button uses `aria-current="location"`; each button needs `aria-controls` pointing to a `ds-section-panel`. Product code owns sticky positioning and the active-section observer because header offsets and route behavior are application concerns.
+`ui-section-nav` is a horizontally scrollable set of in-page controls. The selected button uses `aria-current="location"`; each button needs `aria-controls` pointing to a `ui-section-panel`. Product code owns sticky positioning and the active-section observer because header offsets and route behavior are application concerns.
 
-`ds-section-panel` supplies a stable grid and section rhythm. It does not add a visual surface, landmark, heading, or scroll offset by itself; compose those according to the content.
+`ui-section-panel` supplies a stable grid and section rhythm. It does not add a visual surface, landmark, heading, or scroll offset by itself; compose those according to the content.
 
 Keyboard behavior remains native button order. Selection must update `aria-current`, focus must remain visible when the row scrolls, and activating a control must move or reveal the named section without changing the route unexpectedly.
 
 ### Detail header
 
-`ds-detail-header` is the shared shell header for focused project, agent, summary, attachment, and diff routes. Its fixed anatomy is:
+`ui-detail-header` is the shared shell header for focused project, agent, summary, attachment, and diff routes. Its fixed anatomy is:
 
-- `ds-detail-header__back`: a native button with an explicit accessible name.
-- `ds-detail-header__identity`: product mark plus the title/metadata block.
-- `ds-detail-header__text`, `__title`, and `__metadata`: one page `h1` and one compact context line with deterministic truncation.
-- `ds-detail-header__actions`: route-owned view, schedule, and overflow slots; each visible trigger uses `ds-detail-header__action`.
+- `ui-detail-header__back`: a native button with an explicit accessible name.
+- `ui-detail-header__identity`: product mark plus the title/metadata block.
+- `ui-detail-header__text`, `__title`, and `__metadata`: one page `h1` and one compact context line with deterministic truncation.
+- `ui-detail-header__actions`: route-owned view, schedule, and overflow slots; each visible trigger uses `ui-detail-header__action`.
 
 The shared contract owns the three-column grid, minimum widths, type hierarchy, truncation, action spacing, and 44px targets. The Remote UI shell owns fixed versus sticky positioning, safe-area padding, scroll behavior, split-reader width, menu contents, and route history.
 
@@ -242,7 +258,7 @@ Keyboard behavior stays native: Back follows route history, contextual buttons r
 
 ### Searchable collection
 
-`ds-searchable-collection` composes a `ds-collection-toolbar`, a concise result status, and `ds-collection-results`. `ds-search-field` owns the compound search-control boundary and visible focus; the native search input retains its built-in editing and clearing behavior. `ds-collection-group` provides a stable clipping boundary for product rows without prescribing their content or selection model.
+`ui-searchable-collection` composes a `ui-collection-toolbar`, a concise result status, and `ui-collection-results`. `ui-search-field` owns the compound search-control boundary and visible focus; the native search input retains its built-in editing and clearing behavior. `ui-collection-group` provides a stable clipping boundary for product rows without prescribing their content or selection model.
 
 The result status must state the filtered count and current query, and the search input must reference it with `aria-describedby`. Product code owns filtering, sorting, grouping, empty-state copy, bulk selection, and row actions. Keep those behaviors outside the shared CSS contract because they differ by collection.
 
@@ -252,7 +268,7 @@ Use this pattern when search changes an on-page collection immediately. Do not u
 
 Settings → Response style is the first vertical slice:
 
-- Summary uses `ds-surface`.
+- Summary uses `ui-surface`.
 - Edit/delete/cancel/save use the shared button contract.
 - The editor uses field anatomy, a programmatic description, and shared textarea.
 - Failure uses a danger alert with `role="alert"`.
@@ -276,7 +292,7 @@ The eighth wave migrates the Agents index to the searchable-collection contract.
 
 The ninth wave extracts the focused-route shell header used by project, agent, summary, attachment, and diff pages. Shared classes own its anatomy, title hierarchy, truncation, action spacing, and target size; existing route code still supplies text, back navigation, view controls, menus, fixed/sticky positioning, and split-reader behavior.
 
-The tenth wave migrates Settings server connection, browser-token recovery, and harness-catalog forms. Shared field anatomy now owns label hierarchy, input surfaces, programmatic descriptions, action alignment, and pending presentation. Remote peer actions form a vertical rail at the card edge so the peer identity retains a stable reading column. Custom model/effort fields sit inside a native, state-preserving disclosure; its collapsed summary shows configured values or “No custom values,” so hiding the editor never hides active overrides. Product code still owns peer validation, browser-only token persistence, catalog parsing, API compatibility fallbacks, and the server/harness grids.
+The tenth wave migrates Settings server connection, browser-token recovery, and harness-catalog forms. Shared field anatomy now owns label hierarchy, input surfaces, programmatic descriptions, action alignment, and pending presentation. Remote peer actions use one 44px More trigger and the shared native-details menu contract; Switch to, Edit token, and Remove server remain available without reserving a permanent action rail. The destructive action is separated, Escape restores trigger focus, and removal still uses the shared confirmation dialog. Custom model/effort fields sit inside a native, state-preserving disclosure; its collapsed summary shows configured values or “No custom values,” so hiding the editor never hides active overrides. Product code still owns peer validation, browser-only token persistence, catalog parsing, API compatibility fallbacks, and the server/harness grids.
 
 ## Accessibility and responsive rules
 
