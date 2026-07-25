@@ -108,7 +108,7 @@ Keyboard: native button/link behavior. Icon-only buttons require `aria-label`.
 
 Test matrix: all variants, disabled, loading, long label, 390px width, focus-visible, reduced motion.
 
-Migration: retain existing behavior classes/data attributes and add `.ds-button`; convert `primary` to `data-variant="brand"` and `danger` to `data-variant="danger"`.
+Migration: retain existing behavior classes/data attributes and add `.ds-button`; convert `primary` to `data-variant="brand"` and `danger` to `data-variant="danger"`. Every generated button or link that still carries the legacy `primary`, `danger`, `inline-icon-button`, `icon-button`, or `button-link` adapter now consumes this contract. Product-specific menu items, navigation tabs, reader controls without those adapters, and non-interactive loading labels retain their own contracts.
 
 ### Field and input
 
@@ -144,7 +144,17 @@ The marker and text communicate intent without color alone.
 
 ### Badge, spinner, skeleton, and empty state
 
-Badges label compact facts or status; they do not replace full error or recovery copy. Spinners accompany a persistent text label. Skeletons are for predictable loading geometry and stop animating with reduced motion. Empty states state what is empty and, when useful, what to do next.
+Badges label compact facts or status; they do not replace full error or recovery copy. Spinners accompany a persistent text label. Skeletons are for predictable loading geometry and stop animating with reduced motion.
+
+`ds-empty-state` represents a settled absence, not loading or failure. It states what is empty and, when useful, what to do next. It has `data-state="empty"` and no live-region role by default, so normal polling does not repeatedly announce it.
+
+`ds-loading-state` extends the same stable surface for route-level work. It has `data-state="loading"`, a persistent text label, `role="status"`, `aria-live="polite"`, and `aria-atomic="true"`. The Tycho logo is decorative; the visible label supplies the accessible status. Prefer a spinner inside a control and the branded loading surface for a whole view.
+
+### Alert and recovery feedback
+
+`ds-alert` communicates information, success, warning, or danger through `data-intent`. Visual intent does not determine live-region behavior. Static guidance and restrictions do not receive a live role. A new asynchronous progress message uses a polite status; a new failure that requires attention uses `role="alert"`.
+
+Generated Remote UI markup uses `feedbackMessage(title, body, options)`. Titles and body text are escaped. `options.actions` accepts only trusted, application-owned markup and exists for recovery actions such as Stop agent; never pass server or user content through it. Set `announce: "polite"` or `announce: "assertive"` only when the message enters the page because state changed, not merely because polling rendered the same route again.
 
 ### Metadata badge
 

@@ -427,8 +427,8 @@ h3 {
 
 .icon-button {
   display: inline-grid;
-  width: 42px;
-  min-width: 42px;
+  width: var(--ds-touch-target);
+  min-width: var(--ds-touch-target);
   place-items: center;
   padding: 0;
   font-size: 20px;
@@ -1745,7 +1745,7 @@ select {
 
 .schedule-daemon-actions button,
 .schedule-management-actions button {
-  min-height: 40px;
+  min-height: var(--ds-touch-target);
 }
 
 .schedule-row {
@@ -1811,7 +1811,7 @@ select {
 }
 
 .schedule-row-actions button {
-  min-height: 40px;
+  min-height: var(--ds-touch-target);
   min-width: 0;
 }
 
@@ -2228,7 +2228,7 @@ select {
 
 .agent-group-create {
   flex: 0 0 auto;
-  min-height: 34px;
+  min-height: var(--ds-touch-target);
   padding: 0 10px;
 }
 

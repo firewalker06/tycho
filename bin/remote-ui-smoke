@@ -271,6 +271,63 @@ def write_smoke_script(path)
         if (!headerMoreAfterRefresh.open || headerMoreAfterRefresh.expanded !== "true" || !headerMoreAfterRefresh.visible) {
           throw new Error(`Polling refresh closed the Now context menu: ${JSON.stringify(headerMoreAfterRefresh)}`);
         }
+        const nowHeaderMenuLabels = await page.locator("#header-more-panel [role='menuitem']").evaluateAll((items) => (
+          items.map((item) => item.querySelector("strong")?.textContent.trim())
+        ));
+        if (nowHeaderMenuLabels[0] !== "Settings" ||
+            nowHeaderMenuLabels.includes("Push notifications") ||
+            nowHeaderMenuLabels.includes("Recheck status")) {
+          throw new Error(`Now context menu exposes the wrong global actions: ${JSON.stringify(nowHeaderMenuLabels)}`);
+        }
+        await page.click("#header-more-panel [data-open-settings]");
+        await page.waitForSelector("#session-loop-default-interval", { state: "visible", timeout: 10_000 });
+        const settingsShortcutRoute = await page.evaluate(() => parseRoute());
+        if (settingsShortcutRoute.type !== "tab" || settingsShortcutRoute.tab !== "settings") {
+          throw new Error(`Context-menu Settings shortcut opened the wrong route: ${JSON.stringify(settingsShortcutRoute)}`);
+        }
+        await page.evaluate(() => navigate({ type: "tab", tab: "now" }));
+        await page.waitForSelector("[data-state-key='schedule-now-details']", { state: "visible", timeout: 10_000 });
+        const legacyActionContract = await page.evaluate(() => {
+          const controls = Array.from(document.querySelectorAll([
+            "button.primary",
+            "button.danger:not(.more-menu-item)",
+            "button.inline-icon-button",
+            "button.icon-button",
+            "a.inline-icon-button",
+            ".button-link",
+          ].join(",")));
+          const visibleControls = controls.filter((control) => {
+            const style = getComputedStyle(control);
+            return style.display !== "none" && style.visibility !== "hidden";
+          });
+          const undersized = visibleControls
+            .map((control) => ({
+              classes: control.className,
+              height: control.getBoundingClientRect().height,
+              label: control.getAttribute("aria-label") || control.textContent.trim(),
+            }))
+            .filter((control) => control.height < 44);
+          return {
+            count: controls.length,
+            shared: controls.every((control) => control.classList.contains("ds-button")),
+            iconOnlyShared: controls
+              .filter((control) => control.classList.contains("icon-button"))
+              .every((control) => control.classList.contains("ds-icon-button")),
+            variantsMapped: controls.every((control) => (
+              (!control.classList.contains("primary") || control.dataset.variant === "brand") &&
+              (!control.classList.contains("danger") || control.dataset.variant === "danger")
+            )),
+            touchTargets: undersized.length === 0,
+            undersized,
+          };
+        });
+        if (!legacyActionContract.count ||
+            !legacyActionContract.shared ||
+            !legacyActionContract.iconOnlyShared ||
+            !legacyActionContract.variantsMapped ||
+            !legacyActionContract.touchTargets) {
+          throw new Error(`Legacy actions lost the shared button contract: ${JSON.stringify(legacyActionContract)}`);
+        }
 
         const designSystemPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
         await designSystemPage.goto(`${baseUrl}/design-system`, { waitUntil: "networkidle" });
@@ -287,10 +344,36 @@ def write_smoke_script(path)
         if (await designSystemPage.locator(".ds-status").count() < 6) {
           throw new Error("Metadata badge preview no longer demonstrates the separate product status contract");
         }
+        const feedbackContract = await designSystemPage.evaluate(() => {
+          const empty = document.querySelector('.ds-empty-state[data-state="empty"]');
+          const loading = document.querySelector('.ds-loading-state[data-state="loading"]');
+          const staticAlerts = Array.from(document.querySelectorAll(
+            'section[aria-labelledby="preview-feedback"] .ds-alert'
+          ));
+          return {
+            emptyIsQuiet: Boolean(empty && !empty.hasAttribute("role") && !empty.hasAttribute("aria-live")),
+            loadingIsPolite: Boolean(
+              loading &&
+              loading.getAttribute("role") === "status" &&
+              loading.getAttribute("aria-live") === "polite" &&
+              loading.getAttribute("aria-atomic") === "true"
+            ),
+            loadingHasTextAlternative: Boolean(loading?.querySelector("strong")?.textContent.trim()),
+            loadingImageIsDecorative: loading?.querySelector("img")?.getAttribute("alt") === "",
+            staticAlertsAreQuiet: staticAlerts.length === 4 &&
+              staticAlerts.every((alert) => !alert.hasAttribute("role") && !alert.hasAttribute("aria-live")),
+          };
+        });
+        if (!Object.values(feedbackContract).every(Boolean)) {
+          throw new Error(`Feedback preview lost its announcement contract: ${JSON.stringify(feedbackContract)}`);
+        }
         if (captureDir) {
           await designSystemPage.screenshot({
             path: path.join(captureDir, "design-system-preview-390x844.png"),
             fullPage: true,
+          });
+          await designSystemPage.locator('section[aria-labelledby="preview-feedback"]').screenshot({
+            path: path.join(captureDir, "feedback-states-390x844.png"),
           });
           await designSystemPage.setViewportSize({ width: 768, height: 1024 });
           await designSystemPage.screenshot({
@@ -301,6 +384,9 @@ def write_smoke_script(path)
           await designSystemPage.screenshot({
             path: path.join(captureDir, "design-system-preview-1440x900.png"),
             fullPage: true,
+          });
+          await designSystemPage.locator('section[aria-labelledby="preview-feedback"]').screenshot({
+            path: path.join(captureDir, "feedback-states-1440x900.png"),
           });
         }
         await designSystemPage.close();
@@ -324,6 +410,53 @@ def write_smoke_script(path)
             fullPage: true,
           });
           await productMetadataPage.close();
+
+          const actionControlsPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+          await actionControlsPage.goto(`${baseUrl}/ui#project/web`, { waitUntil: "networkidle" });
+          await actionControlsPage.waitForSelector(".agent-group-create.ds-button", { state: "visible", timeout: 10_000 });
+          const mobileActionContract = await actionControlsPage.evaluate(() => {
+            const back = document.querySelector("#back-button");
+            const more = document.querySelector("#header-more-button");
+            const create = document.querySelector(".agent-group-create");
+            const controls = [back, more, create].filter(Boolean);
+            return {
+              count: controls.length,
+              shared: controls.every((control) => control.classList.contains("ds-button")),
+              targets: controls.every((control) => {
+                const rect = control.getBoundingClientRect();
+                return rect.width >= 44 && rect.height >= 44;
+              }),
+              visible: controls.every((control) => getComputedStyle(control).display !== "none"),
+              overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+            };
+          });
+          if (mobileActionContract.count !== 3 ||
+              !mobileActionContract.shared ||
+              !mobileActionContract.targets ||
+              !mobileActionContract.visible ||
+              mobileActionContract.overflow) {
+            throw new Error(`Mobile project actions lost their shared geometry: ${JSON.stringify(mobileActionContract)}`);
+          }
+          await actionControlsPage.screenshot({
+            path: path.join(captureDir, "action-controls-project-390x844.png"),
+            fullPage: true,
+          });
+          await actionControlsPage.focus(".agent-group-create");
+          const mobileActionFocus = await actionControlsPage.locator(".agent-group-create").evaluate((control) => {
+            const style = getComputedStyle(control);
+            return {
+              focused: document.activeElement === control,
+              visible: style.outlineStyle !== "none" || style.boxShadow !== "none",
+            };
+          });
+          if (!mobileActionFocus.focused || !mobileActionFocus.visible) {
+            throw new Error(`Mobile project action lost visible keyboard focus: ${JSON.stringify(mobileActionFocus)}`);
+          }
+          await actionControlsPage.screenshot({
+            path: path.join(captureDir, "action-controls-project-focus-390x844.png"),
+            fullPage: true,
+          });
+          await actionControlsPage.close();
         }
 
         const agentsRegressionPage = await browser.newPage({ viewport: { width: 390, height: 844 } });

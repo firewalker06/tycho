@@ -101,6 +101,12 @@ More menu, while custom catalog editors collapse without hiding configured model
 or effort values. Compact factual metadata now uses one neutral badge
 contract across Settings, schedules, projects, diffs, and lifecycle forms;
 operational health, urgency, and progress remain in the semantic status taxonomy.
+Route-level loading and settled empty states now use distinct shared contracts.
+Known-intent guidance and recovery messages use one alert helper that separates
+visual intent from polite or assertive announcement timing.
+All generated legacy primary, danger, inline-icon, icon-only, and button-link
+actions now consume the shared button contract while retaining their existing
+behavior selectors and product layout classes.
 
 ## Roadmap
 

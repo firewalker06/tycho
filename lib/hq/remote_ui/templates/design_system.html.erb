@@ -208,29 +208,34 @@
       <section class="ds-stack" aria-labelledby="preview-feedback">
         <h2 id="preview-feedback" class="ds-heading" data-level="2">Feedback and realistic states</h2>
         <div class="ds-grid">
-          <div class="ds-alert" role="status">
+          <div class="ds-alert">
             <div><strong class="ds-alert__title">Agent is running</strong>Logs and conversation refresh automatically.</div>
           </div>
-          <div class="ds-alert" data-intent="warning" role="status">
+          <div class="ds-alert" data-intent="warning">
             <div><strong class="ds-alert__title">Decision required</strong>The agent is waiting for a release strategy.</div>
           </div>
-          <div class="ds-alert" data-intent="danger" role="alert">
+          <div class="ds-alert" data-intent="danger">
             <div><strong class="ds-alert__title">Run failed</strong>Open activity details before retrying.</div>
           </div>
-          <div class="ds-alert" data-intent="success" role="status">
+          <div class="ds-alert" data-intent="success">
             <div><strong class="ds-alert__title">Run complete</strong>All requested checks passed.</div>
           </div>
         </div>
-        <div class="ds-empty-state">
+        <div class="ds-empty-state" data-state="empty">
           <strong>No agents need attention</strong>
-          <span>Running work and recent outcomes will appear here.</span>
+          <p>Running work and recent outcomes will appear here.</p>
+        </div>
+        <div class="ds-empty-state ds-loading-state tycho-loading-state" data-state="loading" role="status" aria-live="polite" aria-atomic="true">
+          <img class="tycho-loading-logo" src="/remote-logo.png?v=<%= HQ::RemoteUI.asset_version %>" alt="">
+          <strong>Loading project</strong>
+          <p>Fetching the selected project state.</p>
         </div>
       </section>
 
       <section class="ds-stack" aria-labelledby="preview-inquiry">
         <h2 id="preview-inquiry" class="ds-heading" data-level="2">Inquiry decision</h2>
         <form class="ds-surface ds-stack" data-ds-form="inquiry" aria-label="Agent inquiry example" aria-describedby="preview-inquiry-status">
-          <div class="ds-alert" data-intent="warning" role="status">
+          <div class="ds-alert" data-intent="warning">
             <div><strong class="ds-alert__title">Decision required</strong>Choose at least one deployment environment before the agent continues.</div>
           </div>
           <div class="ds-field ds-surface">

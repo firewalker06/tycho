@@ -712,6 +712,19 @@ textarea.ds-input {
   text-align: center;
 }
 
+.ds-empty-state > strong {
+  color: var(--ds-text-primary);
+}
+
+.ds-empty-state > p {
+  max-width: var(--ds-content-readable);
+  margin: 0;
+}
+
+.ds-loading-state {
+  border-style: solid;
+}
+
 .ds-overlay-surface {
   border: var(--ds-border-width) solid var(--ds-border-default);
   border-radius: var(--ds-radius-md);
@@ -862,6 +875,7 @@ textarea.ds-input {
   .ds-input,
   .ds-surface,
   .ds-alert,
+  .ds-empty-state,
   .ds-overlay-surface,
   .ds-section-nav,
   .ds-confirmation-dialog__panel {

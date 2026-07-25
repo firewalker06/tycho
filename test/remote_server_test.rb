@@ -2606,6 +2606,10 @@ module RemoteServerTest
            design_system[:body].scan('class="ds-badge ds-metadata-badge"').length >= 5 &&
            design_system[:body].include?("Health, urgency, progress, selection, and filtering"),
            "expected the design-system preview to distinguish metadata from product status")
+    assert(design_system[:body].include?('class="ds-empty-state" data-state="empty"') &&
+           design_system[:body].include?('class="ds-empty-state ds-loading-state tycho-loading-state"') &&
+           design_system[:body].include?('role="status" aria-live="polite" aria-atomic="true"'),
+           "expected the design-system preview to distinguish empty and announced loading states")
     assert(design_system[:body].match?(%r{href="/ui\.css\?v=[0-9a-f]{12}"}),
            "expected the design-system preview stylesheet to be asset-versioned")
 
@@ -2657,6 +2661,7 @@ module RemoteServerTest
       .ds-spinner
       .ds-skeleton
       .ds-empty-state
+      .ds-loading-state
       .ds-overlay-surface
       .ds-confirmation-dialog
       .ds-form-layout
@@ -3102,6 +3107,26 @@ module RemoteServerTest
     end
     assert(js[:body].scan('data-variant="brand" type="submit"').length >= 7,
            "expected lifecycle primary submits to use the semantic brand action")
+    legacy_action_tags = [response[:body], js[:body]].join("\n").scan(
+      /<(?:button|a)\b[^>]*class="[^"]*\b(?:primary|danger|inline-icon-button|icon-button|button-link)\b[^"]*"[^>]*>/
+    )
+    assert(!legacy_action_tags.empty? && legacy_action_tags.all? { |tag| tag.include?("ds-button") },
+           "expected every legacy action adapter to consume the shared button contract")
+    legacy_action_tags.each do |tag|
+      classes = tag[/class="([^"]+)"/, 1].to_s.split
+      if classes.include?("icon-button")
+        assert(classes.include?("ds-icon-button"),
+               "expected legacy icon action to consume the shared icon-button contract: #{tag}")
+      end
+      if classes.include?("primary")
+        assert(tag.include?('data-variant="brand"'),
+               "expected legacy primary action to map to the brand variant: #{tag}")
+      end
+      if classes.include?("danger")
+        assert(tag.include?('data-variant="danger"'),
+               "expected legacy danger action to map to the danger variant: #{tag}")
+      end
+    end
     assert(js[:body].include?('<span>Create and run</span>') && js[:body].include?('type="submit"'),
            "expected Quick Agent to expose a visible primary submit action")
     assert(js[:body].include?("Create without running") && js[:body].include?('class="secondary-submit-menu"'),
@@ -3394,9 +3419,13 @@ module RemoteServerTest
     assert(!js[:body].include?("Connect local peer"),
            "expected Settings to replace the URL-only peer form")
     assert(js[:body].include?('id="settings-push-notifications"'),
-           "expected Settings push section to expose an in-page menu target")
-    assert(js[:body].include?('data-scroll-settings-section="settings-push-notifications"'),
-           "expected Settings More menu to jump to push notifications")
+           "expected Settings to retain its push-notification controls")
+    assert(!js[:body].include?('data-scroll-settings-section="settings-push-notifications"'),
+           "expected the global More menu to omit its Settings-only push shortcut")
+    assert(js[:body].include?('label: "Settings"') &&
+           js[:body].include?('attrs: "data-open-settings"') &&
+           js[:body].include?('navigate({ type: "tab", tab: "settings" })'),
+           "expected the global More menu to open Settings from its first action")
     assert(js[:body].include?('class="settings-section-nav ds-section-nav"') &&
            js[:body].include?('class="settings-section-panel ds-section-panel"') &&
            js[:body].include?('aria-current=') &&
@@ -3515,7 +3544,8 @@ module RemoteServerTest
            css[:body].include?("p.response-style-excerpt") &&
            css[:body].include?("color: var(--text)"),
            "expected the response style editor to have a readable responsive layout")
-    assert(js[:body].include?("Recheck status"), "expected Settings More menu to expose readiness refresh")
+    assert(!js[:body].include?("Recheck status"),
+           "expected the global More menu to omit its Settings-only readiness refresh")
     assert(js[:body].include?("function restartRemoteServer"), "expected Remote UI to handle Remote restarts")
     assert(js[:body].include?('apiPost("/server/restart"'),
            "expected Remote UI restart action to call the restart endpoint")
@@ -3713,7 +3743,7 @@ module RemoteServerTest
            "expected Skill toggle to be disabled while the agent is running")
     assert(js[:body].include?("function agentComposerAction"),
            "expected Agent detail composer action to switch by running state")
-    assert(js[:body].include?('class="danger" type="button" data-agent-action="stop" data-agent-key="${escapeAttr(agent.key)}">Stop agent'),
+    assert(js[:body].include?('class="danger ds-button" data-variant="danger" type="button" data-agent-action="stop" data-agent-key="${escapeAttr(agent.key)}">Stop agent'),
            "expected running agents to replace Send prompt with Stop agent")
     assert(js[:body].include?('enterkeyhint="enter"'),
            "expected Agent composer textarea to hint newline-capable keyboards")
@@ -4264,6 +4294,18 @@ module RemoteServerTest
            "expected Remote UI to render a loading state before empty conversations are fetched")
     assert(js[:body].include?("function tychoLoadingState"),
            "expected Remote UI loading states to share the pulsating Tycho logo")
+    assert(js[:body].include?("function emptyState") &&
+           js[:body].include?('data-state="${escapeAttr(stateName)}"'),
+           "expected empty states to expose a stable state contract without live-region semantics")
+    assert(js[:body].include?("function feedbackMessage") &&
+           js[:body].include?('options.announce === "assertive"') &&
+           js[:body].include?('options.announce === "polite"'),
+           "expected feedback messages to separate visual intent from announcement timing")
+    assert(js[:body].include?('data-state="loading" role="status" aria-live="polite" aria-atomic="true"'),
+           "expected loading states to announce progress once as a polite atomic status")
+    assert(js[:body].include?('feedbackMessage("Diff unavailable", diff.error, {') &&
+           js[:body].include?('announce: "assertive"'),
+           "expected asynchronous diff failures to use assertive feedback semantics")
     assert(js[:body].include?("Loading conversation"),
            "expected Remote UI conversation loading copy to avoid showing an empty state while fetching")
     assert(js[:body].include?("Loading pull requests") &&

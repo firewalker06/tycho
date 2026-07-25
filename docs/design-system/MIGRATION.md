@@ -2,7 +2,7 @@
 
 ## Current adoption
 
-The system is loaded on every Remote UI route. Migrated product areas now include Settings → Response style, Session loop, server connection/token, and harness-catalog controls; agent/project/schedule lifecycle forms; structured inquiries; the Agents searchable collection; focused project/agent/summary/attachment/diff headers; representative agent/schedule/project/setup/diff statuses; primary non-modal menu overlays; consequential confirmation flows; neutral factual badges; and shared form/Settings composite structure. The agent form progressively discloses lower-frequency runtime configuration while keeping its selected defaults visible. Harness catalog overrides use the same rule: fields collapse, configured values remain visible in the summary. The preview route exercises all first-release components.
+The system is loaded on every Remote UI route. Migrated product areas now include Settings → Response style, Session loop, server connection/token, and harness-catalog controls; agent/project/schedule lifecycle forms; structured inquiries; the Agents searchable collection; focused project/agent/summary/attachment/diff headers; representative agent/schedule/project/setup/diff statuses; primary non-modal menu overlays; consequential confirmation flows; neutral factual badges; shared route-level loading, empty, and known-intent feedback states; all generated legacy action adapters; and shared form/Settings composite structure. The agent form progressively discloses lower-frequency runtime configuration while keeping its selected defaults visible. Harness catalog overrides use the same rule: fields collapse, configured values remain visible in the summary. The preview route exercises all first-release components.
 
 Classification:
 
@@ -55,10 +55,12 @@ Current baseline:
 - 5 focused route families use one detail-header anatomy and responsive contract.
 - 3 remaining Settings form families use shared labels, descriptions, inputs, actions, and pending semantics.
 - 15 factual metadata occurrences use one neutral badge contract; neutral product states remain in the status taxonomy.
+- Route-level loading states announce politely, settled empty states remain quiet, and migrated asynchronous failures announce assertively.
+- Every generated `primary`, `danger`, `inline-icon-button`, `icon-button`, and `button-link` action consumes `ds-button`; icon-only controls also consume `ds-icon-button`.
 - 1 preview route added.
 - Shared system loaded on all routes.
 - Legacy aliases remain; broad route migration is incomplete.
 
 ## Next implementation wave
 
-Normalize remaining inline notice, recovery, loading, and empty states next. Migrate only states with known intent and announcement timing to `ds-alert`, `ds-spinner`, `ds-skeleton`, or `ds-empty-state`; keep reader-specific diff, attachment, and conversation toolbars product-owned until another surface demonstrates the same action model. Extend searchable collections only after a second product collection demonstrates the same filtering and result-feedback needs.
+Audit remaining surface adapters and remove duplicate card visuals only after route-by-route comparison. Migrate a second searchable collection only if it demonstrates the same filtering and result-feedback needs. Keep reader-specific diff, attachment, and conversation toolbars product-owned until another surface demonstrates the same action model.

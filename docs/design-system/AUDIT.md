@@ -74,10 +74,10 @@ Authentication is a local operator model, not a role/permission matrix. No produ
 
 | Existing patterns | Occurrences | Main risk | Canonical target | Migration |
 | --- | --- | --- | --- | --- |
-| Generic `button`, `primary`, `danger`, `inline-icon-button`, `icon-button` | Nearly every route | divergent states and geometry | `ds-button`, `ds-icon-button` | Small adapter: keep behavior/data attributes, add classes and semantic `data-variant` |
+| Generic `button`, `primary`, `danger`, `inline-icon-button`, `icon-button` | Nearly every route | divergent states and geometry | `ds-button`, `ds-icon-button` | All generated legacy action adapters now consume the shared contract; product-specific menus, tabs, and reader controls remain local |
 | `field-card`, local labels/hints/controls | all create/edit/settings flows | inconsistent relationships and state styling | `ds-field`, `ds-input` | Lifecycle, inquiry, response-style, Session loop, server, token, and harness-catalog forms migrated |
 | `summary-card`, `detail-card`, settings-only panels | all index/detail pages | repeated surface values | `ds-surface` | Add canonical class, retain product layout class |
-| `notice`, recovery/inquiry banners | settings and agent states | role/state inconsistencies | `ds-alert` | Direct replacement where message intent is known |
+| `notice`, recovery/inquiry banners | settings and agent states | role/state inconsistencies | `ds-alert` | Known-intent guidance, recovery, blocked-agent, schedule-file, PR, and local-diff feedback migrated; rich archive decision surface remains product-owned |
 | `pill`, `chip`, status marks | lists, detail, settings | visual vocabulary overlaps semantics | `ds-metadata-badge`, `ds-status`, plus product status mark | Factual metadata and representative status states migrated; selection/filter/action pills remain product-owned |
 | bespoke flex/grid wrappers | all routes | repeated gap and collapse rules | `ds-stack`, `ds-cluster`, `ds-grid` | Adopt in new and touched markup |
 | lifecycle form sections/actions | agent, project, schedule, message, loop | repeated section anatomy mixed with product grids; low-frequency agent runtime choices dominated the create form | `ds-form-layout`, `ds-form-section-heading`, `ds-form-actions` plus product Advanced disclosure | Shared structure migrated; agent defaults remain visible in the closed summary; product columns and sticky actions remain local |

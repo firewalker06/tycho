@@ -43,6 +43,9 @@ The baseline settings capture was taken before the isolated project fixture was 
 - `implementation/detail-header-project-390x844.png` and `detail-header-project-1440x900.png` — focused project route using the shared Back, identity, title/metadata, and contextual-action anatomy.
 - `implementation/detail-header-agent-summary-1440x900.png` — focused agent summary retaining its view-layout and conversation action triggers inside the shared detail header.
 - `implementation/project-metadata-badges-1440x900.png` — project branch metadata using the neutral factual badge contract beside a semantic Clean status.
+- `implementation/action-controls-project-390x844.png` — mobile project actions consuming the shared button and icon-button geometry while retaining route-specific placement.
+- `implementation/action-controls-project-focus-390x844.png` — migrated New agent action with browser focus and the shared visible focus treatment.
+- `implementation/feedback-states-390x844.png` and `feedback-states-1440x900.png` — shared informational, warning, danger, success, settled-empty, and polite loading states at mobile and desktop widths.
 - `implementation/agent-sort-menu-open-390x844.png` — shared menu overlay with a visible keyboard focus ring at mobile width.
 - `implementation/design-system-preview-390x844.png`, `design-system-preview-768x1024.png`, and `design-system-preview-1440x900.png` — current `/design-system` reference page including separate metadata/status, overlay, confirmation, detail-header, form, section-navigation, and searchable-collection contracts.
 
