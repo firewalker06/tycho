@@ -11,6 +11,7 @@ module HQ
     REASONING_EFFORT_ORDER = %w[minimal low medium high xhigh max].freeze
     CLAUDE_MODEL_SUGGESTIONS = %w[
       claude-fable-5
+      claude-opus-5
       claude-opus-4-8
       claude-sonnet-5
       claude-haiku-4-5
