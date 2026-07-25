@@ -2278,6 +2278,10 @@ select {
   overflow: hidden;
 }
 
+.detail-card.schedule-card {
+  overflow: visible;
+}
+
 #settings-push-notifications {
   scroll-margin-top: calc(var(--safe-area-top) + 76px);
 }

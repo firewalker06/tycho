@@ -222,6 +222,38 @@ def write_smoke_script(path)
       }
 
       try {
+        await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
+        await page.waitForSelector("[data-state-key='schedule-now-details']", { state: "visible", timeout: 10_000 });
+        const scheduleMenuGeometry = await page.evaluate(() => {
+          const details = document.querySelector("[data-state-key='schedule-now-details']");
+          details.open = true;
+          const rows = Array.from(document.querySelectorAll(".schedule-row"));
+          const row = rows.at(-1);
+          const menu = row?.querySelector(".schedule-action-menu");
+          const popover = menu?.querySelector(".schedule-action-popover");
+          const card = row?.closest(".schedule-card");
+          if (!menu || !popover || !card) return { found: false };
+
+          menu.open = true;
+          const popoverRect = popover.getBoundingClientRect();
+          const cardRect = card.getBoundingClientRect();
+          const sampleX = popoverRect.left + (popoverRect.width / 2);
+          const sampleY = Math.min(popoverRect.bottom - 2, cardRect.bottom + 8);
+          const hit = document.elementFromPoint(sampleX, sampleY);
+          return {
+            found: true,
+            popoverBottom: popoverRect.bottom,
+            cardBottom: cardRect.bottom,
+            cardOverflow: getComputedStyle(card).overflow,
+            visibleBeyondCard: popover.contains(hit),
+          };
+        });
+        if (!scheduleMenuGeometry.found ||
+            (scheduleMenuGeometry.popoverBottom > scheduleMenuGeometry.cardBottom &&
+             !scheduleMenuGeometry.visibleBeyondCard)) {
+          throw new Error(`Schedule action menu is clipped by its card: ${JSON.stringify(scheduleMenuGeometry)}`);
+        }
+
         const agentsRegressionPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
         const agentsRegressionErrors = [];
         agentsRegressionPage.on("console", (message) => {
