@@ -4068,6 +4068,8 @@ module RemoteServerTest
            "expected historical inquiry responses to show blank user feedback")
     assert(js[:body].include?("function inquiryResponseBlock"),
            "expected Remote UI to detect inquiry response messages")
+    assert(js[:body].include?("function runSummaryNumber"),
+           "expected Remote UI to label each run summary with its stable run number")
     assert(js[:body].include?('return iconSvg("badgeQuestionMark")'),
            "expected Remote UI inquiry responses to reuse the inquiry icon")
     assert(js[:body].include?("function humanizeJsonKey"),

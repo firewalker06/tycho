@@ -65,6 +65,7 @@ module HQ
         )
       end
       @agent.cost_snapshot = cost_snapshot if cost_snapshot
+      @agent.reconcile_run_count!(runs.length)
       events.length
     rescue StandardError => e
       HQ.logger.error("AgentChatLog") { "Rebuild failed for #{@agent.key}: #{e.message}" } if defined?(HQ.logger)
@@ -119,6 +120,7 @@ module HQ
       chat_system = []
       system_log = []
       inquiry_responses = inquiry_response_metadata_by_signature(events)
+      run_summary_number = 0
 
       events.each_with_index do |event, sequence|
         timestamp = parse_time(event["created_at"])
@@ -170,12 +172,13 @@ module HQ
           chat_system << entry
           system_log << entry
         when "run_summary"
+          run_summary_number += 1
           entry = Parser::SystemEntry.new(
             type: :run_summary,
             content: event["content"].to_s,
             timestamp:,
             tool_name: nil,
-            metadata: run_summary_metadata_for(event, sequence:)
+            metadata: run_summary_metadata_for(event, sequence:, run_number: run_summary_number)
           )
           chat_system << entry
           system_log << entry
@@ -277,10 +280,11 @@ module HQ
       id.empty? ? nil : id
     end
 
-    def run_summary_metadata_for(event, sequence: nil)
+    def run_summary_metadata_for(event, sequence: nil, run_number: nil)
       metadata = event["metadata"].is_a?(Hash) ? event["metadata"].dup : {}
       status = event["status"].to_s.strip
       metadata["status"] = status unless status.empty?
+      metadata["run_number"] ||= run_number unless run_number.nil?
       metadata["summary_id"] ||= summary_id_for(event, sequence)
       merge_sequence_metadata(metadata, sequence)
     end
@@ -433,7 +437,10 @@ module HQ
           "content" => "(rebuilt from raw.log run ##{run_index + 1})",
           "status" => "success",
           "created_at" => completed_at.iso8601,
-          "metadata" => { "cost_snapshot" => cost_agent.cost_snapshot }
+          "metadata" => {
+            "run_number" => run_index + 1,
+            "cost_snapshot" => cost_agent.cost_snapshot
+          }
         }
       end
 
