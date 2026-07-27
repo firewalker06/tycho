@@ -2249,6 +2249,106 @@ select {
   border-bottom-width: 0;
 }
 
+.agent-ledger.ui-surface {
+  display: grid;
+  overflow: hidden;
+  padding: 0;
+}
+
+.agent-ledger .agent-group {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.agent-ledger .agent-group + .agent-group {
+  border-top: 1px solid var(--border);
+}
+
+.agent-ledger .group-title {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto var(--ds-touch-target);
+  min-height: var(--ds-touch-target);
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel-soft) 42%, var(--panel));
+  padding: 0 4px 0 12px;
+}
+
+.agent-ledger .agent-group.empty .group-title {
+  border-bottom: 0;
+  background: transparent;
+}
+
+.agent-ledger .agent-group-project {
+  display: block;
+}
+
+.agent-ledger .agent-group-project :is(a, strong) {
+  display: flex;
+  min-height: var(--ds-touch-target);
+  align-items: center;
+}
+
+.agent-ledger .agent-group-project-title {
+  gap: 0.45em;
+}
+
+.agent-ledger .agent-group-project-title > .ui-icon {
+  flex: 0 0 auto;
+  width: 1em;
+  height: 1em;
+}
+
+.agent-ledger .agent-group.empty .agent-group-project :is(a, strong) {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.agent-group-count {
+  display: inline-grid;
+  min-width: 22px;
+  min-height: 22px;
+  place-items: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-soft) 72%, var(--panel));
+  color: var(--muted);
+  padding: 0 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.agent-ledger .agent-group-create {
+  width: var(--ds-touch-target);
+  min-width: var(--ds-touch-target);
+  min-height: var(--ds-touch-target);
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  padding: 0;
+}
+
+.agent-ledger .agent-group-create:hover,
+.agent-ledger .agent-group-create:focus-visible {
+  background: var(--accent-soft);
+}
+
+.agent-ledger .agent-row {
+  min-height: 58px;
+  background: color-mix(in srgb, var(--panel) 84%, var(--panel-2));
+  padding: 7px 10px 7px 12px;
+}
+
+.agent-flat-list.ui-surface {
+  padding: 0;
+}
+
+.agent-flat-list .agent-row {
+  min-height: 58px;
+  padding: 7px 10px 7px 12px;
+}
+
 .read-only-project-fields {
   padding-top: 12px;
 }

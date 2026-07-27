@@ -1,0 +1,1080 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tycho Agents redesign concepts</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --canvas: #242631;
+      --surface: #292b38;
+      --surface-2: #303342;
+      --surface-3: #383b4d;
+      --text: #f8f8f2;
+      --muted: #bdc2db;
+      --faint: #878da9;
+      --border: #6272a4;
+      --border-soft: rgb(98 114 164 / 0.42);
+      --accent: #bd93f9;
+      --accent-soft: rgb(189 147 249 / 0.16);
+      --green: #50fa7b;
+      --green-soft: rgb(80 250 123 / 0.12);
+      --orange: #ffb86c;
+      --orange-soft: rgb(255 184 108 / 0.12);
+      --red: #ff6e78;
+      --red-soft: rgb(255 110 120 / 0.12);
+      --cyan: #8be9fd;
+      --pink: #ff79c6;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      min-height: 100%;
+      margin: 0;
+      background: #171821;
+    }
+
+    body {
+      display: grid;
+      place-items: start;
+      color: var(--text);
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+    }
+
+    .phone {
+      position: relative;
+      width: 390px;
+      height: 844px;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 86% -8%, rgb(189 147 249 / 0.12), transparent 28%),
+        var(--canvas);
+    }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 28px;
+      padding: 7px 16px 0;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    .device-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+    }
+
+    .signal {
+      letter-spacing: -2px;
+    }
+
+    .battery {
+      display: inline-block;
+      width: 21px;
+      height: 10px;
+      border: 1.5px solid var(--muted);
+      border-radius: 3px;
+      padding: 1.5px;
+    }
+
+    .battery::after {
+      display: block;
+      width: 12px;
+      height: 5px;
+      border-radius: 1px;
+      background: var(--text);
+      content: "";
+    }
+
+    .app-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      height: 78px;
+      padding: 8px 16px 10px;
+      border-bottom: 1px solid var(--border-soft);
+    }
+
+    .title-lockup {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      gap: 11px;
+    }
+
+    .app-mark {
+      display: grid;
+      flex: 0 0 auto;
+      place-items: center;
+      width: 36px;
+      height: 36px;
+      border: 2px solid var(--accent);
+      border-right-color: var(--orange);
+      border-radius: 50%;
+      color: var(--muted);
+      font-size: 16px;
+      transform: rotate(-18deg);
+    }
+
+    .app-mark span {
+      transform: rotate(18deg);
+    }
+
+    .title-copy {
+      min-width: 0;
+    }
+
+    .title-copy h1 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+
+    .title-copy p {
+      overflow: hidden;
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .icon-button,
+    .add-button {
+      display: grid;
+      place-items: center;
+      min-width: 38px;
+      height: 38px;
+      border: 1px solid var(--border-soft);
+      border-radius: 10px;
+      background: transparent;
+      font-size: 20px;
+    }
+
+    .add-button {
+      border-color: rgb(189 147 249 / 0.65);
+      background: var(--accent);
+      color: #282a36;
+      font-size: 26px;
+      font-weight: 500;
+      box-shadow: inset 0 -2px rgb(68 71 90 / 0.25);
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 42px 42px;
+      align-items: center;
+      height: 56px;
+      gap: 7px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border-soft);
+      background: rgb(36 38 49 / 0.92);
+    }
+
+    .search {
+      display: flex;
+      align-items: center;
+      height: 40px;
+      gap: 8px;
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgb(31 32 41 / 0.42);
+      padding: 0 11px;
+      color: var(--muted);
+    }
+
+    .search span {
+      font-size: 18px;
+    }
+
+    .search input {
+      min-width: 0;
+      width: 100%;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    .search input::placeholder {
+      color: var(--faint);
+    }
+
+    .toolbar .icon-button {
+      width: 42px;
+      height: 40px;
+      border-color: var(--border);
+      border-radius: 10px;
+      font-size: 16px;
+    }
+
+    .content {
+      position: absolute;
+      inset: 162px 0 68px;
+      overflow: hidden;
+    }
+
+    .concept {
+      display: none;
+      height: 100%;
+    }
+
+    body[data-variant="ledger"] .concept-ledger,
+    body[data-variant="pulse"] .concept-pulse,
+    body[data-variant="rail"] .concept-rail {
+      display: block;
+    }
+
+    .bottom-nav {
+      position: absolute;
+      z-index: 4;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      height: 68px;
+      border-top: 1px solid var(--border);
+      background: rgb(36 38 49 / 0.98);
+      box-shadow: 0 -12px 28px rgb(0 0 0 / 0.16);
+    }
+
+    .nav-item {
+      display: grid;
+      place-items: center;
+      align-content: center;
+      gap: 2px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .nav-item .nav-icon {
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .nav-item.active {
+      margin: 7px 10px;
+      border-radius: 11px;
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    /* Concept 1: compact grouped ledger */
+    .ledger-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 32px;
+      padding: 0 14px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .density-tag {
+      color: var(--accent);
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .ledger-list {
+      margin: 0 10px;
+      overflow: hidden;
+      border: 1px solid var(--border-soft);
+      border-radius: 12px;
+      background: rgb(41 43 56 / 0.86);
+    }
+
+    .ledger-group + .ledger-group {
+      border-top: 1px solid var(--border-soft);
+    }
+
+    .ledger-group-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      align-items: center;
+      min-height: 42px;
+      gap: 8px;
+      padding: 0 8px 0 12px;
+      background: rgb(48 51 66 / 0.55);
+    }
+
+    .project-name {
+      overflow: hidden;
+      font-size: 13px;
+      font-weight: 750;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .project-count {
+      min-width: 21px;
+      border-radius: 999px;
+      background: var(--surface-3);
+      padding: 3px 7px;
+      color: var(--muted);
+      font-size: 10px;
+      text-align: center;
+    }
+
+    .mini-add {
+      display: grid;
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--accent);
+      font-size: 20px;
+    }
+
+    .ledger-agent {
+      display: grid;
+      grid-template-columns: 31px minmax(0, 1fr) auto;
+      align-items: center;
+      min-height: 58px;
+      gap: 9px;
+      padding: 7px 10px 7px 12px;
+      border-top: 1px solid var(--border-soft);
+      background: rgb(36 38 49 / 0.4);
+    }
+
+    .agent-glyph {
+      display: grid;
+      place-items: center;
+      width: 31px;
+      height: 31px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--surface-3);
+      color: var(--green);
+      font-size: 16px;
+    }
+
+    .agent-copy {
+      min-width: 0;
+    }
+
+    .agent-copy strong {
+      display: block;
+      overflow: hidden;
+      font-size: 13px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .agent-copy span {
+      display: block;
+      overflow: hidden;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 10.5px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 23px;
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      padding: 0 8px;
+      font-size: 10px;
+      font-weight: 750;
+    }
+
+    .status.success {
+      background: var(--green-soft);
+      color: var(--green);
+    }
+
+    .status.running {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .status.input {
+      background: var(--orange-soft);
+      color: var(--orange);
+    }
+
+    .status.failed {
+      background: var(--red-soft);
+      color: var(--red);
+    }
+
+    .ledger-group.empty .ledger-group-header {
+      min-height: 38px;
+      background: transparent;
+      color: var(--muted);
+    }
+
+    .ledger-group.empty .project-name {
+      font-weight: 600;
+    }
+
+    /* Concept 2: status-first pulse board */
+    .pulse-wrap {
+      padding: 10px 10px 0;
+    }
+
+    .pulse-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      overflow: hidden;
+      border: 1px solid var(--border-soft);
+      border-radius: 11px;
+      background: var(--surface);
+    }
+
+    .pulse-stat {
+      display: grid;
+      gap: 2px;
+      min-height: 48px;
+      padding: 8px 10px;
+    }
+
+    .pulse-stat + .pulse-stat {
+      border-left: 1px solid var(--border-soft);
+    }
+
+    .pulse-stat strong {
+      font-size: 17px;
+      line-height: 1;
+    }
+
+    .pulse-stat span {
+      color: var(--muted);
+      font-size: 9px;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+
+    .pulse-stat.attention strong {
+      color: var(--orange);
+    }
+
+    .pulse-stat.running strong {
+      color: var(--accent);
+    }
+
+    .filter-chips {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 9px 0 8px;
+      overflow: hidden;
+    }
+
+    .filter-chip {
+      flex: 0 0 auto;
+      border: 1px solid var(--border-soft);
+      border-radius: 999px;
+      background: transparent;
+      padding: 5px 9px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .filter-chip.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .pulse-list {
+      display: grid;
+      gap: 6px;
+    }
+
+    .pulse-card {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      min-height: 66px;
+      overflow: hidden;
+      border: 1px solid var(--border-soft);
+      border-radius: 10px;
+      background: linear-gradient(100deg, rgb(48 51 66 / 0.55), rgb(41 43 56 / 0.9));
+      padding: 8px 10px 8px 15px;
+    }
+
+    .pulse-card::before {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 3px;
+      background: var(--green);
+      content: "";
+    }
+
+    .pulse-card.running::before {
+      background: var(--accent);
+    }
+
+    .pulse-card.input::before {
+      background: var(--orange);
+    }
+
+    .pulse-card.failed::before {
+      background: var(--red);
+    }
+
+    .pulse-main {
+      min-width: 0;
+    }
+
+    .pulse-title {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      gap: 7px;
+    }
+
+    .pulse-title strong {
+      overflow: hidden;
+      font-size: 13px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .project-badge {
+      flex: 0 1 auto;
+      overflow: hidden;
+      max-width: 96px;
+      border-radius: 5px;
+      background: rgb(98 114 164 / 0.22);
+      padding: 3px 6px;
+      color: var(--cyan);
+      font-size: 9px;
+      font-weight: 700;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .pulse-main p {
+      overflow: hidden;
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 10.5px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .pulse-time {
+      display: grid;
+      justify-items: end;
+      gap: 4px;
+      color: var(--faint);
+      font-size: 9px;
+    }
+
+    .pulse-time .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 4px var(--green-soft);
+    }
+
+    .pulse-card.running .dot {
+      background: var(--accent);
+      box-shadow: 0 0 0 4px var(--accent-soft);
+    }
+
+    .pulse-card.input .dot {
+      background: var(--orange);
+      box-shadow: 0 0 0 4px var(--orange-soft);
+    }
+
+    .pulse-card.failed .dot {
+      background: var(--red);
+      box-shadow: 0 0 0 4px var(--red-soft);
+    }
+
+    /* Concept 3: project rail + focused workspace */
+    .rail-layout {
+      display: grid;
+      grid-template-columns: 116px minmax(0, 1fr);
+      height: 100%;
+    }
+
+    .project-rail {
+      overflow: hidden;
+      border-right: 1px solid var(--border-soft);
+      background: rgb(31 32 41 / 0.3);
+      padding: 9px 7px;
+    }
+
+    .rail-label {
+      padding: 0 7px 7px;
+      color: var(--faint);
+      font-size: 9px;
+      font-weight: 750;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+
+    .rail-project {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      width: 100%;
+      min-height: 42px;
+      gap: 5px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      padding: 6px 7px;
+      color: var(--muted);
+      text-align: left;
+    }
+
+    .rail-project + .rail-project {
+      margin-top: 2px;
+    }
+
+    .rail-project.active {
+      background: var(--accent-soft);
+      color: var(--text);
+      box-shadow: inset 2px 0 var(--accent);
+    }
+
+    .rail-project strong {
+      overflow: hidden;
+      font-size: 10.5px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .rail-project span {
+      min-width: 18px;
+      border-radius: 999px;
+      background: rgb(98 114 164 / 0.22);
+      padding: 3px 5px;
+      color: var(--muted);
+      font-size: 8px;
+      text-align: center;
+    }
+
+    .rail-project.active span {
+      background: rgb(189 147 249 / 0.22);
+      color: var(--accent);
+    }
+
+    .focused-pane {
+      min-width: 0;
+      padding: 11px 10px;
+    }
+
+    .focused-project-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 34px;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .focused-project-header strong {
+      display: block;
+      overflow: hidden;
+      font-size: 16px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .focused-project-header span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 9.5px;
+    }
+
+    .focused-project-header button {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border: 1px solid var(--accent);
+      border-radius: 9px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 20px;
+    }
+
+    .focused-section-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+      color: var(--faint);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .focus-agent {
+      display: grid;
+      grid-template-columns: 8px minmax(0, 1fr);
+      overflow: hidden;
+      min-height: 76px;
+      border: 1px solid var(--border-soft);
+      border-radius: 10px;
+      background: var(--surface);
+    }
+
+    .focus-agent + .focus-agent {
+      margin-top: 7px;
+    }
+
+    .focus-signal {
+      background: var(--accent);
+    }
+
+    .focus-agent.success .focus-signal {
+      background: var(--green);
+    }
+
+    .focus-agent.input .focus-signal {
+      background: var(--orange);
+    }
+
+    .focus-copy {
+      min-width: 0;
+      padding: 9px 9px 8px;
+    }
+
+    .focus-title {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .focus-title strong {
+      overflow: hidden;
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .tiny-status {
+      flex: 0 0 auto;
+      color: var(--accent);
+      font-size: 8px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .focus-agent.success .tiny-status {
+      color: var(--green);
+    }
+
+    .focus-agent.input .tiny-status {
+      color: var(--orange);
+    }
+
+    .focus-copy p {
+      display: -webkit-box;
+      overflow: hidden;
+      margin: 5px 0;
+      color: var(--muted);
+      font-size: 9.5px;
+      line-height: 1.35;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+
+    .focus-meta {
+      color: var(--faint);
+      font-size: 8.5px;
+    }
+
+    .rail-insight {
+      margin-top: 9px;
+      border: 1px dashed var(--border-soft);
+      border-radius: 9px;
+      padding: 8px;
+      color: var(--muted);
+      font-size: 9px;
+      line-height: 1.4;
+    }
+
+    .rail-insight strong {
+      display: block;
+      margin-bottom: 3px;
+      color: var(--cyan);
+      font-size: 9px;
+      text-transform: uppercase;
+    }
+  </style>
+</head>
+<body data-variant="ledger">
+  <main class="phone">
+    <div class="status-bar">
+      <span>15:01</span>
+      <span class="device-status"><span class="signal">▮▮▮</span><span>⌁</span><span class="battery"></span></span>
+    </div>
+
+    <header class="app-header">
+      <div class="title-lockup">
+        <div class="app-mark"><span>⋮</span></div>
+        <div class="title-copy">
+          <h1>Agents</h1>
+          <p id="page-subtitle">6 managed · 8 projects · 1 unread</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="add-button" aria-label="New agent">+</button>
+        <button class="icon-button" aria-label="More">•••</button>
+      </div>
+    </header>
+
+    <section class="toolbar">
+      <label class="search">
+        <span>⌕</span>
+        <input type="search" placeholder="Search agents or projects">
+      </label>
+      <button class="icon-button" aria-label="Sort">↧</button>
+      <button class="icon-button" aria-label="Select">✓</button>
+    </section>
+
+    <section class="content">
+      <section class="concept concept-ledger" aria-label="Compact grouped ledger concept">
+        <div class="ledger-summary">
+          <span>6 agents across 8 projects</span>
+          <span class="density-tag">Grouped ledger</span>
+        </div>
+        <div class="ledger-list">
+          <section class="ledger-group">
+            <div class="ledger-group-header">
+              <span class="project-name">atasgudang</span>
+              <span class="project-count">1</span>
+              <button class="mini-add" aria-label="New atasgudang agent">+</button>
+            </div>
+            <div class="ledger-agent">
+              <span class="agent-glyph">♙</span>
+              <div class="agent-copy">
+                <strong>Log All RSS Feeds</strong>
+                <span>18h · codex · gpt-5.6-sol · high</span>
+              </div>
+              <span class="status success">Succeeded</span>
+            </div>
+          </section>
+          <section class="ledger-group">
+            <div class="ledger-group-header">
+              <span class="project-name">tycho</span>
+              <span class="project-count">2</span>
+              <button class="mini-add" aria-label="New tycho agent">+</button>
+            </div>
+            <div class="ledger-agent">
+              <span class="agent-glyph">♙</span>
+              <div class="agent-copy">
+                <strong>Secondbrain upkeep</strong>
+                <span>2m · claude · opus-5 · high</span>
+              </div>
+              <span class="status running">Running</span>
+            </div>
+            <div class="ledger-agent">
+              <span class="agent-glyph">♙</span>
+              <div class="agent-copy">
+                <strong>Remote UI review</strong>
+                <span>24m · codex · gpt-5.6-sol · medium</span>
+              </div>
+              <span class="status input">Input</span>
+            </div>
+          </section>
+          <section class="ledger-group empty">
+            <div class="ledger-group-header">
+              <span class="project-name">Clipforge</span>
+              <span class="project-count">0</span>
+              <button class="mini-add" aria-label="New Clipforge agent">+</button>
+            </div>
+          </section>
+          <section class="ledger-group empty">
+            <div class="ledger-group-header">
+              <span class="project-name">Clipforge Native</span>
+              <span class="project-count">0</span>
+              <button class="mini-add" aria-label="New Clipforge Native agent">+</button>
+            </div>
+          </section>
+          <section class="ledger-group">
+            <div class="ledger-group-header">
+              <span class="project-name">dotfiles</span>
+              <span class="project-count">1</span>
+              <button class="mini-add" aria-label="New dotfiles agent">+</button>
+            </div>
+            <div class="ledger-agent">
+              <span class="agent-glyph">♙</span>
+              <div class="agent-copy">
+                <strong>Sync workstation config</strong>
+                <span>3h · codex · gpt-5.4 · low</span>
+              </div>
+              <span class="status failed">Failed</span>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="concept concept-pulse" aria-label="Status-first pulse board concept">
+        <div class="pulse-wrap">
+          <div class="pulse-stats">
+            <div class="pulse-stat running"><strong>2</strong><span>Active now</span></div>
+            <div class="pulse-stat attention"><strong>1</strong><span>Needs you</span></div>
+            <div class="pulse-stat"><strong>6</strong><span>Last 24h</span></div>
+          </div>
+          <div class="filter-chips">
+            <button class="filter-chip active">All 6</button>
+            <button class="filter-chip">Active 2</button>
+            <button class="filter-chip">Needs input 1</button>
+            <button class="filter-chip">Failed 1</button>
+          </div>
+          <div class="pulse-list">
+            <article class="pulse-card input">
+              <div class="pulse-main">
+                <div class="pulse-title"><strong>Remote UI review</strong><span class="project-badge">tycho</span></div>
+                <p>Choose between the three density directions.</p>
+              </div>
+              <div class="pulse-time"><span class="dot"></span><span>24m</span></div>
+            </article>
+            <article class="pulse-card running">
+              <div class="pulse-main">
+                <div class="pulse-title"><strong>Secondbrain upkeep</strong><span class="project-badge">tycho</span></div>
+                <p>Indexing new notes and pruning stale links…</p>
+              </div>
+              <div class="pulse-time"><span class="dot"></span><span>2m</span></div>
+            </article>
+            <article class="pulse-card">
+              <div class="pulse-main">
+                <div class="pulse-title"><strong>Log All RSS Feeds</strong><span class="project-badge">atasgudang</span></div>
+                <p>Completed with 14 new entries and no errors.</p>
+              </div>
+              <div class="pulse-time"><span class="dot"></span><span>18h</span></div>
+            </article>
+            <article class="pulse-card failed">
+              <div class="pulse-main">
+                <div class="pulse-title"><strong>Sync workstation config</strong><span class="project-badge">dotfiles</span></div>
+                <p>Push rejected: remote branch changed.</p>
+              </div>
+              <div class="pulse-time"><span class="dot"></span><span>3h</span></div>
+            </article>
+            <article class="pulse-card">
+              <div class="pulse-main">
+                <div class="pulse-title"><strong>Weekly dependency scan</strong><span class="project-badge">mairu</span></div>
+                <p>No vulnerable packages found.</p>
+              </div>
+              <div class="pulse-time"><span class="dot"></span><span>1d</span></div>
+            </article>
+            <article class="pulse-card">
+              <div class="pulse-main">
+                <div class="pulse-title"><strong>Inbox triage</strong><span class="project-badge">secondbrain</span></div>
+                <p>Archived 22 resolved research threads.</p>
+              </div>
+              <div class="pulse-time"><span class="dot"></span><span>1d</span></div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="concept concept-rail" aria-label="Project rail and focused workspace concept">
+        <div class="rail-layout">
+          <aside class="project-rail">
+            <div class="rail-label">Projects</div>
+            <button class="rail-project"><strong>atasgudang</strong><span>1</span></button>
+            <button class="rail-project active"><strong>tycho</strong><span>2</span></button>
+            <button class="rail-project"><strong>Clipforge</strong><span>0</span></button>
+            <button class="rail-project"><strong>Clipforge Native</strong><span>0</span></button>
+            <button class="rail-project"><strong>dotfiles</strong><span>1</span></button>
+            <button class="rail-project"><strong>mairu</strong><span>1</span></button>
+            <button class="rail-project"><strong>secondbrain</strong><span>1</span></button>
+            <button class="rail-project"><strong>website</strong><span>0</span></button>
+          </aside>
+          <section class="focused-pane">
+            <div class="focused-project-header">
+              <div>
+                <strong>tycho</strong>
+                <span>2 agents · 1 active · 1 needs input</span>
+              </div>
+              <button aria-label="New tycho agent">+</button>
+            </div>
+            <div class="focused-section-label"><span>Agents</span><span>Updated now</span></div>
+            <article class="focus-agent">
+              <span class="focus-signal"></span>
+              <div class="focus-copy">
+                <div class="focus-title"><strong>Secondbrain upkeep</strong><span class="tiny-status">Running</span></div>
+                <p>Indexing new notes and pruning stale links across the workspace.</p>
+                <div class="focus-meta">claude · opus-5 · high · run #18</div>
+              </div>
+            </article>
+            <article class="focus-agent input">
+              <span class="focus-signal"></span>
+              <div class="focus-copy">
+                <div class="focus-title"><strong>Remote UI review</strong><span class="tiny-status">Input</span></div>
+                <p>Waiting for a choice between three compact Agents page directions.</p>
+                <div class="focus-meta">codex · gpt-5.6-sol · medium · run #4</div>
+              </div>
+            </article>
+            <div class="rail-insight">
+              <strong>Project focus</strong>
+              The rail keeps all eight projects one tap away while the main pane spends its space only on the selected project.
+            </div>
+          </section>
+        </div>
+      </section>
+    </section>
+
+    <nav class="bottom-nav" aria-label="Primary navigation">
+      <div class="nav-item"><span class="nav-icon">⌁</span><span>Now</span></div>
+      <div class="nav-item active"><span class="nav-icon">♙</span><span>Agents</span></div>
+      <div class="nav-item"><span class="nav-icon">⚙</span><span>Settings</span></div>
+    </nav>
+  </main>
+
+  <script>
+    const variant = new URLSearchParams(window.location.search).get("variant") || "ledger";
+    const variants = new Set(["ledger", "pulse", "rail"]);
+    document.body.dataset.variant = variants.has(variant) ? variant : "ledger";
+    const subtitles = {
+      ledger: "6 managed · compact project ledger",
+      pulse: "6 managed · status-first operations",
+      rail: "8 projects · focused workspace",
+    };
+    document.querySelector("#page-subtitle").textContent = subtitles[document.body.dataset.variant];
+  </script>
+</body>
+</html>

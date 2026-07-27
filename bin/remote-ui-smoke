@@ -531,6 +531,68 @@ def write_smoke_script(path)
         );
 
         await agentsRegressionPage.evaluate(() => navigate({ type: "tab", tab: "agents" }));
+        await agentsRegressionPage.evaluate(() => {
+          state.projects = [
+            ...state.projects,
+            { key: "empty-alpha", name: "Empty Alpha", status: "configured" },
+            { key: "empty-beta", name: "Empty Beta", status: "configured" },
+          ];
+          render();
+        });
+        await agentsRegressionPage.waitForSelector(".agent-ledger", { state: "visible", timeout: 10_000 });
+        const groupedLedgerContract = await agentsRegressionPage.evaluate(() => {
+          const ledgers = Array.from(document.querySelectorAll(".agent-ledger"));
+          const groups = Array.from(document.querySelectorAll(".agent-ledger > .agent-group"));
+          const emptyGroups = groups.filter((group) => group.classList.contains("empty"));
+          const rows = Array.from(document.querySelectorAll(".agent-ledger .agent-row"));
+          const createButtons = Array.from(document.querySelectorAll(".agent-ledger .agent-group-create"));
+          const projectIcons = groups.map((group) => {
+            const title = group.querySelector(".agent-group-project-title");
+            const icon = title?.querySelector(":scope > .ui-icon");
+            return {
+              direct: Boolean(icon && icon.parentElement === title),
+              width: icon?.getBoundingClientRect().width,
+              fontSize: title ? Number.parseFloat(getComputedStyle(title).fontSize) : 0,
+            };
+          });
+          return {
+            ledgerCount: ledgers.length,
+            groupCount: groups.length,
+            emptyGroupCount: emptyGroups.length,
+            emptyHeaderHeights: emptyGroups.map((group) => group.querySelector(".group-title")?.getBoundingClientRect().height),
+            rowHeights: rows.map((row) => row.getBoundingClientRect().height),
+            createTargets: createButtons.map((button) => ({
+              label: button.getAttribute("aria-label"),
+              width: button.getBoundingClientRect().width,
+              height: button.getBoundingClientRect().height,
+            })),
+            projectIcons,
+            overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        });
+        if (groupedLedgerContract.ledgerCount !== 1 ||
+            groupedLedgerContract.groupCount !== 3 ||
+            groupedLedgerContract.emptyGroupCount !== 2 ||
+            groupedLedgerContract.emptyHeaderHeights.some((height) => height > 44.5) ||
+            groupedLedgerContract.rowHeights.some((height) => height > 58.5) ||
+            groupedLedgerContract.createTargets.some((target) => (
+              !target.label?.startsWith("New agent for ") ||
+              target.width < 43.5 ||
+              target.height < 43.5
+            )) ||
+            groupedLedgerContract.projectIcons.some((icon) => (
+              !icon.direct ||
+              Math.abs(icon.width - icon.fontSize) > 0.5
+            )) ||
+            groupedLedgerContract.overflow) {
+          throw new Error(`Grouped Agents ledger lost compact accessible geometry: ${JSON.stringify(groupedLedgerContract)}`);
+        }
+        if (captureDir) {
+          await agentsRegressionPage.evaluate(() => window.scrollTo(0, 0));
+          await agentsRegressionPage.locator(".ui-searchable-collection").screenshot({
+            path: path.join(captureDir, "agents-grouped-ledger-390x844.png"),
+          });
+        }
         await agentsRegressionPage.waitForSelector("[data-agent-sort-menu] > summary", { state: "visible", timeout: 10_000 });
         await agentsRegressionPage.click("[data-agent-sort-menu] > summary");
         await agentsRegressionPage.waitForFunction(
