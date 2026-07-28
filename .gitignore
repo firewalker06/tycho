@@ -15,3 +15,8 @@ tmp/
 coverage/
 pkg/
 *ts.net*
+artifacts/design-system/**/*.png
+artifacts/design-system/**/*.jpg
+artifacts/design-system/**/*.jpeg
+artifacts/design-system/**/*.gif
+artifacts/design-system/**/*.webp

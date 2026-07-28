@@ -26,26 +26,26 @@
     <div id="app" class="app-shell">
       <header class="app-header">
         <div class="header-row">
-          <button id="back-button" class="icon-button ds-detail-header__back hidden" type="button" aria-label="Back" title="Back">
+          <button id="back-button" class="icon-button ui-button ui-icon-button ui-detail-header__back hidden" type="button" aria-label="Back" title="Back">
             <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24">
               <path d="m12 19-7-7 7-7"></path>
               <path d="M19 12H5"></path>
             </svg>
             <span class="sr-only">Back</span>
           </button>
-          <div class="identity ds-detail-header__identity">
+          <div class="identity ui-detail-header__identity">
             <button id="header-mark" class="header-mark" type="button" aria-label="Open agent switcher" title="Open agent switcher" aria-expanded="false" aria-controls="unread-agents-panel">
               <img class="brand-logo" src="/remote-logo.png?v=<%= HQ::RemoteUI.asset_version %>" alt="">
             </button>
-            <div class="title-block ds-detail-header__text">
-              <h1 class="ds-detail-header__title" id="screen-title">Tycho - Factorio for Agents</h1>
-              <p class="ds-detail-header__metadata" id="screen-subtitle">Connecting</p>
+            <div class="title-block ui-detail-header__text">
+              <h1 class="ui-detail-header__title" id="screen-title">Tycho - Factorio for Agents</h1>
+              <p class="ui-detail-header__metadata" id="screen-subtitle">Connecting</p>
             </div>
           </div>
-          <div class="header-actions ds-detail-header__actions">
+          <div class="header-actions ui-detail-header__actions">
             <div id="header-view-menu" class="header-view-menu hidden"></div>
             <div id="header-schedule-menu" class="header-schedule-menu hidden"></div>
-            <button id="header-more-button" class="icon-button ds-detail-header__action hidden" type="button" aria-label="More actions" title="More actions" aria-haspopup="menu" aria-expanded="false" aria-controls="header-more-panel">
+            <button id="header-more-button" class="icon-button ui-button ui-icon-button ui-detail-header__action hidden" type="button" aria-label="More actions" title="More actions" aria-haspopup="menu" aria-expanded="false" aria-controls="header-more-panel">
               <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24">
                 <circle cx="12" cy="12" r="1"></circle>
                 <circle cx="19" cy="12" r="1"></circle>
@@ -64,8 +64,8 @@
             <button id="save-token-button" type="button">Save</button>
           </div>
         </form>
-        <section id="unread-agents-panel" class="unread-agents-panel ds-overlay-surface hidden" aria-label="Agent switcher" data-overlay-surface="agent-switcher"></section>
-        <section id="header-more-panel" class="header-more-panel ds-overlay-surface hidden" aria-label="More actions" data-overlay-surface="header-more" data-overlay-kind="menu"></section>
+        <section id="unread-agents-panel" class="unread-agents-panel ui-overlay-surface hidden" aria-label="Agent switcher" data-overlay-surface="agent-switcher"></section>
+        <section id="header-more-panel" class="header-more-panel ui-overlay-surface hidden" aria-label="More actions" data-overlay-surface="header-more" data-overlay-kind="menu"></section>
         <section id="agent-settings-panel" class="agent-settings-panel hidden" aria-label="Conversation settings"></section>
       </header>
 
@@ -81,7 +81,7 @@
         <span class="quick-agent-fab-label">New agent</span>
       </button>
       <dialog id="quick-agent-dialog" class="quick-agent-dialog" aria-label="New agent"></dialog>
-      <dialog id="confirmation-dialog" class="ds-confirmation-dialog" aria-labelledby="confirmation-title" aria-describedby="confirmation-description"></dialog>
+      <dialog id="confirmation-dialog" class="ui-confirmation-dialog" aria-labelledby="confirmation-title" aria-describedby="confirmation-description"></dialog>
 
       <nav id="bottom-nav" class="bottom-nav" aria-label="Primary navigation">
         <button type="button" data-tab="now">

@@ -74,16 +74,16 @@ Authentication is a local operator model, not a role/permission matrix. No produ
 
 | Existing patterns | Occurrences | Main risk | Canonical target | Migration |
 | --- | --- | --- | --- | --- |
-| Generic `button`, `primary`, `danger`, `inline-icon-button`, `icon-button` | Nearly every route | divergent states and geometry | `ds-button`, `ds-icon-button` | Small adapter: keep behavior/data attributes, add classes and semantic `data-variant` |
-| `field-card`, local labels/hints/controls | all create/edit/settings flows | inconsistent relationships and state styling | `ds-field`, `ds-input` | Lifecycle, inquiry, response-style, Session loop, server, token, and harness-catalog forms migrated |
-| `summary-card`, `detail-card`, settings-only panels | all index/detail pages | repeated surface values | `ds-surface` | Add canonical class, retain product layout class |
-| `notice`, recovery/inquiry banners | settings and agent states | role/state inconsistencies | `ds-alert` | Direct replacement where message intent is known |
-| `pill`, `chip`, status marks | lists, detail, settings | visual vocabulary overlaps semantics | `ds-badge` plus product status mark | Requires state-by-state product decision |
-| bespoke flex/grid wrappers | all routes | repeated gap and collapse rules | `ds-stack`, `ds-cluster`, `ds-grid` | Adopt in new and touched markup |
-| lifecycle form sections/actions | agent, project, schedule, message, loop | repeated section anatomy mixed with product grids; low-frequency agent runtime choices dominated the create form | `ds-form-layout`, `ds-form-section-heading`, `ds-form-actions` plus product Advanced disclosure | Shared structure migrated; agent defaults remain visible in the closed summary; product columns and sticky actions remain local |
-| Settings in-page sections | Settings | selection and panel rhythm coupled to sticky shell; Session loop fields bypassed shared input colors; peer actions and empty catalog editors consumed excess horizontal/vertical space | `ds-section-nav`, `ds-section-panel`, `ds-input`, native catalog disclosure | Shared selection/panel and form styling migrated; peer actions use a right-side rail and collapsed catalogs retain value summaries |
-| Agents search, sort, groups, and bulk selection | Agents | search geometry, result feedback, and grouped surfaces were coupled to one route | `ds-searchable-collection`, `ds-search-field`, `ds-collection-group` | Shared structure and count feedback migrated; filtering, sorting, row actions, and bulk behavior remain product-specific |
-| focused shell header | project, agent, summary, attachment, diff | shared anatomy was implemented only through generic shell selectors; title/action constraints were undocumented | `ds-detail-header` anatomy | Direct replacement on focused routes; fixed/sticky positioning, history, and route actions remain product-specific |
+| Generic `button`, `primary`, `danger`, `inline-icon-button`, `icon-button` | Nearly every route | divergent states and geometry | `ui-button`, `ui-icon-button` | All generated legacy action adapters now consume the shared contract; product-specific menus, tabs, and reader controls remain local |
+| `field-card`, local labels/hints/controls | all create/edit/settings flows | inconsistent relationships and state styling | `ui-field`, `ui-input` | Lifecycle, inquiry, response-style, Session loop, server, token, and harness-catalog forms migrated |
+| `summary-card`, `detail-card`, settings-only panels | all index/detail pages | repeated surface values | `ui-surface` | Add canonical class, retain product layout class |
+| `notice`, recovery/inquiry banners | settings and agent states | role/state inconsistencies | `ui-alert` | Known-intent guidance, recovery, blocked-agent, schedule-file, PR, and local-diff feedback migrated; rich archive decision surface remains product-owned |
+| `pill`, `chip`, status marks | lists, detail, settings | visual vocabulary overlaps semantics | `ui-metadata-badge`, `ui-status`, plus product status mark | Factual metadata and representative status states migrated; selection/filter/action pills remain product-owned |
+| bespoke flex/grid wrappers | all routes | repeated gap and collapse rules | `ui-stack`, `ui-cluster`, `ui-grid` | Adopt in new and touched markup |
+| lifecycle form sections/actions | agent, project, schedule, message, loop | repeated section anatomy mixed with product grids; low-frequency agent runtime choices dominated the create form | `ui-form-layout`, `ui-form-section-heading`, `ui-form-actions` plus product Advanced disclosure | Shared structure migrated; agent defaults remain visible in the closed summary; product columns and sticky actions remain local |
+| Settings in-page sections | Settings | selection and panel rhythm coupled to sticky shell; Session loop fields bypassed shared input colors; peer actions and empty catalog editors consumed excess horizontal/vertical space | `ui-section-nav`, `ui-section-panel`, `ui-input`, native catalog disclosure and contextual menu | Shared selection/panel and form styling migrated; peer actions use one More menu and collapsed catalogs retain value summaries |
+| Agents search, sort, groups, and bulk selection | Agents | search geometry, result feedback, and grouped surfaces were coupled to one route | `ui-searchable-collection`, `ui-search-field`, `ui-collection-group` | Shared structure and count feedback migrated; filtering, sorting, row actions, and bulk behavior remain product-specific |
+| focused shell header | project, agent, summary, attachment, diff | shared anatomy was implemented only through generic shell selectors; title/action constraints were undocumented | `ui-detail-header` anatomy | Direct replacement on focused routes; fixed/sticky positioning, history, and route actions remain product-specific |
 | quick-agent native dialog | global creation | modal behavior must remain complete | documented product dialog pattern | Keep native dialog and browser-owned focus behavior |
 | details menus/flyouts | navigation and readers | keyboard/focus behavior varies | shared overlay surface and interaction contract backed by native details | Primary menu families migrated; product flyouts remain local |
 | native browser confirmations | settings, schedules, attachments, bulk archive | generic labels, browser-dependent presentation, no consequence structure | native `dialog` confirmation contract | Direct replacement; agent archive remains a richer product page |
@@ -93,7 +93,11 @@ Priority score considered frequency, user impact, accessibility risk, maintenanc
 
 ## Baseline evidence
 
-Screenshots are under `artifacts/design-system/baseline/`. Captures record the route/state/viewport in the filename. They were produced from `http://127.0.0.1:7487` with temporary config and logs, no remote token, the current local commit/worktree, and Chrome headless.
+The `/design-system` HTML route is the durable visual inventory. The browser smoke
+check exercises it at mobile, tablet, and desktop widths with temporary config and
+logs, no remote token, and installed Chrome. Pull-request screenshots are generated
+outside the repository and uploaded as disposable review attachments; image binaries
+are not versioned.
 
 Known audit limits:
 
@@ -103,4 +107,4 @@ Known audit limits:
 
 ## Adoption update
 
-The second implementation wave migrated agent create/edit/clone, project edit, schedule create/edit, and schedule-message edit markup to the shared field, input, surface, and button contracts. The third migrated structured inquiry controls and fixed multi-select group/error relationships. The fourth defines six status intents and migrates the highest-value agent, schedule, project, setup, and diff states. Existing product classes remain as layout/behavior adapters.
+The second implementation wave migrated agent create/edit/clone, project edit, schedule create/edit, and schedule-message edit markup to the shared field, input, surface, and button contracts. The third migrated structured inquiry controls and fixed multi-select group/error relationships. The fourth defines six status intents and migrates the highest-value agent, schedule, project, setup, and diff states. The metadata wave moves formats, counts, sizes, identifiers, branches, scopes, PIDs, and scheduler timestamps to one neutral factual badge while leaving health and urgency in the status contract. Existing product classes remain as layout/behavior adapters.

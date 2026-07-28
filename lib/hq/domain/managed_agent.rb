@@ -129,7 +129,7 @@ module HQ
                    stop_requested_at: nil, sandbox_mode: "danger-full-access", agent: "codex", messages: nil,
                    model: nil, reasoning_effort: nil, response_style: nil, skills: nil, unread: false, session_id: nil,
                    session_bootstrapped: nil, color_index: nil, summary: nil, structured_result: nil, schedule_key: nil,
-                   cost_snapshot: nil)
+                   cost_snapshot: nil, total_run_count: nil)
       @key = key
       @name = name
       @project_key = project_key
@@ -160,6 +160,7 @@ module HQ
       @summary = summary.is_a?(String) && !summary.empty? ? summary : nil
       @schedule_key = normalize_schedule_key(schedule_key)
       @cost_snapshot = AgentCostSnapshot.normalize(cost_snapshot)
+      @total_run_count = infer_total_run_count(total_run_count)
     end
 
     def color_index=(value)
@@ -229,7 +230,8 @@ module HQ
         summary: hash["summary"],
         structured_result: hash["structured_result"],
         schedule_key: hash["schedule_key"],
-        cost_snapshot: hash["cost_snapshot"]
+        cost_snapshot: hash["cost_snapshot"],
+        total_run_count: hash["total_run_count"]
       )
     end
 
@@ -334,6 +336,7 @@ module HQ
         "last_exit_code" => @last_exit_code,
         "log_path" => @log_path,
         "runs" => @runs.map(&:to_hash),
+        "total_run_count" => run_count,
         "stop_requested_at" => @stop_requested_at&.iso8601,
         "sandbox_mode" => @sandbox_mode,
         "agent" => @agent,
@@ -431,7 +434,7 @@ module HQ
       log_file.close
       monitor_agent_process(@pid, status_path)
       HQ.logger.info("Agent") { "Started #{@key} (pid=#{@pid})" }
-      @runs << AgentRun.new(
+      record_run!(AgentRun.new(
         started_at: @started_at,
         status: "running",
         log_path: @log_path,
@@ -441,10 +444,9 @@ module HQ
         agent: @agent,
         model: @model,
         log_start_offset: log_start_offset
-      )
+      ))
       @structured_result = nil
       @summary = nil
-      trim_runs!
       HQ.hooks.publish("agent.run.started",
                        agent_key: @key,
                        project_key: @project_key,
@@ -742,7 +744,14 @@ module HQ
     end
 
     def run_count
-      @runs.length
+      @total_run_count = [@total_run_count, @runs.length].max
+    end
+
+    def reconcile_run_count!(value)
+      count = Integer(value)
+      @total_run_count = [@total_run_count, count, @runs.length].max if count >= 0
+    rescue ArgumentError, TypeError
+      @total_run_count
     end
 
     def last_run
@@ -925,7 +934,7 @@ module HQ
         file.puts
       end
 
-      @runs << AgentRun.new(
+      record_run!(AgentRun.new(
         started_at: @started_at,
         finished_at: @finished_at,
         exit_code: @last_exit_code,
@@ -935,10 +944,9 @@ module HQ
         agent: @agent,
         model: @model,
         log_start_offset: log_start_offset
-      )
+      ))
       @structured_result = nil
       @summary = message
-      trim_runs!
       HQ.logger.warn("Agent") { "Failed to start #{@key}: #{message}" }
       false
     end
@@ -1268,6 +1276,29 @@ module HQ
 
     def trim_runs!
       @runs = @runs.last(10)
+    end
+
+    def record_run!(run)
+      @total_run_count = [@total_run_count, @runs.length].max + 1
+      @runs << run
+      trim_runs!
+      run
+    end
+
+    def infer_total_run_count(value)
+      unless value.nil?
+        persisted = Integer(value)
+        return [persisted, @runs.length].max if persisted >= 0
+      end
+
+      summaries = memory_store.events.select { |event| event["type"] == "run_summary" }
+      numbered_count = summaries.filter_map { |event| event.dig("metadata", "run_number")&.to_i }.max.to_i
+      completed_count = [summaries.length, numbered_count].max
+      active_count = last_run&.status == "running" ? completed_count + 1 : completed_count
+      snapshot_count = @cost_snapshot&.fetch("through_run_count", 0).to_i
+      [@runs.length, active_count, snapshot_count].max
+    rescue StandardError
+      @runs.length
     end
 
     def trim_messages!
@@ -1738,8 +1769,9 @@ module HQ
 
     def run_summary_metadata
       metadata = @structured_result.is_a?(Hash) ? @structured_result.dup : {}
+      metadata["run_number"] = run_count
       metadata["cost_snapshot"] = @cost_snapshot if @cost_snapshot.is_a?(Hash) && !@cost_snapshot.empty?
-      metadata.empty? ? nil : metadata
+      metadata
     end
 
     def capture_session_id!

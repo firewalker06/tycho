@@ -8,16 +8,16 @@
     <link rel="stylesheet" href="/ui.css?v=<%= HQ::RemoteUI.asset_version %>">
   </head>
   <body>
-    <main class="ds-page ds-stack" style="--ds-stack-gap: var(--ds-space-6)">
-      <header class="ds-stack" style="--ds-stack-gap: var(--ds-space-2)">
-        <span class="ds-badge" data-intent="info">Internal preview</span>
-        <h1 class="ds-heading" data-level="1">Tycho Design System</h1>
-        <p class="ds-text">Dense, explicit controls for supervising long-running agents without losing context.</p>
+    <main class="ui-page ui-stack" style="--ds-stack-gap: var(--ds-space-6)">
+      <header class="ui-stack" style="--ds-stack-gap: var(--ds-space-2)">
+        <span class="ui-badge ui-metadata-badge" data-kind="metadata">Internal preview</span>
+        <h1 class="ui-heading" data-level="1">Tycho Design System</h1>
+        <p class="ui-text">Dense, explicit controls for supervising long-running agents without losing context.</p>
       </header>
 
-      <section class="ds-stack" aria-labelledby="preview-foundations">
-        <h2 id="preview-foundations" class="ds-heading" data-level="2">Foundations</h2>
-        <div class="ds-grid" style="--ds-grid-min: 10rem">
+      <section class="ui-stack" aria-labelledby="preview-foundations">
+        <h2 id="preview-foundations" class="ui-heading" data-level="2">Foundations</h2>
+        <div class="ui-grid" style="--ds-grid-min: 10rem">
           <% [
             ["Canvas", "var(--ds-background-canvas)"],
             ["Raised", "var(--ds-background-surface-raised)"],
@@ -27,48 +27,60 @@
             ["Warning", "var(--ds-feedback-warning)"],
             ["Danger", "var(--ds-feedback-danger)"]
           ].each do |label, value| %>
-            <div class="ds-surface ds-stack" style="--ds-stack-gap: var(--ds-space-2)">
+            <div class="ui-surface ui-stack" style="--ds-stack-gap: var(--ds-space-2)">
               <span aria-hidden="true" style="display:block;height:3rem;border-radius:var(--ds-radius-md);background:<%= value %>"></span>
               <strong><%= label %></strong>
-              <code class="ds-code"><%= value %></code>
+              <code class="ui-code"><%= value %></code>
             </div>
           <% end %>
         </div>
       </section>
 
-      <section class="ds-stack" aria-labelledby="preview-actions">
-        <h2 id="preview-actions" class="ds-heading" data-level="2">Actions</h2>
-        <div class="ds-surface ds-cluster">
-          <button class="ds-button" data-variant="brand" type="button">Run agent</button>
-          <button class="ds-button" type="button">Edit settings</button>
-          <button class="ds-button" data-variant="danger" type="button">Archive</button>
-          <button class="ds-button" type="button" data-loading="true">
-            <span class="ds-spinner" aria-hidden="true"></span>
+      <section class="ui-stack" aria-labelledby="preview-actions">
+        <h2 id="preview-actions" class="ui-heading" data-level="2">Actions</h2>
+        <div class="ui-surface ui-cluster">
+          <button class="ui-button" data-variant="brand" type="button">Run agent</button>
+          <button class="ui-button" type="button">Edit settings</button>
+          <button class="ui-button" data-variant="danger" type="button">Archive</button>
+          <button class="ui-button" type="button" data-loading="true">
+            <span class="ui-spinner" aria-hidden="true"></span>
             <span>Starting</span>
           </button>
-          <button class="ds-button" type="button" disabled>Unavailable</button>
-          <button class="ds-button ds-icon-button" type="button" aria-label="More actions">•••</button>
+          <button class="ui-button" type="button" disabled>Unavailable</button>
+          <button class="ui-button ui-icon-button" type="button" aria-label="More actions">•••</button>
         </div>
       </section>
 
-      <section class="ds-stack" aria-labelledby="preview-status">
-        <h2 id="preview-status" class="ds-heading" data-level="2">Product status</h2>
-        <div class="ds-surface ds-cluster" aria-label="Semantic status examples">
-          <span class="ds-badge ds-status" data-intent="neutral">Idle</span>
-          <span class="ds-badge ds-status" data-intent="info">No action</span>
-          <span class="ds-badge ds-status" data-intent="active">Running</span>
-          <span class="ds-badge ds-status" data-intent="warning">Answer required</span>
-          <span class="ds-badge ds-status" data-intent="success">Succeeded</span>
-          <span class="ds-badge ds-status" data-intent="danger">Blocked</span>
+      <section class="ui-stack" aria-labelledby="preview-status">
+        <h2 id="preview-status" class="ui-heading" data-level="2">Product status</h2>
+        <div class="ui-surface ui-cluster" aria-label="Semantic status examples">
+          <span class="ui-badge ui-status" data-intent="neutral">Idle</span>
+          <span class="ui-badge ui-status" data-intent="info">No action</span>
+          <span class="ui-badge ui-status" data-intent="active">Running</span>
+          <span class="ui-badge ui-status" data-intent="warning">Answer required</span>
+          <span class="ui-badge ui-status" data-intent="success">Succeeded</span>
+          <span class="ui-badge ui-status" data-intent="danger">Blocked</span>
         </div>
-        <p class="ds-text" data-tone="muted">Labels carry the state; color and adjacent product icons reinforce it.</p>
+        <p class="ui-text" data-tone="muted">Labels carry the state; color and adjacent product icons reinforce it.</p>
       </section>
 
-      <section class="ds-stack" aria-labelledby="preview-overlays">
-        <h2 id="preview-overlays" class="ds-heading" data-level="2">Menu overlay</h2>
-        <div class="ds-surface ds-stack" style="--ds-stack-gap: var(--ds-space-3)">
-          <p class="ds-text">Product positioning stays local; the shared surface owns elevation, boundary, and layering.</p>
-          <div class="ds-overlay-surface" data-overlay-kind="menu" role="menu" aria-label="Example agent actions" style="position:relative;width:min(100%,20rem)">
+      <section class="ui-stack" aria-labelledby="preview-metadata-badges">
+        <h2 id="preview-metadata-badges" class="ui-heading" data-level="2">Metadata badges</h2>
+        <div class="ui-surface ui-cluster" aria-label="Neutral metadata examples">
+          <span class="ui-badge ui-metadata-badge" data-kind="metadata">PR #482</span>
+          <span class="ui-badge ui-metadata-badge" data-kind="metadata">release/design-system</span>
+          <span class="ui-badge ui-metadata-badge" data-kind="metadata">6 templates</span>
+          <span class="ui-badge ui-metadata-badge" data-kind="metadata">Markdown</span>
+          <span class="ui-badge ui-metadata-badge" data-kind="metadata">pid 4317</span>
+        </div>
+        <p class="ui-text" data-tone="muted">Use neutral badges for compact facts. Health, urgency, progress, selection, and filtering use their own semantic contracts.</p>
+      </section>
+
+      <section class="ui-stack" aria-labelledby="preview-overlays">
+        <h2 id="preview-overlays" class="ui-heading" data-level="2">Menu overlay</h2>
+        <div class="ui-surface ui-stack" style="--ds-stack-gap: var(--ds-space-3)">
+          <p class="ui-text">Product positioning stays local; the shared surface owns elevation, boundary, and layering.</p>
+          <div class="ui-overlay-surface" data-overlay-kind="menu" role="menu" aria-label="Example agent actions" style="position:relative;width:min(100%,20rem)">
             <div class="more-menu">
               <button class="more-menu-item single-line" type="button" role="menuitem">
                 <strong>View project</strong>
@@ -85,154 +97,159 @@
         </div>
       </section>
 
-      <section class="ds-stack" aria-labelledby="preview-confirmation">
-        <h2 id="preview-confirmation" class="ds-heading" data-level="2">Confirmation flow</h2>
-        <div class="ds-confirmation-dialog__panel" aria-label="Static destructive confirmation example">
-          <span class="ds-confirmation-dialog__mark" aria-hidden="true">!</span>
-          <div class="ds-confirmation-dialog__content">
-            <h3 class="ds-heading" data-level="2">Delete release schedule?</h3>
-            <p class="ds-text">Future runs will stop. Existing agent sessions and their history are kept.</p>
+      <section class="ui-stack" aria-labelledby="preview-confirmation">
+        <h2 id="preview-confirmation" class="ui-heading" data-level="2">Confirmation flow</h2>
+        <div class="ui-confirmation-dialog__panel" aria-label="Static destructive confirmation example">
+          <span class="ui-confirmation-dialog__mark" aria-hidden="true">!</span>
+          <div class="ui-confirmation-dialog__content">
+            <h3 class="ui-heading" data-level="2">Delete release schedule?</h3>
+            <p class="ui-text">Future runs will stop. Existing agent sessions and their history are kept.</p>
           </div>
-          <div class="ds-confirmation-dialog__actions">
-            <button class="ds-button" type="button">Cancel</button>
-            <button class="ds-button" data-variant="danger" type="button">Delete schedule</button>
+          <div class="ui-confirmation-dialog__actions">
+            <button class="ui-button" type="button">Cancel</button>
+            <button class="ui-button" data-variant="danger" type="button">Delete schedule</button>
           </div>
         </div>
       </section>
 
-      <section class="ds-stack" aria-labelledby="preview-detail-header">
-        <h2 id="preview-detail-header" class="ds-heading" data-level="2">Detail header</h2>
-        <header class="ds-detail-header ds-surface">
-          <button class="ds-button ds-icon-button ds-detail-header__back" type="button" aria-label="Back to agents">←</button>
-          <div class="ds-detail-header__identity">
-            <span class="ds-badge" data-intent="active" aria-hidden="true">A</span>
-            <div class="ds-detail-header__text">
-              <h3 class="ds-detail-header__title">Release verification and deployment readiness</h3>
-              <p class="ds-detail-header__metadata">Tycho / running / codex</p>
+      <section class="ui-stack" aria-labelledby="preview-detail-header">
+        <h2 id="preview-detail-header" class="ui-heading" data-level="2">Detail header</h2>
+        <header class="ui-detail-header ui-surface">
+          <button class="ui-button ui-icon-button ui-detail-header__back" type="button" aria-label="Back to agents">←</button>
+          <div class="ui-detail-header__identity">
+            <span class="ui-badge" data-intent="active" aria-hidden="true">A</span>
+            <div class="ui-detail-header__text">
+              <h3 class="ui-detail-header__title">Release verification and deployment readiness</h3>
+              <p class="ui-detail-header__metadata">Tycho / running / codex</p>
             </div>
           </div>
-          <div class="ds-detail-header__actions">
-            <button class="ds-button ds-icon-button ds-detail-header__action" type="button" aria-label="Change detail layout">▥</button>
-            <button class="ds-button ds-icon-button ds-detail-header__action" type="button" aria-label="More detail actions">•••</button>
+          <div class="ui-detail-header__actions">
+            <button class="ui-button ui-icon-button ui-detail-header__action" type="button" aria-label="Change detail layout">▥</button>
+            <button class="ui-button ui-icon-button ui-detail-header__action" type="button" aria-label="More detail actions">•••</button>
           </div>
         </header>
       </section>
 
-      <section class="ds-stack" aria-labelledby="preview-section-navigation">
-        <h2 id="preview-section-navigation" class="ds-heading" data-level="2">Section navigation</h2>
-        <nav class="ds-section-nav" aria-label="Example settings sections">
+      <section class="ui-stack" aria-labelledby="preview-section-navigation">
+        <h2 id="preview-section-navigation" class="ui-heading" data-level="2">Section navigation</h2>
+        <nav class="ui-section-nav" aria-label="Example settings sections">
           <button type="button" aria-current="location">Connection</button>
           <button type="button" aria-current="false">Automation</button>
           <button type="button" aria-current="false">Configuration</button>
         </nav>
-        <div class="ds-section-panel ds-surface">
+        <div class="ui-section-panel ui-surface">
           <strong>Connection</strong>
-          <p class="ds-text">One selected section remains explicit while the navigation scrolls at narrow widths.</p>
+          <p class="ui-text">One selected section remains explicit while the navigation scrolls at narrow widths.</p>
         </div>
       </section>
 
-      <section class="ds-stack" aria-labelledby="preview-searchable-collection">
-        <h2 id="preview-searchable-collection" class="ds-heading" data-level="2">Searchable collection</h2>
-        <div class="ds-searchable-collection">
-          <div class="ds-collection-toolbar">
-            <label class="ds-search-field" for="preview-agent-search">
+      <section class="ui-stack" aria-labelledby="preview-searchable-collection">
+        <h2 id="preview-searchable-collection" class="ui-heading" data-level="2">Searchable collection</h2>
+        <div class="ui-searchable-collection">
+          <div class="ui-collection-toolbar">
+            <label class="ui-search-field" for="preview-agent-search">
               <span aria-hidden="true">⌕</span>
-              <input class="ds-search-field__input" id="preview-agent-search" type="search" value="release" aria-describedby="preview-agent-results">
+              <input class="ui-search-field__input" id="preview-agent-search" type="search" value="release" aria-describedby="preview-agent-results">
             </label>
-            <button class="ds-button ds-icon-button" type="button" aria-label="Sort agents">⇅</button>
+            <button class="ui-button ui-icon-button" type="button" aria-label="Sort agents">⇅</button>
           </div>
-          <p class="ds-collection-summary" id="preview-agent-results" role="status">2 agents match “release”</p>
-          <div class="ds-collection-results">
-            <section class="ds-collection-group ds-surface" aria-label="Tycho agents">
-              <div class="ds-stack" style="--ds-stack-gap:var(--ds-space-2)">
+          <p class="ui-collection-summary" id="preview-agent-results" role="status">2 agents match “release”</p>
+          <div class="ui-collection-results">
+            <section class="ui-collection-group ui-surface" aria-label="Tycho agents">
+              <div class="ui-stack" style="--ds-stack-gap:var(--ds-space-2)">
                 <strong>Tycho</strong>
-                <span class="ds-text" data-tone="muted">Release verifier · Succeeded</span>
-                <span class="ds-text" data-tone="muted">Release notes · Answer required</span>
+                <span class="ui-text" data-tone="muted">Release verifier · Succeeded</span>
+                <span class="ui-text" data-tone="muted">Release notes · Answer required</span>
               </div>
             </section>
           </div>
         </div>
       </section>
 
-      <section class="ds-stack" aria-labelledby="preview-fields">
-        <h2 id="preview-fields" class="ds-heading" data-level="2">Fields</h2>
-        <form class="ds-surface ds-form-layout" data-ds-form="lifecycle" aria-label="Agent example form">
-          <div class="ds-form-section-heading">
+      <section class="ui-stack" aria-labelledby="preview-fields">
+        <h2 id="preview-fields" class="ui-heading" data-level="2">Fields</h2>
+        <form class="ui-surface ui-form-layout" data-ds-form="lifecycle" aria-label="Agent example form">
+          <div class="ui-form-section-heading">
             <strong>Configuration</strong>
             <span>Identity and runtime</span>
           </div>
-          <div class="ds-grid">
-            <div class="ds-field">
-              <label class="ds-field__label" for="preview-name">Agent name</label>
-              <input class="ds-input" id="preview-name" value="Release verifier" aria-describedby="preview-name-help">
-              <span class="ds-field__description" id="preview-name-help">Shown in queues, notifications, and conversation headers.</span>
+          <div class="ui-grid">
+            <div class="ui-field">
+              <label class="ui-field__label" for="preview-name">Agent name</label>
+              <input class="ui-input" id="preview-name" value="Release verifier" aria-describedby="preview-name-help">
+              <span class="ui-field__description" id="preview-name-help">Shown in queues, notifications, and conversation headers.</span>
             </div>
-            <div class="ds-field">
-              <label class="ds-field__label" for="preview-workspace">Workspace</label>
-              <input class="ds-input" id="preview-workspace" value="/workspace/tycho" readonly>
-              <span class="ds-field__description">Read-only values use a dashed boundary.</span>
+            <div class="ui-field">
+              <label class="ui-field__label" for="preview-workspace">Workspace</label>
+              <input class="ui-input" id="preview-workspace" value="/workspace/tycho" readonly>
+              <span class="ui-field__description">Read-only values use a dashed boundary.</span>
             </div>
-            <div class="ds-field">
-              <label class="ds-field__label" for="preview-harness">Harness</label>
-              <select class="ds-input" id="preview-harness">
+            <div class="ui-field">
+              <label class="ui-field__label" for="preview-harness">Harness</label>
+              <select class="ui-input" id="preview-harness">
                 <option>codex</option>
                 <option>claude</option>
               </select>
-              <span class="ds-field__description">Native selection behavior with shared control geometry.</span>
+              <span class="ui-field__description">Native selection behavior with shared control geometry.</span>
             </div>
           </div>
-          <div class="ds-field">
-            <label class="ds-field__label" for="preview-prompt">Prompt</label>
-            <textarea class="ds-input" id="preview-prompt" aria-invalid="true" aria-describedby="preview-prompt-error"></textarea>
-            <span class="ds-field__error" id="preview-prompt-error">Enter the work this agent should perform.</span>
+          <div class="ui-field">
+            <label class="ui-field__label" for="preview-prompt">Prompt</label>
+            <textarea class="ui-input" id="preview-prompt" aria-invalid="true" aria-describedby="preview-prompt-error"></textarea>
+            <span class="ui-field__error" id="preview-prompt-error">Enter the work this agent should perform.</span>
           </div>
-          <div class="ds-form-actions">
-            <button class="ds-button" data-variant="brand" type="submit">Create and run</button>
-            <button class="ds-button" type="button">Cancel</button>
+          <div class="ui-form-actions">
+            <button class="ui-button" data-variant="brand" type="submit">Create and run</button>
+            <button class="ui-button" type="button">Cancel</button>
           </div>
         </form>
       </section>
 
-      <section class="ds-stack" aria-labelledby="preview-feedback">
-        <h2 id="preview-feedback" class="ds-heading" data-level="2">Feedback and realistic states</h2>
-        <div class="ds-grid">
-          <div class="ds-alert" role="status">
-            <div><strong class="ds-alert__title">Agent is running</strong>Logs and conversation refresh automatically.</div>
+      <section class="ui-stack" aria-labelledby="preview-feedback">
+        <h2 id="preview-feedback" class="ui-heading" data-level="2">Feedback and realistic states</h2>
+        <div class="ui-grid">
+          <div class="ui-alert">
+            <div><strong class="ui-alert__title">Agent is running</strong>Logs and conversation refresh automatically.</div>
           </div>
-          <div class="ds-alert" data-intent="warning" role="status">
-            <div><strong class="ds-alert__title">Decision required</strong>The agent is waiting for a release strategy.</div>
+          <div class="ui-alert" data-intent="warning">
+            <div><strong class="ui-alert__title">Decision required</strong>The agent is waiting for a release strategy.</div>
           </div>
-          <div class="ds-alert" data-intent="danger" role="alert">
-            <div><strong class="ds-alert__title">Run failed</strong>Open activity details before retrying.</div>
+          <div class="ui-alert" data-intent="danger">
+            <div><strong class="ui-alert__title">Run failed</strong>Open activity details before retrying.</div>
           </div>
-          <div class="ds-alert" data-intent="success" role="status">
-            <div><strong class="ds-alert__title">Run complete</strong>All requested checks passed.</div>
+          <div class="ui-alert" data-intent="success">
+            <div><strong class="ui-alert__title">Run complete</strong>All requested checks passed.</div>
           </div>
         </div>
-        <div class="ds-empty-state">
+        <div class="ui-empty-state" data-state="empty">
           <strong>No agents need attention</strong>
-          <span>Running work and recent outcomes will appear here.</span>
+          <p>Running work and recent outcomes will appear here.</p>
+        </div>
+        <div class="ui-empty-state ui-loading-state tycho-loading-state" data-state="loading" role="status" aria-live="polite" aria-atomic="true">
+          <img class="tycho-loading-logo" src="/remote-logo.png?v=<%= HQ::RemoteUI.asset_version %>" alt="">
+          <strong>Loading project</strong>
+          <p>Fetching the selected project state.</p>
         </div>
       </section>
 
-      <section class="ds-stack" aria-labelledby="preview-inquiry">
-        <h2 id="preview-inquiry" class="ds-heading" data-level="2">Inquiry decision</h2>
-        <form class="ds-surface ds-stack" data-ds-form="inquiry" aria-label="Agent inquiry example" aria-describedby="preview-inquiry-status">
-          <div class="ds-alert" data-intent="warning" role="status">
-            <div><strong class="ds-alert__title">Decision required</strong>Choose at least one deployment environment before the agent continues.</div>
+      <section class="ui-stack" aria-labelledby="preview-inquiry">
+        <h2 id="preview-inquiry" class="ui-heading" data-level="2">Inquiry decision</h2>
+        <form class="ui-surface ui-stack" data-ds-form="inquiry" aria-label="Agent inquiry example" aria-describedby="preview-inquiry-status">
+          <div class="ui-alert" data-intent="warning">
+            <div><strong class="ui-alert__title">Decision required</strong>Choose at least one deployment environment before the agent continues.</div>
           </div>
-          <div class="ds-field ds-surface">
-            <div class="ds-field__label" id="preview-environments-label">Environments <span class="ds-badge" data-intent="warning">Required</span></div>
-            <span class="ds-field__description" id="preview-environments-description">Select every environment included in this release.</span>
-            <div class="ds-stack" role="group" aria-labelledby="preview-environments-label" aria-describedby="preview-environments-description" aria-errormessage="preview-environments-error" aria-invalid="true">
-              <label class="ds-cluster"><input type="checkbox"> Staging</label>
-              <label class="ds-cluster"><input type="checkbox"> Production</label>
+          <div class="ui-field ui-surface">
+            <div class="ui-field__label" id="preview-environments-label">Environments <span class="ui-badge" data-intent="warning">Required</span></div>
+            <span class="ui-field__description" id="preview-environments-description">Select every environment included in this release.</span>
+            <div class="ui-stack" role="group" aria-labelledby="preview-environments-label" aria-describedby="preview-environments-description" aria-errormessage="preview-environments-error" aria-invalid="true">
+              <label class="ui-cluster"><input type="checkbox"> Staging</label>
+              <label class="ui-cluster"><input type="checkbox"> Production</label>
             </div>
-            <span class="ds-field__error" id="preview-environments-error">Choose at least one environment.</span>
+            <span class="ui-field__error" id="preview-environments-error">Choose at least one environment.</span>
           </div>
-          <p class="ds-field__error" id="preview-inquiry-status" role="status" aria-live="polite">Environments is required.</p>
-          <div class="ds-cluster" data-collapse="mobile">
-            <button class="ds-button" data-variant="brand" type="submit" disabled>Send answer</button>
+          <p class="ui-field__error" id="preview-inquiry-status" role="status" aria-live="polite">Environments is required.</p>
+          <div class="ui-cluster" data-collapse="mobile">
+            <button class="ui-button" data-variant="brand" type="submit" disabled>Send answer</button>
           </div>
         </form>
       </section>

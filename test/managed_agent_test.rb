@@ -13,6 +13,7 @@ module ManagedAgentTest
 
   def run!
     assert_new_agents_use_unique_log_stems
+    assert_lifetime_run_count_survives_retained_window
     assert_completed_status_overrides_live_pid
     assert_start_finalizes_unpolled_previous_run
     assert_cli_status_finalizes_unpolled_dead_pid
@@ -46,6 +47,53 @@ module ManagedAgentTest
     assert_start_spawns_harness_without_ruby_runner_parent
     assert_agent_runner_warns_when_command_cannot_execute
     puts "managed_agent_test: ok"
+  end
+
+  def assert_lifetime_run_count_survives_retained_window
+    Dir.mktmpdir("hq-managed-agent-run-count-test") do |dir|
+      log_path = File.join(dir, "retained-window.raw.log")
+      runs = 10.times.map do |index|
+        HQ::ManagedAgent::AgentRun.new(
+          started_at: Time.utc(2026, 7, 24, 10, index, 0),
+          finished_at: Time.utc(2026, 7, 24, 10, index, 30),
+          status: "success"
+        )
+      end
+      agent = HQ::ManagedAgent.new(
+        key: "retained-window-agent",
+        name: "Retained window",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "Prompt",
+        log_path: log_path,
+        runs: runs
+      )
+      memory = HQ::AgentMemory.new(agent)
+      12.times do |index|
+        memory.append_run_summary!(
+          summary: "Run #{index + 1}",
+          status: "success",
+          created_at: Time.utc(2026, 7, 24, 11, index, 0)
+        )
+      end
+
+      legacy_state = agent.to_hash
+      legacy_state.delete("total_run_count")
+      restored = HQ::ManagedAgent.from_hash(legacy_state)
+      summary_numbers = HQ::AgentChatLog.new(restored).chat_blocks
+        .select { |block| block.kind == :run_summary }
+        .map { |block| block.metadata["run_number"] }
+
+      assert(restored.runs.length == 10, "expected detailed run retention to remain capped at 10")
+      assert(restored.run_count == 12, "expected the lifetime run count to recover from summary history")
+      assert(restored.to_hash["total_run_count"] == 12, "expected the lifetime run count to persist")
+      assert(summary_numbers == (1..12).to_a, "expected legacy summaries to receive stable run numbers")
+
+      restored.send(:record_run!, HQ::ManagedAgent::AgentRun.new(status: "running"))
+      assert(restored.run_count == 13, "expected a new run to advance the lifetime count past the retained window")
+      assert(restored.runs.length == 10, "expected adding a run to retain only the latest 10 details")
+    end
   end
 
   def assert_completed_run_persists_cost_snapshot
@@ -91,6 +139,8 @@ module ManagedAgentTest
       assert(snapshot["amount_usd"] == 1.25, "expected the completed run to update session cost")
       assert(summary.dig("metadata", "cost_snapshot", "amount_usd") == 1.25,
              "expected the run summary to keep its cost snapshot")
+      assert(summary.dig("metadata", "run_number") == 1,
+             "expected the run summary to keep its lifetime run number")
       assert(restored.cost_snapshot == snapshot, "expected the agent-level cost snapshot to persist")
     end
   end
@@ -183,6 +233,8 @@ module ManagedAgentTest
       assert(agent.cost_snapshot["amount_usd"] == 2.0, "expected memory rebuild to restore the session total")
       assert(summaries.map { |event| event.dig("metadata", "cost_snapshot", "amount_usd") } == [1.25, 2.0],
              "expected rebuilt run summaries to keep as-of cost snapshots")
+      assert(summaries.map { |event| event.dig("metadata", "run_number") } == [1, 2],
+             "expected rebuilt run summaries to keep their run numbers")
     end
   end
 
