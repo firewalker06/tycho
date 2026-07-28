@@ -2735,6 +2735,9 @@ module RemoteServerTest
     assert(css[:body].include?(".agent-sort-menu"), "expected Remote UI to style agent sort dropdowns")
     assert(css[:body].include?(".agent-sort-trigger"), "expected Remote UI to style icon-only sort triggers")
     assert(css[:body].include?(".agent-sort-option"), "expected Remote UI to style text sort options")
+    assert(css[:body].include?(".agent-ledger") &&
+           css[:body].include?(".agent-ledger .agent-group.empty"),
+           "expected grouped Agents results to use one compact ledger with one-line empty projects")
     assert(!css[:body].include?(".agent-settings-actions"),
            "expected Agent settings to move edit/archive actions into the More menu")
     assert(css[:body].include?(".agent-form"), "expected Remote UI to style agent lifecycle forms")
@@ -4343,6 +4346,12 @@ module RemoteServerTest
            "expected Setup screen to be labeled Settings")
     assert(js[:body].include?("function agentProjectGroups"),
            "expected Agents tab to render project groups in sorted order")
+    assert(js[:body].include?("function renderGroupedAgentLedger") &&
+           js[:body].include?("agent-group-count"),
+           "expected Agents tab project sorting to render one compact grouped ledger")
+    assert(js[:body].include?("agent-group-project-title") &&
+           js[:body].include?('iconSvg("folder")'),
+           "expected compact project headers to show an unboxed folder icon beside the project name")
     assert(js[:body].include?("function compareAgentProjectKeys"),
            "expected Agents tab group sorting to compare project display names")
     assert(helpers_js[:body].include?("function compareAgentsByName"),
@@ -4353,6 +4362,8 @@ module RemoteServerTest
            "expected Agents tab to omit redundant zero-agent empty rows")
     assert(js[:body].include?("agent-group-create"),
            "expected Agents tab to keep zero-agent projects reachable from the group header")
+    assert(js[:body].include?('class="sr-only">New agent</span>'),
+           "expected compact per-project create controls to retain an accessible text label")
     assert(js[:body].include?("data-toggle-bulk-archive"),
            "expected Agents tab toolbar to expose bulk archive selection mode")
     assert(js[:body].include?("data-run-bulk-archive"),
