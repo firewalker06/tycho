@@ -33,6 +33,7 @@ def write_fixture(dir)
   response_style_path = File.join(config_dir, "response_style.md")
   schedules_path = File.join(config_dir, "schedules.yml")
   fake_codex_path = File.join(dir, "fake-codex")
+  fake_gh_path = File.join(dir, "fake-gh")
   File.write(config_path, <<~YAML)
     ---
     projects:
@@ -40,6 +41,7 @@ def write_fixture(dir)
         name: Web
         path: #{workspace.inspect}
         agent: codex
+        pr_url: https://github.com/example/web/pull/123
   YAML
   File.write(prompts_path, "---\ncustom: \"Check the workspace.\"\n")
   File.write(schedules_path, <<~YAML)
@@ -55,6 +57,15 @@ def write_fixture(dir)
   YAML
   File.write(fake_codex_path, "#!/bin/sh\nexit 0\n")
   File.chmod(0o755, fake_codex_path)
+  File.write(fake_gh_path, <<~SH)
+    #!/bin/sh
+    if [ "$1" = "auth" ] && [ "$2" = "token" ]; then
+      printf 'smoke-token\\n'
+      exit 0
+    fi
+    exit 1
+  SH
+  File.chmod(0o755, fake_gh_path)
   skill_dir = File.join(workspace, ".agents", "skills", "review")
   FileUtils.mkdir_p(skill_dir)
   File.write(File.join(skill_dir, "SKILL.md"), "# Review\n")
@@ -70,8 +81,138 @@ def write_fixture(dir)
     response_style_path: response_style_path,
     schedules_path: schedules_path,
     fake_codex_path: fake_codex_path,
+    fake_gh_path: fake_gh_path,
     logs_dir: File.join(dir, "logs")
   }
+end
+
+def start_fake_github_api
+  server = TCPServer.new("127.0.0.1", 0)
+  thread = Thread.new do
+    loop do
+      client = server.accept
+      Thread.new(client) do |socket|
+        request_line = socket.gets.to_s
+        method, target, = request_line.split(" ", 3)
+        headers = {}
+        while (line = socket.gets)
+          break if line == "\r\n"
+
+          key, value = line.split(":", 2)
+          headers[key.to_s.downcase] = value.to_s.strip
+        end
+        length = headers.fetch("content-length", "0").to_i
+        request_body = length.positive? ? socket.read(length) : ""
+        path = URI(target.to_s).path
+        status, content_type, body = fake_github_response(method, path, headers, request_body)
+        socket.write("HTTP/1.1 #{status}\r\n")
+        socket.write("Content-Type: #{content_type}\r\n")
+        socket.write("Content-Length: #{body.bytesize}\r\n")
+        socket.write("X-RateLimit-Limit: 5000\r\n")
+        socket.write("X-RateLimit-Remaining: 4999\r\n")
+        socket.write("Connection: close\r\n\r\n")
+        socket.write(body)
+      ensure
+        socket.close
+      end
+    rescue IOError, Errno::EBADF
+      break
+    end
+  end
+  [server, thread]
+end
+
+def fake_github_response(method, path, headers, request_body)
+  if method == "GET" && path == "/repos/example/web/pulls/123" &&
+     headers["accept"].to_s.include?("application/vnd.github.diff")
+    return ["200 OK", "application/vnd.github.diff", <<~DIFF]
+      diff --git a/lib/example.rb b/lib/example.rb
+      index 1111111..2222222 100644
+      --- a/lib/example.rb
+      +++ b/lib/example.rb
+      @@ -1 +1 @@
+      -old
+      +new
+    DIFF
+  end
+
+  pull = {
+    "title" => "Smoke pull request",
+    "body" => "A browser fixture for the complete review loop.",
+    "html_url" => "https://github.com/example/web/pull/123",
+    "state" => "open",
+    "draft" => false,
+    "mergeable" => true,
+    "mergeable_state" => "clean",
+    "user" => { "login" => "smoke-author" },
+    "base" => { "sha" => "base-sha", "ref" => "main" },
+    "head" => { "sha" => "head-sha", "ref" => "feature" },
+    "changed_files" => 1,
+    "additions" => 1,
+    "deletions" => 1,
+    "updated_at" => "2026-07-28T00:00:00Z"
+  }
+  return ["200 OK", "application/json", JSON.generate(pull)] if method == "GET" && path == "/repos/example/web/pulls/123"
+
+  if method == "POST" && path == "/graphql"
+    query = JSON.parse(request_body).fetch("query", "")
+    pull_data = if query.include?("statusCheckRollup")
+                  {
+                    "reviewDecision" => nil,
+                    "reviewThreads" => { "nodes" => [{ "isResolved" => false }] },
+                    "commits" => {
+                      "nodes" => [{
+                        "commit" => {
+                          "statusCheckRollup" => {
+                            "state" => "SUCCESS",
+                            "contexts" => {
+                              "nodes" => [{ "name" => "test", "status" => "COMPLETED", "conclusion" => "SUCCESS" }]
+                            }
+                          }
+                        }
+                      }]
+                    }
+                  }
+                else
+                  {
+                    "reviewThreads" => {
+                      "nodes" => [{
+                        "id" => "thread-1",
+                        "isResolved" => false,
+                        "isOutdated" => false,
+                        "path" => "lib/example.rb",
+                        "line" => 1,
+                        "comments" => {
+                          "nodes" => [{
+                            "id" => "comment-1",
+                            "body" => "Please verify this line.",
+                            "createdAt" => "2026-07-28T00:00:00Z",
+                            "url" => "https://github.com/example/web/pull/123#discussion_r1",
+                            "author" => { "login" => "reviewer" }
+                          }]
+                        }
+                      }]
+                    }
+                  }
+                end
+    body = { "data" => { "repository" => { "pullRequest" => pull_data } } }
+    return ["200 OK", "application/json", JSON.generate(body)]
+  end
+
+  if method == "GET" && path.end_with?("/check-runs")
+    return ["200 OK", "application/json", JSON.generate("check_runs" => [
+      { "name" => "test", "status" => "completed", "conclusion" => "success" }
+    ])]
+  end
+  if method == "GET" && path.end_with?("/commits")
+    return ["200 OK", "application/json", JSON.generate([
+      { "sha" => "head-sha", "commit" => { "message" => "Change example", "author" => { "name" => "Smoke", "date" => "2026-07-28T00:00:00Z" } } }
+    ])]
+  end
+  return ["200 OK", "application/json", "[]"] if method == "GET" &&
+                                                   (path.end_with?("/reviews") || path.end_with?("/comments"))
+
+  ["404 Not Found", "application/json", JSON.generate("message" => "fixture route not found")]
 end
 
 def wait_for_remote(base_url, log_path)
@@ -635,6 +776,115 @@ def write_smoke_script(path)
         await prContextPage.waitForSelector(".agent-pr-diff-shell", { state: "visible", timeout: 10_000 });
         await prContextPage.waitForSelector(".agent-pr-diff-shell .empty-state", { state: "visible", timeout: 10_000 });
         await prContextPage.close();
+
+        const reviewPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+        await reviewPage.goto(`${baseUrl}/ui#reviews`, { waitUntil: "networkidle" });
+        await reviewPage.waitForSelector("#reviews-nav-button:not(.hidden)", { state: "visible", timeout: 10_000 });
+        try {
+          await reviewPage.waitForSelector(".pr-review-row", { state: "visible", timeout: 10_000 });
+        } catch (error) {
+          const diagnostics = await reviewPage.evaluate(async () => ({
+            text: document.querySelector("#view")?.innerText,
+            setup: state.setup?.github,
+            inbox: state.pullRequestInbox,
+            response: await fetch(apiPath("/pull-requests")).then(async (response) => ({
+              status: response.status,
+              body: await response.text(),
+            })),
+          }));
+          throw new Error(`Review Inbox did not load: ${JSON.stringify(diagnostics)} / ${error.message}`);
+        }
+        if (await reviewPage.locator(".pr-review-row").count() !== 1) {
+          throw new Error("Review Inbox did not deduplicate project and agent occurrences");
+        }
+        await reviewPage.click(".pr-review-row");
+        await reviewPage.waitForSelector(".pr-review-workspace", { state: "visible", timeout: 10_000 });
+        const reviewBrief = await reviewPage.locator(".pr-review-workspace").innerText();
+        if (!reviewBrief.includes("Smoke pull request") ||
+            !reviewBrief.includes("1 unresolved") ||
+            !reviewBrief.includes("Checks")) {
+          throw new Error(`Review brief is incomplete: ${JSON.stringify(reviewBrief)}`);
+        }
+        await reviewPage.click("[data-refresh-review]");
+        await reviewPage.waitForSelector("[data-review-file='lib/example.rb']", { state: "visible", timeout: 10_000 });
+        await reviewPage.click("details[data-state-key='review-context-reviews'] > summary");
+        await reviewPage.check("[data-select-review-file='lib/example.rb']");
+        await reviewPage.check("[data-select-review-hunk='lib/example.rb:0']");
+        await reviewPage.check("[data-select-review-comment='comment-1']");
+        await reviewPage.fill("[data-review-file-filter]", "example");
+        await reviewPage.evaluate(async () => {
+          await refresh({ force: true, forcePullRequests: true });
+        });
+        await reviewPage.waitForSelector("[data-review-file='lib/example.rb']", { state: "visible", timeout: 10_000 });
+        const preservedReviewState = await reviewPage.evaluate(() => ({
+          fileFilter: document.querySelector("[data-review-file-filter]")?.value,
+          fileSelected: document.querySelector("[data-select-review-file]")?.checked,
+          hunkSelected: document.querySelector("[data-select-review-hunk]")?.checked,
+          commentSelected: document.querySelector("[data-select-review-comment]")?.checked,
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        }));
+        if (preservedReviewState.fileFilter !== "example" ||
+            !preservedReviewState.fileSelected ||
+            !preservedReviewState.hunkSelected ||
+            !preservedReviewState.commentSelected ||
+            preservedReviewState.overflow) {
+          throw new Error(`Review polling lost selection or mobile layout: ${JSON.stringify(preservedReviewState)}`);
+        }
+        await reviewPage.locator("[data-review-file]").focus();
+        await reviewPage.keyboard.press("j");
+        const keyboardFileFocus = await reviewPage.evaluate(() => document.activeElement?.dataset?.reviewFile);
+        await reviewPage.keyboard.press("]");
+        const keyboardHunkFocus = await reviewPage.evaluate(() => document.activeElement?.dataset?.reviewHunk);
+        if (keyboardFileFocus !== "lib/example.rb" || keyboardHunkFocus !== "lib/example.rb:0") {
+          throw new Error(`Review keyboard navigation failed: ${JSON.stringify({ keyboardFileFocus, keyboardHunkFocus })}`);
+        }
+        await reviewPage.evaluate(async () => {
+          await refresh({ force: true, forcePullRequests: true });
+        });
+        const preservedHunkFocus = await reviewPage.evaluate(() => document.activeElement?.dataset?.reviewHunk);
+        if (preservedHunkFocus !== "lib/example.rb:0") {
+          throw new Error(`Review polling lost focused hunk: ${JSON.stringify(preservedHunkFocus)}`);
+        }
+        const handoffAgentKey = await reviewPage.evaluate(async () => {
+          const data = await apiPost("/agents", {
+            project_key: "web",
+            template_key: "custom",
+            name: "Review Handoff Agent",
+            prompt: "Investigate selected review context.",
+            agent: "codex",
+          });
+          state.agents.push(data.agent);
+          render();
+          return data.agent.key;
+        });
+        await reviewPage.selectOption("[data-review-handoff-form] select[name='agent_key']", handoffAgentKey);
+        await reviewPage.fill("[data-review-handoff-form] textarea[name='note']", "Investigate the selected context.");
+        await reviewPage.click("[data-review-handoff-form] button[type='submit']");
+        await reviewPage.waitForFunction(
+          () => document.querySelector("[data-review-handoff-form]")?.innerText.includes("1 handoff(s) recorded"),
+          null,
+          { timeout: 10_000 }
+        );
+        await reviewPage.fill("[data-review-draft-form] textarea[name='body']", "Looks good after the selected issue is addressed.");
+        await reviewPage.click("[data-review-draft-form] button[type='submit']");
+        await reviewPage.waitForFunction(
+          () => document.querySelector("[data-review-draft-form] textarea[name='body']")?.value.includes("Looks good"),
+          null,
+          { timeout: 10_000 }
+        );
+        if (!(await reviewPage.locator("[data-post-review]").isDisabled())) {
+          throw new Error("GitHub posting was available without the explicit write gate");
+        }
+        await reviewPage.setViewportSize({ width: 1280, height: 800 });
+        const desktopReview = await reviewPage.evaluate(() => ({
+          files: document.querySelectorAll("[data-review-file]").length,
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          postDisabled: document.querySelector("[data-post-review]")?.disabled,
+        }));
+        if (desktopReview.files !== 1 || desktopReview.overflow || !desktopReview.postDisabled) {
+          throw new Error(`Desktop review layout or write gate failed: ${JSON.stringify(desktopReview)}`);
+        }
+        await reviewPage.close();
 
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
@@ -1316,6 +1566,15 @@ def write_smoke_script(path)
         await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
         await page.waitForSelector("[data-testid='response-style-action']", { state: "visible", timeout: 10_000 });
         await page.waitForSelector("#session-loop-default-interval", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector("#settings-github", { state: "visible", timeout: 10_000 });
+        const githubSettings = await page.locator("#settings-github").innerText();
+        const githubInstallHref = await page.locator("#settings-github a[href*='/apps/tycho-smoke/installations/new']").getAttribute("href");
+        if (!githubSettings.includes("GitHub CLI") ||
+            !githubSettings.includes("App login ready") ||
+            !githubInstallHref ||
+            await page.locator("#settings-github [data-start-github-login]").count() !== 1) {
+          throw new Error(`GitHub settings did not expose App login with gh compatibility: ${JSON.stringify({ githubSettings, githubInstallHref })}`);
+        }
         const serversSection = page.locator("[data-scroll-settings-section='settings-servers']");
         await serversSection.click();
         await page.waitForFunction(() => (
@@ -1731,6 +1990,8 @@ browser = ensure_browser_prerequisites!
 
 Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   fixture = write_fixture(dir)
+  github_server, github_thread = start_fake_github_api
+  github_api_url = "http://127.0.0.1:#{github_server.addr[1]}"
   port = free_port
   base_url = "http://127.0.0.1:#{port}"
   log_path = File.join(dir, "remote-server.log")
@@ -1741,7 +2002,11 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     "TYCHO_SCHEDULES_PATH" => fixture.fetch(:schedules_path),
     "TYCHO_LOGS_ROOT" => fixture.fetch(:logs_dir),
     "TYCHO_CODEX_BIN" => fixture.fetch(:fake_codex_path),
-    "TYCHO_REMOTE_TOKEN" => ""
+    "TYCHO_GH_BIN" => fixture.fetch(:fake_gh_path),
+    "TYCHO_GITHUB_APP_CLIENT_ID" => "smoke-client-id",
+    "TYCHO_GITHUB_APP_SLUG" => "tycho-smoke",
+    "TYCHO_REMOTE_TOKEN" => "",
+    "TYCHO_GITHUB_API_URL" => github_api_url
   }
 
   @server_pid = Process.spawn(
@@ -1786,5 +2051,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       Process.kill("TERM", -@server_pid)
       Process.wait(@server_pid)
     end
+    github_server&.close
+    github_thread&.join
   end
 end

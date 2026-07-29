@@ -14,6 +14,7 @@ module HQ
       "This managed agent is owned by the Tycho schedule %{title}.",
       "Treat each scheduled user message as one recurring run in the same long-lived session.",
       "Use prior session context when it helps, but make each run's outcome clear and operator-facing.",
+      "When a run reviews or changes a pull request, attach its canonical GitHub pull request URL and state the outcome briefly.",
       ManagedAgent::NO_ACTION_STATUS_GUIDANCE,
       "If you need human input, ask a precise structured inquiry and stop instead of guessing."
     ].join("\n")

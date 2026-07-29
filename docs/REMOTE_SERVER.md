@@ -325,6 +325,9 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `GET` | `/agents/{key}/pull-requests/{id}/diff` | Read one saved pull request diff snapshot. |
 | `POST` | `/agents/{key}/pull-requests/{id}/refresh` | Fetch current PR metadata and patch content, then save a fresh diff snapshot. |
 | `POST` | `/agents/{key}/pull-requests/refresh` | Refresh every detected pull request diff for one agent. |
+| `POST` | `/github/auth/device` | Start Tycho GitHub App device authorization and return the public user code. |
+| `POST` | `/github/auth/device/{id}/poll` | Poll one server-side device authorization without exposing its device code. |
+| `DELETE` | `/github/auth` | Delete the local Tycho GitHub App session; authenticated `gh` compatibility remains available. |
 | `PUT` | `/agents/{key}/reading` | Mark one agent as read after the user opens its conversation. |
 | `POST` | `/agents/{key}/messages` | Append a user prompt to one agent. |
 | `POST` | `/agents/{key}/prompt` | Alias for appending a user prompt. |

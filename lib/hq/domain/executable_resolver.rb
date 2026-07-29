@@ -13,6 +13,7 @@ module HQ
     ENV_NAMES = {
       "claude" => "CLAUDE_BIN",
       "codex" => "CODEX_BIN",
+      "gh" => "GH_BIN",
       "opencode" => "OPENCODE_BIN",
       "tailscale" => "TAILSCALE_BIN"
     }.freeze

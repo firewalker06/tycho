@@ -1,110 +1,161 @@
 # frozen_string_literal: true
 
+require "tmpdir"
+
 require_relative "../lib/hq/domain/pull_request_diff"
 
 module PullRequestDiffTest
   module_function
 
+  class FakeClient
+    attr_reader :requests
+
+    def initialize(metadata: {}, diff: "")
+      @metadata = metadata
+      @diff = diff
+      @requests = []
+    end
+
+    def get_json(path, **)
+      @requests << [:json, path]
+      HQ::GitHubAPIClient::Response.new(
+        status: 200,
+        body: @metadata,
+        headers: {},
+        etag: "metadata-etag",
+        rate_limit: { remaining: 42 },
+        not_modified: false
+      )
+    end
+
+    def get_text(path, accept:, **)
+      @requests << [:text, path, accept]
+      HQ::GitHubAPIClient::Response.new(
+        status: 200,
+        body: @diff,
+        headers: {},
+        not_modified: false
+      )
+    end
+  end
+
   def run!
-    assert_github_provider_fetches_current_diff_not_commit_patch
-    assert_github_provider_normalizes_utf8_cli_output
-    assert_previous_diff_snapshots_are_not_fresh
-    assert_legacy_snapshots_are_not_fresh
+    assert_github_provider_uses_direct_pr_endpoints
+    assert_structural_truncation_drops_partial_file
+    assert_freshness_separates_code_and_activity
+    assert_snapshot_identity_omits_agent_key
+    assert_store_preserves_concurrent_snapshots
     puts "pull_request_diff_test: ok"
   end
 
-  def assert_github_provider_fetches_current_diff_not_commit_patch
-    provider = Class.new(HQ::PullRequestDiff::GitHubProvider) do
-      attr_reader :commands
-
-      def initialize
-        super
-        @commands = []
-      end
-
-      private
-
-      def gh_output(*args)
-        @commands << args
-        <<~DIFF
-          diff --git a/app/example.rb b/app/example.rb
-          index 1111111..2222222 100644
-          --- a/app/example.rb
-          +++ b/app/example.rb
-          @@ -1,2 +1,2 @@
-          -old
-          +new
-        DIFF
-      end
-    end.new
-
-    reference = HQ::PullRequestDiff::Reference.new(repository: "example/web", number: 123)
-    diff, truncated = provider.patch(reference)
-
-    assert(!truncated, "expected small diff payload to stay untruncated")
-    assert(diff.include?("diff --git"), "expected provider to return diff text")
-    assert(provider.commands.first == ["pr", "diff", "123", "--repo", "example/web", "--color", "never"],
-           "expected GitHub provider to request the current PR diff, not per-commit patch output")
-  end
-
-  def assert_previous_diff_snapshots_are_not_fresh
-    previous = {
-      "diff_format" => "github_diff_v1",
-      "head_sha" => "abc123",
-      "remote_updated_at" => "2026-06-29T07:43:31Z"
-    }
-    metadata = {
-      "head_sha" => "abc123",
-      "remote_updated_at" => "2026-06-29T07:43:31Z"
-    }
-
-    assert(!HQ::PullRequestDiff.snapshot_summary(previous, metadata:)["fresh"],
-           "expected previous diff-format snapshots to be stale so bad cached patch snapshots refetch")
-  end
-
-  def assert_github_provider_normalizes_utf8_cli_output
-    provider = Class.new(HQ::PullRequestDiff::GitHubProvider) do
-      private
-
-      def gh_output(*args)
-        output = if args.first == "api"
-                   "{\"title\":\"Fix \xE2\x80\x94 metadata\",\"head\":{},\"base\":{}}"
-                 else
-                   "diff --git a/caf\xC3\xA9.rb b/caf\xC3\xA9.rb\n"
-                 end
-        output.b.force_encoding(Encoding::US_ASCII)
-      end
-    end.new
-    reference = HQ::PullRequestDiff::Reference.new(
-      repository: "example/web",
-      number: 123,
-      url: "https://github.com/example/web/pull/123"
+  def assert_github_provider_uses_direct_pr_endpoints
+    client = FakeClient.new(
+      metadata: {
+        "title" => "Fix metadata",
+        "html_url" => "https://github.com/example/web/pull/123",
+        "head" => { "sha" => "head", "ref" => "feature" },
+        "base" => { "sha" => "base", "ref" => "main" }
+      },
+      diff: complete_diff("app/example.rb")
     )
+    provider = HQ::PullRequestDiff::GitHubProvider.new(client:)
+    reference = reference_for
 
     metadata = provider.metadata(reference)
-    diff, = provider.patch(reference)
+    diff, truncated = provider.patch(reference)
 
-    assert(metadata["title"] == "Fix \u2014 metadata",
-           "expected GitHub metadata bytes to normalize as UTF-8 under US-ASCII defaults")
-    assert(diff.include?("caf\u00E9.rb"),
-           "expected GitHub diff bytes to normalize as UTF-8 under US-ASCII defaults")
+    assert(metadata["title"] == "Fix metadata", "expected JSON metadata from the REST pull endpoint")
+    assert(!truncated && diff.include?("diff --git"), "expected the current PR diff media type")
+    assert(client.requests == [
+      [:json, "/repos/example/web/pulls/123"],
+      [:text, "/repos/example/web/pulls/123", "application/vnd.github.diff"]
+    ], "expected the provider to use direct metadata and diff endpoints")
   end
 
-  def assert_legacy_snapshots_are_not_fresh
-    legacy = {
-      "head_sha" => "abc123",
-      "remote_updated_at" => "2026-06-29T07:43:31Z"
-    }
-    current = legacy.merge("diff_format" => HQ::PullRequestDiff::DIFF_FORMAT)
-    metadata = {
-      "head_sha" => "abc123",
-      "remote_updated_at" => "2026-06-29T07:43:31Z"
-    }
+  def assert_structural_truncation_drops_partial_file
+    first = complete_diff("small.rb")
+    second = "diff --git a/large.txt b/large.txt\n--- a/large.txt\n+++ b/large.txt\n@@ -1 +1 @@\n" +
+             ("+#{'x' * 200}\n" * 5_000)
+    provider = HQ::PullRequestDiff::GitHubProvider.new(client: FakeClient.new(diff: first + second))
 
-    assert(!HQ::PullRequestDiff.snapshot_summary(legacy, metadata:)["fresh"],
-           "expected unversioned snapshots to be stale because old PR patch snapshots overcounted commit diffs")
-    assert(HQ::PullRequestDiff.snapshot_summary(current, metadata:)["fresh"],
-           "expected current diff-format snapshots to be fresh when metadata matches")
+    diff, truncated = provider.patch(reference_for)
+
+    assert(truncated, "expected an oversized patch to be marked truncated")
+    assert(diff.include?("small.rb"), "expected complete files before the byte limit to remain")
+    assert(!diff.include?("large.txt"), "expected the partial file at the limit to be omitted")
+    assert(diff.valid_encoding?, "expected truncation to preserve valid UTF-8")
+  end
+
+  def assert_freshness_separates_code_and_activity
+    snapshot = {
+      "diff_format" => HQ::PullRequestDiff::DIFF_FORMAT,
+      "head_sha" => "head",
+      "base_sha" => "base",
+      "remote_updated_at" => "old"
+    }
+    summary = HQ::PullRequestDiff.snapshot_summary(
+      snapshot,
+      metadata: { "head_sha" => "head", "base_sha" => "base", "remote_updated_at" => "new" }
+    )
+
+    assert(summary["code_fresh"], "expected activity-only updates not to invalidate code")
+    assert(!summary["activity_fresh"], "expected activity freshness to be reported separately")
+  end
+
+  def assert_snapshot_identity_omits_agent_key
+    client = FakeClient.new(
+      metadata: {
+        "title" => "PR",
+        "head" => { "sha" => "head", "ref" => "feature" },
+        "base" => { "sha" => "base", "ref" => "main" }
+      },
+      diff: complete_diff("app.rb")
+    )
+    first = reference_for(agent_key: "agent-a")
+    second = reference_for(agent_key: "agent-b")
+
+    first_snapshot = HQ::PullRequestDiff.snapshot_for(first, provider: HQ::PullRequestDiff::GitHubProvider.new(client:))
+    second_snapshot = HQ::PullRequestDiff.snapshot_for(second, provider: HQ::PullRequestDiff::GitHubProvider.new(client:))
+
+    assert(first_snapshot["snapshot_id"] == second_snapshot["snapshot_id"], "expected immutable snapshot identity to ignore agent ownership")
+    assert(!first_snapshot.key?("agent_key"), "expected agent ownership to live in occurrence state")
+  end
+
+  def assert_store_preserves_concurrent_snapshots
+    Dir.mktmpdir("tycho-pr-diffs") do |dir|
+      store = HQ::PullRequestDiff::Store.new(File.join(dir, "snapshots.json"))
+      threads = 10.times.map do |index|
+        Thread.new { store.save("id" => index.to_s, "diff_format" => HQ::PullRequestDiff::DIFF_FORMAT) }
+      end
+      threads.each(&:join)
+      assert(store.all.length == 10, "expected locked read-modify-write to preserve concurrent saves")
+      snapshot = { "id" => "current", "snapshot_id" => "immutable-1", "fetched_at" => Time.now.iso8601 }
+      store.save(snapshot)
+      assert(store.fetch_snapshot("immutable-1") == snapshot, "expected immutable history to support changed-since-review")
+    end
+  end
+
+  def reference_for(agent_key: nil)
+    HQ::PullRequestDiff::Reference.new(
+      id: HQ::PullRequestDiff.reference_id("github", "example/web", 123),
+      provider: "github",
+      repository: "example/web",
+      number: 123,
+      url: "https://github.com/example/web/pull/123",
+      agent_key:
+    )
+  end
+
+  def complete_diff(path)
+    <<~DIFF
+      diff --git a/#{path} b/#{path}
+      index 1111111..2222222 100644
+      --- a/#{path}
+      +++ b/#{path}
+      @@ -1 +1 @@
+      -old
+      +new
+    DIFF
   end
 
   def assert(condition, message)

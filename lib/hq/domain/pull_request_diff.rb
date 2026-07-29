@@ -6,15 +6,15 @@ require "json"
 require "time"
 require "uri"
 
-require_relative "command_runner"
 require_relative "constants"
 require_relative "file_store"
 require_relative "git_diff"
+require_relative "github_api_client"
 
 module HQ
   class PullRequestDiff
     GITHUB_PR_URL = %r{\Ahttps?://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)(?:[/?#].*)?\z}i
-    DIFF_FORMAT = "github_diff_v2"
+    DIFF_FORMAT = "github_diff_v3"
     MAX_PATCH_BYTES = 768 * 1024
 
     class Error < StandardError
@@ -43,16 +43,31 @@ module HQ
     end
 
     class Store
+      STORE_VERSION = 1
+      MAX_SNAPSHOTS = 500
+
       def initialize(path = File.join(HQ::AGENT_LOGS_DIR, "pull_request_diffs.json"))
         @path = path
       end
 
       def all
         parsed = FileStore.read_json(@path, fallback: {})
-        parsed.is_a?(Hash) ? parsed : {}
+        return {} unless parsed.is_a?(Hash)
+        return parsed.fetch("snapshots", {}) if parsed["version"] == STORE_VERSION
+
+        parsed
       rescue StandardError => e
         HQ.logger.warn("PRDiff") { "Failed to load PR diffs from #{@path}: #{e.class} - #{e.message}" }
         {}
+      end
+
+      def fetch_snapshot(snapshot_id)
+        parsed = FileStore.read_json(@path, fallback: {})
+        return nil unless parsed.is_a?(Hash) && parsed["version"] == STORE_VERSION
+
+        parsed.fetch("history", {})[snapshot_id.to_s]
+      rescue StandardError
+        nil
       end
 
       def fetch(id)
@@ -60,24 +75,53 @@ module HQ
       end
 
       def save(snapshot)
-        id = snapshot.fetch("id")
-        snapshots = all
-        snapshots[id] = snapshot
-        FileStore.write_json(@path, snapshots)
+        with_lock do
+          id = snapshot.fetch("id")
+          snapshots = all
+          snapshots[id] = snapshot
+          snapshots = snapshots.sort_by { |_key, value| value["fetched_at"].to_s }.last(MAX_SNAPSHOTS).to_h
+          parsed = FileStore.read_json(@path, fallback: {})
+          history = parsed.is_a?(Hash) && parsed["version"] == STORE_VERSION ? parsed.fetch("history", {}) : {}
+          history[snapshot["snapshot_id"]] = snapshot if snapshot["snapshot_id"]
+          history = history.sort_by { |_key, value| value["fetched_at"].to_s }.last(MAX_SNAPSHOTS).to_h
+          FileStore.write_json(
+            @path,
+            { "version" => STORE_VERSION, "snapshots" => snapshots, "history" => history }
+          )
+        end
         snapshot
+      end
+
+      private
+
+      def with_lock
+        FileUtils.mkdir_p(File.dirname(@path))
+        File.open("#{@path}.lock", File::RDWR | File::CREAT, 0o600) do |lock|
+          lock.flock(File::LOCK_EX)
+          yield
+        ensure
+          lock.flock(File::LOCK_UN) rescue nil
+        end
       end
     end
 
     class GitHubProvider
-      COMMAND_TIMEOUT = 12
+      def initialize(client: GitHubAPIClient.new)
+        @client = client
+      end
 
       def metadata(reference)
-        data = gh_json("repos/#{reference.repository}/pulls/#{reference.number}")
+        response = @client.get_json("/repos/#{reference.repository}/pulls/#{reference.number}")
+        data = response.body
         {
           "title" => data["title"],
+          "body" => data["body"],
           "url" => data["html_url"] || reference.url,
           "state" => data["state"],
           "draft" => data["draft"] == true,
+          "mergeable" => data["mergeable"],
+          "mergeable_state" => data["mergeable_state"],
+          "merged" => data["merged"] == true,
           "author" => data.dig("user", "login"),
           "base_sha" => data.dig("base", "sha"),
           "head_sha" => data.dig("head", "sha"),
@@ -86,49 +130,33 @@ module HQ
           "file_count" => data["changed_files"],
           "additions" => data["additions"],
           "deletions" => data["deletions"],
-          "remote_updated_at" => data["updated_at"]
+          "remote_updated_at" => data["updated_at"],
+          "etag" => response.etag,
+          "rate_limit" => response.rate_limit
         }.compact
+      rescue GitHubAPIClient::Error => e
+        raise Error.new(e.message, status: e.status)
       end
 
       def patch(reference)
-        output = utf8_output(gh_output(
-          "pr", "diff", reference.number.to_s,
-          "--repo", reference.repository,
-          "--color", "never"
-        ))
-        truncated = output.bytesize > MAX_PATCH_BYTES
-        output = output.byteslice(0, MAX_PATCH_BYTES).to_s if truncated
+        response = @client.get_text(
+          "/repos/#{reference.repository}/pulls/#{reference.number}",
+          accept: "application/vnd.github.diff"
+        )
+        output, truncated = structurally_truncate(response.body)
         [output, truncated]
+      rescue GitHubAPIClient::Error => e
+        raise Error.new(e.message, status: e.status)
       end
 
       private
 
-      def gh_json(path)
-        JSON.parse(utf8_output(gh_output("api", path)))
-      rescue JSON::ParserError
-        raise Error.new("GitHub returned invalid JSON", status: 502)
-      end
+      def structurally_truncate(output)
+        return [output, false] if output.bytesize <= MAX_PATCH_BYTES
 
-      def utf8_output(output)
-        output.to_s.dup.force_encoding(Encoding::UTF_8).scrub
-      end
-
-      def gh_output(*args)
-        command = ["gh", *args]
-        result = CommandRunner.capture(command, timeout: COMMAND_TIMEOUT)
-        if result.timed_out?
-          raise Error.new("GitHub CLI timed out while fetching PR diff metadata.", status: 504)
-        end
-        raise Error.new(gh_error(result.stderr), status: 502) unless result.success?
-
-        result.stdout.to_s
-      rescue Errno::ENOENT
-        raise Error.new("GitHub CLI is not available; install or authenticate `gh` to refresh PR diffs.", status: 424)
-      end
-
-      def gh_error(stderr)
-        text = stderr.to_s.strip
-        text.empty? ? "GitHub CLI failed while fetching PR diff data." : text
+        prefix = output.byteslice(0, MAX_PATCH_BYTES).to_s.force_encoding(Encoding::UTF_8).scrub
+        boundary = prefix.rindex("\ndiff --git ")
+        boundary ? [prefix.byteslice(0, boundary + 1), true] : ["", true]
       end
     end
 
@@ -147,6 +175,15 @@ module HQ
 
       def reference_from_attachment(agent, attachment)
         url = attachment_url(attachment)
+        reference_from_url(
+          url,
+          title: attachment["title"],
+          description: attachment["description"],
+          agent_key: agent.key
+        )
+      end
+
+      def reference_from_url(url, title: nil, description: nil, agent_key: nil)
         parsed = parse_github_url(url)
         return nil unless parsed
 
@@ -158,9 +195,9 @@ module HQ
           repository: repository,
           number: number,
           url: canonical_url(repository, number),
-          title: attachment["title"].to_s.strip.empty? ? "#{repository}##{number}" : attachment["title"].to_s.strip,
-          description: attachment["description"].to_s.strip.empty? ? nil : attachment["description"].to_s.strip,
-          agent_key: agent.key
+          title: title.to_s.strip.empty? ? "#{repository}##{number}" : title.to_s.strip,
+          description: description.to_s.strip.empty? ? nil : description.to_s.strip,
+          agent_key:
         )
       end
 
@@ -172,7 +209,7 @@ module HQ
       end
 
       def reference_id(provider, repository, number)
-        Digest::SHA256.hexdigest([provider, repository, number].join("\0"))[0, 20]
+        Digest::SHA256.hexdigest([provider.to_s.downcase, repository.to_s.downcase, number].join("\0"))[0, 20]
       end
 
       def canonical_url(repository, number)
@@ -182,16 +219,20 @@ module HQ
       def snapshot_for(reference, provider: GitHubProvider.new)
         metadata = provider.metadata(reference)
         patch, truncated = provider.patch(reference)
-        files = GitDiff.parse_patch_text(patch)
+        files = GitDiff.parse_patch_text(patch).map { |file| annotate_file(file) }
+        snapshot_id = Digest::SHA256.hexdigest(
+          [reference.provider, reference.repository.downcase, reference.number,
+           metadata["base_sha"], metadata["head_sha"]].join("\0")
+        )[0, 24]
         {
           "id" => reference.id,
-          "agent_key" => reference.agent_key,
+          "snapshot_id" => snapshot_id,
           "provider" => reference.provider,
           "repository" => reference.repository,
           "number" => reference.number,
           "url" => metadata["url"] || reference.url,
           "title" => metadata["title"] || reference.title,
-          "description" => reference.description,
+          "description" => metadata["body"] || reference.description,
           "state" => metadata["state"],
           "draft" => metadata["draft"],
           "author" => metadata["author"],
@@ -204,6 +245,9 @@ module HQ
           "diff_format" => DIFF_FORMAT,
           "files" => files,
           "file_count" => files.length,
+          "remote_file_count" => metadata["file_count"],
+          "omitted_file_count" => [metadata["file_count"].to_i - files.length, 0].max,
+          "omitted_reason" => truncated ? "snapshot_byte_limit" : nil,
           "additions" => files.sum { |file| file[:additions].to_i },
           "deletions" => files.sum { |file| file[:deletions].to_i },
           "truncated" => truncated
@@ -220,12 +264,16 @@ module HQ
       def snapshot_summary(snapshot, metadata: nil)
         return nil unless snapshot.is_a?(Hash)
 
-        fresh = if metadata
-                  snapshot["head_sha"].to_s == metadata["head_sha"].to_s &&
-                    snapshot["remote_updated_at"].to_s == metadata["remote_updated_at"].to_s &&
-                    current_snapshot?(snapshot)
-                end
+        code_fresh = if metadata
+                       snapshot["head_sha"].to_s == metadata["head_sha"].to_s &&
+                         snapshot["base_sha"].to_s == metadata["base_sha"].to_s &&
+                         current_snapshot?(snapshot)
+                     end
+        activity_fresh = if metadata
+                           snapshot["remote_updated_at"].to_s == metadata["remote_updated_at"].to_s
+                         end
         {
+          "snapshot_id" => snapshot["snapshot_id"],
           "fetched_at" => snapshot["fetched_at"],
           "remote_updated_at" => snapshot["remote_updated_at"],
           "head_sha" => snapshot["head_sha"],
@@ -234,7 +282,9 @@ module HQ
           "additions" => snapshot["additions"],
           "deletions" => snapshot["deletions"],
           "truncated" => snapshot["truncated"],
-          "fresh" => fresh.nil? ? nil : fresh
+          "fresh" => code_fresh.nil? ? nil : code_fresh,
+          "code_fresh" => code_fresh.nil? ? nil : code_fresh,
+          "activity_fresh" => activity_fresh.nil? ? nil : activity_fresh
         }.compact
       end
 
@@ -243,6 +293,16 @@ module HQ
       end
 
       private
+
+      def annotate_file(file)
+        path = file[:path].to_s
+        file.merge(generated: generated_path?(path))
+      end
+
+      def generated_path?(path)
+        path.match?(%r{(?:\A|/)(?:dist|build|vendor|coverage|node_modules)/}i) ||
+          path.match?(/\.(?:min\.(?:js|css)|lock|map)\z/i)
+      end
 
       def attachment_url(attachment)
         attachment["url"].to_s.strip

@@ -28,8 +28,9 @@ reviewer: >-
   Your task is to review PR(s):
   - ask which PR to review
   - use /review skill as guidelines
-  - write review in markdown file under /tmp directory
-  - run command `open $filename` to open the file and let the user review
+  - report a short, evidence-first outcome
+  - include each reviewed PR's canonical https://github.com/{owner}/{repo}/pull/{number} URL as a link attachment
+  - do not post a GitHub review unless the user explicitly asks
 
 maintenance: >-
   Your task is to perform maintenance by:
