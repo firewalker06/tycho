@@ -851,6 +851,31 @@ h3 {
   margin-left: auto;
 }
 
+.server-filter-control {
+  display: inline-flex;
+}
+
+.server-filter-control select {
+  min-height: var(--control-height);
+  max-width: 220px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 0 30px 0 10px;
+}
+
+.server-identity-badge {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.server-identity-badge > .chip {
+  margin: 0;
+}
+
 .compact-actions button {
   padding: 7px 9px;
 }
@@ -978,10 +1003,25 @@ textarea {
   margin-top: 4px;
 }
 
+.server-list-item .server-row-chips {
+  margin-top: 4px;
+}
+
+.server-list-item .server-row-chips .chip {
+  margin-top: 0;
+}
+
 .server-section-label > div {
   display: grid;
   gap: 2px;
   min-width: 0;
+}
+
+.server-section-label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
 }
 
 .server-section-label .inline-icon-button span {
@@ -2345,13 +2385,29 @@ select {
 }
 
 .agent-ledger .agent-group-project {
-  display: block;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
 }
 
 .agent-ledger .agent-group-project :is(a, strong) {
   display: flex;
   min-height: var(--ds-touch-target);
   align-items: center;
+}
+
+.agent-ledger .agent-group-project > :is(a, strong) {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.agent-ledger .server-identity-badge {
+  flex: 0 1 auto;
+}
+
+.agent-ledger .server-identity-badge .chip {
+  max-width: 180px;
 }
 
 .agent-ledger .agent-group-project-title {
@@ -2401,6 +2457,27 @@ select {
   min-height: 58px;
   background: color-mix(in srgb, var(--panel) 84%, var(--panel-2));
   padding: 7px 10px 7px 12px;
+}
+
+.resource-stale {
+  color: var(--muted);
+}
+
+.resource-stale :is(.row-title strong, .card-title strong, .agent-group-project-title) {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.resource-stale :is(.status-mark, .ui-status, .server-identity-badge) {
+  opacity: 0.68;
+}
+
+.agent-ledger .agent-group.resource-stale .group-title,
+.agent-ledger .agent-group.resource-stale .agent-row,
+.agent-flat-list .agent-row.resource-stale,
+.card.resource-stale,
+.project-overview-row.resource-stale {
+  background: color-mix(in srgb, var(--panel-soft) 48%, var(--panel));
 }
 
 .agent-flat-list.ui-surface {

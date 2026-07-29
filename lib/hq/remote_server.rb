@@ -60,7 +60,8 @@ module HQ
 
     def initialize(host: DEFAULT_HOST, port: DEFAULT_PORT, public_url: nil, startup_messages: nil,
                    restart_command: nil, token: HQ.env("REMOTE_TOKEN"), logger: HQ.logger, output: $stdout,
-                   daemonize_after_startup: false, daemon_log_path: REMOTE_DAEMON_LOG_FILE, daemonizer: nil)
+                   daemonize_after_startup: false, daemon_log_path: REMOTE_DAEMON_LOG_FILE, daemonizer: nil,
+                   resource_catalog: nil)
       @host = host.to_s.empty? ? DEFAULT_HOST : host.to_s
       @port = port.to_i.positive? ? port.to_i : DEFAULT_PORT
       @public_url = public_url.to_s
@@ -72,6 +73,7 @@ module HQ
       @daemonize_after_startup = daemonize_after_startup ? true : false
       @daemon_log_path = daemon_log_path.to_s.empty? ? REMOTE_DAEMON_LOG_FILE : daemon_log_path.to_s
       @daemonizer = daemonizer
+      @resource_catalog = resource_catalog || RemoteResourceCatalog.new
     end
 
     def start
@@ -102,6 +104,7 @@ module HQ
         @output.flush if @output.respond_to?(:flush)
       end
       daemonize_after_startup! if @daemonize_after_startup
+      warm_resource_catalog!
 
       until @shutdown
         begin
@@ -156,6 +159,13 @@ module HQ
       unless authorized?(request)
         status = 401
         write_http(client, status, error: "Unauthorized")
+        return
+      end
+
+      if request.method == "GET" && request.path == "/servers/resources"
+        result = ok(@resource_catalog.snapshot)
+        status = result.fetch(:status)
+        write_http(client, status, result.fetch(:body))
         return
       end
 
@@ -217,15 +227,57 @@ module HQ
 
       if parts.first == "servers"
         broker = RemoteBroker.new(registry: service.registry, server_url: service.server_url)
+        @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
         return ok(servers: broker.servers) if method == "GET" && parts == ["servers"]
-        return created(service.add_remote_server(body)) if method == "POST" && parts == ["servers"]
-        return ok(service.remove_remote_server(parts[1])) if method == "DELETE" && parts.length == 2
+        return ok(@resource_catalog.snapshot) if method == "GET" && parts == ["servers", "resources"]
+        if method == "POST" && parts == ["servers", "resources", "refresh"]
+          tokens = body["tokens"].is_a?(Hash) ? body["tokens"] : {}
+          refreshes = broker.servers.map do |server|
+            @resource_catalog.refresh(
+              server[:key],
+              registry: service.registry,
+              server_url: service.server_url,
+              local_service: service,
+              token_override: tokens[server[:key]].to_s,
+              force: body["force"] == true
+            )
+          end
+          return accepted({
+            accepted: refreshes.any? { |refresh| refresh[:accepted] },
+            refreshes: refreshes
+          })
+        end
+        if method == "POST" && parts.length == 4 && parts[2, 2] == ["resources", "refresh"]
+          return accepted(@resource_catalog.refresh(
+                            parts[1],
+                            registry: service.registry,
+                            server_url: service.server_url,
+                            local_service: service,
+                            token_override: remote_server_token(request),
+                            force: body["force"] == true
+                          ))
+        end
+        if method == "POST" && parts == ["servers"]
+          result = service.add_remote_server(body)
+          @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
+          return created(result)
+        end
+        if method == "DELETE" && parts.length == 2
+          result = service.remove_remote_server(parts[1])
+          @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
+          return ok(result)
+        end
+        if parts.length >= 3 && RemoteBroker::RESOURCE_ROOTS.include?(parts[2])
+          resource_path = "/#{parts.drop(2).join("/")}"
+          return broker.proxy(parts[1], method, resource_path, body, request)
+        end
         if parts.length >= 3 && parts[2] == "proxy"
           proxy_path = "/#{parts.drop(3).join("/")}"
           proxy_path = "/" if proxy_path == "/"
           return broker.proxy(parts[1], method, proxy_path, body, request)
         end
       end
+      return ok(service.resource_snapshot) if method == "GET" && parts == ["resources"]
       return ok(agents: service.agents) if method == "GET" && parts == ["agents"]
       return created(agent: service.create_agent(body)) if method == "POST" && parts == ["agents"]
       return ok(schedules: service.schedules, daemon: service.schedule_daemon) if method == "GET" && parts == ["schedules"]
@@ -528,6 +580,28 @@ module HQ
       nil
     end
 
+    def warm_resource_catalog!
+      service = RemoteService.new(
+        server_url: "http://#{@host}:#{@port}",
+        public_url: @public_url,
+        auth_required: !@token.empty?,
+        restartable: restartable?
+      )
+      @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
+      @resource_catalog.refresh(
+        "local",
+        registry: service.registry,
+        server_url: service.server_url,
+        local_service: service
+      )
+    rescue StandardError => e
+      HQ.logger.warn("RemoteResources") { "Initial local resource refresh failed: #{e.class} - #{e.message}" }
+    end
+
+    def remote_server_token(request)
+      request&.[]("X-Tycho-Remote-Server-Token").to_s
+    end
+
     def log_server(line)
       @logger.info("Remote") { line }
       @output.puts("[Remote] #{Time.now.strftime("%H:%M:%S")} #{line}")
@@ -545,18 +619,354 @@ module HQ
         401 => "Unauthorized",
         404 => "Not Found",
         409 => "Conflict",
+        502 => "Bad Gateway",
+        504 => "Gateway Timeout",
         500 => "Internal Server Error"
       }.fetch(status, "OK")
+    end
+  end
+
+  class RemoteResourceCatalog
+    SCHEMA_VERSION = 1
+    MAX_WORKERS = 4
+    OPEN_TIMEOUT = 0.5
+    READ_TIMEOUT = 1.0
+    REFRESH_INTERVAL_SECONDS = 2
+    FAILURE_BACKOFF_SECONDS = [2, 5, 15, 30, 60].freeze
+
+    LocalConfig = Struct.new(:key, :name, :url, keyword_init: true) do
+      def resolved_token
+        ""
+      end
+    end
+
+    def initialize(max_workers: MAX_WORKERS, logger: HQ.logger)
+      @logger = logger
+      @max_workers = [max_workers.to_i, 1].max
+      @mutex = Mutex.new
+      @worker_mutex = Mutex.new
+      @entries = {}
+      @inflight = {}
+      @revision = 0
+      @queue = Queue.new
+      @workers = nil
+    end
+
+    def reconcile(registry:, server_url:)
+      configs = [
+        LocalConfig.new(key: "local", name: "Local", url: server_url.to_s)
+      ] + Array(registry.remote_servers)
+      next_keys = configs.map(&:key)
+
+      @mutex.synchronize do
+        @entries.delete_if { |key, _entry| !next_keys.include?(key) }
+        @inflight.delete_if { |key, _value| !next_keys.include?(key) }
+        configs.each_with_index do |config, index|
+          existing = @entries[config.key]
+          metadata = {
+            key: config.key,
+            name: config.name,
+            url: config.url,
+            local: index.zero?,
+            auth_configured: !config.resolved_token.to_s.empty?
+          }
+          @entries[config.key] = existing ? existing.merge(metadata) : empty_entry(metadata)
+        end
+      end
+    end
+
+    def snapshot
+      @mutex.synchronize do
+        servers = @entries.values
+                          .sort_by { |entry| [entry[:local] ? 0 : 1, entry[:name].to_s.downcase, entry[:key]] }
+                          .map { |entry| entry.merge(retry_after_ms: retry_after_ms(entry)) }
+        deep_copy(
+          schema_version: SCHEMA_VERSION,
+          revision: @revision,
+          generated_at: Time.now.iso8601,
+          servers: servers
+        )
+      end
+    end
+
+    def refresh(key, registry:, server_url:, local_service:, token_override: nil, force: false)
+      ensure_workers!
+      reconcile(registry:, server_url:)
+      server_key = key.to_s
+      config = config_for(server_key, registry:, server_url:)
+
+      @mutex.synchronize do
+        raise RemoteServer::Error.new("Unknown remote server: #{server_key}", status: 404) unless @entries.key?(server_key)
+
+        if @inflight[server_key]
+          return {
+            accepted: false,
+            server_key: server_key,
+            revision: @revision,
+            retry_after_ms: 0
+          }
+        end
+
+        entry = @entries.fetch(server_key)
+        retry_after = retry_after_ms(entry)
+        if !force && retry_after.positive?
+          return {
+            accepted: false,
+            server_key: server_key,
+            revision: @revision,
+            retry_after_ms: retry_after
+          }
+        end
+
+        @inflight[server_key] = true
+        @entries[server_key] = entry.merge(refreshing: true)
+        @revision += 1
+      end
+      @queue << {
+        key: server_key,
+        config: config,
+        local_service: server_key == "local" ? local_service : nil,
+        token_override: token_override.to_s
+      }
+      refresh_payload(server_key, accepted: true)
+    end
+
+    private
+
+    def ensure_workers!
+      @worker_mutex.synchronize do
+        return if @workers
+
+        @workers = Array.new(@max_workers) do
+          Thread.new do
+            loop { perform_refresh(@queue.pop) }
+          rescue StandardError => e
+            @logger.error("RemoteResources") { "Refresh worker stopped: #{e.class} - #{e.message}" }
+          end
+        end
+      end
+    end
+
+    def perform_refresh(job)
+      started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      result = fetch_snapshot(job)
+      elapsed_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at) * 1000).round
+      if result[:success]
+        record_success(job[:key], result, elapsed_ms)
+      else
+        record_failure(job[:key], result, elapsed_ms)
+      end
+    rescue StandardError => e
+      elapsed_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at) * 1000).round
+      record_failure(job[:key], { category: "offline", error: e.class.name }, elapsed_ms)
+    ensure
+      job[:token_override] = nil if job
+    end
+
+    def fetch_snapshot(job)
+      if job[:local_service]
+        return successful_snapshot(job[:local_service].resource_snapshot, mode: "native")
+      end
+
+      client = RemoteClient.new(
+        job.fetch(:config),
+        open_timeout: OPEN_TIMEOUT,
+        read_timeout: READ_TIMEOUT,
+        token_override: job[:token_override]
+      )
+      response = client.request("GET", "/resources")
+      return legacy_snapshot(client) if response[:status].to_i == 404
+      return failed_response(response) unless response[:status].to_i.between?(200, 299)
+
+      successful_snapshot(response[:body], mode: "native")
+    end
+
+    def legacy_snapshot(client)
+      agents = client.request("GET", "/agents")
+      return failed_response(agents) unless agents[:status].to_i.between?(200, 299)
+
+      projects = client.request("GET", "/projects")
+      return failed_response(projects) unless projects[:status].to_i.between?(200, 299)
+
+      successful_snapshot(
+        {
+          "schema_version" => SCHEMA_VERSION,
+          "agents" => value_for(agents[:body], "agents") || [],
+          "projects" => value_for(projects[:body], "projects") || []
+        },
+        mode: "legacy"
+      )
+    end
+
+    def successful_snapshot(payload, mode:)
+      version = value_for(payload, "schema_version").to_i
+      unless version == SCHEMA_VERSION
+        return {
+          success: false,
+          category: "incompatible",
+          error: "unsupported resource schema #{version}"
+        }
+      end
+
+      agents = Array(value_for(payload, "agents"))
+      projects = Array(value_for(payload, "projects"))
+      unless agents.all?(Hash) && projects.all?(Hash)
+        return {
+          success: false,
+          category: "incompatible",
+          error: "resource lists must contain objects"
+        }
+      end
+      {
+        success: true,
+        agents: agents,
+        projects: projects,
+        resource_mode: mode
+      }
+    end
+
+    def failed_response(response)
+      error = value_for(response[:body], "error").to_s
+      category = if error.include?("rejected broker credentials")
+                   "unauthorized"
+                 elsif response[:status].to_i == 504
+                   "timeout"
+                 else
+                   "offline"
+                 end
+      { success: false, category: category, error: error }
+    end
+
+    def record_success(key, result, elapsed_ms)
+      now = Time.now.iso8601
+      @mutex.synchronize do
+        entry = @entries[key]
+        return unless entry
+
+        @entries[key] = entry.merge(
+          status: "online",
+          latency_ms: elapsed_ms,
+          last_checked_at: now,
+          last_success_at: now,
+          stale: false,
+          refreshing: false,
+          error: nil,
+          failure_count: 0,
+          next_refresh_at: (Time.now + REFRESH_INTERVAL_SECONDS).iso8601,
+          retry_after_ms: REFRESH_INTERVAL_SECONDS * 1000,
+          resource_mode: result[:resource_mode],
+          agents: decorate_resources(result[:agents], entry, kind: "agent"),
+          projects: decorate_resources(result[:projects], entry, kind: "project")
+        )
+        @inflight.delete(key)
+        @revision += 1
+      end
+      @logger.info("RemoteResources") { "#{key} refreshed in #{elapsed_ms}ms" }
+    end
+
+    def record_failure(key, result, elapsed_ms)
+      now = Time.now.iso8601
+      @mutex.synchronize do
+        entry = @entries[key]
+        return unless entry
+
+        status = result[:category] == "unauthorized" ? "unauthorized" : "offline"
+        failure_count = entry[:failure_count].to_i + 1
+        backoff = FAILURE_BACKOFF_SECONDS.fetch(
+          [failure_count - 1, FAILURE_BACKOFF_SECONDS.length - 1].min
+        )
+        @entries[key] = entry.merge(
+          status: status,
+          latency_ms: elapsed_ms,
+          last_checked_at: now,
+          stale: !entry[:last_success_at].nil?,
+          refreshing: false,
+          error: result[:category].to_s,
+          failure_count: failure_count,
+          next_refresh_at: (Time.now + backoff).iso8601,
+          retry_after_ms: backoff * 1000
+        )
+        @inflight.delete(key)
+        @revision += 1
+      end
+      @logger.warn("RemoteResources") { "#{key} refresh #{result[:category]} after #{elapsed_ms}ms" }
+    end
+
+    def decorate_resources(resources, entry, kind:)
+      Array(resources).filter_map do |resource|
+        next unless resource.is_a?(Hash)
+
+        normalized = resource.each_with_object({}) { |(key, value), result| result[key.to_sym] = value }
+        normalized.merge(
+          server_key: entry[:key],
+          server_name: entry[:name],
+          server_local: entry[:local],
+          resource_kind: kind
+        )
+      end
+    end
+
+    def empty_entry(metadata)
+      metadata.merge(
+        status: "loading",
+        latency_ms: nil,
+        last_checked_at: nil,
+        last_success_at: nil,
+        stale: false,
+        refreshing: false,
+        error: nil,
+        failure_count: 0,
+        next_refresh_at: nil,
+        retry_after_ms: 0,
+        resource_mode: nil,
+        agents: [],
+        projects: []
+      )
+    end
+
+    def config_for(key, registry:, server_url:)
+      return LocalConfig.new(key: "local", name: "Local", url: server_url.to_s) if key == "local"
+
+      Array(registry.remote_servers).find { |config| config.key == key }
+    end
+
+    def refresh_payload(key, accepted:)
+      {
+        accepted: accepted,
+        server_key: key,
+        revision: @mutex.synchronize { @revision },
+        retry_after_ms: 0
+      }
+    end
+
+    def retry_after_ms(entry)
+      value = entry[:next_refresh_at].to_s
+      return 0 if value.empty?
+
+      [((Time.iso8601(value) - Time.now) * 1000).ceil, 0].max
+    rescue ArgumentError
+      0
+    end
+
+    def value_for(hash, key)
+      return nil unless hash.is_a?(Hash)
+
+      hash[key] || hash[key.to_sym]
+    end
+
+    def deep_copy(value)
+      Marshal.load(Marshal.dump(value))
     end
   end
 
   class RemoteClient
     DEFAULT_TIMEOUT = 5
 
-    def initialize(config, timeout: DEFAULT_TIMEOUT, token_override: nil)
+    def initialize(config, timeout: DEFAULT_TIMEOUT, open_timeout: nil, read_timeout: nil, token_override: nil)
       @config = config
       @base_uri = URI.parse(config.url)
-      @timeout = timeout
+      @open_timeout = open_timeout || timeout
+      @read_timeout = read_timeout || timeout
       @token_override = token_override.to_s
     end
 
@@ -602,8 +1012,8 @@ module HQ
         uri.hostname,
         uri.port,
         use_ssl: uri.scheme == "https",
-        open_timeout: @timeout,
-        read_timeout: @timeout
+        open_timeout: @open_timeout,
+        read_timeout: @read_timeout
       ) do |http|
         http.request(request)
       end
@@ -672,6 +1082,7 @@ module HQ
 
   class RemoteBroker
     LOOPBACK_PEER_KEY = /\Aloopback-(\d{1,5})\z/
+    RESOURCE_ROOTS = %w[agents projects attachments].freeze
 
     LocalServerConfig = Struct.new(:key, :name, :url, keyword_init: true) do
       def resolved_token
@@ -693,6 +1104,9 @@ module HQ
     def proxy(key, method, path, body, request)
       config = find_config!(key)
       raise RemoteServer::Error.new("Cannot proxy to local server", status: 400) if local_key?(config.key)
+      unless resource_path?(path)
+        raise RemoteServer::Error.new("Peer access is limited to agents, projects, and attachments", status: 404)
+      end
 
       RemoteClient.new(
         config,
@@ -760,6 +1174,11 @@ module HQ
         local: local,
         auth_configured: !config.resolved_token.to_s.empty?
       }
+    end
+
+    def resource_path?(path)
+      root = path.to_s.split("/").reject(&:empty?).first
+      RESOURCE_ROOTS.include?(root)
     end
   end
 
@@ -842,6 +1261,19 @@ module HQ
 
     def agents
       load_agents.map { |agent| agent_payload(agent) }
+    end
+
+    def resource_snapshot
+      agents = load_agents
+      agents_by_project = agents.group_by(&:project_key)
+      {
+        schema_version: RemoteResourceCatalog::SCHEMA_VERSION,
+        generated_at: Time.now.iso8601,
+        agents: agents.map { |agent| agent_list_payload(agent) },
+        projects: visible_projects.map do |project|
+          project_list_payload(project, agents: agents_by_project.fetch(project.key, []))
+        end
+      }
     end
 
     def agent(key)
@@ -2901,6 +3333,34 @@ module HQ
         session_id: agent.session_id.to_s.empty? ? nil : agent.session_id,
         log_path: agent.raw_log_path,
         memory_path: agent.memory_path,
+        revision: agent_revision(agent)
+      }
+    end
+
+    def agent_list_payload(agent)
+      {
+        key: agent.key,
+        name: agent.display_name,
+        project_key: agent.project_key,
+        template_key: agent.template_key,
+        scheduled: agent.scheduled?,
+        schedule_key: agent.schedule_key,
+        agent: agent.agent,
+        model: agent.model,
+        reasoning_effort: agent.reasoning_effort,
+        status: agent.status,
+        running: agent.running?,
+        unread: agent.unread?,
+        awaiting_input: agent.status == "awaiting-input",
+        blocked: agent.status == "blocked",
+        run_count: agent.run_count,
+        created_at: agent.created_at&.iso8601,
+        started_at: agent.started_at&.iso8601,
+        finished_at: agent.finished_at&.iso8601,
+        updated_at: agent.last_activity_at&.iso8601,
+        last_exit_code: agent.last_exit_code,
+        last_result: agent.last_result_label,
+        summary: agent.last_summary,
         revision: agent_revision(agent)
       }
     end

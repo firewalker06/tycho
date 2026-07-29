@@ -53,8 +53,8 @@ are available, and Tycho has been tested on Windows 11 through WSL.
 - Scheduled managed-agent runs from cron-style local config.
 - In-app log views, agent detail views, project detail views, and omnisearch.
 - Local JSON API and mobile Remote UI through `tycho serve`.
-- Remote UI server switching across multiple Tycho servers through a local
-  broker.
+- Combined Remote UI agents and projects across multiple Tycho servers through
+  a local broker.
 - Optional Tailscale MagicDNS URL and terminal QR code for Remote UI access.
 - Optional browser push notifications for agent completions and inquiries.
 - Agent-scoped pull request diff inspection with GitHub App login and `gh`
@@ -326,10 +326,12 @@ remote_servers:
     token_env: TYCHO_VPS_REMOTE_TOKEN
 ```
 
-The Remote UI always includes the local server and can switch to configured
-peers from Settings or the top-right menu. Agents, projects, schedules, drafts,
-attachments, and mutations are scoped to the active server; Tycho does not
-merge state across servers.
+The Remote UI always includes the local server and combines agents and projects
+from every configured peer into the same Agents list. Use the server filter to
+narrow the list. Each resource shows its owner server and health, and each
+agent, project, or attachment request goes only to that owner. Settings manages
+peer connections; schedules, setup, GitHub, push notifications, restart, and
+other server-level controls remain local to the server serving the UI.
 
 Run scheduled agents:
 
@@ -501,7 +503,8 @@ Remote UI URL and QR code. Public screenshots should redact MagicDNS URLs,
 Tailscale IPs, and QR codes.
 
 For multiple Remote servers, the browser still talks only to the Tycho server
-that served the UI. That local server brokers requests to the selected peer,
+that served the UI. That local server returns a cached combined resource
+catalog and brokers each detail or mutation request to the resource's owner,
 using `token_env` values from local config or per-browser peer tokens entered
 in Settings. Browser-entered peer tokens are not written to `hq.yml`.
 

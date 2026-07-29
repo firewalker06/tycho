@@ -49,6 +49,7 @@ module RemoteServerTest
     assert_remote_setup_warns_when_public_url_has_no_token
     assert_remote_server_restart_route_schedules_restart
     assert_remote_broker_lists_configured_servers
+    assert_remote_resource_catalog_combines_and_retains_peer_resources
     assert_remote_broker_proxies_configured_server_requests
     assert_remote_broker_proxies_loopback_peer_requests
     assert_remote_server_persists_added_servers
@@ -2168,6 +2169,120 @@ module RemoteServerTest
     end
   end
 
+  def assert_remote_resource_catalog_combines_and_retains_peer_resources
+    peer_failing = false
+    handler = lambda do |request|
+      if request[:method] == "GET" && request[:path] == "/resources" && !peer_failing
+        {
+          status: 200,
+          content_type: "application/json",
+          body: JSON.generate(
+            schema_version: 1,
+            agents: [{ key: "peer-agent", name: "Peer Agent", project_key: "peer-project" }],
+            projects: [{ key: "peer-project", name: "Peer Project" }]
+          )
+        }
+      else
+        {
+          status: 503,
+          content_type: "application/json",
+          body: JSON.generate(error: "peer unavailable")
+        }
+      end
+    end
+
+    with_fixture_http_server(handler) do |target_url|
+      with_remote_temp_store do |dir|
+        workspace = File.join(dir, "workspace")
+        write_project_workspace(workspace)
+        config_path = File.join(dir, "hq.yml")
+        prompts_path = File.join(dir, "system_prompts.yml")
+        File.write(config_path, <<~YAML)
+          remote_servers:
+            - key: peer
+              name: Peer
+              url: #{target_url}
+          projects:
+            - key: local-project
+              name: Local Project
+              path: #{workspace}
+        YAML
+        File.write(prompts_path, "custom: Default prompt for %{project_key}.\n")
+        registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
+        local_service_class = Struct.new(:payload) do
+          def resource_snapshot
+            payload
+          end
+        end
+        local_service = local_service_class.new(
+          {
+            schema_version: 1,
+            agents: [{ key: "local-agent", name: "Local Agent", project_key: "local-project" }],
+            projects: [{ key: "local-project", name: "Local Project" }]
+          }
+        )
+        catalog = HQ::RemoteResourceCatalog.new(max_workers: 2, logger: Logger.new(StringIO.new))
+        catalog.reconcile(registry: registry, server_url: "http://127.0.0.1:7373")
+        catalog.refresh(
+          "local",
+          registry: registry,
+          server_url: "http://127.0.0.1:7373",
+          local_service: local_service,
+          force: true
+        )
+        catalog.refresh(
+          "peer",
+          registry: registry,
+          server_url: "http://127.0.0.1:7373",
+          local_service: local_service,
+          force: true
+        )
+        wait_for_resource_catalog(catalog) do |snapshot|
+          snapshot[:servers].all? { |entry| entry[:status] == "online" }
+        end
+
+        snapshot = catalog.snapshot
+        local, peer = snapshot[:servers]
+        assert(local[:agents].first[:server_key] == "local",
+               "expected local catalog resources to carry ownership")
+        assert(peer[:agents].first[:server_key] == "peer",
+               "expected peer catalog resources to carry ownership")
+        assert(peer[:projects].first[:key] == "peer-project",
+               "expected peer projects to share the combined catalog")
+
+        peer_failing = true
+        catalog.refresh(
+          "peer",
+          registry: registry,
+          server_url: "http://127.0.0.1:7373",
+          local_service: local_service,
+          force: true
+        )
+        wait_for_resource_catalog(catalog) do |next_snapshot|
+          next_snapshot[:servers].find { |entry| entry[:key] == "peer" }[:status] == "offline"
+        end
+
+        stale_peer = catalog.snapshot[:servers].find { |entry| entry[:key] == "peer" }
+        assert(stale_peer[:stale] == true, "expected failed peer refreshes to mark cached data stale")
+        assert(stale_peer[:agents].first[:key] == "peer-agent",
+               "expected stale peer resources to remain visible")
+        assert(stale_peer[:retry_after_ms].positive?,
+               "expected failed peer refreshes to publish retry backoff")
+      end
+    end
+  end
+
+  def wait_for_resource_catalog(catalog)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 3
+    loop do
+      snapshot = catalog.snapshot
+      return snapshot if yield(snapshot)
+      raise "resource catalog refresh timed out" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+      sleep(0.01)
+    end
+  end
+
   def assert_remote_broker_proxies_configured_server_requests
     old_token = ENV["TYCHO_REMOTE_TARGET_TOKEN"]
     ENV["TYCHO_REMOTE_TARGET_TOKEN"] = "target-secret"
@@ -2192,7 +2307,7 @@ module RemoteServerTest
           body: "png-bytes".b,
           headers: { "X-Content-Type-Options" => "nosniff" }
         }
-      when ["GET", "/unauthorized"]
+      when ["GET", "/agents/unauthorized"]
         {
           status: 401,
           content_type: "application/json",
@@ -2230,7 +2345,7 @@ module RemoteServerTest
 
         request = HQ::RemoteServer.const_get(:Request).new(
           method: "POST",
-          path: "/servers/target/proxy/agents/web-agent-1/messages",
+          path: "/servers/target/agents/web-agent-1/messages",
           query: "force=true",
           headers: {},
           body: ""
@@ -2239,7 +2354,7 @@ module RemoteServerTest
           :route,
           service,
           "POST",
-          "/servers/target/proxy/agents/web-agent-1/messages",
+          "/servers/target/agents/web-agent-1/messages",
           { "prompt" => "Hello target" },
           request
         )
@@ -2251,16 +2366,23 @@ module RemoteServerTest
         assert(requests.last.dig(:headers, "authorization") == "Bearer target-secret",
                "expected broker proxy to use configured target token")
 
-        blob = server.send(:route, service, "GET", "/servers/target/proxy/attachments/image/blob", {}, nil)
+        blob = server.send(:route, service, "GET", "/servers/target/attachments/image/blob", {}, nil)
         assert(blob[:content_type] == "image/png", "expected broker proxy to preserve target content type")
         assert(blob[:body] == "png-bytes", "expected broker proxy to pass non-JSON response bodies through")
         assert(blob.dig(:headers, "X-Content-Type-Options") == "nosniff",
                "expected broker proxy to preserve safe blob headers")
 
-        unauthorized = server.send(:route, service, "GET", "/servers/target/proxy/unauthorized", {}, nil)
+        unauthorized = server.send(:route, service, "GET", "/servers/target/agents/unauthorized", {}, nil)
         assert(unauthorized[:status] == 502, "expected target 401 to be mapped away from broker auth")
         assert(unauthorized.dig(:body, :error).include?("rejected broker credentials"),
                "expected target credential failures to be explicit")
+
+        begin
+          server.send(:route, service, "GET", "/servers/target/proxy/setup", {}, nil)
+          raise "expected peer proxy to reject server-level routes"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 404, "expected peer proxy restriction to use not found")
+        end
       end
     end
   ensure
@@ -2301,7 +2423,7 @@ module RemoteServerTest
         service = HQ::RemoteService.new(registry: registry)
         server = HQ::RemoteServer.new
 
-        proxied = server.send(:route, service, "GET", "/servers/#{key}/proxy/agents", {}, nil)
+        proxied = server.send(:route, service, "GET", "/servers/#{key}/agents", {}, nil)
         assert(proxied.dig(:body, "agents", 0, "key") == "peer-agent-1",
                "expected loopback peer API request to be proxied")
         assert(!requests.last.fetch(:headers, {}).key?("authorization"),
@@ -2392,12 +2514,12 @@ module RemoteServerTest
 
         proxy_request = HQ::RemoteServer.const_get(:Request).new(
           method: "GET",
-          path: "/servers/tycho-peer/proxy/agents",
+          path: "/servers/tycho-peer/agents",
           query: "",
           headers: { "x-tycho-remote-server-token" => "target-secret" },
           body: ""
         )
-        proxied = server.send(:route, service, "GET", "/servers/tycho-peer/proxy/agents", {}, proxy_request)
+        proxied = server.send(:route, service, "GET", "/servers/tycho-peer/agents", {}, proxy_request)
         assert(proxied.dig(:body, "agents", 0, "key") == "peer-agent-1",
                "expected browser-local token header to authenticate broker proxy requests")
 
@@ -3495,12 +3617,13 @@ module RemoteServerTest
            "expected Settings screen to format Tycho build metadata")
     assert(js[:body].include?("data-toggle-server-form") &&
            js[:body].include?("state.serverFormOpen ? renderAddServerForm() :") &&
-           js[:body].include?("Switch to") &&
-           js[:body].include?("data-select-server") &&
+           js[:body].include?("data-refresh-all-servers") &&
+           js[:body].include?("data-filter-server") &&
+           !js[:body].include?("data-select-server") &&
            js[:body].include?("function renderServerActionsMenu") &&
            js[:body].include?("data-server-action-menu") &&
            js[:body].include?('data-overlay-key="server:'),
-           "expected Settings server switching to use a contextual peer menu and a hidden add-server form")
+           "expected Settings to manage peers while Agents exposes one server filter")
     assert(!js[:body].include?("function renderServerSelect") &&
            !js[:body].include?("data-server-select") &&
            !js[:body].include?("Active Tycho server"),
@@ -3538,10 +3661,25 @@ module RemoteServerTest
            js[:body].include?("saveRemoteServerToken") &&
            js[:body].include?("brokerGetWithHeaders") &&
            js[:body].include?("Remote token saved for this browser") &&
-           js[:body].include?("Token needed here") &&
-           js[:body].include?("function renderActiveServerTokenRecovery") &&
-           js[:body].include?("Remote token required"),
+           js[:body].include?("Token needed here"),
            "expected Settings to let existing remote servers save a browser-local token")
+    assert(!js[:body].include?("function renderServerHealthNotices") &&
+           !js[:body].include?("No cached agents or projects are available yet.") &&
+           js[:body].include?("currentAgents().filter(resourceAvailableInNow)"),
+           "expected Now to omit disconnected server cards and stale peer agents")
+    assert(js[:body].include?("async function loadResourceCatalog") &&
+           js[:body].include?('if (error.status !== 404) throw error;') &&
+           js[:body].include?('compatibility_mode: "legacy-local"') &&
+           js[:body].include?('state.resourceCatalogMode = "legacy"') &&
+           js[:body].include?('if (state.resourceCatalogMode === "legacy") return false;'),
+           "expected new Remote UI assets to remain usable against a running legacy daemon")
+    assert(js[:body].include?("function resourceIsStale") &&
+           js[:body].include?('return resourceIsStale(resource) ? "resource-stale" : "";') &&
+           js[:body].include?('if (resourceIsStale(agent)) return "Stale";') &&
+           js[:body].include?('if (resourceIsStale(project)) return "Stale";') &&
+           css[:body].include?(".resource-stale") &&
+           css[:body].include?("opacity: 0.68"),
+           "expected stale peer projects and agents to use one subdued visual state")
     assert(js[:body].include?('class="server-token-form ui-form-layout" data-ds-form="settings"') &&
            js[:body].include?("Stored only in this browser and sent to the selected Remote server.") &&
            js[:body].include?('class="primary inline-icon-button ui-button" data-variant="brand" type="submit"'),
@@ -3555,13 +3693,13 @@ module RemoteServerTest
            css[:body].include?("#settings-servers") &&
            css[:body].include?("overflow: visible"),
            "expected remote server actions to use one touch-sized contextual menu")
-    assert(js[:body].include?('label: active ? "Active server" : "Switch to"') &&
+    assert(js[:body].include?('label: "Refresh"') &&
            js[:body].include?('label: tokenEditorOpen ? "Close token editor" : "Edit token"') &&
            js[:body].include?('label: "Remove server"') &&
            js[:body].include?("closeDetailsOverlay(removeServer.closest") &&
            js[:body].include?("{ restoreFocus: true }"),
-           "expected the peer menu to preserve switching, token editing, destructive separation, and focus restoration")
-    assert(js[:body].include?("Restart the local Remote server to enable ad hoc peer switching"),
+           "expected the peer menu to preserve refresh, token editing, destructive separation, and focus restoration")
+    assert(js[:body].include?("Restart the local Remote server to enable ad hoc peer connections"),
            "expected stale broker errors to explain that the local Remote server must be restarted")
     assert(!js[:body].include?("Connect local peer"),
            "expected Settings to replace the URL-only peer form")
@@ -3669,7 +3807,8 @@ module RemoteServerTest
            js[:body].include?('apiDelete("/settings/response-style")') &&
            js[:body].include?("Managed agents will stop receiving this writing guidance"),
            "expected configured response styles to expose a confirmed remove action")
-    assert(js[:body].include?('["Agent key", agent.key]') &&
+    assert(js[:body].include?('["Agent key", agent.resource_key || agent.key]') &&
+           js[:body].include?('["Server", serverDisplayName(resourceServer(agent.server_key))]') &&
            js[:body].include?('["Model / reasoning", `${agent.model || "default"} / ${agent.reasoning_effort || "default"}`]') &&
            !js[:body].include?('["Effort", agent.reasoning_effort') &&
            !js[:body].include?('["Model", agent.model') &&
@@ -3697,9 +3836,9 @@ module RemoteServerTest
            js[:body].include?('label: "Push notifications"') &&
            js[:body].include?('label: "Settings"'),
            "expected the main More menu to separate global navigation from Settings-only actions")
-    assert(js[:body].include?("server.local && active") &&
+    assert(js[:body].include?('label: "Refresh"') &&
            js[:body].include?("...(!server.local ? ["),
-           "expected an inactive local server to remain switchable without remote-only actions")
+           "expected every server to refresh while local rows omit remote-only actions")
     assert(js[:body].include?("function restartRemoteServer"), "expected Remote UI to handle Remote restarts")
     assert(js[:body].include?('apiPost("/server/restart"'),
            "expected Remote UI restart action to call the restart endpoint")
@@ -4520,8 +4659,9 @@ module RemoteServerTest
            "expected Agents tab bulk menu to expose selection cancellation")
     assert(!js[:body].include?("agent-bulk-trigger"),
            "expected Agents tab bulk actions to avoid a separate ellipsis trigger")
-    assert(js[:body].include?('apiPost("/agents/archive", { keys })'),
-           "expected Remote UI to call the bulk archive endpoint")
+    assert(js[:body].include?('const path = resourceApiPath(serverKey, "/agents/archive")') &&
+           js[:body].include?("agents.map(resourceRawKey)"),
+           "expected Remote UI to group bulk archive calls by owner server")
     assert(js[:body].include?("function agentArchiveable"),
            "expected Remote UI to guard running agents from bulk archives")
     assert(js[:body].include?("function relativeTimeShort"),

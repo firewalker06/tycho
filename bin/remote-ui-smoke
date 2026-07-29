@@ -238,14 +238,14 @@ rescue Errno::ESRCH
   false
 end
 
-def create_agent(base_url)
+def create_agent(base_url, name: "Smoke Agent")
   uri = URI("#{base_url}/agents")
   request = Net::HTTP::Post.new(uri)
   request["Content-Type"] = "application/json"
   request.body = JSON.generate(
     project_key: "web",
     template_key: "custom",
-    name: "Smoke Agent",
+    name: name,
     prompt: "Exercise Remote UI composer preservation.",
     agent: "codex"
   )
@@ -253,6 +253,25 @@ def create_agent(base_url)
   raise "Failed to create smoke agent: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
 
   JSON.parse(response.body).fetch("agent").fetch("key")
+end
+
+def wait_for_resource_agents(base_url, agent_keys)
+  deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10
+  loop do
+    refresh_uri = URI("#{base_url}/servers/resources/refresh")
+    refresh = Net::HTTP::Post.new(refresh_uri)
+    refresh["Content-Type"] = "application/json"
+    refresh.body = JSON.generate(force: true, tokens: {})
+    Net::HTTP.start(refresh_uri.hostname, refresh_uri.port) { |http| http.request(refresh) }
+
+    snapshot = JSON.parse(Net::HTTP.get(URI("#{base_url}/servers/resources")))
+    local = Array(snapshot["servers"]).find { |server| server["key"] == "local" }
+    available = Array(local&.fetch("agents", [])).map { |agent| agent["key"] }
+    return if agent_keys.all? { |key| available.include?(key) }
+    raise "Resource catalog did not include fixture agents: #{available.inspect}" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+    sleep 0.05
+  end
 end
 
 def associate_agent_schedule(logs_dir, agent_key)
@@ -332,7 +351,7 @@ def write_smoke_script(path)
     async function main() {
       const baseUrl = process.env.TYCHO_REMOTE_UI_URL;
       const agentKey = process.env.TYCHO_REMOTE_UI_AGENT_KEY;
-      const unscheduledAgentKey = `${agentKey}-unscheduled-smoke`;
+      const unscheduledAgentKey = process.env.TYCHO_REMOTE_UI_UNSCHEDULED_AGENT_KEY;
       const chromePath = process.env.CHROME_PATH;
       const captureDir = process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "";
       const draft = "Remote UI smoke draft " + Date.now();
@@ -346,6 +365,49 @@ def write_smoke_script(path)
         if (message.type() === "error") errors.push(message.text());
       });
       page.on("pageerror", (error) => errors.push(error.message));
+
+      async function assertResourceCatalogCompatibility() {
+        const catalogTimings = await page.evaluate(async () => {
+          const samples = [];
+          for (let index = 0; index < 20; index += 1) {
+            const startedAt = performance.now();
+            const response = await fetch("/servers/resources", { cache: "no-store" });
+            if (!response.ok) throw new Error(`Catalog request failed with ${response.status}`);
+            await response.json();
+            samples.push(performance.now() - startedAt);
+          }
+          return samples.sort((left, right) => left - right);
+        });
+        const catalogP95 = catalogTimings[Math.ceil(catalogTimings.length * 0.95) - 1];
+        if (catalogP95 >= 50) {
+          throw new Error(`Cached resource catalog p95 exceeded 50ms: ${catalogP95.toFixed(1)}ms`);
+        }
+
+        const legacyPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+        try {
+          await legacyPage.route("**/servers/resources", async (route) => {
+            await route.fulfill({
+              status: 404,
+              contentType: "application/json",
+              body: JSON.stringify({ error: "Not found" }),
+            });
+          });
+          await legacyPage.goto(`${baseUrl}/ui#agents`, { waitUntil: "networkidle" });
+          await legacyPage.waitForSelector(`[data-open-agent='${agentKey}']`, { state: "visible", timeout: 10_000 });
+          const legacyCatalogState = await legacyPage.evaluate(() => ({
+            mode: state.resourceCatalogMode,
+            connection: state.connection,
+            localAgents: state.agents.filter((agent) => agent.server_key === "local").length,
+          }));
+          if (legacyCatalogState.mode !== "legacy" ||
+              legacyCatalogState.connection.startsWith("Offline:") ||
+              legacyCatalogState.localAgents < 1) {
+            throw new Error(`Legacy Remote daemon fallback failed: ${JSON.stringify(legacyCatalogState)}`);
+          }
+        } finally {
+          await legacyPage.close();
+        }
+      }
 
       async function assertEditorExcludedFromRefresh(selector, label, focusSelector) {
         if (focusSelector) await page.focus(focusSelector);
@@ -399,6 +461,7 @@ def write_smoke_script(path)
              !scheduleMenuGeometry.visibleBeyondCard)) {
           throw new Error(`Schedule action menu is clipped by its card: ${JSON.stringify(scheduleMenuGeometry)}`);
         }
+        await assertResourceCatalogCompatibility();
         await page.click("#header-more-button");
         await page.waitForSelector("#header-more-panel:not(.hidden)", { state: "visible", timeout: 10_000 });
         await page.evaluate(async () => {
@@ -619,24 +682,36 @@ def write_smoke_script(path)
           if (message.type() === "error") agentsRegressionErrors.push(message.text());
         });
         agentsRegressionPage.on("pageerror", (error) => agentsRegressionErrors.push(error.message));
+        agentsRegressionPage.on("response", (response) => {
+          if (response.status() >= 400) {
+            agentsRegressionErrors.push(`${response.status()} ${response.request().method()} ${response.url()}`);
+          }
+        });
         await agentsRegressionPage.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await agentsRegressionPage.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
-        await agentsRegressionPage.evaluate(({ key, unscheduledKey }) => {
-          const agent = findAgent(key);
-          state.agents.push({
-            ...agent,
-            key: unscheduledKey,
-            name: "Unscheduled Smoke Agent",
-            schedule_key: null,
-            template_key: "custom",
-          });
+        await agentsRegressionPage.evaluate(() => {
           navigate({ type: "tab", tab: "agents" });
-        }, { key: agentKey, unscheduledKey: unscheduledAgentKey });
+        });
         await agentsRegressionPage.waitForTimeout(100);
         if (agentsRegressionErrors.length) {
           throw new Error(`Agents view browser errors: ${agentsRegressionErrors.join(" | ")}`);
         }
-        await agentsRegressionPage.waitForSelector(`.agent-row[data-open-agent='${unscheduledAgentKey}']`, { state: "visible", timeout: 10_000 });
+        try {
+          await agentsRegressionPage.waitForSelector(`.agent-row[data-open-agent='${unscheduledAgentKey}']`, { state: "visible", timeout: 10_000 });
+        } catch (error) {
+          const agentState = await agentsRegressionPage.evaluate(() => ({
+            agents: state.agents.map((agent) => ({
+              key: agent.key,
+              project_key: agent.project_key,
+              server_key: agent.server_key,
+            })),
+            projects: state.projects.map((project) => project.key),
+            filter: state.filters,
+            rows: Array.from(document.querySelectorAll(".agent-row[data-open-agent]"))
+              .map((row) => row.dataset.openAgent),
+          }));
+          throw new Error(`Unscheduled agent missing from combined list: ${JSON.stringify(agentState)} / ${error.message}`);
+        }
         await agentsRegressionPage.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await agentsRegressionPage.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
         await agentsRegressionPage.click("#header-mark");
@@ -646,6 +721,10 @@ def write_smoke_script(path)
           null,
           { timeout: 10_000 }
         );
+        const switcherAgentCount = await agentsRegressionPage.locator(".switcher-agent-row").count();
+        if (switcherAgentCount < 2) {
+          throw new Error(`Agent switcher did not include both smoke agents: ${switcherAgentCount}`);
+        }
         await agentsRegressionPage.locator("#unread-agent-search").evaluate((input) => { input.__tychoSearchNodeProbe = true; });
         await agentsRegressionPage.fill("#unread-agent-search", "unscheduled");
         const switcherSearchNodeStable = await agentsRegressionPage.locator("#unread-agent-search").evaluate((input) => input.__tychoSearchNodeProbe === true);
@@ -655,12 +734,14 @@ def write_smoke_script(path)
           throw new Error("Agent switcher search did not filter the agent list");
         }
         await agentsRegressionPage.press("#unread-agent-search", "Escape");
-        if (await agentsRegressionPage.locator("#unread-agent-search").inputValue() !== "" || await agentsRegressionPage.locator(".switcher-agent-row").count() !== 2) {
+        if (await agentsRegressionPage.locator("#unread-agent-search").inputValue() !== "" ||
+            await agentsRegressionPage.locator(".switcher-agent-row").count() !== switcherAgentCount) {
           throw new Error("Escape did not clear the agent switcher search");
         }
         await agentsRegressionPage.fill("#unread-agent-search", "unscheduled");
         await agentsRegressionPage.click("[data-clear-unread-agent-search]");
-        if (await agentsRegressionPage.locator("#unread-agent-search").inputValue() !== "" || await agentsRegressionPage.locator(".switcher-agent-row").count() !== 2) {
+        if (await agentsRegressionPage.locator("#unread-agent-search").inputValue() !== "" ||
+            await agentsRegressionPage.locator(".switcher-agent-row").count() !== switcherAgentCount) {
           throw new Error("Clear search did not restore the agent switcher list");
         }
         await agentsRegressionPage.press("#unread-agent-search", "Escape");
@@ -1582,6 +1663,71 @@ def write_smoke_script(path)
           throw new Error(`Schedule system message is missing quiet-outcome guidance: ${JSON.stringify(scheduleSystemMessage)}`);
         }
 
+        await page.evaluate(() => {
+          const peer = {
+            key: "design-peer",
+            name: "Design peer",
+            url: "http://127.0.0.1:7499",
+            local: false,
+            auth_configured: false,
+            status: "offline",
+            stale: true,
+          };
+          state.servers = [...state.servers.filter((server) => server.key !== peer.key), peer];
+          state.projects.push(normalizeProjectResource({
+            key: "peer-project",
+            name: "Peer Project",
+            group: "Remote",
+            status: "configured",
+          }, peer));
+          state.agents.push(normalizeAgentResource({
+            key: "peer-agent",
+            name: "Peer Agent",
+            project_key: "peer-project",
+            status: "succeeded",
+            last_result: "success",
+            running: true,
+            unread: true,
+          }, peer));
+          navigate({ type: "tab", tab: "now" });
+        });
+        await page.waitForFunction(() => location.hash === "#now");
+        if (await page.locator("[data-open-agent='design-peer/peer-agent']").count() !== 0 ||
+            await page.getByText("Server unavailable", { exact: true }).count() !== 0) {
+          throw new Error("Now still exposed disconnected peer resources or server cards");
+        }
+        await page.evaluate(() => {
+          navigate({ type: "tab", tab: "agents" });
+        });
+        await page.waitForSelector("[data-filter-server]", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector("[data-open-agent='design-peer/peer-agent']", { state: "visible", timeout: 10_000 });
+        const peerGroupText = await page.locator(".agent-group", { has: page.locator("[data-open-agent='design-peer/peer-agent']") }).innerText();
+        if (!peerGroupText.includes("Design peer") || !peerGroupText.includes("Stale")) {
+          throw new Error(`Combined Agents list did not show peer ownership and health: ${JSON.stringify(peerGroupText)}`);
+        }
+        const stalePeerAppearance = await page.locator("[data-open-agent='design-peer/peer-agent']").evaluate((row) => ({
+          rowIsStale: row.classList.contains("resource-stale"),
+          groupIsStale: row.closest(".agent-group")?.classList.contains("resource-stale"),
+          status: row.querySelector(".ui-status")?.textContent.trim(),
+          statusOpacity: Number.parseFloat(getComputedStyle(row.querySelector(".ui-status")).opacity),
+        }));
+        if (!stalePeerAppearance.rowIsStale || !stalePeerAppearance.groupIsStale ||
+            stalePeerAppearance.status !== "Stale" || stalePeerAppearance.statusOpacity >= 0.8) {
+          throw new Error(`Stale peer project and agent were not visually subdued: ${JSON.stringify(stalePeerAppearance)}`);
+        }
+        await page.selectOption("[data-filter-server]", "design-peer");
+        if (await page.locator(`[data-open-agent='${agentKey}']`).count() !== 0 ||
+            await page.locator("[data-open-agent='design-peer/peer-agent']").count() !== 1) {
+          throw new Error("Server filter did not isolate peer-owned agents");
+        }
+        const peerAgentsGeometry = await page.evaluate(() => ({
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          filterLabel: document.querySelector("[data-filter-server]")?.selectedOptions?.[0]?.textContent,
+        }));
+        if (peerAgentsGeometry.overflow || !peerAgentsGeometry.filterLabel?.includes("Design peer")) {
+          throw new Error(`Combined Agents list overflowed or lost its filter label: ${JSON.stringify(peerAgentsGeometry)}`);
+        }
+
         await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
         await page.waitForSelector("[data-testid='response-style-action']", { state: "visible", timeout: 10_000 });
         await page.waitForSelector("#session-loop-default-interval", { state: "visible", timeout: 10_000 });
@@ -1608,12 +1754,12 @@ def write_smoke_script(path)
               url: "http://127.0.0.1:7499",
               local: false,
               auth_configured: false,
+              status: "online",
+              stale: false,
+              agents: [],
+              projects: [],
             },
           ];
-          render();
-        });
-        await page.evaluate(() => {
-          state.activeServerKey = "design-peer";
           render();
         });
         const localServerMenu = page.locator(".local-server-list-item [data-server-action-menu]");
@@ -1621,14 +1767,10 @@ def write_smoke_script(path)
         const localServerActions = await localServerMenu.locator("[role='menuitem']").evaluateAll((items) => (
           items.map((item) => item.querySelector("strong")?.textContent.trim())
         ));
-        if (localServerActions.join(" | ") !== "Switch to") {
-          throw new Error(`Inactive local server lost its switch action: ${JSON.stringify(localServerActions)}`);
+        if (localServerActions.join(" | ") !== "Refresh") {
+          throw new Error(`Local server lost its refresh action: ${JSON.stringify(localServerActions)}`);
         }
         await page.keyboard.press("Escape");
-        await page.evaluate(() => {
-          state.activeServerKey = "local";
-          render();
-        });
         await page.waitForSelector("[data-server-action-menu]", { state: "visible", timeout: 10_000 });
         const serverActionTrigger = page.locator(".remote-server-list-item [data-server-action-menu] > summary");
         const serverActionGeometry = await serverActionTrigger.evaluate((trigger) => {
@@ -1646,11 +1788,11 @@ def write_smoke_script(path)
           throw new Error(`Peer server More action lost compact mobile geometry: ${JSON.stringify(serverActionGeometry)}`);
         }
         await serverActionTrigger.click();
-        await page.waitForSelector("[data-server-action-menu][open] .server-action-popover", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector(".remote-server-list-item [data-server-action-menu][open] .server-action-popover", { state: "visible", timeout: 10_000 });
         await page.waitForFunction(() => (
           document.activeElement?.matches("[data-server-action-menu] [role='menuitem']")
         ));
-        const serverMenuGeometry = await page.locator("[data-server-action-menu]").evaluate((menu) => {
+        const serverMenuGeometry = await page.locator(".remote-server-list-item [data-server-action-menu]").evaluate((menu) => {
           const popover = menu.querySelector(".server-action-popover");
           const card = menu.closest("#settings-servers");
           const popoverRect = popover?.getBoundingClientRect();
@@ -1672,7 +1814,7 @@ def write_smoke_script(path)
              !serverMenuGeometry.visibleBeyondCard)) {
           throw new Error(`Peer server More menu is clipped by the Settings card: ${JSON.stringify(serverMenuGeometry)}`);
         }
-        const serverActionMenu = await page.locator("[data-server-action-menu] .more-menu").evaluate((menu) => ({
+        const serverActionMenu = await page.locator(".remote-server-list-item [data-server-action-menu] .more-menu").evaluate((menu) => ({
           labels: Array.from(menu.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent.trim()),
           roles: Array.from(menu.querySelectorAll("button")).every((item) => item.getAttribute("role") === "menuitem"),
           focused: document.activeElement?.textContent.trim(),
@@ -1686,8 +1828,8 @@ def write_smoke_script(path)
               scrollWidth: label.scrollWidth,
             })),
         }));
-        if (serverActionMenu.labels.join(" | ") !== "Switch to | Edit token | Remove server" ||
-            !serverActionMenu.roles || serverActionMenu.focused !== "Switch to" ||
+        if (serverActionMenu.labels.join(" | ") !== "Refresh | Edit token | Remove server" ||
+            !serverActionMenu.roles || serverActionMenu.focused !== "Refresh" ||
             serverActionMenu.itemHeights.some((height) => height < 44) ||
             serverActionMenu.clippedLabels.length) {
           throw new Error(`Peer server More menu lost its action contract: ${JSON.stringify(serverActionMenu)}`);
@@ -2041,7 +2183,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     wait_for_remote(base_url, log_path)
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key = create_agent(base_url)
+    unscheduled_agent_key = create_agent(base_url, name: "Unscheduled Smoke Agent")
     associate_agent_schedule(fixture.fetch(:logs_dir), agent_key)
+    wait_for_resource_agents(base_url, [agent_key, unscheduled_agent_key])
     node_dir = File.join(dir, "node")
     install_playwright!(node_dir)
     script = File.join(node_dir, "remote-ui-smoke.js")
@@ -2050,6 +2194,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     smoke_env = {
       "TYCHO_REMOTE_UI_URL" => base_url,
       "TYCHO_REMOTE_UI_AGENT_KEY" => agent_key,
+      "TYCHO_REMOTE_UI_UNSCHEDULED_AGENT_KEY" => unscheduled_agent_key,
       "CHROME_PATH" => browser
     }
     capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip

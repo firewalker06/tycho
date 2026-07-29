@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-07-28
+2026-07-29
 
 ## Strategic Direction
 
@@ -25,6 +25,9 @@ Key references:
 - [research/claude-json-schema-research.md](./research/claude-json-schema-research.md) and [research/codex-json-schema-research.md](./research/codex-json-schema-research.md) — agent stream formats.
 - [research/a2a-protocol-research.md](./research/a2a-protocol-research.md), [research/agent-communication-protocol-research.md](./research/agent-communication-protocol-research.md), [research/hq-a2a-vs-acp-recommendation.md](./research/hq-a2a-vs-acp-recommendation.md) — agent protocol exploration.
 - [REMOTE_SERVER.md](./REMOTE_SERVER.md) — Remote Sessions server architecture, runtime behavior, and API endpoint reference.
+- [MULTISERVER_RESOURCES_PLAN.md](./MULTISERVER_RESOURCES_PLAN.md) — planned
+  combined Agents and Projects catalog, peer health, explicit ownership, and
+  bounded refresh model.
 - [WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.md) — planned browser push notifications for Remote UI, including the hard HTTPS-over-Tailscale requirement.
 - [SCHEDULED_RUNS.md](./SCHEDULED_RUNS.md) — planned cron-like scheduled runs, `tycho schedule daemon`, command targets, and prompt/message tradeoffs.
 - [MODEL_ARGUMENTS_PLAN.md](./MODEL_ARGUMENTS_PLAN.md) — planned managed-agent `model` and `reasoning_effort` configuration, command mapping, and TUI/Remote UI display.
@@ -59,7 +62,7 @@ Key references:
 | Remote UI responsive shell | Mobile keeps bottom navigation; wide desktop uses a wider content frame with side navigation; creation actions live in the header and focused detail/form routes remove unrelated global actions | Prevent fixed controls from obscuring content, use desktop space effectively, and keep page actions contextual across mobile, tablet, and desktop |
 | Remote UI control sizing | Shared 44 px control and touch-target tokens, 16 px mobile form text, visible focus states, and explicit validation/status text | Avoid mobile auto-zoom, undersized targets, color-only state, and inconsistent action geometry |
 | Remote UI design system | Keep a no-build internal system: semantic `--ds-*` tokens and reusable CSS components in `design_system.css`, product composition in `app.css`, and a static `/design-system` preview; migrate routes incrementally | Match the existing Ruby/vanilla-JS deployment, preserve behavior, make foundations governable, and avoid a framework or package rewrite |
-| Remote multiserver broker | Configured `remote_servers` let one Remote UI switch between local and peer `tycho serve` instances through backend proxy routes | Browser clients stay connected to one origin; peer credentials remain server-side; each view and mutation is scoped to the selected server |
+| Remote multiserver resources | Keep one UI-serving broker, aggregate only compact Agent and Project resources through a stale-while-revalidate catalog, and require explicit server identity for details and mutations | Combined lists should stay responsive when peers are slow or offline; schedules, setup, GitHub, push, restart, and other server-level behavior remain local |
 | Scheduled runs | Dedicated `tycho schedule daemon`, definitions in `~/.tycho/config/schedules.yml`, runtime state in `~/.tycho/logs/schedules.json`, validated standard cron syntax | Scheduled work should continue independently from the TUI and Remote UI while still reusing existing agent execution paths |
 | Temporary session loops | Remote UI can adopt an idle conversation as a normal recurring schedule, run it immediately with schedule context, and stop it at a configured cutoff | Review-waiting sessions need lightweight polling without losing their existing context or creating a separate agent |
 | Run cost provenance | Persist harness and model on each managed-agent run; raw-log cost rebuilds use that per-run metadata and leave legacy runs unpriced when provenance is missing | Historical estimates must not silently apply the agent's current model price to older runs |
@@ -172,7 +175,7 @@ an explicit confirmation and current base/head validation.
 - [x] Project’s icon statuses, similar to Agent’s icon statuses
 - [x] Omnisearch floating fuzzy finder for agents and projects
 - [x] Agent chat attachments from structured output (`ctrl+a` floating panel)
-- [x] Remote UI multiserver switching for configured `remote_servers`
+- [x] Remote UI multiserver broker foundation for configured `remote_servers`
 - [x] Remote UI skill autocomplete and quick agent switching
 - [x] Remote UI run summaries, broader attachments, and state preservation fixes
 - [x] Source-checkout `bin/tycho` Bundler boot fix
@@ -227,6 +230,17 @@ an explicit confirmation and current base/head validation.
       fetch metadata and review context for every pull request
 - [ ] Restore the Review Inbox route only after bounded loading, cancellation,
       and responsive desktop and mobile behavior pass browser checks
+
+### Multiserver Agents And Projects
+
+- [x] Add compact Agent and Project resource snapshots without Git work in list
+      requests
+- [x] Add a broker-owned stale-while-revalidate catalog with bounded peer
+      refresh, independent health, and last-good snapshots
+- [x] Merge server-qualified Agents, Now, and Projects lists in Remote UI
+- [x] Route Agent and Project details and mutations through explicit server keys
+- [x] Remove global peer switching and restrict generic peer proxying after the
+      qualified resource flow is stable
 
 ### Model And Effort Arguments
 
