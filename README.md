@@ -57,8 +57,8 @@ are available, and Tycho has been tested on Windows 11 through WSL.
   broker.
 - Optional Tailscale MagicDNS URL and terminal QR code for Remote UI access.
 - Optional browser push notifications for agent completions and inquiries.
-- Pull request Review Inbox with GitHub App login, navigable diffs, agent
-  handoff, local drafts, and confirmed review posting.
+- Agent-scoped pull request diff inspection with GitHub App login and `gh`
+  compatibility.
 
 ## Requirements
 

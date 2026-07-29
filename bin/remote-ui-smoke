@@ -777,6 +777,24 @@ def write_smoke_script(path)
         await prContextPage.waitForSelector(".agent-pr-diff-shell .empty-state", { state: "visible", timeout: 10_000 });
         await prContextPage.close();
 
+        const pausedReviewPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+        await pausedReviewPage.goto(`${baseUrl}/ui#reviews`, { waitUntil: "networkidle" });
+        await pausedReviewPage.waitForSelector("#view", { state: "visible", timeout: 10_000 });
+        const pausedReviewState = await pausedReviewPage.evaluate(() => ({
+          route: parseRoute(),
+          hasNavigation: Boolean(document.querySelector("[data-tab='reviews']")),
+          inbox: state.pullRequestInbox,
+        }));
+        if (pausedReviewState.route.type !== "tab" ||
+            pausedReviewState.route.tab !== "now" ||
+            pausedReviewState.hasNavigation ||
+            pausedReviewState.inbox !== null) {
+          throw new Error(`Paused Review Inbox became reachable: ${JSON.stringify(pausedReviewState)}`);
+        }
+        await pausedReviewPage.close();
+
+        // Retain the end-to-end Review Inbox scenario for the later performance redesign.
+        if (false) {
         const reviewPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
         await reviewPage.goto(`${baseUrl}/ui#reviews`, { waitUntil: "networkidle" });
         await reviewPage.waitForSelector("#reviews-nav-button:not(.hidden)", { state: "visible", timeout: 10_000 });
@@ -885,6 +903,7 @@ def write_smoke_script(path)
           throw new Error(`Desktop review layout or write gate failed: ${JSON.stringify(desktopReview)}`);
         }
         await reviewPage.close();
+        }
 
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });

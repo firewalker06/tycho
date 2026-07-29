@@ -4480,8 +4480,12 @@ module RemoteServerTest
            "expected Remote UI to scope in-document hash link handling to Markdown viewers")
     assert(js[:body].include?("history.replaceState(null, \"\", routeHash(route))"),
            "expected Markdown hash links to preserve the attachment route")
-    assert(js[:body].include?('const TOP_TABS = ["now", "agents", "reviews", "settings"];'),
-           "expected Remote UI to include the token-gated review inbox")
+    assert(js[:body].include?('const TOP_TABS = ["now", "agents", "settings"];'),
+           "expected Remote UI to keep the paused review inbox out of top-level navigation")
+    assert(!response[:body].include?('data-tab="reviews"'),
+           "expected Remote UI to hide the paused review inbox")
+    assert(!helpers_js[:body].include?('parts[0] === "reviews"'),
+           "expected legacy review inbox hashes to fall back to Now without fetching review data")
     assert(helpers_js[:body].include?('if (parts[0] === "search" || parts[0] === "projects") return { type: "tab", tab: "agents" };'),
            "expected legacy Search and Projects hashes to land on Agents")
     assert(helpers_js[:body].include?('return "#settings/hidden";'),

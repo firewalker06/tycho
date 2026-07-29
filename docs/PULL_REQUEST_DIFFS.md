@@ -2,7 +2,9 @@
 
 ## Outcome
 
-Tycho now implements the complete pull request review loop in the Remote UI. It prefers a Tycho GitHub App user session obtained through OAuth device flow and falls back to an existing authenticated `gh` session for backward compatibility. Either provider enables direct GitHub API access, the cross-agent Review Inbox, review context, navigable diffs, durable viewed and selected state, agent handoff, local drafts, and guarded review posting.
+The cross-agent Review Inbox is paused. Its first implementation performs too much eager aggregation and GitHub work, which makes the page slow and unresponsive. The top-level route, navigation entry, and route-driven polling are disabled until the inbox is redesigned around bounded, incremental loading. Agent-scoped PR diff inspection and the underlying direct GitHub API, authentication, review-state, handoff, draft, and posting code remain available for that future work.
+
+Tycho prefers a Tycho GitHub App user session obtained through OAuth device flow and falls back to an existing authenticated `gh` session for backward compatibility.
 
 Review posting remains off by default. Operators must also set `TYCHO_GITHUB_WRITE_ENABLED=true`, save a draft bound to the current base and head, and confirm the mutation. GitHub remains the final permission authority; a token without `Pull requests: write` receives a sanitized failure.
 
@@ -89,7 +91,7 @@ The GitHub App must be installed on every personal account or organization whose
 | GitHub PR discovery from agent attachments | **Current** | Canonical GitHub PR links are accepted and deduplicated globally. `kind: pull_request` is not required. |
 | Scheduled-review discovery | **Current** | Scheduled agents retain schedule ownership on occurrences, and scheduled prompts require a canonical PR link when a run reviews or changes one. |
 | Current project or branch PR discovery | **Current** | Configured `pr_url` values and open PRs for a project’s current GitHub branch feed the inbox. |
-| Cross-agent queue, ownership, filtering, and priority | **Current** | `GET /pull-requests` returns canonical PRs with every agent, schedule, and project occurrence plus query, project, repository, unread, action-needed, draft, checks, review, and stale filters. |
+| Cross-agent queue, ownership, filtering, and priority | **Paused** | The implementation remains in place, but the top-level route and navigation are disabled because eager aggregation does not meet responsiveness requirements. |
 | Unread and stale state | **Current** | PR read time, code freshness, activity freshness, changed-since-review, invalidation, priority, and outcome live outside immutable snapshots. |
 | Basic PR metadata | **Current** | The queue exposes author, state, draft, refs, SHAs, mergeability, checks, review decision, unresolved threads, and freshness. |
 | Description, commits, CI, reviews, and threads | **Current** | The review brief includes description, commits, checks, reviews, inline and issue comments, and GraphQL review threads. GitHub remains the full-timeline escape hatch. |
@@ -161,7 +163,7 @@ The GitHub App must be installed on every personal account or organization whose
 
 ## Implemented Foundation
 
-The GitHub App and `gh` compatibility foundation, Review Inbox, review brief, navigation, handoff, and guarded posting are implemented.
+The GitHub App and `gh` compatibility foundation, Review Inbox, review brief, navigation, handoff, and guarded posting are implemented. The Review Inbox surface is paused pending a performance redesign.
 
 ### Future: Canonical Tycho GitHub App
 
