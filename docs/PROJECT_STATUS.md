@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-07-24
+2026-07-28
 
 ## Strategic Direction
 
@@ -38,7 +38,7 @@ Key references:
 | Config split | `~/.tycho/config/hq.yml` (active) + `~/.tycho/config/hq.archived.yml` (archived) | Archive without losing history; logs move to `~/.tycho/logs/projects/archived/` |
 | Project lifecycle CLI | `tycho project KEY` plus explicit create/show/update/archive commands, with normalized human or JSON output | Project registration and maintenance should be automatable without duplicating config rules or opening the TUI |
 | Multi-file lifecycle writes | `FileTransaction` snapshots config/state files and runs compensating log moves around project archival and session-loop creation | A failed downstream step must restore project, agent, schedule, memory, and log state instead of leaving a partially completed lifecycle operation |
-| External command capture | `CommandRunner` owns bounded process-group execution for harness discovery and GitHub CLI calls | One process owner preserves signal exit status and avoids `Timeout` closing Open3 streams while reader threads are active |
+| External command capture | `CommandRunner` owns bounded process-group execution for harness discovery; GitHub integration uses direct HTTPS after resolving a GitHub App session or the compatibility credential from `gh auth token` | One process owner preserves signal exit status for tools, while GitHub API behavior remains isolated from CLI response formats |
 | Agent transport | Codex JSON output; Claude-compatible `--output-format stream-json` | Streaming logs render incrementally in the chat viewport |
 | Agent model controls | Optional per-agent `model` and `reasoning_effort`, inherited from project/template config and passed as harness run arguments | Model catalogs change outside Tycho; use harness discovery for suggestions where available, keep free-form fallback everywhere, and keep provider-specific thinking budgets out of first-version scope |
 | Managed-agent identity | Generate keys as `<project>-agent-<UTC timestamp with microseconds>`, adding a short random suffix only on an exact collision; retain legacy numeric keys when loading existing state | Timestamp identities remain sortable and avoid key reuse when agents are created concurrently or archived across Tycho instances |
@@ -48,7 +48,7 @@ Key references:
 | Chat viewport rendering | Hybrid: `memory.jsonl` for history, `raw.log` tail for live streaming | User messages appear immediately (written to `memory.jsonl` on send); assistant turns commit on run finalization |
 | Agent chat conversation blocks | Conversation renders selectable blocks for user messages, agent messages, and collapsed tool-call groups; Enter opens the selected block in a floating scrollable detail layer | Keeps normal chat scanning compact while preserving full tool/message detail on demand |
 | Agent attachments | Structured agent results can include PR/document/image attachments, persisted in `.attachments.json` and mirrored into `memory.jsonl`, surfaced from chat with a `ctrl+a` navigable list | Durable links to artifacts survive later runs and memory rebuilds instead of living only in a single assistant message |
-| Pull request diffs | Remote UI can discover GitHub PR links from an agent's attachments, fetch fresh diff snapshots through `gh api`, and render them inside the agent workspace | Scheduled PR review operators should inspect referenced PR changes without opening every PR in GitHub or switching across sessions |
+| Pull request review | A refreshable Tycho GitHub App user session enables the direct-API Review Inbox; an authenticated `gh` session remains a compatibility source when no App session exists | Prefer explicit App identity and installation boundaries, preserve provenance, fail closed without credentials, and never mutate GitHub through polling or agent completion |
 | Conversation block scrolling | Initial chat load bottom-aligns the latest block when it fits, oversized blocks start at row 1, and navigation scrolls only enough to reveal the selected block | The selected label/cursor must remain visible and predictable while keeping surrounding recent context on first open |
 | Conversation viewport offsets | Block `line_offset` / `line_height` are derived from the final rendered rows; long unbroken preview tokens are hard-wrapped before entering the viewport, and footer debug is computed after viewport sync | Bubbles `Viewport` counts newline-separated lines, while terminals visually wrap long tokens; stale or mismatched offsets cause misleading `visible 0/0` debug and cropped selected blocks |
 | Inquiry submission | Gated review step inside a rounded box | Prevents accidental structured submissions |
@@ -107,6 +107,15 @@ visual intent from polite or assertive announcement timing.
 All generated legacy primary, danger, inline-icon, icon-only, and button-link
 actions now consume the shared button contract while retaining their existing
 behavior selectors and product layout classes.
+The Remote UI now includes a GitHub App-authenticated pull request review loop. It aggregates
+agent, schedule, project, and current-branch occurrences into one queue, fetches
+review context through direct GitHub REST and GraphQL calls, and keeps immutable
+diff snapshots separate from read, viewed, selection, draft, handoff, and outcome
+state. OAuth device login keeps access and refresh tokens server-side, refreshes
+expiring sessions, and exposes installation guidance for each target owner. Existing
+`gh` authentication remains a compatibility source when no App session exists.
+Review posting is disabled unless `TYCHO_GITHUB_WRITE_ENABLED=true`, then requires
+an explicit confirmation and current base/head validation.
 
 ## Roadmap
 
@@ -201,6 +210,16 @@ behavior selectors and product layout classes.
 - [ ] Formalize specs
 - [x] Stabilize source packaging and pre-release browser/TUI checks
 - [ ] Publish and verify the 0.8.0 Homebrew bottles
+
+### Canonical Tycho GitHub App
+
+- [ ] Build and publish a Tycho homepage for marketing and use it as the
+      canonical GitHub App homepage URL
+- [ ] Register the public Tycho GitHub App with Device Flow enabled and the
+      documented repository permissions
+- [ ] Copy the App's public client ID and canonical slug into Tycho defaults,
+      while retaining environment overrides for forks, development, and
+      GitHub Enterprise
 
 ### Model And Effort Arguments
 

@@ -55,6 +55,7 @@
     },
     "attachments": {
       "type": ["array", "null"],
+      "description": "Durable artifacts and links produced or used by this run. When the run reviews or changes a pull request, include its canonical https://github.com/{owner}/{repo}/pull/{number} URL as a link attachment and summarize the review outcome in summary.",
       "items": {
         "type": "object",
         "additionalProperties": false,

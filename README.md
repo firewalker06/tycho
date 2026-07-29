@@ -57,6 +57,8 @@ are available, and Tycho has been tested on Windows 11 through WSL.
   broker.
 - Optional Tailscale MagicDNS URL and terminal QR code for Remote UI access.
 - Optional browser push notifications for agent completions and inquiries.
+- Pull request Review Inbox with GitHub App login, navigable diffs, agent
+  handoff, local drafts, and confirmed review posting.
 
 ## Requirements
 
@@ -190,6 +192,7 @@ Homebrew and source installs use the same user-scoped defaults:
 | Project logs | `~/.tycho/logs/projects/` |
 | Agent logs and artifacts | `~/.tycho/logs/agents/` |
 | Browser push state | `~/.tycho/logs/push_*.json` and `~/.tycho/logs/web_push_vapid.json` |
+| GitHub App session | `~/.tycho/config/github_auth.json` with mode `0600` |
 
 Tycho does not write runtime files under the Homebrew Cellar. Set the
 `TYCHO_*` environment variables below to move config or state for tests,
@@ -215,11 +218,45 @@ Use the `TYCHO_` prefix for runtime overrides.
 | `TYCHO_CODEX_BIN` | Override Codex executable lookup. |
 | `TYCHO_CLAUDE_BIN` | Override Claude executable lookup. |
 | `TYCHO_TAILSCALE_BIN` | Override Tailscale executable lookup. |
+| `TYCHO_GH_BIN` | Override the compatibility GitHub CLI lookup. |
+| `TYCHO_GITHUB_APP_CLIENT_ID` | Public Client ID for the Tycho GitHub App device flow. |
+| `TYCHO_GITHUB_APP_SLUG` | App slug used to build the organization installation URL. |
+| `TYCHO_GITHUB_APP_INSTALL_URL` | Override the GitHub App installation URL. |
+| `TYCHO_GITHUB_AUTH_PATH` | Override the local App session file path. |
+| `TYCHO_GITHUB_WRITE_ENABLED` | Allow separately confirmed review posting when the App has write permission. |
 | `TYCHO_REMOTE_TOKEN` | Require bearer auth for non-local Remote UI/API access. |
 | `TYCHO_LOG_LEVEL` | Set Tycho's log level, such as `DEBUG` or `INFO`. |
 
 Web Push can also use `TYCHO_WEB_PUSH_VAPID_PUBLIC_KEY`,
 `TYCHO_WEB_PUSH_VAPID_PRIVATE_KEY`, and `TYCHO_WEB_PUSH_VAPID_SUBJECT`.
+
+### GitHub App
+
+Register a GitHub App for Tycho and enable **Device Flow**. A callback URL,
+client secret, webhook, and private key are not required for user-to-server
+device authentication. Configure these repository permissions:
+
+- **Contents: read**
+- **Issues: read**
+- **Pull requests: read**
+- **Checks: read**
+- **Commit statuses: read**
+
+Use **Pull requests: write** only if review posting is required. Set the App's
+public Client ID and slug in `.env`, restart Tycho, then connect from
+**Settings → GitHub** or **Reviews**:
+
+```dotenv
+TYCHO_GITHUB_APP_CLIENT_ID=Iv1.example
+TYCHO_GITHUB_APP_SLUG=tycho-example
+```
+
+Authorizing the user and installing the App are separate. Install the App on
+each personal account or organization whose repositories Tycho should review,
+then select the smallest useful repository set. Tycho stores refreshable App
+credentials locally and never sends them to the Remote UI. When no App session
+exists, an authenticated `gh` session remains available for backward
+compatibility.
 
 ## Commands
 
@@ -236,6 +273,14 @@ Start the Remote Sessions server:
 
 ```bash
 tycho serve
+```
+
+Connect and inspect the Tycho GitHub App session:
+
+```bash
+tycho github login
+tycho github status
+tycho github logout
 ```
 
 Bind explicitly to localhost:

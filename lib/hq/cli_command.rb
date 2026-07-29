@@ -10,6 +10,7 @@ require "lipgloss"
 require_relative "domain/project"
 require_relative "domain/project_archiver"
 require_relative "domain/file_store"
+require_relative "domain/github_api_client"
 require_relative "domain/scheduler"
 require_relative "domain/agent_store"
 
@@ -346,6 +347,53 @@ module HQ
         prefix.register "reload", ScheduleReload
       end
 
+      class Github < Dry::CLI::Command
+        desc "Manage GitHub authentication"
+
+        def call(**)
+          exit CLICommand.usage("Missing github command", err: err)
+        end
+      end
+
+      class GithubLogin < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Connect the Tycho GitHub App"
+        usage_template "github login"
+
+        def call(**)
+          exit CLICommand.github_login(out: out, err: err)
+        end
+      end
+
+      class GithubStatus < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Show GitHub authentication status"
+        usage_template "github status"
+
+        def call(**)
+          exit CLICommand.github_status(out: out, err: err)
+        end
+      end
+
+      class GithubLogout < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Delete the local Tycho GitHub App session"
+        usage_template "github logout"
+
+        def call(**)
+          exit CLICommand.github_logout(out: out, err: err)
+        end
+      end
+
+      register "github", Github do |prefix|
+        prefix.register "login", GithubLogin
+        prefix.register "status", GithubStatus
+        prefix.register "logout", GithubLogout
+      end
+
       class Debug < Dry::CLI::Command
         desc "Run diagnostics"
 
@@ -397,6 +445,11 @@ module HQ
       Commands::ScheduleResume,
       Commands::ScheduleReload
     ].freeze
+    GITHUB_COMMANDS = [
+      Commands::GithubLogin,
+      Commands::GithubStatus,
+      Commands::GithubLogout
+    ].freeze
     DEBUG_COMMANDS = [
       Commands::DebugClaude
     ].freeze
@@ -416,6 +469,7 @@ module HQ
         "  #{COMMAND_NAME} #{format(template, project_key: "<project-key>", agent_key: "<agent-key>", prompt: "<prompt>", message: "<message>")}"
       },
       *SCHEDULE_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, schedule_key: "<schedule-key>")}" },
+      *GITHUB_COMMANDS.map { |command| "  #{COMMAND_NAME} #{command.usage_template}" },
       *DEBUG_COMMANDS.map { |command| "  #{COMMAND_NAME} #{command.usage_template}" },
       "",
       "Run without a command to open the interactive Tycho TUI."
@@ -469,10 +523,56 @@ module HQ
       out.puts "Lipgloss backend: #{backend}"
       out.puts "Native Lipgloss loaded: #{native_lipgloss.empty? ? "no" : "yes"}"
       out.puts "Render smoke: #{Bubbles::ANSI.strip(box).lines.first&.chomp} / #{Bubbles::ANSI.strip(progress)}"
+      github = GitHubAPIClient.new.capability
+      github_status = github[:enabled] ? "enabled via #{github[:source]}" : "disabled (connect GitHub App or run `gh auth login`)"
+      out.puts "GitHub PR review: #{github_status}"
       0
     rescue StandardError => e
       err.puts "Tycho runtime check failed: #{e.class}: #{e.message}"
       1
+    end
+
+    def github_login(out: $stdout, err: $stderr, auth: GitHubAuth.default, sleeper: Kernel.method(:sleep))
+      device = auth.start_device_flow
+      out.puts "Connect the Tycho GitHub App"
+      out.puts "Open: #{device.fetch(:verification_uri)}"
+      out.puts "Code: #{device.fetch(:user_code)}"
+      out.puts "Waiting for GitHub authorization..."
+      interval = device.fetch(:interval, 5).to_i
+      loop do
+        sleeper.call([interval, 1].max)
+        result = auth.poll_device_flow(device.fetch(:id))
+        if result[:status] == "authenticated"
+          account = result[:account].to_s
+          out.puts(account.empty? ? "GitHub connected." : "GitHub connected as @#{account}.")
+          return 0
+        end
+        interval = result.fetch(:retry_after, interval).to_i
+      end
+    rescue GitHubAuth::Error => e
+      failure(e.message, err:)
+    rescue Interrupt
+      failure("GitHub login cancelled.", err:)
+    end
+
+    def github_status(out: $stdout, err: $stderr, auth: GitHubAuth.default)
+      github = auth.capability
+      out.puts "GitHub provider: #{github[:source]}"
+      out.puts "Tycho GitHub App: #{github.dig(:app, :authenticated) ? "connected" : github.dig(:app, :configured) ? "ready to connect" : "not configured"}"
+      out.puts "Account: @#{github.dig(:app, :account)}" unless github.dig(:app, :account).to_s.empty?
+      out.puts "Expires: #{github.dig(:app, :expires_at)}" unless github.dig(:app, :expires_at).to_s.empty?
+      out.puts "GitHub CLI: #{github.dig(:gh, :authenticated) ? "authenticated" : github.dig(:gh, :available) ? "not authenticated" : "not installed"}"
+      github[:enabled] ? 0 : 1
+    rescue GitHubAuth::Error => e
+      failure(e.message, err:)
+    end
+
+    def github_logout(out: $stdout, err: $stderr, auth: GitHubAuth.default)
+      auth.logout
+      out.puts "Tycho GitHub App session removed."
+      0
+    rescue GitHubAuth::Error => e
+      failure(e.message, err:)
     end
 
     def debug_claude(opts = {}, out: $stdout, err: $stderr)

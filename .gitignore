@@ -9,6 +9,8 @@ config/hq.archived.yml
 config/system_prompts.yml
 config/hooks.yml
 config/schedules.yml
+config/github_auth.json
+config/github_auth.json.bak
 schedules/*
 !schedules/.gitkeep
 tmp/
