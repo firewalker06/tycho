@@ -790,7 +790,10 @@ module RemoteServerTest
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
       registry = registry_for_project(dir, workspace)
-      service = HQ::RemoteService.new(registry: registry)
+      service = HQ::RemoteService.new(
+        registry: registry,
+        github_client: FakeUnavailableGitHubClient.new
+      )
       server = HQ::RemoteServer.new
       created = service.create_agent(
         "project_key" => "web",
@@ -5508,6 +5511,16 @@ module RemoteServerTest
         headers: {},
         not_modified: false
       )
+    end
+  end
+
+  class FakeUnavailableGitHubClient
+    def enabled?
+      true
+    end
+
+    def get_json(*)
+      raise HQ::GitHubAPIClient::Error.new("GitHub metadata unavailable", status: 503)
     end
   end
 
