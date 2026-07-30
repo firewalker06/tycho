@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "base64"
 require "digest"
 require "fileutils"
 require "json"
@@ -61,7 +62,7 @@ module HQ
     def initialize(host: DEFAULT_HOST, port: DEFAULT_PORT, public_url: nil, startup_messages: nil,
                    restart_command: nil, token: HQ.env("REMOTE_TOKEN"), logger: HQ.logger, output: $stdout,
                    daemonize_after_startup: false, daemon_log_path: REMOTE_DAEMON_LOG_FILE, daemonizer: nil,
-                   resource_catalog: nil)
+                   resource_catalog: nil, resource_snapshot_path: nil)
       @host = host.to_s.empty? ? DEFAULT_HOST : host.to_s
       @port = port.to_i.positive? ? port.to_i : DEFAULT_PORT
       @public_url = public_url.to_s
@@ -73,7 +74,7 @@ module HQ
       @daemonize_after_startup = daemonize_after_startup ? true : false
       @daemon_log_path = daemon_log_path.to_s.empty? ? REMOTE_DAEMON_LOG_FILE : daemon_log_path.to_s
       @daemonizer = daemonizer
-      @resource_catalog = resource_catalog || RemoteResourceCatalog.new
+      @resource_catalog = resource_catalog || RemoteResourceCatalog.new(snapshot_path: resource_snapshot_path)
     end
 
     def start
@@ -257,10 +258,22 @@ module HQ
                             force: body["force"] == true
                           ))
         end
+        if method == "DELETE" && parts.length == 3 && parts[2] == "resources"
+          unless @resource_catalog.forget(parts[1])
+            raise Error.new("Unknown peer server: #{parts[1]}", status: 404)
+          end
+
+          return ok(@resource_catalog.snapshot)
+        end
         if method == "POST" && parts == ["servers"]
           result = service.add_remote_server(body)
           @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
           return created(result)
+        end
+        if method == "PATCH" && parts.length == 2
+          result = service.update_remote_server(parts[1], body)
+          @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
+          return ok(result)
         end
         if method == "DELETE" && parts.length == 2
           result = service.remove_remote_server(parts[1])
@@ -505,7 +518,7 @@ module HQ
     end
 
     def schedule_restart!
-      raise Error.new("Remote restart is unavailable for this server", status: 409) unless restartable?
+      raise Error.new("Remote restart is unavailable for this host", status: 409) unless restartable?
 
       @restart_requested = true
       @shutdown = true
@@ -628,6 +641,7 @@ module HQ
 
   class RemoteResourceCatalog
     SCHEMA_VERSION = 1
+    SNAPSHOT_SCHEMA_VERSION = 1
     MAX_WORKERS = 4
     OPEN_TIMEOUT = 0.5
     READ_TIMEOUT = 1.0
@@ -640,16 +654,20 @@ module HQ
       end
     end
 
-    def initialize(max_workers: MAX_WORKERS, logger: HQ.logger)
+    def initialize(max_workers: MAX_WORKERS, logger: HQ.logger, snapshot_path: nil)
       @logger = logger
       @max_workers = [max_workers.to_i, 1].max
+      @snapshot_path = snapshot_path.to_s.strip
+      @snapshot_path = nil if @snapshot_path.empty?
       @mutex = Mutex.new
       @worker_mutex = Mutex.new
+      @persistence_mutex = Mutex.new
       @entries = {}
       @inflight = {}
       @revision = 0
       @queue = Queue.new
       @workers = nil
+      @persisted_entries = load_persisted_entries
     end
 
     def reconcile(registry:, server_url:)
@@ -658,21 +676,41 @@ module HQ
       ] + Array(registry.remote_servers)
       next_keys = configs.map(&:key)
 
+      persistence_changed = false
       @mutex.synchronize do
-        @entries.delete_if { |key, _entry| !next_keys.include?(key) }
+        removed_keys = @entries.keys - next_keys
+        removed_persisted_keys = @persisted_entries.keys - next_keys
+        @entries.delete_if { |key, _entry| removed_keys.include?(key) }
         @inflight.delete_if { |key, _value| !next_keys.include?(key) }
+        removed_persisted_keys.each { |key| @persisted_entries.delete(key) }
+        persistence_changed = removed_persisted_keys.any?
         configs.each_with_index do |config, index|
           existing = @entries[config.key]
           metadata = {
             key: config.key,
             name: config.name,
+            icon: index.zero? ? "home" : config.icon,
             url: config.url,
             local: index.zero?,
             auth_configured: !config.resolved_token.to_s.empty?
           }
-          @entries[config.key] = existing ? existing.merge(metadata) : empty_entry(metadata)
+          persisted = @persisted_entries[config.key]
+          if persisted && !valid_persisted_entry?(persisted, metadata)
+            @persisted_entries.delete(config.key)
+            persisted = nil
+            persistence_changed = true
+          end
+          if existing && existing[:url].to_s != metadata[:url].to_s
+            existing = nil
+          end
+          @entries[config.key] = if existing
+                                   existing.merge(metadata)
+                                 else
+                                   restored_entry(metadata, persisted)
+                                 end
         end
       end
+      persist_peer_snapshots! if persistence_changed
     end
 
     def snapshot
@@ -687,6 +725,27 @@ module HQ
           servers: servers
         )
       end
+    end
+
+    def forget(key)
+      forgotten = false
+      @mutex.synchronize do
+        entry = @entries[key.to_s]
+        return false unless entry && !entry[:local]
+
+        @entries[key.to_s] = entry.merge(
+          last_success_at: nil,
+          stale: false,
+          resource_mode: nil,
+          agents: [],
+          projects: []
+        )
+        @persisted_entries.delete(key.to_s)
+        @revision += 1
+        forgotten = true
+      end
+      persist_peer_snapshots! if forgotten
+      forgotten
     end
 
     def refresh(key, registry:, server_url:, local_service:, token_override: nil, force: false)
@@ -791,8 +850,8 @@ module HQ
       successful_snapshot(
         {
           "schema_version" => SCHEMA_VERSION,
-          "agents" => value_for(agents[:body], "agents") || [],
-          "projects" => value_for(projects[:body], "projects") || []
+          "agents" => value_for(agents[:body], "agents"),
+          "projects" => value_for(projects[:body], "projects")
         },
         mode: "legacy"
       )
@@ -808,13 +867,14 @@ module HQ
         }
       end
 
-      agents = Array(value_for(payload, "agents"))
-      projects = Array(value_for(payload, "projects"))
-      unless agents.all?(Hash) && projects.all?(Hash)
+      agents = value_for(payload, "agents")
+      projects = value_for(payload, "projects")
+      unless agents.is_a?(Array) && projects.is_a?(Array) &&
+             agents.all?(Hash) && projects.all?(Hash)
         return {
           success: false,
           category: "incompatible",
-          error: "resource lists must contain objects"
+          error: "resource snapshot must contain complete agent and project arrays"
         }
       end
       {
@@ -839,10 +899,12 @@ module HQ
 
     def record_success(key, result, elapsed_ms)
       now = Time.now.iso8601
+      persist = false
       @mutex.synchronize do
         entry = @entries[key]
         return unless entry
 
+        persist = !entry[:local]
         @entries[key] = entry.merge(
           status: "online",
           latency_ms: elapsed_ms,
@@ -861,6 +923,7 @@ module HQ
         @inflight.delete(key)
         @revision += 1
       end
+      persist_peer_snapshots! if persist
       @logger.info("RemoteResources") { "#{key} refreshed in #{elapsed_ms}ms" }
     end
 
@@ -922,6 +985,95 @@ module HQ
         agents: [],
         projects: []
       )
+    end
+
+    def restored_entry(metadata, persisted)
+      entry = empty_entry(metadata)
+      return entry unless valid_persisted_entry?(persisted, metadata)
+
+      entry.merge(
+        last_success_at: value_for(persisted, "last_success_at"),
+        stale: true,
+        resource_mode: value_for(persisted, "resource_mode"),
+        agents: decorate_resources(value_for(persisted, "agents"), metadata, kind: "agent"),
+        projects: decorate_resources(value_for(persisted, "projects"), metadata, kind: "project")
+      )
+    end
+
+    def load_persisted_entries
+      return {} unless @snapshot_path
+
+      payload = FileStore.read_json(@snapshot_path, fallback: {})
+      return {} unless value_for(payload, "schema_version").to_i == SNAPSHOT_SCHEMA_VERSION
+
+      Array(value_for(payload, "servers")).each_with_object({}) do |entry, result|
+        next unless entry.is_a?(Hash)
+
+        key = value_for(entry, "key").to_s
+        next if key.empty? || key == "local"
+
+        result[key] = entry
+      end
+    rescue StandardError => e
+      @logger.warn("RemoteResources") do
+        "Failed to load persisted resource snapshots: #{e.class} - #{e.message}"
+      end
+      {}
+    end
+
+    def valid_persisted_entry?(persisted, metadata)
+      return false unless persisted.is_a?(Hash)
+      return false unless value_for(persisted, "key").to_s == metadata[:key].to_s
+      return false unless value_for(persisted, "url").to_s == metadata[:url].to_s
+      return false if value_for(persisted, "last_success_at").to_s.empty?
+
+      agents = value_for(persisted, "agents")
+      projects = value_for(persisted, "projects")
+      agents.is_a?(Array) && projects.is_a?(Array) &&
+        agents.all?(Hash) && projects.all?(Hash)
+    end
+
+    def persist_peer_snapshots!
+      return unless @snapshot_path
+
+      @persistence_mutex.synchronize do
+        payload = @mutex.synchronize do
+          {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            saved_at: Time.now.iso8601,
+            servers: @entries.values.filter_map do |entry|
+              next if entry[:local] || entry[:last_success_at].to_s.empty?
+
+              {
+                key: entry[:key],
+                url: entry[:url],
+                last_success_at: entry[:last_success_at],
+                resource_mode: entry[:resource_mode],
+                agents: persisted_resources(entry[:agents]),
+                projects: persisted_resources(entry[:projects])
+              }
+            end
+          }
+        end
+        FileStore.write_json(@snapshot_path, payload)
+        persisted = Array(payload[:servers]).to_h { |entry| [entry[:key].to_s, entry] }
+        @mutex.synchronize { @persisted_entries = persisted }
+      end
+    rescue StandardError => e
+      @logger.warn("RemoteResources") do
+        "Failed to persist resource snapshots: #{e.class} - #{e.message}"
+      end
+    end
+
+    def persisted_resources(resources)
+      Array(resources).map do |resource|
+        resource.each_with_object({}) do |(key, value), result|
+          name = key.to_s
+          next if %w[server_key server_name server_local server_stale resource_kind].include?(name)
+
+          result[name] = value
+        end
+      end
     end
 
     def config_for(key, registry:, server_url:)
@@ -1170,6 +1322,7 @@ module HQ
       {
         key: config.key,
         name: config.name,
+        icon: local ? "home" : (config.respond_to?(:icon) ? config.icon : "server"),
         url: config.url,
         local: local,
         auth_configured: !config.resolved_token.to_s.empty?
@@ -1185,6 +1338,20 @@ module HQ
   class RemoteService
     ATTACHMENT_CONTENT_LIMIT = 512 * 1024
     ATTACHMENT_TEXT_SNIFF_LIMIT = 64 * 1024
+    HTML_PREVIEW_ASSET_LIMIT = 2 * 1024 * 1024
+    HTML_PREVIEW_ASSET_TYPES = {
+      ".css" => "text/css",
+      ".gif" => "image/gif",
+      ".jpeg" => "image/jpeg",
+      ".jpg" => "image/jpeg",
+      ".js" => "application/javascript",
+      ".mjs" => "application/javascript",
+      ".png" => "image/png",
+      ".svg" => "image/svg+xml",
+      ".webp" => "image/webp",
+      ".woff" => "font/woff",
+      ".woff2" => "font/woff2"
+    }.freeze
     MAX_PULL_REQUEST_INBOX_ITEMS = 100
     IMAGE_CONTENT_TYPES = {
       ".gif" => "image/gif",
@@ -1246,6 +1413,21 @@ module HQ
       }
     rescue ConfigError => e
       raise Error.new(e.message, status: 400)
+    end
+
+    def update_remote_server(key, body)
+      updated = @registry.update_remote_server!(
+        key,
+        name: body["name"],
+        icon: body["icon"]
+      )
+      broker = RemoteBroker.new(registry: @registry, server_url: @server_url)
+      {
+        server: broker.servers.find { |server| server[:key] == updated.key },
+        servers: broker.servers
+      }
+    rescue ConfigError => e
+      raise Error.new(e.message, status: e.message.start_with?("Unknown") ? 404 : 400)
     end
 
     def remove_remote_server(key)
@@ -1805,7 +1987,7 @@ module HQ
       agent, attachment = find_attachment!(id)
       payload = attachment_payload(agent, attachment)
       return payload unless payload["type"].to_s == "file"
-      return payload unless %w[markdown text].include?(payload["format"].to_s)
+      return payload unless %w[html markdown text].include?(payload["format"].to_s)
 
       path = attachment_file_path(attachment, agent.workspace)
       unless path && File.file?(path)
@@ -1816,6 +1998,9 @@ module HQ
       size = File.size(path)
       payload["content"] = File.open(path, "rb") { |file| file.read(ATTACHMENT_CONTENT_LIMIT) }.to_s.scrub
       payload["content_truncated"] = size > ATTACHMENT_CONTENT_LIMIT
+      if payload["format"].to_s == "html" && !payload["content_truncated"]
+        payload["preview_assets"] = html_preview_assets(payload["content"], path, agent.workspace)
+      end
       payload
     rescue SystemCallError => e
       payload["content_error"] = e.message
@@ -1955,8 +2140,7 @@ module HQ
         logs: log_summary(agents),
         push: push_config,
         refresh_intervals: {
-          running_agent_ms: 2_000,
-          active_agent_ms: 3_000,
+          active_ms: 5_000,
           idle_ms: 10_000,
           hidden_ms: 30_000
         },
@@ -3447,10 +3631,12 @@ module HQ
       path = attachment_file_path(attachment, workspace) unless workspace.to_s.empty?
       if path && File.file?(path)
         plain_text = plain_text_file?(path)
+        return "html" if target.match?(/\.html?(?:[?#].*)?\z/) && plain_text
         return "markdown" if target.match?(/\.(md|markdown)(?:[?#].*)?\z/) && plain_text
         return plain_text ? "text" : "binary"
       end
 
+      return "html" if mime_type == "text/html" || target.match?(/\.html?(?:[?#].*)?\z/)
       return "markdown" if target.match?(/\.(md|markdown)(?:[?#].*)?\z/)
       return "text" if mime_type.start_with?("text/") ||
                        mime_type.match?(/\Aapplication\/(json|x-ndjson)\z/) ||
@@ -3504,6 +3690,35 @@ module HQ
 
     def attachment_content_type(attachment, path)
       attachment["mime_type"].to_s.strip.empty? ? AttachmentNormalizer.mime_type_for_path(path) : attachment["mime_type"].to_s
+    end
+
+    def html_preview_assets(content, html_path, workspace)
+      workspace_root = File.realpath(workspace.to_s)
+      remaining = HTML_PREVIEW_ASSET_LIMIT
+      references = content.scan(/\b(?:href|src)\s*=\s*(["'])(.*?)\1/i).map(&:last).uniq
+      references.filter_map do |reference|
+        next if reference.empty? || reference.start_with?("#", "/")
+        next if reference.match?(/\A(?:[a-z][a-z0-9+.-]*:|\/\/)/i)
+
+        relative = URI::DEFAULT_PARSER.unescape(reference.split(/[?#]/, 2).first.to_s)
+        candidate = File.realpath(File.expand_path(relative, File.dirname(html_path)))
+        next unless candidate.start_with?("#{workspace_root}#{File::SEPARATOR}")
+        next unless File.file?(candidate)
+
+        content_type = HTML_PREVIEW_ASSET_TYPES[File.extname(candidate).downcase]
+        next unless content_type
+
+        size = File.size(candidate)
+        next if size > remaining
+
+        remaining -= size
+        bytes = File.binread(candidate)
+        [reference, "data:#{content_type};base64,#{Base64.strict_encode64(bytes)}"]
+      rescue SystemCallError, URI::InvalidURIError
+        nil
+      end.to_h
+    rescue SystemCallError
+      {}
     end
 
     def http_quoted_filename(value)

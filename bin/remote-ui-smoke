@@ -431,6 +431,144 @@ def write_smoke_script(path)
 
       try {
         await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
+        const mermaidScriptsBefore = await page.locator('script[src*="/mermaid@"]').count();
+        if (mermaidScriptsBefore !== 0) {
+          throw new Error("Mermaid loaded before any Mermaid diagram was present");
+        }
+
+        await page.evaluate(() => {
+          state.attachmentDetails["smoke-html-preview"] = {
+            id: "smoke-html-preview",
+            type: "file",
+            format: "html",
+            title: "Interactive HTML smoke lesson",
+            path: "/tmp/interactive-smoke-lesson.html",
+            content: [
+              "<!doctype html><html><head>",
+              "<link rel='stylesheet' href='../assets/lesson.css'>",
+              "<script defer src='../assets/lesson.js'></" + "script>",
+              "</head><body>",
+              "<h1>Interactive lesson</h1>",
+              "<button id='answer' type='button'>Reveal answer</button>",
+              "<p id='result'>Waiting</p>",
+              "</body></html>",
+            ].join(""),
+            preview_assets: {
+              "../assets/lesson.css": "data:text/css;base64," + btoa("body { color: rgb(12, 34, 56); }"),
+              "../assets/lesson.js": "data:application/javascript;base64," + btoa([
+                "document.querySelector('#answer').addEventListener('click', () => {",
+                "document.querySelector('#result').textContent = 'Correct';",
+                "});",
+              ].join("")),
+            },
+          };
+          replaceView(attachmentViewerHtml("smoke-html-preview"));
+        });
+        const htmlFrame = page.frameLocator(".html-attachment-frame");
+        await htmlFrame.locator("h1").waitFor({ state: "visible", timeout: 10_000 });
+        await htmlFrame.locator("#answer").click();
+        const htmlResult = await htmlFrame.locator("#result").textContent();
+        if (htmlResult !== "Correct") {
+          throw new Error(`Sandboxed HTML interaction failed: ${JSON.stringify(htmlResult)}`);
+        }
+        const htmlColor = await htmlFrame.locator("body").evaluate((body) => getComputedStyle(body).color);
+        if (htmlColor !== "rgb(12, 34, 56)") {
+          throw new Error(`Sandboxed HTML shared asset styling failed: ${JSON.stringify(htmlColor)}`);
+        }
+        const htmlSandbox = await page.locator(".html-attachment-frame").getAttribute("sandbox");
+        if (htmlSandbox.includes("allow-same-origin")) {
+          throw new Error(`HTML attachment sandbox exposed Tycho's origin: ${htmlSandbox}`);
+        }
+
+        await page.evaluate(async () => {
+          await ensureMarkdownParserLoaded();
+          replaceView(renderMarkdown([
+            "```mermaid",
+            "flowchart LR",
+            "  A[HTML attachment] --> B[Visible lesson]",
+            "```",
+          ].join("\\n")));
+        });
+        await page.waitForSelector(".mermaid svg", { state: "visible", timeout: 20_000 });
+        const mermaidContract = await page.evaluate(() => ({
+          scripts: document.querySelectorAll('script[src*="/mermaid@"]').length,
+          processed: document.querySelector(".mermaid")?.dataset.processed,
+          svg: Boolean(document.querySelector(".mermaid svg")),
+        }));
+        if (mermaidContract.scripts !== 1 || mermaidContract.processed !== "true" || !mermaidContract.svg) {
+          throw new Error(`Mermaid rendering contract failed: ${JSON.stringify(mermaidContract)}`);
+        }
+
+        await page.evaluate(() => {
+          state.renderedViewHtml = "";
+          render();
+        });
+        const pollSchedulerContract = await page.evaluate(async (fallbackAgentKey) => {
+          const savedHash = location.hash;
+          const savedSetup = state.setup;
+          const savedServers = state.servers;
+          const savedFailureCount = state.failureCount;
+          const savedLastShellUpdatedAt = state.lastShellUpdatedAt;
+          const originalFetch = window.fetch;
+          let catalogReads = 0;
+          window.fetch = (...args) => {
+            const input = args[0];
+            const url = new URL(typeof input === "string" ? input : input.url, location.href);
+            const method = String(args[1]?.method || input?.method || "GET").toUpperCase();
+            if (method === "GET" && url.pathname === "/servers/resources") catalogReads += 1;
+            return originalFetch(...args);
+          };
+
+          try {
+            const idleAgent = state.agents.find((agent) => !agent.running) || findAgent(fallbackAgentKey);
+            state.setup = {
+              ...(state.setup || {}),
+              refresh_intervals: {
+                ...(state.setup?.refresh_intervals || {}),
+                idle_ms: 100,
+              },
+            };
+            state.servers = state.servers.map((server) => ({
+              ...server,
+              status: "online",
+              stale: false,
+              refreshing: false,
+            }));
+            state.failureCount = 0;
+            history.replaceState(null, "", routeHash({ type: "agent", key: idleAgent.key }));
+            const conversationDelay = pollDelay();
+            history.replaceState(null, "", savedHash || "#now");
+            state.lastShellUpdatedAt = new Date();
+            clearTimeout(state.timer);
+            state.timer = null;
+            schedule(20);
+            await new Promise((resolve) => setTimeout(resolve, 900));
+            return {
+              catalogReads,
+              conversationDelay,
+              timerActive: Boolean(state.timer),
+            };
+          } finally {
+            window.fetch = originalFetch;
+            history.replaceState(null, "", savedHash || "#now");
+            state.setup = savedSetup;
+            state.servers = savedServers;
+            state.failureCount = savedFailureCount;
+            state.lastShellUpdatedAt = savedLastShellUpdatedAt;
+            clearTimeout(state.timer);
+            state.timer = null;
+            schedule();
+          }
+        }, agentKey);
+        if (pollSchedulerContract.catalogReads < 3 ||
+            !pollSchedulerContract.timerActive ||
+            pollSchedulerContract.conversationDelay !== 5_000) {
+          throw new Error(`Remote UI polling did not remain scheduled or use the Conversation interval: ${JSON.stringify(pollSchedulerContract)}`);
+        }
+        if (process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY === "1") {
+          console.log("remote-ui-smoke: HTML, Mermaid, and polling ok");
+          return;
+        }
         await page.waitForSelector("[data-state-key='schedule-now-details']", { state: "visible", timeout: 10_000 });
         const scheduleMenuGeometry = await page.evaluate(() => {
           const details = document.querySelector("[data-state-key='schedule-now-details']");
@@ -754,6 +892,12 @@ def write_smoke_script(path)
 
         await agentsRegressionPage.evaluate(() => navigate({ type: "tab", tab: "agents" }));
         await agentsRegressionPage.evaluate(() => {
+          if (state.servers.length === 1) {
+            state.servers = [
+              ...state.servers,
+              { key: "smoke-peer", name: "Smoke peer", local: false, status: "offline", stale: false },
+            ];
+          }
           state.projects = [
             ...state.projects,
             { key: "empty-alpha", name: "Empty Alpha", status: "configured" },
@@ -768,6 +912,19 @@ def write_smoke_script(path)
           const emptyGroups = groups.filter((group) => group.classList.contains("empty"));
           const rows = Array.from(document.querySelectorAll(".agent-ledger .agent-row"));
           const createButtons = Array.from(document.querySelectorAll(".agent-ledger .agent-group-create"));
+          const countBadges = Array.from(document.querySelectorAll(".agent-ledger .agent-group-count"));
+          const offlineFixture = document.createElement("div");
+          offlineFixture.innerHTML = serverHealthIconBadge({ status: "offline", stale: false });
+          const offlineBadge = offlineFixture.firstElementChild;
+          const healthBadges = groups.map((group) => {
+            const badge = group.querySelector(".server-health-icon-badge");
+            return {
+              label: badge?.getAttribute("aria-label"),
+              title: badge?.getAttribute("title"),
+              iconPathCount: badge?.querySelectorAll(".ui-icon path").length || 0,
+              text: badge?.textContent.trim(),
+            };
+          });
           const projectIcons = groups.map((group) => {
             const title = group.querySelector(".agent-group-project-title");
             const icon = title?.querySelector(":scope > .ui-icon");
@@ -781,8 +938,14 @@ def write_smoke_script(path)
             ledgerCount: ledgers.length,
             groupCount: groups.length,
             emptyGroupCount: emptyGroups.length,
+            countBadgeCount: countBadges.length,
             emptyHeaderHeights: emptyGroups.map((group) => group.querySelector(".group-title")?.getBoundingClientRect().height),
             rowHeights: rows.map((row) => row.getBoundingClientRect().height),
+            healthBadges,
+            offlineHealthBadge: {
+              label: offlineBadge?.getAttribute("aria-label"),
+              pathCount: offlineBadge?.querySelectorAll(".ui-icon path").length || 0,
+            },
             createTargets: createButtons.map((button) => ({
               label: button.getAttribute("aria-label"),
               width: button.getBoundingClientRect().width,
@@ -795,8 +958,17 @@ def write_smoke_script(path)
         if (groupedLedgerContract.ledgerCount !== 1 ||
             groupedLedgerContract.groupCount !== 3 ||
             groupedLedgerContract.emptyGroupCount !== 2 ||
+            groupedLedgerContract.countBadgeCount !== 0 ||
             groupedLedgerContract.emptyHeaderHeights.some((height) => height > 44.5) ||
             groupedLedgerContract.rowHeights.some((height) => height > 58.5) ||
+            groupedLedgerContract.healthBadges.some((badge) => (
+              !badge.label ||
+              badge.title !== badge.label ||
+              badge.iconPathCount === 0 ||
+              badge.text
+            )) ||
+            groupedLedgerContract.offlineHealthBadge.label !== "Offline" ||
+            groupedLedgerContract.offlineHealthBadge.pathCount !== 7 ||
             groupedLedgerContract.createTargets.some((target) => (
               !target.label?.startsWith("New agent for ") ||
               target.width < 43.5 ||
@@ -1701,6 +1873,41 @@ def write_smoke_script(path)
         });
         await page.waitForSelector("[data-filter-server]", { state: "visible", timeout: 10_000 });
         await page.waitForSelector("[data-open-agent='design-peer/peer-agent']", { state: "visible", timeout: 10_000 });
+        const peerAttachmentOwnership = await page.evaluate(() => {
+          const peer = resourceServer("design-peer");
+          const attachment = scopeApiResponse({
+            attachment: {
+              id: "peer-attachment",
+              agent_key: "peer-agent",
+              type: "file",
+              title: "README.md",
+              path: "/tmp/README.md",
+              format: "markdown",
+              content: "# Peer attachment",
+            },
+          }, peer).attachment;
+          state.attachmentDetails[attachment.id] = attachment;
+          const agent = findAgent("design-peer/peer-agent");
+          return {
+            agentKey: agent?.key,
+            attachmentAgentKey: attachment.agent_key,
+            rejectedAsForeign: renderAgentAttachmentView(agent, attachment.id).includes("Attachment belongs to another agent"),
+          };
+        });
+        if (peerAttachmentOwnership.agentKey !== "design-peer/peer-agent" ||
+            peerAttachmentOwnership.attachmentAgentKey !== "design-peer/peer-agent" ||
+            peerAttachmentOwnership.rejectedAsForeign) {
+          throw new Error(`Remote attachment detail lost its scoped agent owner: ${JSON.stringify(peerAttachmentOwnership)}`);
+        }
+        const localOwnershipBadge = await page.locator(".agent-group", { has: page.locator(`[data-open-agent='${agentKey}']`) })
+          .locator(".server-metadata-badge").first().evaluate((badge) => ({
+            text: badge.textContent.trim(),
+            label: badge.getAttribute("aria-label"),
+            icon: Boolean(badge.querySelector("svg")),
+          }));
+        if (localOwnershipBadge.text !== "" || localOwnershipBadge.label !== "Host" || !localOwnershipBadge.icon) {
+          throw new Error(`Local ownership did not collapse to an accessible home icon: ${JSON.stringify(localOwnershipBadge)}`);
+        }
         const peerGroupText = await page.locator(".agent-group", { has: page.locator("[data-open-agent='design-peer/peer-agent']") }).innerText();
         if (!peerGroupText.includes("Design peer") || !peerGroupText.includes("Stale")) {
           throw new Error(`Combined Agents list did not show peer ownership and health: ${JSON.stringify(peerGroupText)}`);
@@ -1714,6 +1921,32 @@ def write_smoke_script(path)
         if (!stalePeerAppearance.rowIsStale || !stalePeerAppearance.groupIsStale ||
             stalePeerAppearance.status !== "Stale" || stalePeerAppearance.statusOpacity >= 0.8) {
           throw new Error(`Stale peer project and agent were not visually subdued: ${JSON.stringify(stalePeerAppearance)}`);
+        }
+        await page.evaluate(() => {
+          state.agentSort = "agent_name_asc";
+          render();
+        });
+        await page.waitForSelector(".agent-flat-list", { state: "visible", timeout: 10_000 });
+        const flatServerIcons = await page.evaluate((localKey) => {
+          const identity = (key) => {
+            const row = document.querySelector(`.agent-flat-list [data-open-agent="${key}"]`);
+            const owner = row?.querySelector(".agent-server-inline");
+            return {
+              text: owner?.textContent.trim(),
+              title: owner?.getAttribute("title"),
+              icon: Boolean(owner?.querySelector(":scope > .ui-icon")),
+            };
+          };
+          return {
+            local: identity(localKey),
+            peer: identity("design-peer/peer-agent"),
+            overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        }, agentKey);
+        if (flatServerIcons.local.text !== "Host" || flatServerIcons.local.title !== "Host" || !flatServerIcons.local.icon ||
+            flatServerIcons.peer.text !== "Design peer" || flatServerIcons.peer.title !== "Design peer" || !flatServerIcons.peer.icon ||
+            flatServerIcons.overflow) {
+          throw new Error(`Flat Agents list lost owner icons or compact layout: ${JSON.stringify(flatServerIcons)}`);
         }
         await page.selectOption("[data-filter-server]", "design-peer");
         if (await page.locator(`[data-open-agent='${agentKey}']`).count() !== 0 ||
@@ -1751,6 +1984,7 @@ def write_smoke_script(path)
             {
               key: "design-peer",
               name: "Design peer",
+              icon: "server",
               url: "http://127.0.0.1:7499",
               local: false,
               auth_configured: false,
@@ -1828,7 +2062,7 @@ def write_smoke_script(path)
               scrollWidth: label.scrollWidth,
             })),
         }));
-        if (serverActionMenu.labels.join(" | ") !== "Refresh | Edit token | Remove server" ||
+        if (serverActionMenu.labels.join(" | ") !== "Refresh | Edit identity | Edit token | Forget cached data | Remove server" ||
             !serverActionMenu.roles || serverActionMenu.focused !== "Refresh" ||
             serverActionMenu.itemHeights.some((height) => height < 44) ||
             serverActionMenu.clippedLabels.length) {
@@ -1841,7 +2075,7 @@ def write_smoke_script(path)
           });
         }
         await page.keyboard.press("ArrowDown");
-        if ((await page.evaluate(() => document.activeElement?.textContent.trim())) !== "Edit token") {
+        if ((await page.evaluate(() => document.activeElement?.textContent.trim())) !== "Edit identity") {
           throw new Error("Peer server More menu did not move focus with ArrowDown");
         }
         await page.keyboard.press("Escape");
@@ -1850,6 +2084,29 @@ def write_smoke_script(path)
           document.activeElement === document.querySelector(".remote-server-list-item [data-server-action-menu] > summary")
         ));
         await serverActionTrigger.click();
+        await page.click("[data-toggle-server-identity-form='design-peer']");
+        await page.waitForSelector("[data-server-identity-form='design-peer']", { state: "visible", timeout: 10_000 });
+        const identityForm = page.locator("[data-server-identity-form='design-peer']");
+        await identityForm.locator(".server-icon-choice", { has: page.locator("input[value='computer']") }).click();
+        const identityFormContract = await identityForm.evaluate((form) => ({
+          name: form.querySelector("[name='name']")?.value,
+          choices: Array.from(form.querySelectorAll("[name='icon']")).map((input) => input.value),
+          selected: form.querySelector("[name='icon']:checked")?.value,
+          icons: form.querySelectorAll(".server-icon-choice svg").length,
+          submitHeight: form.querySelector("button[type='submit']")?.getBoundingClientRect().height,
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        }));
+        if (identityFormContract.name !== "Design peer" ||
+            identityFormContract.choices.join(" | ") !== "server | computer" ||
+            identityFormContract.selected !== "computer" || identityFormContract.icons !== 2 ||
+            identityFormContract.submitHeight < 44 || identityFormContract.overflow) {
+          throw new Error(`Peer identity editor lost its name, icon, or mobile layout contract: ${JSON.stringify(identityFormContract)}`);
+        }
+        const identityServerActionTrigger = page.locator(".remote-server-list-item [data-server-action-menu] > summary");
+        await identityServerActionTrigger.click();
+        await page.click("[data-toggle-server-identity-form='design-peer']");
+        await page.waitForSelector("[data-server-identity-form='design-peer']", { state: "hidden", timeout: 10_000 });
+        await identityServerActionTrigger.click();
         await page.click("[data-toggle-server-token-form='design-peer']");
         await page.waitForSelector("[data-server-token-form='design-peer']", { state: "visible", timeout: 10_000 });
         const reopenedServerActionTrigger = page.locator(".remote-server-list-item [data-server-action-menu] > summary");
@@ -2197,6 +2454,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       "TYCHO_REMOTE_UI_UNSCHEDULED_AGENT_KEY" => unscheduled_agent_key,
       "CHROME_PATH" => browser
     }
+    if ENV["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"].to_s == "1"
+      smoke_env["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"] = "1"
+    end
     capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
     unless capture_dir.empty?
       expanded_capture_dir = File.expand_path(capture_dir, ROOT)
@@ -2209,7 +2469,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     out, err, status = Open3.capture3(smoke_env, *command, chdir: node_dir)
     puts out unless out.empty?
     warn err unless err.empty?
-    exit(status.exitstatus || 1) unless status.success?
+    unless status.success?
+      warn File.read(log_path) if File.exist?(log_path)
+      exit(status.exitstatus || 1)
+    end
   ensure
     if @server_pid && process_alive?(@server_pid)
       Process.kill("TERM", -@server_pid)

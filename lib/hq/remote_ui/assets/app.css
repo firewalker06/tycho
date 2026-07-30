@@ -876,6 +876,29 @@ h3 {
   margin: 0;
 }
 
+.server-metadata-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.server-metadata-badge .ui-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.server-health-icon-badge {
+  width: 28px;
+  flex: 0 0 28px;
+  justify-content: center;
+  padding: 3px;
+}
+
+.server-health-icon-badge .ui-icon {
+  width: 14px;
+  height: 14px;
+}
+
 .compact-actions button {
   padding: 7px 9px;
 }
@@ -972,7 +995,14 @@ textarea {
   margin-top: 10px;
 }
 
-.server-list-item .server-token-form {
+.server-identity-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.server-list-item :is(.server-identity-form, .server-token-form) {
   margin: 0 12px 12px 46px;
 }
 
@@ -1050,6 +1080,61 @@ textarea {
 .server-token-form label {
   display: grid;
   gap: 6px;
+}
+
+.server-identity-form > .ui-field {
+  display: grid;
+  gap: 6px;
+}
+
+.server-icon-field {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.server-icon-field legend {
+  margin-bottom: 6px;
+}
+
+.server-icon-choices {
+  display: flex;
+  gap: 6px;
+}
+
+.server-icon-choice {
+  position: relative;
+  cursor: pointer;
+}
+
+.server-icon-choice > input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.server-icon-choice > span {
+  display: inline-flex;
+  min-height: var(--control-height);
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.server-icon-choice > input:checked + span {
+  border-color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 12%, var(--panel));
+  color: var(--text);
+}
+
+.server-icon-choice > input:focus-visible + span {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
 .server-connection-actions,
@@ -1155,7 +1240,11 @@ textarea {
     grid-row: 1;
   }
 
-  .remote-server-list-item .server-token-form {
+  .server-identity-form {
+    grid-template-columns: 1fr;
+  }
+
+  .remote-server-list-item :is(.server-identity-form, .server-token-form) {
     margin-left: 0;
     margin-right: 0;
   }
@@ -2371,7 +2460,7 @@ select {
 
 .agent-ledger .group-title {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto var(--ds-touch-target);
+  grid-template-columns: minmax(0, 1fr) var(--ds-touch-target);
   min-height: var(--ds-touch-target);
   gap: 8px;
   border-bottom: 1px solid var(--border);
@@ -2425,19 +2514,6 @@ select {
   font-weight: 600;
 }
 
-.agent-group-count {
-  display: inline-grid;
-  min-width: 22px;
-  min-height: 22px;
-  place-items: center;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--panel-soft) 72%, var(--panel));
-  color: var(--muted);
-  padding: 0 7px;
-  font-size: 11px;
-  font-weight: 700;
-}
-
 .agent-ledger .agent-group-create {
   width: var(--ds-touch-target);
   min-width: var(--ds-touch-target);
@@ -2487,6 +2563,18 @@ select {
 .agent-flat-list .agent-row {
   min-height: 58px;
   padding: 7px 10px 7px 12px;
+}
+
+.agent-server-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  vertical-align: text-bottom;
+}
+
+.agent-server-inline > .ui-icon {
+  width: 1em;
+  height: 1em;
 }
 
 .read-only-project-fields {
@@ -4098,6 +4186,25 @@ select {
   max-height: min(62dvh, 680px);
 }
 
+.html-attachment-preview {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.html-attachment-frame {
+  display: block;
+  width: 100%;
+  min-height: min(68dvh, 760px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: white;
+}
+
+.agent-attachment-viewer .html-attachment-frame {
+  min-height: min(62dvh, 700px);
+}
+
 .pending-attachments {
   display: grid;
   gap: 8px;
@@ -4320,6 +4427,32 @@ select {
   height: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+
+.markdown-viewer .mermaid {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0 0 14px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, var(--panel-soft));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 82%, black);
+  padding: 14px;
+  text-align: center;
+}
+
+.markdown-viewer .mermaid svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.markdown-viewer .mermaid[data-mermaid-error="true"] {
+  color: var(--warning);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12.5px;
+  text-align: left;
+  white-space: pre-wrap;
 }
 
 .agent-dock {

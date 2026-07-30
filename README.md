@@ -322,16 +322,18 @@ Connect one Remote UI to multiple Tycho servers by adding `remote_servers` to
 remote_servers:
   - key: vps
     name: VPS
+    icon: server
     url: http://vps-cd946cb7.tail952bf7.ts.net:7373
     token_env: TYCHO_VPS_REMOTE_TOKEN
 ```
 
 The Remote UI always includes the local server and combines agents and projects
 from every configured peer into the same Agents list. Use the server filter to
-narrow the list. Each resource shows its owner server and health, and each
-agent, project, or attachment request goes only to that owner. Settings manages
-peer connections; schedules, setup, GitHub, push notifications, restart, and
-other server-level controls remain local to the server serving the UI.
+narrow the list. Local resources use a home icon; peer resources use their
+configured `server` or `computer` icon and name. Each agent, project, or
+attachment request goes only to its owner. Settings manages peer connections
+and identity; schedules, setup, GitHub, push notifications, restart, and other
+server-level controls remain local to the server serving the UI.
 
 Run scheduled agents:
 

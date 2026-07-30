@@ -81,7 +81,8 @@ module HQ
         restart_command: restart_command,
         startup_messages: startup_messages,
         output: out,
-        daemonize_after_startup: daemonize
+        daemonize_after_startup: daemonize,
+        resource_snapshot_path: REMOTE_RESOURCES_FILE
       ).start
     end
 
