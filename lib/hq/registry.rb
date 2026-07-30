@@ -24,6 +24,7 @@ module HQ
   RemoteServerConfig = Struct.new(
     :key,
     :name,
+    :icon,
     :url,
     :token,
     :token_env,
@@ -57,6 +58,7 @@ module HQ
   class Registry
     DEFAULT_PATH = HQ.default_config_path
     DEFAULT_ARCHIVED_BASENAME = "hq.archived.yml"
+    REMOTE_SERVER_ICONS = %w[server computer].freeze
     DEFAULT_SESSION_LOOP_SETTINGS = {
       interval_minutes: 10,
       end_time: "23:59",
@@ -160,7 +162,8 @@ module HQ
       entry = {
         "key" => key,
         "name" => name.empty? ? key : name,
-        "url" => url
+        "url" => url,
+        "icon" => normalize_remote_server_icon(attrs[:icon] || attrs["icon"])
       }
 
       existing_index = servers.index do |server|
@@ -170,6 +173,7 @@ module HQ
       end
       if existing_index
         existing = servers[existing_index]
+        entry["icon"] = normalize_remote_server_icon(existing["icon"]) unless attrs.key?(:icon) || attrs.key?("icon")
         entry["token"] = existing["token"] if existing.key?("token")
         entry["token_env"] = existing["token_env"] if existing.key?("token_env")
         servers[existing_index] = entry
@@ -182,6 +186,29 @@ module HQ
       write_yaml(@path, data)
       load!
       @remote_servers.find { |server| server.key == key }
+    end
+
+    def update_remote_server!(key, attrs)
+      value = key.to_s.strip
+      raise ConfigError, "Remote server key local is reserved for the current Tycho server" if value == "local"
+      raise ConfigError, "Missing remote server key" if value.empty?
+
+      data = load_yaml(@path)
+      servers = Array(data["remote_servers"])
+      index = servers.index { |server| server["key"].to_s == value }
+      raise ConfigError, "Unknown remote server: #{value}" unless index
+
+      name = (attrs[:name] || attrs["name"]).to_s.strip
+      raise ConfigError, "Server name is required" if name.empty?
+
+      servers[index] = servers[index].merge(
+        "name" => name,
+        "icon" => normalize_remote_server_icon(attrs[:icon] || attrs["icon"])
+      )
+      data["remote_servers"] = servers
+      write_yaml(@path, data)
+      load!
+      @remote_servers.find { |server| server.key == value }
     end
 
     def remove_remote_server!(key)
@@ -599,6 +626,7 @@ module HQ
         RemoteServerConfig.new(
           key: key,
           name: server["name"].to_s.strip.empty? ? key : server["name"].to_s.strip,
+          icon: normalize_remote_server_icon(server["icon"]),
           url: url.sub(%r{/+\z}, ""),
           token: server["token"].to_s,
           token_env: server["token_env"].to_s.strip
@@ -606,6 +634,14 @@ module HQ
       rescue URI::InvalidURIError => e
         raise ConfigError, "Invalid remote server #{key.inspect} url: #{e.message}"
       end
+    end
+
+    def normalize_remote_server_icon(value)
+      icon = value.to_s.strip.downcase
+      icon = "server" if icon.empty?
+      return icon if REMOTE_SERVER_ICONS.include?(icon)
+
+      raise ConfigError, "Remote server icon must be server or computer"
     end
 
     def default_template(project)

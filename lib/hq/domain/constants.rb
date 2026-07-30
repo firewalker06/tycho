@@ -72,6 +72,7 @@ module HQ
 
   LOGS_DIR = USER_LOGS_DIR
   AGENTS_FILE = File.join(LOGS_DIR, "managed_agents.json")
+  REMOTE_RESOURCES_FILE = File.join(LOGS_DIR, "remote_resources.json")
   SCHEDULES_FILE = env_present("SCHEDULES_PATH", default_schedules_path)
   SCHEDULES_STATE_FILE = env_present("SCHEDULES_STATE_PATH", File.join(LOGS_DIR, "schedules.json"))
   SCHEDULER_DAEMON_FILE = env_present("SCHEDULER_DAEMON_PATH", File.join(LOGS_DIR, "scheduler_daemon.json"))

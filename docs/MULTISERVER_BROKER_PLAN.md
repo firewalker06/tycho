@@ -1,5 +1,7 @@
 # Multiserver Broker Plan
 
+> Superseded by [MULTISERVER_RESOURCES_PLAN.md](./MULTISERVER_RESOURCES_PLAN.md). The original active-server broker shipped first; the combined resource catalog now replaces its UI model while retaining restricted broker compatibility.
+
 ## Goal
 
 Let one Tycho Remote UI connect to multiple Tycho Remote servers without browser CORS or client-side aggregation. The browser talks only to the local Remote server that served the UI. That server acts as a broker for requests to configured peer Remote servers.
@@ -178,5 +180,6 @@ Consider later:
 - UI-managed server entries persisted to Tycho config.
 - mDNS/Tailscale discovery helpers.
 - SSE broker forwarding for lower-latency updates.
-- Cross-server dashboard aggregation.
+- Cross-server Agents and Projects aggregation, now specified in
+  [MULTISERVER_RESOURCES_PLAN.md](./MULTISERVER_RESOURCES_PLAN.md).
 - Backend state replication through NATS/JetStream if the product goal changes back to "any node has all state."

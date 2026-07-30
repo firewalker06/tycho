@@ -209,11 +209,29 @@ module RegistryTest
       assert(server.key == "tycho-peer", "expected remote server key to be derived from name")
       assert(remote["key"] == "tycho-peer", "expected remote server key to persist")
       assert(remote["name"] == "tycho-peer", "expected remote server name to persist")
+      assert(remote["icon"] == "server", "expected remote server icon to default to server")
       assert(remote["url"] == "http://127.0.0.1:7374", "expected remote server URL to be normalized")
       assert(!remote.key?("token"), "expected UI-added remote server tokens to stay out of hq.yml")
       assert(!remote.key?("token_encrypted"), "expected UI-added remote server tokens to stay out of hq.yml")
       assert(server.resolved_token.empty?, "expected UI-added remote server token to stay browser-local")
       assert(registry.remote_servers.length == 1, "expected registry to reload persisted remote server")
+
+      updated = registry.update_remote_server!("tycho-peer", name: "Studio Mac", icon: "computer")
+      persisted_after_update = YAML.safe_load(File.read(config_path), aliases: true)
+      remote_after_update = persisted_after_update.fetch("remote_servers").fetch(0)
+      assert(updated.name == "Studio Mac", "expected remote server name to update")
+      assert(updated.icon == "computer", "expected remote server icon to update")
+      assert(remote_after_update["name"] == "Studio Mac", "expected updated remote server name to persist")
+      assert(remote_after_update["icon"] == "computer", "expected updated remote server icon to persist")
+      assert(remote_after_update["url"] == "http://127.0.0.1:7374",
+             "expected identity updates to preserve the remote server URL")
+
+      begin
+        registry.update_remote_server!("tycho-peer", name: "Studio Mac", icon: "cloud")
+        raise "expected unsupported remote server icon to fail"
+      rescue HQ::ConfigError => e
+        assert(e.message.include?("server or computer"), "expected supported remote server icons in validation error")
+      end
 
       removed = registry.remove_remote_server!("tycho-peer")
       persisted_after_remove = YAML.safe_load(File.read(config_path), aliases: true)

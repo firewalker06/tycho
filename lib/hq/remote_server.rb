@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "base64"
 require "digest"
 require "fileutils"
 require "json"
@@ -60,7 +61,8 @@ module HQ
 
     def initialize(host: DEFAULT_HOST, port: DEFAULT_PORT, public_url: nil, startup_messages: nil,
                    restart_command: nil, token: HQ.env("REMOTE_TOKEN"), logger: HQ.logger, output: $stdout,
-                   daemonize_after_startup: false, daemon_log_path: REMOTE_DAEMON_LOG_FILE, daemonizer: nil)
+                   daemonize_after_startup: false, daemon_log_path: REMOTE_DAEMON_LOG_FILE, daemonizer: nil,
+                   resource_catalog: nil, resource_snapshot_path: nil)
       @host = host.to_s.empty? ? DEFAULT_HOST : host.to_s
       @port = port.to_i.positive? ? port.to_i : DEFAULT_PORT
       @public_url = public_url.to_s
@@ -72,6 +74,7 @@ module HQ
       @daemonize_after_startup = daemonize_after_startup ? true : false
       @daemon_log_path = daemon_log_path.to_s.empty? ? REMOTE_DAEMON_LOG_FILE : daemon_log_path.to_s
       @daemonizer = daemonizer
+      @resource_catalog = resource_catalog || RemoteResourceCatalog.new(snapshot_path: resource_snapshot_path)
     end
 
     def start
@@ -102,6 +105,7 @@ module HQ
         @output.flush if @output.respond_to?(:flush)
       end
       daemonize_after_startup! if @daemonize_after_startup
+      warm_resource_catalog!
 
       until @shutdown
         begin
@@ -156,6 +160,13 @@ module HQ
       unless authorized?(request)
         status = 401
         write_http(client, status, error: "Unauthorized")
+        return
+      end
+
+      if request.method == "GET" && request.path == "/servers/resources"
+        result = ok(@resource_catalog.snapshot)
+        status = result.fetch(:status)
+        write_http(client, status, result.fetch(:body))
         return
       end
 
@@ -217,15 +228,69 @@ module HQ
 
       if parts.first == "servers"
         broker = RemoteBroker.new(registry: service.registry, server_url: service.server_url)
+        @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
         return ok(servers: broker.servers) if method == "GET" && parts == ["servers"]
-        return created(service.add_remote_server(body)) if method == "POST" && parts == ["servers"]
-        return ok(service.remove_remote_server(parts[1])) if method == "DELETE" && parts.length == 2
+        return ok(@resource_catalog.snapshot) if method == "GET" && parts == ["servers", "resources"]
+        if method == "POST" && parts == ["servers", "resources", "refresh"]
+          tokens = body["tokens"].is_a?(Hash) ? body["tokens"] : {}
+          refreshes = broker.servers.map do |server|
+            @resource_catalog.refresh(
+              server[:key],
+              registry: service.registry,
+              server_url: service.server_url,
+              local_service: service,
+              token_override: tokens[server[:key]].to_s,
+              force: body["force"] == true
+            )
+          end
+          return accepted({
+            accepted: refreshes.any? { |refresh| refresh[:accepted] },
+            refreshes: refreshes
+          })
+        end
+        if method == "POST" && parts.length == 4 && parts[2, 2] == ["resources", "refresh"]
+          return accepted(@resource_catalog.refresh(
+                            parts[1],
+                            registry: service.registry,
+                            server_url: service.server_url,
+                            local_service: service,
+                            token_override: remote_server_token(request),
+                            force: body["force"] == true
+                          ))
+        end
+        if method == "DELETE" && parts.length == 3 && parts[2] == "resources"
+          unless @resource_catalog.forget(parts[1])
+            raise Error.new("Unknown peer server: #{parts[1]}", status: 404)
+          end
+
+          return ok(@resource_catalog.snapshot)
+        end
+        if method == "POST" && parts == ["servers"]
+          result = service.add_remote_server(body)
+          @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
+          return created(result)
+        end
+        if method == "PATCH" && parts.length == 2
+          result = service.update_remote_server(parts[1], body)
+          @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
+          return ok(result)
+        end
+        if method == "DELETE" && parts.length == 2
+          result = service.remove_remote_server(parts[1])
+          @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
+          return ok(result)
+        end
+        if parts.length >= 3 && RemoteBroker::RESOURCE_ROOTS.include?(parts[2])
+          resource_path = "/#{parts.drop(2).join("/")}"
+          return broker.proxy(parts[1], method, resource_path, body, request)
+        end
         if parts.length >= 3 && parts[2] == "proxy"
           proxy_path = "/#{parts.drop(3).join("/")}"
           proxy_path = "/" if proxy_path == "/"
           return broker.proxy(parts[1], method, proxy_path, body, request)
         end
       end
+      return ok(service.resource_snapshot) if method == "GET" && parts == ["resources"]
       return ok(agents: service.agents) if method == "GET" && parts == ["agents"]
       return created(agent: service.create_agent(body)) if method == "POST" && parts == ["agents"]
       return ok(schedules: service.schedules, daemon: service.schedule_daemon) if method == "GET" && parts == ["schedules"]
@@ -453,7 +518,7 @@ module HQ
     end
 
     def schedule_restart!
-      raise Error.new("Remote restart is unavailable for this server", status: 409) unless restartable?
+      raise Error.new("Remote restart is unavailable for this host", status: 409) unless restartable?
 
       @restart_requested = true
       @shutdown = true
@@ -528,6 +593,28 @@ module HQ
       nil
     end
 
+    def warm_resource_catalog!
+      service = RemoteService.new(
+        server_url: "http://#{@host}:#{@port}",
+        public_url: @public_url,
+        auth_required: !@token.empty?,
+        restartable: restartable?
+      )
+      @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
+      @resource_catalog.refresh(
+        "local",
+        registry: service.registry,
+        server_url: service.server_url,
+        local_service: service
+      )
+    rescue StandardError => e
+      HQ.logger.warn("RemoteResources") { "Initial local resource refresh failed: #{e.class} - #{e.message}" }
+    end
+
+    def remote_server_token(request)
+      request&.[]("X-Tycho-Remote-Server-Token").to_s
+    end
+
     def log_server(line)
       @logger.info("Remote") { line }
       @output.puts("[Remote] #{Time.now.strftime("%H:%M:%S")} #{line}")
@@ -545,18 +632,493 @@ module HQ
         401 => "Unauthorized",
         404 => "Not Found",
         409 => "Conflict",
+        502 => "Bad Gateway",
+        504 => "Gateway Timeout",
         500 => "Internal Server Error"
       }.fetch(status, "OK")
+    end
+  end
+
+  class RemoteResourceCatalog
+    SCHEMA_VERSION = 1
+    SNAPSHOT_SCHEMA_VERSION = 1
+    MAX_WORKERS = 4
+    OPEN_TIMEOUT = 0.5
+    READ_TIMEOUT = 1.0
+    REFRESH_INTERVAL_SECONDS = 2
+    FAILURE_BACKOFF_SECONDS = [2, 5, 15, 30, 60].freeze
+
+    LocalConfig = Struct.new(:key, :name, :url, keyword_init: true) do
+      def resolved_token
+        ""
+      end
+    end
+
+    def initialize(max_workers: MAX_WORKERS, logger: HQ.logger, snapshot_path: nil)
+      @logger = logger
+      @max_workers = [max_workers.to_i, 1].max
+      @snapshot_path = snapshot_path.to_s.strip
+      @snapshot_path = nil if @snapshot_path.empty?
+      @mutex = Mutex.new
+      @worker_mutex = Mutex.new
+      @persistence_mutex = Mutex.new
+      @entries = {}
+      @inflight = {}
+      @revision = 0
+      @queue = Queue.new
+      @workers = nil
+      @persisted_entries = load_persisted_entries
+    end
+
+    def reconcile(registry:, server_url:)
+      configs = [
+        LocalConfig.new(key: "local", name: "Local", url: server_url.to_s)
+      ] + Array(registry.remote_servers)
+      next_keys = configs.map(&:key)
+
+      persistence_changed = false
+      @mutex.synchronize do
+        removed_keys = @entries.keys - next_keys
+        removed_persisted_keys = @persisted_entries.keys - next_keys
+        @entries.delete_if { |key, _entry| removed_keys.include?(key) }
+        @inflight.delete_if { |key, _value| !next_keys.include?(key) }
+        removed_persisted_keys.each { |key| @persisted_entries.delete(key) }
+        persistence_changed = removed_persisted_keys.any?
+        configs.each_with_index do |config, index|
+          existing = @entries[config.key]
+          metadata = {
+            key: config.key,
+            name: config.name,
+            icon: index.zero? ? "home" : config.icon,
+            url: config.url,
+            local: index.zero?,
+            auth_configured: !config.resolved_token.to_s.empty?
+          }
+          persisted = @persisted_entries[config.key]
+          if persisted && !valid_persisted_entry?(persisted, metadata)
+            @persisted_entries.delete(config.key)
+            persisted = nil
+            persistence_changed = true
+          end
+          if existing && existing[:url].to_s != metadata[:url].to_s
+            existing = nil
+          end
+          @entries[config.key] = if existing
+                                   existing.merge(metadata)
+                                 else
+                                   restored_entry(metadata, persisted)
+                                 end
+        end
+      end
+      persist_peer_snapshots! if persistence_changed
+    end
+
+    def snapshot
+      @mutex.synchronize do
+        servers = @entries.values
+                          .sort_by { |entry| [entry[:local] ? 0 : 1, entry[:name].to_s.downcase, entry[:key]] }
+                          .map { |entry| entry.merge(retry_after_ms: retry_after_ms(entry)) }
+        deep_copy(
+          schema_version: SCHEMA_VERSION,
+          revision: @revision,
+          generated_at: Time.now.iso8601,
+          servers: servers
+        )
+      end
+    end
+
+    def forget(key)
+      forgotten = false
+      @mutex.synchronize do
+        entry = @entries[key.to_s]
+        return false unless entry && !entry[:local]
+
+        @entries[key.to_s] = entry.merge(
+          last_success_at: nil,
+          stale: false,
+          resource_mode: nil,
+          agents: [],
+          projects: []
+        )
+        @persisted_entries.delete(key.to_s)
+        @revision += 1
+        forgotten = true
+      end
+      persist_peer_snapshots! if forgotten
+      forgotten
+    end
+
+    def refresh(key, registry:, server_url:, local_service:, token_override: nil, force: false)
+      ensure_workers!
+      reconcile(registry:, server_url:)
+      server_key = key.to_s
+      config = config_for(server_key, registry:, server_url:)
+
+      @mutex.synchronize do
+        raise RemoteServer::Error.new("Unknown remote server: #{server_key}", status: 404) unless @entries.key?(server_key)
+
+        if @inflight[server_key]
+          return {
+            accepted: false,
+            server_key: server_key,
+            revision: @revision,
+            retry_after_ms: 0
+          }
+        end
+
+        entry = @entries.fetch(server_key)
+        retry_after = retry_after_ms(entry)
+        if !force && retry_after.positive?
+          return {
+            accepted: false,
+            server_key: server_key,
+            revision: @revision,
+            retry_after_ms: retry_after
+          }
+        end
+
+        @inflight[server_key] = true
+        @entries[server_key] = entry.merge(refreshing: true)
+        @revision += 1
+      end
+      @queue << {
+        key: server_key,
+        config: config,
+        local_service: server_key == "local" ? local_service : nil,
+        token_override: token_override.to_s
+      }
+      refresh_payload(server_key, accepted: true)
+    end
+
+    private
+
+    def ensure_workers!
+      @worker_mutex.synchronize do
+        return if @workers
+
+        @workers = Array.new(@max_workers) do
+          Thread.new do
+            loop { perform_refresh(@queue.pop) }
+          rescue StandardError => e
+            @logger.error("RemoteResources") { "Refresh worker stopped: #{e.class} - #{e.message}" }
+          end
+        end
+      end
+    end
+
+    def perform_refresh(job)
+      started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      result = fetch_snapshot(job)
+      elapsed_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at) * 1000).round
+      if result[:success]
+        record_success(job[:key], result, elapsed_ms)
+      else
+        record_failure(job[:key], result, elapsed_ms)
+      end
+    rescue StandardError => e
+      elapsed_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at) * 1000).round
+      record_failure(job[:key], { category: "offline", error: e.class.name }, elapsed_ms)
+    ensure
+      job[:token_override] = nil if job
+    end
+
+    def fetch_snapshot(job)
+      if job[:local_service]
+        return successful_snapshot(job[:local_service].resource_snapshot, mode: "native")
+      end
+
+      client = RemoteClient.new(
+        job.fetch(:config),
+        open_timeout: OPEN_TIMEOUT,
+        read_timeout: READ_TIMEOUT,
+        token_override: job[:token_override]
+      )
+      response = client.request("GET", "/resources")
+      return legacy_snapshot(client) if response[:status].to_i == 404
+      return failed_response(response) unless response[:status].to_i.between?(200, 299)
+
+      successful_snapshot(response[:body], mode: "native")
+    end
+
+    def legacy_snapshot(client)
+      agents = client.request("GET", "/agents")
+      return failed_response(agents) unless agents[:status].to_i.between?(200, 299)
+
+      projects = client.request("GET", "/projects")
+      return failed_response(projects) unless projects[:status].to_i.between?(200, 299)
+
+      successful_snapshot(
+        {
+          "schema_version" => SCHEMA_VERSION,
+          "agents" => value_for(agents[:body], "agents"),
+          "projects" => value_for(projects[:body], "projects")
+        },
+        mode: "legacy"
+      )
+    end
+
+    def successful_snapshot(payload, mode:)
+      version = value_for(payload, "schema_version").to_i
+      unless version == SCHEMA_VERSION
+        return {
+          success: false,
+          category: "incompatible",
+          error: "unsupported resource schema #{version}"
+        }
+      end
+
+      agents = value_for(payload, "agents")
+      projects = value_for(payload, "projects")
+      unless agents.is_a?(Array) && projects.is_a?(Array) &&
+             agents.all?(Hash) && projects.all?(Hash)
+        return {
+          success: false,
+          category: "incompatible",
+          error: "resource snapshot must contain complete agent and project arrays"
+        }
+      end
+      {
+        success: true,
+        agents: agents,
+        projects: projects,
+        resource_mode: mode
+      }
+    end
+
+    def failed_response(response)
+      error = value_for(response[:body], "error").to_s
+      category = if error.include?("rejected broker credentials")
+                   "unauthorized"
+                 elsif response[:status].to_i == 504
+                   "timeout"
+                 else
+                   "offline"
+                 end
+      { success: false, category: category, error: error }
+    end
+
+    def record_success(key, result, elapsed_ms)
+      now = Time.now.iso8601
+      persist = false
+      @mutex.synchronize do
+        entry = @entries[key]
+        return unless entry
+
+        persist = !entry[:local]
+        @entries[key] = entry.merge(
+          status: "online",
+          latency_ms: elapsed_ms,
+          last_checked_at: now,
+          last_success_at: now,
+          stale: false,
+          refreshing: false,
+          error: nil,
+          failure_count: 0,
+          next_refresh_at: (Time.now + REFRESH_INTERVAL_SECONDS).iso8601,
+          retry_after_ms: REFRESH_INTERVAL_SECONDS * 1000,
+          resource_mode: result[:resource_mode],
+          agents: decorate_resources(result[:agents], entry, kind: "agent"),
+          projects: decorate_resources(result[:projects], entry, kind: "project")
+        )
+        @inflight.delete(key)
+        @revision += 1
+      end
+      persist_peer_snapshots! if persist
+      @logger.info("RemoteResources") { "#{key} refreshed in #{elapsed_ms}ms" }
+    end
+
+    def record_failure(key, result, elapsed_ms)
+      now = Time.now.iso8601
+      @mutex.synchronize do
+        entry = @entries[key]
+        return unless entry
+
+        status = result[:category] == "unauthorized" ? "unauthorized" : "offline"
+        failure_count = entry[:failure_count].to_i + 1
+        backoff = FAILURE_BACKOFF_SECONDS.fetch(
+          [failure_count - 1, FAILURE_BACKOFF_SECONDS.length - 1].min
+        )
+        @entries[key] = entry.merge(
+          status: status,
+          latency_ms: elapsed_ms,
+          last_checked_at: now,
+          stale: !entry[:last_success_at].nil?,
+          refreshing: false,
+          error: result[:category].to_s,
+          failure_count: failure_count,
+          next_refresh_at: (Time.now + backoff).iso8601,
+          retry_after_ms: backoff * 1000
+        )
+        @inflight.delete(key)
+        @revision += 1
+      end
+      @logger.warn("RemoteResources") { "#{key} refresh #{result[:category]} after #{elapsed_ms}ms" }
+    end
+
+    def decorate_resources(resources, entry, kind:)
+      Array(resources).filter_map do |resource|
+        next unless resource.is_a?(Hash)
+
+        normalized = resource.each_with_object({}) { |(key, value), result| result[key.to_sym] = value }
+        normalized.merge(
+          server_key: entry[:key],
+          server_name: entry[:name],
+          server_local: entry[:local],
+          resource_kind: kind
+        )
+      end
+    end
+
+    def empty_entry(metadata)
+      metadata.merge(
+        status: "loading",
+        latency_ms: nil,
+        last_checked_at: nil,
+        last_success_at: nil,
+        stale: false,
+        refreshing: false,
+        error: nil,
+        failure_count: 0,
+        next_refresh_at: nil,
+        retry_after_ms: 0,
+        resource_mode: nil,
+        agents: [],
+        projects: []
+      )
+    end
+
+    def restored_entry(metadata, persisted)
+      entry = empty_entry(metadata)
+      return entry unless valid_persisted_entry?(persisted, metadata)
+
+      entry.merge(
+        last_success_at: value_for(persisted, "last_success_at"),
+        stale: true,
+        resource_mode: value_for(persisted, "resource_mode"),
+        agents: decorate_resources(value_for(persisted, "agents"), metadata, kind: "agent"),
+        projects: decorate_resources(value_for(persisted, "projects"), metadata, kind: "project")
+      )
+    end
+
+    def load_persisted_entries
+      return {} unless @snapshot_path
+
+      payload = FileStore.read_json(@snapshot_path, fallback: {})
+      return {} unless value_for(payload, "schema_version").to_i == SNAPSHOT_SCHEMA_VERSION
+
+      Array(value_for(payload, "servers")).each_with_object({}) do |entry, result|
+        next unless entry.is_a?(Hash)
+
+        key = value_for(entry, "key").to_s
+        next if key.empty? || key == "local"
+
+        result[key] = entry
+      end
+    rescue StandardError => e
+      @logger.warn("RemoteResources") do
+        "Failed to load persisted resource snapshots: #{e.class} - #{e.message}"
+      end
+      {}
+    end
+
+    def valid_persisted_entry?(persisted, metadata)
+      return false unless persisted.is_a?(Hash)
+      return false unless value_for(persisted, "key").to_s == metadata[:key].to_s
+      return false unless value_for(persisted, "url").to_s == metadata[:url].to_s
+      return false if value_for(persisted, "last_success_at").to_s.empty?
+
+      agents = value_for(persisted, "agents")
+      projects = value_for(persisted, "projects")
+      agents.is_a?(Array) && projects.is_a?(Array) &&
+        agents.all?(Hash) && projects.all?(Hash)
+    end
+
+    def persist_peer_snapshots!
+      return unless @snapshot_path
+
+      @persistence_mutex.synchronize do
+        payload = @mutex.synchronize do
+          {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            saved_at: Time.now.iso8601,
+            servers: @entries.values.filter_map do |entry|
+              next if entry[:local] || entry[:last_success_at].to_s.empty?
+
+              {
+                key: entry[:key],
+                url: entry[:url],
+                last_success_at: entry[:last_success_at],
+                resource_mode: entry[:resource_mode],
+                agents: persisted_resources(entry[:agents]),
+                projects: persisted_resources(entry[:projects])
+              }
+            end
+          }
+        end
+        FileStore.write_json(@snapshot_path, payload)
+        persisted = Array(payload[:servers]).to_h { |entry| [entry[:key].to_s, entry] }
+        @mutex.synchronize { @persisted_entries = persisted }
+      end
+    rescue StandardError => e
+      @logger.warn("RemoteResources") do
+        "Failed to persist resource snapshots: #{e.class} - #{e.message}"
+      end
+    end
+
+    def persisted_resources(resources)
+      Array(resources).map do |resource|
+        resource.each_with_object({}) do |(key, value), result|
+          name = key.to_s
+          next if %w[server_key server_name server_local server_stale resource_kind].include?(name)
+
+          result[name] = value
+        end
+      end
+    end
+
+    def config_for(key, registry:, server_url:)
+      return LocalConfig.new(key: "local", name: "Local", url: server_url.to_s) if key == "local"
+
+      Array(registry.remote_servers).find { |config| config.key == key }
+    end
+
+    def refresh_payload(key, accepted:)
+      {
+        accepted: accepted,
+        server_key: key,
+        revision: @mutex.synchronize { @revision },
+        retry_after_ms: 0
+      }
+    end
+
+    def retry_after_ms(entry)
+      value = entry[:next_refresh_at].to_s
+      return 0 if value.empty?
+
+      [((Time.iso8601(value) - Time.now) * 1000).ceil, 0].max
+    rescue ArgumentError
+      0
+    end
+
+    def value_for(hash, key)
+      return nil unless hash.is_a?(Hash)
+
+      hash[key] || hash[key.to_sym]
+    end
+
+    def deep_copy(value)
+      Marshal.load(Marshal.dump(value))
     end
   end
 
   class RemoteClient
     DEFAULT_TIMEOUT = 5
 
-    def initialize(config, timeout: DEFAULT_TIMEOUT, token_override: nil)
+    def initialize(config, timeout: DEFAULT_TIMEOUT, open_timeout: nil, read_timeout: nil, token_override: nil)
       @config = config
       @base_uri = URI.parse(config.url)
-      @timeout = timeout
+      @open_timeout = open_timeout || timeout
+      @read_timeout = read_timeout || timeout
       @token_override = token_override.to_s
     end
 
@@ -602,8 +1164,8 @@ module HQ
         uri.hostname,
         uri.port,
         use_ssl: uri.scheme == "https",
-        open_timeout: @timeout,
-        read_timeout: @timeout
+        open_timeout: @open_timeout,
+        read_timeout: @read_timeout
       ) do |http|
         http.request(request)
       end
@@ -672,6 +1234,7 @@ module HQ
 
   class RemoteBroker
     LOOPBACK_PEER_KEY = /\Aloopback-(\d{1,5})\z/
+    RESOURCE_ROOTS = %w[agents projects attachments].freeze
 
     LocalServerConfig = Struct.new(:key, :name, :url, keyword_init: true) do
       def resolved_token
@@ -693,6 +1256,9 @@ module HQ
     def proxy(key, method, path, body, request)
       config = find_config!(key)
       raise RemoteServer::Error.new("Cannot proxy to local server", status: 400) if local_key?(config.key)
+      unless resource_path?(path)
+        raise RemoteServer::Error.new("Peer access is limited to agents, projects, and attachments", status: 404)
+      end
 
       RemoteClient.new(
         config,
@@ -756,16 +1322,36 @@ module HQ
       {
         key: config.key,
         name: config.name,
+        icon: local ? "home" : (config.respond_to?(:icon) ? config.icon : "server"),
         url: config.url,
         local: local,
         auth_configured: !config.resolved_token.to_s.empty?
       }
+    end
+
+    def resource_path?(path)
+      root = path.to_s.split("/").reject(&:empty?).first
+      RESOURCE_ROOTS.include?(root)
     end
   end
 
   class RemoteService
     ATTACHMENT_CONTENT_LIMIT = 512 * 1024
     ATTACHMENT_TEXT_SNIFF_LIMIT = 64 * 1024
+    HTML_PREVIEW_ASSET_LIMIT = 2 * 1024 * 1024
+    HTML_PREVIEW_ASSET_TYPES = {
+      ".css" => "text/css",
+      ".gif" => "image/gif",
+      ".jpeg" => "image/jpeg",
+      ".jpg" => "image/jpeg",
+      ".js" => "application/javascript",
+      ".mjs" => "application/javascript",
+      ".png" => "image/png",
+      ".svg" => "image/svg+xml",
+      ".webp" => "image/webp",
+      ".woff" => "font/woff",
+      ".woff2" => "font/woff2"
+    }.freeze
     MAX_PULL_REQUEST_INBOX_ITEMS = 100
     IMAGE_CONTENT_TYPES = {
       ".gif" => "image/gif",
@@ -829,6 +1415,21 @@ module HQ
       raise Error.new(e.message, status: 400)
     end
 
+    def update_remote_server(key, body)
+      updated = @registry.update_remote_server!(
+        key,
+        name: body["name"],
+        icon: body["icon"]
+      )
+      broker = RemoteBroker.new(registry: @registry, server_url: @server_url)
+      {
+        server: broker.servers.find { |server| server[:key] == updated.key },
+        servers: broker.servers
+      }
+    rescue ConfigError => e
+      raise Error.new(e.message, status: e.message.start_with?("Unknown") ? 404 : 400)
+    end
+
     def remove_remote_server(key)
       removed = @registry.remove_remote_server!(key)
       broker = RemoteBroker.new(registry: @registry, server_url: @server_url)
@@ -842,6 +1443,19 @@ module HQ
 
     def agents
       load_agents.map { |agent| agent_payload(agent) }
+    end
+
+    def resource_snapshot
+      agents = load_agents
+      agents_by_project = agents.group_by(&:project_key)
+      {
+        schema_version: RemoteResourceCatalog::SCHEMA_VERSION,
+        generated_at: Time.now.iso8601,
+        agents: agents.map { |agent| agent_list_payload(agent) },
+        projects: visible_projects.map do |project|
+          project_list_payload(project, agents: agents_by_project.fetch(project.key, []))
+        end
+      }
     end
 
     def agent(key)
@@ -1373,7 +1987,7 @@ module HQ
       agent, attachment = find_attachment!(id)
       payload = attachment_payload(agent, attachment)
       return payload unless payload["type"].to_s == "file"
-      return payload unless %w[markdown text].include?(payload["format"].to_s)
+      return payload unless %w[html markdown text].include?(payload["format"].to_s)
 
       path = attachment_file_path(attachment, agent.workspace)
       unless path && File.file?(path)
@@ -1384,6 +1998,9 @@ module HQ
       size = File.size(path)
       payload["content"] = File.open(path, "rb") { |file| file.read(ATTACHMENT_CONTENT_LIMIT) }.to_s.scrub
       payload["content_truncated"] = size > ATTACHMENT_CONTENT_LIMIT
+      if payload["format"].to_s == "html" && !payload["content_truncated"]
+        payload["preview_assets"] = html_preview_assets(payload["content"], path, agent.workspace)
+      end
       payload
     rescue SystemCallError => e
       payload["content_error"] = e.message
@@ -1523,8 +2140,7 @@ module HQ
         logs: log_summary(agents),
         push: push_config,
         refresh_intervals: {
-          running_agent_ms: 2_000,
-          active_agent_ms: 3_000,
+          active_ms: 5_000,
           idle_ms: 10_000,
           hidden_ms: 30_000
         },
@@ -2905,6 +3521,34 @@ module HQ
       }
     end
 
+    def agent_list_payload(agent)
+      {
+        key: agent.key,
+        name: agent.display_name,
+        project_key: agent.project_key,
+        template_key: agent.template_key,
+        scheduled: agent.scheduled?,
+        schedule_key: agent.schedule_key,
+        agent: agent.agent,
+        model: agent.model,
+        reasoning_effort: agent.reasoning_effort,
+        status: agent.status,
+        running: agent.running?,
+        unread: agent.unread?,
+        awaiting_input: agent.status == "awaiting-input",
+        blocked: agent.status == "blocked",
+        run_count: agent.run_count,
+        created_at: agent.created_at&.iso8601,
+        started_at: agent.started_at&.iso8601,
+        finished_at: agent.finished_at&.iso8601,
+        updated_at: agent.last_activity_at&.iso8601,
+        last_exit_code: agent.last_exit_code,
+        last_result: agent.last_result_label,
+        summary: agent.last_summary,
+        revision: agent_revision(agent)
+      }
+    end
+
     def truncate(text, length)
       value = text.to_s.gsub(/\s+/, " ").strip
       return value if value.length <= length
@@ -2987,10 +3631,12 @@ module HQ
       path = attachment_file_path(attachment, workspace) unless workspace.to_s.empty?
       if path && File.file?(path)
         plain_text = plain_text_file?(path)
+        return "html" if target.match?(/\.html?(?:[?#].*)?\z/) && plain_text
         return "markdown" if target.match?(/\.(md|markdown)(?:[?#].*)?\z/) && plain_text
         return plain_text ? "text" : "binary"
       end
 
+      return "html" if mime_type == "text/html" || target.match?(/\.html?(?:[?#].*)?\z/)
       return "markdown" if target.match?(/\.(md|markdown)(?:[?#].*)?\z/)
       return "text" if mime_type.start_with?("text/") ||
                        mime_type.match?(/\Aapplication\/(json|x-ndjson)\z/) ||
@@ -3044,6 +3690,35 @@ module HQ
 
     def attachment_content_type(attachment, path)
       attachment["mime_type"].to_s.strip.empty? ? AttachmentNormalizer.mime_type_for_path(path) : attachment["mime_type"].to_s
+    end
+
+    def html_preview_assets(content, html_path, workspace)
+      workspace_root = File.realpath(workspace.to_s)
+      remaining = HTML_PREVIEW_ASSET_LIMIT
+      references = content.scan(/\b(?:href|src)\s*=\s*(["'])(.*?)\1/i).map(&:last).uniq
+      references.filter_map do |reference|
+        next if reference.empty? || reference.start_with?("#", "/")
+        next if reference.match?(/\A(?:[a-z][a-z0-9+.-]*:|\/\/)/i)
+
+        relative = URI::DEFAULT_PARSER.unescape(reference.split(/[?#]/, 2).first.to_s)
+        candidate = File.realpath(File.expand_path(relative, File.dirname(html_path)))
+        next unless candidate.start_with?("#{workspace_root}#{File::SEPARATOR}")
+        next unless File.file?(candidate)
+
+        content_type = HTML_PREVIEW_ASSET_TYPES[File.extname(candidate).downcase]
+        next unless content_type
+
+        size = File.size(candidate)
+        next if size > remaining
+
+        remaining -= size
+        bytes = File.binread(candidate)
+        [reference, "data:#{content_type};base64,#{Base64.strict_encode64(bytes)}"]
+      rescue SystemCallError, URI::InvalidURIError
+        nil
+      end.to_h
+    rescue SystemCallError
+      {}
     end
 
     def http_quoted_filename(value)
