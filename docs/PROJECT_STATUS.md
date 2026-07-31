@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-07-29
+2026-07-31
 
 ## Strategic Direction
 
@@ -76,50 +76,18 @@ Key references:
 
 ## Current Focus
 
-**v0.8 release**: the Remote UI stabilization work, project lifecycle CLI,
-session loops, persistent scheduled sessions, and cross-harness response style
-are complete. Codex 0.144.6, Claude Code 2.1.216, and OpenCode 1.18.4 pass cold
-and resumed managed-agent validation. The remaining work is to merge, publish,
-and verify the 0.8.0 packages and Homebrew bottles. The first Remote UI design
-system increment now provides semantic foundations, a component preview, and a
-Settings Response style migration. Agent, project, schedule, and schedule-message
-lifecycle forms and structured inquiry decisions now use the same field, input,
-surface, error, and action contracts. Agent, schedule, project, setup, and diff
-health now map through one six-intent status taxonomy. Primary non-modal menus
-now share overlay layering, peer and outside dismissal, arrow navigation, Escape
-handling, and focus restoration without replacing native details/dialog behavior.
-Consequential Remote UI actions now use one native-dialog confirmation contract
-with explicit consequences, safe initial focus, and trigger focus restoration.
-Lifecycle forms and Settings sections now share composite layout, section-heading,
-action, selection, and panel contracts while route-specific grids and sticky
-behavior remain local. Agent runtime defaults are summarized behind an Advanced
-disclosure, and Session loop controls now use the same input surface as other
-Remote UI forms. The Agents index now uses a searchable-collection contract with
-explicit filtered-result feedback while keeping its grouping, sort, and bulk
-behavior unchanged. Focused project, agent, summary, attachment, and diff routes
-share one detail-header anatomy while preserving route history, menus, and
-split-reader layout. Settings server connection, browser-token, and harness
-catalog forms now use the same described field, input, action, and pending
-contracts as other Remote UI forms. Remote peer actions now use one contextual
-More menu, while custom catalog editors collapse without hiding configured model
-or effort values. Compact factual metadata now uses one neutral badge
-contract across Settings, schedules, projects, diffs, and lifecycle forms;
-operational health, urgency, and progress remain in the semantic status taxonomy.
-Route-level loading and settled empty states now use distinct shared contracts.
-Known-intent guidance and recovery messages use one alert helper that separates
-visual intent from polite or assertive announcement timing.
-All generated legacy primary, danger, inline-icon, icon-only, and button-link
-actions now consume the shared button contract while retaining their existing
-behavior selectors and product layout classes.
-The Remote UI now includes a GitHub App-authenticated pull request review loop. It aggregates
-agent, schedule, project, and current-branch occurrences into one queue, fetches
-review context through direct GitHub REST and GraphQL calls, and keeps immutable
-diff snapshots separate from read, viewed, selection, draft, handoff, and outcome
-state. OAuth device login keeps access and refresh tokens server-side, refreshes
-expiring sessions, and exposes installation guidance for each target owner. Existing
-`gh` authentication remains a compatibility source when no App session exists.
-Review posting is disabled unless `TYCHO_GITHUB_WRITE_ENABLED=true`, then requires
-an explicit confirmation and current base/head validation.
+**v0.9 release**: persistent multiserver Agent and Project catalogs and the
+second Remote UI design-system pass are complete. The Remote UI now aggregates
+peer agents and projects through a stale-while-revalidate broker catalog, keeps
+server-qualified detail and mutation routes explicit, persists last-good peer
+snapshots, and shows each connected server's Tycho version in Settings with
+host-version mismatch detection. GitHub App groundwork is present, including
+device login, guarded review posting, and immutable diff snapshots, but the
+canonical App workflow is not applicable for general use yet and the Review
+Inbox route remains paused until discovery is redesigned around bounded
+incremental loading. The remaining v0.9.0 work is to merge the release-prep
+commit, tag the release, publish GitHub notes, update the Homebrew tap, and
+verify the bottle.
 
 ## Roadmap
 
@@ -208,13 +176,25 @@ an explicit confirmation and current base/head validation.
 - [x] Bound harness catalog probes and normalize OpenCode catalog output
 - [x] Document the Homebrew bottle `pr-pull` publishing workflow
 
+### v0.9 — Multiserver and Review Workflows ✓
+
+- [x] Add persistent multiserver Agent and Project catalogs in Remote UI
+- [x] Persist last-good peer snapshots across broker restarts and failed refreshes
+- [x] Route peer Agent and Project details and mutations through explicit server keys
+- [x] Show peer health, token state, and Tycho version compatibility in Settings
+- [x] Prepare GitHub App device login and guarded pull request review posting
+- [x] Store immutable pull request diff snapshots separately from review state
+- [x] Promote Remote UI design-system contracts across forms, menus, badges,
+      confirmations, detail headers, and empty states
+- [x] Pause the eager Review Inbox until bounded discovery and loading are redesigned
+
 ## Features Candidates
 
 ### Release Hardening
 
 - [ ] Formalize specs
 - [x] Stabilize source packaging and pre-release browser/TUI checks
-- [ ] Publish and verify the 0.8.0 Homebrew bottles
+- [ ] Publish and verify the 0.9.0 Homebrew bottles
 
 ### Canonical Tycho GitHub App
 

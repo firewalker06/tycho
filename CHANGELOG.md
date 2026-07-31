@@ -4,6 +4,42 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.9.0 - 2026-07-31
+
+### Highlights
+
+- Make multiserver Agents and Projects persistent in Remote UI, with
+  server-qualified resources, bounded peer refresh, stale last-good snapshots,
+  and explicit peer cache removal.
+- Introduce the Remote UI design system across Settings, forms, menus, status
+  badges, confirmations, detail headers, empty states, and agent ledgers.
+- Show each connected server's Tycho version in Settings, and flag peers whose
+  version differs from the host while keeping older peers backward-compatible as
+  version unknown.
+
+### Other changes
+
+- Prepare for a future GitHub App workflow, including device login,
+  installation guidance, guarded review posting, immutable diff snapshots, and a
+  paused Review Inbox while eager aggregation is redesigned. The GitHub App is
+  not applicable for general use yet.
+- Compact grouped Agents and Projects lists while preserving ownership,
+  filtering, bulk archive behavior, and mobile action geometry.
+- Add Claude Opus 5 to Claude model suggestions.
+- Track lifetime agent run counts and preserve managed-agent run log offsets
+  beyond the raw-log tail window.
+- Add shared confirmation flows, contextual menu behavior, and composite
+  Settings section patterns.
+
+### Fixes
+
+- Make remote server tests independent of auth state.
+- Preserve Now context menus across polling refreshes.
+- Prevent schedule action menus from clipping.
+- Stop agents with stale unstructured output and preserve stopped-agent signal
+  exit status.
+- Normalize GitHub CLI output as UTF-8.
+
 ## 0.8.0 - 2026-07-21
 
 ### Highlights
