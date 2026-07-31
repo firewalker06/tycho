@@ -2205,8 +2205,10 @@ module RemoteServerTest
              "expected broker server list to include local and configured remotes")
       assert(servers.first[:local] == true, "expected local broker server to be marked local")
       assert(servers.first[:icon] == "home", "expected local broker server to use the home icon")
-      assert(servers.first.keys.sort == %i[auth_configured icon key local name url],
+      assert(servers.first.keys.sort == %i[auth_configured icon key local name url version],
              "expected broker server list to include only display metadata")
+      assert(servers.first[:version] == HQ::VERSION,
+             "expected local broker server to expose the running Tycho version")
       remote = servers.last
       assert(remote[:name] == "Office Mac", "expected configured remote display name")
       assert(remote[:icon] == "computer", "expected configured remote icon")
@@ -2221,6 +2223,7 @@ module RemoteServerTest
     peer_failing = false
     peer_payload = {
       schema_version: 1,
+      build: { version: "0.9.0-peer" },
       agents: [{ key: "peer-agent", name: "Peer Agent", project_key: "peer-project" }],
       projects: [{ key: "peer-project", name: "Peer Project" }]
     }
@@ -2266,6 +2269,7 @@ module RemoteServerTest
         local_service = local_service_class.new(
           {
             schema_version: 1,
+            build: { version: HQ::VERSION },
             agents: [{ key: "local-agent", name: "Local Agent", project_key: "local-project" }],
             projects: [{ key: "local-project", name: "Local Project" }]
           }
@@ -2303,6 +2307,8 @@ module RemoteServerTest
                "expected peer catalog resources to carry ownership")
         assert(peer[:projects].first[:key] == "peer-project",
                "expected peer projects to share the combined catalog")
+        assert(local[:version] == HQ::VERSION && peer[:version] == "0.9.0-peer",
+               "expected resource catalog servers to expose host and peer Tycho versions")
         assert(File.exist?(snapshot_path), "expected a successful peer refresh to persist its snapshot")
         assert((File.stat(snapshot_path).mode & 0o777) == 0o600,
                "expected persisted peer snapshots to be private")
@@ -2337,6 +2343,8 @@ module RemoteServerTest
                "expected a restored peer snapshot to start stale while it reconnects")
         assert(restored_peer[:last_success_at] == peer[:last_success_at],
                "expected a restored peer snapshot to preserve its last successful refresh")
+        assert(restored_peer[:version] == "0.9.0-peer",
+               "expected a restored peer snapshot to preserve the last known Tycho version")
         assert(restored_peer[:agents].first[:key] == "peer-agent",
                "expected peer agents to survive a broker restart")
 

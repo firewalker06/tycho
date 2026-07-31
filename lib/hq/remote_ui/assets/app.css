@@ -1026,6 +1026,7 @@ textarea {
 
 .server-list-item > .detail-row {
   align-items: start;
+  padding: 6px 10px;
 }
 
 .server-list-item .chip {
@@ -1039,6 +1040,18 @@ textarea {
 
 .server-list-item .server-row-chips .chip {
   margin-top: 0;
+}
+
+.server-target-line {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-target-line[data-intent="warning"] {
+  color: var(--warning);
 }
 
 .server-section-label > div {

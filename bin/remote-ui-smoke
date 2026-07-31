@@ -1987,6 +1987,7 @@ def write_smoke_script(path)
               icon: "server",
               url: "http://127.0.0.1:7499",
               local: false,
+              version: "0.1.0-peer",
               auth_configured: false,
               status: "online",
               stale: false,
@@ -1996,6 +1997,14 @@ def write_smoke_script(path)
           ];
           render();
         });
+        const serverSettingsText = await page.locator("#settings-servers").innerText();
+        const peerVersionLabel = await page.locator(".remote-server-list-item .server-target-line").innerText();
+        const peerVersionTitle = await page.locator(".remote-server-list-item .server-target-line").getAttribute("title");
+        if (!serverSettingsText.includes("Tycho ") ||
+            !peerVersionLabel.includes("Tycho 0.1.0-peer") ||
+            !peerVersionTitle?.includes("differs from host")) {
+          throw new Error(`Settings server list lost version metadata: ${JSON.stringify({ serverSettingsText, peerVersionLabel, peerVersionTitle })}`);
+        }
         const localServerMenu = page.locator(".local-server-list-item [data-server-action-menu]");
         await localServerMenu.locator("> summary").click();
         const localServerActions = await localServerMenu.locator("[role='menuitem']").evaluateAll((items) => (

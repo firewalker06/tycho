@@ -692,7 +692,8 @@ module HQ
             icon: index.zero? ? "home" : config.icon,
             url: config.url,
             local: index.zero?,
-            auth_configured: !config.resolved_token.to_s.empty?
+            auth_configured: !config.resolved_token.to_s.empty?,
+            version: index.zero? ? HQ::VERSION : nil
           }
           persisted = @persisted_entries[config.key]
           if persisted && !valid_persisted_entry?(persisted, metadata)
@@ -879,6 +880,7 @@ module HQ
       end
       {
         success: true,
+        version: resource_version(payload),
         agents: agents,
         projects: projects,
         resource_mode: mode
@@ -917,6 +919,7 @@ module HQ
           next_refresh_at: (Time.now + REFRESH_INTERVAL_SECONDS).iso8601,
           retry_after_ms: REFRESH_INTERVAL_SECONDS * 1000,
           resource_mode: result[:resource_mode],
+          version: result[:version],
           agents: decorate_resources(result[:agents], entry, kind: "agent"),
           projects: decorate_resources(result[:projects], entry, kind: "project")
         )
@@ -994,6 +997,7 @@ module HQ
       entry.merge(
         last_success_at: value_for(persisted, "last_success_at"),
         stale: true,
+        version: value_for(persisted, "version"),
         resource_mode: value_for(persisted, "resource_mode"),
         agents: decorate_resources(value_for(persisted, "agents"), metadata, kind: "agent"),
         projects: decorate_resources(value_for(persisted, "projects"), metadata, kind: "project")
@@ -1047,6 +1051,7 @@ module HQ
               {
                 key: entry[:key],
                 url: entry[:url],
+                version: entry[:version],
                 last_success_at: entry[:last_success_at],
                 resource_mode: entry[:resource_mode],
                 agents: persisted_resources(entry[:agents]),
@@ -1074,6 +1079,15 @@ module HQ
           result[name] = value
         end
       end
+    end
+
+    def resource_version(payload)
+      build = value_for(payload, "build")
+      version = build.is_a?(Hash) ? value_for(build, "version").to_s : ""
+      version = value_for(payload, "version").to_s if version.empty?
+      server = value_for(payload, "server")
+      version = value_for(server, "version").to_s if version.empty? && server.is_a?(Hash)
+      version.empty? ? nil : version
     end
 
     def config_for(key, registry:, server_url:)
@@ -1325,7 +1339,8 @@ module HQ
         icon: local ? "home" : (config.respond_to?(:icon) ? config.icon : "server"),
         url: config.url,
         local: local,
-        auth_configured: !config.resolved_token.to_s.empty?
+        auth_configured: !config.resolved_token.to_s.empty?,
+        version: local ? HQ::VERSION : nil
       }
     end
 
@@ -1451,6 +1466,9 @@ module HQ
       {
         schema_version: RemoteResourceCatalog::SCHEMA_VERSION,
         generated_at: Time.now.iso8601,
+        build: {
+          version: HQ::VERSION
+        },
         agents: agents.map { |agent| agent_list_payload(agent) },
         projects: visible_projects.map do |project|
           project_list_payload(project, agents: agents_by_project.fetch(project.key, []))
