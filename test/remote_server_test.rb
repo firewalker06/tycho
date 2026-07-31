@@ -4368,7 +4368,7 @@ module RemoteServerTest
     assert(js[:body].include?("openElements"), "expected polling snapshots to preserve floating control state")
     assert(js[:body].include?("renderedViewHtml"),
            "expected polling renders to skip unchanged Remote UI view HTML")
-    assert(js[:body].include?("render({ preserveLiveEditor: true });") &&
+    assert(js[:body].include?("preserveLiveEditor: true,") &&
            js[:body].include?("function liveEditorRefreshPlan") &&
            js[:body].include?("function reconcileViewAroundEditor"),
            "expected polling renders to reconcile around stable Conversation and inquiry forms")
@@ -4381,8 +4381,15 @@ module RemoteServerTest
            "expected polling snapshots to preserve page scroll on same-route renders")
     assert(js[:body].include?('class="agent-detail-pane" aria-label="${escapeAttr(detailKind)}" data-preserve-scroll'),
            "expected split workspace detail panes to preserve local diff scroll across polling")
-    assert(js[:body].include?('data-preserve-scroll data-state-key="agent-attachment:${escapeAttr(id)}"'),
+    assert(js[:body].include?('data-preserve-scroll data-preserve-poll-content data-state-key="agent-attachment:${escapeAttr(id)}"'),
            "expected embedded attachment viewers to preserve their split-pane scroll position")
+    assert(js[:body].include?("preservePollContent: !options.force && !options.forceAttachment") &&
+           js[:body].include?("function transplantPreservedPollContent") &&
+           js[:body].include?("data-preserve-poll-content"),
+           "expected scheduled polling to retain unchanged attachment content DOM")
+    assert(js[:body].include?("state.preservePollContentDuringRender") &&
+           js[:body].include?("replaceViewContent(html)"),
+           "expected explicit attachment refreshes to replace preserved attachment content")
     assert(helpers_js[:body].include?("function controlScrollFor"),
            "expected polling snapshots to preserve prompt textarea scroll offsets")
     assert(js[:body].include?("function restorePageScroll"),
@@ -4657,6 +4664,9 @@ module RemoteServerTest
            "expected Remote UI to support #attachment/:id routes")
     assert(js[:body].include?("function renderMarkdown"),
            "expected markdown attachments to render as markdown")
+    assert(js[:body].include?("renderMarkdown(content, { breaks: true })") &&
+           js[:body].include?("breaks: options.breaks === true"),
+           "expected only markdown attachment call sites to opt into single-newline breaks")
     assert(js[:body].include?("function renderHtmlAttachment") &&
            js[:body].include?('sandbox="allow-popups allow-scripts"'),
            "expected HTML attachments to render in a script-capable sandbox")
