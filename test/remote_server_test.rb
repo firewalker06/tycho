@@ -3424,12 +3424,10 @@ module RemoteServerTest
            "expected Schedule details wrapper to preserve compact top breathing room")
     assert(css[:body].include?(".schedule-disclosure") && css[:body].include?("position: absolute"),
            "expected Schedule block to pin a visible collapsible disclosure control")
-    assert(css[:body].include?(".schedule-daemon-actions") && css[:body].include?("justify-content: flex-end"),
-           "expected Schedule daemon actions to align right")
     assert(css[:body].include?(".schedule-management-actions") && css[:body].include?("justify-content: flex-end"),
            "expected Schedule management actions to align right")
-    assert(css[:body].include?(".schedule-daemon-actions") && css[:body].include?("gap: 8px;"),
-           "expected Schedule daemon action buttons to be spaced")
+    assert(css[:body].include?("align-items: center;") && css[:body].include?(".schedule-action-menu"),
+           "expected Schedule daemon menu to align with the New schedule button")
     assert(css[:body].include?(".schedule-row") && css[:body].include?("grid-template-columns: auto minmax(0, 1fr) auto"),
            "expected Schedule rows to reserve a right-side action column")
     assert(css[:body].include?(".schedule-summary-grid > .status-mark") &&
@@ -4094,11 +4092,12 @@ module RemoteServerTest
            "expected Remote UI scheduler controls to call daemon endpoints")
     assert(js[:body].include?("data-schedule-action"),
            "expected Remote UI to expose schedule run/pause/resume controls")
-    assert(js[:body].include?("Run now") && js[:body].include?("schedule-toggle-button"),
-           "expected Remote UI schedule rows to distinguish manual runs from pause/resume toggles")
-    assert(js[:body].include?("sportShoe") &&
-           js[:body].include?('${iconSvg("sportShoe")}<span>Run now</span>'),
-           "expected Remote UI Run now controls to use Lucide sport-shoe")
+    assert(js[:body].include?('label: "Run now"') &&
+           js[:body].include?('attrs: `data-schedule-action="run" data-schedule-key="${escapeAttr(schedule.key)}"`') &&
+           !js[:body].include?("schedule-run-button"),
+           "expected schedule Run now controls to live only in each schedule context menu")
+    assert(js[:body].include?("sportShoe"),
+           "expected Remote UI Run now menu items to use Lucide sport-shoe")
     assert(js[:body].include?("function renderAgentScheduleMenu") &&
            js[:body].include?('data-header-schedule-menu') &&
            js[:body].include?('header-schedule-control ${scheduledAgentIconStatusClass(agent, schedule)}') &&
@@ -4107,6 +4106,14 @@ module RemoteServerTest
            "expected scheduled agent headers to expose run and pause/resume controls")
     assert(js[:body].include?("data-new-schedule"),
            "expected Remote UI to expose schedule creation")
+    assert(js[:body].include?("${renderScheduleDaemonActions(daemon, schedules)}") &&
+           js[:body].include?('data-overlay-key="schedule-daemon"') &&
+           js[:body].include?('aria-label="Daemon actions"'),
+           "expected daemon actions to share the New schedule toolbar behind a context menu")
+    assert(js[:body].include?('label: "Restart daemon"') &&
+           js[:body].include?('label: "Stop daemon"') &&
+           !js[:body].include?('class="compact-actions schedule-daemon-actions"'),
+           "expected restart and stop daemon controls to live only in the context menu")
     assert(js[:body].include?('label: "Loop session"') &&
            js[:body].include?("function renderAgentLoopForm") &&
            js[:body].include?('id="agent-loop-form"') &&

@@ -565,11 +565,41 @@ def write_smoke_script(path)
             pollSchedulerContract.conversationDelay !== 5_000) {
           throw new Error(`Remote UI polling did not remain scheduled or use the Conversation interval: ${JSON.stringify(pollSchedulerContract)}`);
         }
+        await page.waitForSelector("[data-state-key='schedule-now-details']", { state: "visible", timeout: 10_000 });
+        const daemonMenuLayout = await page.evaluate(() => {
+          const details = document.querySelector("[data-state-key='schedule-now-details']");
+          details.open = true;
+          const toolbar = details.querySelector(".schedule-management-actions");
+          const addButton = toolbar?.querySelector("[data-new-schedule]");
+          const menu = toolbar?.querySelector("[data-overlay-key='schedule-daemon']");
+          const scheduleMenu = details.querySelector(".schedule-row .schedule-action-menu");
+          if (!toolbar || !addButton || !menu || !scheduleMenu) return { found: false };
+
+          menu.open = true;
+          const labels = Array.from(menu.querySelectorAll("[role='menuitem'] strong"), (item) => item.textContent.trim());
+          scheduleMenu.open = true;
+          const scheduleLabels = Array.from(scheduleMenu.querySelectorAll("[role='menuitem'] strong"), (item) => item.textContent.trim());
+          const addRect = addButton.getBoundingClientRect();
+          const triggerRect = menu.querySelector("summary").getBoundingClientRect();
+          return {
+            found: true,
+            labels,
+            scheduleLabels,
+            topDelta: Math.abs(addRect.top - triggerRect.top),
+            toolbarChildren: toolbar.children.length,
+          };
+        });
+        if (!daemonMenuLayout.found ||
+            daemonMenuLayout.labels.join("|") !== "Restart daemon|Stop daemon" ||
+            daemonMenuLayout.scheduleLabels.join("|") !== "Run now|Edit schedule|Delete schedule" ||
+            daemonMenuLayout.topDelta > 2 ||
+            daemonMenuLayout.toolbarChildren !== 2) {
+          throw new Error(`Schedule daemon menu is not aligned beside New schedule: ${JSON.stringify(daemonMenuLayout)}`);
+        }
         if (process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY === "1") {
-          console.log("remote-ui-smoke: HTML, Mermaid, and polling ok");
+          console.log("remote-ui-smoke: HTML, Mermaid, polling, and schedule menu ok");
           return;
         }
-        await page.waitForSelector("[data-state-key='schedule-now-details']", { state: "visible", timeout: 10_000 });
         const scheduleMenuGeometry = await page.evaluate(() => {
           const details = document.querySelector("[data-state-key='schedule-now-details']");
           details.open = true;

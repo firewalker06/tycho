@@ -1938,9 +1938,9 @@ select {
   padding: 8px 10px 10px;
 }
 
-.schedule-daemon-actions,
 .schedule-management-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
   justify-content: flex-end;
   flex-wrap: wrap;
@@ -1948,7 +1948,6 @@ select {
   padding: 2px 0;
 }
 
-.schedule-daemon-actions button,
 .schedule-management-actions button {
   min-height: var(--ds-touch-target);
 }
@@ -2020,11 +2019,10 @@ select {
   min-width: 0;
 }
 
-.schedule-row-actions > button:not(.schedule-run-button, .schedule-toggle-button, .schedule-session-button) {
+.schedule-row-actions > button:not(.schedule-toggle-button, .schedule-session-button) {
   min-width: 88px;
 }
 
-.schedule-run-button,
 .schedule-toggle-button,
 .schedule-session-button {
   padding: 0 10px;
