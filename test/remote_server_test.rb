@@ -3762,6 +3762,8 @@ module RemoteServerTest
            "expected representative destructive workflows to use explicit confirmation labels")
     assert(helpers_js[:body].include?("function parseBackToRoute"),
            "expected Project routes to parse return crumbs")
+    assert(helpers_js[:body].include?('key: parts.slice(1).join("/")'),
+           "expected Project return crumbs to preserve remote scoped agent keys")
     assert(helpers_js[:body].include?("function routeBackQuery"),
            "expected Project routes to serialize return crumbs")
     assert(helpers_js[:body].include?('const route = { type: "projectDiff"'),

@@ -431,6 +431,25 @@ def write_smoke_script(path)
 
       try {
         await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
+        const scopedDiffRouteContract = await page.evaluate(() => {
+          const source = {
+            type: "projectDiff",
+            key: "vps/welcome",
+            scope: "worktree",
+            backTo: { type: "agent", key: "vps/welcome-agent-fixture" },
+          };
+          const hash = routeHash(source);
+          const parsed = window.TychoRemoteHelpers.parseRoute(hash, { topTabs: TOP_TABS });
+          return {
+            hash,
+            projectKey: parsed.key,
+            agentKey: parsed.backTo?.key,
+          };
+        });
+        if (scopedDiffRouteContract.projectKey !== "vps/welcome" ||
+            scopedDiffRouteContract.agentKey !== "vps/welcome-agent-fixture") {
+          throw new Error(`Scoped project diff route lost its remote owner: ${JSON.stringify(scopedDiffRouteContract)}`);
+        }
         const mermaidScriptsBefore = await page.locator('script[src*="/mermaid@"]').count();
         if (mermaidScriptsBefore !== 0) {
           throw new Error("Mermaid loaded before any Mermaid diagram was present");
