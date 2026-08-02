@@ -565,7 +565,95 @@ def write_smoke_script(path)
             pollSchedulerContract.conversationDelay !== 5_000) {
           throw new Error(`Remote UI polling did not remain scheduled or use the Conversation interval: ${JSON.stringify(pollSchedulerContract)}`);
         }
+        const formPollQuietContract = await page.evaluate(async () => {
+          const originalFetch = window.fetch;
+          const savedDeferredUntil = state.pollDeferredUntil;
+          let catalogReads = 0;
+          window.fetch = (...args) => {
+            const input = args[0];
+            const url = new URL(typeof input === "string" ? input : input.url, location.href);
+            const method = String(args[1]?.method || input?.method || "GET").toUpperCase();
+            if (method === "GET" && url.pathname === "/servers/resources") catalogReads += 1;
+            return originalFetch(...args);
+          };
+
+          const form = document.createElement("form");
+          const input = document.createElement("textarea");
+          form.append(input);
+          document.body.append(form);
+          const outsideInput = document.createElement("input");
+          document.body.append(outsideInput);
+
+          try {
+            clearTimeout(state.timer);
+            state.timer = null;
+            state.pollDeferredUntil = 0;
+            schedule(20);
+            input.value = "typing";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            const initialQuietRemaining = formPollQuietRemaining();
+            await refresh();
+            await new Promise((resolve) => setTimeout(resolve, 120));
+            const deferredUntilAfterFormInput = state.pollDeferredUntil;
+            outsideInput.dispatchEvent(new Event("input", { bubbles: true }));
+            return {
+              initialQuietRemaining,
+              catalogReads,
+              timerActive: Boolean(state.timer),
+              outsideInputIgnored: state.pollDeferredUntil === deferredUntilAfterFormInput,
+            };
+          } finally {
+            window.fetch = originalFetch;
+            form.remove();
+            outsideInput.remove();
+            clearTimeout(state.timer);
+            state.timer = null;
+            state.pollDeferredUntil = savedDeferredUntil;
+            schedule();
+          }
+        });
+        if (formPollQuietContract.initialQuietRemaining < 2_800 ||
+            formPollQuietContract.initialQuietRemaining > 3_000 ||
+            formPollQuietContract.catalogReads !== 0 ||
+            !formPollQuietContract.timerActive ||
+            !formPollQuietContract.outsideInputIgnored) {
+          throw new Error(`Form typing did not defer polling for three seconds: ${JSON.stringify(formPollQuietContract)}`);
+        }
         await page.waitForSelector("[data-state-key='schedule-now-details']", { state: "visible", timeout: 10_000 });
+        const scheduleLastContract = await page.evaluate((key) => {
+          const source = findAgent(key) || state.agents[0];
+          const savedAgents = state.agents;
+          const savedAgentDetails = state.agentDetails;
+          state.agents = [{
+            ...source,
+            key: "schedule-order-fixture",
+            resource_key: "schedule-order-fixture",
+            server_key: "local",
+            running: true,
+            unread: false,
+            awaiting_input: false,
+            blocked: false,
+            status: "running",
+          }];
+          state.agentDetails = {};
+          renderNow();
+          const children = Array.from(els.view.children);
+          const schedule = els.view.querySelector(":scope > .schedule-card");
+          const result = {
+            scheduleFound: Boolean(schedule),
+            runningFound: children.some((child) => child.matches(".section-label") && child.textContent.includes("Running")),
+            scheduleIsLast: children.at(-1) === schedule,
+          };
+          state.agents = savedAgents;
+          state.agentDetails = savedAgentDetails;
+          render();
+          return result;
+        }, agentKey);
+        if (!scheduleLastContract.scheduleFound ||
+            !scheduleLastContract.runningFound ||
+            !scheduleLastContract.scheduleIsLast) {
+          throw new Error(`Schedules are not the final Now list: ${JSON.stringify(scheduleLastContract)}`);
+        }
         const daemonMenuLayout = await page.evaluate(() => {
           const details = document.querySelector("[data-state-key='schedule-now-details']");
           details.open = true;
@@ -596,10 +684,216 @@ def write_smoke_script(path)
             daemonMenuLayout.toolbarChildren !== 2) {
           throw new Error(`Schedule daemon menu is not aligned beside New schedule: ${JSON.stringify(daemonMenuLayout)}`);
         }
+        await page.evaluate(() => {
+          navigate({ type: "tab", tab: "agents" });
+          if (state.servers.length === 1) {
+            state.servers = [
+              ...state.servers,
+              { key: "toolbar-peer", name: "Toolbar peer", local: false, status: "online", stale: false },
+            ];
+          }
+          state.projects = [
+            ...state.projects,
+            ...Array.from({ length: 14 }, (_, index) => ({
+              key: `toolbar-empty-${index}`,
+              name: `Toolbar Empty ${index}`,
+              status: "configured",
+              server_key: "local",
+            })),
+          ];
+          render();
+        });
+        await page.waitForSelector("[data-agent-mobile-toolbar-menu] > summary", { state: "visible", timeout: 10_000 });
+        await page.click("[data-agent-mobile-toolbar-menu] > summary");
+        const mobileAgentToolbar = await page.evaluate(async () => {
+          window.scrollTo(0, document.documentElement.scrollHeight);
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const header = document.querySelector(".app-header");
+          const toolbar = document.querySelector(".ui-collection-toolbar");
+          const search = toolbar?.querySelector(".search-box");
+          const desktopActions = toolbar?.querySelector(".agent-toolbar-actions");
+          const menu = toolbar?.querySelector("[data-agent-mobile-toolbar-menu]");
+          const trigger = menu?.querySelector("summary");
+          const labels = Array.from(menu?.querySelectorAll("[role='menuitem'] strong") || [], (item) => item.textContent.trim());
+          return {
+            found: Boolean(header && toolbar && search && menu && trigger),
+            stickyDelta: toolbar && header ? Math.abs(toolbar.getBoundingClientRect().top - header.getBoundingClientRect().bottom) : null,
+            controlTopDelta: search && trigger ? Math.abs(search.getBoundingClientRect().top - trigger.getBoundingClientRect().top) : null,
+            desktopActionsDisplay: desktopActions ? getComputedStyle(desktopActions).display : "missing",
+            mobileMenuDisplay: menu ? getComputedStyle(menu).display : "missing",
+            labels,
+          };
+        });
+        if (!mobileAgentToolbar.found ||
+            mobileAgentToolbar.stickyDelta > 2 ||
+            mobileAgentToolbar.controlTopDelta > 2 ||
+            mobileAgentToolbar.desktopActionsDisplay !== "none" ||
+            mobileAgentToolbar.mobileMenuDisplay === "none" ||
+            !mobileAgentToolbar.labels.includes("All servers") ||
+            !mobileAgentToolbar.labels.includes("Select agents")) {
+          throw new Error(`Mobile Agents toolbar is not sticky and compact: ${JSON.stringify(mobileAgentToolbar)}`);
+        }
+        await page.setViewportSize({ width: 1024, height: 768 });
+        const desktopAgentToolbar = await page.evaluate(async () => {
+          window.scrollTo(0, document.documentElement.scrollHeight);
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const header = document.querySelector(".app-header");
+          const toolbar = document.querySelector(".ui-collection-toolbar");
+          const desktopActions = toolbar?.querySelector(".agent-toolbar-actions");
+          const mobileMenu = toolbar?.querySelector("[data-agent-mobile-toolbar-menu]");
+          return {
+            found: Boolean(header && toolbar && desktopActions && mobileMenu),
+            stickyDelta: toolbar && header ? Math.abs(toolbar.getBoundingClientRect().top - header.getBoundingClientRect().bottom) : null,
+            desktopActionsDisplay: desktopActions ? getComputedStyle(desktopActions).display : "missing",
+            mobileMenuDisplay: mobileMenu ? getComputedStyle(mobileMenu).display : "missing",
+            visibleControlCount: desktopActions
+              ? Array.from(desktopActions.children).filter((element) => element.offsetParent !== null).length
+              : 0,
+          };
+        });
+        if (!desktopAgentToolbar.found ||
+            desktopAgentToolbar.stickyDelta > 2 ||
+            desktopAgentToolbar.desktopActionsDisplay === "none" ||
+            desktopAgentToolbar.mobileMenuDisplay !== "none" ||
+            desktopAgentToolbar.visibleControlCount !== 3) {
+          throw new Error(`Desktop Agents toolbar is not sticky with visible controls: ${JSON.stringify(desktopAgentToolbar)}`);
+        }
+        const nowAgentCardContract = await page.evaluate((key) => {
+          const source = findAgent(key) || state.agents[0];
+          const fixture = document.createElement("div");
+          fixture.style.width = "720px";
+          fixture.innerHTML = renderAgentCard({
+            ...source,
+            server_key: "local",
+            running: true,
+            status: "running",
+            updated_at: new Date(Date.now() - 45_000).toISOString(),
+            summary: "A concise fixture summary.",
+          });
+          document.body.append(fixture);
+          const card = fixture.querySelector(".agent-summary-card");
+          const status = card?.querySelector(".agent-card-status");
+          const excerpt = card?.querySelector(".agent-card-excerpt");
+          const subtitle = card?.querySelector(".card-title span");
+          const excerptStyle = excerpt ? getComputedStyle(excerpt) : null;
+          const result = {
+            found: Boolean(card && status && excerpt && subtitle),
+            statusLabel: status?.querySelector(":scope > .ui-status")?.textContent.trim(),
+            ownerIcon: Boolean(status?.querySelector(".server-metadata-badge svg")),
+            healthLabel: status?.querySelector(".server-health-icon-badge")?.getAttribute("aria-label"),
+            healthIcon: Boolean(status?.querySelector(".server-health-icon-badge svg")),
+            subtitle: subtitle?.textContent.trim(),
+            timeInSubtitle: Boolean(subtitle?.querySelector(".relative-time")),
+            legacyMeta: Boolean(card?.querySelector(".meta")),
+            excerptBorder: excerptStyle?.borderTopStyle,
+            excerptItalic: excerptStyle?.fontStyle,
+          };
+          fixture.remove();
+          return result;
+        }, agentKey);
+        if (!nowAgentCardContract.found ||
+            nowAgentCardContract.statusLabel !== "Running" ||
+            !nowAgentCardContract.ownerIcon ||
+            nowAgentCardContract.healthLabel !== "Online" ||
+            !nowAgentCardContract.healthIcon ||
+            !nowAgentCardContract.timeInSubtitle ||
+            nowAgentCardContract.legacyMeta ||
+            nowAgentCardContract.excerptBorder !== "solid" ||
+            nowAgentCardContract.excerptItalic !== "italic") {
+          throw new Error(`Now agent card hierarchy regressed: ${JSON.stringify(nowAgentCardContract)}`);
+        }
+        const attentionSummaryContract = await page.evaluate((key) => {
+          const source = findAgent(key) || state.agents[0];
+          const savedAgents = state.agents;
+          const savedAgentDetails = state.agentDetails;
+          state.agents = [{
+            ...source,
+            key: "attention-summary-fixture",
+            resource_key: "attention-summary-fixture",
+            server_key: "local",
+            name: "Waiting fixture agent",
+            running: false,
+            unread: true,
+            awaiting_input: true,
+            blocked: false,
+            status: "awaiting-input",
+          }];
+          state.agentDetails = {};
+          renderNow();
+          const summary = document.querySelector(".attention-summary");
+          const copy = summary?.querySelector(".attention-summary-copy");
+          const action = summary?.querySelector(".attention-summary-action");
+          const result = {
+            found: Boolean(summary && copy && action),
+            count: copy?.querySelector("strong")?.textContent.trim(),
+            reason: copy?.querySelector("small")?.textContent.trim(),
+            action: action?.textContent.trim(),
+            actionLabel: action?.getAttribute("aria-label"),
+            leaksAgentName: summary?.textContent.includes("Waiting fixture agent"),
+            columns: summary ? getComputedStyle(summary).gridTemplateColumns.split(" ").length : 0,
+          };
+          state.agents = savedAgents;
+          state.agentDetails = savedAgentDetails;
+          render();
+          return result;
+        }, agentKey);
+        if (!attentionSummaryContract.found ||
+            attentionSummaryContract.count !== "1 waiting" ||
+            attentionSummaryContract.reason !== "Agent needs your input" ||
+            attentionSummaryContract.action !== "Answer next" ||
+            attentionSummaryContract.actionLabel !== "Answer Waiting fixture agent" ||
+            attentionSummaryContract.leaksAgentName ||
+            attentionSummaryContract.columns !== 2) {
+          throw new Error(`Now attention summary regressed: ${JSON.stringify(attentionSummaryContract)}`);
+        }
+        if (captureDir) {
+          await page.setViewportSize({ width: 1200, height: 720 });
+          await page.evaluate((key) => {
+            const source = findAgent(key) || state.agents[0];
+            window.__attentionSummaryCaptureState = {
+              agents: state.agents,
+              agentDetails: state.agentDetails,
+              schedules: state.schedules,
+              scheduleDaemon: state.scheduleDaemon,
+            };
+            state.agents = [{
+              ...source,
+              key: "attention-summary-screenshot",
+              resource_key: "attention-summary-screenshot",
+              server_key: "local",
+              name: "Second Brain Tycho slide, ikastara tech intro",
+              running: false,
+              unread: true,
+              awaiting_input: true,
+              blocked: false,
+              status: "awaiting-input",
+              summary: "I need your answer before I can continue with the next step.",
+              updated_at: new Date(Date.now() - 50_000).toISOString(),
+            }];
+            state.agentDetails = {};
+            state.schedules = [];
+            state.scheduleDaemon = null;
+            renderNow();
+          }, agentKey);
+          await page.locator("#view").screenshot({
+            path: path.join(captureDir, "now-awaiting-input.png"),
+          });
+          await page.evaluate(() => {
+            const saved = window.__attentionSummaryCaptureState;
+            state.agents = saved.agents;
+            state.agentDetails = saved.agentDetails;
+            state.schedules = saved.schedules;
+            state.scheduleDaemon = saved.scheduleDaemon;
+            delete window.__attentionSummaryCaptureState;
+            render();
+          });
+        }
         if (process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY === "1") {
-          console.log("remote-ui-smoke: HTML, Mermaid, polling, and schedule menu ok");
+          console.log("remote-ui-smoke: HTML, Mermaid, polling, schedule menu, sticky Agents toolbar, and Now hierarchy ok");
           return;
         }
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.evaluate(() => navigate({ type: "tab", tab: "now" }));
         const scheduleMenuGeometry = await page.evaluate(() => {
           const details = document.querySelector("[data-state-key='schedule-now-details']");
           details.open = true;
@@ -1017,24 +1311,24 @@ def write_smoke_script(path)
             path: path.join(captureDir, "agents-grouped-ledger-390x844.png"),
           });
         }
-        await agentsRegressionPage.waitForSelector("[data-agent-sort-menu] > summary", { state: "visible", timeout: 10_000 });
-        await agentsRegressionPage.click("[data-agent-sort-menu] > summary");
+        await agentsRegressionPage.waitForSelector("[data-agent-mobile-toolbar-menu] > summary", { state: "visible", timeout: 10_000 });
+        await agentsRegressionPage.click("[data-agent-mobile-toolbar-menu] > summary");
         await agentsRegressionPage.waitForFunction(
-          () => Boolean(document.activeElement?.dataset?.agentSortChoice),
+          () => document.activeElement?.getAttribute("role") === "menuitem",
           null,
           { timeout: 10_000 }
         );
-        const firstSortChoice = await agentsRegressionPage.evaluate(() => document.activeElement?.dataset?.agentSortChoice);
+        const firstToolbarChoice = await agentsRegressionPage.evaluate(() => document.activeElement?.textContent.trim());
         await agentsRegressionPage.keyboard.press("ArrowDown");
-        const secondSortChoice = await agentsRegressionPage.evaluate(() => document.activeElement?.dataset?.agentSortChoice);
-        if (!secondSortChoice || secondSortChoice === firstSortChoice) {
-          throw new Error("Agent sort menu ArrowDown did not move focus");
+        const secondToolbarChoice = await agentsRegressionPage.evaluate(() => document.activeElement?.textContent.trim());
+        if (!secondToolbarChoice || secondToolbarChoice === firstToolbarChoice) {
+          throw new Error("Mobile Agent toolbar ArrowDown did not move focus");
         }
         await agentsRegressionPage.keyboard.press("Escape");
         await agentsRegressionPage.waitForFunction(
           () => (
-            !document.querySelector("[data-agent-sort-menu]")?.open &&
-            document.activeElement === document.querySelector("[data-agent-sort-menu] > summary")
+            !document.querySelector("[data-agent-mobile-toolbar-menu]")?.open &&
+            document.activeElement === document.querySelector("[data-agent-mobile-toolbar-menu] > summary")
           ),
           null,
           { timeout: 10_000 }
@@ -1344,6 +1638,41 @@ def write_smoke_script(path)
         }
         const backgroundInert = await page.locator("[data-agent-workspace]").evaluate((element) => element.inert);
         if (!backgroundInert) throw new Error("Full-screen composer did not make its background inert");
+        const fullScreenPollContract = await page.evaluate(async () => {
+          const savedSetup = state.setup;
+          const savedDeferredUntil = state.pollDeferredUntil;
+          const originalFetch = window.fetch;
+          let catalogReads = 0;
+          window.fetch = (...args) => {
+            const input = args[0];
+            const url = new URL(typeof input === "string" ? input : input.url, location.href);
+            const method = String(args[1]?.method || input?.method || "GET").toUpperCase();
+            if (method === "GET" && url.pathname === "/servers/resources") catalogReads += 1;
+            return originalFetch(...args);
+          };
+          try {
+            state.setup = {
+              ...(state.setup || {}),
+              refresh_intervals: { active_ms: 100, idle_ms: 100, hidden_ms: 100 },
+            };
+            state.pollDeferredUntil = 0;
+            clearTimeout(state.timer);
+            state.timer = null;
+            schedule(20);
+            await new Promise((resolve) => setTimeout(resolve, 450));
+            return { catalogReads, timerActive: Boolean(state.timer) };
+          } finally {
+            window.fetch = originalFetch;
+            state.setup = savedSetup;
+            state.pollDeferredUntil = savedDeferredUntil;
+            clearTimeout(state.timer);
+            state.timer = null;
+            schedule();
+          }
+        });
+        if (fullScreenPollContract.catalogReads !== 0 || fullScreenPollContract.timerActive) {
+          throw new Error(`Full-screen composer did not pause automatic polling: ${JSON.stringify(fullScreenPollContract)}`);
+        }
         await page.locator(".composer-close-button").focus();
         await page.keyboard.press("Shift+Tab");
         const shiftTabStayedInModal = await page.evaluate(() => Boolean(document.activeElement?.closest?.("#composer.composer-full-screen")));
@@ -1902,6 +2231,7 @@ def write_smoke_script(path)
             await page.getByText("Server unavailable", { exact: true }).count() !== 0) {
           throw new Error("Now still exposed disconnected peer resources or server cards");
         }
+        await page.setViewportSize({ width: 1024, height: 768 });
         await page.evaluate(() => {
           navigate({ type: "tab", tab: "agents" });
         });
@@ -1943,7 +2273,7 @@ def write_smoke_script(path)
           throw new Error(`Local ownership did not collapse to an accessible home icon: ${JSON.stringify(localOwnershipBadge)}`);
         }
         const peerGroupText = await page.locator(".agent-group", { has: page.locator("[data-open-agent='design-peer/peer-agent']") }).innerText();
-        if (!peerGroupText.includes("Design peer") || !peerGroupText.includes("Stale")) {
+        if (!peerGroupText.includes("Design peer") || peerGroupText.includes("Stale")) {
           throw new Error(`Combined Agents list did not show peer ownership and health: ${JSON.stringify(peerGroupText)}`);
         }
         const stalePeerAppearance = await page.locator("[data-open-agent='design-peer/peer-agent']").evaluate((row) => ({
@@ -1951,9 +2281,11 @@ def write_smoke_script(path)
           groupIsStale: row.closest(".agent-group")?.classList.contains("resource-stale"),
           status: row.querySelector(".ui-status")?.textContent.trim(),
           statusOpacity: Number.parseFloat(getComputedStyle(row.querySelector(".ui-status")).opacity),
+          healthIcon: Boolean(row.closest(".agent-group")?.querySelector(".server-health-icon-badge svg")),
         }));
         if (!stalePeerAppearance.rowIsStale || !stalePeerAppearance.groupIsStale ||
-            stalePeerAppearance.status !== "Stale" || stalePeerAppearance.statusOpacity >= 0.8) {
+            stalePeerAppearance.status !== "Running" || stalePeerAppearance.statusOpacity >= 0.8 ||
+            !stalePeerAppearance.healthIcon) {
           throw new Error(`Stale peer project and agent were not visually subdued: ${JSON.stringify(stalePeerAppearance)}`);
         }
         await page.evaluate(() => {

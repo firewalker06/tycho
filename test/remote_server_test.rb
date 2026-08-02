@@ -3408,6 +3408,12 @@ module RemoteServerTest
            "expected Agents tab toolbar actions to align independently from the search width")
     assert(css[:body].include?(".agent-toolbar-actions {\n  display: inline-flex;\n  flex: 0 0 auto;"),
            "expected Agents tab toolbar actions to keep fixed width beside search")
+    assert(css[:body].include?(".ui-collection-toolbar {\n  position: sticky;") &&
+           css[:body].include?("top: var(--app-header-height, 64px);"),
+           "expected the Agents filter toolbar to stay below the sticky app header")
+    assert(css[:body].include?(".agent-mobile-toolbar-menu") &&
+           css[:body].include?(".agent-toolbar-actions {\n    display: none;"),
+           "expected narrow Agents toolbars to collapse desktop actions into a context menu")
     assert(css[:body].include?(".agent-bulk-select-button"),
            "expected Agents tab to style the icon-only bulk selection control")
     assert(css[:body].include?(".agent-bulk-menu"),
@@ -3822,6 +3828,11 @@ module RemoteServerTest
            js[:body].include?("data-server-action-menu") &&
            js[:body].include?('data-overlay-key="server:'),
            "expected Settings to manage peers while Agents exposes one server filter")
+    assert(js[:body].include?("function agentMobileToolbarMenuHtml") &&
+           js[:body].include?('data-overlay-key="agent-mobile-toolbar"') &&
+           js[:body].include?("data-agent-server-choice") &&
+           js[:body].include?("data-toggle-bulk-archive"),
+           "expected the narrow Agents toolbar menu to expose server, sort, and bulk actions")
     assert(!js[:body].include?("function renderServerSelect") &&
            !js[:body].include?("data-server-select") &&
            !js[:body].include?("Active Tycho server"),
@@ -3896,11 +3907,11 @@ module RemoteServerTest
            "expected new Remote UI assets to remain usable against a running legacy daemon")
     assert(js[:body].include?("function resourceIsStale") &&
            js[:body].include?('return resourceIsStale(resource) ? "resource-stale" : "";') &&
-           js[:body].include?('if (resourceIsStale(agent)) return "Stale";') &&
-           js[:body].include?('if (resourceIsStale(project)) return "Stale";') &&
+           !js[:body].include?('if (resourceIsStale(agent)) return "Stale";') &&
+           !js[:body].include?('if (resourceIsStale(project)) return "Stale";') &&
            css[:body].include?(".resource-stale") &&
            css[:body].include?("opacity: 0.68"),
-           "expected stale peer projects and agents to use one subdued visual state")
+           "expected stale peer projects and agents to stay subdued without replacing their status")
     assert(js[:body].include?('class="server-token-form ui-form-layout" data-ds-form="settings"') &&
            js[:body].include?("Stored only in this browser and sent to the selected Remote server.") &&
            js[:body].include?('class="primary inline-icon-button ui-button" data-variant="brand" type="submit"'),
@@ -4893,6 +4904,38 @@ module RemoteServerTest
            js[:body].include?('iconName = server?.status === "online" && !server?.stale ? "wifi" : "wifiOff"') &&
            js[:body].include?("serverIdentityBadge(project || agents[0], { compactHealth: true })"),
            "expected Agents tab project groups to show compact Wi-Fi health icons")
+    assert(js[:body].include?('class="summary-card attention attention-summary"') &&
+           js[:body].include?('class="attention-summary-copy"') &&
+           js[:body].include?('>Answer next</button>') &&
+           js[:body].include?('aria-label="Answer ${escapeAttr(waiting[0]?.name || "next agent")}"') &&
+           !js[:body].include?("Answer paused agents first.") &&
+           !css[:body].include?(".big-number") &&
+           css[:body].include?(".attention-summary-action"),
+           "expected Now to use a compact waiting-attention header")
+    now_section_order = ["${nowSection}", "${unreadSection}", "${runningSection}", "${scheduleSection}"]
+      .map { |section| js[:body].index(section) }
+    assert(now_section_order.none?(&:nil?) && now_section_order == now_section_order.sort,
+           "expected Schedules to render after every agent list on Now")
+    assert(js[:body].include?("const FORM_POLL_QUIET_MS = 3_000;") &&
+           js[:body].include?("function deferPollAfterFormInput") &&
+           js[:body].include?('target.closest("form")') &&
+           js[:body].include?('document.addEventListener("input", deferPollAfterFormInput, true)') &&
+           js[:body].include?("quietRemaining > 0 && !options.force"),
+           "expected form typing to defer automatic polling for three seconds")
+    assert(js[:body].include?("function fullScreenEditorOpen") &&
+           js[:body].include?("if (fullScreenEditorOpen()) return;") &&
+           js[:body].include?("if (fullScreenEditorOpen() && !options.force) return;") &&
+           js[:body].scan("state.fullScreenComposerKeys.delete(key);\n  schedule();").length >= 1 &&
+           js[:body].scan("state.fullScreenInquiryKeys.delete(key);\n  schedule();").length >= 1,
+           "expected full-screen Conversation and inquiry forms to pause automatic polling")
+    assert(js[:body].include?('class="card agent-summary-card') &&
+           js[:body].include?("serverIdentityBadge(agent, { compactHealth: true })") &&
+           js[:body].include?('class="agent-card-status"') &&
+           js[:body].include?("agentListSubtextHtml(agent)") &&
+           js[:body].include?('class="card-copy agent-card-excerpt"') &&
+           css[:body].include?(".agent-card-excerpt") &&
+           css[:body].include?("font-style: italic"),
+           "expected Now agent cards to align server health with status and separate excerpts")
     assert(js[:body].include?("agent-group-project-title") &&
            js[:body].include?('iconSvg("folder")'),
            "expected compact project headers to show an unboxed folder icon beside the project name")
