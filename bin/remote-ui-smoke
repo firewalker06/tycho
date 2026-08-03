@@ -1941,6 +1941,51 @@ def write_smoke_script(path)
         await page.selectOption("[name='approved']", "Yes");
         await page.fill("#inquiry-feedback", "Keep the explanation short.");
         await assertEditorExcludedFromRefresh("#inquiry-form:not(.inquiry-form-full-screen)", "Inline inquiry form", "#inquiry-feedback");
+        const inlineInquiryPollContract = await page.evaluate(async (key) => {
+          clearTimeout(state.timer);
+          state.timer = null;
+          state.pollDeferredUntil = 0;
+          state.lastShellUpdatedAt = new Date();
+          const originalFetch = window.fetch;
+          const originalRender = render;
+          let catalogReads = 0;
+          let renderCalls = 0;
+          const form = document.querySelector("#inquiry-form:not(.inquiry-form-full-screen)");
+          const feedback = document.querySelector("#inquiry-feedback");
+          form.__tychoInlinePollProbe = true;
+          feedback.focus();
+          let blurred = false;
+          feedback.addEventListener("blur", () => { blurred = true; }, { once: true });
+          window.fetch = async (input, init) => {
+            const requestUrl = new URL(typeof input === "string" ? input : input.url, location.href);
+            if (requestUrl.pathname === "/servers/resources") catalogReads += 1;
+            return originalFetch(input, init);
+          };
+          render = (...args) => {
+            renderCalls += 1;
+            return originalRender(...args);
+          };
+          try {
+            await refresh();
+            const current = document.querySelector("#inquiry-form:not(.inquiry-form-full-screen)");
+            return {
+              catalogReads,
+              renderCalls,
+              sameNode: current?.__tychoInlinePollProbe === true,
+              sameFocus: document.activeElement === feedback,
+              blurred,
+              feedback: document.querySelector("#inquiry-feedback")?.value,
+            };
+          } finally {
+            window.fetch = originalFetch;
+            render = originalRender;
+          }
+        }, agentKey);
+        if (inlineInquiryPollContract.catalogReads < 1 || inlineInquiryPollContract.renderCalls !== 0 ||
+            !inlineInquiryPollContract.sameNode || !inlineInquiryPollContract.sameFocus ||
+            inlineInquiryPollContract.blurred || inlineInquiryPollContract.feedback !== "Keep the explanation short.") {
+          throw new Error(`Inline inquiry form refreshed during catalog polling: ${JSON.stringify(inlineInquiryPollContract)}`);
+        }
         const structuredInquiryAnswer = await page.evaluate(() => JSON.parse(inquiryAnswerPayload(document.querySelector("#inquiry-form"))));
         if (structuredInquiryAnswer.next_step !== "Ship the focused change." || structuredInquiryAnswer.environments?.[0] !== "Staging" || structuredInquiryAnswer.approved !== true || structuredInquiryAnswer.user_feedback !== "Keep the explanation short." || Object.hasOwn(structuredInquiryAnswer, "feedback")) {
           throw new Error(`Inquiry feedback is missing from the structured answer: ${JSON.stringify(structuredInquiryAnswer)}`);

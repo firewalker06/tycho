@@ -4410,11 +4410,13 @@ module RemoteServerTest
     assert(js[:body].include?("detailRevision !== catalogRevision") &&
            js[:body].include?("delete state.agentDetails[agent.key]"),
            "expected catalog revision changes to invalidate stale agent attachment details")
-    assert(js[:body].include?("function preserveAttachmentWorkspaceDuringPoll") &&
+    assert(js[:body].include?("function preserveWorkspaceDuringPoll") &&
            js[:body].include?("if (options.force || options.forceAttachment) return false") &&
-           js[:body].include?("if (!preserveAttachmentWorkspace) await ensureRouteData(options)") &&
-           js[:body].scan("if (!preserveAttachmentWorkspace)").length == 3,
-           "expected automatic attachment polling to update state without rendering the workspace")
+           js[:body].include?('els.view.querySelector("#inquiry-form")') &&
+           js[:body].include?("if (preservedInquiryAgent) state.agentDetails[inquiryAgentKey] = preservedInquiryAgent") &&
+           js[:body].include?("if (!preserveWorkspace) await ensureRouteData(options)") &&
+           js[:body].scan("if (!preserveWorkspace)").length == 3,
+           "expected automatic attachment and inquiry polling to update state without rendering the workspace")
     assert(js[:body].include?("state.preservePollContentDuringRender") &&
            js[:body].include?("replaceViewContent(html)"),
            "expected explicit attachment refreshes to replace preserved attachment content")
