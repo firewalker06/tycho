@@ -69,7 +69,7 @@ module HQ
         command.concat(["--sandbox", @sandbox_mode]) if @session_id.empty?
       end
       command << "--json"
-      if @session_id.empty? && File.exist?(@result_schema_path)
+      if File.exist?(@result_schema_path)
         command.concat(["--output-schema", @result_schema_path, "-o", @last_message_file_path])
       else
         command.concat(["-o", @last_message_file_path])

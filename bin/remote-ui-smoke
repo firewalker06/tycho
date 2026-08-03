@@ -673,6 +673,54 @@ def write_smoke_script(path)
             !scheduleLastContract.scheduleIsLast) {
           throw new Error(`Schedules are not the final Now list: ${JSON.stringify(scheduleLastContract)}`);
         }
+        const agentDetailRevisionContract = await page.evaluate(() => {
+          const saved = {
+            agents: state.agents,
+            agentDetails: state.agentDetails,
+            projects: state.projects,
+            projectDetails: state.projectDetails,
+            servers: state.servers,
+          };
+          const server = { key: "local", name: "Local", local: true, status: "online", stale: false };
+          const resource = (revision) => ({
+            servers: [{
+              ...server,
+              agents: [{
+                key: "agent-detail-revision-fixture",
+                project_key: "fixture",
+                revision,
+                status: "succeeded",
+              }],
+              projects: [],
+            }],
+          });
+
+          try {
+            state.agentDetails = {
+              "agent-detail-revision-fixture": {
+                key: "agent-detail-revision-fixture",
+                revision: "revision-1",
+                attachments: [{ id: "existing-attachment" }],
+              },
+            };
+            applyResourceCatalog(resource("revision-1"));
+            const unchangedPreserved = state.agentDetails["agent-detail-revision-fixture"]?.attachments?.[0]?.id === "existing-attachment";
+            applyResourceCatalog(resource("revision-2"));
+            return {
+              unchangedPreserved,
+              changedInvalidated: !state.agentDetails["agent-detail-revision-fixture"],
+            };
+          } finally {
+            state.agents = saved.agents;
+            state.agentDetails = saved.agentDetails;
+            state.projects = saved.projects;
+            state.projectDetails = saved.projectDetails;
+            state.servers = saved.servers;
+          }
+        });
+        if (!agentDetailRevisionContract.unchangedPreserved || !agentDetailRevisionContract.changedInvalidated) {
+          throw new Error(`Agent detail cache did not follow catalog revisions: ${JSON.stringify(agentDetailRevisionContract)}`);
+        }
         const daemonMenuLayout = await page.evaluate(() => {
           const details = document.querySelector("[data-state-key='schedule-now-details']");
           details.open = true;
@@ -1990,6 +2038,49 @@ def write_smoke_script(path)
           state.renderedViewHtml = "";
           render();
         }, agentKey);
+        const attachmentPollRenderContract = await page.evaluate(async () => {
+          clearTimeout(state.timer);
+          state.timer = null;
+          const originalFetch = window.fetch;
+          const originalRender = render;
+          const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+          const savedFullScreenComposerKeys = state.fullScreenComposerKeys;
+          const savedFullScreenInquiryKeys = state.fullScreenInquiryKeys;
+          const savedPollDeferredUntil = state.pollDeferredUntil;
+          let catalogReads = 0;
+          let renderCalls = 0;
+          Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+          state.fullScreenComposerKeys = new Set();
+          state.fullScreenInquiryKeys = new Set();
+          state.pollDeferredUntil = 0;
+          window.fetch = async (input, init) => {
+            const requestUrl = new URL(typeof input === "string" ? input : input.url, location.href);
+            if (requestUrl.pathname === "/servers/resources") catalogReads += 1;
+            return originalFetch(input, init);
+          };
+          render = (...args) => {
+            renderCalls += 1;
+            return originalRender(...args);
+          };
+          try {
+            await refresh();
+            return { catalogReads, renderCalls };
+          } finally {
+            window.fetch = originalFetch;
+            render = originalRender;
+            if (hiddenDescriptor) Object.defineProperty(document, "hidden", hiddenDescriptor);
+            else delete document.hidden;
+            state.fullScreenComposerKeys = savedFullScreenComposerKeys;
+            state.fullScreenInquiryKeys = savedFullScreenInquiryKeys;
+            state.pollDeferredUntil = savedPollDeferredUntil;
+            clearTimeout(state.timer);
+            state.timer = null;
+            schedule();
+          }
+        });
+        if (attachmentPollRenderContract.catalogReads < 1 || attachmentPollRenderContract.renderCalls !== 0) {
+          throw new Error(`Attachment polling replaced its workspace: ${JSON.stringify(attachmentPollRenderContract)}`);
+        }
         const viewTriggerGeometry = await page.evaluate(() => {
           const viewTrigger = document.querySelector("[data-focused-view-menu] > summary").getBoundingClientRect();
           const pageContextTrigger = document.querySelector("#header-more-button").getBoundingClientRect();

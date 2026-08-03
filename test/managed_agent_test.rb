@@ -1082,6 +1082,22 @@ module ManagedAgentTest
              "expected scalar attachments JSON to normalize")
       assert(!structured.key?("inquiry_json"), "expected scalar inquiry field to be removed")
       assert(!structured.key?("attachments_json"), "expected scalar attachments field to be removed")
+
+      grilling = HQ::AgentResultNormalizer.new(workspace: dir).normalize_structured_result(
+        "status" => "input_required",
+        "summary" => "Need a design decision.",
+        "inquiry" => {
+          "question" => "Use the LLM only?",
+          "recommendation" => "Prefer LLM-only for the first version.",
+          "options" => ["LLM-only", "LLM plus detector", "Detector-only"]
+        }
+      )
+      grilling_inquiry = grilling["inquiry"]
+      assert(grilling_inquiry["message"] == "Use the LLM only?",
+             "expected question-shaped Claude inquiries to retain their prompt")
+      assert(grilling_inquiry.dig("fields", 0, "input_type") == "select" &&
+             grilling_inquiry.dig("fields", 0, "options") == ["LLM-only", "LLM plus detector", "Detector-only"],
+             "expected question-shaped Claude inquiries to become selectable fields")
     end
   end
 
@@ -1210,6 +1226,9 @@ module ManagedAgentTest
            "Claude compact result schema should allow no_action_needed")
     assert(claude_schema.dig("properties", "status", "description") == status_description,
            "Claude compact result schema should inherit canonical status guidance")
+    inquiry_description = claude_schema.dig("properties", "inquiry_json", "description").to_s
+    assert(inquiry_description.include?('"message"') && inquiry_description.include?('"fields"'),
+           "Claude compact result schema should describe the inquiry JSON shape")
   ensure
     replace_constant(HQ, :AGENT_RESULT_SCHEMA, old_schema_path) if old_schema_path
   end
@@ -1654,6 +1673,8 @@ module ManagedAgentTest
            "expected backfilled Codex resume command to include --model")
     assert(argument_after(resume_command, "-c") == "model_reasoning_effort=\"xhigh\"",
            "expected backfilled Codex resume command to include model_reasoning_effort")
+    assert(argument_after(resume_command, "--output-schema") == HQ::AGENT_RESULT_SCHEMA,
+           "expected Codex resume command to enforce the structured result schema")
 
     explicit = HQ::ManagedAgent.from_hash(data.merge("model" => "gpt-5.1", "reasoning_effort" => "medium"))
     assert(explicit.model == "gpt-5.1", "expected explicit persisted model to beat command backfill")

@@ -1657,7 +1657,7 @@ module HQ
           "summary" => properties.fetch("summary", { "type" => "string" }),
           "inquiry_json" => {
             "type" => "string",
-            "description" => "JSON-encoded inquiry object, or the literal string null when no inquiry is needed."
+            "description" => 'JSON-encoded inquiry object shaped as {"message": string, "fields": [{"key": string, "label": string, "description": string|null, "input_type": "text"|"multiline"|"number"|"integer"|"boolean"|"select"|"multi_select", "required": boolean, "options": string[]|null}]}, or the literal string null when no inquiry is needed.'
           },
           "attachments_json" => {
             "type" => "string",

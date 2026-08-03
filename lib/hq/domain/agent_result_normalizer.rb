@@ -29,6 +29,7 @@ module HQ
     def normalize_inquiry(value)
       return nil unless value.is_a?(Hash)
 
+      value = canonicalize_question_inquiry(value)
       message = value["message"].to_s.strip
       return nil if message.empty?
 
@@ -83,6 +84,29 @@ module HQ
     end
 
     private
+
+    def canonicalize_question_inquiry(value)
+      return value unless value["message"].to_s.strip.empty?
+
+      question = value["question"].to_s.strip
+      return value if question.empty?
+
+      options = Array(value["options"]).map(&:to_s).reject(&:empty?)
+      recommendation = value["recommendation"].to_s.strip
+      value.merge(
+        "message" => question,
+        "fields" => [
+          {
+            "key" => "answer",
+            "label" => "Answer",
+            "description" => recommendation,
+            "input_type" => options.empty? ? "multiline" : "select",
+            "required" => true,
+            "options" => options.empty? ? nil : options
+          }
+        ]
+      )
+    end
 
     def normalize_status(status, summary:, inquiry:)
       return status unless status == "no_action_needed"

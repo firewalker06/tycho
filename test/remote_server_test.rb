@@ -4407,6 +4407,14 @@ module RemoteServerTest
            js[:body].include?("function transplantPreservedPollContent") &&
            js[:body].include?("data-preserve-poll-content"),
            "expected scheduled polling to retain unchanged attachment content DOM")
+    assert(js[:body].include?("detailRevision !== catalogRevision") &&
+           js[:body].include?("delete state.agentDetails[agent.key]"),
+           "expected catalog revision changes to invalidate stale agent attachment details")
+    assert(js[:body].include?("function preserveAttachmentWorkspaceDuringPoll") &&
+           js[:body].include?("if (options.force || options.forceAttachment) return false") &&
+           js[:body].include?("if (!preserveAttachmentWorkspace) await ensureRouteData(options)") &&
+           js[:body].scan("if (!preserveAttachmentWorkspace)").length == 3,
+           "expected automatic attachment polling to update state without rendering the workspace")
     assert(js[:body].include?("state.preservePollContentDuringRender") &&
            js[:body].include?("replaceViewContent(html)"),
            "expected explicit attachment refreshes to replace preserved attachment content")
