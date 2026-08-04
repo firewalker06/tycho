@@ -2873,6 +2873,33 @@ def write_smoke_script(path)
         }
 
         await page.evaluate(() => closeQuickAgent());
+        const mobileQuickAgentPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+        await mobileQuickAgentPage.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
+        await mobileQuickAgentPage.waitForSelector("#quick-agent-fab:not(.hidden)", { state: "visible", timeout: 10_000 });
+        await mobileQuickAgentPage.click("#quick-agent-fab");
+        await mobileQuickAgentPage.waitForSelector("#quick-agent-prompt", { state: "visible", timeout: 10_000 });
+        await mobileQuickAgentPage.click("[data-quick-agent-toggle]");
+        await mobileQuickAgentPage.waitForSelector("#quick-agent-effort", { state: "visible", timeout: 10_000 });
+        const quickAgentMobileLayout = await mobileQuickAgentPage.evaluate(() => {
+          const dialog = document.querySelector("#quick-agent-dialog");
+          const form = document.querySelector("#quick-agent-form");
+          return {
+            viewport: { width: window.innerWidth, height: window.innerHeight },
+            dialog: dialog?.getBoundingClientRect().toJSON(),
+            form: form?.getBoundingClientRect().toJSON(),
+            formOverflowY: form ? getComputedStyle(form).overflowY : "",
+          };
+        });
+        if (quickAgentMobileLayout.dialog?.x !== 0 || quickAgentMobileLayout.dialog?.y !== 0 ||
+            quickAgentMobileLayout.dialog?.width !== quickAgentMobileLayout.viewport.width ||
+            quickAgentMobileLayout.dialog?.height !== quickAgentMobileLayout.viewport.height ||
+            quickAgentMobileLayout.form?.x !== 0 || quickAgentMobileLayout.form?.y !== 0 ||
+            quickAgentMobileLayout.form?.width !== quickAgentMobileLayout.viewport.width ||
+            quickAgentMobileLayout.form?.height !== quickAgentMobileLayout.viewport.height ||
+            !["auto", "scroll"].includes(quickAgentMobileLayout.formOverflowY)) {
+          throw new Error(`Quick Agent form is not a scrollable mobile full-screen surface: ${JSON.stringify(quickAgentMobileLayout)}`);
+        }
+        await mobileQuickAgentPage.close();
         const loopAgentKey = await page.evaluate(async () => {
           const data = await apiPost("/agents", {
             project_key: "web",

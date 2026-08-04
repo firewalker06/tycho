@@ -5730,24 +5730,30 @@ body:has(.inquiry-form-full-screen) {
   color: var(--text, #f8f8f2);
 }
 
-/* Mobile: bottom sheet */
+/* Mobile: full-screen form */
 @media (max-width: 640px) {
   .quick-agent-dialog {
     margin: 0;
     width: 100%;
     max-width: 100%;
-    height: auto;
-    max-height: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
   }
   .quick-agent-dialog[open] {
     position: fixed;
-    inset: auto 0 0 0;
+    inset: 0;
   }
   .quick-agent-form {
     width: 100%;
-    max-height: 90vh;
-    border-radius: 16px 16px 0 0;
-    padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-radius: 0;
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px));
+    box-shadow: none;
   }
   .quick-agent-advanced {
     grid-template-columns: 1fr;
@@ -6533,12 +6539,12 @@ body:has(.inquiry-form-full-screen) {
   }
 
   .quick-agent-form {
-    overflow: hidden;
+    overflow-y: auto;
   }
 
   .quick-agent-advanced {
-    min-height: 0;
-    overflow-y: auto;
+    min-height: auto;
+    overflow: visible;
   }
 
   .quick-agent-actions {

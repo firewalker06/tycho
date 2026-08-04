@@ -3396,6 +3396,11 @@ module RemoteServerTest
            "expected Remote UI to style the Quick Agent floating action button")
     assert(css[:body].include?(".quick-agent-dialog"),
            "expected Remote UI to style the Quick Agent modal")
+    assert(css[:body].include?("height: 100dvh;") &&
+           css[:body].include?(".quick-agent-dialog[open] {\n    position: fixed;\n    inset: 0;") &&
+           css[:body].include?("overflow-y: auto;") &&
+           css[:body].include?("overscroll-behavior: contain;"),
+           "expected the mobile Quick Agent form to fill and scroll within the viewport")
     assert(css[:body].include?("--touch-target: 44px") && css[:body].include?("--control-height: 44px"),
            "expected audited Remote UI controls to share accessible sizing tokens")
     assert(css[:body].include?(".top-actions .search-box"),
