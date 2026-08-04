@@ -519,6 +519,57 @@ def write_smoke_script(path)
         }
 
         await page.evaluate(() => {
+          const copied = [];
+          Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: { writeText: async (value) => copied.push(value) },
+          });
+          window.__markdownCodeCopies = copied;
+          const source = [
+            "```ruby",
+            "puts '<ready>'",
+            "```",
+          ].join("\\n");
+          replaceView([renderMarkdown(source), renderMarkdown(source)].join(""));
+        });
+        const markdownCodeTriggers = page.locator("[data-toggle-markdown-code-menu]");
+        if (await markdownCodeTriggers.count() !== 2 ||
+            await page.locator(".markdown-code-block > pre > code").nth(0).textContent() !== "puts '<ready>'\\n") {
+          throw new Error("Markdown code menus did not render independently for identical viewers");
+        }
+        await markdownCodeTriggers.nth(0).click();
+        const markdownCopyItem = page.getByRole("menuitem", { name: "Copy" });
+        if (await markdownCopyItem.count() !== 1 ||
+            await markdownCodeTriggers.nth(0).getAttribute("aria-expanded") !== "true" ||
+            await markdownCodeTriggers.nth(1).getAttribute("aria-expanded") !== "false") {
+          throw new Error("Opening one Markdown code menu also opened another viewer's menu");
+        }
+        await markdownCopyItem.click();
+        await page.waitForFunction(() => document.querySelector("#growl")?.textContent === "Copied to clipboard");
+        const markdownCopySuccess = await page.evaluate(() => ({
+          copies: window.__markdownCodeCopies,
+          menus: document.querySelectorAll(".markdown-code-menu .block-menu-popover").length,
+        }));
+        if (JSON.stringify(markdownCopySuccess.copies) !== JSON.stringify(["puts '<ready>'\\n"]) ||
+            markdownCopySuccess.menus !== 0) {
+          throw new Error(`Markdown code Copy click did not copy raw text and close its menu: ${JSON.stringify(markdownCopySuccess)}`);
+        }
+
+        await page.evaluate(() => {
+          navigator.clipboard.writeText = async () => { throw new Error("blocked"); };
+        });
+        await markdownCodeTriggers.nth(1).click();
+        const markdownFailureCopyItem = page.getByRole("menuitem", { name: "Copy" });
+        if (await markdownFailureCopyItem.count() !== 1) {
+          throw new Error("Markdown code Copy menu did not open for failure feedback");
+        }
+        await markdownFailureCopyItem.click();
+        await page.waitForFunction(() => document.querySelector("#growl")?.textContent === "Copy failed");
+        if (await page.locator(".markdown-code-menu .block-menu-popover").count() !== 0) {
+          throw new Error("Markdown code Copy failure did not close the menu");
+        }
+
+        await page.evaluate(() => {
           state.renderedViewHtml = "";
           render();
         });

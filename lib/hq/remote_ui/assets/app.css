@@ -4452,10 +4452,42 @@ select {
   border: 1px solid color-mix(in srgb, var(--border) 78%, var(--panel-soft));
   border-radius: 8px;
   background: color-mix(in srgb, var(--bg) 82%, black);
-  padding: 12px;
+  padding: 12px 44px 12px 12px;
   color: var(--text);
   line-height: 1.55;
   white-space: pre;
+}
+
+.markdown-code-block {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0 0 14px;
+}
+
+.markdown-code-block pre,
+.markdown-code-block .mermaid {
+  margin-bottom: 0;
+}
+
+.markdown-code-menu {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+.markdown-code-menu .block-menu-trigger {
+  margin: 0;
+  background: color-mix(in srgb, var(--panel-soft) 78%, var(--bg));
+}
+
+.markdown-code-menu .block-menu-popover {
+  top: 0;
+  right: 0;
+}
+
+.markdown-mermaid-block .markdown-code-menu {
+  z-index: 1;
 }
 
 .markdown-viewer pre code {

@@ -4699,6 +4699,16 @@ module RemoteServerTest
            "expected Remote UI to support #attachment/:id routes")
     assert(js[:body].include?("function renderMarkdown"),
            "expected markdown attachments to render as markdown")
+    assert(js[:body].include?("function prepareMarkdownCodeBlocks") &&
+           js[:body].include?("function markdownCodeMenuHtml"),
+           "expected fenced Markdown code blocks to receive action menus")
+    assert(js[:body].include?('aria-label="Code actions"') &&
+           js[:body].include?('label: "Copy"') &&
+           js[:body].include?('data-markdown-code="${escapeAttr(code)}"'),
+           "expected Markdown code menus to copy only their raw code text")
+    assert(js[:body].include?('showGrowl("Copied to clipboard", "done")') &&
+           js[:body].include?('showGrowl("Copy failed", "fail")'),
+           "expected code copy actions to provide success and failure feedback")
     assert(js[:body].include?("renderMarkdown(content, { breaks: true })") &&
            js[:body].include?("breaks: options.breaks === true"),
            "expected only markdown attachment call sites to opt into single-newline breaks")
