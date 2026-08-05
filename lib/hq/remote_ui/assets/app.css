@@ -4469,6 +4469,61 @@ select {
   word-break: normal;
 }
 
+.markdown-code-block {
+  position: relative;
+  min-width: 0;
+}
+
+.markdown-code-block > pre,
+.markdown-code-block > .mermaid {
+  margin-bottom: 14px;
+}
+
+.markdown-code-menu {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 3;
+}
+
+.markdown-code-menu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, var(--panel-soft));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  color: var(--muted);
+}
+
+.markdown-code-menu-trigger .ui-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.markdown-code-menu-trigger:hover,
+.markdown-code-menu-trigger.active {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+.markdown-code-menu-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 4;
+  min-width: 150px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 98%, transparent);
+  box-shadow: var(--shadow);
+  padding: 6px;
+}
+
 .markdown-viewer table {
   display: block;
   min-width: 0;
