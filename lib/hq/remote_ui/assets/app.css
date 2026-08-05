@@ -6625,6 +6625,10 @@ body:has(.inquiry-form-full-screen) {
     overscroll-behavior: contain;
   }
 
+  .agent-dock:has(.attachment-flyout:not(.hidden)) {
+    overflow: visible;
+  }
+
   .attachment-flyout {
     max-height: min(64dvh, 520px);
     overflow-y: auto;
