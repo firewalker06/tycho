@@ -50,28 +50,37 @@ module HQ
       </svg>
     SVG
 
+    ASSET_CONTENTS = ASSET_VERSION_PATHS.to_h do |path|
+      [path, File.binread(path).freeze]
+    end.freeze
+    ASSET_VERSION = begin
+      digest = Digest::SHA256.new
+      ASSET_VERSION_PATHS.each { |path| digest.update(ASSET_CONTENTS.fetch(path)) }
+      digest.hexdigest[0, 12].freeze
+    end
+
     def self.index
-      ERB.new(File.read(TEMPLATE_PATH)).result(binding)
+      ERB.new(asset_content(TEMPLATE_PATH)).result(binding)
     end
 
     def self.design_system_index
-      ERB.new(File.read(DESIGN_SYSTEM_TEMPLATE_PATH)).result(binding)
+      ERB.new(asset_content(DESIGN_SYSTEM_TEMPLATE_PATH)).result(binding)
     end
 
     def self.css
-      [File.read(DESIGN_SYSTEM_CSS_PATH), File.read(CSS_PATH)].join("\n")
+      [asset_content(DESIGN_SYSTEM_CSS_PATH), asset_content(CSS_PATH)].join("\n")
     end
 
     def self.js
-      File.read(JS_PATH)
+      asset_content(JS_PATH)
     end
 
     def self.helpers_js
-      File.read(HELPERS_JS_PATH)
+      asset_content(HELPERS_JS_PATH)
     end
 
     def self.service_worker_js
-      File.read(SERVICE_WORKER_PATH)
+      asset_content(SERVICE_WORKER_PATH)
     end
 
     def self.manifest_json
@@ -110,17 +119,20 @@ module HQ
     end
 
     def self.png_asset(name)
-      File.binread(PNG_ASSETS.fetch(name))
+      asset_content(PNG_ASSETS.fetch(name))
     end
 
     def self.asset_version
-      digest = Digest::SHA256.new
-      ASSET_VERSION_PATHS.each { |path| digest.update(File.binread(path)) }
-      digest.hexdigest[0, 12]
+      ASSET_VERSION
     end
 
     def self.favicon_svg
       FAVICON_SVG
     end
+
+    def self.asset_content(path)
+      ASSET_CONTENTS.fetch(path)
+    end
+    private_class_method :asset_content
   end
 end

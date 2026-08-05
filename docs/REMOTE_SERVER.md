@@ -724,7 +724,7 @@ Checks the current browser's subscription without exposing its capability URL in
 }
 ```
 
-The response includes `subscribed` for that endpoint and the global `subscription_count`. The Remote UI uses the endpoint-specific result to show the correct controls when other devices are also subscribed.
+The response includes `subscribed`, the global `subscription_count`, and redacted delivery diagnostics for that endpoint: subscription ID, provider host, browser user agent, lifecycle timestamps, last provider response code, last error class, failure count, and disabled time. The full endpoint and encryption keys are never returned. The Remote UI uses the endpoint-specific result to show the correct controls when other devices are also subscribed.
 
 ### `DELETE /push/subscriptions`
 
@@ -739,6 +739,8 @@ Disables one browser push subscription by endpoint:
 ### `POST /push/test`
 
 Sends a test notification to an enabled subscription. Automatic agent-transition notifications are sent by the Remote server poll loop, de-duplicated in `~/.tycho/logs/push_notifications.json`, grouped through a shared notification tag, and mirrored to the installed-app badge when the browser exposes the Badging API.
+
+`sent: 1` means the push provider returned HTTP 2xx. It does not prove that the service worker received the payload or that Windows displayed it. Provider response codes and acceptance/failure times are persisted with the subscription and logged with a hashed endpoint label.
 
 ```json
 {

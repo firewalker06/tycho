@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-07-31
+2026-08-05
 
 ## Strategic Direction
 
@@ -63,6 +63,7 @@ Key references:
 | Remote UI responsive shell | Mobile keeps bottom navigation; wide desktop uses a wider content frame with side navigation; creation actions live in the header and focused detail/form routes remove unrelated global actions | Prevent fixed controls from obscuring content, use desktop space effectively, and keep page actions contextual across mobile, tablet, and desktop |
 | Remote UI control sizing | Shared 44 px control and touch-target tokens, 16 px mobile form text, visible focus states, and explicit validation/status text | Avoid mobile auto-zoom, undersized targets, color-only state, and inconsistent action geometry |
 | Remote UI design system | Keep a no-build internal system: semantic `--ds-*` tokens and reusable CSS components in `design_system.css`, product composition in `app.css`, and a static `/design-system` preview; migrate routes incrementally | Match the existing Ruby/vanilla-JS deployment, preserve behavior, make foundations governable, and avoid a framework or package rewrite |
+| Remote UI deployment coherence | Snapshot all browser assets and their shared hash when `tycho serve` starts; require a daemon restart to load source updates | Prevent an old Ruby API from serving a newer on-disk JavaScript client after a pull, which can break push subscription renewal and other cross-boundary flows |
 | Remote multiserver resources | Keep one UI-serving broker, aggregate only compact Agent and Project resources through a disk-backed stale-while-revalidate catalog, and require explicit server identity for details and mutations | Combined lists stay responsive across peer failures and broker restarts; only a validated full snapshot may remove cached resources, while schedules, setup, GitHub, push, restart, and other server-level behavior remain local |
 | Scheduled runs | Dedicated `tycho schedule daemon`, definitions in `~/.tycho/config/schedules.yml`, runtime state in `~/.tycho/logs/schedules.json`, validated standard cron syntax | Scheduled work should continue independently from the TUI and Remote UI while still reusing existing agent execution paths |
 | Temporary session loops | Remote UI can adopt an idle conversation as a normal recurring schedule, run it immediately with schedule context, and stop it at a configured cutoff | Review-waiting sessions need lightweight polling without losing their existing context or creating a separate agent |
