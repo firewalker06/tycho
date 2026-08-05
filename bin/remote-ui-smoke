@@ -518,6 +518,65 @@ def write_smoke_script(path)
           throw new Error(`Mermaid rendering contract failed: ${JSON.stringify(mermaidContract)}`);
         }
 
+        await page.evaluate(async () => {
+          Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: {
+              writeText: async (value) => {
+                window.__smokeCopiedMarkdownCode = value;
+              },
+            },
+          });
+          window.__smokeMarkdownCodeSource = [
+            "```javascript",
+            "const same = true;",
+            "```",
+            "```javascript",
+            "const same = true;",
+            "```",
+            "```mermaid",
+            "flowchart LR",
+            "  A[Copy source] --> B[Still a diagram]",
+            "```",
+          ].join("\\n");
+          window.__smokeMarkdownRender = render;
+          render = () => replaceView(renderMarkdown(window.__smokeMarkdownCodeSource, { menuScope: "smoke-markdown-code" }));
+          render();
+        });
+        await page.waitForSelector(".mermaid svg", { state: "visible", timeout: 20_000 });
+        const markdownCodeMenus = await page.locator("[data-toggle-markdown-code-menu]").count();
+        if (markdownCodeMenus !== 3) {
+          throw new Error(`Markdown code blocks did not get independent menus: ${markdownCodeMenus}`);
+        }
+        await page.click('[data-toggle-markdown-code-menu="markdown-code:smoke-markdown-code:1"]');
+        const codeMenuContract = await page.evaluate(() => ({
+          openMenus: document.querySelectorAll(".markdown-code-menu-popover").length,
+          copyLabel: document.querySelector(".markdown-code-menu-popover [role='menuitem'] strong")?.textContent?.trim(),
+        }));
+        if (codeMenuContract.openMenus !== 1 || codeMenuContract.copyLabel !== "Copy code") {
+          throw new Error(`Markdown code menu did not open independently: ${JSON.stringify(codeMenuContract)}`);
+        }
+        await page.click("[data-close-markdown-code-menu]");
+        const copiedMarkdownCode = await page.evaluate(() => window.__smokeCopiedMarkdownCode);
+        if (copiedMarkdownCode !== "const same = true;\\n") {
+          throw new Error(`Markdown code copy lost raw source: ${JSON.stringify(copiedMarkdownCode)}`);
+        }
+        await page.evaluate(() => {
+          navigator.clipboard.writeText = async () => { throw new Error("clipboard blocked"); };
+        });
+        await page.click('[data-toggle-markdown-code-menu="markdown-code:smoke-markdown-code:2"]');
+        await page.click("[data-close-markdown-code-menu]");
+        await page.waitForSelector(".growl.fail", { state: "visible", timeout: 10_000 });
+        const failedCodeCopy = await page.locator(".growl.fail").textContent();
+        if (failedCodeCopy !== "Copy failed") {
+          throw new Error(`Markdown code copy failure feedback was unclear: ${JSON.stringify(failedCodeCopy)}`);
+        }
+        await page.evaluate(() => {
+          render = window.__smokeMarkdownRender;
+          state.renderedViewHtml = "";
+          render();
+        });
+
         await page.evaluate(() => {
           state.renderedViewHtml = "";
           render();

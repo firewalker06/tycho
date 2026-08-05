@@ -3347,6 +3347,8 @@ module RemoteServerTest
            "expected rendered markdown links to have readable underline spacing")
     assert(css[:body].include?("white-space: pre"),
            "expected rendered markdown code blocks to preserve whitespace")
+    assert(css[:body].include?(".markdown-code-menu") && css[:body].include?(".markdown-code-menu-popover"),
+           "expected rendered Markdown code blocks to style compact action menus")
     assert(css[:body].include?("overflow-wrap: anywhere"),
            "expected rendered markdown inline code to avoid horizontal page overflow")
     assert(css[:body].include?(".skill-flyout"), "expected skills to use a floating picker")
@@ -4699,7 +4701,16 @@ module RemoteServerTest
            "expected Remote UI to support #attachment/:id routes")
     assert(js[:body].include?("function renderMarkdown"),
            "expected markdown attachments to render as markdown")
-    assert(js[:body].include?("renderMarkdown(content, { breaks: true })") &&
+    assert(js[:body].include?("function prepareMarkdownCodeBlocks") &&
+           js[:body].include?("function renderMarkdownCodeMenu"),
+           "expected fenced Markdown code blocks to expose reusable action menus")
+    assert(js[:body].include?("data-toggle-markdown-code-menu") &&
+           js[:body].include?("data-close-markdown-code-menu"),
+           "expected Markdown code menus to support isolated toggles and copy actions")
+    assert(js[:body].include?("markdownMenuScope: `conversation:${index}:${blockStateToken(block)}`") &&
+           js[:body].include?("menuScope: `attachment:${id}`"),
+           "expected Markdown code menus to use their owning message or attachment as a stable scope")
+    assert(js[:body].include?("renderMarkdown(content, { breaks: true, menuScope: `attachment:${id}` })") &&
            js[:body].include?("breaks: options.breaks === true"),
            "expected only markdown attachment call sites to opt into single-newline breaks")
     assert(js[:body].include?("function renderHtmlAttachment") &&
@@ -4734,7 +4745,7 @@ module RemoteServerTest
     assert(js[:body].include?("https://cdn.jsdelivr.net/npm/dompurify@"),
            "expected markdown rendering to sanitize parsed HTML with DOMPurify")
     assert(js[:body].include?("https://cdn.jsdelivr.net/npm/mermaid@11.15.0/") &&
-           js[:body].include?("function prepareMermaidBlocks") &&
+           js[:body].include?("function prepareMarkdownCodeBlocks") &&
            js[:body].include?("function queueMermaidRendering"),
            "expected Mermaid code fences to lazy-load and render through a pinned CDN build")
     assert(js[:body].include?('securityLevel: "strict"'),
