@@ -2,6 +2,7 @@
 
 require "digest"
 require "json"
+require "uri"
 
 require_relative "constants"
 require_relative "file_store"
@@ -29,6 +30,27 @@ module HQ
       return false if value.empty?
 
       enabled.any? { |subscription| subscription["endpoint"] == value }
+    end
+
+    def status(endpoint)
+      subscription = all.find { |candidate| candidate["endpoint"] == endpoint.to_s }
+      return { subscribed: false } unless subscription
+
+      {
+        subscribed: subscription["disabled_at"].to_s.empty?,
+        subscription_id: subscription["id"],
+        endpoint_host: endpoint_host(subscription["endpoint"]),
+        user_agent: subscription["user_agent"],
+        created_at: subscription["created_at"],
+        last_seen_at: subscription["last_seen_at"],
+        last_attempted_at: subscription["last_attempted_at"],
+        last_accepted_at: subscription["last_accepted_at"],
+        last_failed_at: subscription["last_failed_at"],
+        last_response_code: subscription["last_response_code"],
+        last_error_class: subscription["last_error_class"],
+        failure_count: subscription["failure_count"].to_i,
+        disabled_at: subscription["disabled_at"]
+      }
     end
 
     def save_subscription(attrs, user_agent: nil)
@@ -78,21 +100,53 @@ module HQ
       disabled
     end
 
-    def record_failure(endpoint)
+    def record_success(endpoint, response_code: nil)
+      update_delivery(endpoint) do |subscription, now|
+        subscription["failure_count"] = 0
+        subscription["last_attempted_at"] = now
+        subscription["last_accepted_at"] = now
+        subscription["last_response_code"] = integer_or_nil(response_code)
+        subscription["last_error_class"] = nil
+      end
+    end
+
+    def record_failure(endpoint, response_code: nil, error_class: nil)
+      update_delivery(endpoint) do |subscription, now|
+        subscription["failure_count"] = subscription["failure_count"].to_i + 1
+        subscription["last_attempted_at"] = now
+        subscription["last_failed_at"] = now
+        subscription["last_response_code"] = integer_or_nil(response_code)
+        subscription["last_error_class"] = error_class.to_s.empty? ? nil : error_class.to_s
+      end
+    end
+
+    private
+
+    def update_delivery(endpoint)
       endpoint = endpoint.to_s
       subscriptions = all
       changed = false
+      now = Time.now.utc.iso8601
       subscriptions.each do |subscription|
         next unless subscription["endpoint"] == endpoint
 
-        subscription["failure_count"] = subscription["failure_count"].to_i + 1
-        subscription["updated_at"] = Time.now.utc.iso8601
+        yield subscription, now
+        subscription["updated_at"] = now
         changed = true
       end
       write(subscriptions) if changed
     end
 
-    private
+    def integer_or_nil(value)
+      text = value.to_s
+      text.match?(/\A\d+\z/) ? text.to_i : nil
+    end
+
+    def endpoint_host(endpoint)
+      URI.parse(endpoint.to_s).host.to_s
+    rescue URI::InvalidURIError
+      "invalid"
+    end
 
     def read
       parsed = FileStore.read_json(@path, fallback: [])

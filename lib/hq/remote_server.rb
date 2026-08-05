@@ -427,7 +427,14 @@ module HQ
       when "/ui.js"
         ui_asset("application/javascript; charset=utf-8", RemoteUI.js)
       when "/service-worker.js"
-        ui_asset("application/javascript; charset=utf-8", RemoteUI.service_worker_js)
+        ui_asset(
+          "application/javascript; charset=utf-8",
+          RemoteUI.service_worker_js,
+          headers: {
+            "Cache-Control" => "no-cache, max-age=0, must-revalidate",
+            "Service-Worker-Allowed" => "/"
+          }
+        )
       when "/manifest.webmanifest"
         ui_asset("application/manifest+json; charset=utf-8", RemoteUI.manifest_json)
       when "/remote-logo.png", "/favicon.png", "/favicon.ico"
@@ -449,8 +456,13 @@ module HQ
       end
     end
 
-    def ui_asset(content_type, body)
-      { status: 200, content_type: content_type, body: body }
+    def ui_asset(content_type, body, headers: {})
+      {
+        status: 200,
+        content_type: content_type,
+        body: body,
+        headers: { "X-Tycho-Asset-Version" => RemoteUI.asset_version }.merge(headers)
+      }
     end
 
     def ui_request?(request)
@@ -2318,10 +2330,9 @@ module HQ
     end
 
     def push_status(attrs)
-      {
-        subscribed: @push_subscription_store.enabled_endpoint?(attrs["endpoint"]),
+      @push_subscription_store.status(attrs["endpoint"]).merge(
         subscription_count: @push_subscription_store.count
-      }
+      )
     end
 
     def save_push_subscription(attrs, user_agent: nil)

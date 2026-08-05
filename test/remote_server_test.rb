@@ -2799,8 +2799,13 @@ module RemoteServerTest
       )
       assert(saved[:subscribed], "expected subscription save response")
       assert(saved[:subscription_count] == 1, "expected one enabled subscription")
-      assert(service.push_status("endpoint" => "https://push.example.test/subscription/1")[:subscribed],
+      current_status = service.push_status("endpoint" => "https://push.example.test/subscription/1")
+      assert(current_status[:subscribed],
              "expected push config to identify the current browser subscription")
+      assert(current_status[:endpoint_host] == "push.example.test" && current_status[:user_agent] == "Remote UI test",
+             "expected push status to expose provider and browser diagnostics")
+      assert(!current_status.key?(:endpoint) && !current_status.key?(:p256dh) && !current_status.key?(:auth),
+             "expected push status to keep capability URLs and encryption keys private")
       assert(!service.push_status("endpoint" => "https://push.example.test/subscription/other")[:subscribed],
              "expected push config not to confuse another browser subscription with this browser")
 
@@ -3085,6 +3090,12 @@ module RemoteServerTest
 
     service_worker = server.send(:route_ui, "/service-worker.js")
     assert(service_worker[:content_type].include?("javascript"), "expected service worker route to return JavaScript")
+    assert(service_worker.dig(:headers, "Service-Worker-Allowed") == "/",
+           "expected the service worker route to declare root scope")
+    assert(service_worker.dig(:headers, "Cache-Control").include?("no-cache"),
+           "expected the browser to revalidate service worker updates")
+    assert(service_worker.dig(:headers, "X-Tycho-Asset-Version") == HQ::RemoteUI.asset_version,
+           "expected service worker responses to identify their loaded daemon build")
     assert(service_worker[:body].include?("skipWaiting"), "expected service worker updates to activate immediately")
     assert(service_worker[:body].include?("clients.claim"), "expected service worker updates to claim active clients")
     assert(service_worker[:body].include?("showNotification"), "expected service worker to display push notifications")

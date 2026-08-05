@@ -94,7 +94,7 @@ module HQ
           "vapid_public_key=#{presence_label(keys[:public_key])} " \
           "vapid_private_key=#{presence_label(keys[:private_key])}"
       end
-      WebPush.payload_send(
+      response = WebPush.payload_send(
         message: message,
         endpoint: subscription.fetch("endpoint"),
         p256dh: subscription.fetch("p256dh"),
@@ -111,16 +111,31 @@ module HQ
         open_timeout: 5,
         read_timeout: 5
       )
-      HQ.logger.debug("Push") { "Push delivered endpoint=#{endpoint_label(subscription["endpoint"])}" }
+      @subscription_store.record_success(subscription["endpoint"], response_code: response&.code)
+      HQ.logger.debug("Push") do
+        "Push provider accepted endpoint=#{endpoint_label(subscription["endpoint"])} " \
+          "host=#{endpoint_host(subscription["endpoint"])} " \
+          "response_code=#{response&.code || "unknown"} response_message=#{response&.message.to_s.inspect}"
+      end
       :sent
     rescue WebPush::ExpiredSubscription, WebPush::InvalidSubscription => e
+      record_delivery_failure(subscription, e)
       @subscription_store.disable(subscription["endpoint"])
       log_delivery_failure(subscription, e, disabled: true)
       :disabled
     rescue StandardError => e
-      @subscription_store.record_failure(subscription["endpoint"])
+      record_delivery_failure(subscription, e)
       log_delivery_failure(subscription, e, disabled: false)
       :failed
+    end
+
+    def record_delivery_failure(subscription, error)
+      response = error.respond_to?(:response) ? error.response : nil
+      @subscription_store.record_failure(
+        subscription["endpoint"],
+        response_code: response&.code,
+        error_class: error.class.name
+      )
     end
 
     def log_delivery_failure(subscription, error, disabled:)
