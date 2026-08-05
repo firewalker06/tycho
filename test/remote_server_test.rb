@@ -2799,10 +2799,16 @@ module RemoteServerTest
       )
       assert(saved[:subscribed], "expected subscription save response")
       assert(saved[:subscription_count] == 1, "expected one enabled subscription")
+      assert(service.push_status("endpoint" => "https://push.example.test/subscription/1")[:subscribed],
+             "expected push config to identify the current browser subscription")
+      assert(!service.push_status("endpoint" => "https://push.example.test/subscription/other")[:subscribed],
+             "expected push config not to confuse another browser subscription with this browser")
 
       disabled = service.disable_push_subscription("endpoint" => "https://push.example.test/subscription/1")
       assert(!disabled[:subscribed], "expected unsubscribe response")
       assert(disabled[:subscription_count].zero?, "expected disabled subscription to be excluded from count")
+      assert(!service.push_status("endpoint" => "https://push.example.test/subscription/1")[:subscribed],
+             "expected push config to expose a disabled browser subscription as inactive")
     end
   end
 
@@ -4199,6 +4205,14 @@ module RemoteServerTest
            "expected Remote UI to warn when MagicDNS is not HTTPS")
     assert(js[:body].include?("navigator.serviceWorker.register"),
            "expected Remote UI to register the service worker")
+    assert(js[:body].include?("await navigator.serviceWorker.ready"),
+           "expected push setup to wait for the active service worker")
+    assert(js[:body].include?('push.subscribed === true') &&
+           js[:body].include?('apiPost("/push/status", { endpoint: existing.endpoint })'),
+           "expected push controls to track this browser instead of the global subscription count")
+    assert(js[:body].include?("await existing.unsubscribe()") &&
+           js[:body].include?("pushSubscriptionApplicationServerKey"),
+           "expected push setup to replace expired or VAPID-mismatched browser subscriptions")
     assert(js[:body].include?("function renderAgentForm"),
            "expected Remote UI to render create/edit agent forms")
     assert(!js[:body].include?('name="workspace"'),

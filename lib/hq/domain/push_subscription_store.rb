@@ -24,6 +24,13 @@ module HQ
       enabled.length
     end
 
+    def enabled_endpoint?(endpoint)
+      value = endpoint.to_s
+      return false if value.empty?
+
+      enabled.any? { |subscription| subscription["endpoint"] == value }
+    end
+
     def save_subscription(attrs, user_agent: nil)
       endpoint = attrs["endpoint"].to_s.strip
       keys = attrs["keys"].is_a?(Hash) ? attrs["keys"] : {}

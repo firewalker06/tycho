@@ -12,6 +12,14 @@ This note explains how Tycho Remote UI uses browser push notifications, notifica
 6. When the Remote UI page is open, `syncUnreadAlert()` also mirrors the unread-agent count into the app badge so foreground state and background push state stay aligned.
 7. Notification clicks focus an existing Tycho Remote tab when possible, otherwise they open the payload URL, usually `/#agent/{key}`.
 
+## Subscription Lifecycle
+
+Push-service endpoints can expire while the browser still retains a local `PushSubscription`. Windows Edge subscriptions use Windows Notification Service endpoints, while Chrome commonly uses Firebase Cloud Messaging endpoints. Both can return HTTP 404 or 410 after invalidating an endpoint.
+
+Tycho treats those responses as permanent: it disables the saved endpoint instead of retrying it. Transient failures such as HTTP 429 or 5xx remain enabled and increment their failure count. Settings checks the current browser's endpoint through `POST /push/status`; it does not infer this browser's state from the global subscription count. If the server has retired the local endpoint, or its application-server key differs from Tycho's current VAPID public key, **Enable notifications** unsubscribes it and creates a fresh subscription.
+
+Push endpoints are capability URLs. Tycho sends them in authenticated request bodies, not query strings, so normal URL logging does not expose them.
+
 ## Grouping Model
 
 The Web Notifications API does not provide a portable native "group" primitive like some mobile notification frameworks do. The closest standard tool is the notification `tag` option:
@@ -83,6 +91,16 @@ Example agent payload:
 - `lib/hq/remote_ui/assets/service-worker.js`: receives push events, displays notifications, and updates badges in the background.
 - `lib/hq/remote_ui/assets/app.js`: mirrors unread-agent state to the header logo badge and the installed PWA app badge.
 - `test/remote_server_test.rb`: regression coverage for push payload shape, service worker behavior, and Remote UI hooks.
+- `test/web_push_notifier_test.rb`: delivery-error coverage for permanent and transient subscription failures.
+
+## Windows Edge/Chrome Verification
+
+1. Update Tycho, start `bundle exec bin/tycho serve`, and open its HTTPS URL in the installed Edge or Chrome PWA on Windows.
+2. Open **Settings → Notifications**. Confirm it says either **Enabled — This browser is subscribed** or **Ready — This browser is not subscribed**; the total may include other devices.
+3. If it says **Ready**, select **Enable notifications** and accept the Windows/browser permission prompt.
+4. Select **Send test**. Confirm a Tycho notification appears in Windows Notification Center while the PWA is minimized or closed.
+5. Complete a disposable agent run. Confirm one completion notification arrives and opens that agent when selected.
+6. If delivery fails, open DevTools in the PWA, select **Application → Service workers**, and confirm `/service-worker.js` is active for the Tycho origin. Then check Windows **Settings → System → Notifications** for both the browser and installed Tycho PWA, and inspect `~/.tycho/logs/hq.log` on the Tycho host for the endpoint host plus HTTP response code. Do not copy or share the full endpoint.
 
 ## Improvement Ideas
 
