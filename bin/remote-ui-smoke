@@ -2958,6 +2958,49 @@ def write_smoke_script(path)
             !["auto", "scroll"].includes(quickAgentMobileLayout.formOverflowY)) {
           throw new Error(`Quick Agent form is not a scrollable mobile full-screen surface: ${JSON.stringify(quickAgentMobileLayout)}`);
         }
+        await mobileQuickAgentPage.evaluate((key) => {
+          closeQuickAgent();
+          const agent = findAgent(key);
+          agent.attachments = Array.from({ length: 5 }, (_, index) => ({
+            id: `mobile-attachment-${index}`,
+            agent_key: key,
+            type: "file",
+            title: `report-${index + 1}.html`,
+            path: `/Users/smoke/Code/example-project/very-long-report-directory/report-${index + 1}.html`,
+            blob_path: `/attachments/mobile-attachment-${index}/blob`,
+            format: "html",
+          }));
+          history.replaceState(null, "", routeHash({ type: "agent", key }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
+        await mobileQuickAgentPage.waitForSelector("[data-toggle-attachments]", { state: "visible", timeout: 10_000 });
+        await mobileQuickAgentPage.click("[data-toggle-attachments]");
+        await mobileQuickAgentPage.waitForSelector("[data-attachment-flyout]:not(.hidden)", { state: "visible", timeout: 10_000 });
+        const mobileAttachmentFlyout = await mobileQuickAgentPage.evaluate(() => {
+          const flyout = document.querySelector("[data-attachment-flyout]:not(.hidden)");
+          const header = flyout?.querySelector(".attachment-panel-header");
+          const dock = document.querySelector("[data-agent-dock]");
+          const flyoutRect = flyout?.getBoundingClientRect();
+          const headerRect = header?.getBoundingClientRect();
+          const headerHit = headerRect
+            ? document.elementFromPoint(headerRect.left + headerRect.width / 2, headerRect.top + headerRect.height / 2)
+            : null;
+          return {
+            viewport: { width: window.innerWidth, height: window.innerHeight },
+            flyout: flyoutRect?.toJSON(),
+            dock: dock?.getBoundingClientRect().toJSON(),
+            dockOverflowY: dock ? getComputedStyle(dock).overflowY : "",
+            headerVisible: Boolean(headerHit && flyout?.contains(headerHit)),
+          };
+        });
+        if (!mobileAttachmentFlyout.headerVisible || mobileAttachmentFlyout.flyout?.top < 0 ||
+            mobileAttachmentFlyout.flyout?.left < 0 ||
+            mobileAttachmentFlyout.flyout?.right > mobileAttachmentFlyout.viewport.width ||
+            mobileAttachmentFlyout.flyout?.bottom > mobileAttachmentFlyout.viewport.height) {
+          throw new Error(`Conversation attachments are cropped on mobile: ${JSON.stringify(mobileAttachmentFlyout)}`);
+        }
         await mobileQuickAgentPage.close();
         const loopAgentKey = await page.evaluate(async () => {
           const data = await apiPost("/agents", {

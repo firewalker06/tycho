@@ -3392,6 +3392,8 @@ module RemoteServerTest
            "expected the skill flyout to stack above the floating Summary shortcut")
     assert(css[:body].include?(".agent-dock:has(.attachment-flyout:not(.hidden))"),
            "expected the attachment flyout to stack above the skill flyout")
+    assert(css[:body].include?(".agent-dock:has(.attachment-flyout:not(.hidden)) {\n    overflow: visible;"),
+           "expected mobile attachment flyouts to escape the scrollable composer dock")
     assert(!css[:body].include?(".server-lifecycle-card"),
            "expected Settings restart readiness to use the normal automation readiness card")
     assert(css[:body].include?("#settings-push-notifications"),
