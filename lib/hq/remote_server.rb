@@ -339,6 +339,7 @@ module HQ
       return ok(service.search_index) if method == "GET" && parts == ["search"]
       return accepted(schedule_restart!, headers: RESTART_CACHE_RESET_HEADERS) if method == "POST" && parts == ["server", "restart"]
       return ok(service.push_config) if method == "GET" && parts == ["push", "config"]
+      return ok(service.push_status(body)) if method == "POST" && parts == ["push", "status"]
       return service.attachment_blob(parts[1]) if method == "GET" && parts.length == 3 && parts.first == "attachments" && parts[2] == "blob"
       return ok(service.delete_attachment(parts[1])) if method == "DELETE" && parts.length == 2 && parts.first == "attachments"
       return ok(attachment: service.attachment(parts[1])) if method == "GET" && parts.length == 2 && parts.first == "attachments"
@@ -2314,6 +2315,13 @@ module HQ
         localhost_allowed: true,
         magic_dns_https_required: true
       )
+    end
+
+    def push_status(attrs)
+      {
+        subscribed: @push_subscription_store.enabled_endpoint?(attrs["endpoint"]),
+        subscription_count: @push_subscription_store.count
+      }
     end
 
     def save_push_subscription(attrs, user_agent: nil)

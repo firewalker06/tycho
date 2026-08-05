@@ -54,21 +54,26 @@ module HQ
           "endpoint=#{endpoint_label(endpoint)} enabled=#{enabled_count} matched=#{subscriptions.length} " \
           "urgency=#{urgency} ttl=#{ttl}"
       end
-      return { sent: 0, failed: 0, attempted: 0 } if subscriptions.empty?
+      return { sent: 0, failed: 0, attempted: 0, disabled: 0 } if subscriptions.empty?
 
       attempted = 0
       sent = 0
       failed = 0
+      disabled = 0
       subscriptions.each do |subscription|
         attempted += 1
-        if deliver(subscription, payload, urgency: urgency, ttl: ttl)
+        result = deliver(subscription, payload, urgency: urgency, ttl: ttl)
+        if result == :sent
           sent += 1
         else
           failed += 1
+          disabled += 1 if result == :disabled
         end
       end
-      HQ.logger.debug("Push") { "Push send complete attempted=#{attempted} sent=#{sent} failed=#{failed}" }
-      { sent: sent, failed: failed, attempted: attempted }
+      HQ.logger.debug("Push") do
+        "Push send complete attempted=#{attempted} sent=#{sent} failed=#{failed} disabled=#{disabled}"
+      end
+      { sent: sent, failed: failed, attempted: attempted, disabled: disabled }
     end
 
     private
@@ -107,15 +112,23 @@ module HQ
         read_timeout: 5
       )
       HQ.logger.debug("Push") { "Push delivered endpoint=#{endpoint_label(subscription["endpoint"])}" }
-      true
+      :sent
+    rescue WebPush::ExpiredSubscription, WebPush::InvalidSubscription => e
+      @subscription_store.disable(subscription["endpoint"])
+      log_delivery_failure(subscription, e, disabled: true)
+      :disabled
     rescue StandardError => e
       @subscription_store.record_failure(subscription["endpoint"])
+      log_delivery_failure(subscription, e, disabled: false)
+      :failed
+    end
+
+    def log_delivery_failure(subscription, error, disabled:)
       HQ.logger.debug("Push") do
         "Push delivery failed endpoint=#{endpoint_label(subscription["endpoint"])} " \
-          "host=#{endpoint_host(subscription["endpoint"])} #{push_failure_debug(e)}"
+          "host=#{endpoint_host(subscription["endpoint"])} disabled=#{disabled} #{push_failure_debug(error)}"
       end
-      HQ.logger.warn("Push") { "Web push send failed: #{e.class} - #{e.message}" }
-      false
+      HQ.logger.warn("Push") { "Web push send failed: #{error.class} - #{error.message}" }
     end
 
     def endpoint_label(endpoint)

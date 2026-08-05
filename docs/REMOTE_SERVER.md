@@ -345,6 +345,7 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `GET` | `/settings/session-loops` | Read Loop session interval, cutoff, and prompt-template defaults. |
 | `PATCH` | `/settings/session-loops` | Save Loop session defaults in `hq.yml`. |
 | `GET` | `/push/config` | Read browser push readiness and VAPID public key. |
+| `POST` | `/push/status` | Check whether one browser endpoint is currently enabled. |
 | `POST` | `/push/subscriptions` | Save or refresh one browser push subscription. |
 | `DELETE` | `/push/subscriptions` | Disable one browser push subscription. |
 | `POST` | `/push/test` | Send a test notification to an enabled subscription. |
@@ -712,6 +713,18 @@ Saves or refreshes one browser push subscription. Send the browser's `PushSubscr
   }
 }
 ```
+
+### `POST /push/status`
+
+Checks the current browser's subscription without exposing its capability URL in a query string:
+
+```json
+{
+  "endpoint": "https://push.example/subscription/1"
+}
+```
+
+The response includes `subscribed` for that endpoint and the global `subscription_count`. The Remote UI uses the endpoint-specific result to show the correct controls when other devices are also subscribed.
 
 ### `DELETE /push/subscriptions`
 
