@@ -1087,6 +1087,25 @@ module RemoteServerTest
         "base_sha" => "base", "head_sha" => "head", "diff_format" => HQ::PullRequestDiff::DIFF_FORMAT,
         "files" => [{ "path" => "lib/example.rb", "hunks" => [{ "lines" => [{ "kind" => "added", "new_number" => 4, "content" => "puts :ok" }] }] }]
       )
+      persisted = service.update_pull_request_review_state(
+        reference.id,
+        "selection_snapshot_id" => "snapshot-1",
+        "selections" => { "lines" => [{ "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 }] }
+      )
+      assert(persisted.dig("selections", "lines", 0, "path") == "lib/example.rb",
+             "expected valid selected lines to persist with the sibling snapshot id contract")
+      begin
+        service.update_pull_request_review_state(reference.id, "selection_snapshot_id" => "old", "selections" => { "lines" => [] })
+        raise "expected stale selected line state to fail"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409, "expected stale selected line state to return conflict")
+      end
+      begin
+        service.update_pull_request_review_state(reference.id, "selection_snapshot_id" => "snapshot-1", "selections" => [])
+        raise "expected malformed selected line state to fail"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 400, "expected malformed selected line state to return bad request")
+      end
       result = service.handoff_pull_request_review(reference.id, "agent_key" => created[:key], "note" => "Inspect this.", "start" => false, "idempotency_key" => "line-handoff-1",
                                                     "selection" => { "snapshot_id" => "snapshot-1", "lines" => [{ "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 }] })
       content = result[:conversation].last[:content]

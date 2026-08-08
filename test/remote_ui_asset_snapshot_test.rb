@@ -12,7 +12,15 @@ module RemoteUIAssetSnapshotTest
 
   def run!
     assert_loaded_daemon_keeps_one_asset_build
+    assert_handoff_retry_key_is_cleared_after_success
     puts "remote_ui_asset_snapshot_test: ok"
+  end
+
+  def assert_handoff_retry_key_is_cleared_after_success
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    response_index = javascript.index("const response = await apiPost(`/pull-requests/${encodeURIComponent(id)}/handoff`")
+    clear_index = javascript.index("delete form.dataset.handoffIdempotencyKey", response_index)
+    raise "expected a successful handoff to clear its retry key" unless response_index && clear_index && clear_index > response_index
   end
 
   def assert_loaded_daemon_keeps_one_asset_build

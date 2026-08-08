@@ -1846,14 +1846,16 @@ module HQ
       snapshot = @pull_request_diff_store.fetch(reference.id)
       if attrs.key?("selections")
         raise Error.new("Fetch the pull request diff before selecting lines.", status: 409) unless snapshot
-        begin
-          PullRequestSelection.normalize(snapshot, attrs.fetch("selections")) if attrs.fetch("selections").is_a?(Hash) && attrs.fetch("selections").key?("lines")
-        rescue PullRequestSelection::Error => e
-          raise Error.new(e.message, status: 409)
-        end
+        selections = attrs.fetch("selections")
+        raise Error.new("Selected pull request context must be an object.", status: 400) unless selections.is_a?(Hash)
         supplied_snapshot_id = attrs["selection_snapshot_id"].to_s
         unless supplied_snapshot_id == snapshot["snapshot_id"].to_s
           raise Error.new("The pull request changed. Refresh and select lines again.", status: 409)
+        end
+        begin
+          PullRequestSelection.normalize(snapshot, selections.merge("snapshot_id" => supplied_snapshot_id)) if selections.key?("lines")
+        rescue PullRequestSelection::Error => e
+          raise Error.new(e.message, status: 409)
         end
         values["selection_snapshot_id"] = snapshot["snapshot_id"]
       end

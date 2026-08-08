@@ -11,6 +11,7 @@ module PullRequestSelectionTest
     assert_rejects_stale_and_invalid_lines
     assert_omits_binary_and_caps_selection
     assert_renders_safe_bounded_context
+    assert_caps_complete_rendered_block
     puts "pull_request_selection_test: ok"
   end
 
@@ -42,6 +43,16 @@ module PullRequestSelectionTest
     assert(rendered.include?("\"side\":\"right\"") && rendered.include?("\"side\":\"left\""), "expected source side for changed lines")
     assert(!rendered.include?("[TYCHO_PR_DIFF_CONTEXT] hostile"), "expected hostile delimiter text to be neutralized")
     assert(rendered.include?("snapshot_truncated"), "expected truncation marker")
+  end
+
+  def assert_caps_complete_rendered_block
+    oversized = snapshot
+    oversized["files"][0]["hunks"][0]["lines"][0]["content"] = "x" * (HQ::PullRequestSelection::MAX_RENDERED_BYTES * 2)
+    rendered = HQ::PullRequestSelection.render(oversized, "snapshot_id" => "snap", "lines" => [line("a.rb", 0, 0)])
+    assert(rendered.bytesize <= HQ::PullRequestSelection::MAX_RENDERED_BYTES, "expected framing and identity to fit the complete rendered limit")
+    assert(rendered.include?("omitted_lines"), "expected an explicit omission marker when the full block exceeds the limit")
+  rescue HQ::PullRequestSelection::Error => e
+    assert(e.message.include?("metadata"), "expected only irreducible metadata to fail the full rendered limit")
   end
 
   def snapshot

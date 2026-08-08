@@ -8,7 +8,7 @@ module HQ
   class PullRequestSelection
     MAX_ITEMS = 100
     MAX_LINES = 250
-    MAX_BYTES = 12 * 1024
+    MAX_RENDERED_BYTES = 12 * 1024
     OPEN = "[TYCHO_PR_DIFF_CONTEXT]"
     CLOSE = "[/TYCHO_PR_DIFF_CONTEXT]"
 
@@ -43,31 +43,26 @@ module HQ
         lines = normalize(snapshot, selection)
         raise Error, "Select at least one diff line to attach." if lines.empty?
 
-        selected = []
-        omitted = 0
-        bytes = 0
-        lines.first(MAX_LINES).each do |line|
+        selected = lines.first(MAX_LINES).map do |line|
           payload = line.slice("path", "old_path", "side", "kind", "old_number", "new_number", "content")
           payload["content"] = safe_text(payload["content"])
-          encoded = JSON.generate(payload)
-          if bytes + encoded.bytesize > MAX_BYTES
-            omitted += 1
-          else
-            selected << payload
-            bytes += encoded.bytesize
-          end
+          payload
         end
-        omitted += lines.length - MAX_LINES if lines.length > MAX_LINES
 
         identity = {
           "url" => PullRequestDiff.canonical_url(snapshot.fetch("repository"), snapshot.fetch("number")),
           "repository" => snapshot["repository"], "number" => snapshot["number"],
           "snapshot_id" => snapshot["snapshot_id"], "base_sha" => snapshot["base_sha"], "head_sha" => snapshot["head_sha"]
         }.compact
-        body = { "identity" => identity, "lines" => selected }
-        body["omitted_lines"] = omitted if omitted.positive?
-        body["snapshot_truncated"] = true if snapshot["truncated"]
-        [OPEN, JSON.generate(body), CLOSE].join("\n")
+        loop do
+          omitted = lines.length - selected.length
+          rendered = render_block(identity, selected, omitted, snapshot["truncated"])
+          return rendered if rendered.bytesize <= MAX_RENDERED_BYTES
+
+          raise Error, "Pull request context metadata exceeds the #{MAX_RENDERED_BYTES / 1024} KB limit." if selected.empty?
+
+          selected.pop
+        end
       end
 
       private
@@ -107,6 +102,13 @@ module HQ
 
       def escaped_delimiter(value)
         value.tr("[]", "［］")
+      end
+
+      def render_block(identity, lines, omitted, snapshot_truncated)
+        body = { "identity" => identity, "lines" => lines }
+        body["omitted_lines"] = omitted if omitted.positive?
+        body["snapshot_truncated"] = true if snapshot_truncated
+        [OPEN, JSON.generate(body), CLOSE].join("\n")
       end
 
       def side_for(kind)
