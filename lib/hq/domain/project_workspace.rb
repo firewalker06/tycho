@@ -21,12 +21,13 @@ module HQ
       /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/,
       /\bAIza[0-9A-Za-z_-]{30,}\b/,
       /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/,
-      /\b(?:glpat|npm|pypi|hf)_[A-Za-z0-9_-]{16,}\b/,
+      /\b(?:glpat|pypi)-[A-Za-z0-9_-]{16,}\b/,
+      /\b(?:npm|hf)_[A-Za-z0-9_-]{16,}\b/,
       /\bsk-[A-Za-z0-9_-]{20,}\b/,
       /\bsk_live_[A-Za-z0-9]{16,}\b/,
       /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,
       /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|rediss|amqp|amqps):\/\/[^\s"']+/i,
-      /(?:\A|[\r\n])\s*["']?(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|database[_-]?url|db[_-]?url|password|private[_-]?key|secret|secret[_-]?key(?:[_-]?base)?|signing[_-]?key|token)["']?\s*[=:]\s*["']?(?!example\b|placeholder\b|redacted\b|changeme\b|null\b|nil\b|false\b|true\b)[^\s"']+/i
+      /(?:\A|[\r\n])\s*(?:(?:export|const|let|var)\s+)?["']?(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|database[_-]?url|db[_-]?url|password|private[_-]?key|secret|secret[_-]?key(?:[_-]?base)?|signing[_-]?key|token)["']?\s*[=:]\s*["']?(?!example\b|placeholder\b|redacted\b|changeme\b|null\b|nil\b|false\b|true\b)[^\s"']+/i
     ].freeze
 
     class Error < StandardError
