@@ -14,6 +14,7 @@ module GitHubAuthTest
   def run!
     assert_device_flow_persists_and_refreshes_session
     assert_cli_fallback_and_app_precedence
+    assert_cli_token_fetch_is_coalesced
     puts "github_auth_test: ok"
   end
 
@@ -132,6 +133,49 @@ module GitHubAuthTest
     app.authenticated = true
     assert(auth.source == "github_app" && auth.access_token == "ghu_app",
            "expected the Tycho GitHub App session to take precedence")
+  end
+
+  def assert_cli_token_fetch_is_coalesced
+    runner = BlockingCLIRunner.new
+    cli = HQ::GitHubAuth::CLI.new(
+      resolution: HQ::ExecutableResolver::Resolution.new(
+        name: "gh", command: "/fake/gh", path: "/fake/gh", source: "test"
+      ),
+      runner:
+    )
+    first = Thread.new { cli.token }
+    runner.started.pop
+    second = Thread.new { cli.token }
+
+    runner.release!
+    assert([first.value, second.value] == ["gho_cli", "gho_cli"], "expected callers to receive the cached CLI token")
+    assert(runner.calls == 1, "expected concurrent token lookups to invoke gh once")
+  end
+
+  class BlockingCLIRunner
+    attr_reader :started, :calls
+
+    def initialize
+      @started = Queue.new
+      @calls = 0
+      @lock = Mutex.new
+      @condition = ConditionVariable.new
+      @released = false
+    end
+
+    def capture3(*)
+      @calls += 1
+      @started << true
+      @lock.synchronize { @condition.wait(@lock) until @released }
+      ["gho_cli", "", GitHubAuthTest::FakeStatus.new(true)]
+    end
+
+    def release!
+      @lock.synchronize do
+        @released = true
+        @condition.broadcast
+      end
+    end
   end
 
   def assert(condition, message)

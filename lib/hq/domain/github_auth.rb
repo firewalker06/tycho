@@ -473,6 +473,7 @@ module HQ
         @runner = runner
         @timeout = timeout
         @now = now
+        @token_lock = Mutex.new
       end
 
       def available?
@@ -484,18 +485,20 @@ module HQ
       end
 
       def token
-        now = @now.call
-        return @token if defined?(@token_checked_at) && now - @token_checked_at < CACHE_TTL
+        @token_lock.synchronize do
+          now = @now.call
+          return @token if defined?(@token_checked_at) && now - @token_checked_at < CACHE_TTL
 
-        @token_checked_at = now
-        return @token = nil unless available?
+          @token_checked_at = now
+          return @token = nil unless available?
 
-        stdout, _stderr, status = Timeout.timeout(@timeout) do
-          @runner.capture3(@resolution.command, "auth", "token")
+          stdout, _stderr, status = Timeout.timeout(@timeout) do
+            @runner.capture3(@resolution.command, "auth", "token")
+          end
+          @token = status.success? ? stdout.to_s.strip : nil
+          @token = nil if @token.to_s.empty? || @token.to_s.bytesize > 4_096
+          @token
         end
-        @token = status.success? ? stdout.to_s.strip : nil
-        @token = nil if @token.to_s.empty? || @token.to_s.bytesize > 4_096
-        @token
       rescue Timeout::Error, SystemCallError
         @token = nil
       end

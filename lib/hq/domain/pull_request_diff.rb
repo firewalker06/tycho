@@ -111,8 +111,31 @@ module HQ
       end
 
       def metadata(reference)
+        metadata_with_pull(reference).first
+      end
+
+      def metadata_with_pull(reference)
         response = @client.get_json("/repos/#{reference.repository}/pulls/#{reference.number}")
         data = response.body
+        [metadata_from(reference, data, response), data]
+      rescue GitHubAPIClient::Error => e
+        raise Error.new(e.message, status: e.status)
+      end
+
+      def patch(reference)
+        response = @client.get_text(
+          "/repos/#{reference.repository}/pulls/#{reference.number}",
+          accept: "application/vnd.github.diff"
+        )
+        output, truncated = structurally_truncate(response.body)
+        [output, truncated]
+      rescue GitHubAPIClient::Error => e
+        raise Error.new(e.message, status: e.status)
+      end
+
+      private
+
+      def metadata_from(reference, data, response)
         {
           "title" => data["title"],
           "body" => data["body"],
@@ -134,22 +157,7 @@ module HQ
           "etag" => response.etag,
           "rate_limit" => response.rate_limit
         }.compact
-      rescue GitHubAPIClient::Error => e
-        raise Error.new(e.message, status: e.status)
       end
-
-      def patch(reference)
-        response = @client.get_text(
-          "/repos/#{reference.repository}/pulls/#{reference.number}",
-          accept: "application/vnd.github.diff"
-        )
-        output, truncated = structurally_truncate(response.body)
-        [output, truncated]
-      rescue GitHubAPIClient::Error => e
-        raise Error.new(e.message, status: e.status)
-      end
-
-      private
 
       def structurally_truncate(output)
         return [output, false] if output.bytesize <= MAX_PATCH_BYTES
@@ -216,8 +224,8 @@ module HQ
         "https://github.com/#{repository}/pull/#{number}"
       end
 
-      def snapshot_for(reference, provider: GitHubProvider.new)
-        metadata = provider.metadata(reference)
+      def snapshot_for(reference, provider: GitHubProvider.new, metadata: nil)
+        metadata ||= provider.metadata(reference)
         patch, truncated = provider.patch(reference)
         files = GitDiff.parse_patch_text(patch).map { |file| annotate_file(file) }
         snapshot_id = Digest::SHA256.hexdigest(
