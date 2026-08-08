@@ -32,6 +32,16 @@ module HQ
       end
     end
 
+    class SymlinkConflict < InstallError
+      attr_reader :path
+
+      def initialize(path)
+        super("Tycho will not follow the symbolic link at #{path}; replace it with a real path before retrying",
+              category: "compatibility")
+        @path = path
+      end
+    end
+
     def initialize(home: Dir.home, source_root: DEFAULT_SOURCE_ROOT, manifest_path: DEFAULT_MANIFEST_PATH)
       @home = File.expand_path(home)
       @source_root = File.expand_path(source_root)
@@ -109,7 +119,8 @@ module HQ
 
     def source_manifest
       @source_manifest ||= begin
-        parsed = JSON.parse(File.read(@manifest_path))
+        ensure_no_symlinks!(@manifest_path, root: File.dirname(@manifest_path))
+        parsed = JSON.parse(safe_binread(@manifest_path))
         validate_manifest!(parsed)
         parsed
       rescue InstallError
@@ -146,8 +157,10 @@ module HQ
     def skill_status(harness, skill)
       name = skill.fetch("name")
       directory = skill_directory(harness, name)
-      return { name: name, status: "missing", path: directory } unless File.exist?(directory)
-      unless File.directory?(directory)
+      ensure_no_managed_symlinks!(directory)
+      directory_stat = lstat_or_nil(directory)
+      return { name: name, status: "missing", path: directory } unless directory_stat
+      unless directory_stat.directory?
         return collision_status(name, directory, "The target exists but is not a directory; move it before installing")
       end
 
@@ -162,7 +175,7 @@ module HQ
 
       expected = skill.fetch("files")
       current = expected.all? do |relative_path, expected_checksum|
-        secure_equal?(checksum(File.join(directory, relative_path)), expected_checksum)
+        secure_equal?(managed_checksum(File.join(directory, relative_path)), expected_checksum)
       end
       {
         name: name,
@@ -172,15 +185,19 @@ module HQ
       }
     rescue JSON::ParserError
       collision_status(name, directory, "The Tycho ownership marker is invalid JSON; repair or remove this skill manually")
+    rescue SymlinkConflict => e
+      collision_status(name, directory, e.message)
     rescue Errno::EACCES, Errno::EPERM => e
       { name: name, status: "error", path: directory, error: permission_message(directory, e) }
     end
 
     def read_marker(directory)
       path = File.join(directory, MARKER_FILE)
-      return nil unless File.file?(path)
+      ensure_no_managed_symlinks!(path)
+      marker_stat = lstat_or_nil(path)
+      return nil unless marker_stat&.file?
 
-      JSON.parse(File.read(path))
+      JSON.parse(safe_binread(path))
     end
 
     def owned_marker?(marker, name)
@@ -191,18 +208,27 @@ module HQ
     def installed_files_unchanged?(directory, marker)
       marker.fetch("files").all? do |relative_path, installed_checksum|
         validate_relative_path!(relative_path)
-        secure_equal?(checksum(File.join(directory, relative_path)), installed_checksum)
+        secure_equal?(managed_checksum(File.join(directory, relative_path)), installed_checksum)
       end
     end
 
     def install_skill(harness, skill)
       destination = skill_directory(harness, skill.fetch("name"))
-      raise InstallError.new("A skill already exists at #{destination}", category: "compatibility") if File.exist?(destination)
+      ensure_no_managed_symlinks!(destination)
+      if path_exists?(destination)
+        raise InstallError.new("A skill already exists at #{destination}", category: "compatibility")
+      end
 
       parent = File.dirname(destination)
+      ensure_no_managed_symlinks!(parent)
       FileUtils.mkdir_p(parent)
+      ensure_no_managed_symlinks!(parent)
       staging = Dir.mktmpdir(".tycho-skill-", parent)
       populate_skill(staging, skill)
+      ensure_no_managed_symlinks!(destination)
+      if path_exists?(destination)
+        raise InstallError.new("A skill appeared at #{destination}; Tycho left it unchanged", category: "compatibility")
+      end
       File.rename(staging, destination)
       staging = nil
     ensure
@@ -211,24 +237,27 @@ module HQ
 
     def update_skill(harness, skill)
       destination = skill_directory(harness, skill.fetch("name"))
+      ensure_safe_managed_skill!(destination, skill)
       parent = File.dirname(destination)
+      ensure_no_managed_symlinks!(parent)
       staging = Dir.mktmpdir(".tycho-skill-", parent)
       FileUtils.copy_entry(destination, staging, false, false, true)
       populate_skill(staging, skill)
       backup = File.join(parent, ".#{skill.fetch("name")}.tycho-backup-#{SecureRandom.hex(6)}")
+      ensure_safe_managed_skill!(destination, skill)
       File.rename(destination, backup)
       begin
         File.rename(staging, destination)
         staging = nil
       rescue StandardError
-        File.rename(backup, destination) unless File.exist?(destination)
+        File.rename(backup, destination) unless path_exists?(destination)
         raise
       end
       FileUtils.remove_entry(backup)
       backup = nil
     ensure
       FileUtils.remove_entry(staging) if staging && File.exist?(staging)
-      if backup && File.exist?(backup) && !File.exist?(destination)
+      if backup && path_exists?(backup) && !path_exists?(destination)
         File.rename(backup, destination)
       end
     end
@@ -238,7 +267,7 @@ module HQ
       skill.fetch("files").each do |relative_path, expected_checksum|
         destination = File.join(directory, relative_path)
         FileUtils.mkdir_p(File.dirname(destination))
-        atomic_write(destination, File.binread(source_file(skill.fetch("name"), relative_path)))
+        atomic_write(destination, safe_binread(source_file(skill.fetch("name"), relative_path)))
         installed_files[relative_path] = expected_checksum
       end
       marker = {
@@ -253,6 +282,7 @@ module HQ
     end
 
     def atomic_write(path, content)
+      ensure_no_symlinks!(path, root: File.dirname(path))
       temp = File.join(File.dirname(path), ".#{File.basename(path)}.tmp-#{SecureRandom.hex(6)}")
       File.open(temp, File::WRONLY | File::CREAT | File::EXCL, 0o600) do |file|
         file.binmode
@@ -350,7 +380,9 @@ module HQ
     end
 
     def source_file(name, relative_path)
-      File.join(@source_root, name, relative_path)
+      path = File.join(@source_root, name, relative_path)
+      ensure_no_symlinks!(path, root: @source_root)
+      path
     end
 
     def validate_relative_path!(path)
@@ -373,9 +405,63 @@ module HQ
     end
 
     def checksum(path)
-      Digest::SHA256.file(path).hexdigest
+      Digest::SHA256.hexdigest(safe_binread(path))
     rescue Errno::ENOENT
       ""
+    end
+
+    def managed_checksum(path)
+      ensure_no_managed_symlinks!(path)
+      checksum(path)
+    end
+
+    def safe_binread(path)
+      File.open(path, File::RDONLY | File::NOFOLLOW, &:read)
+    end
+
+    def ensure_safe_managed_skill!(directory, skill)
+      ensure_no_managed_symlinks!(directory)
+      marker = read_marker(directory)
+      marker_paths = marker && marker["files"].is_a?(Hash) ? marker["files"].keys : []
+      managed_paths = skill.fetch("files").keys + marker_paths
+      managed_paths.uniq.each do |relative_path|
+        validate_relative_path!(relative_path)
+        ensure_no_managed_symlinks!(File.join(directory, relative_path))
+      end
+    end
+
+    def ensure_no_managed_symlinks!(path)
+      ensure_no_symlinks!(path, root: @home)
+    end
+
+    def ensure_no_symlinks!(path, root:)
+      root = File.expand_path(root)
+      path = File.expand_path(path)
+      unless path == root || path.start_with?("#{root}#{File::SEPARATOR}")
+        raise InstallError.new("Unsafe Tycho skill path: #{path}", category: "compatibility")
+      end
+
+      relative = path.delete_prefix(root).delete_prefix(File::SEPARATOR)
+      components = [root]
+      relative.split(File::SEPARATOR).reject(&:empty?).each do |component|
+        components << File.join(components.last, component)
+      end
+      components.each do |component|
+        stat = File.lstat(component)
+        raise SymlinkConflict, component if stat.symlink?
+      rescue Errno::ENOENT
+        break
+      end
+    end
+
+    def path_exists?(path)
+      !lstat_or_nil(path).nil?
+    end
+
+    def lstat_or_nil(path)
+      File.lstat(path)
+    rescue Errno::ENOENT
+      nil
     end
 
     def secure_equal?(left, right)

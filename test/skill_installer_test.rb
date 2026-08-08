@@ -14,6 +14,7 @@ module SkillInstallerTest
     assert_supported_harness_paths_and_idempotent_install
     assert_outdated_skill_updates_without_removing_extra_files
     assert_unowned_and_locally_modified_skills_are_preserved
+    assert_symlinked_managed_paths_are_rejected
     assert_permission_and_partial_failures_are_actionable
     puts "skill_installer_test: ok"
   end
@@ -101,6 +102,92 @@ module SkillInstallerTest
     end
   end
 
+  def assert_symlinked_managed_paths_are_rejected
+    with_installer do |installer, home, _source, _manifest|
+      external = File.join(home, "external-target-root")
+      FileUtils.mkdir_p(external)
+      File.symlink(external, File.join(home, ".agents"))
+      status = installer.status("codex")
+      assert(status[:status] == "conflict", "expected symlinked target root to be a conflict")
+      begin
+        installer.apply(harness: "codex", action: "install")
+        raise "expected symlinked target root to block install"
+      rescue HQ::SkillInstaller::InstallError => e
+        assert(e.category == "compatibility", "expected symlinked target root to be a compatibility error")
+      end
+      assert(Dir.children(external).empty?, "expected symlinked target root to remain unchanged")
+    end
+
+    assert_symlink_conflict("target skill directory") do |home, target, external|
+      FileUtils.mv(target, external)
+      File.symlink(external, target)
+    end
+
+    assert_symlink_conflict("ownership marker") do |_home, target, external|
+      marker = File.join(target, HQ::SkillInstaller::MARKER_FILE)
+      FileUtils.mv(marker, external)
+      File.symlink(external, marker)
+    end
+
+    assert_symlink_conflict("managed file") do |_home, target, external|
+      managed_file = File.join(target, "SKILL.md")
+      FileUtils.mv(managed_file, external)
+      File.symlink(external, managed_file)
+    end
+
+    with_installer do |installer, _home, source, manifest|
+      nested_source = File.join(source, "tycho", "docs", "reference.md")
+      FileUtils.mkdir_p(File.dirname(nested_source))
+      File.write(nested_source, "managed reference")
+      write_manifest(manifest, source, version: "1")
+      installer.apply(harness: "codex", action: "install")
+      target = installer.status("codex").dig(:skills, 0, :path)
+      nested_directory = File.join(target, "docs")
+      external = File.join(File.dirname(target), "external-managed-component")
+      FileUtils.mv(nested_directory, external)
+      File.symlink(external, nested_directory)
+
+      assert_blocked_symlink_update(installer, "managed path component", external, "reference.md")
+    end
+  end
+
+  def assert_symlink_conflict(label)
+    with_installer do |installer, home, _source, _manifest|
+      installer.apply(harness: "codex", action: "install")
+      target = installer.status("codex").dig(:skills, 0, :path)
+      external = File.join(home, "external-#{label.tr(" ", "-")}")
+      yield home, target, external
+
+      assert_blocked_symlink_update(installer, label, external)
+    end
+  end
+
+  def assert_blocked_symlink_update(installer, label, external, nested_file = nil)
+    before = nested_file ? File.binread(File.join(external, nested_file)) : external_snapshot(external)
+    status = installer.status("codex")
+    assert(status[:status] == "conflict", "expected symlinked #{label} to be a conflict")
+    assert(status.dig(:skills, 0, :error).include?("will not follow"),
+           "expected symlinked #{label} to explain the safe refusal")
+    begin
+      installer.apply(harness: "codex", action: "update")
+      raise "expected symlinked #{label} to block update"
+    rescue HQ::SkillInstaller::InstallError => e
+      assert(e.category == "compatibility", "expected symlinked #{label} to be a compatibility error")
+    end
+    after = nested_file ? File.binread(File.join(external, nested_file)) : external_snapshot(external)
+    assert(after == before, "expected symlinked #{label} target to remain unchanged")
+  end
+
+  def external_snapshot(path)
+    return File.binread(path) if File.file?(path)
+
+    Dir.glob(File.join(path, "**", "*"), File::FNM_DOTMATCH).sort.filter_map do |entry|
+      next unless File.file?(entry)
+
+      [entry.delete_prefix("#{path}/"), File.binread(entry)]
+    end
+  end
+
   def assert_permission_and_partial_failures_are_actionable
     with_installer do |installer, home, _source, _manifest|
       locked = File.join(home, ".agents")
@@ -157,10 +244,15 @@ module SkillInstallerTest
 
   def write_manifest(path, source, version:)
     skills = Dir.children(source).sort.map do |name|
-      skill_path = File.join(source, name, "SKILL.md")
+      skill_root = File.join(source, name)
+      files = Dir.glob(File.join(skill_root, "**", "*"), File::FNM_DOTMATCH).sort.filter_map do |skill_path|
+        next unless File.file?(skill_path)
+
+        [skill_path.delete_prefix("#{skill_root}/"), Digest::SHA256.file(skill_path).hexdigest]
+      end.to_h
       {
         "name" => name,
-        "files" => { "SKILL.md" => Digest::SHA256.file(skill_path).hexdigest }
+        "files" => files
       }
     end
     File.write(path, JSON.pretty_generate({

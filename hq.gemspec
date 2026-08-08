@@ -21,6 +21,8 @@ Gem::Specification.new do |spec|
   spec.executables = %w[tycho]
   spec.require_paths = ["lib"]
   spec.files = Dir.glob("lib/**/*.rb") +
+               %w[lib/hq/skill_assets.json] +
+               Dir.glob("lib/hq/skill_assets/**/*").select { |path| File.file?(path) } +
                Dir.glob("lib/hq/remote_ui/**/*").select { |path| File.file?(path) } +
                Dir.glob("bin/*") +
                %w[

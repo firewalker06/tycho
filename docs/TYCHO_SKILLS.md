@@ -19,7 +19,7 @@ Each skill lives in `<root>/tycho/SKILL.md`. Tycho places a `.tycho-owned.json` 
 - **Missing**: no `tycho` directory exists. **Install** is available.
 - **Installed**: the source version, ownership marker, and file checksums match. Repeated install or update requests make no changes.
 - **Outdated**: a valid, unmodified Tycho-owned installation differs from the bundled source. **Update** is available.
-- **Blocked**: the name belongs to an unmarked skill, the ownership marker is invalid, or a managed file has local edits. Tycho does not overwrite it.
+- **Blocked**: the name belongs to an unmarked skill, the ownership marker is invalid, a managed file has local edits, or a target/managed path is a symbolic link. Tycho does not overwrite or follow it.
 - **Error**: Tycho cannot read its bundled source or the target path. The UI reports whether the problem is a permission, network/source, or compatibility failure and gives the affected path.
 
 Install and update require a confirmation in the Remote UI and `{"confirmed":true}` through the Remote API. Updates build a staged copy, preserve extra files in the Tycho-owned directory, atomically replace managed files, and roll back the directory swap if replacement fails. Other skill directories are never changed.
