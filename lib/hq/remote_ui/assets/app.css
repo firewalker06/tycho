@@ -1591,6 +1591,9 @@ select {
   white-space: pre-wrap;
 }
 
+.pr-line-selection { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pr-line-selection span { color: var(--muted); }
+
 @media (max-width: 700px) {
   .pr-review-workspace .card-title,
   .pr-review-workspace .button-row,
@@ -3225,10 +3228,12 @@ select {
 
 .diff-line {
   display: grid;
-  grid-template-columns: 5ch 5ch 2ch minmax(40ch, 1fr);
+  grid-template-columns: 22px 5ch 5ch 2ch minmax(40ch, 1fr);
   min-height: 20px;
   padding: 0 12px;
 }
+
+.diff-line.selected { outline: 1px solid var(--accent); outline-offset: -1px; }
 
 .diff-line.added {
   background: color-mix(in srgb, var(--ok) 14%, transparent);
@@ -3300,7 +3305,7 @@ select {
   }
 
   .diff-line {
-    grid-template-columns: 4.5ch 4.5ch 2ch minmax(36ch, 1fr);
+    grid-template-columns: 22px 4.5ch 4.5ch 2ch minmax(36ch, 1fr);
     min-height: 18px;
     padding-inline: 10px;
   }

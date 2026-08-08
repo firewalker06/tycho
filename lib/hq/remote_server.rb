@@ -30,6 +30,7 @@ require_relative "domain/push_notification_store"
 require_relative "domain/push_subscription_store"
 require_relative "domain/pull_request_diff"
 require_relative "domain/pull_request_review"
+require_relative "domain/pull_request_selection"
 require_relative "domain/response_style_policy"
 require_relative "domain/remote_credential_store"
 require_relative "domain/schedule_daemon_supervisor"
@@ -1843,7 +1844,22 @@ module HQ
       allowed = %w[read_at reviewed_head_sha reviewed_base_sha viewed_files selections priority outcome]
       values = attrs.select { |key, _value| allowed.include?(key.to_s) }
       snapshot = @pull_request_diff_store.fetch(reference.id)
-      values["selection_snapshot_id"] = snapshot["snapshot_id"] if snapshot && (attrs.key?("selections") || attrs.key?("viewed_files"))
+      if attrs.key?("selections")
+        raise Error.new("Fetch the pull request diff before selecting lines.", status: 409) unless snapshot
+        selections = attrs.fetch("selections")
+        raise Error.new("Selected pull request context must be an object.", status: 400) unless selections.is_a?(Hash)
+        supplied_snapshot_id = attrs["selection_snapshot_id"].to_s
+        unless supplied_snapshot_id == snapshot["snapshot_id"].to_s
+          raise Error.new("The pull request changed. Refresh and select lines again.", status: 409)
+        end
+        begin
+          PullRequestSelection.normalize(snapshot, selections.merge("snapshot_id" => supplied_snapshot_id)) if selections.key?("lines")
+        rescue PullRequestSelection::Error => e
+          raise Error.new(e.message, status: 409)
+        end
+        values["selection_snapshot_id"] = snapshot["snapshot_id"]
+      end
+      values["selection_snapshot_id"] = snapshot["snapshot_id"] if snapshot && attrs.key?("viewed_files")
       values["read_at"] = Time.now.iso8601 if truthy?(attrs["read"]) && !values.key?("read_at")
       @pull_request_review_store.update_state(reference.id, values)
     end
@@ -1874,13 +1890,27 @@ module HQ
 
       agent_key = attrs["agent_key"].to_s
       find_agent!(agent_key)
-      prompt = PullRequestReview.handoff_prompt(reference, snapshot, attrs["selection"] || {}, attrs["note"])
+      idempotency_key = attrs["idempotency_key"].to_s
+      raise Error.new("An idempotency key is required.", status: 400) if idempotency_key.empty?
+      state = @pull_request_review_store.state(reference.id)
+      previous = Array(state["handoffs"]).find { |handoff| handoff["idempotency_key"] == idempotency_key }
+      return { handoff: previous, review: state, idempotent: true } if previous
+      selection = attrs["selection"] || {}
+      line_context = if Array(selection["lines"]).any?
+                       begin
+                         PullRequestSelection.render(snapshot, selection)
+                       rescue PullRequestSelection::Error => e
+                         raise Error.new(e.message, status: 409)
+                       end
+                     end
+      prompt = [PullRequestReview.handoff_prompt(reference, snapshot, selection, attrs["note"]), line_context].compact.join("\n")
       result = submit_prompt(agent_key, "prompt" => prompt, "start" => truthy?(attrs.fetch("start", true)))
       state = @pull_request_review_store.record_handoff(
         reference.id,
         "agent_key" => agent_key,
         "snapshot_id" => snapshot["snapshot_id"],
-        "selection" => attrs["selection"] || {},
+        "idempotency_key" => idempotency_key,
+        "selection" => selection,
         "note" => attrs["note"].to_s
       )
       result.merge(review: state)
