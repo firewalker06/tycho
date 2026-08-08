@@ -139,7 +139,7 @@ New managed agents use timestamp-based keys such as `web-agent-20260712-120501-1
 
 Home-screen launches are treated as normal browser sessions, but mobile browsers can be more aggressive about reusing an old app shell. The root UI references `/ui.css` and `/ui.js` with a content digest query string, and `POST /server/restart` is the explicit cache-reset path: the restart response sends cache-reset headers, the browser clears Cache Storage when available, and the UI reloads itself with a restart query string after the replacement server responds to setup requests.
 
-The top-level mobile tabs are `Now`, `Agents`, and `Settings`. Agents is the canonical project-and-agent workspace: it filters agents and project metadata, keeps zero-agent projects reachable for first-agent creation, and links to project detail routes. Legacy `#search`, `#projects`, and `#setup` hashes are redirected to the closest surviving tab. Detail routes use hash navigation such as `#agent/{key}`, `#project/{key}`, and `#project/{key}/action/{action}`. The footer nav is fixed on top-level routes, hides while scrolling down, shows again while scrolling up, and is hidden on detail subpages.
+The top-level mobile tabs are `Now`, `Agents`, and `Settings`. Agents is the canonical project-and-agent workspace: it filters agents and project metadata, keeps zero-agent projects reachable for first-agent creation, and links to project detail routes. Project detail can open a read-only workspace browser at `#project/{key}/files`; directory and selected-file query state stays in browser history, and project ownership continues through the multiserver broker. Legacy `#search`, `#projects`, and `#setup` hashes are redirected to the closest surviving tab. Detail routes use hash navigation such as `#agent/{key}`, `#project/{key}`, and `#project/{key}/action/{action}`. The footer nav is fixed on top-level routes, hides while scrolling down, shows again while scrolling up, and is hidden on detail subpages.
 
 Settings → Configuration explains that response style is shared writing guidance for tone, clarity, and prose rather than task instructions. A missing policy stays collapsed behind **Add response style**. Once saved, the compact summary shows an excerpt, **Edit response style**, and a trash action that removes the global policy after confirmation. Opening the editor prefills existing content, while saving or canceling returns to the compact summary. Conversation Settings records whether the displayed agent run used the **Global**, **Custom**, or **Disabled** response-style source and combines model and reasoning effort into one row. It reads and writes `~/.tycho/config/response_style.md` by default, or `TYCHO_RESPONSE_STYLE_PATH` when configured. Saves use Tycho's atomic file store and retain the previous file as `response_style.md.bak`; focused edits survive polling refreshes.
 
@@ -835,6 +835,14 @@ Returns active projects after refreshing metadata:
 ```
 
 ### `GET /projects/{key}`
+
+### `GET /projects/{key}/workspace?path={relative}&offset={n}&limit={n}`
+
+Returns one bounded, deterministically sorted page of safe directory entries. Paths in requests and responses are relative to the project's canonical workspace root. The server rejects absolute, traversing, encoded, NUL-containing, unavailable, and escaping-symlink paths; hides VCS internals, dependency/build/cache directories, and sensitive names; and never returns the host workspace path. The default page size is 100, the maximum is 200, and directories above the deterministic 5,000-entry scan cap return a sanitized size error.
+
+### `GET /projects/{key}/workspace/preview?path={relative}`
+
+Returns a UTF-8-safe text preview up to 256 KB. Binary, oversized, sensitive, missing, and unreadable files return explicit sanitized errors. Both workspace endpoints are read-only and remain project-scoped when brokered to a peer server.
 
 ### `GET /projects/{key}/skills/{agent}`
 

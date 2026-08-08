@@ -17,6 +17,7 @@ require_relative "remote_ui"
 require_relative "terminal_qr"
 require_relative "version"
 require_relative "domain/project"
+require_relative "domain/project_workspace"
 require_relative "domain/attachment_normalizer"
 require_relative "domain/constants"
 require_relative "domain/agent_attachment_store"
@@ -423,6 +424,12 @@ module HQ
         tail = parts.drop(2)
         return ok(project: service.project(key)) if method == "GET" && tail.empty?
         return ok(project: service.update_project(key, body)) if %w[PATCH PUT].include?(method) && tail.empty?
+        if method == "GET" && tail == ["workspace"]
+          return ok(workspace: service.project_workspace(key, request&.query_params || {}))
+        end
+        if method == "GET" && tail == ["workspace", "preview"]
+          return ok(preview: service.project_workspace_preview(key, request&.query_params || {}))
+        end
         return ok(git: service.project_git_status(key)) if method == "GET" && tail == ["git", "status"]
         if method == "GET" && tail[0, 2] == ["git", "diff"] && tail.length <= 3
           return ok(diff: service.project_git_diff(key, scope: tail[2] || request&.query_params&.fetch("scope", nil)))
@@ -662,8 +669,11 @@ module HQ
         202 => "Accepted",
         400 => "Bad Request",
         401 => "Unauthorized",
+        403 => "Forbidden",
         404 => "Not Found",
         409 => "Conflict",
+        413 => "Content Too Large",
+        415 => "Unsupported Media Type",
         502 => "Bad Gateway",
         504 => "Gateway Timeout",
         500 => "Internal Server Error"
@@ -2247,6 +2257,24 @@ module HQ
       GitDiff.new(project.path).diff_payload(scope:, project_key: project.key)
     rescue GitDiff::Error => e
       raise Error.new(e.message, status: e.status)
+    end
+
+    def project_workspace(key, params = {})
+      project = find_project!(key)
+      ProjectWorkspace.new(project.path).list(
+        path: params["path"].to_s,
+        offset: params["offset"],
+        limit: params["limit"]
+      )
+    rescue ProjectWorkspace::Error => e
+      raise Error.new(e.message, status: e.status, details: { code: e.code })
+    end
+
+    def project_workspace_preview(key, params = {})
+      project = find_project!(key)
+      ProjectWorkspace.new(project.path).preview(path: params["path"].to_s)
+    rescue ProjectWorkspace::Error => e
+      raise Error.new(e.message, status: e.status, details: { code: e.code })
     end
 
     def update_project(key, attrs)

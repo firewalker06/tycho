@@ -68,6 +68,19 @@ def write_fixture(dir)
     exit 1
   SH
   File.chmod(0o755, fake_gh_path)
+  FileUtils.mkdir_p(File.join(workspace, "docs"))
+  FileUtils.mkdir_p(File.join(workspace, "fast"))
+  FileUtils.mkdir_p(File.join(workspace, "slow"))
+  FileUtils.mkdir_p(File.join(workspace, "src"))
+  FileUtils.mkdir_p(File.join(workspace, "node_modules", "fixture"))
+  File.write(File.join(workspace, "docs", "guide.md"), "# Workspace guide\n\nRead-only preview.\n")
+  File.write(File.join(workspace, "fast", "fast.txt"), "fast\n")
+  File.write(File.join(workspace, "slow", "slow.txt"), "slow\n")
+  File.write(File.join(workspace, "src", "app.rb"), "puts \"fixture\"\n")
+  File.binwrite(File.join(workspace, "binary.dat"), "fixture\0binary")
+  File.binwrite(File.join(workspace, "large.txt"), "x" * ((256 * 1024) + 1))
+  File.write(File.join(workspace, ".env"), "SECRET=not-visible\n")
+  File.write(File.join(workspace, "node_modules", "fixture", "index.js"), "generated\n")
   skill_dir = File.join(workspace, ".agents", "skills", "review")
   FileUtils.mkdir_p(skill_dir)
   File.write(File.join(skill_dir, "SKILL.md"), "# Review\n")
@@ -491,6 +504,99 @@ def write_smoke_script(path)
         }
       }
 
+      async function assertProjectWorkspaceBrowser() {
+        const consoleErrorStart = errors.length;
+        await page.goto(`${baseUrl}/ui#project/web`, { waitUntil: "networkidle" });
+        await page.waitForSelector("[data-open-project-workspace='web']", { state: "visible", timeout: 10_000 });
+        await page.click(".project-primary-actions [data-open-project-workspace='web']");
+        await page.waitForSelector(".workspace-entry-list", { state: "visible", timeout: 10_000 });
+
+        const rootContract = await page.evaluate(() => ({
+          route: parseRoute(),
+          labels: Array.from(document.querySelectorAll(".workspace-entry-name strong"), (node) => node.textContent),
+          absolutePathVisible: document.querySelector(".workspace-browser")?.textContent.includes(state.projectDetails.web?.path || "__missing__"),
+        }));
+        if (rootContract.route.type !== "projectWorkspace" || rootContract.route.path !== "" ||
+            !rootContract.labels.includes("docs") || rootContract.labels.includes(".env") ||
+            rootContract.labels.includes("node_modules") || rootContract.absolutePathVisible) {
+          throw new Error(`Workspace root policy or route failed: ${JSON.stringify(rootContract)}`);
+        }
+
+        await page.setViewportSize({ width: 1440, height: 900 });
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-browser-desktop.png"), fullPage: true });
+
+        const docsButton = page.locator("[data-workspace-directory='docs']");
+        await docsButton.focus();
+        await page.keyboard.press("Enter");
+        await page.waitForSelector("[data-workspace-file='docs/guide.md']", { state: "visible", timeout: 10_000 });
+        await page.click("[data-workspace-file='docs/guide.md']");
+        await page.waitForSelector(".workspace-text-preview", { state: "visible", timeout: 10_000 });
+        const previewContract = await page.evaluate(() => ({
+          route: parseRoute(),
+          content: document.querySelector(".workspace-text-preview")?.textContent,
+          focusable: document.querySelector(".workspace-text-preview")?.tabIndex,
+        }));
+        if (previewContract.route.path !== "docs" || previewContract.route.file !== "docs/guide.md" ||
+            !previewContract.content?.includes("Read-only preview") || previewContract.focusable !== 0) {
+          throw new Error(`Workspace text preview contract failed: ${JSON.stringify(previewContract)}`);
+        }
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-preview-desktop.png"), fullPage: true });
+
+        await page.goBack();
+        await page.waitForSelector(".workspace-preview-empty", { state: "visible", timeout: 10_000 });
+        await page.goForward();
+        await page.waitForSelector(".workspace-text-preview", { state: "visible", timeout: 10_000 });
+
+        await page.setViewportSize({ width: 390, height: 844 });
+        const mobileContract = await page.evaluate(() => ({
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          columns: getComputedStyle(document.querySelector(".workspace-browser-grid")).gridTemplateColumns,
+          previewVisible: Boolean(document.querySelector(".workspace-text-preview")),
+        }));
+        if (mobileContract.overflow || !mobileContract.previewVisible || mobileContract.columns.split(" ").length !== 1) {
+          throw new Error(`Workspace mobile layout failed: ${JSON.stringify(mobileContract)}`);
+        }
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-browser-mobile.png"), fullPage: true });
+
+        await page.click("[data-workspace-directory='']");
+        await page.waitForSelector("[data-workspace-file='binary.dat']", { state: "visible", timeout: 10_000 });
+        await page.click("[data-workspace-file='binary.dat']");
+        await page.waitForFunction(() => document.querySelector(".workspace-preview-pane")?.textContent.includes("Binary file"));
+        if (!(await page.locator(".workspace-preview-pane").innerText()).includes("Binary file")) {
+          throw new Error("Workspace binary state was not visible");
+        }
+        await page.click("[data-workspace-file='large.txt']");
+        await page.waitForFunction(() => document.querySelector(".workspace-preview-pane")?.textContent.includes("File too large"));
+
+        const workspaceRoutePattern = "**/projects/web/workspace?*";
+        await page.route(workspaceRoutePattern, async (route) => {
+          const requestUrl = new URL(route.request().url());
+          if (requestUrl.searchParams.get("path") === "slow") await new Promise((resolve) => setTimeout(resolve, 250));
+          await route.continue();
+        });
+        await page.evaluate(() => {
+          delete state.projectWorkspaces[projectWorkspaceKey("web", "slow")];
+          delete state.projectWorkspaces[projectWorkspaceKey("web", "fast")];
+          navigate({ type: "projectWorkspace", key: "web", path: "slow", file: "" });
+        });
+        await page.waitForTimeout(30);
+        await page.evaluate(() => navigate({ type: "projectWorkspace", key: "web", path: "fast", file: "" }));
+        await page.waitForSelector("[data-workspace-file='fast/fast.txt']", { state: "visible", timeout: 10_000 });
+        await page.waitForTimeout(300);
+        const raceContract = await page.evaluate(() => ({
+          route: parseRoute(),
+          slowVisible: Boolean(document.querySelector("[data-workspace-file='slow/slow.txt']")),
+          fastVisible: Boolean(document.querySelector("[data-workspace-file='fast/fast.txt']")),
+        }));
+        await page.unroute(workspaceRoutePattern);
+        if (raceContract.route.path !== "fast" || raceContract.slowVisible || !raceContract.fastVisible) {
+          throw new Error(`Workspace race-safe navigation failed: ${JSON.stringify(raceContract)}`);
+        }
+        const unexpectedErrors = errors.slice(consoleErrorStart).filter((message) =>
+          !message.includes("status of 415") && !message.includes("status of 413"));
+        errors.splice(consoleErrorStart, errors.length - consoleErrorStart, ...unexpectedErrors);
+      }
+
       try {
         await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
         if (skillsOnly) {
@@ -501,6 +607,8 @@ def write_smoke_script(path)
           console.log("remote-ui-skill-smoke: ok");
           return;
         }
+        await assertProjectWorkspaceBrowser();
+        await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
         const scopedDiffRouteContract = await page.evaluate(() => {
           const source = {
             type: "projectDiff",

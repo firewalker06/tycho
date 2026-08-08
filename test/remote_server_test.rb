@@ -38,6 +38,7 @@ module RemoteServerTest
     assert_remote_agent_debug_endpoints
     assert_remote_project_payloads_include_status_and_detail
     assert_remote_project_git_diff_payload
+    assert_remote_project_workspace_routes
     assert_remote_project_update_route_edits_metadata
     assert_remote_agent_model_and_effort_payloads
     assert_remote_hidden_settings_filter_projects_and_agents
@@ -1658,6 +1659,64 @@ module RemoteServerTest
     end
   end
 
+  def assert_remote_project_workspace_routes
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      FileUtils.mkdir_p(File.join(workspace, "docs"))
+      File.write(File.join(workspace, "docs", "guide.md"), "# Guide\n")
+      File.write(File.join(workspace, ".env"), "TOKEN=secret\n")
+      registry = registry_for_project(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      server = HQ::RemoteServer.new
+
+      listing_request = HQ::RemoteServer::Request.new(
+        method: "GET",
+        path: "/projects/web/workspace",
+        query: "path=docs&limit=50",
+        headers: {},
+        body: ""
+      )
+      listing = server.send(:route, service, "GET", listing_request.path, {}, listing_request)
+      assert(listing[:body].dig(:workspace, :path) == "docs", "expected workspace listing route")
+      assert(listing[:body].dig(:workspace, :entries, 0, :path) == "docs/guide.md",
+             "expected workspace routes to return relative paths")
+      assert(!listing[:body].inspect.include?(workspace), "expected workspace API responses to hide host paths")
+
+      preview_request = HQ::RemoteServer::Request.new(
+        method: "GET",
+        path: "/projects/web/workspace/preview",
+        query: "path=docs%2Fguide.md",
+        headers: {},
+        body: ""
+      )
+      preview = server.send(:route, service, "GET", preview_request.path, {}, preview_request)
+      assert(preview[:body].dig(:preview, :content) == "# Guide\n", "expected text preview route")
+
+      traversal = HQ::RemoteServer::Request.new(
+        method: "GET",
+        path: "/projects/web/workspace",
+        query: "path=%252e%252e%252foutside",
+        headers: {},
+        body: ""
+      )
+      begin
+        server.send(:route, service, "GET", traversal.path, {}, traversal)
+        raise "expected encoded traversal to be rejected"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 400 && e.details[:code] == "invalid_path", "expected sanitized workspace path error")
+        assert(!e.message.include?(workspace), "expected workspace errors to hide host paths")
+      end
+
+      begin
+        service.project_workspace("wrong-project")
+        raise "expected wrong project routing to fail"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 404, "expected wrong project routing to stay project-scoped")
+      end
+    end
+  end
+
   def assert_remote_project_update_route_edits_metadata
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
@@ -2735,6 +2794,23 @@ module RemoteServerTest
             echoed_body: JSON.parse(request[:body])
           )
         }
+      when ["GET", "/projects/web/workspace"]
+        {
+          status: 200,
+          content_type: "application/json",
+          body: JSON.generate(
+            workspace: {
+              path: "docs",
+              parent: "",
+              entries: [{ name: "guide.md", path: "docs/guide.md", kind: "file", size_bytes: 8 }],
+              offset: 0,
+              limit: 100,
+              total: 1,
+              next_offset: nil,
+              truncated: false
+            }
+          )
+        }
       when ["GET", "/attachments/image/blob"]
         {
           status: 200,
@@ -2800,6 +2876,27 @@ module RemoteServerTest
                "expected broker proxy to forward JSON request body")
         assert(requests.last.dig(:headers, "authorization") == "Bearer target-secret",
                "expected broker proxy to use configured target token")
+
+        workspace_request = HQ::RemoteServer.const_get(:Request).new(
+          method: "GET",
+          path: "/servers/target/projects/web/workspace",
+          query: "path=docs&limit=100",
+          headers: {},
+          body: ""
+        )
+        workspace_response = server.send(
+          :route,
+          service,
+          "GET",
+          workspace_request.path,
+          {},
+          workspace_request
+        )
+        assert(workspace_response.dig(:body, "workspace", "entries", 0, "path") == "docs/guide.md",
+               "expected project workspace payloads to stay scoped to the target server")
+        assert(requests.last[:path] == "/projects/web/workspace" &&
+               requests.last[:query] == "path=docs&limit=100",
+               "expected project workspace paths and pagination to survive broker routing")
 
         blob = server.send(:route, service, "GET", "/servers/target/attachments/image/blob", {}, nil)
         assert(blob[:content_type] == "image/png", "expected broker proxy to preserve target content type")
@@ -4539,6 +4636,24 @@ module RemoteServerTest
            "expected Project More menu to expose edit navigation")
     assert(js[:body].include?('label: "See diff"') && js[:body].include?("function navigateProjectDiff"),
            "expected More menus to expose Project diff navigation")
+    assert(js[:body].include?('label: "Browse workspace"') &&
+           js[:body].include?("function renderProjectWorkspace") &&
+           js[:body].include?("function ensureProjectWorkspacePreview"),
+           "expected Project detail to expose the read-only workspace browser")
+    assert(js[:body].include?("function performProjectWorkspaceRequest") &&
+           js[:body].include?("requests[key] !== requestId"),
+           "expected workspace navigation responses to be race-safe")
+    assert(js[:body].include?('aria-label="Project workspace file browser"') &&
+           js[:body].include?('aria-label="Workspace path"') &&
+           js[:body].include?('class="workspace-text-preview" tabindex="0"'),
+           "expected workspace browsing and previews to expose keyboard and screen-reader contracts")
+    assert(css[:body].include?(".workspace-browser-grid") &&
+           css[:body].include?("@media (max-width: 760px)"),
+           "expected workspace browsing to use responsive desktop and mobile layouts")
+    assert(helpers_js[:body].include?('type: "projectWorkspace"') &&
+           helpers_js[:body].include?('params.set("file", route.file)') &&
+           helpers_js[:body].include?('project-workspace:${route.key}:${route.path || ""}:${route.file || ""}'),
+           "expected workspace directory and preview state to persist in browser history")
     assert(helpers_js[:body].include?('return { type: "projectForm", key: parts[1] };'),
            "expected Remote UI to parse Project edit routes")
     assert(js[:body].include?("function renderProjectForm"),
