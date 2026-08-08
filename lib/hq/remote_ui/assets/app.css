@@ -4120,16 +4120,17 @@ select {
   bottom: 52px;
   left: 0;
   z-index: 8;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
   width: min(360px, calc(100vw - 24px), calc(100% - 24px));
-  max-height: min(46dvh, 340px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  max-block-size: min(46dvh, 340px);
+  overflow: hidden;
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--info) 46%, var(--border));
   border-radius: 8px;
   background: color-mix(in srgb, var(--info) 8%, var(--panel));
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
 }
 
 .attachment-panel-header,
@@ -4161,6 +4162,9 @@ select {
 
 .attachment-list {
   display: grid;
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   gap: 7px;
 }
 
@@ -7023,9 +7027,7 @@ body:has(.inquiry-form-full-screen) {
   }
 
   .attachment-flyout {
-    max-height: min(64dvh, 520px);
-    overflow-y: auto;
-    overscroll-behavior: contain;
+    max-block-size: min(64dvh, 520px);
   }
 
   .attachment-viewer-actions {

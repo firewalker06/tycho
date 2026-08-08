@@ -3695,6 +3695,14 @@ module RemoteServerTest
     assert(css[:body].include?(".turn-completed-metric strong"),
            "expected Codex turn completion metrics to style compact values")
     assert(css[:body].include?(".attachment-flyout"), "expected Agent detail to style attachment flyouts")
+    assert(css[:body].include?("max-block-size: min(46dvh, 340px)") &&
+           css[:body].include?("overflow: hidden;"),
+           "expected attachment flyouts to shrink-wrap until their viewport-aware height cap")
+    assert(css[:body].include?(".attachment-list {\n  display: grid;\n  min-block-size: 0;\n  overflow-y: auto;") &&
+           css[:body].include?("overscroll-behavior: contain;"),
+           "expected attachment flyout lists to own bounded scrolling")
+    assert(css[:body].include?("max-block-size: min(64dvh, 520px)"),
+           "expected mobile attachment flyouts to use a viewport-aware height cap")
     assert(css[:body].include?(".attachment-item"), "expected Agent detail attachments to render as rows")
     assert(css[:body].include?(".attachment-main"), "expected Agent detail attachment rows to separate links from actions")
     assert(css[:body].include?(".attachment-actions"), "expected Agent detail attachment rows to expose row actions")
@@ -5227,6 +5235,10 @@ module RemoteServerTest
            "expected attachment rows not to render descriptions")
     assert(js[:body].include?("function toggleAttachmentFlyout"),
            "expected Agent detail attachments to be toggleable")
+    assert(js[:body].include?("aria-controls=\"agent-attachment-flyout\"") &&
+           js[:body].include?("function handleAttachmentFlyoutKeydown") &&
+           js[:body].include?("button.focus({ preventScroll: true })"),
+           "expected attachment flyouts to retain named trigger and Escape focus behavior")
     assert(js[:body].include?("!event.target.closest(\"[data-attachment-flyout]\")"),
            "expected Attachment flyout to close when clicking outside it")
     assert(js[:body].include?('aria-label="Upload file"') && js[:body].include?("iconSvg(\"upload\")"),
