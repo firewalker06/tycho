@@ -143,6 +143,8 @@ The top-level mobile tabs are `Now`, `Agents`, and `Settings`. Agents is the can
 
 Settings → Configuration explains that response style is shared writing guidance for tone, clarity, and prose rather than task instructions. A missing policy stays collapsed behind **Add response style**. Once saved, the compact summary shows an excerpt, **Edit response style**, and a trash action that removes the global policy after confirmation. Opening the editor prefills existing content, while saving or canceling returns to the compact summary. Conversation Settings records whether the displayed agent run used the **Global**, **Custom**, or **Disabled** response-style source and combines model and reasoning effort into one row. It reads and writes `~/.tycho/config/response_style.md` by default, or `TYCHO_RESPONSE_STYLE_PATH` when configured. Saves use Tycho's atomic file store and retain the previous file as `response_style.md.bak`; focused edits survive polling refreshes.
 
+Settings → Skills reports the bundled Tycho skill as missing, installed, outdated, blocked, or errored for Codex, Claude Code, and OpenCode. Install and update are separate confirmed actions, target each harness's official personal skill directory, and report the exact skills changed. See [TYCHO_SKILLS.md](./TYCHO_SKILLS.md) for source, ownership, checksum, path, and verification details.
+
 The Conversation composer has a full-screen editor for longer prompts. It opens as an accessible modal with a constrained writing canvas, focus containment, visual-viewport sizing for mobile keyboards, and only an X close control—no editor header or explanatory copy. Inline and full-screen Conversation and inquiry forms are stable islands during polling: surrounding conversation state refreshes without detaching, blurring, or reconstructing the live form control. Draft text, focus, selection, attachments, and editor mode therefore survive same-route polling refreshes. Drafts save locally while typing and survive reloads; route navigation, sending, the X control, or one Escape press exits full screen without discarding the draft.
 
 Structured inquiry forms use the same full-screen interaction and always end with an optional **Leave feedback** textarea. The submitted JSON answer preserves every declared inquiry field and appends `user_feedback` as a reserved final field, using `null` when left blank. Historical inquiry responses without that key receive the same null row at render time, so the conversation consistently reflects the form.
@@ -423,6 +425,9 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `GET` | `/projects` | List active projects with metadata and agent counts. |
 | `GET` | `/projects/{key}` | Read one project detail payload. |
 | `GET` | `/projects/{key}/skills/{agent}` | Discover skills for a project workspace and agent harness. |
+| `GET` | `/skills` | Read Tycho-owned skill installation status for supported harnesses. |
+| `POST` | `/skills/{harness}/install` | Install missing Tycho skills after explicit confirmation. |
+| `POST` | `/skills/{harness}/update` | Update outdated, provably Tycho-owned skills after explicit confirmation. |
 | `GET` | `/attachments/{id}` | Read normalized attachment metadata and inline preview content when available. |
 | `GET` | `/attachments/{id}/blob` | Stream the attachment file bytes for image and binary previews. |
 | `GET` | `/setup` | Read Remote UI readiness, auth, Tailscale, config, log, and refresh metadata. |
@@ -835,7 +840,19 @@ Discovers skills for the project workspace and agent harness, reusing `HQ::Skill
 
 ### `GET /setup`
 
-Returns Remote UI readiness metadata: local URL, public Tailscale/MagicDNS URL, auth state, counts, harness readiness, schema/config readiness, log/storage summary, refresh intervals, and safety defaults. Harness readiness entries may include `model_suggestions`, `reasoning_effort_suggestions`, and `catalog_source`; these are UI hints only and are not validation allowlists.
+Returns Remote UI readiness metadata: local URL, public Tailscale/MagicDNS URL, auth state, counts, harness readiness, skill installation status, schema/config readiness, log/storage summary, refresh intervals, and safety defaults. Harness readiness entries may include `model_suggestions`, `reasoning_effort_suggestions`, and `catalog_source`; these are UI hints only and are not validation allowlists.
+
+### `GET /skills`
+
+Returns the source/version/verification guidance and missing, installed, outdated, blocked, or error state for Codex, Claude Code, and OpenCode. Paths are resolved against the Tycho server user's home directory.
+
+### `POST /skills/{harness}/install`
+
+Installs missing Tycho skills into the selected harness. The JSON body must contain `{"confirmed":true}`. A successful response includes `result.changed_skills`; a repeated install of a current version returns an empty list.
+
+### `POST /skills/{harness}/update`
+
+Updates an outdated skill only when its Tycho ownership marker and installed checksums prove that no local edits would be overwritten. The JSON body must contain `{"confirmed":true}`. Unowned collisions and locally edited managed skills return `409` without changing files.
 
 When no projects are configured, the payload includes onboarding metadata so the
 Remote UI can render a first-run screen without the normal header or footer.
@@ -883,6 +900,8 @@ Errors use a simple JSON shape:
   "error": "Unknown agent: web-charlie-agent-8"
 }
 ```
+
+Skill mutation errors can also include `details.category` (`permission`, `network`, or `compatibility`) and `details.changed_skills` when an earlier skill completed before a later failure.
 
 Common statuses:
 

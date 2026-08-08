@@ -39,6 +39,7 @@ module RemoteServerTest
     assert_remote_hidden_settings_filter_projects_and_agents
     assert_remote_response_style_settings
     assert_remote_session_loop_settings
+    assert_remote_skill_installation_requires_confirmation
     assert_remote_schedule_routes
     assert_remote_setup_payload_includes_readiness
     assert_remote_harness_catalogs_are_configurable
@@ -138,6 +139,61 @@ module RemoteServerTest
       assert(persisted.dig("session_loops", "prompt_templates", 1, "prompt") ==
              "Check release readiness.\nReport blockers only.",
              "expected session loop settings to persist each template prompt independently")
+    end
+  end
+
+  def assert_remote_skill_installation_requires_confirmation
+    with_remote_temp_store do |dir|
+      home = File.join(dir, "home")
+      source = File.join(dir, "source")
+      skill_dir = File.join(source, "tycho")
+      manifest = File.join(dir, "skill-assets.json")
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p([home, skill_dir])
+      File.write(File.join(skill_dir, "SKILL.md"), "---\nname: tycho\ndescription: Test Tycho\n---\n")
+      checksum = Digest::SHA256.file(File.join(skill_dir, "SKILL.md")).hexdigest
+      File.write(manifest, JSON.generate({
+        source: "https://example.test/tycho-skills",
+        version: "test-1",
+        verification: "Invoke tycho",
+        skills: [{ name: "tycho", files: { "SKILL.md" => checksum } }]
+      }))
+      write_project_workspace(workspace)
+      installer = HQ::SkillInstaller.new(home: home, source_root: source, manifest_path: manifest)
+      service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace), skill_installer: installer)
+      server = HQ::RemoteServer.new
+
+      previous_skills_home = ENV["TYCHO_SKILLS_HOME"]
+      ENV["TYCHO_SKILLS_HOME"] = home
+      begin
+        environment_service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
+        environment_target = environment_service.skill_installation.dig(:harnesses, 0, :target_path)
+        assert(environment_target == File.join(home, ".agents", "skills"),
+               "expected TYCHO_SKILLS_HOME to isolate default skill installation")
+      ensure
+        ENV["TYCHO_SKILLS_HOME"] = previous_skills_home
+      end
+
+      fetched = server.send(:route, service, "GET", "/skills", {}, nil)
+      harnesses = fetched.dig(:body, :skill_installation, :harnesses)
+      assert(harnesses.map { |item| item[:harness] } == %w[codex claude opencode],
+             "expected Remote skills status for every supported harness")
+      assert(harnesses.all? { |item| item[:status] == "missing" }, "expected isolated homes to start missing")
+
+      begin
+        server.send(:route, service, "POST", "/skills/codex/install", {}, nil)
+        raise "expected skill mutation without confirmation to fail"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 400 && e.message.include?("Confirm"), "expected explicit mutation intent")
+      end
+
+      installed = server.send(:route, service, "POST", "/skills/codex/install", { "confirmed" => true }, nil)
+      result = installed.dig(:body, :result)
+      assert(result[:changed_skills] == ["tycho"], "expected Remote skill action to report exact changes")
+      assert(result.dig(:harness, :target_path) == File.join(home, ".agents", "skills"),
+             "expected Remote Codex install to use the isolated official path")
+      assert(service.setup.dig(:skill_installation, :harnesses, 0, :status) == "installed",
+             "expected setup to expose current skill status")
     end
   end
 
@@ -3612,6 +3668,13 @@ module RemoteServerTest
            helpers_js[:body].include?("function attachmentBlobPath"),
            "expected Remote UI attachment target primitives to live in the helper asset")
     js = server.send(:route_ui, "/ui.js")
+    assert(js[:body].include?("function renderSkillInstallation") &&
+           js[:body].include?('data-skill-action="install"') &&
+           js[:body].include?('data-skill-action="update"') &&
+           js[:body].include?("function changeHarnessSkills") &&
+           js[:body].include?("Only Tycho-owned files can be updated") &&
+           js[:body].include?("Changed before failure:"),
+           "expected Settings to expose confirmed skill actions and partial change details")
     assert(js[:body].include?("function statusIntent") &&
            js[:body].include?("function statusBadge") &&
            js[:body].include?("function statusMarkAttributes") &&

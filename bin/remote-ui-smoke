@@ -24,8 +24,10 @@ end
 
 def write_fixture(dir)
   config_dir = File.join(dir, "config")
+  home_dir = File.join(dir, "home")
   workspace = File.join(dir, "workspace")
   FileUtils.mkdir_p(config_dir)
+  FileUtils.mkdir_p(home_dir)
   FileUtils.mkdir_p(workspace)
 
   config_path = File.join(config_dir, "hq.yml")
@@ -82,6 +84,7 @@ def write_fixture(dir)
     schedules_path: schedules_path,
     fake_codex_path: fake_codex_path,
     fake_gh_path: fake_gh_path,
+    home_dir: home_dir,
     logs_dir: File.join(dir, "logs")
   }
 end
@@ -354,6 +357,7 @@ def write_smoke_script(path)
       const unscheduledAgentKey = process.env.TYCHO_REMOTE_UI_UNSCHEDULED_AGENT_KEY;
       const chromePath = process.env.CHROME_PATH;
       const captureDir = process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "";
+      const skillsOnly = process.env.TYCHO_REMOTE_UI_SKILLS_ONLY === "1";
       const draft = "Remote UI smoke draft " + Date.now();
       const errors = [];
 
@@ -429,8 +433,74 @@ def write_smoke_script(path)
         if (!result.sameNode || !result.sameFocus || result.blurred) throw new Error(`${label} did not remain stable during a polling render: ${JSON.stringify(result)}`);
       }
 
+      async function assertSkillInstallation() {
+        const skillsSection = page.locator("[data-scroll-settings-section='settings-skills']");
+        await skillsSection.click();
+        await page.waitForFunction(() => (
+          document.querySelector("[data-scroll-settings-section='settings-skills']")?.getAttribute("aria-current") === "location"
+        ));
+        const codexSkillRow = page.locator("[data-skill-installation-harness='codex']");
+        const initialSkillState = await codexSkillRow.innerText();
+        const installSkillButton = codexSkillRow.locator("[data-skill-action='install']");
+        const skillGeometry = await codexSkillRow.evaluate((row) => ({
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          buttonHeight: row.querySelector("[data-skill-action]")?.getBoundingClientRect().height,
+          sourceVisible: Boolean(document.querySelector("#settings-skills .skill-installation-source")),
+        }));
+        if (!initialSkillState.includes("Missing") || !initialSkillState.includes(".agents/skills") ||
+            skillGeometry.overflow || skillGeometry.buttonHeight < 44 || !skillGeometry.sourceVisible) {
+          throw new Error(`Skill settings lost missing status, official path, or mobile geometry: ${JSON.stringify({ initialSkillState, skillGeometry })}`);
+        }
+        await installSkillButton.click();
+        await page.waitForSelector("#confirmation-dialog[open]", { state: "visible", timeout: 10_000 });
+        const skillConfirmation = await page.evaluate(() => ({
+          title: document.querySelector("#confirmation-title")?.textContent,
+          description: document.querySelector("#confirmation-description")?.textContent,
+          cancelFocused: document.activeElement?.hasAttribute("data-confirmation-cancel"),
+        }));
+        if (skillConfirmation.title !== "Install Tycho skills for codex?" ||
+            !skillConfirmation.description?.includes(".agents/skills") || !skillConfirmation.cancelFocused) {
+          throw new Error(`Skill install confirmation is incomplete: ${JSON.stringify(skillConfirmation)}`);
+        }
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(() => (
+          !document.querySelector("#confirmation-dialog")?.open &&
+          document.activeElement?.matches("[data-skill-installation-harness='codex'] [data-skill-action='install']")
+        ));
+        await installSkillButton.click();
+        await page.waitForSelector("#confirmation-dialog[open]", { state: "visible", timeout: 10_000 });
+        await page.click("[data-confirmation-accept]");
+        await page.waitForFunction(() => (
+          document.querySelector("#growl")?.textContent === "Installed tycho for codex" &&
+          document.querySelector("[data-skill-installation-harness='codex']")?.textContent.includes("Installed")
+        ), null, { timeout: 10_000 });
+        if (captureDir) {
+          await page.setViewportSize({ width: 390, height: 1400 });
+          await page.evaluate(() => {
+            const top = document.querySelector("#settings-skills")?.offsetTop || 0;
+            window.scrollTo({ top: Math.max(0, top - 180), behavior: "auto" });
+          });
+          await page.screenshot({ path: path.join(captureDir, "skills-panel-mobile.png") });
+          await page.setViewportSize({ width: 1440, height: 900 });
+          await page.evaluate(() => {
+            const top = document.querySelector("#settings-skills")?.offsetTop || 0;
+            window.scrollTo({ top: Math.max(0, top - 180), behavior: "auto" });
+          });
+          await page.screenshot({ path: path.join(captureDir, "skills-panel-desktop.png") });
+          await page.setViewportSize({ width: 390, height: 844 });
+        }
+      }
+
       try {
         await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
+        if (skillsOnly) {
+          await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
+          await page.waitForSelector("#settings-skills", { state: "visible", timeout: 10_000 });
+          await assertSkillInstallation();
+          if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
+          console.log("remote-ui-skill-smoke: ok");
+          return;
+        }
         const scopedDiffRouteContract = await page.evaluate(() => {
           const source = {
             type: "projectDiff",
@@ -2746,6 +2816,8 @@ def write_smoke_script(path)
         }
         await page.click("[data-toggle-server-form]");
 
+        await assertSkillInstallation();
+
         const automationSection = page.locator("[data-scroll-settings-section='settings-automation']");
         await automationSection.click();
         await page.waitForFunction(() => (
@@ -3073,6 +3145,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   base_url = "http://127.0.0.1:#{port}"
   log_path = File.join(dir, "remote-server.log")
   env = {
+    "TYCHO_SKILLS_HOME" => fixture.fetch(:home_dir),
     "TYCHO_CONFIG_PATH" => fixture.fetch(:config_path),
     "TYCHO_SYSTEM_PROMPTS_PATH" => fixture.fetch(:prompts_path),
     "TYCHO_RESPONSE_STYLE_PATH" => fixture.fetch(:response_style_path),
@@ -3115,6 +3188,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     }
     if ENV["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"].to_s == "1"
       smoke_env["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"] = "1"
+    end
+    if ENV["TYCHO_REMOTE_UI_SKILLS_ONLY"].to_s == "1"
+      smoke_env["TYCHO_REMOTE_UI_SKILLS_ONLY"] = "1"
     end
     capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
     unless capture_dir.empty?

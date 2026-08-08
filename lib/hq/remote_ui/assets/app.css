@@ -2288,6 +2288,38 @@ select {
   gap: 8px;
 }
 
+.skill-installation-card .field-hint {
+  margin: 0 0 10px;
+}
+
+.skill-installation-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.skill-installation-source {
+  margin-top: 12px;
+}
+
+@media (max-width: 560px) {
+  .skill-installation-row {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .skill-installation-actions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+
+  .skill-installation-card .skill-installation-source {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .card-copy {
   grid-column: 1 / -1;
   color: var(--muted);
