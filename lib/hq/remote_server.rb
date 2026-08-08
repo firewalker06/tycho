@@ -3442,7 +3442,8 @@ module HQ
       {
         active: @projects.empty?,
         welcome_project_key: Onboarding::WELCOME_PROJECT_KEY,
-        welcome_workspace_path: Onboarding.welcome_workspace_path
+        welcome_workspace_path: Onboarding.welcome_workspace_path,
+        agent_cli_guides: Onboarding.agent_cli_guides
       }
     end
 

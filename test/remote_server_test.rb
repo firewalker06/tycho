@@ -46,6 +46,7 @@ module RemoteServerTest
     assert_remote_setup_uses_shared_executable_resolution
     assert_remote_setup_handles_utf8_harness_output_under_ascii_external
     assert_remote_welcome_onboarding_creates_project
+    assert_remote_welcome_onboarding_exposes_agent_cli_guides
     assert_remote_setup_warns_when_public_url_has_no_token
     assert_remote_server_restart_route_schedules_restart
     assert_remote_broker_lists_configured_servers
@@ -2182,6 +2183,27 @@ module RemoteServerTest
     end
   end
 
+  def assert_remote_welcome_onboarding_exposes_agent_cli_guides
+    with_remote_temp_store do |dir|
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      File.write(config_path, "projects: []\n")
+      File.write(prompts_path, "custom: Default prompt.\n")
+      registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
+      setup = HQ::RemoteService.new(registry: registry).setup
+      guides = setup.dig(:onboarding, :agent_cli_guides)
+
+      assert(guides.map { |guide| guide[:key] } == %w[codex claude opencode],
+             "expected onboarding CLI guides for each built-in harness")
+      guides.each do |guide|
+        assert(guide[:install_command].to_s.length.positive?, "expected #{guide[:key]} install command")
+        assert(guide[:verify_command].to_s.end_with?("--version"), "expected #{guide[:key]} verification command")
+        assert(guide[:setup].to_s.length.positive?, "expected #{guide[:key]} setup guidance")
+        assert(guide[:documentation_url].to_s.start_with?("https://"), "expected #{guide[:key]} official docs URL")
+      end
+    end
+  end
+
   def assert_remote_server_restart_route_schedules_restart
     output = StringIO.new
     server = HQ::RemoteServer.new(
@@ -3270,6 +3292,8 @@ module RemoteServerTest
            "expected informational agent list icons to match their status pills")
     assert(css[:body].include?(".growl"), "expected Remote UI to style growl notifications")
     assert(css[:body].include?(".agent-sort-menu"), "expected Remote UI to style agent sort dropdowns")
+    assert(css[:body].include?(".onboarding-cli-guide") && css[:body].include?(".onboarding-cli-options"),
+           "expected Remote UI to style the onboarding CLI guide")
     assert(css[:body].include?(".agent-sort-trigger"), "expected Remote UI to style icon-only sort triggers")
     assert(css[:body].include?(".agent-sort-option"), "expected Remote UI to style text sort options")
     assert(css[:body].include?(".agent-ledger") &&
@@ -4285,6 +4309,17 @@ module RemoteServerTest
            "expected push setup to replace expired or VAPID-mismatched browser subscriptions")
     assert(js[:body].include?("function renderAgentForm"),
            "expected Remote UI to render create/edit agent forms")
+    assert(js[:body].include?("function renderOnboardingCliGuide") &&
+           js[:body].include?("data-select-onboarding-cli") &&
+           js[:body].include?("agent_cli_guides"),
+           "expected onboarding to render selectable server-provided CLI installation guides")
+    assert(js[:body].include?("No installation is needed.") &&
+           js[:body].include?("aria-pressed") &&
+           js[:body].include?("target=\"_blank\" rel=\"noreferrer\""),
+           "expected onboarding CLI guidance to expose readiness, keyboard semantics, and safe official-doc links")
+    assert(js[:body].include?("[data-select-onboarding-cli].selected") &&
+           js[:body].include?("?.focus({ preventScroll: true })"),
+           "expected onboarding CLI selection to retain keyboard focus after rendering")
     assert(!js[:body].include?('name="workspace"'),
            "expected Remote UI agent forms to omit editable workspace fields")
     assert(!js[:body].include?('formData.get("workspace")'),
