@@ -29,6 +29,7 @@ module RemoteServerTest
     assert_concurrent_pull_request_diff_refreshes_are_coalesced
     assert_pull_request_review_refresh_reuses_metadata
     assert_pull_request_feature_gate_and_global_inbox
+    assert_pull_request_line_handoff_uses_snapshot_context
     assert_github_app_auth_routes
     assert_pull_request_posting_is_confirmed_stale_safe_and_idempotent
     assert_remote_prompt_accepts_uploaded_attachments
@@ -1065,6 +1066,42 @@ module RemoteServerTest
              "expected canonical PR to preserve every agent and project occurrence")
       assert(client.requests.none? { |request| request.first == :get_text },
              "expected inbox metadata work not to fetch patches")
+    end
+  end
+
+  def assert_pull_request_line_handoff_uses_snapshot_context
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      diff_store = HQ::PullRequestDiff::Store.new(File.join(dir, "handoff-diffs.json"))
+      service = HQ::RemoteService.new(registry:, github_client: FakeGitHubReviewClient.new, pull_request_diff_store: diff_store,
+                                      pull_request_review_store: HQ::PullRequestReview::Store.new(File.join(dir, "handoff-reviews.json")))
+      created = service.create_agent("project_key" => "web", "template_key" => "custom", "name" => "Recipient", "prompt" => "Work.", "agent" => "codex")
+      agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+      HQ::AgentMemory.new(agent).append_attachment!({ "kind" => "link", "title" => "PR", "url" => "https://github.com/example/web/pull/123" })
+      HQ::AgentStore.new(registry.projects).save([agent])
+      reference = HQ::PullRequestDiff.reference_from_url("https://github.com/example/web/pull/123")
+      diff_store.save(
+        "id" => reference.id, "snapshot_id" => "snapshot-1", "provider" => "github", "repository" => "example/web", "number" => 123,
+        "base_sha" => "base", "head_sha" => "head", "diff_format" => HQ::PullRequestDiff::DIFF_FORMAT,
+        "files" => [{ "path" => "lib/example.rb", "hunks" => [{ "lines" => [{ "kind" => "added", "new_number" => 4, "content" => "puts :ok" }] }] }]
+      )
+      result = service.handoff_pull_request_review(reference.id, "agent_key" => created[:key], "note" => "Inspect this.", "start" => false, "idempotency_key" => "line-handoff-1",
+                                                    "selection" => { "snapshot_id" => "snapshot-1", "lines" => [{ "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 }] })
+      content = result[:conversation].last[:content]
+      assert(content.include?("Inspect this.") && content.include?(HQ::PullRequestSelection::OPEN) && content.include?("https://github.com/example/web/pull/123"),
+             "expected handoff to append bounded immutable line context through the normal user-message flow")
+      begin
+        service.handoff_pull_request_review(reference.id, "agent_key" => created[:key], "note" => "Retry", "start" => false, "idempotency_key" => "line-handoff-stale",
+                                            "selection" => { "snapshot_id" => "old", "lines" => [{ "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 }] })
+        raise "expected stale line selection to fail"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409, "expected stale selected lines to be rejected")
+      end
+      retry_result = service.handoff_pull_request_review(reference.id, "agent_key" => created[:key], "note" => "Ignored", "start" => false, "idempotency_key" => "line-handoff-1",
+                                                          "selection" => { "snapshot_id" => "snapshot-1", "lines" => [{ "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 }] })
+      assert(retry_result[:idempotent] == true, "expected an idempotent handoff retry")
     end
   end
 
