@@ -99,6 +99,12 @@ module ProjectWorkspaceTest
       File.write(File.join(root, "client.js"), "const token = \"provider-access-value\";\n")
       File.write(File.join(root, "gitlab.txt"), "glpat-abcdefghijklmnopqrstuvwxyz\n")
       File.write(File.join(root, "pypi.txt"), "pypi-abcdefghijklmnopqrstuvwxyz\n")
+      File.write(File.join(root, "auth.rb"), <<~RUBY)
+        token = auth.sub(/Bearer /, "")
+        token = response["access_token"].to_s
+        token = fields.get("token")
+        secret = ENV.fetch("SERVICE_SECRET")
+      RUBY
       FileUtils.mkdir_p(File.join(root, "dist"))
       File.write(File.join(root, "dist", "bundle.js"), "generated")
       browser = HQ::ProjectWorkspace.new(root)
@@ -118,6 +124,8 @@ module ProjectWorkspaceTest
       assert_error("sensitive") { browser.preview(path: "gitlab.txt") }
       assert_error("sensitive") { browser.preview(path: "pypi.txt") }
       assert_error("not_found") { browser.preview(path: "dist/bundle.js") }
+      assert(browser.preview(path: "auth.rb")[:content].include?("response[\"access_token\"].to_s"),
+             "expected ordinary authentication expressions to remain previewable")
     end
   end
 

@@ -27,7 +27,9 @@ module HQ
       /\bsk_live_[A-Za-z0-9]{16,}\b/,
       /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,
       /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|rediss|amqp|amqps):\/\/[^\s"']+/i,
-      /(?:\A|[\r\n])\s*(?:(?:export|const|let|var)\s+)?["']?(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|database[_-]?url|db[_-]?url|password|private[_-]?key|secret|secret[_-]?key(?:[_-]?base)?|signing[_-]?key|token)["']?\s*[=:]\s*["']?(?!example\b|placeholder\b|redacted\b|changeme\b|null\b|nil\b|false\b|true\b)[^\s"']+/i
+      /(?:\A|[\r\n{,])\s*["']?(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|database[_-]?url|db[_-]?url|password|private[_-]?key|secret|secret[_-]?key(?:[_-]?base)?|signing[_-]?key|token)["']?\s*:\s*(?:"[^"\r\n]{8,}"|'[^'\r\n]{8,}'|(?!example\b|placeholder\b|redacted\b|changeme\b|null\b|nil\b|false\b|true\b)[A-Za-z0-9_+\/=.-]{8,}(?=\s*(?:[#;,}]|\z|[\r\n])))/i,
+      /(?:\A|[\r\n])\s*(?:(?:const|let|var)\s+)?["']?(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|database[_-]?url|db[_-]?url|password|private[_-]?key|secret|secret[_-]?key(?:[_-]?base)?|signing[_-]?key|token)["']?\s*=\s*(?:"[^"\r\n]{8,}"|'[^'\r\n]{8,}')/i,
+      /(?:\A|[\r\n])\s*(?:export\s+)?(?:API_KEY|ACCESS_TOKEN|AUTH_TOKEN|CLIENT_SECRET|DATABASE_URL|DB_URL|PASSWORD|PRIVATE_KEY|SECRET|SECRET_KEY(?:_BASE)?|SIGNING_KEY|TOKEN)\s*=\s*(?!example\b|placeholder\b|redacted\b|changeme\b|null\b|nil\b|false\b|true\b)[A-Za-z0-9_+\/=.-]{8,}(?=\s*(?:[#;]|\z|[\r\n]))/
     ].freeze
 
     class Error < StandardError
