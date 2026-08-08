@@ -22,6 +22,7 @@ module RemoteServerTest
     assert_remote_agent_clone_archives_source_with_editable_name
     assert_remote_agent_payload_has_revision
     assert_remote_agent_payload_has_cost_snapshot
+    assert_remote_metrics_query_and_backfill_routes
     assert_remote_inquiry_payload_has_stable_id_and_guarded_answer
     assert_remote_agent_payload_includes_attachments
     assert_remote_agent_pull_request_diff_payload
@@ -97,6 +98,47 @@ module RemoteServerTest
       payload = service.send(:agent_payload, agent)
       assert(payload.dig(:cost_snapshot, "amount_usd") == 2.5,
              "expected remote agent payloads to expose the persisted cost snapshot")
+    end
+  end
+
+  def assert_remote_metrics_query_and_backfill_routes
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      store = HQ::UsageMetrics::Store.new(path: HQ::USAGE_METRICS_FILE)
+      store.upsert(
+        "run_id" => "remote-metric-run",
+        "agent_key" => "demo-agent-1",
+        "project_key" => "demo",
+        "group" => "work",
+        "harness" => "claude",
+        "harness_adapter" => "claude",
+        "configured_model" => "configured-model",
+        "observed_models" => ["observed-model"],
+        "native_session_id" => "remote-session",
+        "session_key" => "claude:remote-session",
+        "started_at" => Time.utc(2026, 7, 6, 10).iso8601,
+        "status" => "succeeded",
+        "tokens" => { "input_tokens" => 10, "cached_input_tokens" => 0, "output_tokens" => 2 },
+        "estimated_cost" => {
+          "amount_usd" => 1.25,
+          "currency" => "USD",
+          "semantics" => "estimate_not_invoice",
+          "source" => "claude_reported_estimate"
+        },
+        "completeness" => { "overall" => "complete", "unknown_reasons" => [] },
+        "provenance" => { "source" => "fixture", "event_count" => 0 }
+      )
+      service = HQ::RemoteService.new(registry: registry)
+      server = HQ::RemoteServer.new
+
+      query = server.send(:route, service, "GET", "/metrics", {}, nil)
+      assert(query.dig(:body, "summary", "run_starts") == 1, "expected Remote API metrics query")
+      assert(query.dig(:body, "summary", "known_estimated_cost_usd") == 1.25,
+             "expected Remote API cost summary")
+      backfill = server.send(:route, service, "POST", "/metrics/backfill", { "durable_only" => true }, nil)
+      assert(backfill.dig(:body, "status") == "success", "expected Remote API backfill route")
     end
   end
 
@@ -200,6 +242,7 @@ module RemoteServerTest
   def assert_remote_agent_lifecycle
     Dir.mktmpdir("hq-remote-test") do |dir|
       old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_usage_metrics_file = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
       old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
       old_archive_dir = replace_constant(HQ, :AGENT_ARCHIVE_DIR, File.join(dir, "agents", "archive"))
 
@@ -235,6 +278,7 @@ module RemoteServerTest
       assert(service.agents.empty?, "expected archived agent to be removed from active list")
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+      replace_constant(HQ, :USAGE_METRICS_FILE, old_usage_metrics_file) if old_usage_metrics_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
       replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
     end
@@ -5448,6 +5492,7 @@ module RemoteServerTest
   def with_remote_temp_store
     Dir.mktmpdir("hq-remote-test") do |dir|
       old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_usage_metrics_file = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
       old_schedules_file = replace_constant(HQ, :SCHEDULES_FILE, File.join(dir, "config", "schedules.yml"))
       old_schedules_state_file = replace_constant(HQ, :SCHEDULES_STATE_FILE, File.join(dir, "schedules.json"))
       old_scheduler_daemon_file = replace_constant(HQ, :SCHEDULER_DAEMON_FILE, File.join(dir, "scheduler_daemon.json"))
@@ -5472,6 +5517,7 @@ module RemoteServerTest
       yield dir
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+      replace_constant(HQ, :USAGE_METRICS_FILE, old_usage_metrics_file) if old_usage_metrics_file
       replace_constant(HQ, :SCHEDULES_FILE, old_schedules_file) if old_schedules_file
       replace_constant(HQ, :SCHEDULES_STATE_FILE, old_schedules_state_file) if old_schedules_state_file
       replace_constant(HQ, :SCHEDULER_DAEMON_FILE, old_scheduler_daemon_file) if old_scheduler_daemon_file

@@ -38,6 +38,7 @@ require_relative "domain/skill_installer"
 require_relative "domain/onboarding"
 require_relative "domain/visibility"
 require_relative "domain/web_push_notifier"
+require_relative "domain/usage_metrics"
 
 module HQ
   class RemoteServer
@@ -301,6 +302,8 @@ module HQ
         end
       end
       return ok(service.resource_snapshot) if method == "GET" && parts == ["resources"]
+      return ok(service.metrics_query(request&.query_params || {})) if method == "GET" && parts == ["metrics"]
+      return ok(service.metrics_backfill(body)) if method == "POST" && parts == ["metrics", "backfill"]
       return ok(agents: service.agents) if method == "GET" && parts == ["agents"]
       return created(agent: service.create_agent(body)) if method == "POST" && parts == ["agents"]
       return ok(schedules: service.schedules, daemon: service.schedule_daemon) if method == "GET" && parts == ["schedules"]
@@ -2492,6 +2495,21 @@ module HQ
       visible = visible_agents(agents)
       visible_keys = visible.map(&:key)
       dispatch_agent_push_events(events.select { |event| visible_keys.include?(event.agent_key) }, agents: visible)
+    end
+
+    def metrics_query(filters = {})
+      UsageMetrics.query(filters)
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 400)
+    end
+
+    def metrics_backfill(attrs = {})
+      UsageMetrics.backfill({
+        "timezone" => attrs["timezone"],
+        "include_raw" => attrs["durable_only"] != true
+      })
+    rescue ArgumentError, ConfigError => e
+      raise Error.new(e.message, status: 400)
     end
 
     def skills(project_key, agent_kind)

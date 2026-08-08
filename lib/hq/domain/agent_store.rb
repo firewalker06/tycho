@@ -33,8 +33,11 @@ module HQ
       format(scheduled_system_prompt_template, title:)
     end
 
-    def initialize(projects)
+    def initialize(projects, usage_metrics_store: nil)
       @projects = projects
+      @usage_metrics_store = usage_metrics_store || UsageMetrics.store(
+        path: File.join(File.dirname(AGENTS_FILE), "usage_metrics.json")
+      )
     end
 
     def load
@@ -50,11 +53,14 @@ module HQ
       schedule_keys = schedule_keys_by_agent
       agents = Array(FileStore.read_json(AGENTS_FILE, fallback: [])).map do |hash|
         agent = ManagedAgent.from_hash(hash)
+        agent.usage_metrics_store = @usage_metrics_store
         changed = true if hash != agent.to_hash
         if agent.schedule_key.nil? && schedule_keys.key?(agent.key)
           agent.associate_schedule!(schedule_keys.fetch(agent.key))
           changed = true
         end
+        project = project_for(agent.project_key)
+        changed = agent.reconcile_project_group!(project.group) || changed if project
         before_hash = agent.to_hash
         was_running = running_for_poll_event?(agent)
         agent.poll!
@@ -100,6 +106,7 @@ module HQ
         key: key,
         name: "#{project.name} #{template.name.downcase} #{suffix}",
         project_key: project.key,
+        project_group: project.group,
         template_key: template.key,
         workspace: project.path,
         prompt: template.prompt,
@@ -113,7 +120,7 @@ module HQ
         color_index: next_color_index(existing)
       )
       seed_memory_system_prompts!(agent, project, template.prompt)
-      agent
+      attach_usage_metrics_store(agent)
     end
 
     def create_scheduled(project, schedule_key:, name:, system_message: nil, existing_agents: load)
@@ -125,6 +132,7 @@ module HQ
         key: key,
         name: scheduled_agent_name(project, schedule_key:, name:),
         project_key: project.key,
+        project_group: project.group,
         template_key: "scheduled",
         workspace: project.path,
         prompt: prompt,
@@ -139,7 +147,7 @@ module HQ
         schedule_key: schedule_key
       )
       seed_memory_system_prompts!(agent, project, prompt)
-      agent
+      attach_usage_metrics_store(agent)
     end
 
     def add_scheduled_message!(agent, schedule_key:, message:, due_at: nil)
@@ -158,10 +166,11 @@ module HQ
     def clone_agent(agent, existing_agents: load)
       now = Time.now
       key = next_agent_key(agent.project_key, existing_agents, now:)
-      ManagedAgent.new(
+      attach_usage_metrics_store(ManagedAgent.new(
         key: key,
         name: agent.name,
         project_key: agent.project_key,
+        project_group: agent.project_group,
         template_key: agent.template_key,
         workspace: agent.workspace,
         prompt: agent.prompt,
@@ -173,7 +182,7 @@ module HQ
         response_style: agent.response_style,
         skills: agent.skills,
         color_index: next_color_index(existing_agents)
-      )
+      ))
     end
 
     def ensure_project_context_prompt!(agent, project)
@@ -188,6 +197,11 @@ module HQ
     end
 
     private
+
+    def attach_usage_metrics_store(agent)
+      agent.usage_metrics_store = @usage_metrics_store
+      agent
+    end
 
     def schedule_keys_by_agent
       ScheduleStore.new.load.each_with_object({}) do |(schedule_key, state), result|

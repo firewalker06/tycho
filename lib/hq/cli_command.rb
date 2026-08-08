@@ -16,6 +16,7 @@ require_relative "domain/file_store"
 require_relative "domain/github_api_client"
 require_relative "domain/scheduler"
 require_relative "domain/agent_store"
+require_relative "domain/usage_metrics"
 
 module HQ
   module CLICommand
@@ -524,6 +525,54 @@ module HQ
       register "debug", Debug do |prefix|
         prefix.register "claude", DebugClaude
       end
+
+      class Metrics < Dry::CLI::Command
+        desc "Query or backfill usage metrics"
+
+        def call(**)
+          exit CLICommand.usage("Missing metrics command", err: err)
+        end
+      end
+
+      class MetricsQuery < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Query normalized run and native-session usage metrics"
+        option :from, desc: "Inclusive range start (date/time)"
+        option :to, desc: "Exclusive range end (date/time)"
+        option :timezone, default: "UTC", desc: "IANA timezone for offset-free boundaries"
+        option :group, desc: "Group filter (comma-separated)"
+        option :project, desc: "Project filter (comma-separated)"
+        option :agent, desc: "Agent filter (comma-separated)"
+        option :harness, desc: "Harness filter (comma-separated)"
+        option :model, desc: "Configured or observed model filter (comma-separated)"
+        option :status, desc: "Run status filter (comma-separated)"
+        remote_options
+        usage_template "metrics query [--from TIME] [--to TIME] [--timezone ZONE] [filters] [--json]"
+
+        def call(**opts)
+          exit CLICommand.query_metrics(opts, out: out, err: err)
+        end
+      end
+
+      class MetricsBackfill < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Idempotently backfill normalized usage metrics"
+        option :timezone, desc: "IANA timezone for legacy offset-free run headers"
+        option :durable_only, type: :boolean, default: false, desc: "Do not inspect legacy raw telemetry"
+        remote_options
+        usage_template "metrics backfill [--timezone ZONE] [--durable-only] [--json]"
+
+        def call(**opts)
+          exit CLICommand.backfill_metrics(opts, out: out, err: err)
+        end
+      end
+
+      register "metrics", Metrics do |prefix|
+        prefix.register "query", MetricsQuery
+        prefix.register "backfill", MetricsBackfill
+      end
     end
 
     PROJECT_COMMANDS = [
@@ -568,6 +617,10 @@ module HQ
     DEBUG_COMMANDS = [
       Commands::DebugClaude
     ].freeze
+    METRICS_COMMANDS = [
+      Commands::MetricsQuery,
+      Commands::MetricsBackfill
+    ].freeze
     COMMAND_NAME = "tycho"
     RUNTIME_COMMANDS = [
       "  #{COMMAND_NAME} serve [daemon] [--host 127.0.0.1] [--port 7373]",
@@ -586,6 +639,7 @@ module HQ
       *SCHEDULE_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, schedule_key: "<schedule-key>")}" },
       *GITHUB_COMMANDS.map { |command| "  #{COMMAND_NAME} #{command.usage_template}" },
       *SERVER_COMMANDS.map { |command| "  #{COMMAND_NAME} #{command.usage_template}" },
+      *METRICS_COMMANDS.map { |command| "  #{COMMAND_NAME} #{command.usage_template}" },
       *DEBUG_COMMANDS.map { |command| "  #{COMMAND_NAME} #{command.usage_template}" },
       "",
       "Run without a command to open the interactive Tycho TUI."
@@ -669,6 +723,29 @@ module HQ
       failure(e.message, err:)
     rescue Interrupt
       failure("GitHub login cancelled.", err:)
+    end
+
+    def query_metrics(opts = {}, out: $stdout, err: $stderr)
+      return remote_query_metrics(opts, out:, err:) if remote_requested?(opts)
+
+      result = UsageMetrics.query(metric_filters(opts))
+      print_metrics(result, json: opts[:json], out:)
+      0
+    rescue ArgumentError => e
+      failure(e.message, err:)
+    end
+
+    def backfill_metrics(opts = {}, out: $stdout, err: $stderr)
+      return remote_backfill_metrics(opts, out:, err:) if remote_requested?(opts)
+
+      result = UsageMetrics.backfill({
+        "timezone" => opts[:timezone],
+        "include_raw" => opts[:durable_only] != true
+      })
+      print_backfill(result, json: opts[:json], out:)
+      0
+    rescue ArgumentError, ConfigError => e
+      failure(e.message, err:)
     end
 
     def github_status(out: $stdout, err: $stderr, auth: GitHubAuth.default)
@@ -1505,6 +1582,84 @@ module HQ
 
     def remote_requested?(opts)
       !opts[:server].to_s.strip.empty?
+    end
+
+    def metric_filters(opts)
+      %i[from to timezone group project agent harness model status].each_with_object({}) do |key, result|
+        value = opts[key]
+        result[key.to_s] = value unless value.to_s.strip.empty?
+      end
+    end
+
+    def print_metrics(result, json:, out:)
+      if json
+        out.puts JSON.pretty_generate(result)
+        return
+      end
+
+      summary = result.fetch("summary")
+      rows = [
+        ["Run starts", summary.fetch("run_starts").to_s],
+        ["Managed agents", summary.fetch("managed_agents").to_s],
+        ["Native sessions", summary.fetch("distinct_native_sessions").to_s],
+        ["Average runs/session", format_metric_number(summary["average_runs_per_session"])],
+        ["Known estimated cost", format_metric_cost(summary["known_estimated_cost_usd"])],
+        ["Median priced session", format_metric_cost(summary["median_priced_session_cost_usd"])],
+        ["Maximum priced session", format_metric_cost(summary["max_priced_session_cost_usd"])],
+        ["Priced / unpriced runs", "#{summary.fetch("priced_run_count")} / #{summary.fetch("unpriced_run_count")}"],
+        ["Priced coverage", format_metric_percent(summary["priced_run_coverage"])]
+      ]
+      out.puts agent_table(%w[Metric Value], rows)
+      out.puts "Range: #{result.dig("query", "from") || "unbounded"} <= start < " \
+               "#{result.dig("query", "to") || "unbounded"} (#{result.dig("query", "timezone")})"
+      out.puts "Costs are estimates, not invoices. Sessions with any unpriced run are excluded from median/max."
+    end
+
+    def print_backfill(result, json:, out:)
+      if json
+        out.puts JSON.pretty_generate(result)
+        return
+      end
+
+      rows = %w[created updated unchanged manifest_run_count raw_fallback_run_count skipped_run_count].map do |key|
+        [key.tr("_", " ").capitalize, result.fetch(key, 0).to_s]
+      end
+      out.puts agent_table(%w[Backfill Count], rows)
+      Array(result["warnings"]).each { |warning| out.puts "Warning: #{warning}" }
+    end
+
+    def format_metric_number(value)
+      value.nil? ? "unknown" : format("%.2f", value)
+    end
+
+    def format_metric_cost(value)
+      value.nil? ? "unknown" : format("$%.4f estimated", value)
+    end
+
+    def format_metric_percent(value)
+      value.nil? ? "unknown" : format("%.1f%%", value * 100)
+    end
+
+    def remote_query_metrics(opts, out:, err:)
+      query = URI.encode_www_form(metric_filters(opts))
+      path = query.empty? ? "/metrics" : "/metrics?#{query}"
+      result = remote_client(opts[:server]).request("GET", path)
+      print_metrics(result, json: opts[:json], out:)
+      0
+    rescue RemoteCLIClient::Error, ArgumentError => e
+      failure(e.message, err:)
+    end
+
+    def remote_backfill_metrics(opts, out:, err:)
+      result = remote_client(opts[:server]).request(
+        "POST",
+        "/metrics/backfill",
+        body: { "timezone" => opts[:timezone], "durable_only" => opts[:durable_only] == true }
+      )
+      print_backfill(result, json: opts[:json], out:)
+      0
+    rescue RemoteCLIClient::Error, ArgumentError => e
+      failure(e.message, err:)
     end
 
     def remote_client(server_key)

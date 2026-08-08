@@ -31,6 +31,7 @@ Key references:
 - [WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.md) — planned browser push notifications for Remote UI, including the hard HTTPS-over-Tailscale requirement.
 - [SCHEDULED_RUNS.md](./SCHEDULED_RUNS.md) — planned cron-like scheduled runs, `tycho schedule daemon`, command targets, and prompt/message tradeoffs.
 - [MODEL_ARGUMENTS_PLAN.md](./MODEL_ARGUMENTS_PLAN.md) — planned managed-agent `model` and `reasoning_effort` configuration, command mapping, and TUI/Remote UI display.
+- [USAGE_METRICS.md](./USAGE_METRICS.md) — normalized run/native-session schema, provider cost semantics, query/backfill operations, archive behavior, and recovery.
 
 ## Key Decisions
 
@@ -71,6 +72,7 @@ Key references:
 | Scheduled runs | Dedicated `tycho schedule daemon`, definitions in `~/.tycho/config/schedules.yml`, runtime state in `~/.tycho/logs/schedules.json`, validated standard cron syntax | Scheduled work should continue independently from the TUI and Remote UI while still reusing existing agent execution paths |
 | Temporary session loops | Remote UI can adopt an idle conversation as a normal recurring schedule, run it immediately with schedule context, and stop it at a configured cutoff | Review-waiting sessions need lightweight polling without losing their existing context or creating a separate agent |
 | Run cost provenance | Persist harness and model on each managed-agent run; raw-log cost rebuilds use that per-run metadata and leave legacy runs unpriced when provenance is missing | Historical estimates must not silently apply the agent's current model price to older runs |
+| Usage metrics | Persist idempotent v1 run records and provider-scoped native-session aggregates in one atomic, locked store; normalize Codex cumulative counters and Claude-compatible per-run/modelUsage telemetry; query active and archived history through the same CLI/API module | Historical reporting must remain auditable without raw-log joins, guessed prices/models/session IDs, or conflating runs, native sessions, and managed agents |
 | Schedule daemon freshness | `tycho schedule daemon` writes heartbeat state to `~/.tycho/logs/scheduler_daemon.json`; UI surfaces derive running/stale/stopped from heartbeat age and process liveness, and report untracked running daemons without heartbeat state | Users need to know whether cron work is actually ticking, not only whether definitions are valid |
 | Schedule command scope | Agent-only schedules; each schedule owns one persistent managed agent session and accepts only inline messages or files under `schedules/` | Preserve recurring context without adding arbitrary shell execution or loose existing-agent targets |
 | Schedule statuses | Schedules expose `scheduled`, `paused`, or `stopped`; last outcome and error reason are tracked separately. `no_action_needed` is reserved for observational checks where no action was necessary, while completed actions and deliverables use `success` | Keep healthy no-op checks quiet without hiding meaningful completed work from unread state and notifications |
@@ -290,7 +292,7 @@ verify the bottle.
 
 ### Observability
 
-- [ ] Structured event metrics for agent run timings and lifecycle events
+- [x] Structured run/native-session usage, cost, timing, completeness, and lifecycle metrics
 - [ ] In-app log filter / search for `~/.tycho/logs/hq.log`
 - [ ] Agent run timeline view
 
@@ -356,6 +358,7 @@ verify the bottle.
 - [x] Finalized-run estimated session-cost snapshots on latest and historical Summary pages, including Codex token-delta estimates from an auditable OpenAI model rate card, explicit rebuild backfill, and no startup log scan
 - [ ] Dedicated mobile activity/log detail page
 - [x] Full mobile agent create/edit form
+- [x] First-class run/native-session usage metrics, idempotent historical backfill, archive manifests, and CLI/Remote API reporting
 
 ## Known Issues
 

@@ -16,6 +16,8 @@ require_relative "../parser"
 require_relative "agent_chat_log"
 require_relative "process_liveness"
 require_relative "agent_cost_snapshot"
+require_relative "file_store"
+require_relative "usage_metrics"
 require "digest"
 require "securerandom"
 require "shellwords"
@@ -54,7 +56,7 @@ module HQ
 
     AgentRun = Struct.new(
       :started_at, :finished_at, :exit_code, :status, :log_path, :command, :session_id, :response_style_source,
-      :agent, :model, :log_start_offset,
+      :agent, :model, :log_start_offset, :run_id,
       keyword_init: true
     ) do
       def self.from_hash(hash)
@@ -72,7 +74,8 @@ module HQ
           response_style_source: hash["response_style_source"],
           agent: hash["agent"],
           model: hash["model"],
-          log_start_offset: log_start_offset
+          log_start_offset: log_start_offset,
+          run_id: hash["run_id"]
         )
       end
 
@@ -90,6 +93,7 @@ module HQ
         result["agent"] = agent unless agent.to_s.empty?
         result["model"] = model unless model.to_s.empty?
         result["log_start_offset"] = log_start_offset if log_start_offset.is_a?(Integer) && log_start_offset >= 0
+        result["run_id"] = run_id unless run_id.to_s.empty?
         result
       end
     end
@@ -125,18 +129,23 @@ module HQ
     attr_reader :key, :name, :project_key, :template_key, :workspace, :prompt, :created_at, :started_at,
                 :finished_at, :pid, :last_exit_code, :log_path, :runs, :sandbox_mode, :agent, :messages, :skills,
                 :model, :reasoning_effort, :response_style, :session_id, :session_bootstrapped, :color_index, :summary,
-                :structured_result, :schedule_key, :cost_snapshot
+                :structured_result, :schedule_key, :cost_snapshot, :project_group
     attr_writer :summary, :structured_result, :cost_snapshot
+
+    def usage_metrics_store=(store)
+      @usage_metrics_store = store
+    end
 
     def initialize(key:, name:, project_key:, template_key:, workspace:, prompt:, created_at: nil, started_at: nil,
                    finished_at: nil, pid: nil, last_exit_code: nil, log_path: nil, runs: nil,
                    stop_requested_at: nil, sandbox_mode: "danger-full-access", agent: "codex", messages: nil,
                    model: nil, reasoning_effort: nil, response_style: nil, skills: nil, unread: false, session_id: nil,
                    session_bootstrapped: nil, color_index: nil, summary: nil, structured_result: nil, schedule_key: nil,
-                   cost_snapshot: nil, total_run_count: nil)
+                   cost_snapshot: nil, total_run_count: nil, project_group: nil)
       @key = key
       @name = name
       @project_key = project_key
+      @project_group = project_group.to_s
       @template_key = template_key
       @workspace = workspace
       @prompt = prompt
@@ -199,6 +208,12 @@ module HQ
 
     def self.from_hash(hash)
       runs = Array(hash["runs"]).map { |run| AgentRun.from_hash(run) }
+      runs.each do |run|
+        next unless run.run_id.to_s.empty?
+
+        components = [hash["key"], run.started_at&.utc&.iso8601(6), run.log_start_offset].map(&:to_s)
+        run.run_id = Digest::SHA256.hexdigest("usage-run-v1\0#{components.join("\0")}")
+      end
       launch_settings = launch_settings_from_runs(runs)
       model = hash["model"].to_s.strip.empty? ? launch_settings[:model] : hash["model"]
       reasoning_effort = if hash["reasoning_effort"].to_s.strip.empty?
@@ -235,7 +250,8 @@ module HQ
         structured_result: hash["structured_result"],
         schedule_key: hash["schedule_key"],
         cost_snapshot: hash["cost_snapshot"],
-        total_run_count: hash["total_run_count"]
+        total_run_count: hash["total_run_count"],
+        project_group: hash["project_group"]
       )
     end
 
@@ -359,6 +375,7 @@ module HQ
       result["structured_result"] = @structured_result if @structured_result.is_a?(Hash) && !@structured_result.empty?
       result["schedule_key"] = @schedule_key unless @schedule_key.to_s.empty?
       result["cost_snapshot"] = @cost_snapshot if @cost_snapshot.is_a?(Hash) && !@cost_snapshot.empty?
+      result["project_group"] = @project_group unless @project_group.empty?
       result
     end
 
@@ -372,6 +389,14 @@ module HQ
 
     def associate_schedule!(schedule_key)
       @schedule_key = normalize_schedule_key(schedule_key)
+    end
+
+    def reconcile_project_group!(value)
+      normalized = value.to_s
+      return false if @project_group == normalized
+
+      @project_group = normalized
+      true
     end
 
     def display_name
@@ -449,7 +474,8 @@ module HQ
         response_style_source: response_style_source,
         agent: @agent,
         model: @model,
-        log_start_offset: log_start_offset
+        log_start_offset: log_start_offset,
+        run_id: SecureRandom.uuid
       ))
       @structured_result = nil
       @summary = nil
@@ -623,13 +649,18 @@ module HQ
 
     def archive_logs!(root = AGENT_ARCHIVE_DIR)
       present = log_files.select { |path| File.exist?(path) }
-      return nil if present.empty?
-
       destination = LogPaths.agent_archive_destination(root, @key)
       FileUtils.mkdir_p(destination)
       present.each do |path|
         FileUtils.mv(path, File.join(destination, File.basename(path)))
       end
+      @usage_metrics_store&.mark_agent_archived(@key)
+      FileStore.write_json(File.join(destination, "agent_manifest.json"), to_hash)
+      archived_metrics = Array(@usage_metrics_store&.runs).select { |record| record["agent_key"] == @key }
+      FileStore.write_json(
+        File.join(destination, "usage_metrics.json"),
+        { "schema_version" => UsageMetrics::Store::SCHEMA_VERSION, "runs" => archived_metrics }
+      )
       destination
     end
 
@@ -984,7 +1015,8 @@ module HQ
         file.puts
       end
 
-      record_run!(AgentRun.new(
+      failed_run = record_run!(AgentRun.new(
+        run_id: SecureRandom.uuid,
         started_at: @started_at,
         finished_at: @finished_at,
         exit_code: @last_exit_code,
@@ -995,6 +1027,14 @@ module HQ
         model: @model,
         log_start_offset: log_start_offset
       ))
+      if @usage_metrics_store
+        UsageMetrics.record_run(
+          agent: self,
+          run: failed_run,
+          usage_entries: [],
+          metrics_store: @usage_metrics_store
+        )
+      end
       @structured_result = nil
       @summary = message
       HQ.logger.warn("Agent") { "Failed to start #{@key}: #{message}" }
@@ -1771,6 +1811,14 @@ module HQ
       conversation, system = Parser.parse_stream(current_run_log_lines, agent_type: @agent)
       usage_entries = system.select { |entry| entry.type == :usage }
       @cost_snapshot = AgentCostSnapshot.advance(agent: self, run:, usage_entries:)
+      if @usage_metrics_store
+        UsageMetrics.record_run(
+          agent: self,
+          run:,
+          usage_entries:,
+          metrics_store: @usage_metrics_store
+        )
+      end
 
       conversation.each do |entry|
         next unless entry.role == "assistant"
