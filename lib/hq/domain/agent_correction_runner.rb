@@ -67,7 +67,8 @@ module HQ
       FileUtils.rm_f(@config["last_message_path"]) unless @config["last_message_path"].to_s.empty?
       lines = []
       status = nil
-      Open3.popen2e(*command) do |_stdin, stream, wait_thread|
+      Open3.popen2e(*command) do |stdin, stream, wait_thread|
+        stdin.close
         stream.each_line do |line|
           lines << line.chomp
           @output.write(line)
