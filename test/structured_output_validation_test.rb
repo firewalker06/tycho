@@ -5,6 +5,7 @@ require "rbconfig"
 require "stringio"
 require "tmpdir"
 require_relative "../lib/hq/domain/agent_correction_runner"
+require_relative "../lib/hq/parser"
 
 module StructuredOutputValidationTest
   module_function
@@ -63,6 +64,21 @@ module StructuredOutputValidationTest
                "expected machine-readable correction feedback")
         assert(result[:invocations].count { |entry| entry["tool_work"] } == 1,
                "expected completed tool work not to rerun for #{adapter}")
+        conversation, system = HQ::Parser.parse_stream(result[:output].lines, agent_type: adapter)
+        blocks = HQ::Parser.compose_chat_blocks(conversation, system)
+        retry_index = blocks.index { |block| block.kind == :validation_retry }
+        assistant_indexes = blocks.each_index.select do |index|
+          blocks[index].kind == :message && blocks[index].role == "assistant"
+        end
+        assert(retry_index && assistant_indexes.length == 2,
+               "expected #{adapter} retry event between two assistant responses: #{blocks.inspect}")
+        assert(assistant_indexes.first < retry_index && retry_index < assistant_indexes.last,
+               "expected #{adapter} retry event to preserve conversation order")
+        retry_block = blocks[retry_index]
+        assert(retry_block.content.include?("Retrying in the same native session (1 of 2)"),
+               "expected concise #{adapter} retry copy")
+        assert(retry_block.metadata["errors"].all? { |error| !JSON.generate(error).include?("must not appear") },
+               "expected #{adapter} retry block to omit rejected field values")
       end
     end
   end
@@ -143,10 +159,22 @@ module StructuredOutputValidationTest
       if adapter == "codex"
         File.write(last_message_path, raw)
         puts JSON.generate("type" => "thread.started", "thread_id" => "codex-session")
+        puts JSON.generate(
+          "type" => "item.completed",
+          "item" => { "type" => "agent_message", "text" => raw }
+        )
       elsif fixture_name == "malformed.json"
         puts JSON.generate("type" => "result", "session_id" => "claude-session", "result" => raw)
       else
-        puts JSON.generate("type" => "assistant", "session_id" => "claude-session", "structured_output" => JSON.parse(raw))
+        puts JSON.generate(
+          "type" => "assistant",
+          "session_id" => "claude-session",
+          "structured_output" => JSON.parse(raw),
+          "message" => {
+            "role" => "assistant",
+            "content" => [{ "type" => "text", "text" => raw }]
+          }
+        )
       end
     RUBY
   end

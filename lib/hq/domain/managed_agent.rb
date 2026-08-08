@@ -1661,6 +1661,14 @@ module HQ
     end
 
     def read_structured_result_payload_from_log
+      if codex_agent? && @last_exit_code.to_i.zero? && File.file?(last_message_file_path)
+        parsed = JSON.parse(File.read(last_message_file_path))
+        normalized = AgentStructuredResult.normalize_payload(parsed)
+        return normalized if normalized
+      end
+
+      AgentStructuredResult.from_log_lines(last_run_log_lines)
+    rescue JSON::ParserError
       AgentStructuredResult.from_log_lines(last_run_log_lines)
     end
 
@@ -1767,10 +1775,23 @@ module HQ
       conversation.each do |entry|
         next unless entry.role == "assistant"
 
-        memory_store.append_assistant_message!(entry.content, created_at: entry.timestamp || @finished_at || Time.now)
+        memory_store.append_assistant_message!(
+          entry.content,
+          created_at: entry.timestamp || @finished_at || Time.now,
+          metadata: entry.metadata
+        )
       end
 
       system.each do |entry|
+        if entry.type == :validation_retry
+          memory_store.append_validation_retry!(
+            entry.content,
+            created_at: entry.timestamp || @finished_at || Time.now,
+            metadata: entry.metadata
+          )
+          next
+        end
+
         if entry.type == :usage
           memory_store.append_token_usage!(
             entry.content,
@@ -1824,6 +1845,7 @@ module HQ
     def run_summary_metadata
       metadata = @structured_result.is_a?(Hash) ? @structured_result.dup : {}
       metadata["run_number"] = run_count
+      metadata["_stream_sequence"] = current_run_log_lines.length + 1
       metadata["cost_snapshot"] = @cost_snapshot if @cost_snapshot.is_a?(Hash) && !@cost_snapshot.empty?
       metadata
     end

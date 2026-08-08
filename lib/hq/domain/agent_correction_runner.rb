@@ -41,8 +41,9 @@ module HQ
         validation = @validator.validate(candidate)
         return 0 if validation.valid?
 
-        emit_validation_event(validation.errors, attempt:, correction_limit:)
-        if attempt >= correction_limit || session_id.empty?
+        will_retry = attempt < correction_limit && !session_id.empty?
+        emit_validation_event(validation.errors, attempt:, correction_limit:, will_retry:)
+        unless will_retry
           errors = validation.errors.dup
           if session_id.empty? && attempt < correction_limit
             errors << {
@@ -120,11 +121,13 @@ module HQ
       end
     end
 
-    def emit_validation_event(errors, attempt:, correction_limit:)
+    def emit_validation_event(errors, attempt:, correction_limit:, will_retry:)
       emit(
         "type" => "tycho.structured_output.validation_failed",
-        "correction_attempt" => attempt,
+        "response_attempt" => attempt + 1,
+        "next_correction_attempt" => will_retry ? attempt + 1 : nil,
         "correction_limit" => correction_limit,
+        "will_retry" => will_retry,
         "errors" => errors
       )
     end

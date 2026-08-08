@@ -174,7 +174,7 @@ module HQ
     end
 
     def entry_sequence(entry, fallback_sequence)
-      sequence = entry.metadata&.dig("_sequence")
+      sequence = entry.metadata&.dig("_stream_sequence") || entry.metadata&.dig("_sequence")
       Integer(sequence)
     rescue StandardError
       fallback_sequence
@@ -221,6 +221,16 @@ module HQ
             kind: :run_summary,
             role: nil,
             content: run_summary_chat_content(entry),
+            tool_name: nil,
+            metadata: entry.metadata,
+            created_at: entry.timestamp&.iso8601
+          )
+        when :validation_retry
+          flush_summary.call
+          blocks << ChatBlock.new(
+            kind: :validation_retry,
+            role: nil,
+            content: entry.content,
             tool_name: nil,
             metadata: entry.metadata,
             created_at: entry.timestamp&.iso8601
@@ -444,17 +454,61 @@ module HQ
         conversation = include_prompt_header ? Parser.extract_prompt_header_conversation(lines) : []
         system = []
 
-        lines.each do |line|
+        lines.each_with_index do |line, stream_sequence|
           stripped = line.strip
           next unless stripped.start_with?("{")
 
           event = JSON.parse(stripped)
+          conversation_start = conversation.length
+          system_start = system.length
+          if parse_tycho_event(event, system)
+            tag_stream_sequence(system, system_start, stream_sequence)
+            next
+          end
           parse_event(event, conversation, system)
+          tag_stream_sequence(conversation, conversation_start, stream_sequence)
+          tag_stream_sequence(system, system_start, stream_sequence)
         rescue JSON::ParserError
           next
         end
 
         [conversation, system]
+      end
+
+      def tag_stream_sequence(entries, start_index, stream_sequence)
+        Array(entries[start_index..]).each do |entry|
+          metadata = entry.metadata.is_a?(Hash) ? entry.metadata.dup : {}
+          metadata["_stream_sequence"] = stream_sequence
+          entry.metadata = metadata
+        end
+      end
+
+      def parse_tycho_event(event, system)
+        return false unless event["type"] == "tycho.structured_output.validation_failed"
+
+        will_retry = event["will_retry"] == true
+        attempt = event["next_correction_attempt"].to_i
+        limit = event["correction_limit"].to_i
+        content = if will_retry
+                    "Structured output failed validation. Retrying in the same native session (#{attempt} of #{limit})."
+                  else
+                    "Structured output failed validation. The correction retry limit is exhausted."
+                  end
+        system << SystemEntry.new(
+          type: :validation_retry,
+          content: content,
+          timestamp: Time.now,
+          tool_name: nil,
+          metadata: {
+            "event_type" => event["type"],
+            "response_attempt" => event["response_attempt"],
+            "next_correction_attempt" => event["next_correction_attempt"],
+            "correction_limit" => event["correction_limit"],
+            "will_retry" => will_retry,
+            "errors" => Array(event["errors"])
+          }
+        )
+        true
       end
     end
   end

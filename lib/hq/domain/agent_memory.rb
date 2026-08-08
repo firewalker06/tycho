@@ -265,14 +265,15 @@ module HQ
       )
     end
 
-    def append_assistant_message!(content, created_at: Time.now)
+    def append_assistant_message!(content, created_at: Time.now, metadata: nil)
       text = content.to_s.strip
       return if text.empty?
 
       append_event!(
         "type" => "assistant_message",
         "content" => text,
-        "created_at" => created_at.iso8601
+        "created_at" => created_at.iso8601,
+        "metadata" => metadata.is_a?(Hash) && !metadata.empty? ? metadata : nil
       )
     end
 
@@ -297,6 +298,18 @@ module HQ
 
       append_event!(
         "type" => "token_usage",
+        "content" => text,
+        "created_at" => created_at.iso8601,
+        "metadata" => metadata.is_a?(Hash) && !metadata.empty? ? metadata : nil
+      )
+    end
+
+    def append_validation_retry!(content, created_at: Time.now, metadata: nil)
+      text = content.to_s.strip
+      return if text.empty?
+
+      append_event!(
+        "type" => "validation_retry",
         "content" => text,
         "created_at" => created_at.iso8601,
         "metadata" => metadata.is_a?(Hash) && !metadata.empty? ? metadata : nil
