@@ -1680,6 +1680,45 @@ def write_smoke_script(path)
 
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+        await page.evaluate(() => {
+          window.SpeechRecognition = class SmokeSpeechRecognition {
+            start() { window.__speechRecognitionStarted = (window.__speechRecognitionStarted || 0) + 1; }
+            stop() {}
+          };
+          state.renderedViewHtml = "";
+          render();
+          const hiddenComposer = document.createElement("form");
+          hiddenComposer.id = "composer";
+          hiddenComposer.hidden = true;
+          hiddenComposer.dataset.agentKey = "hidden-speech-composer";
+          hiddenComposer.innerHTML = '<textarea id="prompt-input"></textarea>';
+          els.view.append(hiddenComposer);
+          document.activeElement?.blur();
+        });
+        await page.keyboard.press("Meta+Shift+.");
+        const speechShortcutContract = await page.evaluate((key) => {
+          const recognition = state.speechRecognition;
+          recognition?.onresult?.({
+            resultIndex: 0,
+            results: [{ isFinal: true, 0: { transcript: "spoken smoke" } }],
+          });
+          return {
+            started: window.__speechRecognitionStarted,
+            selectedAgentKey: state.speechComposerKey,
+            focusedPrompt: document.activeElement?.id === "prompt-input" && document.activeElement?.closest("#composer")?.dataset.agentKey === key,
+            transcript: document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] #prompt-input`)?.value,
+            shortcutHint: document.querySelector("[data-toggle-speech-mode]")?.getAttribute("aria-label"),
+          };
+        }, agentKey);
+        if (speechShortcutContract.started !== 1 ||
+            speechShortcutContract.selectedAgentKey !== agentKey ||
+            !speechShortcutContract.focusedPrompt ||
+            speechShortcutContract.transcript !== "spoken smoke" ||
+            !speechShortcutContract.shortcutHint?.includes("Shift+.")) {
+          throw new Error(`Speech shortcut did not select and focus the visible composer: ${JSON.stringify(speechShortcutContract)}`);
+        }
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "speech-shortcut-desktop.png") });
+        await page.evaluate(() => stopSpeechMode());
         await page.waitForSelector("#header-schedule-menu:not(.hidden)", { state: "visible", timeout: 10_000 });
         const scheduleHeaderGeometry = await page.evaluate(() => {
           const scheduleTrigger = document.querySelector("[data-header-schedule-menu] > summary").getBoundingClientRect();
