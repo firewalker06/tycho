@@ -14,12 +14,21 @@ module StructuredOutputValidationTest
   SCHEMA_PATH = File.expand_path("../config/schemas/agent_result.json", __dir__)
 
   def run!
+    assert_runner_uses_null_child_stdin
     assert_first_pass_success
     assert_malformed_json_feedback
     assert_multiple_schema_violations
     assert_successful_correction_for_supported_harnesses
     assert_retry_exhaustion_preserves_invalid_response
     puts "structured_output_validation_test: ok"
+  end
+
+  def assert_runner_uses_null_child_stdin
+    with_runner("codex", "requires_null_stdin", correction_limit: 2) do |result|
+      assert(result[:exit_code].zero?,
+             "expected runner to attach unused child stdin to the null device: #{result[:output]}")
+      assert(result[:invocations].length == 1, "expected null stdin check to run once")
+    end
   end
 
   def assert_first_pass_success
@@ -148,7 +157,14 @@ module StructuredOutputValidationTest
         "tool_work" => count.zero?
       }
       File.open(state_path, "a") { |file| file.puts(JSON.generate(entry)) }
-      fixture_name = if scenario == "first_pass" || (scenario == "corrected" && count.positive?)
+      if scenario == "requires_null_stdin"
+        unless $stdin.stat.ftype == "characterSpecial" && $stdin.read.empty?
+          warn "child stdin was not the null device"
+          exit 42
+        end
+      end
+      fixture_name = if %w[first_pass requires_null_stdin].include?(scenario) ||
+                        (scenario == "corrected" && count.positive?)
                        "valid.json"
                      elsif scenario == "corrected"
                        "multiple_violations.json"
