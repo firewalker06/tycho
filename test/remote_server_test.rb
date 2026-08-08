@@ -26,6 +26,8 @@ module RemoteServerTest
     assert_remote_inquiry_payload_has_stable_id_and_guarded_answer
     assert_remote_agent_payload_includes_attachments
     assert_remote_agent_pull_request_diff_payload
+    assert_concurrent_pull_request_diff_refreshes_are_coalesced
+    assert_pull_request_review_refresh_reuses_metadata
     assert_pull_request_feature_gate_and_global_inbox
     assert_github_app_auth_routes
     assert_pull_request_posting_is_confirmed_stale_safe_and_idempotent
@@ -966,6 +968,48 @@ module RemoteServerTest
       routed = server.send(:route, service, "GET",
                            "/agents/#{created[:key]}/pull-requests/#{reference["id"]}/diff", {}, nil)
       assert(routed.dig(:body, :diff, "file_count") == 1, "expected PR diff route to return saved snapshots")
+    end
+  end
+
+  def assert_concurrent_pull_request_diff_refreshes_are_coalesced
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      client = BlockingGitHubDiffClient.new
+      service = HQ::RemoteService.new(
+        registry: registry_for_project(dir, workspace),
+        github_client: client,
+        pull_request_diff_store: HQ::PullRequestDiff::Store.new(File.join(dir, "diffs.json"))
+      )
+      reference = HQ::PullRequestDiff.reference_from_url("https://github.com/example/web/pull/123")
+      first = Thread.new { service.send(:refresh_pull_request_snapshot, reference) }
+      client.metadata_started.pop
+      second = Thread.new { service.send(:refresh_pull_request_snapshot, reference) }
+
+      client.release!
+      [first, second].each(&:value)
+
+      assert(client.metadata_requests == 1 && client.diff_requests == 1,
+             "expected concurrent identical diff refreshes to share one metadata and diff fetch")
+    end
+  end
+
+  def assert_pull_request_review_refresh_reuses_metadata
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      client = FakeGitHubReviewClient.new
+      service = HQ::RemoteService.new(
+        registry: registry_for_project(dir, workspace),
+        github_client: client,
+        pull_request_diff_store: HQ::PullRequestDiff::Store.new(File.join(dir, "diffs.json"))
+      )
+      reference = HQ::PullRequestDiff.reference_from_url("https://github.com/example/web/pull/123")
+      refreshed = service.send(:refresh_pull_request_fetch, reference)
+
+      detail_requests = client.requests.count { |kind, path| kind == :get_json && path.end_with?("/pulls/123") }
+      assert(detail_requests == 1, "expected review refresh to reuse the PR metadata fetched for its diff")
+      assert(refreshed.dig(:context, "head_sha") == "head", "expected reused PR metadata to preserve review context")
     end
   end
 
@@ -5842,6 +5886,21 @@ module RemoteServerTest
       )
     end
 
+    def get_text(path, **)
+      @requests << [:get_text, path]
+      HQ::GitHubAPIClient::Response.new(
+        status: 200,
+        body: "diff --git a/app.rb b/app.rb\n--- a/app.rb\n+++ b/app.rb\n@@ -1 +1 @@\n-old\n+new\n",
+        headers: {},
+        not_modified: false
+      )
+    end
+
+    def paginate(path, **)
+      @requests << [:paginate, path]
+      [[], nil]
+    end
+
     def post_json(path, _payload, **)
       @requests << [:post_json, path]
       if path.end_with?("/pulls/123/reviews")
@@ -5870,6 +5929,64 @@ module RemoteServerTest
         headers: {},
         not_modified: false
       )
+    end
+  end
+
+  class BlockingGitHubDiffClient
+    attr_reader :metadata_started, :metadata_requests, :diff_requests
+
+    def initialize
+      @metadata_started = Queue.new
+      @lock = Mutex.new
+      @condition = ConditionVariable.new
+      @released = false
+      @metadata_requests = 0
+      @diff_requests = 0
+    end
+
+    def enabled?
+      true
+    end
+
+    def get_json(_path, **)
+      @metadata_requests += 1
+      @metadata_started << true
+      @lock.synchronize { @condition.wait(@lock) until @released }
+      HQ::GitHubAPIClient::Response.new(
+        status: 200,
+        body: {
+          "title" => "Shared PR",
+          "html_url" => "https://github.com/example/web/pull/123",
+          "head" => { "sha" => "head", "ref" => "feature" },
+          "base" => { "sha" => "base", "ref" => "main" }
+        },
+        headers: {},
+        not_modified: false
+      )
+    end
+
+    def get_text(_path, accept:, **)
+      @diff_requests += 1
+      HQ::GitHubAPIClient::Response.new(
+        status: 200,
+        body: <<~DIFF,
+          diff --git a/app.rb b/app.rb
+          --- a/app.rb
+          +++ b/app.rb
+          @@ -1 +1 @@
+          -old
+          +new
+        DIFF
+        headers: {},
+        not_modified: false
+      )
+    end
+
+    def release!
+      @lock.synchronize do
+        @released = true
+        @condition.broadcast
+      end
     end
   end
 

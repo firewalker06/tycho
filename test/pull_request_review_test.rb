@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "tmpdir"
+require "timeout"
 
 require_relative "../lib/hq/domain/pull_request_review"
 
@@ -12,6 +13,8 @@ module PullRequestReviewTest
     assert_revision_change_invalidates_review_state
     assert_handoff_is_bound_to_snapshot
     assert_thousand_file_state_remains_bounded
+    assert_context_fetches_independent_collections_concurrently
+    assert_context_reuses_a_known_pull_response
     puts "pull_request_review_test: ok"
   end
 
@@ -78,6 +81,30 @@ module PullRequestReviewTest
     assert(encoded.bytesize < 100_000, "expected path-only review state to remain bounded")
   end
 
+  def assert_context_fetches_independent_collections_concurrently
+    client = BlockingContextClient.new
+    worker = Thread.new { HQ::PullRequestReview::GitHubContext.new(client:).fetch(reference_for) }
+
+    begin
+      Timeout.timeout(1) { 6.times { client.started.pop } }
+    rescue Timeout::Error
+      raise "expected independent PR context requests to start before any one completes"
+    ensure
+      client.release!
+      worker.join
+    end
+    assert(worker.value["title"] == "Example", "expected the concurrent PR context to remain complete")
+  end
+
+  def assert_context_reuses_a_known_pull_response
+    client = BlockingContextClient.new(block: false)
+    pull = client.pull
+    context = HQ::PullRequestReview::GitHubContext.new(client:).fetch(reference_for, pull:)
+
+    assert(client.pull_requests.zero?, "expected a supplied PR payload to avoid a duplicate detail request")
+    assert(context["head_sha"] == "head", "expected the supplied PR payload to preserve detail fields")
+  end
+
   def reference_for
     HQ::PullRequestDiff::Reference.new(
       id: HQ::PullRequestDiff.reference_id("github", "example/web", 123),
@@ -87,6 +114,69 @@ module PullRequestReviewTest
       url: "https://github.com/example/web/pull/123",
       title: "Example"
     )
+  end
+
+  class BlockingContextClient
+    attr_reader :started, :pull_requests
+
+    def initialize(block: true)
+      @block = block
+      @started = Queue.new
+      @lock = Mutex.new
+      @condition = ConditionVariable.new
+      @released = false
+      @pull_requests = 0
+    end
+
+    def pull
+      {
+        "title" => "Example",
+        "html_url" => "https://github.com/example/web/pull/123",
+        "state" => "open",
+        "head" => { "sha" => "head", "ref" => "feature" },
+        "base" => { "sha" => "base", "ref" => "main" }
+      }
+    end
+
+    def get_json(path, **)
+      if path.end_with?("/pulls/123")
+        @pull_requests += 1
+        return response(pull)
+      end
+
+      wait_for_other_requests(:checks)
+      response("check_runs" => [])
+    end
+
+    def paginate(path, **)
+      wait_for_other_requests(path)
+      [[], nil]
+    end
+
+    def post_json(_path, _payload, **)
+      wait_for_other_requests(:threads)
+      response("data" => { "repository" => { "pullRequest" => { "reviewThreads" => { "nodes" => [] } } } })
+    end
+
+    def release!
+      @lock.synchronize do
+        @released = true
+        @condition.broadcast
+      end
+    end
+
+    private
+
+    def response(body)
+      HQ::GitHubAPIClient::Response.new(status: 200, body:, headers: {}, not_modified: false)
+    end
+
+    def wait_for_other_requests(name)
+      @started << name
+      return unless @block
+
+      @lock.synchronize { @condition.wait(@lock) until @released }
+    end
   end
 
   def assert(condition, message)

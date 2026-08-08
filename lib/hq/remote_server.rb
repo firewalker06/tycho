@@ -6,6 +6,7 @@ require "fileutils"
 require "json"
 require "net/http"
 require "open3"
+require "thread"
 require "socket"
 require "uri"
 
@@ -1480,6 +1481,8 @@ module HQ
       @github_client = github_client
       @pull_request_diff_store = pull_request_diff_store
       @pull_request_review_store = pull_request_review_store
+      @pull_request_fetch_lock = Mutex.new
+      @pull_request_fetches = {}
     end
 
     def add_remote_server(body)
@@ -1699,7 +1702,7 @@ module HQ
       raise Error.new("Pull request diff has not been fetched yet", status: 404) unless snapshot
       return snapshot if PullRequestDiff.current_snapshot?(snapshot)
 
-      @pull_request_diff_store.save(PullRequestDiff.snapshot_for(reference, provider: github_provider))
+      refresh_pull_request_snapshot(reference)
     rescue PullRequestDiff::Error => e
       raise Error.new(e.message, status: e.status)
     end
@@ -1708,7 +1711,7 @@ module HQ
       ensure_github_enabled!
       agent = find_agent!(key)
       reference = pull_request_reference!(agent, id)
-      @pull_request_diff_store.save(PullRequestDiff.snapshot_for(reference, provider: github_provider))
+      refresh_pull_request_snapshot(reference)
     rescue PullRequestDiff::Error => e
       raise Error.new(e.message, status: e.status)
     end
@@ -1719,7 +1722,7 @@ module HQ
       refreshed = []
       failed = []
       PullRequestDiff.references_for_agent(agent).each do |reference|
-        refreshed << @pull_request_diff_store.save(PullRequestDiff.snapshot_for(reference, provider: github_provider))
+        refreshed << refresh_pull_request_snapshot(reference)
       rescue PullRequestDiff::Error => e
         failed << {
           id: reference.id,
@@ -1829,9 +1832,7 @@ module HQ
     def refresh_pull_request_review(id)
       ensure_github_enabled!
       reference = pull_request_reference_by_id!(id)
-      snapshot = @pull_request_diff_store.save(PullRequestDiff.snapshot_for(reference, provider: github_provider))
-      @pull_request_review_store.reconcile_snapshot(reference.id, snapshot)
-      { snapshot: snapshot, context: PullRequestReview::GitHubContext.new(client: @github_client).fetch(reference) }
+      refresh_pull_request_fetch(reference)
     rescue PullRequestDiff::Error => e
       raise Error.new(e.message, status: e.status)
     end
@@ -3159,6 +3160,77 @@ module HQ
 
     def github_provider
       PullRequestDiff::GitHubProvider.new(client: @github_client)
+    end
+
+    def refresh_pull_request_snapshot(reference)
+      refresh_pull_request_snapshot_fetch(reference).fetch(:snapshot)
+    end
+
+    def refresh_pull_request_snapshot_fetch(reference)
+      coalesce_pull_request_fetch(reference, "snapshot") do
+        metadata, pull = github_provider.metadata_with_pull(reference)
+        { snapshot: save_pull_request_snapshot(reference, metadata), pull: }
+      end
+    end
+
+    def refresh_pull_request_fetch(reference)
+      refreshed = refresh_pull_request_snapshot_fetch(reference)
+      context = coalesce_pull_request_fetch(reference, "context") do
+        PullRequestReview::GitHubContext.new(client: @github_client).fetch(reference, pull: refreshed.fetch(:pull))
+      end
+      { snapshot: refreshed.fetch(:snapshot), context: }
+    end
+
+    def save_pull_request_snapshot(reference, metadata)
+      snapshot = @pull_request_diff_store.save(
+        PullRequestDiff.snapshot_for(reference, provider: github_provider, metadata:)
+      )
+      @pull_request_review_store.reconcile_snapshot(reference.id, snapshot)
+      snapshot
+    end
+
+    def coalesce_pull_request_fetch(reference, operation)
+      key = [github_cache_scope, reference.id, operation].join("\0")
+      leader = false
+      @pull_request_fetch_lock.synchronize do
+        fetch = @pull_request_fetches[key]
+        unless fetch
+          fetch = { condition: ConditionVariable.new, complete: false }
+          @pull_request_fetches[key] = fetch
+          leader = true
+        end
+        unless leader
+          fetch[:condition].wait(@pull_request_fetch_lock) until fetch[:complete]
+          raise fetch[:error] if fetch[:error]
+
+          return fetch[:value]
+        end
+      end
+
+      value = yield
+      complete_pull_request_fetch(key, value:)
+      value
+    rescue StandardError => e
+      complete_pull_request_fetch(key, error: e) if leader
+      raise
+    end
+
+    def complete_pull_request_fetch(key, value: nil, error: nil)
+      @pull_request_fetch_lock.synchronize do
+        fetch = @pull_request_fetches.delete(key)
+        return unless fetch
+
+        fetch[:value] = value
+        fetch[:error] = error
+        fetch[:complete] = true
+        fetch[:condition].broadcast
+      end
+    end
+
+    def github_cache_scope
+      return @github_client.base_url.to_s if @github_client.respond_to?(:base_url)
+
+      @github_client.object_id.to_s
     end
 
     def ensure_github_enabled!

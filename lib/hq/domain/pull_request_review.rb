@@ -157,21 +157,24 @@ module HQ
     end
 
     class GitHubContext
+      MAX_CONCURRENT_COLLECTION_FETCHES = 8
+      @collection_fetch_lock = Mutex.new
+      @collection_fetch_condition = ConditionVariable.new
+      @collection_fetches_in_flight = 0
+
       def initialize(client: GitHubAPIClient.new)
         @client = client
       end
 
-      def fetch(reference)
-        pull = @client.get_json(pr_path(reference)).body
-        commits, = @client.paginate("#{pr_path(reference)}/commits", max_pages: 3)
-        reviews, = @client.paginate("#{pr_path(reference)}/reviews", max_pages: 5)
-        comments, = @client.paginate("#{pr_path(reference)}/comments", max_pages: 5)
-        issue_comments, = @client.paginate(
-          "/repos/#{reference.repository}/issues/#{reference.number}/comments",
-          max_pages: 5
-        )
-        statuses = fetch_statuses(reference, pull.dig("head", "sha"))
-        threads = fetch_threads(reference)
+      def fetch(reference, pull: nil)
+        pull ||= @client.get_json(pr_path(reference)).body
+        collections = fetch_collections(reference, pull.dig("head", "sha"))
+        commits = collections.fetch(:commits)
+        reviews = collections.fetch(:reviews)
+        comments = collections.fetch(:comments)
+        issue_comments = collections.fetch(:issue_comments)
+        statuses = collections.fetch(:statuses)
+        threads = collections.fetch(:threads)
         {
           "title" => pull["title"],
           "url" => pull["html_url"],
@@ -267,6 +270,55 @@ module HQ
       end
 
       private
+
+      def fetch_collections(reference, head_sha)
+        tasks = {
+          commits: -> { @client.paginate("#{pr_path(reference)}/commits", max_pages: 3).first },
+          reviews: -> { @client.paginate("#{pr_path(reference)}/reviews", max_pages: 5).first },
+          comments: -> { @client.paginate("#{pr_path(reference)}/comments", max_pages: 5).first },
+          issue_comments: lambda {
+            @client.paginate("/repos/#{reference.repository}/issues/#{reference.number}/comments", max_pages: 5).first
+          },
+          statuses: -> { fetch_statuses(reference, head_sha) },
+          threads: -> { fetch_threads(reference) }
+        }
+        threads = tasks.transform_values { |task| start_collection_fetch(&task) }
+        threads.to_h { |name, thread| [name, thread.value] }
+      ensure
+        threads&.each_value(&:join)
+      end
+
+      def start_collection_fetch(&task)
+        self.class.acquire_collection_fetch_slot
+        Thread.new do
+          task.call
+        ensure
+          self.class.release_collection_fetch_slot
+        end
+      rescue StandardError
+        self.class.release_collection_fetch_slot
+        raise
+      end
+
+      class << self
+        def acquire_collection_fetch_slot
+          collection_fetch_lock.synchronize do
+            collection_fetch_condition.wait(collection_fetch_lock) until
+              collection_fetches_in_flight < MAX_CONCURRENT_COLLECTION_FETCHES
+            self.collection_fetches_in_flight += 1
+          end
+        end
+
+        def release_collection_fetch_slot
+          collection_fetch_lock.synchronize do
+            self.collection_fetches_in_flight -= 1
+            collection_fetch_condition.broadcast
+          end
+        end
+
+        attr_reader :collection_fetch_lock, :collection_fetch_condition
+        attr_accessor :collection_fetches_in_flight
+      end
 
       def pr_path(reference)
         "/repos/#{reference.repository}/pulls/#{reference.number}"
