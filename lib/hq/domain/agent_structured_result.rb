@@ -5,6 +5,26 @@ require "json"
 module HQ
   class AgentStructuredResult
     class << self
+      def candidate_from_log_lines(lines)
+        Array(lines).reverse_each do |line|
+          parsed = JSON.parse(line.to_s.strip)
+          candidate = structured_candidate_from_event(parsed)
+          return candidate unless candidate.nil?
+        rescue JSON::ParserError
+          next
+        end
+
+        Array(lines).reverse_each do |line|
+          parsed = JSON.parse(line.to_s.strip)
+          candidate = text_candidate_from_event(parsed)
+          return candidate unless candidate.nil?
+        rescue JSON::ParserError
+          next
+        end
+
+        nil
+      end
+
       def from_log_lines(lines)
         Array(lines).reverse_each do |line|
           stripped = line.to_s.strip
@@ -44,6 +64,41 @@ module HQ
       end
 
       private
+
+      def structured_candidate_from_event(parsed)
+        return nil unless parsed.is_a?(Hash)
+        return parsed["structured_output"] if parsed.key?("structured_output")
+
+        if parsed["type"] == "assistant"
+          Array(parsed.dig("message", "content")).reverse_each do |item|
+            next unless item.is_a?(Hash)
+            if item["type"] == "tool_use" && item["name"].to_s.downcase == "structuredoutput"
+              return item["input"]
+            end
+          end
+        end
+
+        nil
+      end
+
+      def text_candidate_from_event(parsed)
+        return nil unless parsed.is_a?(Hash)
+
+        if parsed["type"] == "assistant"
+          Array(parsed.dig("message", "content")).reverse_each do |item|
+            next unless item.is_a?(Hash)
+            return item["text"] if item["type"] == "text" && !item["text"].to_s.empty?
+          end
+        end
+
+        item = parsed["item"]
+        if parsed["type"] == "item.completed" && item.is_a?(Hash) && item["type"] == "agent_message"
+          return item["text"]
+        end
+        return parsed["result"] if parsed["type"] == "result" && parsed.key?("result")
+
+        nil
+      end
 
       def assistant_event_payload(parsed)
         return nil unless parsed["type"] == "assistant"

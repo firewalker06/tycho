@@ -1,0 +1,19 @@
+{
+  "status": "finished",
+  "summary": 42,
+  "inquiry": {
+    "message": "Choose",
+    "fields": [
+      {
+        "key": "choice",
+        "label": "Choice",
+        "description": null,
+        "input_type": "dropdown",
+        "required": "yes",
+        "options": [1]
+      }
+    ],
+    "secret": "must not appear in feedback"
+  },
+  "debug_token": "must not appear in feedback"
+}

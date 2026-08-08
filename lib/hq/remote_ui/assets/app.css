@@ -3280,6 +3280,65 @@ select {
   min-width: 0;
 }
 
+.system-event-block.validation-retry-block {
+  border-color: color-mix(in srgb, var(--warning) 58%, var(--border));
+  background: color-mix(in srgb, var(--warning) 7%, var(--panel));
+}
+
+.system-event-block.validation-retry-block > summary {
+  color: color-mix(in srgb, var(--warning) 76%, var(--text));
+}
+
+.validation-retry-brand {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--warning) 62%, var(--border));
+  border-radius: 5px;
+  color: var(--warning);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.validation-retry-body {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--warning) 32%, var(--border));
+  padding: 10px 12px 12px;
+  color: color-mix(in srgb, var(--text) 88%, var(--muted));
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.validation-retry-body p,
+.validation-retry-errors {
+  margin: 0;
+}
+
+.validation-retry-errors {
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.validation-retry-errors li {
+  display: grid;
+  grid-template-columns: minmax(110px, auto) minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.validation-retry-errors code {
+  color: var(--warning);
+  font-size: 12px;
+}
+
+.validation-retry-empty {
+  color: var(--muted);
+}
+
 .message-group-label {
   display: inline-flex;
   align-items: center;

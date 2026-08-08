@@ -171,6 +171,16 @@ module HQ
           )
           chat_system << entry
           system_log << entry
+        when "validation_retry"
+          entry = Parser::SystemEntry.new(
+            type: :validation_retry,
+            content: event["content"].to_s,
+            timestamp:,
+            tool_name: nil,
+            metadata: merge_sequence_metadata(event["metadata"], sequence)
+          )
+          chat_system << entry
+          system_log << entry
         when "run_summary"
           run_summary_number += 1
           entry = Parser::SystemEntry.new(
@@ -382,14 +392,25 @@ module HQ
             events << {
               "type" => "assistant_message",
               "content" => entry.content.to_s,
-              "created_at" => cursor.iso8601
-            }
+              "created_at" => cursor.iso8601,
+              "metadata" => entry.metadata.is_a?(Hash) ? entry.metadata : nil
+            }.compact
           end
         end
 
         usage_entries = system.select { |entry| entry.type == :usage }
         system.each do |entry|
           cursor += 1
+          if entry.type == :validation_retry
+            events << {
+              "type" => "validation_retry",
+              "content" => entry.content.to_s,
+              "created_at" => cursor.iso8601,
+              "metadata" => entry.metadata.is_a?(Hash) ? entry.metadata : nil
+            }.compact
+            next
+          end
+
           if entry.type == :usage
             events << {
               "type" => "token_usage",

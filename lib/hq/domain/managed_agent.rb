@@ -7,6 +7,7 @@ require_relative "agent_command_builder"
 require_relative "agent_memory"
 require_relative "agent_result_normalizer"
 require_relative "agent_structured_result"
+require_relative "agent_correction_runner"
 require_relative "response_style_policy"
 require_relative "executable_resolver"
 require_relative "../harness_registry"
@@ -18,6 +19,7 @@ require_relative "agent_cost_snapshot"
 require "digest"
 require "securerandom"
 require "shellwords"
+require "rbconfig"
 
 module HQ
   class ManagedAgent
@@ -109,6 +111,8 @@ module HQ
     LEGACY_SCHEDULED_NAME_PREFIX = "[Scheduled]"
     DIRECT_OUTPUT_IDLE_TIMEOUT_SECONDS = 5 * 60
     PROCESS_OUTPUT_MARKER = "=== process output ==="
+    STRUCTURED_OUTPUT_CORRECTION_LIMIT = 2
+    MAX_STRUCTURED_OUTPUT_CORRECTION_LIMIT = 5
 
     def self.with_final_output_checklist(prompt)
       text = prompt.to_s.rstrip
@@ -412,6 +416,7 @@ module HQ
       status_path = status_file_path
       FileUtils.rm_f(status_path)
       FileUtils.rm_f(last_message_file_path)
+      FileUtils.rm_f(invalid_structured_output_file_path)
       invalidate_derived_logs!
       log_start_offset = nil
       File.open(@log_path, "a") do |file|
@@ -426,9 +431,10 @@ module HQ
       end
 
       log_file = File.open(@log_path, "a")
+      launch = structured_output_runner_launch(command, environment)
       @pid = spawn(
-        external_process_environment(environment),
-        *command,
+        external_process_environment(launch.fetch(:env)),
+        *launch.fetch(:command),
         chdir: @workspace, out: log_file, err: %i[child out], pgroup: true
       )
       log_file.close
@@ -607,6 +613,7 @@ module HQ
         system_log_path,
         memory_path,
         attachments_path,
+        invalid_structured_output_file_path,
         status_file_path,
         last_message_file_path,
         legacy_status_file_path,
@@ -857,7 +864,8 @@ module HQ
       LogPaths.derived_agent_log_path(@log_path, suffix)
     end
 
-    def command_builder(prompt: prompt_for_execution)
+    def command_builder(prompt: prompt_for_execution, session_id: @session_id,
+                        session_bootstrapped: @session_bootstrapped)
       AgentCommandBuilder.new(
         agent: @agent,
         harness_adapter: harness_adapter,
@@ -865,8 +873,8 @@ module HQ
         sandbox_mode: @sandbox_mode,
         model: @model,
         reasoning_effort: @reasoning_effort,
-        session_id: @session_id,
-        session_bootstrapped: @session_bootstrapped,
+        session_id: session_id,
+        session_bootstrapped: session_bootstrapped,
         prompt: prompt,
         codex_executable: codex_executable,
         claude_command_prefix: claude_command_prefix,
@@ -880,6 +888,47 @@ module HQ
 
     def build_command(prompt: prompt_for_execution)
       command_builder(prompt:).build
+    end
+
+    def structured_output_runner_launch(command, environment)
+      return { command:, env: environment } unless structured_output_correction_supported?
+
+      correction = command_builder(
+        prompt: AgentCorrectionRunner::PROMPT_PLACEHOLDER,
+        session_id: AgentCorrectionRunner::SESSION_PLACEHOLDER,
+        session_bootstrapped: true
+      ).build
+      config = {
+        "initial_command" => command,
+        "correction_command" => correction.fetch(:command),
+        "harness_adapter" => harness_adapter,
+        "schema_path" => AGENT_RESULT_SCHEMA,
+        "last_message_path" => last_message_file_path,
+        "invalid_response_path" => invalid_structured_output_file_path,
+        "session_id" => @session_id.to_s,
+        "correction_limit" => structured_output_correction_limit
+      }
+      runner_command = [
+        RbConfig.ruby,
+        "-I", File.expand_path("../..", __dir__),
+        "-r", "hq/domain/agent_correction_runner",
+        "-e", "HQ::AgentCorrectionRunner.run_from_environment!"
+      ]
+      {
+        command: runner_command,
+        env: environment.merge("TYCHO_AGENT_RUNNER_CONFIG" => JSON.generate(config))
+      }
+    end
+
+    def structured_output_correction_supported?
+      File.file?(AGENT_RESULT_SCHEMA) && %w[codex claude].include?(harness_adapter)
+    end
+
+    def structured_output_correction_limit
+      value = Integer(ENV.fetch("TYCHO_STRUCTURED_OUTPUT_CORRECTION_LIMIT", STRUCTURED_OUTPUT_CORRECTION_LIMIT.to_s))
+      [[value, 0].max, MAX_STRUCTURED_OUTPUT_CORRECTION_LIMIT].min
+    rescue ArgumentError, TypeError
+      STRUCTURED_OUTPUT_CORRECTION_LIMIT
     end
 
     def missing_executable_for(command)
@@ -920,6 +969,7 @@ module HQ
       mark_read!
       FileUtils.rm_f(status_file_path)
       FileUtils.rm_f(last_message_file_path)
+      FileUtils.rm_f(invalid_structured_output_file_path)
       invalidate_derived_logs!
 
       log_start_offset = nil
@@ -1032,6 +1082,10 @@ module HQ
 
     def last_message_file_path
       derived_log_path("last_message.json")
+    end
+
+    def invalid_structured_output_file_path
+      derived_log_path("invalid_structured_output.json")
     end
 
     def legacy_last_message_file_path
@@ -1607,6 +1661,14 @@ module HQ
     end
 
     def read_structured_result_payload_from_log
+      if codex_agent? && @last_exit_code.to_i.zero? && File.file?(last_message_file_path)
+        parsed = JSON.parse(File.read(last_message_file_path))
+        normalized = AgentStructuredResult.normalize_payload(parsed)
+        return normalized if normalized
+      end
+
+      AgentStructuredResult.from_log_lines(last_run_log_lines)
+    rescue JSON::ParserError
       AgentStructuredResult.from_log_lines(last_run_log_lines)
     end
 
@@ -1713,10 +1775,23 @@ module HQ
       conversation.each do |entry|
         next unless entry.role == "assistant"
 
-        memory_store.append_assistant_message!(entry.content, created_at: entry.timestamp || @finished_at || Time.now)
+        memory_store.append_assistant_message!(
+          entry.content,
+          created_at: entry.timestamp || @finished_at || Time.now,
+          metadata: entry.metadata
+        )
       end
 
       system.each do |entry|
+        if entry.type == :validation_retry
+          memory_store.append_validation_retry!(
+            entry.content,
+            created_at: entry.timestamp || @finished_at || Time.now,
+            metadata: entry.metadata
+          )
+          next
+        end
+
         if entry.type == :usage
           memory_store.append_token_usage!(
             entry.content,
@@ -1770,6 +1845,7 @@ module HQ
     def run_summary_metadata
       metadata = @structured_result.is_a?(Hash) ? @structured_result.dup : {}
       metadata["run_number"] = run_count
+      metadata["_stream_sequence"] = current_run_log_lines.length + 1
       metadata["cost_snapshot"] = @cost_snapshot if @cost_snapshot.is_a?(Hash) && !@cost_snapshot.empty?
       metadata
     end

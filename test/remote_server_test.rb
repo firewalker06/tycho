@@ -1143,7 +1143,18 @@ module RemoteServerTest
         #!#{RbConfig.ruby}
         require "json"
         File.write(#{argv_path.dump}, JSON.generate(ARGV))
-        exit 0 if ARGV.include?("--")
+        if ARGV.include?("--")
+          output_index = ARGV.index("-o")
+          if output_index
+            File.write(ARGV[output_index + 1], JSON.generate(
+              "status" => "success",
+              "summary" => "Prompt accepted.",
+              "inquiry" => nil,
+              "attachments" => nil
+            ))
+          end
+          exit 0
+        end
 
         prompt = ARGV.reverse.find { |argument| argument.include?("inquiry reply") }
         if prompt&.start_with?("-")
@@ -1232,14 +1243,34 @@ module RemoteServerTest
       )
       shared_time = Time.now
       memory.append_assistant_message!(
-        "This same-second assistant update should render before the summary.",
-        created_at: shared_time
+        "The first same-second assistant response is invalid.",
+        created_at: shared_time,
+        metadata: { "_stream_sequence" => 20 }
+      )
+      memory.append_validation_retry!(
+        "Structured output failed validation. Retrying in the same native session (1 of 2).",
+        created_at: shared_time,
+        metadata: {
+          "_stream_sequence" => 21,
+          "will_retry" => true,
+          "next_correction_attempt" => 1,
+          "correction_limit" => 2,
+          "errors" => [
+            { "code" => "missing_field", "path" => "$.attachments" }
+          ]
+        }
+      )
+      memory.append_assistant_message!(
+        "The second same-second assistant response is corrected.",
+        created_at: shared_time,
+        metadata: { "_stream_sequence" => 23 }
       )
       memory.append_run_summary!(
         summary: "A detailed run summary that should stay readable in the conversation.\n\nSecond paragraph stays available for the full Summary page.",
         status: "succeeded",
         created_at: shared_time,
         metadata: {
+          "_stream_sequence" => 24,
           "attachments" => [
             {
               "type" => "file",
@@ -1253,9 +1284,14 @@ module RemoteServerTest
 
       conversation = service.conversation(created[:key])
       summary = conversation.find { |block| block[:kind] == "run_summary" }
+      retry_block = conversation.find { |block| block[:kind] == "validation_retry" }
       assistant = conversation.find { |block| block[:role] == "assistant" }
-      same_second_assistant_index = conversation.index do |block|
-        block[:role] == "assistant" && block[:content].include?("same-second assistant")
+      invalid_assistant_index = conversation.index do |block|
+        block[:role] == "assistant" && block[:content].include?("first same-second")
+      end
+      retry_index = conversation.index(retry_block)
+      corrected_assistant_index = conversation.index do |block|
+        block[:role] == "assistant" && block[:content].include?("second same-second")
       end
       summary_index = conversation.index(summary)
       memory_summary = memory.events.find { |event| event["type"] == "run_summary" }
@@ -1268,10 +1304,16 @@ module RemoteServerTest
              "expected run summary conversation blocks to expose a stable summary id")
       assert(summary&.dig(:metadata, "attachments")&.first&.dig("title") == "summary-notes.md",
              "expected run summary conversation blocks to keep attachment metadata")
-      assert(same_second_assistant_index && summary_index && same_second_assistant_index < summary_index,
-             "expected same-second summaries to render after earlier memory events")
+      assert(invalid_assistant_index && retry_index && corrected_assistant_index && summary_index &&
+             invalid_assistant_index < retry_index && retry_index < corrected_assistant_index &&
+             corrected_assistant_index < summary_index,
+             "expected same-second retry events to stay between assistant responses and before the summary")
       assert(assistant&.dig(:content)&.include?("normal assistant response"),
              "expected normal assistant messages to remain visible in the conversation")
+      assert(retry_block&.dig(:content)&.include?("Retrying in the same native session"),
+             "expected Remote UI conversation payload to include Tycho system event blocks")
+      assert(retry_block&.dig(:metadata, "errors", 0, "path") == "$.attachments",
+             "expected system event blocks to expose safe field-level validation details")
       assert(memory_summary&.dig("content")&.include?("A detailed run summary"),
              "expected run summaries to remain persisted for the Summary page")
     ensure
@@ -4863,6 +4905,15 @@ module RemoteServerTest
            "expected stale summary attachment growl copy")
     assert(js[:body].include?("<details class=\"message-group\""),
            "expected Agent detail internal groups to be collapsed by default")
+    assert(js[:body].include?('block?.kind === "validation_retry"') &&
+           js[:body].include?("function renderSystemEventBlock") &&
+           js[:body].include?("function renderValidationRetryBlock") &&
+           js[:body].include?('<span class="validation-retry-brand">TYCHO</span>'),
+           "expected structured-output retries to render as collapsed Tycho system event blocks")
+    assert(js[:body].include?("system-event-block validation-retry-block") &&
+           css[:body].include?(".system-event-block.validation-retry-block") &&
+           css[:body].include?(".validation-retry-errors"),
+           "expected Tycho system event blocks to have compact expandable styling")
     assert(js[:body].include?("function renderCodexTurnCompletedContent"),
            "expected Codex turn completion summaries to render parsed metrics")
     assert(js[:body].include?("function agentUsageSummaryBlock") &&

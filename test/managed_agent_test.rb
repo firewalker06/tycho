@@ -44,7 +44,7 @@ module ManagedAgentTest
     assert_poll_stops_stale_unstructured_output
     assert_poll_preserves_stale_structured_output
     assert_external_process_environment_removes_ruby_loader_state
-    assert_start_spawns_harness_without_ruby_runner_parent
+    assert_start_spawns_harness_through_validation_runner
     assert_agent_runner_warns_when_command_cannot_execute
     puts "managed_agent_test: ok"
   end
@@ -631,6 +631,7 @@ module ManagedAgentTest
         captured.concat(args)
         { command: ["true"], env: {} }
       end
+      agent.define_singleton_method(:structured_output_correction_supported?) { false }
 
       expected_response_style_source = agent.effective_response_style_source
       agent.start!
@@ -721,6 +722,7 @@ module ManagedAgentTest
         captured.concat(args)
         { command: ["true"], env: {} }
       end
+      agent.define_singleton_method(:structured_output_correction_supported?) { false }
 
       agent.start!
 
@@ -1495,23 +1497,14 @@ module ManagedAgentTest
     assert(env["CUSTOM"] == "1", "expected explicit harness env to be preserved")
   end
 
-  def assert_start_spawns_harness_without_ruby_runner_parent
+  def assert_start_spawns_harness_through_validation_runner
     old_harnesses = HQ.custom_harnesses
     Dir.mktmpdir("hq-direct-harness-test") do |dir|
       harness = File.join(dir, "direct-harness")
       File.write(harness, <<~SH)
         #!/bin/sh
-        parent_args="$(ps -p "$PPID" -o args=)"
-        case "$parent_args" in
-          *" -e "*)
-            echo "ruby-wrapper-parent: $parent_args"
-            exit 42
-            ;;
-          *)
-            echo "direct-parent"
-            exit 0
-            ;;
-        esac
+        printf '%s\n' '{"type":"assistant","session_id":"validation-session","message":{"role":"assistant","content":[{"type":"tool_use","name":"StructuredOutput","input":{"status":"success","summary":"Validated through runner.","inquiry_json":"null","attachments_json":"null"}}]}}'
+        exit 0
       SH
       File.chmod(0o755, harness)
       HQ.custom_harnesses = [
@@ -1544,8 +1537,8 @@ module ManagedAgentTest
       log = File.read(agent.log_path)
       run = agent.last_run
       restored_run = HQ::ManagedAgent::AgentRun.from_hash(run.to_hash)
-      assert(agent.last_exit_code == 0, "expected direct harness to exit cleanly, log: #{log}")
-      assert(log.include?("direct-parent"), "expected harness process not to be parented by ruby -e runner")
+      assert(agent.last_exit_code == 0, "expected validated harness to exit cleanly, log: #{log}")
+      assert(log.include?("Validated through runner."), "expected validation runner to stream harness output")
       assert(run.log_start_offset.is_a?(Integer) && run.log_start_offset.positive?,
              "expected the run to record its raw-log byte offset")
       assert(restored_run.log_start_offset == run.log_start_offset,
@@ -1555,7 +1548,7 @@ module ManagedAgentTest
         raise "offset reads should not scan the accumulated raw log"
       end
       run_lines = agent.send(:current_run_log_lines)
-      assert(run_lines.include?("direct-parent"),
+      assert(run_lines.any? { |line| line.include?("Validated through runner.") },
              "expected the persisted byte offset to read the completed run directly")
     end
   ensure
