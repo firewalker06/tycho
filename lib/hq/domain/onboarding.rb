@@ -8,6 +8,29 @@ module HQ
     WELCOME_PROJECT_KEY = "welcome"
     WELCOME_PROJECT_NAME = "Welcome Sandbox"
     WELCOME_PROJECT_GROUP = "Getting Started"
+    AGENT_CLI_GUIDES = {
+      "codex" => {
+        name: "Codex",
+        install_command: "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+        verify_command: "codex --version",
+        setup: "Run `codex` in a project and choose a sign-in method. Complete the browser step on a device you trust; do not paste credentials into Tycho.",
+        documentation_url: "https://developers.openai.com/codex/cli/"
+      },
+      "claude" => {
+        name: "Claude Code",
+        install_command: "curl -fsSL https://claude.ai/install.sh | bash",
+        verify_command: "claude --version",
+        setup: "Run `claude` in a project and complete the sign-in flow for your Anthropic account, Claude subscription, or approved cloud provider. Keep credentials out of shell history and Tycho.",
+        documentation_url: "https://docs.anthropic.com/en/docs/claude-code/getting-started"
+      },
+      "opencode" => {
+        name: "OpenCode",
+        install_command: "curl -fsSL https://opencode.ai/install | bash",
+        verify_command: "opencode --version",
+        setup: "Run `opencode`, then use `/connect` to choose and configure a provider. Authenticate on the server or a trusted device without sharing API keys with Tycho.",
+        documentation_url: "https://dev.opencode.ai/docs/"
+      }
+    }.freeze
 
     module_function
 
@@ -30,6 +53,13 @@ module HQ
         path: ensure_welcome_workspace!,
         agent: agent.to_s
       }
+    end
+
+    def agent_cli_guides
+      HQ::BUILTIN_HARNESSES.filter_map do |harness|
+        guide = AGENT_CLI_GUIDES[harness]
+        guide && guide.merge(key: harness)
+      end
     end
 
     def current_directory_candidate(cwd = Dir.pwd)
