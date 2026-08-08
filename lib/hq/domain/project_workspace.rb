@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "pathname"
-
 module HQ
   class ProjectWorkspace
     DEFAULT_PAGE_SIZE = 100
@@ -9,18 +7,23 @@ module HQ
     MAX_DIRECTORY_ENTRIES = 5_000
     MAX_NAME_BYTES = 1_024
     MAX_PREVIEW_BYTES = 256 * 1024
-    BINARY_SAMPLE_BYTES = 8 * 1024
-
     EXCLUDED_DIRECTORIES = %w[
       .bundle .cache .git .hg .svn .terraform .yardoc
       build coverage dist log logs node_modules pkg tmp vendor
     ].freeze
     SENSITIVE_NAMES = %w[
-      .env .netrc .npmrc .pypirc credentials credentials.json
+      .aws .env .envrc .gnupg .netrc .npmrc .pypirc .ssh credentials credentials.json
       id_dsa id_ecdsa id_ed25519 id_rsa known_hosts
     ].freeze
     SENSITIVE_SUFFIXES = %w[.key .p12 .pfx .pem].freeze
     PRIVATE_KEY_MARKER = /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/.freeze
+    SECRET_VALUE_PATTERNS = [
+      /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/,
+      /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/,
+      /\bsk-[A-Za-z0-9_-]{20,}\b/,
+      /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,
+      /(?:api[_-]?key|access[_-]?token|client[_-]?secret|password)\s*[=:]\s*["']?[A-Za-z0-9_+\/=.-]{12,}/i
+    ].freeze
 
     class Error < StandardError
       attr_reader :code, :status
@@ -40,7 +43,7 @@ module HQ
       root = canonical_root!
       relative = normalize_relative_path(path)
       directory = resolve!(root, relative, kind: :directory)
-      entries, scan_truncated = directory_entries(root, directory, relative)
+      entries = directory_entries(root, directory, relative)
       page_offset = bounded_offset(offset)
       page_limit = bounded_limit(limit)
       page = entries.slice(page_offset, page_limit) || []
@@ -53,7 +56,7 @@ module HQ
         limit: page_limit,
         total: entries.length,
         next_offset: page_offset + page.length < entries.length ? page_offset + page.length : nil,
-        truncated: scan_truncated
+        truncated: false
       }
     rescue Errno::EACCES, Errno::EPERM
       raise Error.new("permission_denied", "Workspace directory is not readable", status: 403)
@@ -132,24 +135,23 @@ module HQ
     end
 
     def directory_entries(root, directory, relative)
-      entries = []
-      scanned = 0
-      truncated = false
+      names = []
       Dir.each_child(directory) do |name|
-        scanned += 1
-        if scanned > MAX_DIRECTORY_ENTRIES
-          truncated = true
-          break
+        names << name
+        if names.length > MAX_DIRECTORY_ENTRIES
+          raise Error.new("directory_too_large", "Directory has too many entries to browse", status: 413)
         end
+      end
+
+      entries = names.filter_map do |name|
         next unless safe_name?(name)
 
         child_relative = relative.empty? ? name : "#{relative}/#{name}"
         next unless public_path?(child_relative)
 
-        entry = entry_payload(root, directory, child_relative, name)
-        entries << entry if entry
+        entry_payload(root, directory, child_relative, name)
       end
-      [entries.sort_by { |entry| [entry[:kind] == "directory" ? 0 : 1, sort_name(entry[:name]), entry[:name].b] }, truncated]
+      entries.sort_by { |entry| [entry[:kind] == "directory" ? 0 : 1, sort_name(entry[:name]), entry[:name].b] }
     end
 
     def entry_payload(root, directory, relative, name)
@@ -190,6 +192,7 @@ module HQ
       return true if SENSITIVE_NAMES.include?(normalized)
       return true if normalized.start_with?(".env.")
       return true if normalized.include?("credential") || normalized.include?("private-key") || normalized.include?("private_key")
+      return true if normalized.match?(/\A(?:passwords?|secrets?|tokens?)(?:\.(?:conf|ini|json|toml|txt|ya?ml))?\z/)
 
       SENSITIVE_SUFFIXES.any? { |suffix| normalized.end_with?(suffix) }
     end
@@ -209,18 +212,17 @@ module HQ
     end
 
     def binary?(bytes)
-      sample = bytes.byteslice(0, BINARY_SAMPLE_BYTES).to_s
-      return true if sample.include?("\0")
+      return true if bytes.include?("\0")
 
-      text = sample.dup.force_encoding(Encoding::UTF_8)
+      text = bytes.dup.force_encoding(Encoding::UTF_8)
       return false if text.valid_encoding?
 
-      invalid = text.scrub("").bytesize
-      sample.bytesize.positive? && invalid < sample.bytesize * 0.85
+      valid_bytes = text.scrub("").bytesize
+      bytes.bytesize.positive? && valid_bytes < bytes.bytesize * 0.85
     end
 
     def sensitive_content?(content)
-      content.match?(PRIVATE_KEY_MARKER)
+      content.match?(PRIVATE_KEY_MARKER) || SECRET_VALUE_PATTERNS.any? { |pattern| content.match?(pattern) }
     end
 
     def parent_path(relative)

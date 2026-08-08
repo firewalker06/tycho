@@ -3181,7 +3181,7 @@ select {
 
 .workspace-breadcrumbs button {
   flex: 0 0 auto;
-  min-height: 34px;
+  min-height: 44px;
   border: 0;
   background: transparent;
   color: var(--muted);
@@ -3289,6 +3289,14 @@ select {
 .workspace-load-more {
   align-self: center;
   margin: 10px;
+}
+
+.workspace-load-spinner {
+  visibility: hidden;
+}
+
+.workspace-load-more[data-loading="true"] .workspace-load-spinner {
+  visibility: visible;
 }
 
 .workspace-preview-empty {

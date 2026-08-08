@@ -69,9 +69,13 @@ def write_fixture(dir)
   SH
   File.chmod(0o755, fake_gh_path)
   FileUtils.mkdir_p(File.join(workspace, "docs"))
+  FileUtils.mkdir_p(File.join(workspace, "fast"))
+  FileUtils.mkdir_p(File.join(workspace, "slow"))
   FileUtils.mkdir_p(File.join(workspace, "src"))
   FileUtils.mkdir_p(File.join(workspace, "node_modules", "fixture"))
   File.write(File.join(workspace, "docs", "guide.md"), "# Workspace guide\n\nRead-only preview.\n")
+  File.write(File.join(workspace, "fast", "fast.txt"), "fast\n")
+  File.write(File.join(workspace, "slow", "slow.txt"), "slow\n")
   File.write(File.join(workspace, "src", "app.rb"), "puts \"fixture\"\n")
   File.binwrite(File.join(workspace, "binary.dat"), "fixture\0binary")
   File.binwrite(File.join(workspace, "large.txt"), "x" * ((256 * 1024) + 1))
@@ -536,6 +540,7 @@ def write_smoke_script(path)
             !previewContract.content?.includes("Read-only preview") || previewContract.focusable !== 0) {
           throw new Error(`Workspace text preview contract failed: ${JSON.stringify(previewContract)}`);
         }
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-preview-desktop.png"), fullPage: true });
 
         await page.goBack();
         await page.waitForSelector(".workspace-preview-empty", { state: "visible", timeout: 10_000 });
@@ -556,12 +561,37 @@ def write_smoke_script(path)
         await page.click("[data-workspace-directory='']");
         await page.waitForSelector("[data-workspace-file='binary.dat']", { state: "visible", timeout: 10_000 });
         await page.click("[data-workspace-file='binary.dat']");
-        await page.waitForSelector(".workspace-preview-pane [role='alert']", { state: "visible", timeout: 10_000 });
+        await page.waitForFunction(() => document.querySelector(".workspace-preview-pane")?.textContent.includes("Binary file"));
         if (!(await page.locator(".workspace-preview-pane").innerText()).includes("Binary file")) {
           throw new Error("Workspace binary state was not visible");
         }
         await page.click("[data-workspace-file='large.txt']");
         await page.waitForFunction(() => document.querySelector(".workspace-preview-pane")?.textContent.includes("File too large"));
+
+        const workspaceRoutePattern = "**/projects/web/workspace?*";
+        await page.route(workspaceRoutePattern, async (route) => {
+          const requestUrl = new URL(route.request().url());
+          if (requestUrl.searchParams.get("path") === "slow") await new Promise((resolve) => setTimeout(resolve, 250));
+          await route.continue();
+        });
+        await page.evaluate(() => {
+          delete state.projectWorkspaces[projectWorkspaceKey("web", "slow")];
+          delete state.projectWorkspaces[projectWorkspaceKey("web", "fast")];
+          navigate({ type: "projectWorkspace", key: "web", path: "slow", file: "" });
+        });
+        await page.waitForTimeout(30);
+        await page.evaluate(() => navigate({ type: "projectWorkspace", key: "web", path: "fast", file: "" }));
+        await page.waitForSelector("[data-workspace-file='fast/fast.txt']", { state: "visible", timeout: 10_000 });
+        await page.waitForTimeout(300);
+        const raceContract = await page.evaluate(() => ({
+          route: parseRoute(),
+          slowVisible: Boolean(document.querySelector("[data-workspace-file='slow/slow.txt']")),
+          fastVisible: Boolean(document.querySelector("[data-workspace-file='fast/fast.txt']")),
+        }));
+        await page.unroute(workspaceRoutePattern);
+        if (raceContract.route.path !== "fast" || raceContract.slowVisible || !raceContract.fastVisible) {
+          throw new Error(`Workspace race-safe navigation failed: ${JSON.stringify(raceContract)}`);
+        }
         const unexpectedErrors = errors.slice(consoleErrorStart).filter((message) =>
           !message.includes("status of 415") && !message.includes("status of 413"));
         errors.splice(consoleErrorStart, errors.length - consoleErrorStart, ...unexpectedErrors);

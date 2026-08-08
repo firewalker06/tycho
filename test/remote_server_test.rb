@@ -2794,6 +2794,23 @@ module RemoteServerTest
             echoed_body: JSON.parse(request[:body])
           )
         }
+      when ["GET", "/projects/web/workspace"]
+        {
+          status: 200,
+          content_type: "application/json",
+          body: JSON.generate(
+            workspace: {
+              path: "docs",
+              parent: "",
+              entries: [{ name: "guide.md", path: "docs/guide.md", kind: "file", size_bytes: 8 }],
+              offset: 0,
+              limit: 100,
+              total: 1,
+              next_offset: nil,
+              truncated: false
+            }
+          )
+        }
       when ["GET", "/attachments/image/blob"]
         {
           status: 200,
@@ -2859,6 +2876,27 @@ module RemoteServerTest
                "expected broker proxy to forward JSON request body")
         assert(requests.last.dig(:headers, "authorization") == "Bearer target-secret",
                "expected broker proxy to use configured target token")
+
+        workspace_request = HQ::RemoteServer.const_get(:Request).new(
+          method: "GET",
+          path: "/servers/target/projects/web/workspace",
+          query: "path=docs&limit=100",
+          headers: {},
+          body: ""
+        )
+        workspace_response = server.send(
+          :route,
+          service,
+          "GET",
+          workspace_request.path,
+          {},
+          workspace_request
+        )
+        assert(workspace_response.dig(:body, "workspace", "entries", 0, "path") == "docs/guide.md",
+               "expected project workspace payloads to stay scoped to the target server")
+        assert(requests.last[:path] == "/projects/web/workspace" &&
+               requests.last[:query] == "path=docs&limit=100",
+               "expected project workspace paths and pagination to survive broker routing")
 
         blob = server.send(:route, service, "GET", "/servers/target/attachments/image/blob", {}, nil)
         assert(blob[:content_type] == "image/png", "expected broker proxy to preserve target content type")
@@ -4602,8 +4640,8 @@ module RemoteServerTest
            js[:body].include?("function renderProjectWorkspace") &&
            js[:body].include?("function ensureProjectWorkspacePreview"),
            "expected Project detail to expose the read-only workspace browser")
-    assert(js[:body].include?("projectWorkspaceRequests") &&
-           js[:body].include?("state.projectWorkspaceRequests[key] !== requestId"),
+    assert(js[:body].include?("function performProjectWorkspaceRequest") &&
+           js[:body].include?("requests[key] !== requestId"),
            "expected workspace navigation responses to be race-safe")
     assert(js[:body].include?('aria-label="Project workspace file browser"') &&
            js[:body].include?('aria-label="Workspace path"') &&

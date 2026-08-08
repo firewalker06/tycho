@@ -669,8 +669,11 @@ module HQ
         202 => "Accepted",
         400 => "Bad Request",
         401 => "Unauthorized",
+        403 => "Forbidden",
         404 => "Not Found",
         409 => "Conflict",
+        413 => "Content Too Large",
+        415 => "Unsupported Media Type",
         502 => "Bad Gateway",
         504 => "Gateway Timeout",
         500 => "Internal Server Error"

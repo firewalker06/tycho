@@ -4,6 +4,9 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+- Add a read-only Remote UI project workspace browser with multiserver routing,
+  bounded directory listings, safe text previews, durable navigation, and
+  server-enforced traversal, symlink, binary, size, VCS, and secret controls.
 - Attach the structured-output runner's child stdin to the null device so
   managed Codex agents start without waiting for input or failing with a
   terminal I/O error.

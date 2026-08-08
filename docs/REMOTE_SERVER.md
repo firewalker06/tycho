@@ -838,7 +838,7 @@ Returns active projects after refreshing metadata:
 
 ### `GET /projects/{key}/workspace?path={relative}&offset={n}&limit={n}`
 
-Returns one bounded, deterministically sorted page of safe directory entries. Paths in requests and responses are relative to the project's canonical workspace root. The server rejects absolute, traversing, encoded, NUL-containing, unavailable, and escaping-symlink paths; hides VCS internals, dependency/build/cache directories, and sensitive names; and never returns the host workspace path. The default page size is 100, the maximum is 200, and directory scanning stops after 5,000 candidates.
+Returns one bounded, deterministically sorted page of safe directory entries. Paths in requests and responses are relative to the project's canonical workspace root. The server rejects absolute, traversing, encoded, NUL-containing, unavailable, and escaping-symlink paths; hides VCS internals, dependency/build/cache directories, and sensitive names; and never returns the host workspace path. The default page size is 100, the maximum is 200, and directories above the deterministic 5,000-entry scan cap return a sanitized size error.
 
 ### `GET /projects/{key}/workspace/preview?path={relative}`
 

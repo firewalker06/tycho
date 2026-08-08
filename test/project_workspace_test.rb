@@ -11,6 +11,7 @@ module ProjectWorkspaceTest
   def run!
     assert_lists_nested_content_with_deterministic_sorting
     assert_paginates_and_bounds_directory_payloads
+    assert_rejects_directories_above_the_deterministic_scan_cap
     assert_previews_unicode_and_scrubs_invalid_utf8
     assert_rejects_binary_large_sensitive_and_generated_files
     assert_reports_permission_errors
@@ -71,18 +72,37 @@ module ProjectWorkspaceTest
     end
   end
 
+  def assert_rejects_directories_above_the_deterministic_scan_cap
+    with_workspace do |root|
+      old_limit = HQ::ProjectWorkspace::MAX_DIRECTORY_ENTRIES
+      replace_constant(HQ::ProjectWorkspace, :MAX_DIRECTORY_ENTRIES, 5)
+      6.times { |index| File.write(File.join(root, "entry-#{index}.txt"), index.to_s) }
+      assert_error("directory_too_large") { HQ::ProjectWorkspace.new(root).list }
+    ensure
+      replace_constant(HQ::ProjectWorkspace, :MAX_DIRECTORY_ENTRIES, old_limit) if old_limit
+    end
+  end
+
   def assert_rejects_binary_large_sensitive_and_generated_files
     with_workspace do |root|
       File.binwrite(File.join(root, "image.bin"), "abc\0def")
+      File.binwrite(File.join(root, "late-binary.bin"), ("a" * 9_000) + "\0binary")
       File.binwrite(File.join(root, "large.txt"), "x" * (HQ::ProjectWorkspace::MAX_PREVIEW_BYTES + 1))
       File.write(File.join(root, "secret.pem"), "-----BEGIN PRIVATE KEY-----\nnope")
+      File.write(File.join(root, "secrets.yml"), "token: nope\n")
+      File.write(File.join(root, ".envrc"), "export TOKEN=nope\n")
+      File.write(File.join(root, "config.yml"), "api_key: sk-abcdefghijklmnopqrstuvwxyz\n")
       FileUtils.mkdir_p(File.join(root, "dist"))
       File.write(File.join(root, "dist", "bundle.js"), "generated")
       browser = HQ::ProjectWorkspace.new(root)
 
       assert_error("binary") { browser.preview(path: "image.bin") }
+      assert_error("binary") { browser.preview(path: "late-binary.bin") }
       assert_error("too_large") { browser.preview(path: "large.txt") }
       assert_error("not_found") { browser.preview(path: "secret.pem") }
+      assert_error("not_found") { browser.preview(path: "secrets.yml") }
+      assert_error("not_found") { browser.preview(path: ".envrc") }
+      assert_error("sensitive") { browser.preview(path: "config.yml") }
       assert_error("not_found") { browser.preview(path: "dist/bundle.js") }
     end
   end
@@ -160,6 +180,11 @@ module ProjectWorkspaceTest
 
   def assert(condition, message)
     raise message unless condition
+  end
+
+  def replace_constant(mod, name, value)
+    mod.send(:remove_const, name)
+    mod.const_set(name, value)
   end
 end
 
