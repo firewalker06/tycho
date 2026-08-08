@@ -3280,12 +3280,12 @@ select {
   min-width: 0;
 }
 
-.validation-retry-block {
+.system-event-block.validation-retry-block {
   border-color: color-mix(in srgb, var(--warning) 58%, var(--border));
   background: color-mix(in srgb, var(--warning) 7%, var(--panel));
 }
 
-.validation-retry-block > summary {
+.system-event-block.validation-retry-block > summary {
   color: color-mix(in srgb, var(--warning) 76%, var(--text));
 }
 

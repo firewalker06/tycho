@@ -599,10 +599,10 @@ system logs record validation events, and the Remote UI shows the failed status
 and summary without treating the invalid payload as a successful result.
 
 Each validation failure also appears in the conversation as a collapsed
-**TYCHO** block between the rejected response and the next response. The compact
-row shows whether Tycho is retrying or has exhausted the limit. Expanding it
-shows schema paths and safe error details, but never copies rejected field
-values into the conversation.
+**system event block** branded **TYCHO**, between the rejected response and the
+next response. The compact row shows whether Tycho is retrying or has exhausted
+the limit. Expanding it shows schema paths and safe error details, but never
+copies rejected field values into the conversation.
 
 Use `TYCHO_CODEX_BIN`, `TYCHO_CLAUDE_BIN`, or another documented environment
 override when a harness executable is not on `PATH`.

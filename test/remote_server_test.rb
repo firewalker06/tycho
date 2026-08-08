@@ -1311,9 +1311,9 @@ module RemoteServerTest
       assert(assistant&.dig(:content)&.include?("normal assistant response"),
              "expected normal assistant messages to remain visible in the conversation")
       assert(retry_block&.dig(:content)&.include?("Retrying in the same native session"),
-             "expected Remote UI conversation payload to include Tycho validation retry blocks")
+             "expected Remote UI conversation payload to include Tycho system event blocks")
       assert(retry_block&.dig(:metadata, "errors", 0, "path") == "$.attachments",
-             "expected retry blocks to expose safe field-level validation details")
+             "expected system event blocks to expose safe field-level validation details")
       assert(memory_summary&.dig("content")&.include?("A detailed run summary"),
              "expected run summaries to remain persisted for the Summary page")
     ensure
@@ -4906,12 +4906,14 @@ module RemoteServerTest
     assert(js[:body].include?("<details class=\"message-group\""),
            "expected Agent detail internal groups to be collapsed by default")
     assert(js[:body].include?('block?.kind === "validation_retry"') &&
+           js[:body].include?("function renderSystemEventBlock") &&
            js[:body].include?("function renderValidationRetryBlock") &&
            js[:body].include?('<span class="validation-retry-brand">TYCHO</span>'),
-           "expected structured-output retries to render as collapsed Tycho conversation blocks")
-    assert(css[:body].include?(".validation-retry-block") &&
+           "expected structured-output retries to render as collapsed Tycho system event blocks")
+    assert(js[:body].include?("system-event-block validation-retry-block") &&
+           css[:body].include?(".system-event-block.validation-retry-block") &&
            css[:body].include?(".validation-retry-errors"),
-           "expected Tycho retry blocks to have compact expandable styling")
+           "expected Tycho system event blocks to have compact expandable styling")
     assert(js[:body].include?("function renderCodexTurnCompletedContent"),
            "expected Codex turn completion summaries to render parsed metrics")
     assert(js[:body].include?("function agentUsageSummaryBlock") &&
