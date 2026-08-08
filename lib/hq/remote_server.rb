@@ -34,6 +34,7 @@ require_relative "domain/remote_credential_store"
 require_relative "domain/schedule_daemon_supervisor"
 require_relative "domain/scheduler"
 require_relative "domain/skill_discovery"
+require_relative "domain/skill_installer"
 require_relative "domain/onboarding"
 require_relative "domain/visibility"
 require_relative "domain/web_push_notifier"
@@ -52,11 +53,12 @@ module HQ
     }.freeze
 
     class Error < StandardError
-      attr_reader :status
+      attr_reader :status, :details
 
-      def initialize(message, status: 400)
+      def initialize(message, status: 400, details: nil)
         super(message)
         @status = status
+        @details = details
       end
     end
 
@@ -184,7 +186,9 @@ module HQ
                  headers: result.fetch(:headers, {}))
     rescue Error => e
       status = e.status
-      write_http(client, status, error: e.message)
+      payload = { error: e.message }
+      payload[:details] = e.details if e.details
+      write_http(client, status, payload)
     rescue JSON::ParserError
       status = 400
       write_http(client, status, error: "Invalid JSON body")
@@ -307,6 +311,10 @@ module HQ
       return accepted(service.restart_schedule_daemon(body)) if method == "POST" && parts == ["schedules", "daemon", "restart"]
       return ok(service.archive_agents(body)) if method == "POST" && parts == ["agents", "archive"]
       return ok(projects: service.projects) if method == "GET" && parts == ["projects"]
+      return ok(skill_installation: service.skill_installation) if method == "GET" && parts == ["skills"]
+      if method == "POST" && parts.length == 3 && parts.first == "skills" && %w[install update].include?(parts[2])
+        return ok(service.change_skills(parts[1], parts[2], body))
+      end
       return created(project: service.create_welcome_project) if method == "POST" && parts == ["setup", "welcome"]
       return ok(setup: service.refresh_harnesses) if method == "POST" && parts == ["setup", "harnesses", "refresh"]
       if %w[PATCH PUT].include?(method) && parts.length == 4 && parts[0, 2] == ["setup", "harnesses"] && parts[3] == "catalog"
@@ -1449,6 +1457,7 @@ module HQ
                    web_push_notifier: nil,
                    schedule_daemon_supervisor: nil,
                    restartable: false,
+                   skill_installer: nil,
                    github_client: GitHubAPIClient.new,
                    pull_request_diff_store: PullRequestDiff::Store.new,
                    pull_request_review_store: PullRequestReview::Store.new)
@@ -1463,6 +1472,8 @@ module HQ
       @public_url = public_url.to_s
       @auth_required = auth_required ? true : false
       @restartable = restartable ? true : false
+      skills_home = HQ.env_present("SKILLS_HOME", Dir.home)
+      @skill_installer = skill_installer || SkillInstaller.new(home: skills_home)
       @github_client = github_client
       @pull_request_diff_store = pull_request_diff_store
       @pull_request_review_store = pull_request_review_store
@@ -2255,6 +2266,7 @@ module HQ
           unread_agents: agents.count(&:unread?)
         },
         harnesses: harness_readiness,
+        skill_installation: skill_installation,
         tools: tool_readiness,
         schema: schema_readiness,
         config: config_readiness,
@@ -2268,6 +2280,27 @@ module HQ
         },
         safety: safety_guidance
       }
+    end
+
+    def skill_installation
+      {
+        harnesses: @skill_installer.statuses
+      }
+    end
+
+    def change_skills(harness, action, body)
+      unless body["confirmed"] == true
+        raise Error.new("Confirm this #{action} action before changing agent skills", status: 400)
+      end
+
+      result = @skill_installer.apply(harness: harness, action: action)
+      {
+        skill_installation: skill_installation,
+        result: result
+      }
+    rescue SkillInstaller::InstallError => e
+      status = { "permission" => 403, "network" => 502 }.fetch(e.category, 409)
+      raise Error.new(e.message, status: status, details: e.to_h)
     end
 
     def start_github_login

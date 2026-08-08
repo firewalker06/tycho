@@ -213,6 +213,7 @@ Use the `TYCHO_` prefix for runtime overrides.
 | `TYCHO_SCHEDULES_ROOT` | Override schedule message file root. |
 | `TYCHO_HOOKS_PATH` | Override global hooks config path. |
 | `TYCHO_LOGS_ROOT` | Override runtime state and logs root. |
+| `TYCHO_SKILLS_HOME` | Override the home prefix used for harness skill installation, primarily for isolated tests or profiles. |
 | `TYCHO_SCHEDULES_STATE_PATH` | Override scheduler runtime state path. |
 | `TYCHO_SCHEDULER_DAEMON_PATH` | Override scheduler daemon heartbeat path. |
 | `TYCHO_CODEX_BIN` | Override Codex executable lookup. |
@@ -638,6 +639,7 @@ bundle exec ruby test/rendering_test.rb
 - `docs/PROJECT_STATUS.md`: current roadmap and architectural decisions.
 - `docs/SYSTEM_PROMPT_AUDIT.md`: when Tycho introduces system and automatic prompt context, the exact content, purpose, and known contract gaps.
 - `docs/REMOTE_SERVER.md`: Remote Sessions API and Remote UI behavior.
+- `docs/TYCHO_SKILLS.md`: Tycho skill source, install/update paths, ownership safety, and verification.
 - `docs/SCHEDULED_RUNS.md`: scheduled-agent design, policies, and runtime state.
 - `docs/GOTCHAS.md`: operational pitfalls.
 - `docs/OPEN_SOURCE_PLAN.md`: open-source readiness plan and launch criteria.
