@@ -370,11 +370,13 @@ def write_smoke_script(path)
       const unscheduledAgentKey = process.env.TYCHO_REMOTE_UI_UNSCHEDULED_AGENT_KEY;
       const chromePath = process.env.CHROME_PATH;
       const captureDir = process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "";
+      const beforeCapture = process.env.TYCHO_REMOTE_UI_BEFORE_CAPTURE || "";
       const skillsOnly = process.env.TYCHO_REMOTE_UI_SKILLS_ONLY === "1";
       const draft = "Remote UI smoke draft " + Date.now();
       const errors = [];
 
       if (captureDir) fs.mkdirSync(captureDir, { recursive: true });
+      if (captureDir && beforeCapture) fs.copyFileSync(beforeCapture, path.join(captureDir, "attachment-flyout-before.png"));
 
       const browser = await chromium.launch({ executablePath: chromePath, headless: true });
       const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -2415,6 +2417,155 @@ def write_smoke_script(path)
         }
 
         await page.setViewportSize({ width: 1280, height: 800 });
+        const attachmentFlyoutLayouts = await page.evaluate((key) => {
+          const agent = findAgent(key);
+          const longName = `very-long-attachment-name-${"x".repeat(180)}.md`;
+          const measurements = [0, 1, 2, 3, 16].map((count) => {
+            agent.attachments = Array.from({ length: count }, (_, index) => ({
+              id: `attachment-flyout-${count}-${index}`,
+              agent_key: key,
+              type: "file",
+              title: index === 0 ? longName : `attachment-${index + 1}.md`,
+              path: `/tmp/${index === 0 ? longName : `attachment-${index + 1}.md`}`,
+              blob_path: `/attachments/attachment-flyout-${count}-${index}/blob`,
+              format: "text",
+            }));
+            state.renderedViewHtml = "";
+            render();
+
+            const button = document.querySelector("[data-toggle-attachments]");
+            const flyout = document.querySelector("[data-attachment-flyout]");
+            if (!count) return { count, button: Boolean(button), flyout: Boolean(flyout) };
+
+            setAttachmentFlyoutOpen(true);
+            const list = flyout.querySelector(".attachment-list");
+            const header = flyout.querySelector(".attachment-panel-header");
+            const copy = flyout.querySelector(".attachment-copy");
+            const rect = flyout.getBoundingClientRect();
+            const headerRect = header.getBoundingClientRect();
+            const listRect = list.getBoundingClientRect();
+            const result = {
+              count,
+              controls: button.getAttribute("aria-controls"),
+              label: flyout.getAttribute("aria-label"),
+              panel: rect.toJSON(),
+              list: listRect.toJSON(),
+              panelScrollHeight: flyout.scrollHeight,
+              listScrollHeight: list.scrollHeight,
+              listClientHeight: list.clientHeight,
+              listOverflowY: getComputedStyle(list).overflowY,
+              copyOverflows: copy.scrollWidth > copy.clientWidth,
+              intrinsicDelta: Math.abs(rect.height - (headerRect.height + listRect.height + 30)),
+            };
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+            result.closedWithEscape = flyout.classList.contains("hidden");
+            result.focusReturned = document.activeElement === button;
+            return result;
+          });
+          return measurements;
+        }, agentKey);
+        const zeroAttachmentFlyout = attachmentFlyoutLayouts.find((layout) => layout.count === 0);
+        const compactAttachmentFlyouts = attachmentFlyoutLayouts.filter((layout) => [1, 2, 3].includes(layout.count));
+        const overflowingAttachmentFlyout = attachmentFlyoutLayouts.find((layout) => layout.count === 16);
+        if (zeroAttachmentFlyout.button || zeroAttachmentFlyout.flyout ||
+            compactAttachmentFlyouts.some((layout) => layout.controls !== "agent-attachment-flyout" ||
+              layout.label !== "Attachments" || layout.intrinsicDelta > 2 || layout.panel.width > 360 ||
+              layout.copyOverflows || !layout.closedWithEscape || !layout.focusReturned) ||
+            overflowingAttachmentFlyout.panel.height > 341 ||
+            overflowingAttachmentFlyout.listScrollHeight <= overflowingAttachmentFlyout.listClientHeight ||
+            !["auto", "scroll"].includes(overflowingAttachmentFlyout.listOverflowY) ||
+            !overflowingAttachmentFlyout.closedWithEscape || !overflowingAttachmentFlyout.focusReturned) {
+          throw new Error(`Attachment flyout does not shrink, scroll, or retain accessible controls: ${JSON.stringify(attachmentFlyoutLayouts)}`);
+        }
+        const attachmentFlyoutRenderContract = await page.evaluate((key) => {
+          const agent = findAgent(key);
+          agent.attachments = Array.from({ length: 16 }, (_, index) => ({
+            id: `attachment-flyout-render-${index}`,
+            agent_key: key,
+            type: "file",
+            title: `attachment-${index + 1}.md`,
+            path: `/tmp/attachment-${index + 1}.md`,
+            blob_path: `/attachments/attachment-flyout-render-${index}/blob`,
+            format: "text",
+          }));
+          state.renderedViewHtml = "";
+          render();
+          setAttachmentFlyoutOpen(true);
+          const beforeRender = document.querySelector(".attachment-list");
+          beforeRender.scrollTop = 80;
+          const scrollTop = beforeRender.scrollTop;
+          state.renderedViewHtml = "";
+          render();
+          const flyout = document.querySelector("[data-attachment-flyout]");
+          const afterRender = flyout?.querySelector(".attachment-list");
+          return {
+            open: Boolean(flyout && !flyout.classList.contains("hidden")),
+            before: scrollTop,
+            after: afterRender?.scrollTop,
+          };
+        }, agentKey);
+        if (!attachmentFlyoutRenderContract.open || attachmentFlyoutRenderContract.before <= 0 ||
+            Math.abs(attachmentFlyoutRenderContract.after - attachmentFlyoutRenderContract.before) > 1) {
+          throw new Error(`Attachment flyout lost its scroll position during a normal render: ${JSON.stringify(attachmentFlyoutRenderContract)}`);
+        }
+        await page.evaluate((key) => {
+          const agent = findAgent(key);
+          agent.attachments = [{
+            id: "attachment-flyout-capture",
+            agent_key: key,
+            type: "file",
+            title: "very-long-attachment-name-for-the-flexible-popup-capture.md",
+            path: "/tmp/very-long-attachment-name-for-the-flexible-popup-capture.md",
+            blob_path: "/attachments/attachment-flyout-capture/blob",
+            format: "text",
+          }];
+          state.renderedViewHtml = "";
+          render();
+          setAttachmentFlyoutOpen(true);
+        }, agentKey);
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "attachment-flyout-desktop.png") });
+        await page.evaluate((key) => {
+          const agent = findAgent(key);
+          agent.attachments = Array.from({ length: 16 }, (_, index) => ({
+            id: `attachment-flyout-resize-${index}`,
+            agent_key: key,
+            type: "file",
+            title: `attachment-${index + 1}.md`,
+            path: `/tmp/attachment-${index + 1}.md`,
+            blob_path: `/attachments/attachment-flyout-resize-${index}/blob`,
+            format: "text",
+          }));
+          state.renderedViewHtml = "";
+          render();
+          setAttachmentFlyoutOpen(true);
+          document.querySelector(".attachment-list").scrollTop = 80;
+        }, agentKey);
+        await page.setViewportSize({ width: 390, height: 844 });
+        const attachmentFlyoutResizeContract = await page.evaluate(() => {
+          const flyout = document.querySelector("[data-attachment-flyout]:not(.hidden)");
+          const toggle = document.querySelector("[data-toggle-attachments]");
+          const list = flyout?.querySelector(".attachment-list");
+          const flyoutRect = flyout?.getBoundingClientRect();
+          const toggleRect = toggle?.getBoundingClientRect();
+          return {
+            viewport: { width: window.innerWidth, height: window.innerHeight },
+            flyout: flyoutRect?.toJSON(),
+            toggle: toggleRect?.toJSON(),
+            scrollTop: list?.scrollTop,
+            scrollHeight: list?.scrollHeight,
+            clientHeight: list?.clientHeight,
+          };
+        });
+        if (!attachmentFlyoutResizeContract.flyout || !attachmentFlyoutResizeContract.toggle ||
+            attachmentFlyoutResizeContract.flyout.left < 0 ||
+            attachmentFlyoutResizeContract.flyout.right > attachmentFlyoutResizeContract.viewport.width ||
+            attachmentFlyoutResizeContract.flyout.bottom > attachmentFlyoutResizeContract.toggle.top ||
+            attachmentFlyoutResizeContract.flyout.bottom > attachmentFlyoutResizeContract.viewport.height ||
+            attachmentFlyoutResizeContract.scrollTop <= 0 ||
+            attachmentFlyoutResizeContract.scrollHeight <= attachmentFlyoutResizeContract.clientHeight) {
+          throw new Error(`Attachment flyout lost its anchor or scroll position after resize: ${JSON.stringify(attachmentFlyoutResizeContract)}`);
+        }
+        await page.setViewportSize({ width: 1280, height: 800 });
         await page.evaluate((key) => {
           const attachment = {
             id: "smoke-attachment-menu",
@@ -3298,6 +3449,7 @@ def write_smoke_script(path)
             mobileAttachmentFlyout.flyout?.bottom > mobileAttachmentFlyout.viewport.height) {
           throw new Error(`Conversation attachments are cropped on mobile: ${JSON.stringify(mobileAttachmentFlyout)}`);
         }
+        if (captureDir) await mobileQuickAgentPage.screenshot({ path: path.join(captureDir, "attachment-flyout-mobile.png") });
         await mobileQuickAgentPage.close();
         const loopAgentKey = await page.evaluate(async () => {
           const data = await apiPost("/agents", {
