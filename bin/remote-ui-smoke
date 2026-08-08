@@ -1680,6 +1680,123 @@ def write_smoke_script(path)
 
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+        await page.evaluate(() => {
+          window.SpeechRecognition = class SmokeSpeechRecognition {
+            start() { window.__speechRecognitionStarted = (window.__speechRecognitionStarted || 0) + 1; }
+            stop() {}
+          };
+          state.renderedViewHtml = "";
+          render();
+          const hiddenComposer = document.createElement("form");
+          hiddenComposer.id = "composer";
+          hiddenComposer.hidden = true;
+          hiddenComposer.dataset.agentKey = "hidden-speech-composer";
+          hiddenComposer.innerHTML = '<textarea id="prompt-input"></textarea>';
+          els.view.append(hiddenComposer);
+          document.activeElement?.blur();
+        });
+        await page.keyboard.press("Meta+Shift+.");
+        const speechShortcutContract = await page.evaluate((key) => {
+          const recognition = state.speechRecognition;
+          recognition?.onresult?.({
+            resultIndex: 0,
+            results: [{ isFinal: true, 0: { transcript: "spoken smoke" } }],
+          });
+          return {
+            started: window.__speechRecognitionStarted,
+            selectedAgentKey: state.speechComposerKey,
+            focusedPrompt: document.activeElement?.id === "prompt-input" && document.activeElement?.closest("#composer")?.dataset.agentKey === key,
+            transcript: document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] #prompt-input`)?.value,
+            shortcutHint: document.querySelector("[data-toggle-speech-mode]")?.getAttribute("aria-label"),
+          };
+        }, agentKey);
+        if (speechShortcutContract.started !== 1 ||
+            speechShortcutContract.selectedAgentKey !== agentKey ||
+            !speechShortcutContract.focusedPrompt ||
+            speechShortcutContract.transcript !== "spoken smoke" ||
+            !speechShortcutContract.shortcutHint?.includes("Shift+.")) {
+          throw new Error(`Speech shortcut did not select and focus the visible composer: ${JSON.stringify(speechShortcutContract)}`);
+        }
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "speech-shortcut-desktop.png") });
+        await page.evaluate(() => stopSpeechMode());
+        const speechGuardContract = await page.evaluate((key) => {
+          const shortcut = (overrides = {}) => {
+            let prevented = false;
+            return {
+              handled: handleSpeechModeShortcut({
+                metaKey: true,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                code: "Period",
+                repeat: false,
+                isComposing: false,
+                preventDefault: () => { prevented = true; },
+                ...overrides,
+              }),
+              prevented,
+            };
+          };
+          const activeComposer = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"]`);
+          const otherAgent = { ...findAgent(key), key: "speech-other", name: "Speech other", running: false, status: "idle" };
+          state.agents.push(otherAgent);
+          const otherComposer = activeComposer.cloneNode(true);
+          otherComposer.dataset.agentKey = otherAgent.key;
+          els.view.append(otherComposer);
+          const disabledComposer = activeComposer.cloneNode(true);
+          disabledComposer.dataset.agentKey = otherAgent.key;
+          disabledComposer.dataset.agentRunning = "true";
+          els.view.append(disabledComposer);
+          const externalInput = document.createElement("input");
+          const editable = document.createElement("div");
+          editable.contentEditable = "true";
+          const dialog = document.createElement("div");
+          dialog.setAttribute("role", "dialog");
+          dialog.textContent = "Speech guard dialog";
+          document.body.append(externalInput, editable, dialog);
+          const results = {};
+          externalInput.focus();
+          results.textInput = shortcut();
+          editable.focus();
+          results.contentEditable = shortcut();
+          document.activeElement?.blur();
+          results.repeat = shortcut({ repeat: true });
+          results.composing = shortcut({ isComposing: true });
+          results.dialog = shortcut();
+          dialog.remove();
+          const constructor = window.SpeechRecognition;
+          const webkitConstructor = window.webkitSpeechRecognition;
+          Object.defineProperties(window, {
+            SpeechRecognition: { configurable: true, value: undefined },
+            webkitSpeechRecognition: { configurable: true, value: undefined },
+          });
+          results.unsupported = shortcut();
+          Object.defineProperties(window, {
+            SpeechRecognition: { configurable: true, value: constructor },
+            webkitSpeechRecognition: { configurable: true, value: webkitConstructor },
+          });
+          document.activeElement?.blur();
+          results.multiple = shortcut();
+          results.focusedVisibleComposer = document.activeElement === document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] #prompt-input`);
+          results.disabledIgnored = !speechEligibleComposer(disabledComposer);
+          results.activeKey = state.speechComposerKey;
+          stopSpeechMode();
+          state.agents = state.agents.filter((agent) => agent.key !== otherAgent.key);
+          otherComposer.remove();
+          disabledComposer.remove();
+          externalInput.remove();
+          editable.remove();
+          return results;
+        }, agentKey);
+        if (speechGuardContract.textInput.handled || speechGuardContract.textInput.prevented ||
+            speechGuardContract.contentEditable.handled || speechGuardContract.contentEditable.prevented ||
+            speechGuardContract.repeat.handled || speechGuardContract.composing.handled ||
+            speechGuardContract.dialog.handled || speechGuardContract.dialog.prevented ||
+            speechGuardContract.unsupported.handled || speechGuardContract.unsupported.prevented ||
+            !speechGuardContract.multiple.handled || !speechGuardContract.focusedVisibleComposer ||
+            !speechGuardContract.disabledIgnored || speechGuardContract.activeKey !== agentKey) {
+          throw new Error(`Speech shortcut guards or composer selection failed: ${JSON.stringify(speechGuardContract)}`);
+        }
         await page.waitForSelector("#header-schedule-menu:not(.hidden)", { state: "visible", timeout: 10_000 });
         const scheduleHeaderGeometry = await page.evaluate(() => {
           const scheduleTrigger = document.querySelector("[data-header-schedule-menu] > summary").getBoundingClientRect();

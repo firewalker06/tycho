@@ -4468,6 +4468,32 @@ module RemoteServerTest
            "expected Skill toggle to be disabled while the agent is running")
     assert(js[:body].include?("function agentComposerAction"),
            "expected Agent detail composer action to switch by running state")
+    assert(js[:body].include?("function speechModeShortcutLabel"),
+           "expected Remote UI to expose a platform-aware speech shortcut label")
+    assert(js[:body].include?("function macPlatform"),
+           "expected platform detection to be shared by speech and existing shortcut labels")
+    assert(js[:body].include?("return `${platformShortcutModifier()}+Shift+.`;"),
+           "expected speech mode to use Cmd/Ctrl+Shift+. rather than a browser-reserved shortcut")
+    assert(js[:body].include?("function handleSpeechModeShortcut"),
+           "expected a document-level speech-mode shortcut handler")
+    assert(js[:body].include?("event.repeat || event.isComposing"),
+           "expected speech shortcut to ignore held keys and IME composition")
+    assert(js[:body].include?("isTextEntryFocused() && !document.activeElement?.closest?.(\"#composer\")"),
+           "expected speech shortcut not to hijack other text inputs or contenteditable controls")
+    assert(js[:body].include?("function speechTargetComposer"),
+           "expected speech shortcut to select an eligible visible composer")
+    assert(js[:body].include?("els.quickAgentDialog?.open || els.confirmationDialog?.open"),
+           "expected speech shortcut to defer to open dialogs")
+    assert(js[:body].include?("dialog[open], [role='dialog']"),
+           "expected speech shortcut to defer to every other visible dialog")
+    assert(js[:body].include?("function startSpeechMode(composer)"),
+           "expected the visible Speech control and shortcut to share one activation path")
+    assert(js[:body].include?("function updateSpeechModeControls"),
+           "expected active Speech controls to update without waiting for a full render")
+    assert(js[:body].include?("data-toggle-speech-mode"),
+           "expected composers to expose a discoverable Speech mode control")
+    assert(js[:body].include?("aria-keyshortcuts="),
+           "expected Speech mode control to expose its shortcut to assistive technology")
     assert(js[:body].include?('class="danger ui-button" data-variant="danger" type="button" data-agent-action="stop" data-agent-key="${escapeAttr(agent.key)}">Stop agent'),
            "expected running agents to replace Send prompt with Stop agent")
     assert(js[:body].include?('enterkeyhint="enter"'),
