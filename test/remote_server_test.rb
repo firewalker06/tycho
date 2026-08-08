@@ -4470,6 +4470,8 @@ module RemoteServerTest
            "expected Agent detail composer action to switch by running state")
     assert(js[:body].include?("function speechModeShortcutLabel"),
            "expected Remote UI to expose a platform-aware speech shortcut label")
+    assert(js[:body].include?("function macPlatform"),
+           "expected platform detection to be shared by speech and existing shortcut labels")
     assert(js[:body].include?("return `${platformShortcutModifier()}+Shift+.`;"),
            "expected speech mode to use Cmd/Ctrl+Shift+. rather than a browser-reserved shortcut")
     assert(js[:body].include?("function handleSpeechModeShortcut"),
@@ -4486,6 +4488,8 @@ module RemoteServerTest
            "expected speech shortcut to defer to every other visible dialog")
     assert(js[:body].include?("function startSpeechMode(composer)"),
            "expected the visible Speech control and shortcut to share one activation path")
+    assert(js[:body].include?("function updateSpeechModeControls"),
+           "expected active Speech controls to update without waiting for a full render")
     assert(js[:body].include?("data-toggle-speech-mode"),
            "expected composers to expose a discoverable Speech mode control")
     assert(js[:body].include?("aria-keyshortcuts="),
