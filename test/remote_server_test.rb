@@ -5239,6 +5239,9 @@ module RemoteServerTest
            js[:body].include?("function handleAttachmentFlyoutKeydown") &&
            js[:body].include?("button.focus({ preventScroll: true })"),
            "expected attachment flyouts to retain named trigger and Escape focus behavior")
+    assert(js[:body].include?("data-preserve-open data-state-key=\"agent-attachment-flyout\"") &&
+           js[:body].include?("attachment-list\" data-preserve-scroll data-state-key=\"agent-attachment-flyout-list\""),
+           "expected attachment flyout open state and list scroll state to persist independently")
     assert(js[:body].include?("!event.target.closest(\"[data-attachment-flyout]\")"),
            "expected Attachment flyout to close when clicking outside it")
     assert(js[:body].include?('aria-label="Upload file"') && js[:body].include?("iconSvg(\"upload\")"),

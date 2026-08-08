@@ -2477,6 +2477,37 @@ def write_smoke_script(path)
             !overflowingAttachmentFlyout.closedWithEscape || !overflowingAttachmentFlyout.focusReturned) {
           throw new Error(`Attachment flyout does not shrink, scroll, or retain accessible controls: ${JSON.stringify(attachmentFlyoutLayouts)}`);
         }
+        const attachmentFlyoutRenderContract = await page.evaluate((key) => {
+          const agent = findAgent(key);
+          agent.attachments = Array.from({ length: 16 }, (_, index) => ({
+            id: `attachment-flyout-render-${index}`,
+            agent_key: key,
+            type: "file",
+            title: `attachment-${index + 1}.md`,
+            path: `/tmp/attachment-${index + 1}.md`,
+            blob_path: `/attachments/attachment-flyout-render-${index}/blob`,
+            format: "text",
+          }));
+          state.renderedViewHtml = "";
+          render();
+          setAttachmentFlyoutOpen(true);
+          const beforeRender = document.querySelector(".attachment-list");
+          beforeRender.scrollTop = 80;
+          const scrollTop = beforeRender.scrollTop;
+          state.renderedViewHtml = "";
+          render();
+          const flyout = document.querySelector("[data-attachment-flyout]");
+          const afterRender = flyout?.querySelector(".attachment-list");
+          return {
+            open: Boolean(flyout && !flyout.classList.contains("hidden")),
+            before: scrollTop,
+            after: afterRender?.scrollTop,
+          };
+        }, agentKey);
+        if (!attachmentFlyoutRenderContract.open || attachmentFlyoutRenderContract.before <= 0 ||
+            Math.abs(attachmentFlyoutRenderContract.after - attachmentFlyoutRenderContract.before) > 1) {
+          throw new Error(`Attachment flyout lost its scroll position during a normal render: ${JSON.stringify(attachmentFlyoutRenderContract)}`);
+        }
         await page.evaluate((key) => {
           const agent = findAgent(key);
           agent.attachments = [{
