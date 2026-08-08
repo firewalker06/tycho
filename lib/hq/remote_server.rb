@@ -1472,7 +1472,7 @@ module HQ
       @public_url = public_url.to_s
       @auth_required = auth_required ? true : false
       @restartable = restartable ? true : false
-      skills_home = HQ.env_present("SKILLS_HOME", Dir.home)
+      skills_home = HQ.env_present("TYCHO_SKILLS_HOME", Dir.home)
       @skill_installer = skill_installer || SkillInstaller.new(home: skills_home)
       @github_client = github_client
       @pull_request_diff_store = pull_request_diff_store

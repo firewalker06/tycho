@@ -3189,6 +3189,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     if ENV["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"].to_s == "1"
       smoke_env["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"] = "1"
     end
+    if ENV["TYCHO_REMOTE_UI_SKILLS_ONLY"].to_s == "1"
+      smoke_env["TYCHO_REMOTE_UI_SKILLS_ONLY"] = "1"
+    end
     capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
     unless capture_dir.empty?
       expanded_capture_dir = File.expand_path(capture_dir, ROOT)

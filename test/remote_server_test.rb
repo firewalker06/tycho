@@ -163,6 +163,17 @@ module RemoteServerTest
       service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace), skill_installer: installer)
       server = HQ::RemoteServer.new
 
+      previous_skills_home = ENV["TYCHO_SKILLS_HOME"]
+      ENV["TYCHO_SKILLS_HOME"] = home
+      begin
+        environment_service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
+        environment_target = environment_service.skill_installation.dig(:harnesses, 0, :target_path)
+        assert(environment_target == File.join(home, ".agents", "skills"),
+               "expected TYCHO_SKILLS_HOME to isolate default skill installation")
+      ensure
+        ENV["TYCHO_SKILLS_HOME"] = previous_skills_home
+      end
+
       fetched = server.send(:route, service, "GET", "/skills", {}, nil)
       harnesses = fetched.dig(:body, :skill_installation, :harnesses)
       assert(harnesses.map { |item| item[:harness] } == %w[codex claude opencode],
@@ -3661,8 +3672,9 @@ module RemoteServerTest
            js[:body].include?('data-skill-action="install"') &&
            js[:body].include?('data-skill-action="update"') &&
            js[:body].include?("function changeHarnessSkills") &&
-           js[:body].include?("Only Tycho-owned files can be updated"),
-           "expected Settings to expose confirmed Tycho skill install and update actions")
+           js[:body].include?("Only Tycho-owned files can be updated") &&
+           js[:body].include?("Changed before failure:"),
+           "expected Settings to expose confirmed skill actions and partial change details")
     assert(js[:body].include?("function statusIntent") &&
            js[:body].include?("function statusBadge") &&
            js[:body].include?("function statusMarkAttributes") &&
