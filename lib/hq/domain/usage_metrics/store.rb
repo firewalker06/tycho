@@ -8,10 +8,14 @@ require "time"
 require_relative "../constants"
 require_relative "../file_store"
 require_relative "../openai_model_pricing"
+require_relative "session_aggregate"
+require_relative "values"
 
 module HQ
   module UsageMetrics
     class Store
+      include Values
+
       SCHEMA_VERSION = 1
 
       attr_reader :path, :lock_path
@@ -195,7 +199,14 @@ module HQ
       end
 
       def valid_record?(record)
-        record.is_a?(Hash) && !record["run_id"].to_s.empty? && !record["started_at"].to_s.empty?
+        return false unless record.is_a?(Hash)
+        return false if %w[run_id started_at agent_key harness_adapter].any? { |key| record[key].to_s.empty? }
+        return false if !record["native_session_id"].to_s.empty? && record["session_key"].to_s.empty?
+
+        Time.iso8601(record.fetch("started_at"))
+        true
+      rescue ArgumentError
+        false
       end
 
       def rebuild!(document)
@@ -261,49 +272,7 @@ module HQ
 
       def build_sessions(runs)
         runs.reject { |run| run["native_session_id"].to_s.empty? }.group_by { |run| run.fetch("session_key") }
-            .transform_values { |session_runs| session_record(session_runs) }
-      end
-
-      def session_record(runs)
-        sorted = runs.sort_by { |run| [run["started_at"].to_s, run["run_id"].to_s] }
-        costs = sorted.filter_map { |run| numeric(run.dig("estimated_cost", "amount_usd")) }
-        all_priced = costs.length == sorted.length
-        all_complete = sorted.all? { |run| run.dig("completeness", "overall") == "complete" }
-        tokens_complete = sorted.all? { |run| valid_tokens?(run["tokens"]) }
-        token_totals = sum_tokens(sorted.map { |run| run["tokens"] })
-        observed_models = sorted.flat_map { |run| Array(run["observed_models"]) }.uniq.sort
-        configured_models = sorted.filter_map { |run| present(run["configured_model"]) }.uniq.sort
-        {
-          "session_key" => sorted.first.fetch("session_key"),
-          "native_session_id" => sorted.first.fetch("native_session_id"),
-          "harness_adapter" => sorted.first.fetch("harness_adapter"),
-          "first_activity_at" => sorted.first.fetch("started_at"),
-          "last_activity_at" => sorted.map { |run| run["finished_at"] || run["started_at"] }.max,
-          "run_count" => sorted.length,
-          "agent_count" => sorted.map { |run| run["agent_key"] }.uniq.length,
-          "configured_models" => configured_models,
-          "observed_models" => observed_models,
-          "mixed_model" => (configured_models + observed_models).uniq.length > 1,
-          "tokens" => tokens_complete ? token_totals : nil,
-          "known_tokens" => token_totals,
-          "known_estimated_cost_usd" => costs.empty? ? nil : costs.sum,
-          "estimated_cost_usd" => all_priced && all_complete ? costs.sum : nil,
-          "currency" => costs.empty? ? nil : "USD",
-          "completeness" => {
-            "tokens" => tokens_complete ? "complete" : "partial",
-            "pricing" => all_priced ? "priced" : costs.empty? ? "unpriced" : "partial",
-            "overall" => all_priced && tokens_complete && all_complete ? "complete" : "partial",
-            "unknown_reasons" => sorted.flat_map { |run| Array(run.dig("completeness", "unknown_reasons")) }.uniq
-          }
-        }
-      end
-
-      def sum_tokens(tokens)
-        keys = Array(tokens).filter_map { |value| value.is_a?(Hash) ? value.keys : nil }.flatten.uniq
-        keys.to_h do |key|
-          values = Array(tokens).filter_map { |value| numeric(value[key]) if value.is_a?(Hash) }
-          [key, values.empty? ? nil : values.sum]
-        end.compact
+            .transform_values { |session_runs| SessionAggregate.build(session_runs) }
       end
 
       def valid_tokens?(value)
@@ -339,29 +308,10 @@ module HQ
         end
       end
 
-      def stringify(value)
-        case value
-        when Hash then value.each_with_object({}) { |(key, entry), result| result[key.to_s] = stringify(entry) }
-        when Array then value.map { |entry| stringify(entry) }
-        else value
-        end
-      end
-
       def deep_copy(value)
         JSON.parse(JSON.generate(value))
       end
 
-      def numeric(value)
-        number = Float(value)
-        number if number.finite? && number >= 0
-      rescue ArgumentError, TypeError
-        nil
-      end
-
-      def present(value)
-        text = value.to_s.strip
-        text unless text.empty?
-      end
     end
   end
 end

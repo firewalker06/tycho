@@ -5,10 +5,14 @@ require "json"
 require "time"
 
 require_relative "../../harness_registry"
+require_relative "provider_telemetry"
+require_relative "values"
 
 module HQ
   module UsageMetrics
     class Normalizer
+      include Values
+
       TOKEN_KEYS = %w[
         input_tokens cached_input_tokens cache_creation_input_tokens cache_read_input_tokens
         output_tokens reasoning_output_tokens
@@ -23,8 +27,9 @@ module HQ
       end
 
       def record
-        adapter = HQ.harness_adapter(harness)
-        normalized = adapter == "codex" ? codex_usage : per_run_usage(adapter)
+        provider = ProviderTelemetry.for(harness)
+        adapter = provider.adapter
+        normalized = provider.codex? ? codex_usage(provider) : per_run_usage(provider)
         native_session_id = present(@run.session_id) || present(@agent.session_id)
         inferred_fields = Array(@inference["inferred_fields"]).map(&:to_s).uniq
         unknown_reasons = Array(normalized.fetch("unknown_reasons"))
@@ -74,8 +79,8 @@ module HQ
 
       private
 
-      def codex_usage
-        entry = final_entry("turn.completed")
+      def codex_usage(provider)
+        entry = final_entry(provider.event_type)
         snapshot = token_hash(metadata(entry)["usage"])
         observed = observed_models(entry)
         reasons = []
@@ -91,19 +96,14 @@ module HQ
         }
       end
 
-      def per_run_usage(adapter)
-        entry_type = adapter == "opencode" ? "step_finish" : "result"
-        entries = @usage_entries.select { |entry| event_type(entry) == entry_type }
+      def per_run_usage(provider)
+        adapter = provider.adapter
+        entries = @usage_entries.select { |entry| event_type(entry) == provider.event_type }
         final = entries.last
         tokens = token_hash(metadata(final)["usage"], require_codex_core: false)
         attribution = adapter == "claude" ? claude_model_attribution(final) : []
         observed = (observed_models(final) + attribution.filter_map { |item| item["observed_model"] }).uniq.sort
-        cost = if adapter == "opencode"
-                 values = entries.filter_map { |entry| numeric(metadata(entry)["total_cost_usd"]) }
-                 values.empty? ? nil : values.sum
-               else
-                 numeric(metadata(final)["total_cost_usd"])
-               end
+        cost = provider.reported_cost(entries) { |entry| numeric(metadata(entry)["total_cost_usd"]) }
         reason = if final.nil?
                    "#{adapter_label(adapter)} did not report usage telemetry"
                  elsif cost.nil?
@@ -282,26 +282,6 @@ module HQ
 
       def utc_iso(value)
         value&.utc&.iso8601(6)
-      end
-
-      def numeric(value)
-        number = Float(value)
-        number if number.finite? && number >= 0
-      rescue ArgumentError, TypeError
-        nil
-      end
-
-      def present(value)
-        text = value.to_s.strip
-        text unless text.empty?
-      end
-
-      def stringify(value)
-        case value
-        when Hash then value.each_with_object({}) { |(key, entry), result| result[key.to_s] = stringify(entry) }
-        when Array then value.map { |entry| stringify(entry) }
-        else value
-        end
       end
 
       def canonical(value)

@@ -12,9 +12,9 @@ module HQ
       Store.new(path:, lock_path:)
     end
 
-    def record_run(agent:, run:, usage_entries:, source: "managed_run_finalization", inference: {})
+    def record_run(agent:, run:, usage_entries:, source: "managed_run_finalization", inference: {}, metrics_store: store)
       record = Normalizer.new(agent:, run:, usage_entries:, source:, inference:).record
-      store.upsert(record)
+      metrics_store.upsert(record)
       record
     end
 

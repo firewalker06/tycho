@@ -21,9 +21,13 @@ module UsageMetricsTest
     assert_claude_model_usage_preserves_mixed_model_attribution
     assert_unknown_ids_models_and_prices_stay_unknown
     assert_retries_resumes_filters_and_report_statistics
+    assert_start_failure_is_ingested_immediately
     assert_archive_transition_preserves_metrics_and_manifest
     assert_timezone_boundaries_are_inclusive_exclusive
     assert_backfill_prefers_manifests_and_is_idempotent
+    assert_backfill_identity_survives_archive_move
+    assert_missing_manifest_telemetry_is_preserved
+    assert_trimmed_codex_history_has_unknown_baseline
     assert_schema_migration_and_corruption_recovery
     puts "usage_metrics_test: ok"
   end
@@ -53,8 +57,9 @@ module UsageMetricsTest
       session = store.sessions.fetch(0)
       assert(session["run_count"] == 2, "expected distinct runs inside one native session")
       assert_close(session["known_estimated_cost_usd"], 0.00143)
-      assert(session["estimated_cost_usd"].nil?,
-             "expected missing observed-model telemetry to keep the session incomplete")
+      assert_close(session["estimated_cost_usd"], 0.00143)
+      assert(session.dig("completeness", "overall") == "partial",
+             "expected pricing completeness to remain distinct from missing model metadata")
     end
   end
 
@@ -130,26 +135,48 @@ module UsageMetricsTest
         priced_record("failed-retry", "session-a", 1.0, status: "failed", harness: "claude", hour: 10),
         priced_record("successful-resume", "session-a", 2.0, status: "succeeded", harness: "claude", hour: 11),
         priced_record("other-session", "session-b", 5.0, status: "succeeded", harness: "claude", hour: 12),
-        priced_record("unpriced-session", "session-c", nil, status: "succeeded", harness: "codex", hour: 13)
+        priced_record("unpriced-session", "session-c", nil, status: "succeeded", harness: "codex", hour: 13),
+        priced_record("orphan-run", nil, nil, status: "failed", harness: "claude", hour: 14)
       ]
+      records[2]["completeness"] = {
+        "overall" => "partial", "unknown_reasons" => ["Observed model was not reported"]
+      }
       records.each { |record| store.upsert(record) }
       result = HQ::UsageMetrics::Query.new(metrics_store: store).call(
         "project" => "demo", "group" => "work", "harness" => "claude,codex"
       )
 
-      assert(result.dig("summary", "run_starts") == 4, "expected retry and resume as distinct run starts")
+      assert(result.dig("summary", "run_starts") == 5, "expected retry, resume, and orphan as distinct run starts")
       assert(result.dig("summary", "distinct_native_sessions") == 3, "expected three native sessions")
       assert_close(result.dig("summary", "average_runs_per_session"), 4.0 / 3)
       assert_close(result.dig("summary", "known_estimated_cost_usd"), 8.0)
-      assert_close(result.dig("summary", "median_complete_session_cost_usd"), 4.0)
-      assert_close(result.dig("summary", "max_complete_session_cost_usd"), 5.0)
+      assert_close(result.dig("summary", "median_priced_session_cost_usd"), 4.0)
+      assert_close(result.dig("summary", "max_priced_session_cost_usd"), 5.0)
       assert(result.dig("summary", "priced_run_count") == 3, "expected priced run coverage")
-      assert(result.dig("summary", "unpriced_run_count") == 1, "expected unpriced run coverage")
+      assert(result.dig("summary", "unpriced_run_count") == 2, "expected unpriced run coverage")
 
       failed = HQ::UsageMetrics::Query.new(metrics_store: store).call("status" => "failed")
-      assert(failed.dig("summary", "run_starts") == 1, "expected status filter")
+      assert(failed.dig("summary", "run_starts") == 2, "expected status filter")
       model = HQ::UsageMetrics::Query.new(metrics_store: store).call("model" => "observed-model")
-      assert(model.dig("summary", "run_starts") == 4, "expected observed-model filter")
+      assert(model.dig("summary", "run_starts") == 5, "expected observed-model filter")
+    end
+  end
+
+  def assert_start_failure_is_ingested_immediately
+    Dir.mktmpdir("usage-metrics-start-failure") do |dir|
+      store = HQ::UsageMetrics::Store.new(path: File.join(dir, "metrics.json"))
+      managed = HQ::ManagedAgent.new(
+        key: "demo-agent-launch-failure", name: "Launch failure", project_key: "demo", project_group: "work",
+        template_key: "custom", workspace: dir, prompt: "prompt", log_path: File.join(dir, "agent.raw.log"),
+        agent: "claude", model: "configured-model"
+      )
+      managed.usage_metrics_store = store
+      managed.send(:record_start_failure!, "executable unavailable", ["missing-command"])
+
+      metric = store.runs.fetch(0)
+      assert(metric["status"] == "failed" && !metric["run_id"].to_s.empty?,
+             "expected launch failure lifecycle ingestion with a persisted identity")
+      assert(metric.dig("estimated_cost", "amount_usd").nil?, "expected launch failure cost to remain unknown")
     end
   end
 
@@ -180,6 +207,9 @@ module UsageMetricsTest
       assert(manifest["model"] == "configured-model", "expected exact model in archived manifest")
       assert(snapshot.fetch("runs").fetch(0).dig("estimated_cost", "amount_usd") == 2.5,
              "expected archived metric snapshot")
+      public_metrics = JSON.generate(HQ::UsageMetrics::Query.new(metrics_store: store).call)
+      assert(!public_metrics.include?("sensitive prompt") && !public_metrics.include?(dir),
+             "expected metric output to exclude prompts and internal paths")
     end
   end
 
@@ -219,6 +249,13 @@ module UsageMetricsTest
       partial = recovered.merge("runs" => recovered.fetch("runs").merge("bad" => { "run_id" => "bad" }))
       File.write(path, JSON.generate(partial))
       assert(store.snapshot.dig("recovery", "discarded_run_count") == 1, "expected invalid partial record handling")
+
+      broken_session = priced_record("broken-session", "native-id", 1.0).tap { |record| record.delete("session_key") }
+      File.write(path, JSON.generate(recovered.merge("runs" => { "broken-session" => broken_session })))
+      structurally_recovered = store.snapshot
+      assert(structurally_recovered.fetch("runs").empty? &&
+             structurally_recovered.dig("recovery", "discarded_run_count") == 1,
+             "expected structurally incomplete session records to be discarded without crashing")
     end
   end
 
@@ -257,6 +294,85 @@ module UsageMetricsTest
     end
   end
 
+  def assert_backfill_identity_survives_archive_move
+    Dir.mktmpdir("usage-metrics-backfill-archive") do |dir|
+      active_dir = File.join(dir, "active")
+      archive_dir = File.join(dir, "archive", "20260706-100000-demo-agent-backfill")
+      FileUtils.mkdir_p(active_dir)
+      path = File.join(active_dir, "legacy.raw.log")
+      marker = "=== [2026-07-06 10:00:00] start ===\n"
+      File.write(path, marker + fixture("claude_model_usage.jsonl").join("\n") + "\n")
+      current = HQ::ManagedAgent::AgentRun.new(
+        started_at: Time.new(2026, 7, 6, 10, 0, 0, "+07:00"), status: "succeeded",
+        session_id: "claude-session-1", agent: "claude", log_path: path, log_start_offset: marker.bytesize
+      )
+      fixture_agent = HQ::ManagedAgent.new(
+        key: "demo-agent-backfill", name: "Backfill", project_key: "demo", project_group: "work",
+        template_key: "custom", workspace: dir, prompt: "prompt", log_path: path,
+        agent: "claude", model: "configured-exact", runs: [current]
+      )
+      store = HQ::UsageMetrics::Store.new(path: File.join(dir, "metrics.json"))
+      registry = Struct.new(:projects).new([])
+      active = { "registry" => registry, "manifests" => [{ "agent" => fixture_agent, "archived" => false }],
+                 "raw_paths" => [], "timezone" => "Asia/Jakarta" }
+      HQ::UsageMetrics.backfill(active, metrics_store: store)
+      FileUtils.mkdir_p(archive_dir)
+      FileUtils.mv(path, File.join(archive_dir, File.basename(path)))
+      archived = active.merge("manifests" => [{ "agent" => fixture_agent, "archived" => true,
+                                                 "directory" => archive_dir }])
+      outcome = HQ::UsageMetrics.backfill(archived, metrics_store: store)
+
+      assert(store.runs.length == 1 && outcome["created"].zero?,
+             "expected location-independent backfill identity across archive move")
+      assert(store.runs.fetch(0)["archived"] == true, "expected the existing metric to transition to archived")
+    end
+  end
+
+  def assert_missing_manifest_telemetry_is_preserved
+    Dir.mktmpdir("usage-metrics-missing-telemetry") do |dir|
+      missing = File.join(dir, "missing.raw.log")
+      current = HQ::ManagedAgent::AgentRun.new(
+        run_id: "missing-log-run", started_at: Time.utc(2026, 7, 6, 10), status: "failed",
+        agent: "claude", log_path: missing
+      )
+      fixture_agent = agent("claude", nil, [current])
+      store = HQ::UsageMetrics::Store.new(path: File.join(dir, "metrics.json"))
+      options = { "registry" => Struct.new(:projects).new([]),
+                  "manifests" => [{ "agent" => fixture_agent, "archived" => false }], "raw_paths" => [] }
+      HQ::UsageMetrics.backfill(options, metrics_store: store)
+
+      metric = store.runs.fetch(0)
+      assert(metric.dig("completeness", "unknown_reasons").include?("Raw telemetry for the durable run was unavailable"),
+             "expected durable run with missing telemetry and an explicit unknown reason")
+    end
+  end
+
+  def assert_trimmed_codex_history_has_unknown_baseline
+    Dir.mktmpdir("usage-metrics-trimmed-codex") do |dir|
+      path = File.join(dir, "codex.raw.log")
+      marker = "=== [2026-07-06 10:00:00] start ===\n"
+      File.write(path, marker + fixture_segments("codex_cumulative.jsonl").first.join("\n") + "\n")
+      current = HQ::ManagedAgent::AgentRun.new(
+        started_at: Time.new(2026, 7, 6, 10, 0, 0, "+07:00"), status: "succeeded",
+        session_id: "codex-session-1", agent: "codex", model: "gpt-5.5",
+        log_path: path, log_start_offset: marker.bytesize
+      )
+      fixture_agent = HQ::ManagedAgent.new(
+        key: "demo-agent-codex", name: "Codex", project_key: "demo", project_group: "work",
+        template_key: "custom", workspace: dir, prompt: "prompt", log_path: path,
+        agent: "codex", model: "gpt-5.5", runs: [current], total_run_count: 2
+      )
+      store = HQ::UsageMetrics::Store.new(path: File.join(dir, "metrics.json"))
+      options = { "registry" => Struct.new(:projects).new([]),
+                  "manifests" => [{ "agent" => fixture_agent, "archived" => false }], "raw_paths" => [] }
+      HQ::UsageMetrics.backfill(options, metrics_store: store)
+
+      metric = store.runs.fetch(0)
+      assert(metric["tokens"].nil? && metric["codex_baseline_known"] == false,
+             "expected retained cumulative telemetry not to become a false zero-baseline delta")
+    end
+  end
+
   def priced_record(id, session_id, cost, status: "succeeded", harness: "claude", hour: 10, day: 6)
     {
       "schema_version" => 1,
@@ -270,7 +386,7 @@ module UsageMetricsTest
       "observed_models" => ["observed-model"],
       "model_attribution" => [],
       "native_session_id" => session_id,
-      "session_key" => "#{harness}:#{session_id}",
+      "session_key" => session_id ? "#{harness}:#{session_id}" : nil,
       "started_at" => Time.utc(2026, 7, day, hour).iso8601(6),
       "finished_at" => Time.utc(2026, 7, day, hour, 1).iso8601(6),
       "duration_ms" => 60_000,

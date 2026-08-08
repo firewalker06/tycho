@@ -1015,7 +1015,8 @@ module HQ
         file.puts
       end
 
-      record_run!(AgentRun.new(
+      failed_run = record_run!(AgentRun.new(
+        run_id: SecureRandom.uuid,
         started_at: @started_at,
         finished_at: @finished_at,
         exit_code: @last_exit_code,
@@ -1026,6 +1027,14 @@ module HQ
         model: @model,
         log_start_offset: log_start_offset
       ))
+      if @usage_metrics_store
+        UsageMetrics.record_run(
+          agent: self,
+          run: failed_run,
+          usage_entries: [],
+          metrics_store: @usage_metrics_store
+        )
+      end
       @structured_result = nil
       @summary = message
       HQ.logger.warn("Agent") { "Failed to start #{@key}: #{message}" }
@@ -1803,13 +1812,12 @@ module HQ
       usage_entries = system.select { |entry| entry.type == :usage }
       @cost_snapshot = AgentCostSnapshot.advance(agent: self, run:, usage_entries:)
       if @usage_metrics_store
-        metric = UsageMetrics::Normalizer.new(
+        UsageMetrics.record_run(
           agent: self,
           run:,
           usage_entries:,
-          source: "managed_run_finalization"
-        ).record
-        @usage_metrics_store.upsert(metric)
+          metrics_store: @usage_metrics_store
+        )
       end
 
       conversation.each do |entry|

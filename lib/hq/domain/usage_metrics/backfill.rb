@@ -9,11 +9,15 @@ require_relative "../log_paths"
 require_relative "../managed_agent"
 require_relative "../../parser"
 require_relative "../../registry"
+require_relative "provider_telemetry"
 require_relative "query"
+require_relative "values"
 
 module HQ
   module UsageMetrics
     class Backfill
+      include Values
+
       Segment = Struct.new(:started_at, :start_offset, :lines, :index, keyword_init: true)
       HistoricalAgent = Struct.new(
         :key, :project_key, :project_group, :agent, :model, :session_id, :runs,
@@ -33,6 +37,7 @@ module HQ
         @stats = Hash.new(0)
         @warnings = []
         @records = []
+        @existing_identity_index = existing_identity_index
 
         manifests = durable_manifests(options)
         claimed = ingest_manifests(manifests)
@@ -178,7 +183,22 @@ module HQ
 
       def ingest(agent, run, usage, source:, inference:)
         record = Normalizer.new(agent:, run:, usage_entries: usage, source:, inference:).record
+        if run.run_id.to_s.empty? && (existing = @existing_identity_index[identity_coordinates(record)])
+          record["run_id"] = existing.fetch("run_id")
+          record["identity_kind"] = existing["identity_kind"] || "deterministic_backfill_v1"
+        end
         @records << record
+      end
+
+      def existing_identity_index
+        grouped = @metrics_store.runs.select { |run| run["identity_kind"].to_s.start_with?("deterministic_backfill") }
+                                .group_by { |run| identity_coordinates(run) }
+        grouped.filter_map { |coordinates, runs| [coordinates, runs.first] if runs.length == 1 }.to_h
+      end
+
+      def identity_coordinates(record)
+        [record["agent_key"], record["started_at"], record.dig("provenance", "log_start_offset"),
+         record["harness_adapter"]]
       end
 
       def grouped_runs(agent, archived_directory)
@@ -188,7 +208,7 @@ module HQ
           else
             run.log_path.to_s.empty? ? agent.raw_log_path : run.log_path
           end
-        end.reject { |path, _runs| path.to_s.empty? || !File.file?(path) }
+        end.reject { |path, _runs| path.to_s.empty? }
       end
 
       def matching_segment(segments, run)
@@ -230,38 +250,12 @@ module HQ
       def usage_entries(lines, harness)
         return [] if lines.nil?
 
-        adapter = HQ.harness_adapter(harness)
+        provider = ProviderTelemetry.for(harness)
         Array(lines).filter_map do |line|
           next unless line.to_s.lstrip.start_with?("{")
 
           event = JSON.parse(line)
-          metadata = case adapter
-                     when "codex"
-                       next unless event["type"] == "turn.completed"
-                       {
-                         "event_type" => "turn.completed",
-                         "usage" => event["usage"],
-                         "model" => event["model"]
-                       }
-                     when "claude"
-                       next unless event["type"] == "result"
-                       {
-                         "event_type" => "result",
-                         "total_cost_usd" => event["total_cost_usd"],
-                         "usage" => event["usage"],
-                         "model_usage" => event["modelUsage"] || event["model_usage"],
-                         "model" => event["model"],
-                         "duration_ms" => event["duration_ms"]
-                       }
-                     when "opencode"
-                       next unless event["type"] == "step_finish"
-                       {
-                         "event_type" => "step_finish",
-                         "total_cost_usd" => event["total_cost_usd"] || event.dig("part", "cost"),
-                         "usage" => event["usage"] || event.dig("part", "tokens"),
-                         "model" => event["model"] || event.dig("part", "model")
-                       }
-                     end
+          metadata = provider.usage_metadata(event)
           next unless metadata
 
           Parser::SystemEntry.new(type: :usage, content: "usage", timestamp: nil, tool_name: nil,
@@ -272,15 +266,12 @@ module HQ
       end
 
       def session_id_from(lines, harness)
+        provider = ProviderTelemetry.for(harness)
         Array(lines).each do |line|
           event = JSON.parse(line) if line.to_s.lstrip.start_with?("{")
           next unless event.is_a?(Hash)
-          id = case HQ.harness_adapter(harness)
-               when "codex" then event["thread_id"] || event["session_id"] || (event["id"] if event["type"] == "thread.started")
-               when "opencode" then event["session_id"] || event["sessionID"] || event["sessionId"] || event.dig("session", "id")
-               else event["session_id"]
-               end
-          return id.to_s unless id.to_s.empty?
+          id = provider.session_id(event)
+          return id if id
         rescue JSON::ParserError
           next
         end
@@ -308,17 +299,7 @@ module HQ
         rescue JSON::ParserError
           nil
         end
-        adapter = HQ.harness_adapter(harness)
-        if adapter == "codex"
-          return "failed" if events.any? { |event| %w[turn.failed error].include?(event["type"]) }
-          return "succeeded" if events.any? { |event| event["type"] == "turn.completed" }
-        elsif adapter == "claude"
-          result = events.reverse.find { |event| event["type"] == "result" }
-          return result["is_error"] ? "failed" : "succeeded" if result
-        elsif adapter == "opencode"
-          return "succeeded" if events.any? { |event| event["type"] == "step_finish" }
-        end
-        "unknown"
+        ProviderTelemetry.for(harness).infer_status(events)
       end
 
       def inferred_finish(started_at, usage)
@@ -328,6 +309,7 @@ module HQ
 
       def manifest_baseline_known?(agent, run)
         return nil unless HQ.harness_adapter(run.agent.to_s.empty? ? agent.agent : run.agent) == "codex"
+        return false unless agent.respond_to?(:run_count) && agent.run_count == agent.runs.length
 
         prior = agent.runs.take_while { |candidate| candidate != run }
                      .count { |candidate| candidate.session_id.to_s == run.session_id.to_s }
@@ -379,19 +361,9 @@ module HQ
       end
 
       def source_identity(path, segment)
-        Digest::SHA256.hexdigest([File.expand_path(path), segment&.start_offset].join("\0"))
+        Digest::SHA256.hexdigest([File.basename(path), segment&.start_offset].join("\0"))
       end
 
-      def numeric(value)
-        number = Float(value)
-        number if number.finite? && number >= 0
-      rescue ArgumentError, TypeError
-        nil
-      end
-
-      def stringify(value)
-        value.each_with_object({}) { |(key, entry), result| result[key.to_s] = entry }
-      end
     end
   end
 end

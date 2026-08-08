@@ -1604,15 +1604,15 @@ module HQ
         ["Native sessions", summary.fetch("distinct_native_sessions").to_s],
         ["Average runs/session", format_metric_number(summary["average_runs_per_session"])],
         ["Known estimated cost", format_metric_cost(summary["known_estimated_cost_usd"])],
-        ["Median complete session", format_metric_cost(summary["median_complete_session_cost_usd"])],
-        ["Maximum complete session", format_metric_cost(summary["max_complete_session_cost_usd"])],
+        ["Median priced session", format_metric_cost(summary["median_priced_session_cost_usd"])],
+        ["Maximum priced session", format_metric_cost(summary["max_priced_session_cost_usd"])],
         ["Priced / unpriced runs", "#{summary.fetch("priced_run_count")} / #{summary.fetch("unpriced_run_count")}"],
         ["Priced coverage", format_metric_percent(summary["priced_run_coverage"])]
       ]
       out.puts agent_table(%w[Metric Value], rows)
       out.puts "Range: #{result.dig("query", "from") || "unbounded"} <= start < " \
                "#{result.dig("query", "to") || "unbounded"} (#{result.dig("query", "timezone")})"
-      out.puts "Costs are estimates, not invoices. Unknown and incomplete session costs are excluded from median/max."
+      out.puts "Costs are estimates, not invoices. Sessions with any unpriced run are excluded from median/max."
     end
 
     def print_backfill(result, json:, out:)
