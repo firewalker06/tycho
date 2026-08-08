@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "io/console"
 require "open3"
 require "rbconfig"
 require "time"
@@ -288,6 +289,85 @@ module HQ
         prefix.register "clone", AgentClone
       end
 
+      class Server < Dry::CLI::Command
+        desc "Manage remote server credentials"
+
+        def call(**)
+          exit CLICommand.usage("Missing server command", err: err)
+        end
+      end
+
+      class ServerLogin < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Save a remote server credential"
+        argument :server_key, required: true, desc: "Remote server key"
+        option :no_verify, type: :boolean, default: false, desc: "Save without contacting the server"
+        usage_template "server login SERVER_KEY [--no-verify]"
+
+        def call(server_key:, **opts)
+          exit CLICommand.server_login(server_key, opts, input: $stdin, out: out, err: err)
+        end
+      end
+
+      class ServerLogout < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Delete a Tycho-stored remote server credential"
+        argument :server_key, required: true, desc: "Remote server key"
+        usage_template "server logout SERVER_KEY"
+
+        def call(server_key:, **)
+          exit CLICommand.server_logout(server_key, out: out, err: err)
+        end
+      end
+
+      class ServerStatus < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Show remote server credential metadata"
+        argument :server_key, required: false, desc: "Remote server key"
+        option :json, type: :boolean, default: false, desc: "Print JSON"
+        usage_template "server status [SERVER_KEY] [--json]"
+
+        def call(server_key: nil, **opts)
+          exit CLICommand.server_status(server_key, opts, out: out, err: err)
+        end
+      end
+
+      class ServerVerify < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Verify the active credential for a remote server"
+        argument :server_key, required: true, desc: "Remote server key"
+        usage_template "server verify SERVER_KEY"
+
+        def call(server_key:, **)
+          exit CLICommand.server_verify(server_key, out: out, err: err)
+        end
+      end
+
+      class ServerMigrate < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Move inline hq.yml tokens into the credential store"
+        argument :server_key, required: false, desc: "Remote server key"
+        option :all, type: :boolean, default: false, desc: "Migrate every inline remote token"
+        usage_template "server migrate [SERVER_KEY | --all]"
+
+        def call(server_key: nil, **opts)
+          exit CLICommand.server_migrate(server_key, opts, out: out, err: err)
+        end
+      end
+
+      register "server", Server do |prefix|
+        prefix.register "login", ServerLogin
+        prefix.register "logout", ServerLogout
+        prefix.register "status", ServerStatus
+        prefix.register "verify", ServerVerify
+        prefix.register "migrate", ServerMigrate
+      end
+
       class Schedule < Dry::CLI::Command
         desc "Manage scheduled agent runs"
 
@@ -478,6 +558,13 @@ module HQ
       Commands::GithubStatus,
       Commands::GithubLogout
     ].freeze
+    SERVER_COMMANDS = [
+      Commands::ServerLogin,
+      Commands::ServerLogout,
+      Commands::ServerStatus,
+      Commands::ServerVerify,
+      Commands::ServerMigrate
+    ].freeze
     DEBUG_COMMANDS = [
       Commands::DebugClaude
     ].freeze
@@ -498,6 +585,7 @@ module HQ
       },
       *SCHEDULE_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, schedule_key: "<schedule-key>")}" },
       *GITHUB_COMMANDS.map { |command| "  #{COMMAND_NAME} #{command.usage_template}" },
+      *SERVER_COMMANDS.map { |command| "  #{COMMAND_NAME} #{command.usage_template}" },
       *DEBUG_COMMANDS.map { |command| "  #{COMMAND_NAME} #{command.usage_template}" },
       "",
       "Run without a command to open the interactive Tycho TUI."
@@ -601,6 +689,179 @@ module HQ
       0
     rescue GitHubAuth::Error => e
       failure(e.message, err:)
+    end
+
+    def server_login(server_key, opts = {}, input: $stdin, out: $stdout, err: $stderr)
+      registry, config, resolver = remote_credential_context(server_key, err: err)
+      return 1 unless config
+      unless config.token_env.to_s.empty?
+        return failure(
+          "Remote server #{config.key} uses external credential #{config.token_env}; " \
+          "update that environment variable or remove token_env before storing a Tycho credential",
+          err: err
+        )
+      end
+
+      err.print "Token for #{config.key}: "
+      token = if input.respond_to?(:tty?) && input.tty? && input.respond_to?(:noecho)
+                input.noecho(&:gets)
+              else
+                input.gets
+              end
+      err.puts
+      token = token.to_s.chomp
+      return failure("Remote token is required", err: err) if token.empty?
+
+      unless opts[:no_verify]
+        credential = resolver.transient(config, token)
+        RemoteCLIClient.new(config, credential_resolver: resolver, credential: credential).request("GET", "/agents")
+      end
+      resolver.save(config, token: token, verified: !opts[:no_verify])
+      state = opts[:no_verify] ? "unverified" : "verified"
+      out.puts "Stored #{state} credential for #{config.key} in #{resolver.store.path}"
+      0
+    rescue RemoteCLIClient::Error, RemoteCredentialResolver::Error, ConfigError => e
+      failure(e.message, err: err)
+    ensure
+      token = nil
+    end
+
+    def server_logout(server_key, out: $stdout, err: $stderr)
+      _registry, config, resolver = remote_credential_context(server_key, err: err)
+      return 1 unless config
+
+      removed = resolver.store.delete_token(config.key)
+      out.puts(removed ? "Removed stored credential for #{config.key}." : "No stored credential for #{config.key}.")
+      unless config.token_env.to_s.empty?
+        state = ENV[config.token_env].to_s.empty? ? "not set" : "still active"
+        out.puts "External source #{config.token_env} is #{state}; Tycho did not change it."
+      end
+      0
+    rescue ConfigError => e
+      failure(e.message, err: err)
+    end
+
+    def server_status(server_key = nil, opts = {}, out: $stdout, err: $stderr)
+      require_relative "registry"
+      require_relative "domain/remote_credential_store"
+
+      registry = Registry.new
+      configs = Array(registry.remote_servers)
+      unless server_key.to_s.empty?
+        configs = configs.select { |config| config.key == server_key.to_s }
+        return failure("Unknown remote server: #{server_key}", err: err) if configs.empty?
+      end
+      store = RemoteCredentialStore.new(registry: registry)
+      resolver = RemoteCredentialResolver.new(store: store, warning: ->(_message) {})
+      statuses = configs.map { |config| remote_credential_status(config, resolver) }
+
+      if opts[:json]
+        value = server_key.to_s.empty? ? statuses : statuses.first
+        out.puts JSON.pretty_generate(value)
+      elsif statuses.empty?
+        out.puts "No remote servers configured."
+      else
+        rows = statuses.map do |status|
+          [status[:key], status[:source], status[:state], status[:origin] || "—", status[:token_env] || "—"]
+        end
+        out.puts agent_table(%w[Key Source State Origin Token-env], rows)
+      end
+      0
+    rescue ConfigError => e
+      failure(e.message, err: err)
+    end
+
+    def server_verify(server_key, out: $stdout, err: $stderr)
+      _registry, config, resolver = remote_credential_context(server_key, err: err)
+      return 1 unless config
+
+      credential = resolver.resolve(config, allow_rejected: true, allow_origin_change: true)
+      return failure("Remote server #{config.key} has no credential to verify", err: err) if credential.token.to_s.empty?
+      if credential.source == "inline"
+        return failure("Run `tycho server migrate #{config.key}` before verifying its inline credential", err: err)
+      end
+
+      RemoteCLIClient.new(config, credential_resolver: resolver, credential: credential).request("GET", "/agents")
+      out.puts "Verified #{credential.source} credential for #{config.key} at #{resolver.canonical_origin(config.url)}"
+      0
+    rescue RemoteCLIClient::Error, RemoteCredentialResolver::Error, ConfigError => e
+      failure(e.message, err: err)
+    end
+
+    def server_migrate(server_key = nil, opts = {}, out: $stdout, err: $stderr)
+      require_relative "registry"
+      require_relative "domain/remote_credential_store"
+
+      return failure("Choose SERVER_KEY or --all, not both", err: err) if opts[:all] && !server_key.to_s.empty?
+      return failure("Missing SERVER_KEY or --all", err: err) unless opts[:all] || !server_key.to_s.empty?
+
+      registry = Registry.new
+      configs = if opts[:all]
+                  Array(registry.remote_servers).select { |config| !config.token.to_s.empty? }
+                else
+                  config = Array(registry.remote_servers).find { |candidate| candidate.key == server_key.to_s }
+                  return failure("Unknown remote server: #{server_key}", err: err) unless config
+                  return failure("Remote server #{config.key} has no inline token to migrate", err: err) if config.token.to_s.empty?
+                  [config]
+                end
+      resolver = RemoteCredentialResolver.new(store: RemoteCredentialStore.new(registry: registry))
+      configs.each do |config|
+        resolver.save(config, token: config.token, verified: false)
+        registry.remove_remote_server_inline_token!(config.key)
+        out.puts "Migrated #{config.key} to #{resolver.store.path} (unverified)."
+      end
+      out.puts "No inline remote tokens found." if configs.empty?
+      0
+    rescue ConfigError => e
+      failure(e.message, err: err)
+    end
+
+    def remote_credential_context(server_key, err:)
+      require_relative "registry"
+      require_relative "domain/remote_cli_client"
+      require_relative "domain/remote_credential_store"
+
+      registry = Registry.new
+      config = Array(registry.remote_servers).find { |candidate| candidate.key == server_key.to_s }
+      unless config
+        failure("Unknown remote server: #{server_key}", err: err)
+        return [registry, nil, nil]
+      end
+      store = RemoteCredentialStore.new(registry: registry)
+      resolver = RemoteCredentialResolver.new(store: store, warning: ->(message) { err.puts message })
+      [registry, config, resolver]
+    end
+
+    def remote_credential_status(config, resolver)
+      origin = resolver.canonical_origin(config.url)
+      stored = resolver.store.metadata(config.key)
+      token_env = config.token_env.to_s.strip
+      source, metadata, state = if !token_env.empty?
+                                  external = stored.fetch("external", {})
+                                  external_state = ENV[token_env].to_s.empty? ? "missing" : external.fetch("state", "unverified")
+                                  ["external", external, external_state]
+                                elsif !resolver.store.stored(config.key)["token"].to_s.empty?
+                                  item = stored.fetch("stored", {})
+                                  ["stored", item, item.fetch("state", "unverified")]
+                                elsif !config.token.to_s.empty?
+                                  ["inline", {}, "legacy"]
+                                else
+                                  ["none", {}, "missing"]
+                                end
+      bound_origin = metadata["origin"]
+      state = "origin_mismatch" if bound_origin && bound_origin != origin
+      {
+        key: config.key,
+        name: config.name,
+        url: config.url,
+        origin: bound_origin || origin,
+        source: source,
+        state: state,
+        token_env: token_env.empty? ? nil : token_env,
+        verified_at: metadata["verified_at"],
+        rejected_at: metadata["rejected_at"],
+        updated_at: metadata["updated_at"]
+      }
     end
 
     def debug_claude(opts = {}, out: $stdout, err: $stderr)

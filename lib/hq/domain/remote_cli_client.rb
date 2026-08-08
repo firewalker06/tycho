@@ -6,6 +6,8 @@ require "openssl"
 require "socket"
 require "uri"
 
+require_relative "remote_credential_store"
+
 module HQ
   class RemoteCLIClient
     DEFAULT_OPEN_TIMEOUT = 5
@@ -26,15 +28,23 @@ module HQ
       config = Array(registry.remote_servers).find { |candidate| candidate.key == key }
       raise Error.new("Unknown remote server: #{key}", kind: :unknown_server) unless config
 
-      new(config, **options)
+      store = options.delete(:credential_store) || RemoteCredentialStore.new(registry: registry)
+      resolver = options.delete(:credential_resolver) || RemoteCredentialResolver.new(store: store)
+      new(config, credential_resolver: resolver, **options)
+    rescue RemoteCredentialResolver::Error => e
+      raise Error.new(e.message, kind: e.kind)
     end
 
-    attr_reader :server_key
+    attr_reader :server_key, :credential
 
-    def initialize(config, open_timeout: DEFAULT_OPEN_TIMEOUT, read_timeout: DEFAULT_READ_TIMEOUT)
+    def initialize(config, open_timeout: DEFAULT_OPEN_TIMEOUT, read_timeout: DEFAULT_READ_TIMEOUT,
+                   credential_resolver: nil, credential: nil)
       @server_key = config.key
+      @config = config
       @base_uri = URI.parse(config.url)
-      @token = config.resolved_token.to_s
+      @credential_resolver = credential_resolver
+      @credential = credential || resolve_credential(config)
+      @token = @credential.token.to_s
       @open_timeout = open_timeout
       @read_timeout = read_timeout
     end
@@ -89,10 +99,14 @@ module HQ
     def parse_response(response)
       status = response.code.to_i
       payload = parse_json(response.body)
-      return payload if status.between?(200, 299)
+      if status.between?(200, 299)
+        @credential_resolver&.verified!(@credential, @config)
+        return payload
+      end
 
       message = error_message(payload, response)
       if status == 401 || status == 403
+        @credential_resolver&.rejected!(@credential, @config)
         raise Error.new("Remote server #{server_key} authentication failed", kind: :authentication, status: status)
       end
       if status == 404 && message == "Not found"
@@ -123,6 +137,19 @@ module HQ
       return value.to_s if @token.empty?
 
       value.to_s.gsub(@token, "[REDACTED]")
+    end
+
+    def resolve_credential(config)
+      return @credential_resolver.resolve(config) if @credential_resolver
+
+      RemoteCredentialResolver::Credential.new(
+        server_key: config.key,
+        token: config.resolved_token.to_s,
+        source: "legacy",
+        state: "legacy"
+      )
+    rescue RemoteCredentialResolver::Error => e
+      raise Error.new(e.message, kind: e.kind)
     end
   end
 end

@@ -231,6 +231,22 @@ module HQ
       value
     end
 
+    def remove_remote_server_inline_token!(key)
+      value = key.to_s.strip
+      data = load_yaml(@path)
+      servers = Array(data["remote_servers"])
+      entry = servers.find { |server| server["key"].to_s == value }
+      raise ConfigError, "Unknown remote server: #{value}" unless entry
+
+      removed = entry.delete("token")
+      return false if removed.nil?
+
+      data["remote_servers"] = servers
+      write_yaml(@path, data)
+      load!
+      true
+    end
+
     def update_group_hidden!(group_name, hidden)
       name = group_name.to_s.strip
       raise ConfigError, "Missing group name" if name.empty?

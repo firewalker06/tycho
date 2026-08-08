@@ -90,11 +90,38 @@ module CLICommandTest
         assert(projects.fetch(:status).success?, "expected remote project list: #{projects.fetch(:stderr)}")
         assert(JSON.parse(projects.fetch(:stdout)).fetch(0).fetch("key") == "demo",
                "expected remote project list payload")
+        missing_external = run_tycho(local_env.except("TYCHO_TEST_PEER_TOKEN"),
+                                     "project", "list", "--server", "peer")
+        assert(!missing_external.fetch(:status).success? &&
+               missing_external.fetch(:stderr).include?("requires environment variable TYCHO_TEST_PEER_TOKEN"),
+               "expected configured external credentials to fail without falling back")
         inline_auth = run_tycho(local_env.except("TYCHO_TEST_PEER_TOKEN"),
                                 "project", "list", "--server", "peer-inline", "--json")
         assert(inline_auth.fetch(:status).success? &&
                !inline_auth.fetch(:stdout).include?(token) && !inline_auth.fetch(:stderr).include?(token),
                "expected inline token auth without credential output")
+        assert(inline_auth.fetch(:stderr).include?("removed in v0.11.0"),
+               "expected the inline fallback to warn about its removal")
+
+        migrated = run_tycho(local_env, "server", "migrate", "peer-inline")
+        credential_path = File.join(local_dir, "remote_credentials.json")
+        migrated_config = YAML.safe_load_file(local_config)
+        assert(migrated.fetch(:status).success? && File.stat(credential_path).mode & 0o777 == 0o600 &&
+               !migrated_config.fetch("remote_servers").find { |item| item["key"] == "peer-inline" }.key?("token"),
+               "expected migration to move the inline token into a private credential file")
+        unverified = run_tycho(local_env, "server", "status", "peer-inline", "--json")
+        assert(JSON.parse(unverified.fetch(:stdout)).fetch("state") == "unverified",
+               "expected migrated credentials to start unverified")
+        verified = run_tycho(local_env, "server", "verify", "peer-inline")
+        assert(verified.fetch(:status).success?, "expected explicit credential verification: #{verified.fetch(:stderr)}")
+        logged_out = run_tycho(local_env, "server", "logout", "peer-inline")
+        assert(logged_out.fetch(:status).success? && logged_out.fetch(:stdout).include?("Removed stored credential"),
+               "expected logout to remove only the stored credential")
+        logged_in = run_tycho(local_env, "server", "login", "peer-inline", "--no-verify", stdin_data: "#{token}\n")
+        assert(logged_in.fetch(:status).success? && !logged_in.fetch(:stdout).include?(token) &&
+               !logged_in.fetch(:stderr).include?(token),
+               "expected hidden-input login to save without printing the credential")
+        run_tycho(local_env, "server", "verify", "peer-inline")
 
         project = run_tycho(local_env, "project", "show", "demo", "--server", "peer", "--json")
         assert(project.fetch(:status).success?, "expected remote project show: #{project.fetch(:stderr)}")
@@ -145,6 +172,15 @@ module CLICommandTest
         assert(!bad_auth.fetch(:status).success? && bad_auth.fetch(:stderr).include?("authentication failed") &&
                !bad_auth.fetch(:stderr).include?("wrong"),
                "expected an auth error without credentials")
+        rejected = run_tycho(local_env, "server", "status", "peer", "--json")
+        assert(JSON.parse(rejected.fetch(:stdout)).fetch("state") == "rejected",
+               "expected rejected external credentials to remain visible as metadata")
+        recovered = run_tycho(local_env, "server", "verify", "peer")
+        assert(recovered.fetch(:status).success?, "expected explicit verification to recover rejected credentials")
+        external_logout = run_tycho(local_env, "server", "logout", "peer")
+        assert(external_logout.fetch(:stdout).include?("External source TYCHO_TEST_PEER_TOKEN is still active") &&
+               !external_logout.fetch(:stdout).include?(token),
+               "expected logout to report but never modify or print the external source")
       end
 
       unreachable = run_tycho(local_env, "agent", "list", "--server", "peer")
@@ -444,8 +480,9 @@ module CLICommandTest
     HQ::ManagedAgent.define_method(:running?, original_running) if original_running
   end
 
-  def run_tycho(env, *args)
-    stdout, stderr, status = Open3.capture3(env, RbConfig.ruby, EXECUTABLE, *args, chdir: ROOT)
+  def run_tycho(env, *args, stdin_data: "")
+    stdout, stderr, status = Open3.capture3(env, RbConfig.ruby, EXECUTABLE, *args,
+                                            chdir: ROOT, stdin_data: stdin_data)
     { stdout: stdout, stderr: stderr, status: status }
   end
 

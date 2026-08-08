@@ -2683,6 +2683,17 @@ module RemoteServerTest
         assert(requests.all? { |request| request.dig(:headers, "authorization") == "Bearer target-secret" },
                "expected broker requests to use the provided browser-local token")
 
+        promoted = server.send(:route, service, "POST", "/servers/tycho-peer/credentials", {
+          "token" => "target-secret"
+        }, nil)
+        credential_path = File.join(dir, "remote_credentials.json")
+        assert(promoted[:status] == 200 && promoted.dig(:body, :credential, :state) == "verified",
+               "expected browser promotion to verify and persist the credential")
+        assert(File.stat(credential_path).mode & 0o777 == 0o600,
+               "expected browser-promoted credentials to use private file permissions")
+        assert(!promoted.dig(:body, :credential).to_s.include?("target-secret"),
+               "expected credential metadata to omit token values")
+
         updated = server.send(:route, service, "PATCH", "/servers/tycho-peer", {
           "name" => "Studio Mac",
           "icon" => "computer"
@@ -2714,18 +2725,21 @@ module RemoteServerTest
           method: "GET",
           path: "/servers/tycho-peer/agents",
           query: "",
-          headers: { "x-tycho-remote-server-token" => "target-secret" },
+          headers: {},
           body: ""
         )
         proxied = server.send(:route, service, "GET", "/servers/tycho-peer/agents", {}, proxy_request)
         assert(proxied.dig(:body, "agents", 0, "key") == "peer-agent-1",
-               "expected browser-local token header to authenticate broker proxy requests")
+               "expected the broker to use the Tycho-stored credential after browser promotion")
 
         deleted = server.send(:route, service, "DELETE", "/servers/tycho-peer", {}, nil)
         assert(deleted[:status] == 200, "expected Remote server delete route to succeed")
         persisted_after_delete = YAML.safe_load(File.read(config_path), aliases: true)
         assert(!persisted_after_delete.key?("remote_servers"),
                "expected deleted server to be removed from hq.yml")
+        credentials_after_delete = JSON.parse(File.read(credential_path))
+        assert(!credentials_after_delete.fetch("servers").key?("tycho-peer"),
+               "expected deleting a peer to remove its Tycho-stored credential")
       end
     end
   end
@@ -3888,7 +3902,8 @@ module RemoteServerTest
            js[:body].include?("SERVER_TOKENS_STORAGE_KEY") &&
            js[:body].include?("hq.remote.serverTokens") &&
            js[:body].include?("X-Tycho-Remote-Server-Token") &&
-           js[:body].include?("storeRemoteServerToken(server?.key, token)") &&
+           js[:body].include?('brokerPost(`/servers/${encodeURIComponent(server?.key || "")}/credentials`') &&
+           js[:body].include?("removeRemoteServerToken(server?.key)") &&
            js[:body].include?("removeRemoteServerToken(value)") &&
            js[:body].include?('brokerDelete(`/servers/${encodeURIComponent(value)}`') &&
            !js[:body].include?("hq.remote.customServers"),
@@ -3900,8 +3915,8 @@ module RemoteServerTest
     assert(js[:body].include?("data-toggle-server-token-form") &&
            js[:body].include?("function renderServerTokenForm") &&
            js[:body].include?("saveRemoteServerToken") &&
-           js[:body].include?("brokerGetWithHeaders") &&
-           js[:body].include?("Remote token saved for this browser") &&
+           js[:body].include?('brokerPost(`/servers/${encodeURIComponent(serverKey)}/credentials`') &&
+           js[:body].include?("Remote token moved to this Tycho host") &&
            js[:body].include?("Token needed here"),
            "expected Settings to let existing remote servers save a browser-local token")
     assert(js[:body].include?("function serverMetadataBadge") &&
@@ -3941,7 +3956,7 @@ module RemoteServerTest
            css[:body].include?("opacity: 0.68"),
            "expected stale peer projects and agents to stay subdued without replacing their status")
     assert(js[:body].include?('class="server-token-form ui-form-layout" data-ds-form="settings"') &&
-           js[:body].include?("Stored only in this browser and sent to the selected Remote server.") &&
+           js[:body].include?("Verified, stored on this Tycho host, then removed from this browser.") &&
            js[:body].include?('class="primary inline-icon-button ui-button" data-variant="brand" type="submit"'),
            "expected Remote token recovery to use the shared field, input, description, and semantic action contracts")
     assert(css[:body].include?(".server-action-menu > summary") &&
