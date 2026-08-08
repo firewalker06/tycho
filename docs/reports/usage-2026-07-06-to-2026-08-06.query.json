@@ -1,0 +1,28 @@
+{
+  "interface": "tycho metrics query",
+  "schema_version": 1,
+  "query": {
+    "from": "2026-07-06",
+    "to": "2026-08-07",
+    "timezone": "Asia/Jakarta",
+    "range_semantics": "from_inclusive_to_exclusive",
+    "filters": {}
+  },
+  "command": "bundle exec bin/tycho metrics query --from 2026-07-06 --to 2026-08-07 --timezone Asia/Jakarta --json",
+  "summary": {
+    "run_starts": 2232,
+    "managed_agents": 193,
+    "distinct_native_sessions": 193,
+    "runs_without_native_session": 72,
+    "average_runs_per_session": 11.564766839378239,
+    "known_estimated_cost_usd": 2850.0493570296,
+    "median_complete_session_cost_usd": 4.446837700000001,
+    "max_complete_session_cost_usd": 8.24582975,
+    "priced_run_count": 1499,
+    "unpriced_run_count": 733,
+    "priced_run_coverage": 0.671594982078853,
+    "complete_priced_session_count": 2,
+    "incomplete_or_unpriced_session_count": 191,
+    "cost_semantics": "estimate_not_invoice"
+  }
+}

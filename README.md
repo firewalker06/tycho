@@ -191,6 +191,7 @@ Homebrew and source installs use the same user-scoped defaults:
 | Runtime state and logs | `~/.tycho/logs/` |
 | Project logs | `~/.tycho/logs/projects/` |
 | Agent logs and artifacts | `~/.tycho/logs/agents/` |
+| Normalized usage metrics | `~/.tycho/logs/usage_metrics.json` |
 | Browser push state | `~/.tycho/logs/push_*.json` and `~/.tycho/logs/web_push_vapid.json` |
 | GitHub App session | `~/.tycho/config/github_auth.json` with mode `0600` |
 
@@ -373,6 +374,18 @@ in v0.11.0. `--json` is supported by project list/show and every agent command
 above. Errors distinguish unknown server keys, missing external sources,
 origin changes, unreachable servers, timeouts, rejected credentials,
 unsupported endpoints, and other Remote API responses without printing tokens.
+
+Query normalized run, native-session, token, and estimated-cost metrics without
+scanning raw logs:
+
+```bash
+tycho metrics backfill --timezone Asia/Jakarta
+tycho metrics query --from 2026-07-06 --to 2026-08-07 --timezone Asia/Jakarta
+tycho metrics query --server vps --from 2026-07-06 --to 2026-08-07 --timezone UTC --json
+```
+
+Ranges are start-inclusive and end-exclusive. Unknown telemetry and prices stay
+unknown rather than becoming zero. See [Usage metrics](docs/USAGE_METRICS.md).
 
 The Remote UI always includes the local server and combines agents and projects
 from every configured peer into the same Agents list. Use the server filter to

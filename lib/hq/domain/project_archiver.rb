@@ -59,6 +59,7 @@ module HQ
         @registry.path,
         @registry.archived_projects_path,
         AGENTS_FILE,
+        File.join(File.dirname(AGENTS_FILE), "usage_metrics.json"),
         SCHEDULES_FILE,
         SCHEDULES_STATE_FILE
       ]
@@ -84,6 +85,8 @@ module HQ
           FileUtils.mkdir_p(File.dirname(path))
           FileUtils.mv(archived, path)
         end
+        FileUtils.rm_f(File.join(destination, "agent_manifest.json"))
+        FileUtils.rm_f(File.join(destination, "usage_metrics.json"))
         Dir.rmdir(destination) if Dir.exist?(destination) && Dir.empty?(destination)
       end
     end

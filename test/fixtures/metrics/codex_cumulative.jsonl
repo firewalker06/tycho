@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"codex-session-1"}
+{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":40,"output_tokens":20,"reasoning_output_tokens":5}}
+---RUN---
+{"type":"thread.started","thread_id":"codex-session-1"}
+{"type":"turn.completed","usage":{"input_tokens":175,"cached_input_tokens":90,"output_tokens":32,"reasoning_output_tokens":8}}

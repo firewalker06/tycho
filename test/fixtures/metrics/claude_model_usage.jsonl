@@ -1,0 +1,1 @@
+{"type":"result","session_id":"claude-session-1","total_cost_usd":1.5,"usage":{"input_tokens":300,"cache_creation_input_tokens":20,"cache_read_input_tokens":100,"output_tokens":60},"modelUsage":{"claude-sonnet-4-5":{"inputTokens":200,"outputTokens":40,"costUSD":1.0},"claude-haiku-4-5":{"inputTokens":100,"outputTokens":20,"costUSD":0.5}}}

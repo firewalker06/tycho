@@ -144,6 +144,7 @@ module HQ
             "reasoning_output_tokens" => reasoning_tokens
           }
         )
+        system.last.metadata["model"] = event["model"] if event["model"]
       end
 
       def parse_error(event, system)

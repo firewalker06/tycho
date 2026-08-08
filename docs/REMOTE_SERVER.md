@@ -402,6 +402,8 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `POST` | `/agents/{key}/clone` | Clone one managed agent, optionally archiving the source. |
 | `POST` | `/agents/{key}/archive` | Archive one idle managed agent. |
 | `POST` | `/agents/{key}/loop-schedule` | Adopt one idle agent as a temporary recurring schedule and run it immediately. |
+| `GET` | `/metrics` | Query normalized run and native-session metrics with inclusive `from`, exclusive `to`, timezone, and attribution filters. |
+| `POST` | `/metrics/backfill` | Idempotently backfill metrics from durable manifests and optional legacy raw telemetry. |
 | `GET` | `/settings/session-loops` | Read Loop session interval, cutoff, and prompt-template defaults. |
 | `PATCH` | `/settings/session-loops` | Save Loop session defaults in `hq.yml`. |
 | `GET` | `/push/config` | Read browser push readiness and VAPID public key. |

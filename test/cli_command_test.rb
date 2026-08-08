@@ -25,6 +25,7 @@ module CLICommandTest
     assert_remote_client_reports_timeout_and_unsupported_operation
     assert_github_commands_cover_device_login_status_and_logout
     assert_debug_claude_is_listed_in_usage
+    assert_metrics_commands_are_listed_in_usage
     assert_debug_claude_run_agent_uses_claude_defaults
     puts "cli_command_test: ok"
   end
@@ -187,6 +188,16 @@ module CLICommandTest
       assert(!unreachable.fetch(:status).success? && unreachable.fetch(:stderr).include?("is unreachable"),
              "expected a clear unreachable-server error")
     end
+  end
+
+  def assert_metrics_commands_are_listed_in_usage
+    output = StringIO.new
+    status = HQ::CLICommand.usage(nil, err: output)
+    text = output.string
+
+    assert(status.zero?, "expected metrics help rendering to succeed")
+    assert(text.include?("metrics query") && text.include?("metrics backfill"),
+           "expected metrics query and backfill in CLI usage")
   end
 
   def assert_remote_client_reports_timeout_and_unsupported_operation

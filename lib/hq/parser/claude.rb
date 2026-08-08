@@ -120,6 +120,9 @@ module HQ
         meta["terminal_reason"] = event["terminal_reason"] if event["terminal_reason"]
         meta["stop_reason"] = event["stop_reason"] if event["stop_reason"]
         meta["session_id"] = event["session_id"] if event["session_id"]
+        model_usage = event["modelUsage"] || event["model_usage"]
+        meta["model_usage"] = model_usage if model_usage.is_a?(Hash)
+        meta["model"] = event["model"] if event["model"]
 
         summary_parts = []
         summary_parts << "$#{format("%.4f", cost)}" if cost

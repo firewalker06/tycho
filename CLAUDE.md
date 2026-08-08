@@ -19,6 +19,7 @@ Domain and process-management code lives under `lib/hq/domain/`:
 - `project.rb` represents a configured project and handles workspace and git metadata.
 - `managed_agent.rb` manages Codex and Claude-compatible agent execution, logs, messages, structured results, and inquiry state.
 - `agent_store.rb` persists managed agents.
+- `usage_metrics.rb` exposes versioned, idempotent managed-run/native-session metrics, provider normalization, query, and backfill through focused files under `usage_metrics/`.
 - `agent_log_parser.rb` parses raw Codex JSON streams and `chat.log` blocks into conversation, system, and chat entries.
 - `agent_chat_log.rb` builds chat viewport content from two sources: `memory.jsonl` for historical conversation and `raw.log` for live streaming during active runs. It also generates `conversation.log` and `system.log` as human-readable artifacts.
 - `agent_memory.rb` maintains a canonical `*.memory.jsonl` event log per agent, bootstrapping from existing messages and bounding how much history is replayed back into prompts.
@@ -39,6 +40,8 @@ bundle install
 bin/tycho
 bundle exec bin/tycho
 bundle exec bin/tycho project <key> [options]
+bundle exec bin/tycho metrics query [filters] [--json]
+bundle exec bin/tycho metrics backfill [--timezone ZONE]
 bin/test
 bundle exec ruby -c bin/tycho
 bundle exec ruby test/registry_test.rb
