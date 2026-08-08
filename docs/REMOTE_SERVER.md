@@ -195,6 +195,35 @@ For ad hoc peers, open Settings, use the **Add server** toggle in the **Servers*
 
 UI-entered remote tokens are not written to `hq.yml`. The browser stores them in local storage under `hq.remote.serverTokens`, keyed by server key, and sends only the owning peer's token to the local broker as `X-Tycho-Remote-Server-Token`. The broker uses that value only for the outgoing peer request. If another browser can see an existing remote server but does not have its token, use that server row's **Token** action in Settings to re-authenticate it for the current browser. The UI's own bearer token remains separate under `hq.remote.token` and is sent as the normal `Authorization` header to the server that served the UI. For durable server-side peer credentials, configure `token_env` manually in `hq.yml`.
 
+## Remote CLI Control
+
+Project inspection and managed-agent lifecycle commands can target one
+configured peer directly. The CLI connects to that peer's `url`; it does not
+depend on a running local broker or any browser state.
+
+```bash
+tycho project list --server office-mac [--json]
+tycho project show <project-key> --server office-mac [--json]
+tycho agent list [<project-key>] --server office-mac [--json]
+tycho agent status <agent-key> --server office-mac [--json]
+tycho agent create <project-key> <prompt> --server office-mac [--run] [--json]
+tycho agent run <agent-key> --server office-mac [--json]
+tycho agent send <agent-key> <message> --server office-mac [--json]
+tycho agent stop <agent-key> --server office-mac [--json]
+tycho agent archive <agent-key> --server office-mac [--json]
+```
+
+The selected key must exist under `remote_servers`. Requests send
+`Authorization: Bearer ...` from the configured `token_env`, or from `token`
+when no environment variable name is configured. Keep production credentials
+in `token_env`; command output and errors never include them. Without
+`--server`, all commands retain their local behavior.
+
+Remote failures use explicit messages for unknown keys, connection failures,
+timeouts, authentication rejection, unsupported endpoints, and non-success API
+responses. The CLI exits nonzero for each failure. Agent `run`, `send`, and
+`stop` also enforce the same running/idle preconditions as their local forms.
+
 Browser push notification work is tracked in [WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.md), and the current grouping, silent-notification, and PWA badge behavior is summarized in [WEB_PUSH_BEHAVIOR.md](./WEB_PUSH_BEHAVIOR.md). Push can use a Tailscale MagicDNS domain when it is served over HTTPS, preferably with Tailscale Serve or Tailscale Funnel. Plain HTTP MagicDNS URLs show a soft warning, but the UI still lets the user try enabling notifications when the browser exposes the required push APIs.
 
 The Remote server polls managed-agent state while it is running and sends one push notification when an agent requires response or finishes. Structured `no_action_needed` outcomes stay quiet and do not mark the agent unread. Agent notifications share the `hq:agents` browser notification tag so repeated agent updates replace the previous Tycho agent notification instead of piling up; input-required notifications renotify audibly, while routine finish notifications are marked silent. Agent payloads also carry the current unread-agent count so browsers with the Badging API can show the count on the installed PWA app icon. Agent notification clicks open `/#agent/{key}`.

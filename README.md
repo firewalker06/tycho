@@ -305,6 +305,7 @@ tycho project create my-workspace \
   --reasoning-effort medium
 
 tycho project show my-workspace
+tycho project list
 tycho project update my-workspace --group Work --model=""
 tycho project archive my-workspace
 ```
@@ -326,6 +327,31 @@ remote_servers:
     url: http://vps-cd946cb7.tail952bf7.ts.net:7373
     token_env: TYCHO_VPS_REMOTE_TOKEN
 ```
+
+Target a configured peer directly from the CLI with `--server`. Project reads
+and the full managed-agent lifecycle use the peer's Remote JSON API; commands
+without `--server` keep using local state.
+
+```bash
+tycho project list --server vps
+tycho project show my-workspace --server vps --json
+
+tycho agent list my-workspace --server vps
+tycho agent status <agent-key> --server vps --json
+tycho agent create my-workspace "Inspect the failing build" --server vps
+tycho agent run <agent-key> --server vps
+tycho agent send <agent-key> "Try the smaller reproduction" --server vps
+tycho agent stop <agent-key> --server vps
+tycho agent archive <agent-key> --server vps
+```
+
+Remote CLI commands resolve the server only from `remote_servers` in
+`hq.yml`. Authentication uses `token_env` when configured, otherwise `token`;
+browser local storage is never read. Prefer `token_env` so credentials stay out
+of the config file. `--json` is supported by project list/show and every agent
+command above. Errors distinguish unknown server keys, unreachable servers,
+timeouts, rejected credentials, unsupported endpoints, and other Remote API
+responses without printing the token.
 
 The Remote UI always includes the local server and combines agents and projects
 from every configured peer into the same Agents list. Use the server filter to

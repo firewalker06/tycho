@@ -4,6 +4,10 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+- Add direct `--server` CLI targeting for remote project inspection and the
+  complete managed-agent lifecycle, with token/token_env authentication, JSON
+  output, and explicit transport, authentication, compatibility, and API errors.
+
 ## 0.9.0 - 2026-07-31
 
 ### Highlights

@@ -3,6 +3,8 @@
 require "json"
 require "open3"
 require "rbconfig"
+require "time"
+require "uri"
 
 require "dry/cli"
 require "lipgloss"
@@ -47,6 +49,11 @@ module HQ
           option :hidden, desc: "Visibility override: true, false, or inherit"
           option :json, type: :boolean, default: false, desc: "Print JSON"
         end
+
+        def remote_options(json: true)
+          option :server, desc: "Remote server key from hq.yml"
+          option :json, type: :boolean, default: false, desc: "Print JSON" if json
+        end
       end
 
       class Project < Dry::CLI::Command
@@ -82,11 +89,23 @@ module HQ
 
         desc "Show project configuration"
         argument :project_key, required: true, desc: "Project key"
-        option :json, type: :boolean, default: false, desc: "Print JSON"
-        usage_template "project show %{project_key} [--json]"
+        remote_options
+        usage_template "project show %{project_key} [--server SERVER_KEY] [--json]"
 
         def call(project_key:, **opts)
           exit CLICommand.show_project(project_key, opts, out: out, err: err)
+        end
+      end
+
+      class ProjectList < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "List projects"
+        remote_options
+        usage_template "project list [--server SERVER_KEY] [--json]"
+
+        def call(**opts)
+          exit CLICommand.list_projects(opts, out: out, err: err)
         end
       end
 
@@ -118,6 +137,7 @@ module HQ
 
       register "project", Project do |prefix|
         prefix.register "create", ProjectCreate
+        prefix.register "list", ProjectList
         prefix.register "show", ProjectShow
         prefix.register "update", ProjectUpdate
         prefix.register "archive", ProjectArchive
@@ -142,7 +162,8 @@ module HQ
         option :name, desc: "Agent name override"
         option :template, desc: "Template key to use (defaults to project's first template)"
         option :run, type: :boolean, default: false, desc: "Start the agent immediately after creating"
-        usage_template "agent create %{project_key} %{prompt}"
+        remote_options
+        usage_template "agent create %{project_key} %{prompt} [--server SERVER_KEY] [--json]"
 
         def call(project_key:, prompt:, **opts)
           exit CLICommand.create_agent(project_key, prompt, opts, out: out, err: err)
@@ -154,10 +175,11 @@ module HQ
 
         desc "List managed agents"
         argument :project_key, required: false, desc: "Filter by project key"
-        usage_template "agent list [%{project_key}]"
+        remote_options
+        usage_template "agent list [%{project_key}] [--server SERVER_KEY] [--json]"
 
         def call(**opts)
-          exit CLICommand.list_agents(opts[:project_key], out: out, err: err)
+          exit CLICommand.list_agents(opts[:project_key], opts, out: out, err: err)
         end
       end
 
@@ -166,10 +188,11 @@ module HQ
 
         desc "Show status and metadata for an agent"
         argument :agent_key, required: true, desc: "Agent key"
-        usage_template "agent status %{agent_key}"
+        remote_options
+        usage_template "agent status %{agent_key} [--server SERVER_KEY] [--json]"
 
-        def call(agent_key:, **)
-          exit CLICommand.agent_status(agent_key, out: out, err: err)
+        def call(agent_key:, **opts)
+          exit CLICommand.agent_status(agent_key, opts, out: out, err: err)
         end
       end
 
@@ -178,10 +201,11 @@ module HQ
 
         desc "Start (or re-run) an existing agent"
         argument :agent_key, required: true, desc: "Agent key"
-        usage_template "agent run %{agent_key}"
+        remote_options
+        usage_template "agent run %{agent_key} [--server SERVER_KEY] [--json]"
 
-        def call(agent_key:, **)
-          exit CLICommand.run_agent(agent_key, out: out, err: err)
+        def call(agent_key:, **opts)
+          exit CLICommand.run_agent(agent_key, opts, out: out, err: err)
         end
       end
 
@@ -190,10 +214,11 @@ module HQ
 
         desc "Stop a running agent"
         argument :agent_key, required: true, desc: "Agent key"
-        usage_template "agent stop %{agent_key}"
+        remote_options
+        usage_template "agent stop %{agent_key} [--server SERVER_KEY] [--json]"
 
-        def call(agent_key:, **)
-          exit CLICommand.stop_agent(agent_key, out: out, err: err)
+        def call(agent_key:, **opts)
+          exit CLICommand.stop_agent(agent_key, opts, out: out, err: err)
         end
       end
 
@@ -217,10 +242,11 @@ module HQ
         desc "Send a message to an agent and re-run it"
         argument :agent_key, required: true, desc: "Agent key"
         argument :message, required: true, desc: "Message to send"
-        usage_template "agent send %{agent_key} %{message}"
+        remote_options
+        usage_template "agent send %{agent_key} %{message} [--server SERVER_KEY] [--json]"
 
-        def call(agent_key:, message:, **)
-          exit CLICommand.send_agent_message(agent_key, message, out: out, err: err)
+        def call(agent_key:, message:, **opts)
+          exit CLICommand.send_agent_message(agent_key, message, opts, out: out, err: err)
         end
       end
 
@@ -229,10 +255,11 @@ module HQ
 
         desc "Archive an agent and move its logs"
         argument :agent_key, required: true, desc: "Agent key"
-        usage_template "agent archive %{agent_key}"
+        remote_options
+        usage_template "agent archive %{agent_key} [--server SERVER_KEY] [--json]"
 
-        def call(agent_key:, **)
-          exit CLICommand.archive_agent(agent_key, out: out, err: err)
+        def call(agent_key:, **opts)
+          exit CLICommand.archive_agent(agent_key, opts, out: out, err: err)
         end
       end
 
@@ -422,6 +449,7 @@ module HQ
     PROJECT_COMMANDS = [
       Commands::Project,
       Commands::ProjectCreate,
+      Commands::ProjectList,
       Commands::ProjectShow,
       Commands::ProjectUpdate,
       Commands::ProjectArchive
@@ -795,6 +823,8 @@ module HQ
     end
 
     def show_project(project_key, opts = {}, out: $stdout, err: $stderr)
+      return remote_show_project(project_key, opts, out:, err:) if remote_requested?(opts)
+
       require_relative "registry"
 
       registry = Registry.new
@@ -805,6 +835,25 @@ module HQ
       0
     rescue StandardError => e
       failure("Failed to show #{project_key}: #{e.message}", err: err)
+    end
+
+    def list_projects(opts = {}, out: $stdout, err: $stderr)
+      return remote_list_projects(opts, out:, err:) if remote_requested?(opts)
+
+      payload = registry_projects.map do |project|
+        project.refresh_metadata!
+        {
+          key: project.key,
+          name: project.name,
+          group: project.group.empty? ? nil : project.group,
+          path: project.path,
+          status: project.status
+        }
+      end
+      print_project_list(payload, json: opts[:json], out: out)
+      0
+    rescue StandardError => e
+      failure("Failed to list projects: #{e.message}", err: err)
     end
 
     def update_project(project_key, opts, out: $stdout, err: $stderr)
@@ -960,6 +1009,8 @@ module HQ
     end
 
     def create_agent(project_key, prompt, opts, out: $stdout, err: $stderr)
+      return remote_create_agent(project_key, prompt, opts, out:, err:) if remote_requested?(opts)
+
       require_relative "registry"
       require_relative "harness_registry"
 
@@ -997,13 +1048,6 @@ module HQ
       existing.unshift(agent)
       agent_store.save(existing)
 
-      out.puts "Created agent #{agent.key}"
-      out.puts "  Name:    #{agent.name}"
-      out.puts "  Project: #{agent.project_key}"
-      out.puts "  Harness: #{agent.agent}"
-      out.puts "  Model:   #{agent.model || "(project default)"}"
-      out.puts "  Prompt:  #{agent.prompt.lines.first&.chomp}"
-
       if opts[:run]
         agent.start!
         # Persist started state (pid, status, started_at) back to disk.
@@ -1011,23 +1055,28 @@ module HQ
         idx = existing.index { |a| a.key == agent.key }
         existing[idx] = agent if idx
         agent_store.save(existing)
-        if agent.running?
-          out.puts "  Status:  running (pid #{agent.pid})"
-          out.puts "  Log:     #{agent.raw_log_path}"
-        else
-          out.puts "  Status:  start failed — #{agent.last_run&.error || "unknown error"}"
+        unless agent.running?
+          out.puts "Status: start failed — #{agent.last_run&.error || "unknown error"}" unless opts[:json]
           return 1
         end
       end
 
+      print_created_agent(agent_cli_payload(agent), json: opts[:json], out: out)
       0
     rescue StandardError => e
       failure("Failed to create agent: #{e.message}", err: err)
     end
 
-    def list_agents(project_key, out: $stdout, err: $stderr)
+    def list_agents(project_key, opts = {}, out: $stdout, err: $stderr)
+      return remote_list_agents(project_key, opts, out:, err:) if remote_requested?(opts)
+
       agents = load_all_agents
       agents = agents.select { |a| a.project_key == project_key.to_s } if project_key
+      payload = agents.map { |agent| agent_cli_payload(agent) }
+      if opts[:json]
+        out.puts JSON.pretty_generate(payload)
+        return 0
+      end
       if agents.empty?
         out.puts project_key ? "No agents for project: #{project_key}" : "No agents found."
         return 0
@@ -1042,41 +1091,21 @@ module HQ
       failure("Failed to list agents: #{e.message}", err: err)
     end
 
-    def agent_status(agent_key, out: $stdout, err: $stderr)
+    def agent_status(agent_key, opts = {}, out: $stdout, err: $stderr)
+      return remote_agent_status(agent_key, opts, out:, err:) if remote_requested?(opts)
+
       agent = load_all_agents.find { |a| a.key == agent_key.to_s }
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
 
-      last = agent.last_run
-      rows = [
-        ["Key", agent.key],
-        ["Name", agent.name],
-        ["Project", agent.project_key],
-        ["Schedule key", agent.schedule_key || "n/a"],
-        ["Harness", agent.agent],
-        ["Model", agent.model || "(project default)"],
-        ["Status", agent.status],
-        ["PID", agent.pid ? agent.pid.to_s : "n/a"],
-        ["Runs", agent.run_count.to_s],
-        ["Started", agent.started_at ? agent.started_at.strftime("%Y-%m-%d %H:%M:%S") : "n/a"],
-        ["Finished", agent.finished_at ? agent.finished_at.strftime("%Y-%m-%d %H:%M:%S") : "n/a"],
-        ["Exit code", agent.last_exit_code ? agent.last_exit_code.to_s : "n/a"],
-        ["Last run", last ? last.started_at&.strftime("%Y-%m-%d %H:%M:%S") || "n/a" : "n/a"],
-        ["Workspace", agent.workspace],
-        ["Log", agent.raw_log_path || "n/a"],
-      ]
-      table = Lipgloss::Table.new
-        .rows(rows)
-        .border_style(Lipgloss::Style.new.foreground(COLORS[:accent_alt]))
-        .style_func(rows: rows.length, columns: 2) { |_row, column|
-          column.zero? ? Lipgloss::Style.new.bold(true).foreground(COLORS[:notice]) : Lipgloss::Style.new.foreground(COLORS[:text])
-        }
-      out.puts table.render
+      print_agent_status(agent_cli_payload(agent), json: opts[:json], out: out)
       0
     rescue StandardError => e
       failure("Failed to get agent status: #{e.message}", err: err)
     end
 
-    def run_agent(agent_key, out: $stdout, err: $stderr)
+    def run_agent(agent_key, opts = {}, out: $stdout, err: $stderr)
+      return remote_agent_action(agent_key, "start", opts, out:, err:) if remote_requested?(opts)
+
       agent = load_all_agents.find { |a| a.key == agent_key.to_s }
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
       return failure("Agent #{agent_key} is already running", err: err) if agent.running?
@@ -1084,8 +1113,7 @@ module HQ
       agent.start!
       save_agent_in_store(agent)
       if agent.running?
-        out.puts "Started #{agent.key} (pid #{agent.pid})"
-        out.puts "Log: #{agent.raw_log_path}"
+        print_started_agent(agent_cli_payload(agent), json: opts[:json], out: out)
       else
         out.puts "Failed to start #{agent.key}"
         return 1
@@ -1095,14 +1123,16 @@ module HQ
       failure("Failed to run agent: #{e.message}", err: err)
     end
 
-    def stop_agent(agent_key, out: $stdout, err: $stderr)
+    def stop_agent(agent_key, opts = {}, out: $stdout, err: $stderr)
+      return remote_agent_action(agent_key, "stop", opts, out:, err:) if remote_requested?(opts)
+
       agent = load_all_agents.find { |a| a.key == agent_key.to_s }
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
       return failure("Agent #{agent_key} is not running", err: err) unless agent.running?
 
       agent.stop!
       save_agent_in_store(agent)
-      out.puts "Stopped #{agent.key}"
+      print_simple_agent_action("Stopped", agent_cli_payload(agent), json: opts[:json], out: out)
       0
     rescue StandardError => e
       failure("Failed to stop agent: #{e.message}", err: err)
@@ -1130,7 +1160,9 @@ module HQ
       failure("Failed to read agent logs: #{e.message}", err: err)
     end
 
-    def send_agent_message(agent_key, message, out: $stdout, err: $stderr)
+    def send_agent_message(agent_key, message, opts = {}, out: $stdout, err: $stderr)
+      return remote_send_agent_message(agent_key, message, opts, out:, err:) if remote_requested?(opts)
+
       agent = load_all_agents.find { |a| a.key == agent_key.to_s }
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
       return failure("Agent #{agent_key} is already running", err: err) if agent.running?
@@ -1139,8 +1171,7 @@ module HQ
       agent.start!
       save_agent_in_store(agent)
       if agent.running?
-        out.puts "Message sent and agent started (pid #{agent.pid})"
-        out.puts "Log: #{agent.raw_log_path}"
+        print_sent_agent(agent_cli_payload(agent), json: opts[:json], out: out)
       else
         out.puts "Message saved but agent failed to start"
         return 1
@@ -1150,7 +1181,9 @@ module HQ
       failure("Failed to send message: #{e.message}", err: err)
     end
 
-    def archive_agent(agent_key, out: $stdout, err: $stderr)
+    def archive_agent(agent_key, opts = {}, out: $stdout, err: $stderr)
+      return remote_archive_agent(agent_key, opts, out:, err:) if remote_requested?(opts)
+
       agents = load_all_agents
       agent = agents.find { |a| a.key == agent_key.to_s }
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
@@ -1159,8 +1192,13 @@ module HQ
       archive_path = agent.archive_logs!
       remaining = agents.reject { |a| a.key == agent_key.to_s }
       agent_store_for_all.save(remaining)
-      out.puts "Archived #{agent.key}"
-      out.puts "Archive: #{archive_path}" if archive_path
+      result = { archived: true, agent_key: agent.key, archive_path: archive_path }.compact
+      if opts[:json]
+        out.puts JSON.pretty_generate(result)
+      else
+        out.puts "Archived #{agent.key}"
+        out.puts "Archive: #{archive_path}" if archive_path
+      end
       0
     rescue StandardError => e
       failure("Failed to archive agent: #{e.message}", err: err)
@@ -1202,6 +1240,323 @@ module HQ
       0
     rescue StandardError => e
       failure("Failed to clone agent: #{e.message}", err: err)
+    end
+
+    def remote_requested?(opts)
+      !opts[:server].to_s.strip.empty?
+    end
+
+    def remote_client(server_key)
+      require_relative "registry"
+      require_relative "domain/remote_cli_client"
+
+      RemoteCLIClient.from_registry(server_key, registry: Registry.new)
+    end
+
+    def remote_show_project(project_key, opts, out:, err:)
+      payload = remote_client(opts[:server]).request("GET", remote_resource_path("projects", project_key)).fetch("project")
+      print_project_result(remote_project_detail(payload), json: opts[:json], out: out)
+      0
+    rescue RemoteCLIClient::Error, KeyError => e
+      failure(e.message, err: err)
+    end
+
+    def remote_list_projects(opts, out:, err:)
+      payload = remote_client(opts[:server]).request("GET", "/projects").fetch("projects").map do |project|
+        remote_project_list_item(project)
+      end
+      print_project_list(payload, json: opts[:json], out: out)
+      0
+    rescue RemoteCLIClient::Error, KeyError => e
+      failure(e.message, err: err)
+    end
+
+    def remote_create_agent(project_key, prompt, opts, out:, err:)
+      body = {
+        "project_key" => project_key.to_s,
+        "prompt" => prompt.to_s,
+        "start" => opts[:run] == true
+      }
+      {
+        name: "name",
+        template: "template_key",
+        harness: "agent",
+        model: "model"
+      }.each do |option, field|
+        value = opts[option].to_s.strip
+        body[field] = value unless value.empty?
+      end
+      payload = remote_client(opts[:server]).request("POST", "/agents", body: body).fetch("agent")
+      print_created_agent(remote_agent_payload(payload), json: opts[:json], out: out)
+      0
+    rescue RemoteCLIClient::Error, KeyError => e
+      failure(e.message, err: err)
+    end
+
+    def remote_list_agents(project_key, opts, out:, err:)
+      agents = remote_client(opts[:server]).request("GET", "/agents").fetch("agents")
+      agents = agents.select { |agent| agent["project_key"] == project_key.to_s } if project_key
+      agents = agents.map { |agent| remote_agent_payload(agent) }
+      if opts[:json]
+        out.puts JSON.pretty_generate(agents)
+      elsif agents.empty?
+        out.puts project_key ? "No agents for project: #{project_key}" : "No agents found."
+      else
+        rows = agents.map do |agent|
+          [agent["key"], agent["project_key"], agent["name"], agent["agent"], agent["status"], agent["run_count"].to_s]
+        end
+        out.puts agent_table(%w[Key Project Name Harness Status Runs], rows)
+      end
+      0
+    rescue RemoteCLIClient::Error, KeyError => e
+      failure(e.message, err: err)
+    end
+
+    def remote_agent_status(agent_key, opts, out:, err:)
+      payload = remote_client(opts[:server]).request("GET", remote_resource_path("agents", agent_key)).fetch("agent")
+      payload = remote_agent_payload(payload)
+      print_agent_status(payload, json: opts[:json], out: out)
+      0
+    rescue RemoteCLIClient::Error, KeyError => e
+      failure(e.message, err: err)
+    end
+
+    def remote_agent_action(agent_key, action, opts, out:, err:)
+      client = remote_client(opts[:server])
+      current = client.request("GET", remote_resource_path("agents", agent_key)).fetch("agent")
+      if action == "start" && current["running"]
+        return failure("Agent #{agent_key} is already running", err: err)
+      end
+      if action == "stop" && !current["running"]
+        return failure("Agent #{agent_key} is not running", err: err)
+      end
+
+      payload = client
+        .request("POST", "#{remote_resource_path("agents", agent_key)}/#{action}")
+        .fetch("agent")
+      payload = remote_agent_payload(payload)
+      if action == "start"
+        print_started_agent(payload, json: opts[:json], out: out)
+      else
+        print_simple_agent_action("Stopped", payload, json: opts[:json], out: out)
+      end
+      0
+    rescue RemoteCLIClient::Error, KeyError => e
+      failure(e.message, err: err)
+    end
+
+    def remote_send_agent_message(agent_key, message, opts, out:, err:)
+      client = remote_client(opts[:server])
+      current = client.request("GET", remote_resource_path("agents", agent_key)).fetch("agent")
+      return failure("Agent #{agent_key} is already running", err: err) if current["running"]
+
+      payload = client
+        .request(
+          "POST",
+          "#{remote_resource_path("agents", agent_key)}/messages",
+          body: { "prompt" => message.to_s, "start" => true }
+        )
+        .fetch("agent")
+      payload = remote_agent_payload(payload)
+      print_sent_agent(payload, json: opts[:json], out: out)
+      0
+    rescue RemoteCLIClient::Error, KeyError => e
+      failure(e.message, err: err)
+    end
+
+    def remote_archive_agent(agent_key, opts, out:, err:)
+      payload = remote_client(opts[:server])
+        .request("POST", "#{remote_resource_path("agents", agent_key)}/archive")
+      payload = {
+        "archived" => payload["archived"],
+        "agent_key" => payload["agent_key"],
+        "archive_path" => payload["archive_path"]
+      }.compact
+      if opts[:json]
+        out.puts JSON.pretty_generate(payload)
+      else
+        out.puts "Archived #{payload["agent_key"] || agent_key}"
+        out.puts "Archive: #{payload["archive_path"]}" unless payload["archive_path"].to_s.empty?
+      end
+      0
+    rescue RemoteCLIClient::Error => e
+      failure(e.message, err: err)
+    end
+
+    def remote_resource_path(root, key)
+      encoded = URI.encode_www_form_component(key.to_s).gsub("+", "%20")
+      "/#{root}/#{encoded}"
+    end
+
+    def remote_project_detail(payload)
+      {
+        key: payload["key"],
+        name: payload["name"],
+        group: payload["group"],
+        path: payload["path"],
+        harness: payload["agent"],
+        model: payload["model"],
+        reasoning_effort: payload["reasoning_effort"],
+        response_style: nil,
+        pr_url: payload["pr_url"],
+        hidden: false,
+        visibility_source: "remote server",
+        git: {
+          branch: payload["branch"],
+          commit: payload["commit_hash"],
+          dirty_files: payload["dirty_files"]
+        }
+      }
+    end
+
+    def remote_project_list_item(payload)
+      {
+        "key" => payload["key"],
+        "name" => payload["name"],
+        "group" => payload["group"],
+        "path" => payload["path"],
+        "status" => payload["status"]
+      }
+    end
+
+    def remote_agent_payload(payload)
+      {
+        "key" => payload["key"],
+        "name" => payload["name"],
+        "project_key" => payload["project_key"],
+        "schedule_key" => payload["schedule_key"],
+        "agent" => payload["agent"],
+        "model" => payload["model"],
+        "status" => payload["status"],
+        "running" => payload["running"],
+        "pid" => payload["pid"],
+        "run_count" => payload["run_count"],
+        "started_at" => payload["started_at"],
+        "finished_at" => payload["finished_at"],
+        "last_exit_code" => payload["last_exit_code"],
+        "last_run_at" => payload["started_at"],
+        "workspace" => payload["workspace"],
+        "log_path" => payload["log_path"],
+        "prompt" => payload["prompt"]
+      }
+    end
+
+    def print_project_list(payload, json:, out:)
+      return out.puts(JSON.pretty_generate(payload)) if json
+
+      if payload.empty?
+        out.puts "No projects found."
+        return
+      end
+      rows = payload.map do |project|
+        value = project.transform_keys(&:to_s)
+        [value["key"], value["name"], value["group"] || "(none)", value["status"] || "n/a", value["path"]]
+      end
+      out.puts agent_table(%w[Key Name Group Status Path], rows)
+    end
+
+    def agent_cli_payload(agent)
+      last = agent.last_run
+      {
+        key: agent.key,
+        name: agent.name,
+        project_key: agent.project_key,
+        schedule_key: agent.schedule_key,
+        agent: agent.agent,
+        model: agent.model,
+        status: agent.status,
+        running: agent.running?,
+        pid: agent.pid,
+        run_count: agent.run_count,
+        started_at: agent.started_at&.iso8601,
+        finished_at: agent.finished_at&.iso8601,
+        last_exit_code: agent.last_exit_code,
+        last_run_at: last&.started_at&.iso8601,
+        workspace: agent.workspace,
+        log_path: agent.raw_log_path,
+        prompt: agent.prompt
+      }
+    end
+
+    def print_created_agent(payload, json:, out:)
+      return out.puts(JSON.pretty_generate(payload)) if json
+
+      value = payload.transform_keys(&:to_s)
+      out.puts "Created agent #{value["key"]}"
+      out.puts "  Name:    #{value["name"]}"
+      out.puts "  Project: #{value["project_key"]}"
+      out.puts "  Harness: #{value["agent"]}"
+      out.puts "  Model:   #{value["model"] || "(project default)"}"
+      out.puts "  Prompt:  #{value["prompt"].to_s.lines.first&.chomp}"
+      if value["running"]
+        out.puts "  Status:  running (pid #{value["pid"]})"
+        out.puts "  Log:     #{value["log_path"]}"
+      end
+    end
+
+    def print_agent_status(payload, json:, out:)
+      return out.puts(JSON.pretty_generate(payload)) if json
+
+      value = payload.transform_keys(&:to_s)
+      rows = [
+        ["Key", value["key"]],
+        ["Name", value["name"]],
+        ["Project", value["project_key"]],
+        ["Schedule key", value["schedule_key"] || "n/a"],
+        ["Harness", value["agent"]],
+        ["Model", value["model"] || "(project default)"],
+        ["Status", value["status"]],
+        ["PID", value["pid"] || "n/a"],
+        ["Runs", value["run_count"].to_i.to_s],
+        ["Started", display_timestamp(value["started_at"])],
+        ["Finished", display_timestamp(value["finished_at"])],
+        ["Exit code", value["last_exit_code"].nil? ? "n/a" : value["last_exit_code"].to_s],
+        ["Last run", display_timestamp(value["last_run_at"] || value["started_at"])],
+        ["Workspace", value["workspace"]],
+        ["Log", value["log_path"] || "n/a"]
+      ]
+      out.puts detail_table(rows)
+    end
+
+    def print_started_agent(payload, json:, out:)
+      return out.puts(JSON.pretty_generate(payload)) if json
+
+      value = payload.transform_keys(&:to_s)
+      out.puts "Started #{value["key"]} (pid #{value["pid"]})"
+      out.puts "Log: #{value["log_path"]}"
+    end
+
+    def print_sent_agent(payload, json:, out:)
+      return out.puts(JSON.pretty_generate(payload)) if json
+
+      value = payload.transform_keys(&:to_s)
+      out.puts "Message sent and agent started (pid #{value["pid"]})"
+      out.puts "Log: #{value["log_path"]}"
+    end
+
+    def print_simple_agent_action(action, payload, json:, out:)
+      return out.puts(JSON.pretty_generate(payload)) if json
+
+      value = payload.transform_keys(&:to_s)
+      out.puts "#{action} #{value["key"]}"
+    end
+
+    def display_timestamp(value)
+      return "n/a" if value.to_s.empty?
+
+      Time.parse(value.to_s).strftime("%Y-%m-%d %H:%M:%S")
+    rescue ArgumentError
+      value.to_s
+    end
+
+    def detail_table(rows)
+      Lipgloss::Table.new
+        .rows(rows)
+        .border_style(Lipgloss::Style.new.foreground(COLORS[:accent_alt]))
+        .style_func(rows: rows.length, columns: 2) { |_row, column|
+          column.zero? ? Lipgloss::Style.new.bold(true).foreground(COLORS[:notice]) : Lipgloss::Style.new.foreground(COLORS[:text])
+        }
+        .render
     end
 
     def validate_schedules(out: $stdout, err: $stderr)

@@ -182,6 +182,7 @@ verify the bottle.
 - [x] Add persistent multiserver Agent and Project catalogs in Remote UI
 - [x] Persist last-good peer snapshots across broker restarts and failed refreshes
 - [x] Route peer Agent and Project details and mutations through explicit server keys
+- [x] Add direct `--server` CLI control for remote project reads and managed-agent lifecycles
 - [x] Show peer health, token state, and Tycho version compatibility in Settings
 - [x] Prepare GitHub App device login and guarded pull request review posting
 - [x] Store immutable pull request diff snapshots separately from review state
