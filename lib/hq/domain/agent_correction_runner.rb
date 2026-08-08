@@ -2,7 +2,6 @@
 
 require "fileutils"
 require "json"
-require "open3"
 require_relative "agent_structured_result"
 require_relative "agent_structured_output_validator"
 
@@ -67,19 +66,27 @@ module HQ
       FileUtils.rm_f(@config["last_message_path"]) unless @config["last_message_path"].to_s.empty?
       lines = []
       status = nil
-      Open3.popen2e(*command) do |stdin, stream, wait_thread|
-        stdin.close
-        stream.each_line do |line|
-          lines << line.chomp
-          @output.write(line)
-          @output.flush
-        end
-        status = wait_thread.value
+      stream, child_output = IO.pipe
+      pid = Process.spawn(*command, in: File::NULL, out: child_output, err: [:child, :out])
+      child_output.close
+      stream.each_line do |line|
+        lines << line.chomp
+        @output.write(line)
+        @output.flush
       end
+      _waited_pid, status = Process.wait2(pid)
       [lines, status.exitstatus || 1]
     rescue SystemCallError => e
       warn e.message
       [lines, 127]
+    ensure
+      stream&.close unless stream&.closed?
+      child_output&.close unless child_output&.closed?
+      begin
+        Process.wait(pid) if pid && !status
+      rescue Errno::ECHILD
+        nil
+      end
     end
 
     def candidate_for(lines)

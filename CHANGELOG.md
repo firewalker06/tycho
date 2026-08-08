@@ -4,8 +4,9 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
-- Close the structured-output runner's unused stdin pipe so managed Codex
-  agents start without waiting for input or failing with a terminal I/O error.
+- Attach the structured-output runner's child stdin to the null device so
+  managed Codex agents start without waiting for input or failing with a
+  terminal I/O error.
 - Validate managed-agent structured output before success, request up to two
   same-session corrections for Codex and Claude-compatible harnesses, and
   preserve exhausted invalid responses in private diagnostic files while

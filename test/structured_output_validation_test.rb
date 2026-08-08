@@ -14,7 +14,7 @@ module StructuredOutputValidationTest
   SCHEMA_PATH = File.expand_path("../config/schemas/agent_result.json", __dir__)
 
   def run!
-    assert_runner_closes_child_stdin
+    assert_runner_uses_null_child_stdin
     assert_first_pass_success
     assert_malformed_json_feedback
     assert_multiple_schema_violations
@@ -23,11 +23,11 @@ module StructuredOutputValidationTest
     puts "structured_output_validation_test: ok"
   end
 
-  def assert_runner_closes_child_stdin
-    with_runner("codex", "requires_stdin_eof", correction_limit: 2) do |result|
+  def assert_runner_uses_null_child_stdin
+    with_runner("codex", "requires_null_stdin", correction_limit: 2) do |result|
       assert(result[:exit_code].zero?,
-             "expected runner to close unused child stdin before reading output: #{result[:output]}")
-      assert(result[:invocations].length == 1, "expected stdin EOF check to run once")
+             "expected runner to attach unused child stdin to the null device: #{result[:output]}")
+      assert(result[:invocations].length == 1, "expected null stdin check to run once")
     end
   end
 
@@ -157,14 +157,13 @@ module StructuredOutputValidationTest
         "tool_work" => count.zero?
       }
       File.open(state_path, "a") { |file| file.puts(JSON.generate(entry)) }
-      if scenario == "requires_stdin_eof"
-        readable = IO.select([$stdin], nil, nil, 0.25)
-        unless readable && $stdin.read.empty?
-          warn "child stdin did not reach EOF"
+      if scenario == "requires_null_stdin"
+        unless $stdin.stat.ftype == "characterSpecial" && $stdin.read.empty?
+          warn "child stdin was not the null device"
           exit 42
         end
       end
-      fixture_name = if %w[first_pass requires_stdin_eof].include?(scenario) ||
+      fixture_name = if %w[first_pass requires_null_stdin].include?(scenario) ||
                         (scenario == "corrected" && count.positive?)
                        "valid.json"
                      elsif scenario == "corrected"
