@@ -4,12 +4,14 @@ require "fileutils"
 require "json"
 require "open3"
 require "rbconfig"
+require "socket"
 require "stringio"
 require "tmpdir"
 require "yaml"
 
 require_relative "../lib/hq/cli_command"
 require_relative "../lib/hq/domain/managed_agent"
+require_relative "../lib/hq/domain/remote_cli_client"
 
 module CLICommandTest
   ROOT = File.expand_path("..", __dir__)
@@ -19,12 +21,234 @@ module CLICommandTest
 
   def run!
     assert_project_commands_manage_full_lifecycle
+    assert_remote_server_commands_manage_full_agent_lifecycle
+    assert_remote_client_reports_timeout_and_unsupported_operation
     assert_github_commands_cover_device_login_status_and_logout
     assert_debug_claude_is_listed_in_usage
     assert_debug_claude_run_agent_uses_claude_defaults
     puts "cli_command_test: ok"
   end
 
+  def assert_remote_server_commands_manage_full_agent_lifecycle
+    Dir.mktmpdir("hq-cli-remote-test") do |dir|
+      port = available_port
+      token = "remote-cli-test-token"
+      target_dir = File.join(dir, "target")
+      local_dir = File.join(dir, "local")
+      workspace = File.join(target_dir, "workspace")
+      FileUtils.mkdir_p([workspace, local_dir])
+      fake_codex = File.join(dir, "fake-codex")
+      File.write(fake_codex, <<~SH)
+        #!/bin/sh
+        sleep 20
+      SH
+      FileUtils.chmod(0o755, fake_codex)
+
+      target_config = File.join(target_dir, "hq.yml")
+      target_prompts = File.join(target_dir, "system_prompts.yml")
+      File.write(target_config, <<~YAML)
+        projects:
+          - key: demo
+            name: Remote Demo
+            path: #{workspace}
+            agent: codex
+      YAML
+      File.write(target_prompts, "{}\n")
+
+      local_config = File.join(local_dir, "hq.yml")
+      local_prompts = File.join(local_dir, "system_prompts.yml")
+      File.write(local_config, <<~YAML)
+        projects: []
+        remote_servers:
+          - key: peer
+            name: Test Peer
+            url: http://127.0.0.1:#{port}
+            token_env: TYCHO_TEST_PEER_TOKEN
+          - key: peer-inline
+            name: Inline Test Peer
+            url: http://127.0.0.1:#{port}
+            token: #{token}
+      YAML
+      File.write(local_prompts, "{}\n")
+
+      server_env = {
+        "TYCHO_CONFIG_PATH" => target_config,
+        "TYCHO_SYSTEM_PROMPTS_PATH" => target_prompts,
+        "TYCHO_LOGS_ROOT" => File.join(target_dir, "logs"),
+        "TYCHO_REMOTE_TOKEN" => token,
+        "TYCHO_CODEX_BIN" => fake_codex
+      }
+      local_env = {
+        "TYCHO_CONFIG_PATH" => local_config,
+        "TYCHO_SYSTEM_PROMPTS_PATH" => local_prompts,
+        "TYCHO_LOGS_ROOT" => File.join(local_dir, "logs"),
+        "TYCHO_TEST_PEER_TOKEN" => token
+      }
+
+      with_remote_server(server_env, port, File.join(dir, "server.log")) do
+        projects = run_tycho(local_env, "project", "list", "--server", "peer", "--json")
+        assert(projects.fetch(:status).success?, "expected remote project list: #{projects.fetch(:stderr)}")
+        assert(JSON.parse(projects.fetch(:stdout)).fetch(0).fetch("key") == "demo",
+               "expected remote project list payload")
+        missing_external = run_tycho(local_env.except("TYCHO_TEST_PEER_TOKEN"),
+                                     "project", "list", "--server", "peer")
+        assert(!missing_external.fetch(:status).success? &&
+               missing_external.fetch(:stderr).include?("requires environment variable TYCHO_TEST_PEER_TOKEN"),
+               "expected configured external credentials to fail without falling back")
+        inline_auth = run_tycho(local_env.except("TYCHO_TEST_PEER_TOKEN"),
+                                "project", "list", "--server", "peer-inline", "--json")
+        assert(inline_auth.fetch(:status).success? &&
+               !inline_auth.fetch(:stdout).include?(token) && !inline_auth.fetch(:stderr).include?(token),
+               "expected inline token auth without credential output")
+        assert(inline_auth.fetch(:stderr).include?("removed in v0.11.0"),
+               "expected the inline fallback to warn about its removal")
+
+        migrated = run_tycho(local_env, "server", "migrate", "peer-inline")
+        credential_path = File.join(local_dir, "remote_credentials.json")
+        migrated_config = YAML.safe_load_file(local_config)
+        assert(migrated.fetch(:status).success? && File.stat(credential_path).mode & 0o777 == 0o600 &&
+               !migrated_config.fetch("remote_servers").find { |item| item["key"] == "peer-inline" }.key?("token"),
+               "expected migration to move the inline token into a private credential file")
+        unverified = run_tycho(local_env, "server", "status", "peer-inline", "--json")
+        assert(JSON.parse(unverified.fetch(:stdout)).fetch("state") == "unverified",
+               "expected migrated credentials to start unverified")
+        verified = run_tycho(local_env, "server", "verify", "peer-inline")
+        assert(verified.fetch(:status).success?, "expected explicit credential verification: #{verified.fetch(:stderr)}")
+        logged_out = run_tycho(local_env, "server", "logout", "peer-inline")
+        assert(logged_out.fetch(:status).success? && logged_out.fetch(:stdout).include?("Removed stored credential"),
+               "expected logout to remove only the stored credential")
+        logged_in = run_tycho(local_env, "server", "login", "peer-inline", "--no-verify", stdin_data: "#{token}\n")
+        assert(logged_in.fetch(:status).success? && !logged_in.fetch(:stdout).include?(token) &&
+               !logged_in.fetch(:stderr).include?(token),
+               "expected hidden-input login to save without printing the credential")
+        run_tycho(local_env, "server", "verify", "peer-inline")
+
+        project = run_tycho(local_env, "project", "show", "demo", "--server", "peer", "--json")
+        assert(project.fetch(:status).success?, "expected remote project show: #{project.fetch(:stderr)}")
+        assert(JSON.parse(project.fetch(:stdout)).fetch("name") == "Remote Demo",
+               "expected normalized remote project detail")
+
+        created = run_tycho(local_env, "agent", "create", "demo", "Remote CLI lifecycle test",
+                            "--name", "Remote CLI test", "--server", "peer", "--json")
+        assert(created.fetch(:status).success?, "expected remote agent create: #{created.fetch(:stderr)}")
+        agent_key = JSON.parse(created.fetch(:stdout)).fetch("key")
+
+        listed = run_tycho(local_env, "agent", "list", "demo", "--server", "peer", "--json")
+        listed_payload = JSON.parse(listed.fetch(:stdout))
+        assert(listed_payload.any? { |agent| agent["key"] == agent_key },
+               "expected remote agent list to include created agent")
+        expected_agent_keys = %w[agent finished_at key last_exit_code last_run_at log_path model name pid project_key
+                                 prompt run_count running schedule_key started_at status workspace].sort
+        assert(listed_payload.fetch(0).keys.sort == expected_agent_keys,
+               "expected stable local/remote agent JSON fields")
+        status = run_tycho(local_env, "agent", "status", agent_key, "--server", "peer", "--json")
+        assert(JSON.parse(status.fetch(:stdout)).fetch("key") == agent_key,
+               "expected remote agent status payload")
+
+        started = run_tycho(local_env, "agent", "run", agent_key, "--server", "peer", "--json")
+        assert(started.fetch(:status).success? && JSON.parse(started.fetch(:stdout)).fetch("running"),
+               "expected remote agent run to start the target")
+        stopped = run_tycho(local_env, "agent", "stop", agent_key, "--server", "peer", "--json")
+        assert(stopped.fetch(:status).success? && !JSON.parse(stopped.fetch(:stdout)).fetch("running"),
+               "expected remote agent stop to stop the target")
+
+        sent = run_tycho(local_env, "agent", "send", agent_key, "Continue remotely",
+                         "--server", "peer", "--json")
+        assert(sent.fetch(:status).success? && JSON.parse(sent.fetch(:stdout)).fetch("running"),
+               "expected remote agent send to append and start")
+        run_tycho(local_env, "agent", "stop", agent_key, "--server", "peer", "--json")
+        archived = run_tycho(local_env, "agent", "archive", agent_key, "--server", "peer", "--json")
+        assert(archived.fetch(:status).success? && JSON.parse(archived.fetch(:stdout)).fetch("archived"),
+               "expected remote agent archive")
+
+        missing = run_tycho(local_env, "agent", "status", agent_key, "--server", "peer")
+        assert(!missing.fetch(:status).success? && missing.fetch(:stderr).include?("API error (HTTP 404)"),
+               "expected a clear remote API error")
+        unknown = run_tycho(local_env, "agent", "list", "--server", "unknown")
+        assert(!unknown.fetch(:status).success? && unknown.fetch(:stderr).include?("Unknown remote server: unknown"),
+               "expected a clear unknown-server error")
+        bad_auth = run_tycho(local_env.merge("TYCHO_TEST_PEER_TOKEN" => "wrong"),
+                             "agent", "list", "--server", "peer")
+        assert(!bad_auth.fetch(:status).success? && bad_auth.fetch(:stderr).include?("authentication failed") &&
+               !bad_auth.fetch(:stderr).include?("wrong"),
+               "expected an auth error without credentials")
+        rejected = run_tycho(local_env, "server", "status", "peer", "--json")
+        assert(JSON.parse(rejected.fetch(:stdout)).fetch("state") == "rejected",
+               "expected rejected external credentials to remain visible as metadata")
+        recovered = run_tycho(local_env, "server", "verify", "peer")
+        assert(recovered.fetch(:status).success?, "expected explicit verification to recover rejected credentials")
+        external_logout = run_tycho(local_env, "server", "logout", "peer")
+        assert(external_logout.fetch(:stdout).include?("External source TYCHO_TEST_PEER_TOKEN is still active") &&
+               !external_logout.fetch(:stdout).include?(token),
+               "expected logout to report but never modify or print the external source")
+      end
+
+      unreachable = run_tycho(local_env, "agent", "list", "--server", "peer")
+      assert(!unreachable.fetch(:status).success? && unreachable.fetch(:stderr).include?("is unreachable"),
+             "expected a clear unreachable-server error")
+    end
+  end
+
+  def assert_remote_client_reports_timeout_and_unsupported_operation
+    server = TCPServer.new("127.0.0.1", 0)
+    port = server.addr.fetch(1)
+    config = HQ::RemoteServerConfig.new(key: "slow", name: "Slow", url: "http://127.0.0.1:#{port}", token: "", token_env: "")
+    thread = Thread.new do
+      socket = server.accept
+      sleep 0.2
+      socket.close
+    end
+    client = HQ::RemoteCLIClient.new(config, open_timeout: 0.05, read_timeout: 0.05)
+    begin
+      client.request("GET", "/agents")
+      raise "expected remote timeout"
+    rescue HQ::RemoteCLIClient::Error => e
+      assert(e.kind == :timeout && e.message.include?("timed out"), "expected a typed timeout error")
+    ensure
+      thread.join
+      server.close
+    end
+
+    begin
+      client.request("TRACE", "/agents")
+      raise "expected unsupported remote operation"
+    rescue HQ::RemoteCLIClient::Error => e
+      assert(e.kind == :unsupported && e.message.include?("Unsupported remote operation"),
+             "expected a typed unsupported-operation error")
+    end
+
+
+    token = "must-not-appear"
+    error_server = TCPServer.new("127.0.0.1", 0)
+    error_port = error_server.addr.fetch(1)
+    error_thread = Thread.new do
+      socket = error_server.accept
+      while (line = socket.gets)
+        break if line == "\r\n"
+      end
+      body = JSON.generate(error: "upstream echoed #{token}")
+      socket.write("HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n" \
+                   "Content-Length: #{body.bytesize}\r\nConnection: close\r\n\r\n#{body}")
+      socket.close
+    end
+    secret_config = HQ::RemoteServerConfig.new(
+      key: "error",
+      name: "Error",
+      url: "http://127.0.0.1:#{error_port}",
+      token: token,
+      token_env: ""
+    )
+    begin
+      HQ::RemoteCLIClient.new(secret_config).request("GET", "/agents")
+      raise "expected remote API error"
+    rescue HQ::RemoteCLIClient::Error => e
+      assert(!e.message.include?(token) && e.message.include?("[REDACTED]"),
+             "expected remote API errors to redact credentials")
+    ensure
+      error_thread.join
+      error_server.close
+    end
+    end
   def assert_github_commands_cover_device_login_status_and_logout
     auth = Class.new do
       attr_reader :logged_out
@@ -256,9 +480,57 @@ module CLICommandTest
     HQ::ManagedAgent.define_method(:running?, original_running) if original_running
   end
 
-  def run_tycho(env, *args)
-    stdout, stderr, status = Open3.capture3(env, RbConfig.ruby, EXECUTABLE, *args, chdir: ROOT)
+  def run_tycho(env, *args, stdin_data: "")
+    stdout, stderr, status = Open3.capture3(env, RbConfig.ruby, EXECUTABLE, *args,
+                                            chdir: ROOT, stdin_data: stdin_data)
     { stdout: stdout, stderr: stderr, status: status }
+  end
+
+  def available_port
+    server = TCPServer.new("127.0.0.1", 0)
+    server.addr.fetch(1)
+  ensure
+    server&.close
+  end
+
+  def with_remote_server(env, port, log_path)
+    log = File.open(log_path, "w")
+    pid = Process.spawn(
+      env,
+      RbConfig.ruby,
+      EXECUTABLE,
+      "serve",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      port.to_s,
+      chdir: ROOT,
+      out: log,
+      err: log
+    )
+    deadline = Time.now + 10
+    loop do
+      begin
+        socket = TCPSocket.new("127.0.0.1", port)
+        socket.close
+        break
+      rescue Errno::ECONNREFUSED
+        raise "remote test server did not start:\n#{File.read(log_path)}" if Time.now >= deadline
+
+        sleep 0.05
+      end
+    end
+    yield
+  ensure
+    if pid
+      begin
+        Process.kill("TERM", pid)
+        Process.wait(pid)
+      rescue Errno::ESRCH, Errno::ECHILD
+        nil
+      end
+    end
+    log&.close
   end
 
   def with_env(values)

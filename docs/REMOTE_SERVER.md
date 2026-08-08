@@ -133,7 +133,7 @@ The remote server also serves a lightweight mobile web UI:
 http://127.0.0.1:7373/
 ```
 
-The UI is plain server-served HTML/CSS/JavaScript, with no frontend build step or JavaScript package dependencies. It uses the existing JSON endpoints, stores the optional bearer token in browser local storage, and sends it as `Authorization: Bearer ...` for API requests.
+The UI is plain server-served HTML/CSS/JavaScript, with no frontend build step or JavaScript package dependencies. It uses the existing JSON endpoints and stores only the UI-serving host's optional bearer token in browser local storage for `Authorization: Bearer ...` API requests. Peer credentials are external or host-managed as described below.
 
 New managed agents use timestamp-based keys such as `web-agent-20260712-120501-123456`. Existing numeric keys remain valid and load unchanged.
 
@@ -187,13 +187,71 @@ session_loops:
       prompt: Check the pull request for approvals, reviews, and comments. Address actionable feedback, run the relevant checks, and update the pull request. If nobody has acted, return no_action_needed.
 ```
 
-`key` must be stable and URL-safe. `url` must be an `http` or `https` base URL without embedded credentials. `icon` accepts `server` or `computer` and defaults to `server`. Prefer `token_env` over inline `token` outside local development. The synthetic `local` server is always present and cannot be redefined in config.
+`key` must be stable and URL-safe. It is also the local credential identity. `url` must be an `http` or `https` base URL without embedded credentials. `icon` accepts `server` or `computer` and defaults to `server`. Use `token_env` for an explicit external credential override or enroll a Tycho-managed credential with `tycho server login`. The synthetic `local` server is always present and cannot be redefined in config.
 
 The Settings screen manages the configured server list; the default local server is always present. Each peer row can edit its display name, choose the Lucide **Server** or **Computer** icon, and explicitly **Forget cached data** without changing the remote server itself. The Agents screen combines agents and projects from all servers and offers an **All servers** filter. Local ownership uses a home icon without a visible label; peers show their configured icon and name. Resource health remains explicit as **Online**, **Offline**, **Stale**, or **Token required**. There is no global active-server switch.
 
 For ad hoc peers, open Settings, use the **Add server** toggle in the **Servers** header, and enter a display name plus a loopback or Tailscale MagicDNS URL such as `tycho-peer` and `http://127.0.0.1:7374/` or `http://vps-cd946cb7.tail952bf7.ts.net:7373`. If the peer requires a bearer token, enter it in **Remote token**. The UI verifies the peer through the agent API, writes the peer metadata to `remote_servers` in `~/.tycho/config/hq.yml`, reloads the registry, and refreshes that peer's resource catalog. Removing a non-local server from the list also removes it from `hq.yml`. Ad hoc UI-added peers are intentionally limited to loopback and Tailscale MagicDNS hosts; edit `remote_servers` directly for broader LAN, public, or credentialed peers.
 
-UI-entered remote tokens are not written to `hq.yml`. The browser stores them in local storage under `hq.remote.serverTokens`, keyed by server key, and sends only the owning peer's token to the local broker as `X-Tycho-Remote-Server-Token`. The broker uses that value only for the outgoing peer request. If another browser can see an existing remote server but does not have its token, use that server row's **Token** action in Settings to re-authenticate it for the current browser. The UI's own bearer token remains separate under `hq.remote.token` and is sent as the normal `Authorization` header to the server that served the UI. For durable server-side peer credentials, configure `token_env` manually in `hq.yml`.
+UI-entered remote tokens are not written to `hq.yml`. Saving one verifies it against the selected peer, atomically writes it to the UI-serving Tycho host's private credential file, and removes the browser-local copy only after persistence succeeds. Existing browser tokens under `hq.remote.serverTokens` remain usable for promotion and are sent only to their owning peer as `X-Tycho-Remote-Server-Token`; a failed promotion leaves that browser copy intact. The UI's own bearer token remains separate under `hq.remote.token` and authenticates the browser to the server that served the UI.
+
+## Remote CLI Control
+
+Project inspection and managed-agent lifecycle commands can target one
+configured peer directly. The CLI connects to that peer's `url`; it does not
+depend on a running local broker or any browser state.
+
+```bash
+tycho project list --server office-mac [--json]
+tycho project show <project-key> --server office-mac [--json]
+tycho agent list [<project-key>] --server office-mac [--json]
+tycho agent status <agent-key> --server office-mac [--json]
+tycho agent create <project-key> <prompt> --server office-mac [--run] [--json]
+tycho agent run <agent-key> --server office-mac [--json]
+tycho agent send <agent-key> <message> --server office-mac [--json]
+tycho agent stop <agent-key> --server office-mac [--json]
+tycho agent archive <agent-key> --server office-mac [--json]
+```
+
+The selected key must exist under `remote_servers`. Requests use the credential
+selected for that exact entry:
+
+1. If `token_env` is configured, its environment value wins. A missing value is
+   an error; Tycho does not fall through to its store.
+2. Otherwise, Tycho uses the server key's entry from
+   `~/.tycho/config/remote_credentials.json`.
+3. Otherwise, an inline `token` is accepted temporarily with a migration
+   warning. This fallback will be removed in v0.11.0.
+
+The credential file is local to each Tycho installation, written atomically,
+and mode `0600`. It stores one bearer token per server key plus verification
+metadata. Status output includes the source, state, bound origin, and timestamps
+but no token or fingerprint. A verified origin is the lowercased scheme and
+host plus effective port; URL paths do not affect the binding.
+
+```bash
+tycho server login office-mac
+tycho server login office-mac --no-verify
+tycho server status [office-mac] [--json]
+tycho server verify office-mac
+tycho server logout office-mac
+tycho server migrate office-mac
+tycho server migrate --all
+```
+
+`login` reads the token from a hidden prompt and normally verifies it before
+saving. `--no-verify` supports offline enrollment and records the credential as
+unverified until its first successful authenticated request. `verify` can
+recover an unverified or rejected credential. `logout` deletes only the
+Tycho-stored token and reports an external source without changing it. Migration
+moves inline values out of `hq.yml` and stores them as unverified. Without
+`--server`, project and agent commands retain their local behavior.
+
+Remote failures use explicit messages for unknown keys, connection failures,
+timeouts, authentication rejection, unsupported endpoints, and non-success API
+responses, missing external variables, origin mismatches, and credentials that
+remain rejected until explicit verification. The CLI exits nonzero for each failure. Agent `run`, `send`, and
+`stop` also enforce the same running/idle preconditions as their local forms.
 
 Browser push notification work is tracked in [WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.md), and the current grouping, silent-notification, and PWA badge behavior is summarized in [WEB_PUSH_BEHAVIOR.md](./WEB_PUSH_BEHAVIOR.md). Push can use a Tailscale MagicDNS domain when it is served over HTTPS, preferably with Tailscale Serve or Tailscale Funnel. Plain HTTP MagicDNS URLs show a soft warning, but the UI still lets the user try enabling notifications when the browser exposes the required push APIs.
 
@@ -358,6 +416,7 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `POST` | `/servers` | Add or update one loopback or Tailscale MagicDNS Remote server in `remote_servers` inside `hq.yml`. |
 | `PATCH` | `/servers/{key}` | Update one peer server's display name and `server` or `computer` icon. |
 | `DELETE` | `/servers/{key}` | Remove one non-local Remote server from `remote_servers` inside `hq.yml`. |
+| `POST` | `/servers/{key}/credentials` | Verify a peer bearer token, save it in the UI-serving host's private credential store, and return metadata without the token. |
 | `GET` / `POST` / `PUT` / `PATCH` / `DELETE` | `/servers/{key}/agents/{path}` | Forward an agent-owned request to one peer. |
 | `GET` / `POST` / `PUT` / `PATCH` / `DELETE` | `/servers/{key}/projects/{path}` | Forward a project-owned request to one peer. |
 | `GET` / `POST` / `PUT` / `PATCH` / `DELETE` | `/servers/{key}/attachments/{path}` | Forward an attachment-owned request to one peer. |

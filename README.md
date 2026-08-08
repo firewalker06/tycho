@@ -305,6 +305,7 @@ tycho project create my-workspace \
   --reasoning-effort medium
 
 tycho project show my-workspace
+tycho project list
 tycho project update my-workspace --group Work --model=""
 tycho project archive my-workspace
 ```
@@ -326,6 +327,50 @@ remote_servers:
     url: http://vps-cd946cb7.tail952bf7.ts.net:7373
     token_env: TYCHO_VPS_REMOTE_TOKEN
 ```
+
+Target a configured peer directly from the CLI with `--server`. Project reads
+and the full managed-agent lifecycle use the peer's Remote JSON API; commands
+without `--server` keep using local state.
+
+```bash
+tycho project list --server vps
+tycho project show my-workspace --server vps --json
+
+tycho agent list my-workspace --server vps
+tycho agent status <agent-key> --server vps --json
+tycho agent create my-workspace "Inspect the failing build" --server vps
+tycho agent run <agent-key> --server vps
+tycho agent send <agent-key> "Try the smaller reproduction" --server vps
+tycho agent stop <agent-key> --server vps
+tycho agent archive <agent-key> --server vps
+```
+
+Remote CLI commands resolve the server only from `remote_servers` in
+`hq.yml`. Each server key owns its credential. Tycho-managed tokens live in
+`~/.tycho/config/remote_credentials.json`, which Tycho writes atomically with
+`0600` permissions. An explicit `token_env` on that server entry takes
+precedence; if the variable is missing, the request fails instead of silently
+using another source.
+
+```bash
+tycho server login vps                 # hidden prompt; verify before saving
+tycho server login vps --no-verify     # save for an offline server
+tycho server status [vps] [--json]     # metadata only; never the token
+tycho server verify vps
+tycho server logout vps
+tycho server migrate vps               # move an inline hq.yml token
+tycho server migrate --all
+```
+
+Credentials bind to the stable server key and, after verification, to the
+server's scheme, normalized host, and effective port. Changing that origin
+requires login or verification. Authentication rejection marks a credential
+rejected and stops automatic reuse until explicit recovery. Inline `token`
+entries remain a warned migration fallback through v0.10.x and will be removed
+in v0.11.0. `--json` is supported by project list/show and every agent command
+above. Errors distinguish unknown server keys, missing external sources,
+origin changes, unreachable servers, timeouts, rejected credentials,
+unsupported endpoints, and other Remote API responses without printing tokens.
 
 The Remote UI always includes the local server and combines agents and projects
 from every configured peer into the same Agents list. Use the server filter to
@@ -507,8 +552,9 @@ Tailscale IPs, and QR codes.
 For multiple Remote servers, the browser still talks only to the Tycho server
 that served the UI. That local server returns a cached combined resource
 catalog and brokers each detail or mutation request to the resource's owner,
-using `token_env` values from local config or per-browser peer tokens entered
-in Settings. Browser-entered peer tokens are not written to `hq.yml`.
+using each peer's selected external or Tycho-stored credential. Saving a token
+in Settings verifies it, writes it to the host's private
+`remote_credentials.json`, and only then removes the browser-local copy.
 
 ## Custom Claude Harnesses
 

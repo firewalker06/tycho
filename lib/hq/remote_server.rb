@@ -30,6 +30,7 @@ require_relative "domain/push_subscription_store"
 require_relative "domain/pull_request_diff"
 require_relative "domain/pull_request_review"
 require_relative "domain/response_style_policy"
+require_relative "domain/remote_credential_store"
 require_relative "domain/schedule_daemon_supervisor"
 require_relative "domain/scheduler"
 require_relative "domain/skill_discovery"
@@ -264,6 +265,11 @@ module HQ
           end
 
           return ok(@resource_catalog.snapshot)
+        end
+        if method == "POST" && parts.length == 3 && parts[2] == "credentials"
+          result = service.save_remote_server_credential(parts[1], body)
+          @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
+          return ok(result)
         end
         if method == "POST" && parts == ["servers"]
           result = service.add_remote_server(body)
@@ -684,6 +690,7 @@ module HQ
     end
 
     def reconcile(registry:, server_url:)
+      credential_resolver = RemoteCredentialResolver.new(store: RemoteCredentialStore.new(registry: registry))
       configs = [
         LocalConfig.new(key: "local", name: "Local", url: server_url.to_s)
       ] + Array(registry.remote_servers)
@@ -705,7 +712,7 @@ module HQ
             icon: index.zero? ? "home" : config.icon,
             url: config.url,
             local: index.zero?,
-            auth_configured: !config.resolved_token.to_s.empty?,
+            auth_configured: index.zero? ? false : credential_resolver.configured?(config),
             version: index.zero? ? HQ::VERSION : nil
           }
           persisted = @persisted_entries[config.key]
@@ -799,7 +806,8 @@ module HQ
         key: server_key,
         config: config,
         local_service: server_key == "local" ? local_service : nil,
-        token_override: token_override.to_s
+        token_override: token_override.to_s,
+        credential_resolver: RemoteCredentialResolver.new(store: RemoteCredentialStore.new(registry: registry))
       }
       refresh_payload(server_key, accepted: true)
     end
@@ -845,7 +853,8 @@ module HQ
         job.fetch(:config),
         open_timeout: OPEN_TIMEOUT,
         read_timeout: READ_TIMEOUT,
-        token_override: job[:token_override]
+        token_override: job[:token_override],
+        credential_resolver: job[:credential_resolver]
       )
       response = client.request("GET", "/resources")
       return legacy_snapshot(client) if response[:status].to_i == 404
@@ -1141,12 +1150,15 @@ module HQ
   class RemoteClient
     DEFAULT_TIMEOUT = 5
 
-    def initialize(config, timeout: DEFAULT_TIMEOUT, open_timeout: nil, read_timeout: nil, token_override: nil)
+    def initialize(config, timeout: DEFAULT_TIMEOUT, open_timeout: nil, read_timeout: nil, token_override: nil,
+                   credential_resolver: nil)
       @config = config
       @base_uri = URI.parse(config.url)
       @open_timeout = open_timeout || timeout
       @read_timeout = read_timeout || timeout
       @token_override = token_override.to_s
+      @credential_resolver = credential_resolver
+      @credential = resolve_credential
     end
 
     def request(method, path, body: nil, query: nil)
@@ -1180,7 +1192,7 @@ module HQ
     def perform_request(method, uri, body)
       request = request_for(method, uri)
       request["Accept"] = "application/json"
-      token = @token_override.empty? ? @config.resolved_token : @token_override
+      token = @credential.token.to_s
       request["Authorization"] = "Bearer #{token}" unless token.to_s.empty?
       if request.request_body_permitted?
         request["Content-Type"] = "application/json"
@@ -1213,7 +1225,8 @@ module HQ
 
     def response_payload(response)
       content_type = response["content-type"].to_s
-      if response.code.to_i == 401
+      if [401, 403].include?(response.code.to_i)
+        @credential_resolver&.rejected!(@credential, @config)
         return {
           status: 502,
           body: { error: "Remote server #{@config.key} rejected broker credentials" }
@@ -1222,6 +1235,8 @@ module HQ
 
       if content_type.start_with?("application/json")
         parsed = JSON.parse(response.body.to_s)
+        @credential_resolver&.verified!(@credential, @config) if response.code.to_i.between?(200, 299)
+        parsed = redact_value(parsed) if response.code.to_i >= 400
         return {
           status: response.code.to_i,
           body: parsed.is_a?(Hash) ? parsed : { data: parsed },
@@ -1232,7 +1247,7 @@ module HQ
       if response.code.to_i >= 400
         return {
           status: response.code.to_i,
-          body: { error: response.body.to_s.empty? ? response.message : response.body.to_s }
+          body: { error: redact_value(response.body.to_s.empty? ? response.message : response.body.to_s) }
         }
       end
 
@@ -1247,6 +1262,38 @@ module HQ
         status: response.code.to_i >= 400 ? response.code.to_i : 502,
         body: { error: "Remote server #{@config.key} returned invalid JSON" }
       }
+    end
+
+    def redact_value(value)
+      token = @credential.token.to_s
+      return value if token.empty?
+
+      case value
+      when Hash
+        value.transform_values { |item| redact_value(item) }
+      when Array
+        value.map { |item| redact_value(item) }
+      when String
+        value.gsub(token, "[REDACTED]")
+      else
+        value
+      end
+    end
+
+    def resolve_credential
+      if !@token_override.empty? && @credential_resolver
+        return @credential_resolver.transient(@config, @token_override)
+      end
+      return @credential_resolver.resolve(@config) if @credential_resolver
+
+      RemoteCredentialResolver::Credential.new(
+        server_key: @config.key,
+        token: @token_override.empty? ? @config.resolved_token : @token_override,
+        source: "legacy",
+        state: "legacy"
+      )
+    rescue RemoteCredentialResolver::Error => e
+      raise RemoteServer::Error.new(e.message, status: 502)
     end
 
     def proxy_response_headers(response)
@@ -1273,6 +1320,7 @@ module HQ
       @registry = registry
       @server_url = server_url.to_s
       @timeout = timeout
+      @credential_resolver = RemoteCredentialResolver.new(store: RemoteCredentialStore.new(registry: registry))
     end
 
     def servers
@@ -1290,7 +1338,8 @@ module HQ
       RemoteClient.new(
         config,
         timeout: @timeout,
-        token_override: remote_server_token(request)
+        token_override: remote_server_token(request),
+        credential_resolver: @credential_resolver
       ).request(method, path, body:, query: request&.query)
     end
 
@@ -1352,7 +1401,7 @@ module HQ
         icon: local ? "home" : (config.respond_to?(:icon) ? config.icon : "server"),
         url: config.url,
         local: local,
-        auth_configured: !config.resolved_token.to_s.empty?,
+        auth_configured: local ? false : @credential_resolver.configured?(config),
         version: local ? HQ::VERSION : nil
       }
     end
@@ -1458,8 +1507,37 @@ module HQ
       raise Error.new(e.message, status: e.message.start_with?("Unknown") ? 404 : 400)
     end
 
+    def save_remote_server_credential(key, body)
+      config = Array(@registry.remote_servers).find { |server| server.key == key.to_s }
+      raise Error.new("Unknown remote server: #{key}", status: 404) unless config
+      unless config.token_env.to_s.empty?
+        raise Error.new(
+          "Remote server #{key} uses external credential #{config.token_env}; update that source on this Tycho host",
+          status: 409
+        )
+      end
+
+      token = body["token"].to_s
+      raise Error.new("Remote token is required", status: 400) if token.empty?
+
+      store = RemoteCredentialStore.new(registry: @registry)
+      resolver = RemoteCredentialResolver.new(store: store)
+      response = RemoteClient.new(config, credential_resolver: resolver, token_override: token).request("GET", "/agents")
+      unless response[:status].to_i.between?(200, 299)
+        detail = response.dig(:body, "error") || response.dig(:body, :error) || response[:status]
+        raise Error.new("Remote server #{key} rejected the credential: #{detail}", status: 502)
+      end
+
+      resolver.save(config, token: token, verified: true)
+      {
+        credential: remote_credential_metadata(config, resolver),
+        servers: RemoteBroker.new(registry: @registry, server_url: @server_url).servers
+      }
+    end
+
     def remove_remote_server(key)
       removed = @registry.remove_remote_server!(key)
+      RemoteCredentialStore.new(registry: @registry).remove_server(key)
       broker = RemoteBroker.new(registry: @registry, server_url: @server_url)
       {
         removed: removed,
@@ -1467,6 +1545,19 @@ module HQ
       }
     rescue ConfigError => e
       raise Error.new(e.message, status: e.message.start_with?("Unknown") ? 404 : 400)
+    end
+
+    def remote_credential_metadata(config, resolver)
+      credential = resolver.resolve(config)
+      metadata = resolver.store.metadata(config.key).fetch(credential.source, {})
+      {
+        server_key: config.key,
+        source: credential.source,
+        state: credential.state,
+        origin: metadata["origin"],
+        verified_at: metadata["verified_at"],
+        rejected_at: metadata["rejected_at"]
+      }
     end
 
     def agents
