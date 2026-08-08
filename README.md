@@ -217,6 +217,7 @@ Use the `TYCHO_` prefix for runtime overrides.
 | `TYCHO_SCHEDULER_DAEMON_PATH` | Override scheduler daemon heartbeat path. |
 | `TYCHO_CODEX_BIN` | Override Codex executable lookup. |
 | `TYCHO_CLAUDE_BIN` | Override Claude executable lookup. |
+| `TYCHO_STRUCTURED_OUTPUT_CORRECTION_LIMIT` | Set schema-correction attempts for Codex and Claude-compatible managed agents. Defaults to `2`; Tycho clamps values to `0..5`. |
 | `TYCHO_TAILSCALE_BIN` | Override Tailscale executable lookup. |
 | `TYCHO_GH_BIN` | Override the compatibility GitHub CLI lookup. |
 | `TYCHO_GITHUB_APP_CLIENT_ID` | Public Client ID for the Tycho GitHub App device flow. |
@@ -579,6 +580,23 @@ projects:
 `execution_command` may be a shell string or an argv list. The command must be
 Claude-compatible because Tycho appends Claude CLI flags for stream-json output,
 structured result schemas, and native session resume.
+
+## Structured Output Correction
+
+Tycho validates each final managed-agent response against
+`~/.tycho/config/schemas/agent_result.json` before accepting it as successful.
+When JSON is malformed or violates the schema, Tycho sends concise JSON feedback
+to the same native Codex or Claude-compatible session and asks for one complete
+corrected payload. The feedback reports only error codes, schema paths, expected
+types, and allowed enum values; it does not copy response values.
+
+The default limit is two correction attempts (three total responses). Set
+`TYCHO_STRUCTURED_OUTPUT_CORRECTION_LIMIT=0` to disable correction while keeping
+validation, or choose up to `5`. If the limit is exhausted, the run fails with
+an actionable summary and keeps the final invalid response in the agent's
+owner-readable `*.invalid_structured_output.json` diagnostic file. Raw and
+system logs record validation events, and the Remote UI shows the failed status
+and summary without treating the invalid payload as a successful result.
 
 Use `TYCHO_CODEX_BIN`, `TYCHO_CLAUDE_BIN`, or another documented environment
 override when a harness executable is not on `PATH`.

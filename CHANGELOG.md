@@ -4,6 +4,10 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+- Validate managed-agent structured output before success, request up to two
+  same-session corrections for Codex and Claude-compatible harnesses, and
+  preserve exhausted invalid responses in private diagnostic files while
+  surfacing an actionable failure in logs and Remote UI.
 - Add direct `--server` CLI targeting for remote project inspection and the
   complete managed-agent lifecycle, with token/token_env authentication, JSON
   output, and explicit transport, authentication, compatibility, and API errors.

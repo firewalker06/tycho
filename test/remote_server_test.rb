@@ -1143,7 +1143,18 @@ module RemoteServerTest
         #!#{RbConfig.ruby}
         require "json"
         File.write(#{argv_path.dump}, JSON.generate(ARGV))
-        exit 0 if ARGV.include?("--")
+        if ARGV.include?("--")
+          output_index = ARGV.index("-o")
+          if output_index
+            File.write(ARGV[output_index + 1], JSON.generate(
+              "status" => "success",
+              "summary" => "Prompt accepted.",
+              "inquiry" => nil,
+              "attachments" => nil
+            ))
+          end
+          exit 0
+        end
 
         prompt = ARGV.reverse.find { |argument| argument.include?("inquiry reply") }
         if prompt&.start_with?("-")

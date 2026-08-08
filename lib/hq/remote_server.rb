@@ -2897,6 +2897,9 @@ module HQ
         system: file_debug_payload(agent.system_log_path),
         status: file_debug_payload(agent_private_log_path(agent, :status_file_path)),
         last_message: file_debug_payload(agent_private_log_path(agent, :last_message_file_path)),
+        invalid_structured_output: file_debug_payload(
+          agent_private_log_path(agent, :invalid_structured_output_file_path)
+        ),
         attachments: file_debug_payload(agent.attachments_path)
       }
     end
