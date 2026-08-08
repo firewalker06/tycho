@@ -92,6 +92,9 @@ module ProjectWorkspaceTest
       File.write(File.join(root, "secrets.yml"), "token: nope\n")
       File.write(File.join(root, ".envrc"), "export TOKEN=nope\n")
       File.write(File.join(root, "config.yml"), "api_key: sk-abcdefghijklmnopqrstuvwxyz\n")
+      File.write(File.join(root, "rails.yml"), "secret_key_base: a-real-application-secret\n")
+      File.write(File.join(root, "service.yml"), "token: provider-access-value\n")
+      File.write(File.join(root, "database.yml"), "url: postgres://user:password@example.test/app\n")
       FileUtils.mkdir_p(File.join(root, "dist"))
       File.write(File.join(root, "dist", "bundle.js"), "generated")
       browser = HQ::ProjectWorkspace.new(root)
@@ -103,6 +106,9 @@ module ProjectWorkspaceTest
       assert_error("not_found") { browser.preview(path: "secrets.yml") }
       assert_error("not_found") { browser.preview(path: ".envrc") }
       assert_error("sensitive") { browser.preview(path: "config.yml") }
+      assert_error("sensitive") { browser.preview(path: "rails.yml") }
+      assert_error("sensitive") { browser.preview(path: "service.yml") }
+      assert_error("sensitive") { browser.preview(path: "database.yml") }
       assert_error("not_found") { browser.preview(path: "dist/bundle.js") }
     end
   end
