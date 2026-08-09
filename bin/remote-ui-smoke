@@ -1790,6 +1790,8 @@ def write_smoke_script(path)
           const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
           const diff = state.pullRequestDiffs[pullRequestDiffKey(key, pullRequestId)];
           const originalLines = diff.files[0].hunks[0].lines;
+          const originalSnapshotId = diff.snapshot_id;
+          const originalExpandAll = state.prDiffExpandAll[key];
           diff.files[0].hunks[0].lines = Array.from({ length: 1_500 }, (_, index) => ({
             kind: "context", old_number: index + 1, new_number: index + 1, content: `large diff line ${index + 1}`,
           }));
@@ -1827,18 +1829,89 @@ def write_smoke_script(path)
           const pollScrollContainer = document.querySelector(".pr-diff-detail");
           const pollScrollTop = window.scrollY;
           const pollLineTop = target.closest(".diff-line").getBoundingClientRect().top;
+          const originalRenderDiffLine = renderDiffLine;
+          let pollDiffLineRenderCount = 0;
+          renderDiffLine = (...args) => {
+            pollDiffLineRenderCount += 1;
+            return originalRenderDiffLine(...args);
+          };
+          const pollRenderStartedAt = performance.now();
           render({ preserveLiveEditor: true, preservePollContent: true });
+          result.pollRenderSyncMs = performance.now() - pollRenderStartedAt;
+          result.pollDiffLineRenderCount = pollDiffLineRenderCount;
+          renderDiffLine = originalRenderDiffLine;
           await new Promise((resolve) => requestAnimationFrame(resolve));
           result.pollViewerPersistent = pollViewer === document.querySelector("[data-pr-diff-viewer]");
           result.pollCommentPersistent = pollComment === document.querySelector("[data-pr-context-comment]");
+          result.pollFocusPersistent = document.activeElement === pollComment;
           result.pollContainerReplaced = pollScrollContainer !== document.querySelector(".pr-diff-detail");
           result.pollScrollDelta = Math.abs(window.scrollY - pollScrollTop);
           result.pollLineDelta = Math.abs(target.closest(".diff-line").getBoundingClientRect().top - pollLineTop);
+          pollComment.value = "Live comment text must not invalidate the diff shell.";
+          pollComment.dispatchEvent(new Event("input", { bubbles: true }));
+          let steadyPollDiffLineRenderCount = 0;
+          renderDiffLine = (...args) => {
+            steadyPollDiffLineRenderCount += 1;
+            return originalRenderDiffLine(...args);
+          };
+          const steadyPollStartedAt = performance.now();
+          render({ preserveLiveEditor: true, preservePollContent: true });
+          result.steadyPollRenderSyncMs = performance.now() - steadyPollStartedAt;
+          renderDiffLine = originalRenderDiffLine;
+          result.steadyPollDiffLineRenderCount = steadyPollDiffLineRenderCount;
+          result.steadyPollComment = document.querySelector("[data-pr-context-comment]")?.value;
+          result.steadyPollViewerPersistent = pollViewer === document.querySelector("[data-pr-diff-viewer]");
+
+          const item = state.pullRequests[key].items.find((candidate) => candidate.id === pullRequestId);
+          const originalTitle = item.title;
+          item.title = `${originalTitle} updated`;
+          let forcedRenderDiffLineCount = 0;
+          renderDiffLine = (...args) => {
+            forcedRenderDiffLineCount += 1;
+            return originalRenderDiffLine(...args);
+          };
+          render({ preserveLiveEditor: true, preservePollContent: false });
+          renderDiffLine = originalRenderDiffLine;
+          result.forcedRenderDiffLineCount = forcedRenderDiffLineCount;
+          result.forcedViewerPersistent = pollViewer === document.querySelector("[data-pr-diff-viewer]");
+          result.forcedCommentPersistent = pollComment === document.querySelector("[data-pr-context-comment]");
+          result.forcedTitleUpdated = document.querySelector(".pr-diff-title-meta strong")?.textContent === item.title;
+          item.title = originalTitle;
+
+          let changedSnapshotRenderCount = 0;
+          renderDiffLine = (...args) => {
+            changedSnapshotRenderCount += 1;
+            return originalRenderDiffLine(...args);
+          };
+          diff.snapshot_id = `${originalSnapshotId}-changed`;
+          render({ preserveLiveEditor: true, preservePollContent: true });
+          renderDiffLine = originalRenderDiffLine;
+          result.changedSnapshotRenderCount = changedSnapshotRenderCount;
+          result.changedSnapshotViewerReplaced = pollViewer !== document.querySelector("[data-pr-diff-viewer]");
+
+          const changedSnapshotViewer = document.querySelector("[data-pr-diff-viewer]");
+          diff.snapshot_id = originalSnapshotId;
+          let collapsedRenderCount = 0;
+          renderDiffLine = (...args) => {
+            collapsedRenderCount += 1;
+            return originalRenderDiffLine(...args);
+          };
+          document.querySelector(`[data-toggle-pr-diff-expand-all="${CSS.escape(key)}"]`).click();
+          renderDiffLine = originalRenderDiffLine;
+          result.collapsedRenderCount = collapsedRenderCount;
+          result.collapsedViewerReplaced = changedSnapshotViewer !== document.querySelector("[data-pr-diff-viewer]");
+          result.collapsedFilesClosed = Array.from(document.querySelectorAll("[data-pr-diff-viewer] .diff-file"))
+            .every((detail) => !detail.open);
 
           const selection = pullRequestDiffSelection(key, pullRequestId, diff.snapshot_id);
           selection.anchor = null;
           selection.lines = [];
           selection.comment = "";
+          if (originalExpandAll === undefined) delete state.prDiffExpandAll[key];
+          else state.prDiffExpandAll[key] = originalExpandAll;
+          document.querySelectorAll(".pr-diff-detail .diff-file").forEach((detail) => {
+            detail.open = originalExpandAll !== false;
+          });
           diff.files[0].hunks[0].lines = originalLines;
           state.renderedViewHtml = "";
           render();
@@ -1846,13 +1919,28 @@ def write_smoke_script(path)
         }, prContextAgentKey);
         if (!largeDiffSelectionContract.viewerPersistent || !largeDiffSelectionContract.formVisible ||
             !largeDiffSelectionContract.pollViewerPersistent || !largeDiffSelectionContract.pollCommentPersistent ||
-            !largeDiffSelectionContract.pollContainerReplaced ||
+            !largeDiffSelectionContract.pollFocusPersistent ||
+            largeDiffSelectionContract.pollContainerReplaced ||
+            largeDiffSelectionContract.pollDiffLineRenderCount !== 0 ||
+            !largeDiffSelectionContract.steadyPollViewerPersistent ||
+            largeDiffSelectionContract.steadyPollDiffLineRenderCount !== 0 ||
+            largeDiffSelectionContract.steadyPollComment !== "Live comment text must not invalidate the diff shell." ||
+            largeDiffSelectionContract.steadyPollRenderSyncMs >= largeDiffSelectionContract.fullRenderSyncMs * 0.5 ||
+            largeDiffSelectionContract.forcedRenderDiffLineCount !== 0 ||
+            !largeDiffSelectionContract.forcedViewerPersistent ||
+            !largeDiffSelectionContract.forcedCommentPersistent ||
+            !largeDiffSelectionContract.forcedTitleUpdated ||
+            largeDiffSelectionContract.changedSnapshotRenderCount !== 1_500 ||
+            !largeDiffSelectionContract.changedSnapshotViewerReplaced ||
+            largeDiffSelectionContract.collapsedRenderCount !== 1_500 ||
+            !largeDiffSelectionContract.collapsedViewerReplaced ||
+            !largeDiffSelectionContract.collapsedFilesClosed ||
             largeDiffSelectionContract.scrollDelta > 1 || largeDiffSelectionContract.lineDelta > 1 ||
             largeDiffSelectionContract.pollScrollDelta > 1 || largeDiffSelectionContract.pollLineDelta > 1 ||
             largeDiffSelectionContract.durationMs > 500) {
           throw new Error(`Large PR selection did not preserve the diff, form, or scroll: ${JSON.stringify(largeDiffSelectionContract)}`);
         }
-        console.log(`PR rendering (1,500 lines): full ${largeDiffSelectionContract.fullRenderSyncMs.toFixed(1)}ms sync / selection ${largeDiffSelectionContract.selectionSyncMs.toFixed(1)}ms sync`);
+        console.log(`PR rendering (1,500 lines): full ${largeDiffSelectionContract.fullRenderSyncMs.toFixed(1)}ms sync / selection ${largeDiffSelectionContract.selectionSyncMs.toFixed(1)}ms sync / first poll ${largeDiffSelectionContract.pollRenderSyncMs.toFixed(1)}ms sync / steady poll ${largeDiffSelectionContract.steadyPollRenderSyncMs.toFixed(1)}ms sync`);
         await prContextPage.evaluate((key) => {
           const route = parseRoute();
           const pullRequestId = selectedPullRequestId(key, route.pullRequestId);

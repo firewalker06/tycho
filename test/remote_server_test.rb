@@ -4959,7 +4959,7 @@ module RemoteServerTest
            js[:body].include?("function liveEditorRefreshPlan") &&
            js[:body].include?("function reconcileViewAroundEditor"),
            "expected polling renders to reconcile around stable Conversation and inquiry forms")
-    assert(js[:body].include?("replaceSiblingsAroundEditor") &&
+    assert(js[:body].include?("replaceSiblingsAroundAnchor") &&
            js[:body].include?('data-agent-running="${agentIsRunning(agent) ? "true" : "false"}"'),
            "expected live editor reconciliation to preserve controls without hiding real agent state transitions")
     assert(js[:body].include?("scrollContainers"),
