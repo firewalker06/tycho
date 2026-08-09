@@ -1157,6 +1157,7 @@ module RemoteServerTest
                                      "pull_request_contexts" => [{
                                        "pull_request_id" => reference.id,
                                        "snapshot_id" => "composer-snapshot",
+                                       "comment" => "Explain why these two sides differ.",
                                        "lines" => [
                                          { "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 },
                                          { "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 1 }
@@ -1167,8 +1168,23 @@ module RemoteServerTest
              "expected normal composer messages to include validated PR context")
       assert(content.include?('"path":"lib/example.rb"') && content.include?('"side":"left"') &&
              content.include?('"side":"right"') && content.include?('"old_number":3') &&
-             content.include?('"new_number":4'),
+             content.include?('"new_number":4') &&
+             content.include?("Comment on this range:\nExplain why these two sides differ."),
              "expected PR context to carry repository file, side, and line metadata")
+
+      begin
+        service.submit_prompt(created[:key],
+                              "prompt" => "Oversized comment.",
+                              "pull_request_contexts" => [{
+                                "pull_request_id" => reference.id, "snapshot_id" => "composer-snapshot",
+                                "comment" => "x" * ((8 * 1024) + 1),
+                                "lines" => [{ "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 }]
+                              }])
+        raise "expected oversized PR comment to fail"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 400 && e.message.include?("at most 8 KB"),
+               "expected oversized PR comments to return a bounded input error")
+      end
 
       begin
         asset_pattern = File.join(HQ::AGENT_LOGS_DIR, "assets", created[:key], "**", "*")

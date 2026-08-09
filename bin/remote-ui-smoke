@@ -1720,7 +1720,7 @@ def write_smoke_script(path)
         if (!(await firstLine.getAttribute("aria-label"))?.includes("lib/example.rb")) {
           throw new Error("PR diff line control is missing an accessible file and line label");
         }
-        const rangeLimitMessage = await prContextPage.evaluate((key) => {
+        const rangeLimitContract = await prContextPage.evaluate(async (key) => {
           const route = parseRoute();
           const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
           const diffKey = pullRequestDiffKey(key, pullRequestId);
@@ -1729,9 +1729,23 @@ def write_smoke_script(path)
           diff.files[0].hunks[0].lines = Array.from({ length: 101 }, (_, index) => ({
             kind: "context", old_number: index + 1, new_number: index + 1, content: `line ${index + 1}`,
           }));
+          selectPullRequestDiffLine({ dataset: {
+            agentKey: key,
+            pullRequestId,
+            snapshotId: diff.snapshot_id,
+            reviewLinePath: "lib/example.rb",
+            reviewLineHunk: "0",
+            reviewLineIndex: "0",
+          } }, false);
+          await new Promise((resolve) => requestAnimationFrame(resolve));
           const selection = pullRequestDiffSelection(key, pullRequestId, diff.snapshot_id);
-          selection.anchor = pullRequestDiffLine(diff, "lib/example.rb", 0, 0);
-          selection.lines = [selection.anchor];
+          const inlineComment = document.querySelector("[data-pr-inline-comment]");
+          const longLines = Array.from(document.querySelectorAll("[data-select-pr-diff-line]"));
+          const inlinePlacement = Boolean(
+            inlineComment && longLines[0].compareDocumentPosition(inlineComment) & Node.DOCUMENT_POSITION_FOLLOWING &&
+            inlineComment.compareDocumentPosition(longLines[1]) & Node.DOCUMENT_POSITION_FOLLOWING
+          );
+          const focusedInlineComment = document.activeElement === document.querySelector("[data-pr-context-comment]");
           selectPullRequestDiffLine({ dataset: {
             agentKey: key,
             pullRequestId,
@@ -1746,10 +1760,11 @@ def write_smoke_script(path)
           selection.lines = [];
           state.renderedViewHtml = "";
           render();
-          return message;
+          return { message, inlinePlacement, focusedInlineComment };
         }, prContextAgentKey);
-        if (!rangeLimitMessage.includes("at most 100 contiguous lines")) {
-          throw new Error(`PR range limit was not enforced visibly: ${JSON.stringify(rangeLimitMessage)}`);
+        if (!rangeLimitContract.message.includes("at most 100 contiguous lines") ||
+            !rangeLimitContract.inlinePlacement || !rangeLimitContract.focusedInlineComment) {
+          throw new Error(`PR long-hunk placement, focus, or range limit failed: ${JSON.stringify(rangeLimitContract)}`);
         }
         const diffErrorState = await prContextPage.evaluate((key) => {
           const route = parseRoute();
@@ -1770,14 +1785,16 @@ def write_smoke_script(path)
         }
         await firstLine.click();
         await secondLine.click({ modifiers: ["Shift"] });
+        await prContextPage.waitForSelector("[data-pr-inline-comment]", { state: "visible", timeout: 10_000 });
         const selectedRange = await prContextPage.evaluate(() => ({
           selected: document.querySelectorAll("[data-select-pr-diff-line]:checked").length,
-          selectionText: document.querySelector("[data-pr-context-selection]")?.innerText,
+          selectionText: document.querySelector("[data-pr-inline-comment]")?.innerText,
           overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
         }));
-        if (selectedRange.selected !== 2 || !selectedRange.selectionText?.includes("2 lines selected") || selectedRange.overflow) {
+        if (selectedRange.selected !== 2 || !selectedRange.selectionText?.includes("Commenting on") || selectedRange.overflow) {
           throw new Error(`PR line range selection is not usable on mobile: ${JSON.stringify(selectedRange)}`);
         }
+        await prContextPage.fill("[data-pr-context-comment]", "Clarify this mixed-side range.");
         await prContextPage.evaluate(() => document.querySelector("#growl")?.classList.add("hidden"));
         if (captureDir) await prContextPage.screenshot({ path: path.join(captureDir, "pr-context-selected-mobile.png"), fullPage: true });
         await prContextPage.keyboard.press("Escape");
@@ -1792,22 +1809,45 @@ def write_smoke_script(path)
         }
         await firstLine.click();
         await secondLine.click({ modifiers: ["Shift"] });
+        await prContextPage.fill("[data-pr-context-comment]", "Clarify this mixed-side range.");
         await prContextPage.evaluate(async () => refresh({ force: true, forceConversation: true }));
         await prContextPage.waitForSelector("[data-select-pr-diff-line]:checked", { state: "visible", timeout: 10_000 });
-        if (await prContextPage.locator("[data-select-pr-diff-line]:checked").count() !== 2) {
-          throw new Error("PR line selection did not survive a conversation refresh");
+        const refreshedInlineComment = await prContextPage.inputValue("[data-pr-context-comment]");
+        if (await prContextPage.locator("[data-select-pr-diff-line]:checked").count() !== 2 ||
+            refreshedInlineComment !== "Clarify this mixed-side range.") {
+          throw new Error("PR line selection and comment did not survive a conversation refresh");
         }
+        await prContextPage.click("[data-send-pr-diff-comment]");
+        await prContextPage.waitForFunction(
+          (key) => arrayValue(state.conversations[key]?.blocks)
+            .some((block) => block.role === "user" && block.content?.includes("Clarify this mixed-side range.")),
+          prContextAgentKey,
+          { timeout: 10_000 }
+        );
+        await prContextPage.waitForFunction((key) => !agentIsRunning(findAgent(key)), prContextAgentKey, { timeout: 10_000 });
+        await prContextPage.waitForFunction((key) => !state.pendingPullRequestCommentKeys.has(key), prContextAgentKey, { timeout: 10_000 });
+        if (await prContextPage.locator("[data-select-pr-diff-line]:checked").count()) {
+          throw new Error("Direct diff comment did not clear its completed selection");
+        }
+        await firstLine.click();
+        await secondLine.click({ modifiers: ["Shift"] });
+        await prContextPage.fill("[data-pr-context-comment]", "Combine this section with another.");
         await prContextPage.click("[data-attach-pr-diff-selection]");
+        await prContextPage.waitForFunction(() => document.querySelectorAll("[data-pending-pr-context]").length === 1);
+        await prContextPage.click("[data-open-pr-context-composer]");
         await prContextPage.waitForSelector("[data-pending-pr-context]", { state: "visible", timeout: 10_000 });
         const pendingContext = await prContextPage.evaluate(() => ({
           text: document.querySelector("[data-pending-pr-context]")?.innerText,
+          reviewButton: document.querySelector("[data-open-pr-context-composer]")?.innerText,
           focused: document.activeElement?.id === "prompt-input",
         }));
         if (!pendingContext.text?.includes("example/web#123") ||
             !pendingContext.text?.includes("lib/example.rb") ||
             !pendingContext.text?.includes("mixed sides") ||
+            !pendingContext.text?.includes("Combine this section with another.") ||
+            !pendingContext.reviewButton?.includes("Review combined comment") ||
             !pendingContext.focused) {
-          throw new Error(`Attached PR context is incomplete or did not focus the composer: ${JSON.stringify(pendingContext)}`);
+          throw new Error(`Combined PR comment section is incomplete: ${JSON.stringify(pendingContext)}`);
         }
         await prContextPage.click("[data-remove-pr-context]");
         if (await prContextPage.locator("[data-pending-pr-context]").count()) {
@@ -1815,9 +1855,11 @@ def write_smoke_script(path)
         }
         await firstLine.click();
         await secondLine.click({ modifiers: ["Shift"] });
+        await prContextPage.fill("[data-pr-context-comment]", "Duplicate range check.");
         await prContextPage.click("[data-attach-pr-diff-selection]");
         await firstLine.click();
         await secondLine.click({ modifiers: ["Shift"] });
+        await prContextPage.fill("[data-pr-context-comment]", "Duplicate range check.");
         await prContextPage.click("[data-attach-pr-diff-selection]");
         if (await prContextPage.locator("[data-pending-pr-context]").count() !== 1 ||
             !(await prContextPage.locator("#growl").innerText()).includes("already attached")) {
@@ -1857,20 +1899,25 @@ def write_smoke_script(path)
         await prContextPage.click("#composer button[type='submit']");
         await prContextPage.waitForFunction(() => typeof window.__releasePromptAttachmentPayloads === "function");
         await firstLine.click();
+        await prContextPage.fill("[data-pr-context-comment]", "A later comment section.");
         await prContextPage.click("[data-attach-pr-diff-selection]");
         if (await prContextPage.locator("[data-pending-pr-context]").count() !== 2) {
           throw new Error("PR context could not be queued while another prompt payload was encoding");
         }
         await prContextPage.evaluate(() => window.__releasePromptAttachmentPayloads());
         await prContextPage.waitForFunction(
-          () => arrayValue(state.conversations[parseRoute().key]?.blocks)
-            .some((block) => block.content?.includes("[TYCHO_PR_DIFF_CONTEXT]")),
+          () => {
+            const key = parseRoute().key;
+            return !state.pendingComposerKeys.has(key) && arrayValue(state.conversations[key]?.blocks)
+              .some((block) => block.content?.includes("Explain the selected change.") && block.content?.includes("Duplicate range check."));
+          },
           null,
           { timeout: 10_000 }
         );
         const sentContext = await prContextPage.evaluate((key) => {
           pendingAttachmentPayloads = window.__originalPendingAttachmentPayloads;
-          const message = arrayValue(state.conversations[key]?.blocks).find((block) => block.content?.includes("[TYCHO_PR_DIFF_CONTEXT]"));
+          const message = arrayValue(state.conversations[key]?.blocks)
+            .find((block) => block.content?.includes("Explain the selected change.") && block.content?.includes("[TYCHO_PR_DIFF_CONTEXT]"));
           return {
             content: message?.content || "",
             pending: pendingPullRequestContextsFor(key).map((context) => context.lines.length),
@@ -1880,6 +1927,7 @@ def write_smoke_script(path)
             !sentContext.content.includes('"path":"lib/example.rb"') ||
             !sentContext.content.includes('"side":"left"') ||
             !sentContext.content.includes('"side":"right"') ||
+            !sentContext.content.includes("Duplicate range check.") ||
             JSON.stringify(sentContext.pending) !== "[1]") {
           throw new Error(`Sent PR context lost metadata or consumed a later range: ${JSON.stringify(sentContext)}`);
         }
@@ -2048,9 +2096,6 @@ def write_smoke_script(path)
               this.onerror?.({ error: "aborted" });
             }
           };
-          if (state.timer) window.clearTimeout(state.timer);
-          state.timer = null;
-          state.pollDeferredUntil = Date.now() + 60_000;
           state.renderedViewHtml = "";
           render();
           const hiddenComposer = document.createElement("form");
@@ -2066,18 +2111,31 @@ def write_smoke_script(path)
           icon: Boolean(document.querySelector('[data-toggle-speech-mode] path[d^="M12 2a3"]')),
           state: document.querySelector("[data-toggle-speech-mode]")?.dataset.state,
           label: document.querySelector("[data-toggle-speech-mode]")?.getAttribute("aria-label"),
+          inEditor: Boolean(document.querySelector(".composer-editor-shell > [data-speech-mode-control]")),
+          micTop: document.querySelector("[data-toggle-speech-mode]")?.getBoundingClientRect().top,
+          fullScreenTop: document.querySelector("[data-toggle-composer-full-screen]")?.getBoundingClientRect().top,
         }));
-        if (!speechIconContract.icon || speechIconContract.state !== "idle" || !speechIconContract.label?.includes("Start speech recognition")) {
+        if (!speechIconContract.icon || speechIconContract.state !== "idle" ||
+            !speechIconContract.label?.includes("Start speech recognition") ||
+            !speechIconContract.inEditor || speechIconContract.micTop <= speechIconContract.fullScreenTop) {
           throw new Error(`Speech idle control is not clear or accessible: ${JSON.stringify(speechIconContract)}`);
         }
         await captureVisibleComposer("speech-idle-icon-desktop.png");
-        await page.keyboard.press("Meta+Shift+.");
+        await page.click("[data-toggle-speech-mode]");
+        await page.evaluate(async () => refresh({ force: true, forceConversation: true }));
         const listeningState = await page.evaluate(() => ({
           state: document.querySelector("[data-toggle-speech-mode]")?.dataset.state,
           status: document.querySelector("[data-speech-mode-status]")?.textContent,
           interimResults: state.speechRecognition?.interimResults,
+          started: window.__speechRecognitionStarted,
+          composerState: document.querySelector("#composer")?.dataset.speechState,
+          pulse: getComputedStyle(document.querySelector(".composer-editor-shell")).animationName,
+          statusHidden: document.querySelector("[data-speech-mode-status]")?.classList.contains("sr-only"),
         }));
-        if (listeningState.state !== "listening" || !listeningState.status?.includes("Listening") || !listeningState.interimResults) {
+        if (listeningState.state !== "listening" || !listeningState.status?.includes("Listening") ||
+            !listeningState.interimResults || listeningState.started !== 1 ||
+            listeningState.composerState !== "listening" || !listeningState.pulse.includes("speech-listening") ||
+            !listeningState.statusHidden) {
           throw new Error(`Speech listening state is incomplete: ${JSON.stringify(listeningState)}`);
         }
         await captureVisibleComposer("speech-listening-desktop.png");
@@ -2248,6 +2306,7 @@ def write_smoke_script(path)
           const permission = {
             state: document.querySelector("[data-toggle-speech-mode]")?.dataset.state,
             status: document.querySelector("[data-speech-mode-status]")?.textContent,
+            label: document.querySelector("[data-toggle-speech-mode]")?.getAttribute("aria-label"),
           };
 
           startSpeechMode(composer);
@@ -2262,9 +2321,10 @@ def write_smoke_script(path)
           const rerenderRecognition = state.speechRecognition;
           state.renderedViewHtml = "force speech cleanup";
           render();
-          const rerenderCleaned = rerenderRecognition.stopped === true && !state.speechRecognition;
+          const rerenderPreserved = rerenderRecognition === state.speechRecognition && rerenderRecognition.stopped !== true;
 
           const navigationComposer = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"]`);
+          stopSpeechMode({ cancel: true });
           startSpeechMode(navigationComposer);
           const navigationRecognition = state.speechRecognition;
           window.dispatchEvent(new HashChangeEvent("hashchange"));
@@ -2272,7 +2332,7 @@ def write_smoke_script(path)
 
           return {
             insertedAtCaret, repeatedStopped, cleanStopped, cancelled, permission, network,
-            rerenderCleaned, navigationCleaned,
+            rerenderPreserved, navigationCleaned,
           };
         }, speechAgentKey);
         if (speechLifecycleContract.insertedAtCaret !== "before spoken words after" ||
@@ -2281,9 +2341,11 @@ def write_smoke_script(path)
             speechLifecycleContract.cancelled !== "keep this" ||
             speechLifecycleContract.permission.state !== "error" ||
             !speechLifecycleContract.permission.status?.includes("permission denied") ||
+            !speechLifecycleContract.permission.label?.includes("Speech recognition error") ||
+            !speechLifecycleContract.permission.label?.includes("permission denied") ||
             speechLifecycleContract.network.state !== "error" ||
             !speechLifecycleContract.network.status?.includes("network service") ||
-            !speechLifecycleContract.rerenderCleaned ||
+            !speechLifecycleContract.rerenderPreserved ||
             !speechLifecycleContract.navigationCleaned) {
           throw new Error(`Speech lifecycle, caret, permission, or cleanup failed: ${JSON.stringify(speechLifecycleContract)}`);
         }
@@ -2301,6 +2363,7 @@ def write_smoke_script(path)
             disabled: button.disabled,
             state: button.dataset.state,
             status: document.querySelector("[data-speech-mode-status]")?.textContent,
+            label: button.getAttribute("aria-label"),
             growl: document.querySelector("#growl")?.innerText,
           };
           Object.defineProperty(window, "SpeechRecognition", { configurable: true, value: constructor });
@@ -2312,6 +2375,7 @@ def write_smoke_script(path)
         });
         if (unsupportedSpeechContract.disabled || unsupportedSpeechContract.state !== "unsupported" ||
             !unsupportedSpeechContract.status?.includes("unavailable") ||
+            !unsupportedSpeechContract.label?.includes("Use the keyboard instead") ||
             !unsupportedSpeechContract.growl?.includes("unavailable")) {
           throw new Error(`Unsupported speech recognition is not actionable: ${JSON.stringify(unsupportedSpeechContract)}`);
         }

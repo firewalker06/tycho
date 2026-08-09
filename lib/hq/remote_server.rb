@@ -1454,6 +1454,7 @@ module HQ
     }.freeze
     MAX_PULL_REQUEST_INBOX_ITEMS = 100
     MAX_PROMPT_PULL_REQUEST_CONTEXTS = 5
+    MAX_PROMPT_PULL_REQUEST_COMMENT_BYTES = 8 * 1024
     IMAGE_CONTENT_TYPES = {
       ".gif" => "image/gif",
       ".heic" => "image/heic",
@@ -3784,7 +3785,12 @@ module HQ
         snapshot = @pull_request_diff_store.fetch(reference.id)
         raise Error.new("Fetch the pull request diff before attaching lines.", status: 409) unless snapshot
 
-        PullRequestSelection.render(snapshot, raw)
+        rendered = PullRequestSelection.render(snapshot, raw)
+        comment = raw["comment"].to_s.strip
+        if comment.bytesize > MAX_PROMPT_PULL_REQUEST_COMMENT_BYTES
+          raise Error.new("Pull request comments must be at most 8 KB.", status: 400)
+        end
+        comment.empty? ? rendered : [rendered, "Comment on this range:\n#{comment}"].join("\n")
       rescue PullRequestSelection::Error => e
         raise Error.new(e.message, status: 409)
       end
