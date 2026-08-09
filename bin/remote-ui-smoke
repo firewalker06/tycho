@@ -1783,6 +1783,17 @@ def write_smoke_script(path)
         if (!diffErrorState.includes("Diff unavailable") || !diffErrorState.includes("stale fixture diff")) {
           throw new Error(`PR diff errors are not visible: ${JSON.stringify(diffErrorState)}`);
         }
+        await prContextPage.evaluate((key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diff = state.pullRequestDiffs[pullRequestDiffKey(key, pullRequestId)];
+          diff.files[0].hunks[0].lines[1].content = `new ${"wide-code-column ".repeat(24)}`;
+          diff.files[0].hunks[0].lines.push({
+            kind: "context", old_number: 2, new_number: 2, content: "following unselected line",
+          });
+          state.renderedViewHtml = "";
+          render();
+        }, prContextAgentKey);
         await firstLine.click();
         await secondLine.click({ modifiers: ["Shift"] });
         await prContextPage.waitForSelector("[data-pr-inline-comment]", { state: "visible", timeout: 10_000 });
@@ -1795,6 +1806,41 @@ def write_smoke_script(path)
           throw new Error(`PR line range selection is not usable on mobile: ${JSON.stringify(selectedRange)}`);
         }
         await prContextPage.fill("[data-pr-context-comment]", "Clarify this mixed-side range.");
+        await prContextPage.setViewportSize({ width: 1210, height: 640 });
+        const landscapeInlineContract = await prContextPage.evaluate(() => {
+          const body = document.querySelector(".diff-file-body");
+          const panel = document.querySelector("[data-pr-inline-comment]");
+          const send = document.querySelector("[data-send-pr-diff-comment]");
+          const add = document.querySelector("[data-attach-pr-diff-selection]");
+          const selectedCheck = document.querySelector("[data-select-pr-diff-line]:checked + .diff-line-check");
+          const emptyCheck = document.querySelector("[data-select-pr-diff-line]:not(:checked) + .diff-line-check");
+          const nativeCheck = document.querySelector("[data-select-pr-diff-line]");
+          const bodyRect = body?.getBoundingClientRect();
+          const panelRect = panel?.getBoundingClientRect();
+          const sendRect = send?.getBoundingClientRect();
+          const addRect = add?.getBoundingClientRect();
+          return {
+            bodyWidth: bodyRect?.width,
+            panelWidth: panelRect?.width,
+            panelInside: panelRect.left >= bodyRect.left - 1 && panelRect.right <= bodyRect.right + 1,
+            actionsInside: [sendRect, addRect].every((rect) => rect.left >= bodyRect.left - 1 && rect.right <= bodyRect.right + 1),
+            sendVisible: getComputedStyle(send).visibility !== "hidden" && sendRect.width > 0,
+            nativeHidden: getComputedStyle(nativeCheck).opacity === "0",
+            selectedMark: selectedCheck?.textContent,
+            emptyMark: emptyCheck?.textContent,
+          };
+        });
+        if (!landscapeInlineContract.panelInside || !landscapeInlineContract.actionsInside ||
+            !landscapeInlineContract.sendVisible || !landscapeInlineContract.nativeHidden ||
+            landscapeInlineContract.selectedMark !== "✓" || landscapeInlineContract.emptyMark !== "") {
+          throw new Error(`Landscape inline comment or minimal line selector failed: ${JSON.stringify(landscapeInlineContract)}`);
+        }
+        await prContextPage.evaluate(() => {
+          document.querySelector("#growl")?.classList.add("hidden");
+          document.querySelector("[data-pr-inline-comment]")?.scrollIntoView({ block: "center", inline: "nearest" });
+        });
+        if (captureDir) await prContextPage.screenshot({ path: path.join(captureDir, "pr-context-selected-landscape.png"), fullPage: false });
+        await prContextPage.setViewportSize({ width: 390, height: 844 });
         await prContextPage.evaluate(() => document.querySelector("#growl")?.classList.add("hidden"));
         if (captureDir) await prContextPage.screenshot({ path: path.join(captureDir, "pr-context-selected-mobile.png"), fullPage: true });
         await prContextPage.keyboard.press("Escape");
@@ -2262,7 +2308,7 @@ def write_smoke_script(path)
             !speechGuardContract.disabledIgnored || speechGuardContract.activeKey !== speechAgentKey) {
           throw new Error(`Speech shortcut guards or composer selection failed: ${JSON.stringify(speechGuardContract)}`);
         }
-        const speechLifecycleContract = await page.evaluate((key) => {
+        const speechLifecycleContract = await page.evaluate(async (key) => {
           const composer = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"]`);
           const input = composer.querySelector("#prompt-input");
           input.value = "before after";
@@ -2300,6 +2346,46 @@ def write_smoke_script(path)
           stopSpeechMode({ cancel: true });
           const cancelled = input.value;
 
+          input.value = Array.from({ length: 24 }, (_, index) => `existing line ${index + 1}`).join("\\n");
+          input.setSelectionRange(input.value.length, input.value.length);
+          input.scrollTop = 0;
+          startSpeechMode(composer);
+          const scrollingRecognition = state.speechRecognition;
+          scrollingRecognition.onresult({
+            resultIndex: 0,
+            results: [{ isFinal: false, 0: { transcript: "spoken text at the end" } }],
+          });
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const speechFollow = {
+            scrollTop: input.scrollTop,
+            scrollHeight: input.scrollHeight,
+            clientHeight: input.clientHeight,
+          };
+          stopSpeechMode({ cancel: true });
+
+          const middleLines = Array.from({ length: 30 }, (_, index) => `middle line ${index + 1}`);
+          input.value = middleLines.join("\\n");
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          const middleCaret = middleLines.slice(0, 10).join("\\n").length;
+          input.setSelectionRange(middleCaret, middleCaret);
+          input.scrollTop = 80;
+          const middleOriginalScrollTop = input.scrollTop;
+          startSpeechMode(composer);
+          const middleRecognition = state.speechRecognition;
+          middleRecognition.onresult({
+            resultIndex: 0,
+            results: [{ isFinal: false, 0: { transcript: "spoken middle ".repeat(80) } }],
+          });
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const middleFollow = {
+            originalScrollTop: middleOriginalScrollTop,
+            followedScrollTop: input.scrollTop,
+            maxScrollTop: input.scrollHeight - input.clientHeight,
+          };
+          stopSpeechMode({ cancel: true });
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          middleFollow.restoredScrollTop = input.scrollTop;
+
           startSpeechMode(composer);
           const permissionRecognition = state.speechRecognition;
           permissionRecognition.onerror({ error: "not-allowed" });
@@ -2332,13 +2418,19 @@ def write_smoke_script(path)
 
           return {
             insertedAtCaret, repeatedStopped, cleanStopped, cancelled, permission, network,
-            rerenderPreserved, navigationCleaned,
+            speechFollow, middleFollow, rerenderPreserved, navigationCleaned,
           };
         }, speechAgentKey);
         if (speechLifecycleContract.insertedAtCaret !== "before spoken words after" ||
             !speechLifecycleContract.repeatedStopped ||
             speechLifecycleContract.cleanStopped !== "keep last words finalized" ||
             speechLifecycleContract.cancelled !== "keep this" ||
+            speechLifecycleContract.speechFollow.scrollTop <= 0 ||
+            speechLifecycleContract.speechFollow.scrollTop + speechLifecycleContract.speechFollow.clientHeight <
+              speechLifecycleContract.speechFollow.scrollHeight - 2 ||
+            speechLifecycleContract.middleFollow.followedScrollTop <= speechLifecycleContract.middleFollow.originalScrollTop ||
+            speechLifecycleContract.middleFollow.followedScrollTop >= speechLifecycleContract.middleFollow.maxScrollTop - 2 ||
+            Math.abs(speechLifecycleContract.middleFollow.restoredScrollTop - speechLifecycleContract.middleFollow.originalScrollTop) > 1 ||
             speechLifecycleContract.permission.state !== "error" ||
             !speechLifecycleContract.permission.status?.includes("permission denied") ||
             !speechLifecycleContract.permission.label?.includes("Speech recognition error") ||
@@ -2349,6 +2441,32 @@ def write_smoke_script(path)
             !speechLifecycleContract.navigationCleaned) {
           throw new Error(`Speech lifecycle, caret, permission, or cleanup failed: ${JSON.stringify(speechLifecycleContract)}`);
         }
+        const speechFollowCapture = await page.evaluate(async (key) => {
+          const composer = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"]`);
+          const input = composer.querySelector("#prompt-input");
+          input.value = Array.from({ length: 24 }, (_, index) => `captured line ${index + 1}`).join("\\n");
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.setSelectionRange(input.value.length, input.value.length);
+          input.scrollTop = 0;
+          startSpeechMode(composer);
+          state.speechRecognition.onresult({
+            resultIndex: 0,
+            results: [{ isFinal: false, 0: { transcript: "spoken follow at the end" } }],
+          });
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          return {
+            value: input.value,
+            scrollTop: input.scrollTop,
+            scrollHeight: input.scrollHeight,
+            clientHeight: input.clientHeight,
+          };
+        }, speechAgentKey);
+        if (!speechFollowCapture.value.endsWith("spoken follow at the end") || speechFollowCapture.scrollTop <= 0 ||
+            speechFollowCapture.scrollTop + speechFollowCapture.clientHeight < speechFollowCapture.scrollHeight - 2) {
+          throw new Error(`Speech follow capture did not stay at the active transcript: ${JSON.stringify(speechFollowCapture)}`);
+        }
+        await captureVisibleComposer("speech-follow-scroll-desktop.png");
+        await page.evaluate(() => stopSpeechMode({ cancel: true }));
         const unsupportedSpeechContract = await page.evaluate(() => {
           const constructor = window.SpeechRecognition;
           Object.defineProperties(window, {
