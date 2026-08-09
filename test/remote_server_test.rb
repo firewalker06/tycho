@@ -26,6 +26,7 @@ module RemoteServerTest
     assert_remote_inquiry_payload_has_stable_id_and_guarded_answer
     assert_remote_agent_payload_includes_attachments
     assert_remote_agent_pull_request_diff_payload
+    assert_agent_pull_request_listing_avoids_eager_metadata_requests
     assert_concurrent_pull_request_diff_refreshes_are_coalesced
     assert_pull_request_review_refresh_reuses_metadata
     assert_pull_request_feature_gate_and_global_inbox
@@ -933,8 +934,10 @@ module RemoteServerTest
       reference = payload.first
       assert(reference["repository"] == "example/web", "expected GitHub repository to be parsed")
       assert(reference["number"] == 123, "expected GitHub PR number to be parsed")
-      assert(reference["error"].to_s.length.positive?,
-             "expected metadata errors to be reported without hiding PR references")
+      assert(reference["error"].nil?, "expected ordinary PR listing to avoid unavailable GitHub metadata")
+      metadata_refresh = service.refresh_agent_pull_request_metadata(created[:key])
+      assert(metadata_refresh[:failed].length == 1,
+             "expected explicit metadata refresh errors to be reported without hiding PR references")
 
       snapshot = {
         "id" => reference["id"],
@@ -943,7 +946,9 @@ module RemoteServerTest
         "repository" => "example/web",
         "number" => 123,
         "url" => "https://github.com/example/web/pull/123",
-        "title" => "Example PR",
+        "title" => "Origin PR title",
+        "state" => "open",
+        "draft" => true,
         "head_sha" => "abc1234",
         "base_sha" => "def5678",
         "fetched_at" => Time.now.iso8601,
@@ -965,6 +970,13 @@ module RemoteServerTest
       }
       HQ::PullRequestDiff::Store.new.save(snapshot)
 
+      listed_from_snapshot = service.agent_pull_requests(created[:key]).first
+      assert(listed_from_snapshot["title"] == "Origin PR title" &&
+             listed_from_snapshot["state"] == "open" && listed_from_snapshot["draft"] == true,
+             "expected saved origin metadata to backfill the agent PR catalog and listing")
+      assert(!listed_from_snapshot.fetch("snapshot").key?("fresh"),
+             "expected snapshot-seeded metadata to leave remote freshness unknown")
+
       diff = service.agent_pull_request_diff(created[:key], reference["id"])
       assert(diff["files"].first["path"] == "lib/example.rb", "expected saved PR diff snapshot to be returned")
 
@@ -974,26 +986,157 @@ module RemoteServerTest
     end
   end
 
+  def assert_agent_pull_request_listing_avoids_eager_metadata_requests
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      client = FakeGitHubReviewClient.new
+      snapshot_store = CountingPullRequestDiffStore.new(File.join(dir, "diffs.json"))
+      service = HQ::RemoteService.new(registry:, github_client: client, pull_request_diff_store: snapshot_store)
+      created = service.create_agent(
+        "project_key" => "web",
+        "template_key" => "custom",
+        "name" => "Many pull requests",
+        "prompt" => "Review pull requests.",
+        "agent" => "codex"
+      )
+      agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+      memory = HQ::AgentMemory.new(agent)
+      3.times do |index|
+        memory.append_attachment!(
+          {
+            "kind" => "link",
+            "title" => "PR #{index + 1}",
+            "url" => "https://github.com/example/web/pull/#{index + 1}"
+          },
+          created_at: Time.parse("2026-08-09 13:00:0#{index}")
+        )
+      end
+
+      listed = service.agent_pull_requests(created[:key])
+      metadata_requests = client.requests.count { |kind, path| kind == :get_json && path.include?("/pulls/") }
+
+      assert(listed.length == 3, "expected every attached pull request to be listed")
+      assert(metadata_requests.zero?,
+             "expected ordinary PR listing to avoid one blocking GitHub metadata request per pull request")
+      assert(snapshot_store.all_calls == 1,
+             "expected ordinary PR listing to parse the shared diff snapshot store only once")
+
+      server = HQ::RemoteServer.new
+      response = server.send(
+        :route,
+        service,
+        "POST",
+        "/agents/#{created[:key]}/pull-requests/metadata/refresh",
+        {},
+        nil
+      )
+      refreshed = response[:body]
+      metadata_requests = client.requests.count { |kind, path| kind == :get_json && path.include?("/pulls/") }
+      assert(metadata_requests == 3, "expected explicit metadata refresh to request each pull request once")
+      assert(refreshed[:pull_requests].all? { |item| item["title"] == "Shared PR" },
+             "expected refreshed GitHub metadata to be returned from the persistent catalog")
+      assert(refreshed[:pull_requests].all? { |item| item["metadata_refreshed_at"].to_s.length.positive? },
+             "expected cached PR metadata to expose its refresh time")
+      catalog = JSON.parse(File.read(agent.pull_request_catalog_path))
+      assert(catalog.fetch("entries").length == 3,
+             "expected newly discovered pull requests to be persisted in the agent-owned PR catalog")
+      assert(!File.exist?(File.join(HQ::AGENT_LOGS_DIR, "pull_request_catalog.json")),
+             "expected agent PR listing to avoid a shared cross-agent catalog")
+
+      second_created = service.create_agent(
+        "project_key" => "web",
+        "template_key" => "custom",
+        "name" => "Other pull requests",
+        "prompt" => "Review another list.",
+        "agent" => "codex"
+      )
+      second_agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == second_created[:key] }
+      HQ::AgentMemory.new(second_agent).append_attachment!(
+        {
+          "kind" => "link",
+          "title" => "Other PR",
+          "url" => "https://github.com/other/repository/pull/99"
+        },
+        created_at: Time.parse("2026-08-09 13:01:00")
+      )
+      requests_before_second_list = client.requests.length
+      second_list = service.agent_pull_requests(second_created[:key])
+      second_catalog = JSON.parse(File.read(second_agent.pull_request_catalog_path))
+      assert(second_list.length == 1 && client.requests.length == requests_before_second_list,
+             "expected another agent's PR list to remain network-free")
+      assert(second_agent.pull_request_catalog_path != agent.pull_request_catalog_path,
+             "expected each agent to own a distinct PR catalog path")
+      assert(second_catalog.fetch("entries").length == 1 && catalog.fetch("entries").length == 3,
+             "expected one agent's PR discovery to stay isolated from every other catalog")
+
+      restarted = HQ::RemoteService.new(registry:, github_client: FakeUnavailableGitHubClient.new)
+      cached = restarted.agent_pull_requests(created[:key])
+      assert(cached.length == 3 && cached.all? { |item| item["title"] == "Shared PR" },
+             "expected PR references and metadata to survive a Remote server restart")
+
+      catalog_paths = [
+        agent.pull_request_catalog_path,
+        "#{agent.pull_request_catalog_path}.bak",
+        "#{agent.pull_request_catalog_path}.lock"
+      ]
+      archive = agent.archive_logs!(File.join(dir, "archive"))
+      assert(catalog_paths.all? { |path| File.exist?(File.join(archive, File.basename(path))) },
+             "expected agent archive to move the PR catalog, backup, and lock sidecars")
+      assert(catalog_paths.none? { |path| File.exist?(path) },
+             "expected agent archive to leave no active PR catalog sidecars behind")
+    end
+  end
+
   def assert_concurrent_pull_request_diff_refreshes_are_coalesced
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
       client = BlockingGitHubDiffClient.new
+      registry = registry_for_project(dir, workspace)
       service = HQ::RemoteService.new(
-        registry: registry_for_project(dir, workspace),
+        registry:,
         github_client: client,
         pull_request_diff_store: HQ::PullRequestDiff::Store.new(File.join(dir, "diffs.json"))
       )
-      reference = HQ::PullRequestDiff.reference_from_url("https://github.com/example/web/pull/123")
-      first = Thread.new { service.send(:refresh_pull_request_snapshot, reference) }
+      agents = 2.times.map do |index|
+        created = service.create_agent(
+          "project_key" => "web",
+          "template_key" => "custom",
+          "name" => "Shared PR agent #{index + 1}",
+          "prompt" => "Review the shared PR.",
+          "agent" => "codex"
+        )
+        agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+        HQ::AgentMemory.new(agent).append_attachment!(
+          {
+            "kind" => "link",
+            "title" => "Shared PR",
+            "url" => "https://github.com/example/web/pull/123"
+          },
+          created_at: Time.parse("2026-08-09 13:02:0#{index}")
+        )
+        agent
+      end
+      references = agents.map { |agent| HQ::PullRequestDiff.references_for_agent(agent).fetch(0) }
+      first = Thread.new { service.send(:refresh_pull_request_snapshot, references.fetch(0)) }
       client.metadata_started.pop
-      second = Thread.new { service.send(:refresh_pull_request_snapshot, reference) }
+      second = Thread.new { service.send(:refresh_pull_request_snapshot, references.fetch(1)) }
+
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+      Thread.pass until second.status == "sleep" || Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+      follower_waiting = second.status == "sleep"
 
       client.release!
       [first, second].each(&:value)
 
+      assert(follower_waiting, "expected the second agent refresh to join the in-flight PR fetch")
       assert(client.metadata_requests == 1 && client.diff_requests == 1,
              "expected concurrent identical diff refreshes to share one metadata and diff fetch")
+      catalogs = agents.map { |agent| JSON.parse(File.read(agent.pull_request_catalog_path)) }
+      assert(catalogs.all? { |catalog| catalog.dig("entries", references.first.id, "metadata", "title") == "Shared PR" },
+             "expected every coalesced caller to persist metadata in its own agent catalog")
     end
   end
 
@@ -6259,6 +6402,20 @@ module RemoteServerTest
         @released = true
         @condition.broadcast
       end
+    end
+  end
+
+  class CountingPullRequestDiffStore < HQ::PullRequestDiff::Store
+    attr_reader :all_calls
+
+    def initialize(path)
+      super
+      @all_calls = 0
+    end
+
+    def all
+      @all_calls += 1
+      super
     end
   end
 

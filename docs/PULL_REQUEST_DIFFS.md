@@ -8,6 +8,8 @@ Tycho prefers a Tycho GitHub App user session obtained through OAuth device flow
 
 Review posting remains off by default. Operators must also set `TYCHO_GITHUB_WRITE_ENABLED=true`, save a draft bound to the current base and head, and confirm the mutation. GitHub remains the final permission authority; a token without `Pull requests: write` receives a sanitized failure.
 
+Agent-scoped PR discovery persists canonical references and compact metadata in an agent-owned `~/.tycho/logs/agents/<agent-stem>.pull_request_catalog.json` sidecar. Opening an agent's PR list reads only that agent's catalog and does not issue one GitHub request per PR. The cached GitHub title replaces attachment-supplied display text, and the list/detail surfaces show Open, Draft, Closed, or Merged state. Existing saved snapshots seed missing catalog metadata without another patch fetch. **Refresh metadata** updates the catalog explicitly; fetching one or all diffs remains a separate patch operation. Archiving an agent moves its catalog, backup, and lock sidecars with its other logs.
+
 ## Workflow
 
 ```mermaid

@@ -386,6 +386,9 @@ module HQ
           return ok(memory_rebuild: service.rebuild_agent_memory(key))
         end
         return ok(pull_requests: service.agent_pull_requests(key)) if method == "GET" && tail == ["pull-requests"]
+        if method == "POST" && tail == ["pull-requests", "metadata", "refresh"]
+          return ok(service.refresh_agent_pull_request_metadata(key))
+        end
         return ok(service.refresh_agent_pull_requests(key)) if method == "POST" && tail == ["pull-requests", "refresh"]
         if tail.length == 3 && tail.first == "pull-requests" && tail[2] == "diff"
           return ok(diff: service.agent_pull_request_diff(key, tail[1])) if method == "GET"
@@ -1694,17 +1697,40 @@ module HQ
       ensure_github_enabled!
       agent = find_agent!(key)
       references = PullRequestDiff.references_for_agent(agent)
-      store = @pull_request_diff_store
-      provider = PullRequestDiff::GitHubProvider.new(client: @github_client)
+      snapshots = @pull_request_diff_store.all
+      catalog = pull_request_catalog(agent).discover(references, metadata_by_id: snapshots)
       references.map do |reference|
-        snapshot = store.fetch(reference.id)
-        begin
-          metadata = provider.metadata(reference)
-          PullRequestDiff.reference_payload(reference, snapshot:, metadata:)
-        rescue PullRequestDiff::Error => e
-          PullRequestDiff.reference_payload(reference, snapshot:, error: e.message)
-        end
+        pull_request_reference_payload(reference, catalog[reference.id], snapshots[reference.id])
       end
+    end
+
+    def refresh_agent_pull_request_metadata(key)
+      ensure_github_enabled!
+      agent = find_agent!(key)
+      references = PullRequestDiff.references_for_agent(agent)
+      catalog_store = pull_request_catalog(agent)
+      catalog_store.discover(references)
+      refreshed = []
+      failed = []
+      references.each do |reference|
+        refreshed << [reference, github_provider.metadata(reference)]
+      rescue PullRequestDiff::Error => e
+        failed << {
+          id: reference.id,
+          repository: reference.repository,
+          number: reference.number,
+          error: e.message
+        }
+      end
+      catalog = catalog_store.save_all_metadata(refreshed)
+      snapshots = @pull_request_diff_store.all
+      {
+        pull_requests: references.map do |reference|
+          pull_request_reference_payload(reference, catalog[reference.id], snapshots[reference.id])
+        end,
+        refreshed: refreshed.map { |reference, _metadata| reference.id },
+        failed:
+      }
     end
 
     def agent_pull_request_diff(key, id)
@@ -3224,15 +3250,39 @@ module HQ
       PullRequestDiff::GitHubProvider.new(client: @github_client)
     end
 
+    def pull_request_reference_payload(reference, entry, snapshot)
+      entry ||= {}
+      metadata = entry["metadata"]
+      freshness_metadata = metadata if entry["metadata_source"] == "github"
+      payload = PullRequestDiff.reference_payload(reference, snapshot:, metadata:, freshness_metadata:)
+      if metadata.is_a?(Hash)
+        payload["metadata_refreshed_at"] = entry["metadata_refreshed_at"]
+      end
+      payload
+    end
+
+    def pull_request_catalog(agent)
+      PullRequestDiff::Catalog.new(path: agent.pull_request_catalog_path)
+    end
+
+    def persist_pull_request_metadata(reference, metadata)
+      return if reference.agent_key.to_s.empty?
+
+      agent = load_agents.find { |candidate| candidate.key == reference.agent_key }
+      pull_request_catalog(agent).save_metadata(reference, metadata) if agent
+    end
+
     def refresh_pull_request_snapshot(reference)
       refresh_pull_request_snapshot_fetch(reference).fetch(:snapshot)
     end
 
     def refresh_pull_request_snapshot_fetch(reference)
-      coalesce_pull_request_fetch(reference, "snapshot") do
+      refreshed = coalesce_pull_request_fetch(reference, "snapshot") do
         metadata, pull = github_provider.metadata_with_pull(reference)
-        { snapshot: save_pull_request_snapshot(reference, metadata), pull: }
+        { snapshot: save_pull_request_snapshot(reference, metadata), pull:, metadata: }
       end
+      persist_pull_request_metadata(reference, refreshed.fetch(:metadata))
+      refreshed
     end
 
     def refresh_pull_request_fetch(reference)

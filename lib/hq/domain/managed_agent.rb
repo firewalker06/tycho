@@ -627,6 +627,10 @@ module HQ
       derived_log_path("attachments.json")
     end
 
+    def pull_request_catalog_path
+      derived_log_path("pull_request_catalog.json")
+    end
+
     def invalidate_derived_logs!
       [conversation_log_path, system_log_path].each do |path|
         FileUtils.rm_f(path)
@@ -640,6 +644,9 @@ module HQ
         system_log_path,
         memory_path,
         attachments_path,
+        pull_request_catalog_path,
+        "#{pull_request_catalog_path}.bak",
+        "#{pull_request_catalog_path}.lock",
         invalid_structured_output_file_path,
         status_file_path,
         last_message_file_path,

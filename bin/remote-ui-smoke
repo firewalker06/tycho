@@ -1713,6 +1713,41 @@ def write_smoke_script(path)
         await prContextPage.waitForSelector(".agent-pr-diff-shell .empty-state", { state: "visible", timeout: 10_000 });
         await prContextPage.click("[data-refresh-pr-diff]");
         await prContextPage.waitForSelector("[data-select-pr-diff-line]", { state: "visible", timeout: 10_000 });
+        const prOriginMetadata = await prContextPage.evaluate((key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const item = state.pullRequests[key].items.find((candidate) => candidate.id === pullRequestId);
+          const result = {
+            itemTitle: item?.title,
+            navTitle: document.querySelector(".pr-diff-nav-item.active strong")?.textContent,
+            detailTitle: document.querySelector(".pr-diff-title-meta strong")?.textContent,
+            states: [],
+          };
+          [
+            { state: "open", draft: false, merged: false, expected: "Open" },
+            { state: "open", draft: true, merged: false, expected: "Draft" },
+            { state: "closed", draft: true, merged: false, expected: "Closed" },
+            { state: "closed", draft: false, merged: true, expected: "Merged" },
+          ].forEach((status) => {
+            Object.assign(item, status);
+            state.renderedViewHtml = "";
+            render();
+            result.states.push({
+              expected: status.expected,
+              badge: document.querySelector("[data-pr-status-badge]")?.textContent?.trim(),
+              navMeta: document.querySelector(".pr-diff-nav-item.active .pr-diff-nav-copy > span")?.textContent,
+            });
+          });
+          return result;
+        }, prContextAgentKey);
+        if (prOriginMetadata.itemTitle !== "Smoke pull request" ||
+            prOriginMetadata.navTitle !== "Smoke pull request" ||
+            prOriginMetadata.detailTitle !== "Smoke pull request" ||
+            prOriginMetadata.states.some((status) => (
+              status.badge !== status.expected || !status.navMeta?.includes(status.expected)
+            ))) {
+          throw new Error(`PR title or status did not reflect origin metadata: ${JSON.stringify(prOriginMetadata)}`);
+        }
         const selectableLines = prContextPage.locator("[data-select-pr-diff-line]");
         if (await selectableLines.count() !== 2) throw new Error("PR detail did not expose selectable changed lines");
         const firstLine = selectableLines.nth(0);
