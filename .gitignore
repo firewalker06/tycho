@@ -22,3 +22,5 @@ artifacts/design-system/**/*.jpg
 artifacts/design-system/**/*.jpeg
 artifacts/design-system/**/*.gif
 artifacts/design-system/**/*.webp
+docs/reports/usage-*.md
+docs/reports/usage-*.query.json

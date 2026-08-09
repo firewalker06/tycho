@@ -1453,6 +1453,7 @@ module HQ
       ".woff2" => "font/woff2"
     }.freeze
     MAX_PULL_REQUEST_INBOX_ITEMS = 100
+    MAX_PROMPT_PULL_REQUEST_CONTEXTS = 5
     IMAGE_CONTENT_TYPES = {
       ".gif" => "image/gif",
       ".heic" => "image/heic",
@@ -2622,8 +2623,10 @@ module HQ
 
     def submit_prompt(key, attrs)
       target = find_agent!(key)
+      pull_request_context = render_prompt_pull_request_contexts(target, attrs)
       attachments = import_prompt_attachments(target, attrs)
       text = prompt_text(attrs, attachments:)
+      text = [text, pull_request_context].reject(&:empty?).join("\n")
       target.add_user_message!(
         text,
         attachments:
@@ -3765,6 +3768,27 @@ module HQ
       return "Please review the attached files." if attachments.any?
 
       raise Error.new("prompt is required")
+    end
+
+    def render_prompt_pull_request_contexts(target, attrs)
+      contexts = attrs["pull_request_contexts"]
+      return "" unless contexts.is_a?(Array) && contexts.any?
+      if contexts.length > MAX_PROMPT_PULL_REQUEST_CONTEXTS
+        raise Error.new("Attach at most #{MAX_PROMPT_PULL_REQUEST_CONTEXTS} pull request ranges.", status: 400)
+      end
+
+      rendered = contexts.map do |raw|
+        raise Error.new("Pull request context must be an object.", status: 400) unless raw.is_a?(Hash)
+
+        reference = pull_request_reference!(target, raw["pull_request_id"])
+        snapshot = @pull_request_diff_store.fetch(reference.id)
+        raise Error.new("Fetch the pull request diff before attaching lines.", status: 409) unless snapshot
+
+        PullRequestSelection.render(snapshot, raw)
+      rescue PullRequestSelection::Error => e
+        raise Error.new(e.message, status: 409)
+      end
+      rendered.join("\n")
     end
 
     def inquiry_answer_with_feedback(answer, feedback, supplied:)

@@ -301,6 +301,26 @@ def associate_agent_schedule(logs_dir, agent_key)
   File.write(agents_path, JSON.pretty_generate(agents))
 end
 
+def associate_agent_pull_request(logs_dir, agent_key)
+  agents_path = File.join(logs_dir, "managed_agents.json")
+  agents = JSON.parse(File.read(agents_path))
+  agent = agents.find { |item| item["key"] == agent_key }
+  raise "Failed to find smoke agent #{agent_key.inspect}" unless agent
+
+  attachments_path = agent.fetch("log_path").sub(/\.raw\.log\z/, ".attachments.json")
+  File.write(
+    attachments_path,
+    JSON.pretty_generate(
+      "attachments" => [{
+        "kind" => "pull_request",
+        "title" => "Example PR",
+        "url" => "https://github.com/example/web/pull/123",
+        "created_at" => Time.now.iso8601
+      }]
+    )
+  )
+end
+
 def mark_schedule_daemon_running(logs_dir, pid)
   FileUtils.mkdir_p(logs_dir)
   now = Time.now.iso8601
@@ -384,6 +404,38 @@ def write_smoke_script(path)
         if (message.type() === "error") errors.push(message.text());
       });
       page.on("pageerror", (error) => errors.push(error.message));
+
+      async function captureVisibleComposer(filename) {
+        if (!captureDir) return;
+        const composer = page.locator("#composer:not([hidden])");
+        await composer.waitFor({ state: "visible", timeout: 10_000 });
+        const bounds = await composer.boundingBox();
+        if (!bounds) throw new Error("Visible composer had no screenshot bounds");
+        const viewport = page.viewportSize();
+        const padding = 36;
+        const x = Math.max(0, bounds.x - padding);
+        const y = Math.max(0, bounds.y - padding);
+        const clip = {
+          x,
+          y,
+          width: Math.min(viewport.width, bounds.x + bounds.width + padding) - x,
+          height: Math.min(viewport.height, bounds.y + bounds.height + padding) - y,
+        };
+        await page.screenshot({ path: path.join(captureDir, filename), clip });
+      }
+
+      async function ensureSkillAutocompleteVisible() {
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          if (await page.locator("[data-skill-autocomplete]:not(.hidden)").isVisible()) return;
+          await page.evaluate(() => {
+            const prompt = document.querySelector("#prompt-input");
+            prompt?.focus();
+            if (prompt) refreshSkillAutocomplete(prompt);
+          });
+          await page.waitForTimeout(100);
+        }
+        throw new Error("Skill autocomplete did not become visible");
+      }
 
       async function assertResourceCatalogCompatibility() {
         const catalogTimings = await page.evaluate(async () => {
@@ -1642,7 +1694,8 @@ def write_smoke_script(path)
         await agentsRegressionPage.close();
 
         const prContextPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
-        await prContextPage.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
+        const prContextAgentKey = unscheduledAgentKey;
+        await prContextPage.goto(`${baseUrl}/ui#agent/${encodeURIComponent(prContextAgentKey)}`, { waitUntil: "networkidle" });
         await prContextPage.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
         await prContextPage.evaluate((key) => {
           const agent = findAgent(key);
@@ -1652,12 +1705,184 @@ def write_smoke_script(path)
           ];
           state.renderedViewHtml = "";
           render();
-        }, agentKey);
+        }, prContextAgentKey);
         await prContextPage.click("#header-more-button");
-        await prContextPage.waitForSelector(`[data-open-agent-pr-diffs='${agentKey}']`, { state: "visible", timeout: 10_000 });
-        await prContextPage.click(`[data-open-agent-pr-diffs='${agentKey}']`);
+        await prContextPage.waitForSelector(`[data-open-agent-pr-diffs='${prContextAgentKey}']`, { state: "visible", timeout: 10_000 });
+        await prContextPage.click(`[data-open-agent-pr-diffs='${prContextAgentKey}']`);
         await prContextPage.waitForSelector(".agent-pr-diff-shell", { state: "visible", timeout: 10_000 });
         await prContextPage.waitForSelector(".agent-pr-diff-shell .empty-state", { state: "visible", timeout: 10_000 });
+        await prContextPage.click("[data-refresh-pr-diff]");
+        await prContextPage.waitForSelector("[data-select-pr-diff-line]", { state: "visible", timeout: 10_000 });
+        const selectableLines = prContextPage.locator("[data-select-pr-diff-line]");
+        if (await selectableLines.count() !== 2) throw new Error("PR detail did not expose selectable changed lines");
+        const firstLine = selectableLines.nth(0);
+        const secondLine = selectableLines.nth(1);
+        if (!(await firstLine.getAttribute("aria-label"))?.includes("lib/example.rb")) {
+          throw new Error("PR diff line control is missing an accessible file and line label");
+        }
+        const rangeLimitMessage = await prContextPage.evaluate((key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diffKey = pullRequestDiffKey(key, pullRequestId);
+          const diff = state.pullRequestDiffs[diffKey];
+          const originalLines = diff.files[0].hunks[0].lines;
+          diff.files[0].hunks[0].lines = Array.from({ length: 101 }, (_, index) => ({
+            kind: "context", old_number: index + 1, new_number: index + 1, content: `line ${index + 1}`,
+          }));
+          const selection = pullRequestDiffSelection(key, pullRequestId, diff.snapshot_id);
+          selection.anchor = pullRequestDiffLine(diff, "lib/example.rb", 0, 0);
+          selection.lines = [selection.anchor];
+          selectPullRequestDiffLine({ dataset: {
+            agentKey: key,
+            pullRequestId,
+            snapshotId: diff.snapshot_id,
+            reviewLinePath: "lib/example.rb",
+            reviewLineHunk: "0",
+            reviewLineIndex: "100",
+          } }, true);
+          const message = document.querySelector("#growl")?.innerText || "";
+          diff.files[0].hunks[0].lines = originalLines;
+          selection.anchor = null;
+          selection.lines = [];
+          state.renderedViewHtml = "";
+          render();
+          return message;
+        }, prContextAgentKey);
+        if (!rangeLimitMessage.includes("at most 100 contiguous lines")) {
+          throw new Error(`PR range limit was not enforced visibly: ${JSON.stringify(rangeLimitMessage)}`);
+        }
+        const diffErrorState = await prContextPage.evaluate((key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diffKey = pullRequestDiffKey(key, pullRequestId);
+          const original = state.pullRequestDiffs[diffKey];
+          state.pullRequestDiffs[diffKey] = { error: "stale fixture diff", files: [] };
+          state.renderedViewHtml = "";
+          render();
+          const visible = document.querySelector(".ui-alert")?.innerText || "";
+          state.pullRequestDiffs[diffKey] = original;
+          state.renderedViewHtml = "";
+          render();
+          return visible;
+        }, prContextAgentKey);
+        if (!diffErrorState.includes("Diff unavailable") || !diffErrorState.includes("stale fixture diff")) {
+          throw new Error(`PR diff errors are not visible: ${JSON.stringify(diffErrorState)}`);
+        }
+        await firstLine.click();
+        await secondLine.click({ modifiers: ["Shift"] });
+        const selectedRange = await prContextPage.evaluate(() => ({
+          selected: document.querySelectorAll("[data-select-pr-diff-line]:checked").length,
+          selectionText: document.querySelector("[data-pr-context-selection]")?.innerText,
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        }));
+        if (selectedRange.selected !== 2 || !selectedRange.selectionText?.includes("2 lines selected") || selectedRange.overflow) {
+          throw new Error(`PR line range selection is not usable on mobile: ${JSON.stringify(selectedRange)}`);
+        }
+        await prContextPage.evaluate(() => document.querySelector("#growl")?.classList.add("hidden"));
+        if (captureDir) await prContextPage.screenshot({ path: path.join(captureDir, "pr-context-selected-mobile.png"), fullPage: true });
+        await prContextPage.keyboard.press("Escape");
+        if (await prContextPage.locator("[data-select-pr-diff-line]:checked").count()) {
+          const escapeState = await prContextPage.evaluate((key) => ({
+            route: parseRoute(),
+            selections: state.pullRequestDiffSelections,
+            speech: Boolean(state.speechRecognition),
+            key,
+          }), prContextAgentKey);
+          throw new Error(`Escape did not clear the active PR diff range: ${JSON.stringify(escapeState)}`);
+        }
+        await firstLine.click();
+        await secondLine.click({ modifiers: ["Shift"] });
+        await prContextPage.evaluate(async () => refresh({ force: true, forceConversation: true }));
+        await prContextPage.waitForSelector("[data-select-pr-diff-line]:checked", { state: "visible", timeout: 10_000 });
+        if (await prContextPage.locator("[data-select-pr-diff-line]:checked").count() !== 2) {
+          throw new Error("PR line selection did not survive a conversation refresh");
+        }
+        await prContextPage.click("[data-attach-pr-diff-selection]");
+        await prContextPage.waitForSelector("[data-pending-pr-context]", { state: "visible", timeout: 10_000 });
+        const pendingContext = await prContextPage.evaluate(() => ({
+          text: document.querySelector("[data-pending-pr-context]")?.innerText,
+          focused: document.activeElement?.id === "prompt-input",
+        }));
+        if (!pendingContext.text?.includes("example/web#123") ||
+            !pendingContext.text?.includes("lib/example.rb") ||
+            !pendingContext.text?.includes("mixed sides") ||
+            !pendingContext.focused) {
+          throw new Error(`Attached PR context is incomplete or did not focus the composer: ${JSON.stringify(pendingContext)}`);
+        }
+        await prContextPage.click("[data-remove-pr-context]");
+        if (await prContextPage.locator("[data-pending-pr-context]").count()) {
+          throw new Error("Pending PR context could not be removed");
+        }
+        await firstLine.click();
+        await secondLine.click({ modifiers: ["Shift"] });
+        await prContextPage.click("[data-attach-pr-diff-selection]");
+        await firstLine.click();
+        await secondLine.click({ modifiers: ["Shift"] });
+        await prContextPage.click("[data-attach-pr-diff-selection]");
+        if (await prContextPage.locator("[data-pending-pr-context]").count() !== 1 ||
+            !(await prContextPage.locator("#growl").innerText()).includes("already attached")) {
+          throw new Error("Duplicate PR context was not rejected visibly");
+        }
+        await prContextPage.evaluate((key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diff = state.pullRequestDiffs[pullRequestDiffKey(key, pullRequestId)];
+          diff.snapshot_id = "newer-snapshot";
+          state.renderedViewHtml = "";
+          render();
+        }, prContextAgentKey);
+        if (!(await prContextPage.locator("[data-pending-pr-context]").innerText()).includes("outdated")) {
+          throw new Error("Stale pending PR context is not called out before submission");
+        }
+        await prContextPage.evaluate((key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diff = state.pullRequestDiffs[pullRequestDiffKey(key, pullRequestId)];
+          diff.snapshot_id = document.querySelector("[data-pending-pr-context]")?.dataset.pendingPrContext
+            ? pendingPullRequestContextsFor(key)[0].snapshot_id
+            : diff.snapshot_id;
+          state.renderedViewHtml = "";
+          render();
+        }, prContextAgentKey);
+        await prContextPage.setViewportSize({ width: 1280, height: 800 });
+        await prContextPage.evaluate(() => document.querySelector("#growl")?.classList.add("hidden"));
+        if (captureDir) await prContextPage.screenshot({ path: path.join(captureDir, "pr-context-pending-desktop.png"), fullPage: true });
+        await prContextPage.evaluate(() => {
+          window.__originalPendingAttachmentPayloads = pendingAttachmentPayloads;
+          pendingAttachmentPayloads = async () => new Promise((resolve) => {
+            window.__releasePromptAttachmentPayloads = () => resolve([]);
+          });
+        });
+        await prContextPage.fill("#prompt-input", "Explain the selected change.");
+        await prContextPage.click("#composer button[type='submit']");
+        await prContextPage.waitForFunction(() => typeof window.__releasePromptAttachmentPayloads === "function");
+        await firstLine.click();
+        await prContextPage.click("[data-attach-pr-diff-selection]");
+        if (await prContextPage.locator("[data-pending-pr-context]").count() !== 2) {
+          throw new Error("PR context could not be queued while another prompt payload was encoding");
+        }
+        await prContextPage.evaluate(() => window.__releasePromptAttachmentPayloads());
+        await prContextPage.waitForFunction(
+          () => arrayValue(state.conversations[parseRoute().key]?.blocks)
+            .some((block) => block.content?.includes("[TYCHO_PR_DIFF_CONTEXT]")),
+          null,
+          { timeout: 10_000 }
+        );
+        const sentContext = await prContextPage.evaluate((key) => {
+          pendingAttachmentPayloads = window.__originalPendingAttachmentPayloads;
+          const message = arrayValue(state.conversations[key]?.blocks).find((block) => block.content?.includes("[TYCHO_PR_DIFF_CONTEXT]"));
+          return {
+            content: message?.content || "",
+            pending: pendingPullRequestContextsFor(key).map((context) => context.lines.length),
+          };
+        }, prContextAgentKey);
+        if (!sentContext.content.includes('"repository":"example/web"') ||
+            !sentContext.content.includes('"path":"lib/example.rb"') ||
+            !sentContext.content.includes('"side":"left"') ||
+            !sentContext.content.includes('"side":"right"') ||
+            JSON.stringify(sentContext.pending) !== "[1]") {
+          throw new Error(`Sent PR context lost metadata or consumed a later range: ${JSON.stringify(sentContext)}`);
+        }
         await prContextPage.close();
 
         const pausedReviewPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -1788,13 +2013,44 @@ def write_smoke_script(path)
         await reviewPage.close();
         }
 
-        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
+        const speechAgentKey = await page.evaluate(async () => {
+          const data = await apiPost("/agents", {
+            project_key: "web",
+            template_key: "custom",
+            name: "Speech Smoke Agent",
+            prompt: "Test speech input.",
+            agent: "codex",
+          });
+          state.agents.push(data.agent);
+          return data.agent.key;
+        });
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(speechAgentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
         await page.evaluate(() => {
           window.SpeechRecognition = class SmokeSpeechRecognition {
+            constructor() {
+              window.__speechRecognitionInstances ||= [];
+              window.__speechRecognitionInstances.push(this);
+            }
             start() { window.__speechRecognitionStarted = (window.__speechRecognitionStarted || 0) + 1; }
-            stop() {}
+            stop() {
+              this.stopped = true;
+              if (this.finalOnStop) {
+                this.onresult?.({
+                  resultIndex: 0,
+                  results: [{ isFinal: true, 0: { transcript: this.finalOnStop } }],
+                });
+              }
+              this.onend?.();
+            }
+            abort() {
+              this.aborted = true;
+              this.onerror?.({ error: "aborted" });
+            }
           };
+          if (state.timer) window.clearTimeout(state.timer);
+          state.timer = null;
+          state.pollDeferredUntil = Date.now() + 60_000;
           state.renderedViewHtml = "";
           render();
           const hiddenComposer = document.createElement("form");
@@ -1805,9 +2061,33 @@ def write_smoke_script(path)
           els.view.append(hiddenComposer);
           document.activeElement?.blur();
         });
+        await page.waitForTimeout(1200);
+        const speechIconContract = await page.evaluate(() => ({
+          icon: Boolean(document.querySelector('[data-toggle-speech-mode] path[d^="M12 2a3"]')),
+          state: document.querySelector("[data-toggle-speech-mode]")?.dataset.state,
+          label: document.querySelector("[data-toggle-speech-mode]")?.getAttribute("aria-label"),
+        }));
+        if (!speechIconContract.icon || speechIconContract.state !== "idle" || !speechIconContract.label?.includes("Start speech recognition")) {
+          throw new Error(`Speech idle control is not clear or accessible: ${JSON.stringify(speechIconContract)}`);
+        }
+        await captureVisibleComposer("speech-idle-icon-desktop.png");
         await page.keyboard.press("Meta+Shift+.");
+        const listeningState = await page.evaluate(() => ({
+          state: document.querySelector("[data-toggle-speech-mode]")?.dataset.state,
+          status: document.querySelector("[data-speech-mode-status]")?.textContent,
+          interimResults: state.speechRecognition?.interimResults,
+        }));
+        if (listeningState.state !== "listening" || !listeningState.status?.includes("Listening") || !listeningState.interimResults) {
+          throw new Error(`Speech listening state is incomplete: ${JSON.stringify(listeningState)}`);
+        }
+        await captureVisibleComposer("speech-listening-desktop.png");
         const speechShortcutContract = await page.evaluate((key) => {
           const recognition = state.speechRecognition;
+          recognition?.onresult?.({
+            resultIndex: 0,
+            results: [{ isFinal: false, 0: { transcript: "spoken" } }],
+          });
+          const interim = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] #prompt-input`)?.value;
           recognition?.onresult?.({
             resultIndex: 0,
             results: [{ isFinal: true, 0: { transcript: "spoken smoke" } }],
@@ -1816,19 +2096,36 @@ def write_smoke_script(path)
             started: window.__speechRecognitionStarted,
             selectedAgentKey: state.speechComposerKey,
             focusedPrompt: document.activeElement?.id === "prompt-input" && document.activeElement?.closest("#composer")?.dataset.agentKey === key,
+            interim,
             transcript: document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] #prompt-input`)?.value,
+            state: state.speechState,
+            status: document.querySelector("[data-speech-mode-status]")?.textContent,
             shortcutHint: document.querySelector("[data-toggle-speech-mode]")?.getAttribute("aria-label"),
           };
-        }, agentKey);
+        }, speechAgentKey);
         if (speechShortcutContract.started !== 1 ||
-            speechShortcutContract.selectedAgentKey !== agentKey ||
+            speechShortcutContract.selectedAgentKey !== speechAgentKey ||
             !speechShortcutContract.focusedPrompt ||
+            speechShortcutContract.interim !== "spoken" ||
             speechShortcutContract.transcript !== "spoken smoke" ||
+            speechShortcutContract.state !== "processing" ||
+            !speechShortcutContract.status?.includes("Transcript added") ||
             !speechShortcutContract.shortcutHint?.includes("Shift+.")) {
           throw new Error(`Speech shortcut did not select and focus the visible composer: ${JSON.stringify(speechShortcutContract)}`);
         }
-        if (captureDir) await page.screenshot({ path: path.join(captureDir, "speech-shortcut-desktop.png") });
+        await captureVisibleComposer("speech-transcribed-desktop.png");
         await page.evaluate(() => stopSpeechMode());
+        await page.click("#composer button[type='submit']");
+        await page.waitForFunction(
+          (key) => arrayValue(state.conversations[key]?.blocks).some((block) => block.role === "user" && block.content === "spoken smoke"),
+          speechAgentKey,
+          { timeout: 10_000 }
+        );
+        await page.waitForFunction((key) => !agentIsRunning(findAgent(key)), speechAgentKey, { timeout: 10_000 });
+        await page.evaluate(() => {
+          state.renderedViewHtml = "";
+          render();
+        });
         const speechGuardContract = await page.evaluate((key) => {
           const shortcut = (overrides = {}) => {
             let prevented = false;
@@ -1897,16 +2194,128 @@ def write_smoke_script(path)
           externalInput.remove();
           editable.remove();
           return results;
-        }, agentKey);
+        }, speechAgentKey);
         if (speechGuardContract.textInput.handled || speechGuardContract.textInput.prevented ||
             speechGuardContract.contentEditable.handled || speechGuardContract.contentEditable.prevented ||
             speechGuardContract.repeat.handled || speechGuardContract.composing.handled ||
             speechGuardContract.dialog.handled || speechGuardContract.dialog.prevented ||
-            speechGuardContract.unsupported.handled || speechGuardContract.unsupported.prevented ||
+            !speechGuardContract.unsupported.handled || !speechGuardContract.unsupported.prevented ||
             !speechGuardContract.multiple.handled || !speechGuardContract.focusedVisibleComposer ||
-            !speechGuardContract.disabledIgnored || speechGuardContract.activeKey !== agentKey) {
+            !speechGuardContract.disabledIgnored || speechGuardContract.activeKey !== speechAgentKey) {
           throw new Error(`Speech shortcut guards or composer selection failed: ${JSON.stringify(speechGuardContract)}`);
         }
+        const speechLifecycleContract = await page.evaluate((key) => {
+          const composer = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"]`);
+          const input = composer.querySelector("#prompt-input");
+          input.value = "before after";
+          input.setSelectionRange(6, 6);
+          startSpeechMode(composer);
+          const firstRecognition = state.speechRecognition;
+          firstRecognition.onresult({
+            resultIndex: 0,
+            results: [{ isFinal: true, 0: { transcript: "spoken words" } }],
+          });
+          const insertedAtCaret = input.value;
+          startSpeechMode(composer);
+          const repeatedStopped = firstRecognition.stopped === true && !state.speechRecognition;
+
+          input.value = "keep";
+          input.setSelectionRange(input.value.length, input.value.length);
+          startSpeechMode(composer);
+          const cleanStopRecognition = state.speechRecognition;
+          cleanStopRecognition.onresult({
+            resultIndex: 0,
+            results: [{ isFinal: false, 0: { transcript: "last words" } }],
+          });
+          cleanStopRecognition.finalOnStop = "last words finalized";
+          startSpeechMode(composer);
+          const cleanStopped = input.value;
+
+          input.value = "keep this";
+          input.setSelectionRange(4, 4);
+          startSpeechMode(composer);
+          const cancelRecognition = state.speechRecognition;
+          cancelRecognition.onresult({
+            resultIndex: 0,
+            results: [{ isFinal: false, 0: { transcript: " temporary" } }],
+          });
+          stopSpeechMode({ cancel: true });
+          const cancelled = input.value;
+
+          startSpeechMode(composer);
+          const permissionRecognition = state.speechRecognition;
+          permissionRecognition.onerror({ error: "not-allowed" });
+          const permission = {
+            state: document.querySelector("[data-toggle-speech-mode]")?.dataset.state,
+            status: document.querySelector("[data-speech-mode-status]")?.textContent,
+          };
+
+          startSpeechMode(composer);
+          const networkRecognition = state.speechRecognition;
+          networkRecognition.onerror({ error: "network" });
+          const network = {
+            state: document.querySelector("[data-toggle-speech-mode]")?.dataset.state,
+            status: document.querySelector("[data-speech-mode-status]")?.textContent,
+          };
+
+          startSpeechMode(composer);
+          const rerenderRecognition = state.speechRecognition;
+          state.renderedViewHtml = "force speech cleanup";
+          render();
+          const rerenderCleaned = rerenderRecognition.stopped === true && !state.speechRecognition;
+
+          const navigationComposer = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"]`);
+          startSpeechMode(navigationComposer);
+          const navigationRecognition = state.speechRecognition;
+          window.dispatchEvent(new HashChangeEvent("hashchange"));
+          const navigationCleaned = navigationRecognition.stopped === true && !state.speechRecognition;
+
+          return {
+            insertedAtCaret, repeatedStopped, cleanStopped, cancelled, permission, network,
+            rerenderCleaned, navigationCleaned,
+          };
+        }, speechAgentKey);
+        if (speechLifecycleContract.insertedAtCaret !== "before spoken words after" ||
+            !speechLifecycleContract.repeatedStopped ||
+            speechLifecycleContract.cleanStopped !== "keep last words finalized" ||
+            speechLifecycleContract.cancelled !== "keep this" ||
+            speechLifecycleContract.permission.state !== "error" ||
+            !speechLifecycleContract.permission.status?.includes("permission denied") ||
+            speechLifecycleContract.network.state !== "error" ||
+            !speechLifecycleContract.network.status?.includes("network service") ||
+            !speechLifecycleContract.rerenderCleaned ||
+            !speechLifecycleContract.navigationCleaned) {
+          throw new Error(`Speech lifecycle, caret, permission, or cleanup failed: ${JSON.stringify(speechLifecycleContract)}`);
+        }
+        const unsupportedSpeechContract = await page.evaluate(() => {
+          const constructor = window.SpeechRecognition;
+          Object.defineProperties(window, {
+            SpeechRecognition: { configurable: true, value: undefined },
+            webkitSpeechRecognition: { configurable: true, value: undefined },
+          });
+          state.renderedViewHtml = "";
+          render();
+          const button = document.querySelector("[data-toggle-speech-mode]");
+          button.click();
+          const result = {
+            disabled: button.disabled,
+            state: button.dataset.state,
+            status: document.querySelector("[data-speech-mode-status]")?.textContent,
+            growl: document.querySelector("#growl")?.innerText,
+          };
+          Object.defineProperty(window, "SpeechRecognition", { configurable: true, value: constructor });
+          state.pollDeferredUntil = 0;
+          schedule();
+          state.renderedViewHtml = "";
+          render();
+          return result;
+        });
+        if (unsupportedSpeechContract.disabled || unsupportedSpeechContract.state !== "unsupported" ||
+            !unsupportedSpeechContract.status?.includes("unavailable") ||
+            !unsupportedSpeechContract.growl?.includes("unavailable")) {
+          throw new Error(`Unsupported speech recognition is not actionable: ${JSON.stringify(unsupportedSpeechContract)}`);
+        }
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector("#header-schedule-menu:not(.hidden)", { state: "visible", timeout: 10_000 });
         const scheduleHeaderGeometry = await page.evaluate(() => {
           const scheduleTrigger = document.querySelector("[data-header-schedule-menu] > summary").getBoundingClientRect();
@@ -2214,10 +2623,14 @@ def write_smoke_script(path)
           const agent = findAgent(key);
           return agent && !agentIsRunning(agent);
         }, agentKey, { timeout: 10_000 });
+        await page.evaluate(() => {
+          state.renderedViewHtml = "";
+          render();
+        });
         await page.click("#prompt-input");
         await page.fill("#prompt-input", "$rev");
         await page.evaluate(() => refreshSkillAutocomplete(document.querySelector("#prompt-input")));
-        await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
+        await ensureSkillAutocompleteVisible();
         if (!(await page.locator("[data-skill-autocomplete-rescan]").isVisible())) {
           throw new Error("Skill autocomplete re-scan command was not visible");
         }
@@ -2225,7 +2638,7 @@ def write_smoke_script(path)
           if (typeof refresh !== "function") throw new Error("refresh function is unavailable");
           await refresh({ force: true, forceConversation: true });
         });
-        await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
+        await ensureSkillAutocompleteVisible();
         await page.waitForSelector("[data-skill-autocomplete-index]", { state: "visible", timeout: 10_000 });
         const stillAutocompleting = await page.locator("#prompt-input").inputValue();
         if (stillAutocompleting !== "$rev") {
@@ -3551,6 +3964,8 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     agent_key = create_agent(base_url)
     unscheduled_agent_key = create_agent(base_url, name: "Unscheduled Smoke Agent")
     associate_agent_schedule(fixture.fetch(:logs_dir), agent_key)
+    associate_agent_pull_request(fixture.fetch(:logs_dir), agent_key)
+    associate_agent_pull_request(fixture.fetch(:logs_dir), unscheduled_agent_key)
     wait_for_resource_agents(base_url, [agent_key, unscheduled_agent_key])
     node_dir = File.join(dir, "node")
     install_playwright!(node_dir)

@@ -3438,6 +3438,23 @@ select {
 
 .diff-line.selected { outline: 1px solid var(--accent); outline-offset: -1px; }
 
+.diff-line.selectable {
+  cursor: pointer;
+}
+
+.diff-line.selectable:hover,
+.diff-line.selectable:focus-within {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.diff-line-select {
+  align-self: center;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .diff-line.added {
   background: color-mix(in srgb, var(--ok) 14%, transparent);
 }
@@ -3474,7 +3491,71 @@ select {
   white-space: pre;
 }
 
+.pr-context-selection-bar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  padding: 10px 12px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
+}
+
+.pr-context-selection-bar.has-selection {
+  border-color: var(--accent);
+}
+
+.pr-context-selection-copy,
+.pr-context-selection-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pr-context-selection-copy > span {
+  display: grid;
+  gap: 2px;
+}
+
+.pr-context-selection-copy > span > span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.pending-pr-contexts {
+  display: grid;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+  padding: 10px;
+}
+
+.pending-pr-context.stale {
+  border-color: var(--danger);
+}
+
+.pending-pr-context .pending-attachment-thumb {
+  color: var(--accent);
+}
+
 @media (max-width: 560px) {
+  .pr-context-selection-bar,
+  .pr-context-selection-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .pr-context-selection-actions .ui-button {
+    justify-content: center;
+    width: 100%;
+  }
+
   .diff-toolbar {
     align-items: stretch;
     flex-direction: column;
@@ -5845,6 +5926,10 @@ body:has(.inquiry-form-full-screen) {
   .agent-running-indicator .ui-icon {
     animation: none;
   }
+
+  .speech-mode-button {
+    animation: none !important;
+  }
 }
 
 .skill-toggle-button,
@@ -5859,6 +5944,59 @@ body:has(.inquiry-form-full-screen) {
   padding: 0;
   color: var(--accent);
   line-height: 1;
+}
+
+.speech-mode-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.speech-mode-button[data-state="listening"] {
+  color: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent);
+  animation: speech-listening-pulse 1.4s ease-in-out infinite;
+}
+
+.speech-mode-button[data-state="processing"] {
+  color: var(--info);
+}
+
+.speech-mode-button[data-state="error"],
+.speech-mode-button[data-state="unsupported"] {
+  color: var(--muted);
+}
+
+.speech-mode-status {
+  max-width: 180px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.2;
+}
+
+.speech-mode-control[data-state="error"] .speech-mode-status {
+  color: var(--danger);
+}
+
+@keyframes speech-listening-pulse {
+  50% { transform: scale(1.06); }
+}
+
+@media (max-width: 640px) {
+  .speech-mode-status {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 6px);
+    z-index: 4;
+    max-width: min(260px, 72vw);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    padding: 6px 8px;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.24);
+  }
 }
 
 .attachment-toggle-button {

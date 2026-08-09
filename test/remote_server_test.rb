@@ -30,6 +30,7 @@ module RemoteServerTest
     assert_pull_request_review_refresh_reuses_metadata
     assert_pull_request_feature_gate_and_global_inbox
     assert_pull_request_line_handoff_uses_snapshot_context
+    assert_remote_prompt_accepts_pull_request_context
     assert_github_app_auth_routes
     assert_pull_request_posting_is_confirmed_stale_safe_and_idempotent
     assert_remote_prompt_accepts_uploaded_attachments
@@ -1122,6 +1123,74 @@ module RemoteServerTest
       retry_result = service.handoff_pull_request_review(reference.id, "agent_key" => created[:key], "note" => "Ignored", "start" => false, "idempotency_key" => "line-handoff-1",
                                                           "selection" => { "snapshot_id" => "snapshot-1", "lines" => [{ "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 }] })
       assert(retry_result[:idempotent] == true, "expected an idempotent handoff retry")
+    end
+  end
+
+  def assert_remote_prompt_accepts_pull_request_context
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      diff_store = HQ::PullRequestDiff::Store.new(File.join(dir, "composer-diffs.json"))
+      service = HQ::RemoteService.new(registry:, github_client: FakeGitHubReviewClient.new,
+                                      pull_request_diff_store: diff_store)
+      created = service.create_agent("project_key" => "web", "template_key" => "custom", "name" => "Composer",
+                                     "prompt" => "Work.", "agent" => "codex")
+      agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+      HQ::AgentMemory.new(agent).append_attachment!(
+        { "kind" => "link", "title" => "PR", "url" => "https://github.com/example/web/pull/123" }
+      )
+      HQ::AgentStore.new(registry.projects).save([agent])
+      reference = HQ::PullRequestDiff.reference_from_url("https://github.com/example/web/pull/123")
+      diff_store.save(
+        "id" => reference.id, "snapshot_id" => "composer-snapshot", "provider" => "github",
+        "repository" => "example/web", "number" => 123, "base_sha" => "base", "head_sha" => "head",
+        "diff_format" => HQ::PullRequestDiff::DIFF_FORMAT,
+        "files" => [{ "path" => "lib/example.rb", "hunks" => [{ "lines" => [
+          { "kind" => "removed", "old_number" => 3, "content" => "old" },
+          { "kind" => "added", "new_number" => 4, "content" => "new" }
+        ] }] }]
+      )
+
+      result = service.submit_prompt(created[:key],
+                                     "prompt" => "Explain this range.",
+                                     "pull_request_contexts" => [{
+                                       "pull_request_id" => reference.id,
+                                       "snapshot_id" => "composer-snapshot",
+                                       "lines" => [
+                                         { "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 },
+                                         { "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 1 }
+                                       ]
+                                     }])
+      content = result[:conversation].last[:content]
+      assert(content.start_with?("Explain this range.") && content.include?(HQ::PullRequestSelection::OPEN),
+             "expected normal composer messages to include validated PR context")
+      assert(content.include?('"path":"lib/example.rb"') && content.include?('"side":"left"') &&
+             content.include?('"side":"right"') && content.include?('"old_number":3') &&
+             content.include?('"new_number":4'),
+             "expected PR context to carry repository file, side, and line metadata")
+
+      begin
+        asset_pattern = File.join(HQ::AGENT_LOGS_DIR, "assets", created[:key], "**", "*")
+        asset_files_before = Dir.glob(asset_pattern).select { |path| File.file?(path) }
+        service.submit_prompt(created[:key],
+                              "prompt" => "Stale.",
+                              "attachments" => [{
+                                "filename" => "stale.txt", "mime_type" => "text/plain",
+                                "content_base64" => Base64.strict_encode64("must not be imported")
+                              }],
+                              "pull_request_contexts" => [{
+                                "pull_request_id" => reference.id, "snapshot_id" => "old",
+                                "lines" => [{ "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 }]
+                              }])
+        raise "expected stale composer PR context to fail"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("changed"),
+               "expected stale composer PR context to return an actionable conflict")
+        asset_files_after = Dir.glob(asset_pattern).select { |path| File.file?(path) }
+        assert(asset_files_after == asset_files_before,
+               "expected stale PR context validation to happen before uploaded files are written")
+      end
     end
   end
 
@@ -5362,7 +5431,8 @@ module RemoteServerTest
            "expected Remote UI to clear the prompt before optimistic conversation rendering replaces the composer")
     assert(js[:body].include?("pendingConversationMessages"),
            "expected Remote UI to render optimistic pending chat messages")
-    assert(js[:body].include?("await apiPost(`/agents/${encodeURIComponent(key)}/messages`, { prompt, start: true, attachments });\n      removePendingConversationMessage(key, pendingMessageId, { render: false });"),
+    assert(js[:body].include?("pull_request_contexts: pullRequestContexts") &&
+           js[:body].include?("removePendingConversationMessage(key, pendingMessageId, { render: false });"),
            "expected Remote UI to remove optimistic chat before refreshing server-backed conversation")
     assert(js[:body].include?("loadingConversations"),
            "expected Remote UI to track conversation loading per agent")
