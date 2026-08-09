@@ -1748,6 +1748,71 @@ def write_smoke_script(path)
             ))) {
           throw new Error(`PR title or status did not reflect origin metadata: ${JSON.stringify(prOriginMetadata)}`);
         }
+        const delayedConversationPattern = `**/agents/${encodeURIComponent(prContextAgentKey)}/conversation`;
+        const originalPullRequestHash = await prContextPage.evaluate(() => location.hash);
+        let releaseDelayedConversation;
+        const delayedConversationGate = new Promise((resolve) => {
+          releaseDelayedConversation = resolve;
+        });
+        const delayedConversationHandler = async (route) => {
+          await delayedConversationGate;
+          await route.continue();
+        };
+        await prContextPage.route(delayedConversationPattern, delayedConversationHandler);
+        const secondPullRequestId = await prContextPage.evaluate((key) => {
+          const current = state.pullRequests[key].items[0];
+          const id = `${current.id}-navigation-latency`;
+          state.pullRequests[key].items.push({
+            ...current,
+            id,
+            number: Number(current.number || 0) + 1,
+            title: "Navigation latency fixture",
+          });
+          state.renderedViewHtml = "";
+          render();
+          return id;
+        }, prContextAgentKey);
+        const navigationDiffPattern = `**/pull-requests/${encodeURIComponent(secondPullRequestId)}/diff`;
+        let resolveNavigationDiffRequest;
+        const navigationDiffRequest = new Promise((resolve) => {
+          resolveNavigationDiffRequest = resolve;
+        });
+        const navigationDiffHandler = async (route) => {
+          resolveNavigationDiffRequest();
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ diff: { id: secondPullRequestId, snapshot_id: "navigation-latency", files: [] } }),
+          });
+        };
+        await prContextPage.route(navigationDiffPattern, navigationDiffHandler);
+        const delayedConversationResponse = prContextPage.waitForResponse(
+          (response) => response.url().endsWith(`/agents/${encodeURIComponent(prContextAgentKey)}/conversation`),
+          { timeout: 10_000 }
+        );
+        await prContextPage.click(`.pr-diff-nav-item[href*='${encodeURIComponent(secondPullRequestId)}']`);
+        await prContextPage.waitForFunction(
+          (id) => location.hash.includes(encodeURIComponent(id)),
+          secondPullRequestId,
+          { timeout: 10_000 }
+        );
+        let navigationDiffTimeout;
+        await Promise.race([
+          navigationDiffRequest,
+          new Promise((_resolve, reject) => {
+            navigationDiffTimeout = setTimeout(
+              () => reject(new Error("PR diff request waited behind unrelated route data")),
+              10_000
+            );
+          }),
+        ]);
+        clearTimeout(navigationDiffTimeout);
+        releaseDelayedConversation();
+        await delayedConversationResponse;
+        await prContextPage.unroute(delayedConversationPattern, delayedConversationHandler);
+        await prContextPage.unroute(navigationDiffPattern, navigationDiffHandler);
+        await prContextPage.goto(`${baseUrl}/ui${originalPullRequestHash}`, { waitUntil: "networkidle" });
+        await prContextPage.waitForSelector("[data-select-pr-diff-line]", { state: "visible", timeout: 10_000 });
         const selectableLines = prContextPage.locator("[data-select-pr-diff-line]");
         if (await selectableLines.count() !== 2) throw new Error("PR detail did not expose selectable changed lines");
         const firstLine = selectableLines.nth(0);
