@@ -1729,6 +1729,8 @@ def write_smoke_script(path)
           diff.files[0].hunks[0].lines = Array.from({ length: 101 }, (_, index) => ({
             kind: "context", old_number: index + 1, new_number: index + 1, content: `line ${index + 1}`,
           }));
+          state.renderedViewHtml = "";
+          render();
           selectPullRequestDiffLine({ dataset: {
             agentKey: key,
             pullRequestId,
@@ -1783,6 +1785,74 @@ def write_smoke_script(path)
         if (!diffErrorState.includes("Diff unavailable") || !diffErrorState.includes("stale fixture diff")) {
           throw new Error(`PR diff errors are not visible: ${JSON.stringify(diffErrorState)}`);
         }
+        const largeDiffSelectionContract = await prContextPage.evaluate(async (key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diff = state.pullRequestDiffs[pullRequestDiffKey(key, pullRequestId)];
+          const originalLines = diff.files[0].hunks[0].lines;
+          diff.files[0].hunks[0].lines = Array.from({ length: 1_500 }, (_, index) => ({
+            kind: "context", old_number: index + 1, new_number: index + 1, content: `large diff line ${index + 1}`,
+          }));
+          state.renderedViewHtml = "";
+          const fullRenderStartedAt = performance.now();
+          render();
+          const fullRenderSyncMs = performance.now() - fullRenderStartedAt;
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          const fullRenderMs = performance.now() - fullRenderStartedAt;
+
+          const viewerBefore = document.querySelector("[data-pr-diff-viewer]");
+          const target = document.querySelectorAll("[data-select-pr-diff-line]")[900];
+          target.scrollIntoView({ block: "center", inline: "nearest" });
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          const scrollBefore = window.scrollY;
+          const lineTopBefore = target.closest(".diff-line").getBoundingClientRect().top;
+          const startedAt = performance.now();
+          target.click();
+          const selectionSyncMs = performance.now() - startedAt;
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const durationMs = performance.now() - startedAt;
+          const result = {
+            fullRenderMs,
+            fullRenderSyncMs,
+            durationMs,
+            selectionSyncMs,
+            viewerPersistent: viewerBefore === document.querySelector("[data-pr-diff-viewer]"),
+            scrollDelta: Math.abs(window.scrollY - scrollBefore),
+            lineDelta: Math.abs(target.closest(".diff-line").getBoundingClientRect().top - lineTopBefore),
+            formVisible: Boolean(document.querySelector("[data-pr-inline-comment]")),
+          };
+
+          const pollViewer = document.querySelector("[data-pr-diff-viewer]");
+          const pollComment = document.querySelector("[data-pr-context-comment]");
+          const pollScrollContainer = document.querySelector(".pr-diff-detail");
+          const pollScrollTop = window.scrollY;
+          const pollLineTop = target.closest(".diff-line").getBoundingClientRect().top;
+          render({ preserveLiveEditor: true, preservePollContent: true });
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          result.pollViewerPersistent = pollViewer === document.querySelector("[data-pr-diff-viewer]");
+          result.pollCommentPersistent = pollComment === document.querySelector("[data-pr-context-comment]");
+          result.pollContainerReplaced = pollScrollContainer !== document.querySelector(".pr-diff-detail");
+          result.pollScrollDelta = Math.abs(window.scrollY - pollScrollTop);
+          result.pollLineDelta = Math.abs(target.closest(".diff-line").getBoundingClientRect().top - pollLineTop);
+
+          const selection = pullRequestDiffSelection(key, pullRequestId, diff.snapshot_id);
+          selection.anchor = null;
+          selection.lines = [];
+          selection.comment = "";
+          diff.files[0].hunks[0].lines = originalLines;
+          state.renderedViewHtml = "";
+          render();
+          return result;
+        }, prContextAgentKey);
+        if (!largeDiffSelectionContract.viewerPersistent || !largeDiffSelectionContract.formVisible ||
+            !largeDiffSelectionContract.pollViewerPersistent || !largeDiffSelectionContract.pollCommentPersistent ||
+            !largeDiffSelectionContract.pollContainerReplaced ||
+            largeDiffSelectionContract.scrollDelta > 1 || largeDiffSelectionContract.lineDelta > 1 ||
+            largeDiffSelectionContract.pollScrollDelta > 1 || largeDiffSelectionContract.pollLineDelta > 1 ||
+            largeDiffSelectionContract.durationMs > 500) {
+          throw new Error(`Large PR selection did not preserve the diff, form, or scroll: ${JSON.stringify(largeDiffSelectionContract)}`);
+        }
+        console.log(`PR rendering (1,500 lines): full ${largeDiffSelectionContract.fullRenderSyncMs.toFixed(1)}ms sync / selection ${largeDiffSelectionContract.selectionSyncMs.toFixed(1)}ms sync`);
         await prContextPage.evaluate((key) => {
           const route = parseRoute();
           const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
@@ -1797,11 +1867,20 @@ def write_smoke_script(path)
         await firstLine.click();
         await secondLine.click({ modifiers: ["Shift"] });
         await prContextPage.waitForSelector("[data-pr-inline-comment]", { state: "visible", timeout: 10_000 });
-        const selectedRange = await prContextPage.evaluate(() => ({
-          selected: document.querySelectorAll("[data-select-pr-diff-line]:checked").length,
-          selectionText: document.querySelector("[data-pr-inline-comment]")?.innerText,
-          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-        }));
+        await prContextPage.waitForFunction(() => document.querySelectorAll("[data-select-pr-diff-line]:checked").length === 2);
+        const selectedRange = await prContextPage.evaluate((key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diff = state.pullRequestDiffs[pullRequestDiffKey(key, pullRequestId)];
+          const selection = pullRequestDiffSelection(key, pullRequestId, diff.snapshot_id);
+          return {
+            selected: document.querySelectorAll("[data-select-pr-diff-line]:checked").length,
+            selectedIndexes: selection.lines.map((line) => line.line_index),
+            anchorIndex: selection.anchor?.line_index,
+            selectionText: document.querySelector("[data-pr-inline-comment]")?.innerText,
+            overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        }, prContextAgentKey);
         if (selectedRange.selected !== 2 || !selectedRange.selectionText?.includes("Commenting on") || selectedRange.overflow) {
           throw new Error(`PR line range selection is not usable on mobile: ${JSON.stringify(selectedRange)}`);
         }
@@ -1843,6 +1922,29 @@ def write_smoke_script(path)
         await prContextPage.setViewportSize({ width: 390, height: 844 });
         await prContextPage.evaluate(() => document.querySelector("#growl")?.classList.add("hidden"));
         if (captureDir) await prContextPage.screenshot({ path: path.join(captureDir, "pr-context-selected-mobile.png"), fullPage: true });
+        const cancelContract = await prContextPage.evaluate(() => {
+          const viewer = document.querySelector("[data-pr-diff-viewer]");
+          const selectedLine = document.querySelector(".diff-line.selected");
+          const lineTop = selectedLine?.getBoundingClientRect().top;
+          const scrollTop = window.scrollY;
+          document.querySelector("[data-clear-pr-diff-selection]").click();
+          return {
+            viewerPersistent: viewer === document.querySelector("[data-pr-diff-viewer]"),
+            formRemoved: !document.querySelector("[data-pr-inline-comment]"),
+            selectedRows: document.querySelectorAll(".diff-line.selected").length,
+            checkedLines: document.querySelectorAll("[data-select-pr-diff-line]:checked").length,
+            selectedMarks: document.querySelectorAll(".diff-line-check.selected").length,
+            scrollDelta: Math.abs(window.scrollY - scrollTop),
+            lineDelta: Math.abs((selectedLine?.getBoundingClientRect().top || 0) - (lineTop || 0)),
+          };
+        });
+        if (!cancelContract.viewerPersistent || !cancelContract.formRemoved || cancelContract.selectedRows ||
+            cancelContract.checkedLines || cancelContract.selectedMarks || cancelContract.scrollDelta > 1 || cancelContract.lineDelta > 1) {
+          throw new Error(`Cancel did not clear the persistent PR comment UI in place: ${JSON.stringify(cancelContract)}`);
+        }
+        await firstLine.click();
+        await secondLine.click({ modifiers: ["Shift"] });
+        await prContextPage.waitForFunction(() => document.querySelectorAll("[data-select-pr-diff-line]:checked").length === 2);
         await prContextPage.keyboard.press("Escape");
         if (await prContextPage.locator("[data-select-pr-diff-line]:checked").count()) {
           const escapeState = await prContextPage.evaluate((key) => ({

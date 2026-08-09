@@ -3539,6 +3539,10 @@ select {
   border-color: var(--accent);
 }
 
+.pr-context-selection-placeholder {
+  visibility: hidden;
+}
+
 .pr-context-selection-copy,
 .pr-context-selection-actions {
   display: flex;
