@@ -48,10 +48,13 @@ module HQ
 
       def initialize(path = File.join(HQ::AGENT_LOGS_DIR, "pull_request_diffs.json"))
         @path = path
+        @document_mutex = Mutex.new
+        @document_signature = nil
+        @document_cache = nil
       end
 
       def all
-        parsed = FileStore.read_json(@path, fallback: {})
+        parsed = document
         return {} unless parsed.is_a?(Hash)
         return parsed.fetch("snapshots", {}) if parsed["version"] == STORE_VERSION
 
@@ -62,7 +65,7 @@ module HQ
       end
 
       def fetch_snapshot(snapshot_id)
-        parsed = FileStore.read_json(@path, fallback: {})
+        parsed = document
         return nil unless parsed.is_a?(Hash) && parsed["version"] == STORE_VERSION
 
         parsed.fetch("history", {})[snapshot_id.to_s]
@@ -77,22 +80,58 @@ module HQ
       def save(snapshot)
         with_lock do
           id = snapshot.fetch("id")
-          snapshots = all
+          snapshots = all.dup
           snapshots[id] = snapshot
           snapshots = snapshots.sort_by { |_key, value| value["fetched_at"].to_s }.last(MAX_SNAPSHOTS).to_h
-          parsed = FileStore.read_json(@path, fallback: {})
-          history = parsed.is_a?(Hash) && parsed["version"] == STORE_VERSION ? parsed.fetch("history", {}) : {}
+          parsed = document
+          history = parsed.is_a?(Hash) && parsed["version"] == STORE_VERSION ? parsed.fetch("history", {}).dup : {}
           history[snapshot["snapshot_id"]] = snapshot if snapshot["snapshot_id"]
           history = history.sort_by { |_key, value| value["fetched_at"].to_s }.last(MAX_SNAPSHOTS).to_h
           FileStore.write_json(
             @path,
             { "version" => STORE_VERSION, "snapshots" => snapshots, "history" => history }
           )
+          invalidate_document_cache
         end
         snapshot
       end
 
       private
+
+      def document
+        signature = document_signature
+        @document_mutex.synchronize do
+          return @document_cache if @document_cache && @document_signature == signature
+
+          @document_cache = deep_freeze(FileStore.read_json(@path, fallback: {}))
+          @document_signature = signature
+          @document_cache
+        end
+      end
+
+      def deep_freeze(value)
+        case value
+        when Hash
+          value.each { |key, item| deep_freeze(key); deep_freeze(item) }
+        when Array
+          value.each { |item| deep_freeze(item) }
+        end
+        value.freeze
+      end
+
+      def document_signature
+        stat = File.stat(@path)
+        [stat.ino, stat.size, stat.mtime.to_i, stat.mtime.nsec]
+      rescue Errno::ENOENT
+        nil
+      end
+
+      def invalidate_document_cache
+        @document_mutex.synchronize do
+          @document_signature = nil
+          @document_cache = nil
+        end
+      end
 
       def with_lock
         FileUtils.mkdir_p(File.dirname(@path))

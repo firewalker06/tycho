@@ -3430,6 +3430,12 @@ select {
   line-height: 1.45;
 }
 
+.diff-line-chunk {
+  display: grid;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 2000px;
+}
+
 .diff-line {
   position: relative;
   display: grid;
