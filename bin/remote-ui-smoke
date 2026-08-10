@@ -1748,6 +1748,62 @@ def write_smoke_script(path)
             ))) {
           throw new Error(`PR title or status did not reflect origin metadata: ${JSON.stringify(prOriginMetadata)}`);
         }
+        const asynchronousDiffRenderContract = await prContextPage.evaluate(async () => {
+          const originalRenderDiffLine = renderDiffLine;
+          let renderCount = 0;
+          renderDiffLine = (...args) => {
+            renderCount += 1;
+            return originalRenderDiffLine(...args);
+          };
+          resetPullRequestDiffRender();
+          state.renderedViewHtml = "";
+          render();
+          const immediateRenderCount = renderCount;
+          const loadingBeforePaint = Boolean(document.querySelector(".pr-diff-loading-state"));
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const deferredRenderCount = renderCount - immediateRenderCount;
+          renderDiffLine = originalRenderDiffLine;
+          return { immediateRenderCount, deferredRenderCount, loadingBeforePaint };
+        });
+        if (asynchronousDiffRenderContract.immediateRenderCount !== 0 ||
+            asynchronousDiffRenderContract.deferredRenderCount < 1 ||
+            !asynchronousDiffRenderContract.loadingBeforePaint) {
+          throw new Error(`PR diff rendered in the route-switch frame: ${JSON.stringify(asynchronousDiffRenderContract)}`);
+        }
+        const refreshedSnapshotRenderContract = await prContextPage.evaluate(async (key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diffKey = pullRequestDiffKey(key, pullRequestId);
+          const originalDiff = state.pullRequestDiffs[diffKey];
+          const originalRenderDiffLine = renderDiffLine;
+          let renderCount = 0;
+          renderDiffLine = (...args) => {
+            renderCount += 1;
+            return originalRenderDiffLine(...args);
+          };
+          state.pullRequestDiffs[diffKey] = {
+            ...state.pullRequestDiffs[diffKey],
+            snapshot_id: `${state.pullRequestDiffs[diffKey].snapshot_id}-refreshed`,
+          };
+          state.renderedViewHtml = "";
+          render();
+          const immediateRenderCount = renderCount;
+          const loadingBeforePaint = Boolean(document.querySelector(".pr-diff-loading-state"));
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const deferredRenderCount = renderCount - immediateRenderCount;
+          renderDiffLine = originalRenderDiffLine;
+          state.pullRequestDiffs[diffKey] = originalDiff;
+          resetPullRequestDiffRender();
+          state.renderedViewHtml = "";
+          render();
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          return { immediateRenderCount, deferredRenderCount, loadingBeforePaint };
+        }, prContextAgentKey);
+        if (refreshedSnapshotRenderContract.immediateRenderCount !== 0 ||
+            refreshedSnapshotRenderContract.deferredRenderCount < 1 ||
+            !refreshedSnapshotRenderContract.loadingBeforePaint) {
+          throw new Error(`Refreshed PR diff rendered before the first paint: ${JSON.stringify(refreshedSnapshotRenderContract)}`);
+        }
         const delayedConversationPattern = `**/agents/${encodeURIComponent(prContextAgentKey)}/conversation`;
         const originalPullRequestHash = await prContextPage.evaluate(() => location.hash);
         let releaseDelayedConversation;
@@ -2104,12 +2160,21 @@ def write_smoke_script(path)
         }
         await prContextPage.evaluate(() => document.querySelector("#cached-pr-scroll-smoke-style")?.remove());
         await prContextPage.setViewportSize({ width: 390, height: 844 });
+        await prContextPage.evaluate(() => new Promise((resolve) => (
+          requestAnimationFrame(() => requestAnimationFrame(resolve))
+        )));
         const mobileScrollContract = await prContextPage.evaluate(async ({ firstId, secondId }) => {
           const switchTo = async (id) => {
             Array.from(document.querySelectorAll(".pr-diff-nav-item"))
               .find((item) => item.getAttribute("href")?.includes(encodeURIComponent(id)))
               .click();
-            await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            const deadline = Date.now() + 10_000;
+            const renderKeyPrefix = `${pullRequestDiffKey(parseRoute().key, id)}:`;
+            while (!state.pullRequestDiffRenderReadyKey.startsWith(renderKeyPrefix)) {
+              if (Date.now() > deadline) throw new Error(`Timed out rendering ${id}`);
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+            await new Promise((resolve) => requestAnimationFrame(resolve));
           };
           window.scrollTo(0, 500);
           await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -2310,6 +2375,8 @@ def write_smoke_script(path)
           };
           diff.snapshot_id = `${originalSnapshotId}-changed`;
           render({ preserveLiveEditor: true, preservePollContent: true });
+          result.changedSnapshotImmediateRenderCount = changedSnapshotRenderCount;
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
           renderDiffLine = originalRenderDiffLine;
           result.changedSnapshotRenderCount = changedSnapshotRenderCount;
           result.changedSnapshotViewerReplaced = pollViewer !== document.querySelector("[data-pr-diff-viewer]");
@@ -2322,9 +2389,13 @@ def write_smoke_script(path)
             return originalRenderDiffLine(...args);
           };
           document.querySelector(`[data-toggle-pr-diff-expand-all="${CSS.escape(key)}"]`).click();
+          result.collapsedImmediateRenderCount = collapsedRenderCount;
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
           renderDiffLine = originalRenderDiffLine;
           result.collapsedRenderCount = collapsedRenderCount;
           result.collapsedViewerReplaced = changedSnapshotViewer !== document.querySelector("[data-pr-diff-viewer]");
+          result.collapsedViewerPresent = Boolean(document.querySelector("[data-pr-diff-viewer]"));
+          result.collapsedLoadingVisible = Boolean(document.querySelector(".pr-diff-loading-state"));
           result.collapsedFilesClosed = Array.from(document.querySelectorAll("[data-pr-diff-viewer] .diff-file"))
             .every((detail) => !detail.open);
 
@@ -2354,17 +2425,21 @@ def write_smoke_script(path)
             !largeDiffSelectionContract.forcedViewerPersistent ||
             !largeDiffSelectionContract.forcedCommentPersistent ||
             !largeDiffSelectionContract.forcedTitleUpdated ||
+            largeDiffSelectionContract.changedSnapshotImmediateRenderCount !== 0 ||
             largeDiffSelectionContract.changedSnapshotRenderCount !== 5_000 ||
             !largeDiffSelectionContract.changedSnapshotViewerReplaced ||
-            largeDiffSelectionContract.collapsedRenderCount !== 5_000 ||
+            largeDiffSelectionContract.collapsedImmediateRenderCount !== 0 ||
+            ![0, 5_000].includes(largeDiffSelectionContract.collapsedRenderCount) ||
             !largeDiffSelectionContract.collapsedViewerReplaced ||
+            !largeDiffSelectionContract.collapsedViewerPresent ||
+            largeDiffSelectionContract.collapsedLoadingVisible ||
             !largeDiffSelectionContract.collapsedFilesClosed ||
             largeDiffSelectionContract.scrollDelta > 1 || largeDiffSelectionContract.lineDelta > 1 ||
             largeDiffSelectionContract.pollScrollDelta > 1 || largeDiffSelectionContract.pollLineDelta > 1) {
           throw new Error(`Large PR selection did not preserve the diff, form, or scroll: ${JSON.stringify(largeDiffSelectionContract)}`);
         }
         console.log(`PR rendering (5,000 lines): full ${largeDiffSelectionContract.fullRenderSyncMs.toFixed(1)}ms sync / selection ${largeDiffSelectionContract.selectionSyncMs.toFixed(1)}ms sync / first poll ${largeDiffSelectionContract.pollRenderSyncMs.toFixed(1)}ms sync / steady poll ${largeDiffSelectionContract.steadyPollRenderSyncMs.toFixed(1)}ms sync`);
-        await prContextPage.evaluate((key) => {
+        await prContextPage.evaluate(async (key) => {
           const route = parseRoute();
           const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
           const diff = state.pullRequestDiffs[pullRequestDiffKey(key, pullRequestId)];
@@ -2372,13 +2447,33 @@ def write_smoke_script(path)
           diff.files[0].hunks[0].lines.push({
             kind: "context", old_number: 2, new_number: 2, content: "following unselected line",
           });
+          state.pullRequestDiffViewers.clear();
+          resetPullRequestDiffRender();
           state.renderedViewHtml = "";
           render();
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         }, prContextAgentKey);
+        await prContextPage.waitForSelector("[data-select-pr-diff-line]", { state: "visible", timeout: 10_000 });
         await firstLine.click();
         await secondLine.click({ modifiers: ["Shift"] });
         await prContextPage.waitForSelector("[data-pr-inline-comment]", { state: "visible", timeout: 10_000 });
-        await prContextPage.waitForFunction(() => document.querySelectorAll("[data-select-pr-diff-line]:checked").length === 2);
+        await prContextPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+        const rangeSelectionState = await prContextPage.evaluate((key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diff = state.pullRequestDiffs[pullRequestDiffKey(key, pullRequestId)];
+          const selection = pullRequestDiffSelection(key, pullRequestId, diff.snapshot_id);
+          return {
+            checked: document.querySelectorAll("[data-select-pr-diff-line]:checked").length,
+            selected: selection.lines.map((line) => line.line_index),
+            anchor: selection.anchor?.line_index,
+            snapshotId: diff.snapshot_id,
+            domSnapshotIds: Array.from(document.querySelectorAll("[data-select-pr-diff-line]"), (line) => line.dataset.snapshotId).slice(0, 3),
+          };
+        }, prContextAgentKey);
+        if (rangeSelectionState.checked !== 2) {
+          throw new Error(`PR line range did not select two lines: ${JSON.stringify(rangeSelectionState)}`);
+        }
         const selectedRange = await prContextPage.evaluate((key) => {
           const route = parseRoute();
           const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
@@ -2453,9 +2548,13 @@ def write_smoke_script(path)
             cancelContract.checkedLines || cancelContract.selectedMarks || cancelContract.scrollDelta > 1 || cancelContract.lineDelta > 1) {
           throw new Error(`Cancel did not clear the persistent PR comment UI in place: ${JSON.stringify(cancelContract)}`);
         }
+        await prContextPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
         await firstLine.click();
         await secondLine.click({ modifiers: ["Shift"] });
-        await prContextPage.waitForFunction(() => document.querySelectorAll("[data-select-pr-diff-line]:checked").length === 2);
+        await prContextPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+        if (await prContextPage.locator("[data-select-pr-diff-line]:checked").count() !== 2) {
+          throw new Error("PR range could not be reselected after clearing it");
+        }
         await prContextPage.keyboard.press("Escape");
         if (await prContextPage.locator("[data-select-pr-diff-line]:checked").count()) {
           const escapeState = await prContextPage.evaluate((key) => ({
@@ -2524,18 +2623,19 @@ def write_smoke_script(path)
             !(await prContextPage.locator("#growl").innerText()).includes("already attached")) {
           throw new Error("Duplicate PR context was not rejected visibly");
         }
-        await prContextPage.evaluate((key) => {
+        await prContextPage.evaluate(async (key) => {
           const route = parseRoute();
           const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
           const diff = state.pullRequestDiffs[pullRequestDiffKey(key, pullRequestId)];
           diff.snapshot_id = "newer-snapshot";
           state.renderedViewHtml = "";
           render();
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         }, prContextAgentKey);
         if (!(await prContextPage.locator("[data-pending-pr-context]").innerText()).includes("outdated")) {
           throw new Error("Stale pending PR context is not called out before submission");
         }
-        await prContextPage.evaluate((key) => {
+        await prContextPage.evaluate(async (key) => {
           const route = parseRoute();
           const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
           const diff = state.pullRequestDiffs[pullRequestDiffKey(key, pullRequestId)];
@@ -2544,6 +2644,7 @@ def write_smoke_script(path)
             : diff.snapshot_id;
           state.renderedViewHtml = "";
           render();
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         }, prContextAgentKey);
         await prContextPage.setViewportSize({ width: 1280, height: 800 });
         await prContextPage.evaluate(() => document.querySelector("#growl")?.classList.add("hidden"));

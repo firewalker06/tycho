@@ -597,8 +597,13 @@ module HQ
       return "blocked" if blocked?
       return "idle" if @started_at.nil? && last_run.nil?
       return "idle" if @last_exit_code.nil?
-      return "succeeded" if @last_exit_code.zero?
       return "stopped" if stopped_exit_code?
+
+      structured_status = @structured_result&.dig("status").to_s.strip
+      return "succeeded" if %w[success succeeded no_action_needed].include?(structured_status)
+      return "partial" if structured_status == "partial"
+      return "failed" if structured_status == "failed"
+      return "succeeded" if @last_exit_code.zero?
 
       "failed"
     end
