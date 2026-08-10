@@ -5124,6 +5124,8 @@ module RemoteServerTest
            js[:body].include?("if (options.forceAttachment) return false") &&
            js[:body].include?("if (options.force && !options.preserveFocusedWorkspace) return false") &&
            js[:body].include?("function focusedWorkspacePreservedDuringPoll") &&
+           js[:body].include?("function focusedWorkspacePollingSubtitle") &&
+           js[:body].include?("Conversation poll paused") &&
            js[:body].include?("function syncFocusedWorkspaceCatalog") &&
            js[:body].include?('els.view.querySelector("#inquiry-form")') &&
            js[:body].include?("if (preservedInquiryAgent) state.agentDetails[inquiryAgentKey] = preservedInquiryAgent") &&

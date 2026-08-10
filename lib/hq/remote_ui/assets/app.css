@@ -7162,6 +7162,12 @@ body:has(.inquiry-form-full-screen) {
     white-space: nowrap;
   }
 
+  .subtitle-polling-paused .subtitle-status-text {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
   .content {
     padding-bottom: calc(var(--mobile-nav-height) + 24px + env(safe-area-inset-bottom, 0px));
   }

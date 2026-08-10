@@ -4002,10 +4002,10 @@ def write_smoke_script(path)
           const savedFullScreenInquiryKeys = state.fullScreenInquiryKeys;
           const savedPollDeferredUntil = state.pollDeferredUntil;
           const routes = [
-            { route: { type: "agentPullRequests", key }, workspacePaused: true },
-            { route: { type: "agentAttachment", key, attachmentId: "smoke-attachment-menu" }, workspacePaused: true },
-            { route: { type: "agentSummary", key }, workspacePaused: true },
-            { route: { type: "projectDiff", key: "web", scope: "worktree", backTo: { type: "agent", key } }, workspacePaused: true },
+            { route: { type: "agentPullRequests", key }, workspacePaused: true, subtitle: "Conversation poll paused / PR details" },
+            { route: { type: "agentAttachment", key, attachmentId: "smoke-attachment-menu" }, workspacePaused: true, subtitle: "Conversation poll paused / attachment" },
+            { route: { type: "agentSummary", key }, workspacePaused: true, subtitle: "Conversation poll paused / summary" },
+            { route: { type: "projectDiff", key: "web", scope: "worktree", backTo: { type: "agent", key } }, workspacePaused: true, subtitle: "Conversation poll paused / project diff" },
             { route: { type: "agent", key }, workspacePaused: false },
           ];
           let catalogReads = 0;
@@ -4027,7 +4027,7 @@ def write_smoke_script(path)
           };
           try {
             const results = [];
-            for (const { route, workspacePaused } of routes) {
+            for (const { route, workspacePaused, subtitle } of routes) {
               clearTimeout(state.timer);
               state.timer = null;
               catalogReads = 0;
@@ -4035,7 +4035,7 @@ def write_smoke_script(path)
               renderCalls = 0;
               history.replaceState(null, "", routeHash(route));
               await refresh({ force: true, forceConversation: true, preserveFocusedWorkspace: true });
-              results.push({ type: route.type, workspacePaused, catalogReads, conversationReads, renderCalls });
+              results.push({ type: route.type, workspacePaused, expectedSubtitle: subtitle, subtitle: els.subtitle.textContent.trim(), catalogReads, conversationReads, renderCalls });
             }
             return results;
           } finally {
@@ -4057,11 +4057,53 @@ def write_smoke_script(path)
         }, agentKey);
         if (focusedRoutePollingContract.some((route) => (
           route.catalogReads < 1 ||
+          (route.workspacePaused && route.subtitle !== route.expectedSubtitle) ||
           (route.workspacePaused && (route.conversationReads !== 0 || route.renderCalls !== 0)) ||
           (!route.workspacePaused && (route.conversationReads < 1 || route.renderCalls < 1))
         ))) {
           throw new Error(`Focused non-conversation routes performed workspace polling: ${JSON.stringify(focusedRoutePollingContract)}`);
         }
+        const mobilePollingSubtitleHash = await page.evaluate(() => location.hash);
+        await page.setViewportSize({ width: 390, height: 844 });
+        const mobilePollingSubtitleContract = await page.evaluate((key) => {
+          history.replaceState(null, "", routeHash({ type: "agentPullRequests", key }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+          const subtitle = document.querySelector("#screen-subtitle .subtitle-status-text");
+          const styles = getComputedStyle(subtitle);
+          const headerRect = els.header.getBoundingClientRect();
+          const firstContentRect = els.view.firstElementChild?.getBoundingClientRect();
+          const result = {
+            text: subtitle?.textContent.trim(),
+            clientWidth: subtitle?.clientWidth || 0,
+            scrollWidth: subtitle?.scrollWidth || 0,
+            clientHeight: subtitle?.clientHeight || 0,
+            scrollHeight: subtitle?.scrollHeight || 0,
+            whiteSpace: styles.whiteSpace,
+            overflow: styles.overflow,
+            headerHeight: headerRect.height,
+            headerBottom: headerRect.bottom,
+            firstContentTop: firstContentRect?.top || 0,
+            detailHeaderHeight: parseFloat(getComputedStyle(els.view).getPropertyValue("--detail-header-height")) || 0,
+          };
+          return result;
+        }, agentKey);
+        if (!mobilePollingSubtitleContract.text.startsWith("Conversation poll paused") ||
+            mobilePollingSubtitleContract.whiteSpace === "nowrap" ||
+            mobilePollingSubtitleContract.scrollWidth > mobilePollingSubtitleContract.clientWidth + 1 ||
+            mobilePollingSubtitleContract.scrollHeight > mobilePollingSubtitleContract.clientHeight + 1 ||
+            Math.abs(mobilePollingSubtitleContract.detailHeaderHeight - Math.ceil(mobilePollingSubtitleContract.headerHeight)) > 1 ||
+            mobilePollingSubtitleContract.firstContentTop + 1 < mobilePollingSubtitleContract.headerBottom) {
+          throw new Error(`Mobile header clips the paused polling state: ${JSON.stringify(mobilePollingSubtitleContract)}`);
+        }
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await page.evaluate((hash) => {
+          history.replaceState(null, "", hash);
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+        }, mobilePollingSubtitleHash);
         const focusedStatusSyncContract = await page.evaluate(async (key) => {
           const originalHash = location.hash;
           const originalLoadResourceCatalog = loadResourceCatalog;
