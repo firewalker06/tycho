@@ -12,6 +12,8 @@ Agent-scoped PR discovery persists canonical references and compact metadata in 
 
 The Remote UI preloads up to six saved diff snapshots for the open agent, cancels stale queued preloads when that route changes, retains at most twelve snapshot payloads, and keeps up to six visited diff viewers and scroll positions in bounded LRU caches. Foreground navigation has priority and one reserved request slot, so a click cannot wait behind background preloads; an explicit refresh that meets an in-flight preload follows it with the required refresh request. Single and bulk refresh results use the same bounded payload cache and protect the selected PR. Route changes paint the PR shell and loading state first, then attach even an already-cached diff on a later animation frame, keeping diff layout out of the navigation frame. Diff lines render in 100-line containment chunks so off-screen code does not force full-page layout. The persistent snapshot store remains authoritative, while the server reuses an immutable parsed document until the snapshot file's inode, size, or nanosecond mtime changes. Switching among visited PRs therefore avoids both JSON reparsing and rebuilding thousands of diff-line DOM controls; first visits use the preloaded snapshot and bounded layout.
 
+Automatic Remote UI polling does not fetch or rebuild the conversation behind a focused PR Diff. It still reconciles lightweight agent status and lifecycle controls from the resource catalog; the cross-route policy is recorded in `docs/PROJECT_STATUS.md`.
+
 ## Workflow
 
 ```mermaid

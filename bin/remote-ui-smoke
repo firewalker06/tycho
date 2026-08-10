@@ -3897,6 +3897,324 @@ def write_smoke_script(path)
           state.renderedViewHtml = "";
           render();
         }, agentKey);
+        const focusedCodeHighlightContract = await page.evaluate((key) => {
+          const originalHash = location.hash;
+          const originalPrism = window.Prism;
+          const originalRubyFailure = codeHighlighter.failedLanguages.ruby;
+          const attachment = {
+            id: "smoke-code-highlight",
+            agent_key: key,
+            type: "file",
+            title: "smoke.rb",
+            path: "/tmp/tycho-smoke/smoke.rb",
+            format: "text",
+            mime_type: "text/x-ruby",
+            content: `puts :smoke # ${"x".repeat(500)}`,
+          };
+          state.attachmentDetails[attachment.id] = attachment;
+          const agent = findAgent(key);
+          agent.attachments = [...(agent.attachments || []).filter((item) => item.id !== attachment.id), attachment];
+          window.Prism = null;
+          codeHighlighter.failedLanguages.ruby = true;
+          history.replaceState(null, "", routeHash({ type: "agentAttachment", key, attachmentId: attachment.id }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+          clearTimeout(state.timer);
+          state.timer = null;
+          const workspaceBefore = document.querySelector("[data-agent-workspace]");
+          const viewerBefore = document.querySelector(".attachment-code-viewer");
+          viewerBefore.scrollLeft = 80;
+          const codeBefore = viewerBefore.querySelector("code")?.textContent;
+          window.Prism = {
+            languages: { ruby: {} },
+            highlight: (source) => `<span class="token smoke-token">${escapeHtml(source)}</span>`,
+          };
+          delete codeHighlighter.failedLanguages.ruby;
+          renderCodeRoute("ruby");
+          const result = {
+            codeBefore,
+            highlighted: Boolean(document.querySelector(".attachment-code-viewer .smoke-token")),
+            scrollLeft: document.querySelector(".attachment-code-viewer")?.scrollLeft,
+            workspacePreserved: document.querySelector("[data-agent-workspace]") === workspaceBefore,
+          };
+          if (originalPrism === undefined) delete window.Prism;
+          else window.Prism = originalPrism;
+          if (originalRubyFailure === undefined) delete codeHighlighter.failedLanguages.ruby;
+          else codeHighlighter.failedLanguages.ruby = originalRubyFailure;
+          history.replaceState(null, "", originalHash);
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+          schedule();
+          return result;
+        }, agentKey);
+        if (!focusedCodeHighlightContract.codeBefore.startsWith("puts :smoke") ||
+            !focusedCodeHighlightContract.highlighted ||
+            focusedCodeHighlightContract.scrollLeft !== 80 ||
+            !focusedCodeHighlightContract.workspacePreserved) {
+          throw new Error(`Focused code highlighting replaced the workspace or failed to upgrade: ${JSON.stringify(focusedCodeHighlightContract)}`);
+        }
+        const focusedMarkdownUpgradeContract = await page.evaluate(() => {
+          const originalMarked = window.marked;
+          const originalPurify = window.DOMPurify;
+          const originalFailed = markdownParser.failed;
+          const workspace = document.querySelector("[data-agent-workspace]");
+          const fixture = document.createElement("div");
+          fixture.dataset.smokeMarkdownFixture = "true";
+          workspace.appendChild(fixture);
+          window.marked = null;
+          window.DOMPurify = null;
+          markdownParser.failed = false;
+          fixture.innerHTML = renderMarkdown("**focused markdown**", { menuScope: "smoke-focused-markdown" });
+          const storedBeforeUpgrade = state.markdownFallbacks.size;
+          window.marked = { parse: () => "<p><strong>focused markdown</strong></p>" };
+          window.DOMPurify = { sanitize: (html) => html };
+          renderMarkdownRoute();
+          const upgraded = Boolean(fixture.querySelector("strong"));
+          const workspacePreserved = document.querySelector("[data-agent-workspace]") === workspace;
+
+          window.marked = null;
+          window.DOMPurify = null;
+          markdownParser.failed = true;
+          state.markdownFallbacks.clear();
+          const failedHtml = renderMarkdown("**plain fallback**", { menuScope: "smoke-failed-markdown" });
+          const failedFallbackStored = state.markdownFallbacks.size;
+          window.marked = originalMarked;
+          window.DOMPurify = originalPurify;
+          markdownParser.failed = originalFailed;
+          fixture.remove();
+          return { storedBeforeUpgrade, upgraded, workspacePreserved, failedHtml, failedFallbackStored };
+        });
+        if (focusedMarkdownUpgradeContract.storedBeforeUpgrade < 1 ||
+            !focusedMarkdownUpgradeContract.upgraded ||
+            !focusedMarkdownUpgradeContract.workspacePreserved ||
+            focusedMarkdownUpgradeContract.failedHtml.includes("data-markdown-fallback-key") ||
+            focusedMarkdownUpgradeContract.failedFallbackStored !== 0) {
+          throw new Error(`Focused Markdown fallback upgrade or failure cleanup regressed: ${JSON.stringify(focusedMarkdownUpgradeContract)}`);
+        }
+        const focusedRoutePollingContract = await page.evaluate(async (key) => {
+          const originalHash = location.hash;
+          const originalFetch = window.fetch;
+          const originalRender = render;
+          const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+          const savedFullScreenComposerKeys = state.fullScreenComposerKeys;
+          const savedFullScreenInquiryKeys = state.fullScreenInquiryKeys;
+          const savedPollDeferredUntil = state.pollDeferredUntil;
+          const routes = [
+            { route: { type: "agentPullRequests", key }, workspacePaused: true },
+            { route: { type: "agentAttachment", key, attachmentId: "smoke-attachment-menu" }, workspacePaused: true },
+            { route: { type: "agentSummary", key }, workspacePaused: true },
+            { route: { type: "projectDiff", key: "web", scope: "worktree", backTo: { type: "agent", key } }, workspacePaused: true },
+            { route: { type: "agent", key }, workspacePaused: false },
+          ];
+          let catalogReads = 0;
+          let conversationReads = 0;
+          let renderCalls = 0;
+          Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+          state.fullScreenComposerKeys = new Set();
+          state.fullScreenInquiryKeys = new Set();
+          state.pollDeferredUntil = 0;
+          window.fetch = async (input, init) => {
+            const requestUrl = new URL(typeof input === "string" ? input : input.url, location.href);
+            if (requestUrl.pathname === "/servers/resources") catalogReads += 1;
+            if (requestUrl.pathname.endsWith("/conversation")) conversationReads += 1;
+            return originalFetch(input, init);
+          };
+          render = (...args) => {
+            renderCalls += 1;
+            return originalRender(...args);
+          };
+          try {
+            const results = [];
+            for (const { route, workspacePaused } of routes) {
+              clearTimeout(state.timer);
+              state.timer = null;
+              catalogReads = 0;
+              conversationReads = 0;
+              renderCalls = 0;
+              history.replaceState(null, "", routeHash(route));
+              await refresh({ force: true, forceConversation: true, preserveFocusedWorkspace: true });
+              results.push({ type: route.type, workspacePaused, catalogReads, conversationReads, renderCalls });
+            }
+            return results;
+          } finally {
+            window.fetch = originalFetch;
+            render = originalRender;
+            if (hiddenDescriptor) Object.defineProperty(document, "hidden", hiddenDescriptor);
+            else delete document.hidden;
+            state.fullScreenComposerKeys = savedFullScreenComposerKeys;
+            state.fullScreenInquiryKeys = savedFullScreenInquiryKeys;
+            state.pollDeferredUntil = savedPollDeferredUntil;
+            clearTimeout(state.timer);
+            state.timer = null;
+            history.replaceState(null, "", originalHash);
+            state.renderedRouteKey = null;
+            state.renderedViewHtml = "";
+            render();
+            schedule();
+          }
+        }, agentKey);
+        if (focusedRoutePollingContract.some((route) => (
+          route.catalogReads < 1 ||
+          (route.workspacePaused && (route.conversationReads !== 0 || route.renderCalls !== 0)) ||
+          (!route.workspacePaused && (route.conversationReads < 1 || route.renderCalls < 1))
+        ))) {
+          throw new Error(`Focused non-conversation routes performed workspace polling: ${JSON.stringify(focusedRoutePollingContract)}`);
+        }
+        const focusedStatusSyncContract = await page.evaluate(async (key) => {
+          const originalHash = location.hash;
+          const originalLoadResourceCatalog = loadResourceCatalog;
+          const originalRender = render;
+          const agent = findAgent(key);
+          agent.running = true;
+          agent.status = "running";
+          agent.unread = false;
+          history.replaceState(null, "", routeHash({ type: "agentSummary", key }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          originalRender();
+          clearTimeout(state.timer);
+          state.timer = null;
+          const workspaceBefore = document.querySelector("[data-agent-workspace]");
+          const steadyActionBefore = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] [data-agent-action="stop"]`);
+          steadyActionBefore?.focus({ preventScroll: true });
+          syncFocusedWorkspaceCatalog(parseRoute());
+          const steadyActionAfter = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] [data-agent-action="stop"]`);
+          const before = {
+            status: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
+            action: document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] [data-agent-action="stop"]`)?.textContent.trim(),
+            steadyActionPreserved: steadyActionAfter === steadyActionBefore,
+            steadyActionFocused: document.activeElement === steadyActionBefore,
+          };
+          let renderCalls = 0;
+          let conversationReads = 0;
+          render = (...args) => {
+            renderCalls += 1;
+            return originalRender(...args);
+          };
+          loadResourceCatalog = async () => {
+            const data = await originalLoadResourceCatalog();
+            for (const server of data.servers || []) {
+              for (const item of server.agents || []) {
+                if (normalizeAgentResource(item, server)?.key !== key) continue;
+                item.running = false;
+                item.status = "succeeded";
+                item.unread = false;
+                item.awaiting_input = false;
+                item.blocked = false;
+                item.last_result = "success";
+              }
+            }
+            return data;
+          };
+          const originalFetch = window.fetch;
+          window.fetch = async (input, init) => {
+            const requestUrl = new URL(typeof input === "string" ? input : input.url, location.href);
+            if (requestUrl.pathname.endsWith("/conversation")) conversationReads += 1;
+            return originalFetch(input, init);
+          };
+          try {
+            await refresh({ preserveFocusedWorkspace: true });
+            return {
+              before,
+              after: {
+                status: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
+                sendPrompt: document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] button[type="submit"]`)?.textContent.trim(),
+                sendPromptFocused: document.activeElement === document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] button[type="submit"]`),
+              },
+              conversationReads,
+              renderCalls,
+              workspacePreserved: document.querySelector("[data-agent-workspace]") === workspaceBefore,
+            };
+          } finally {
+            window.fetch = originalFetch;
+            loadResourceCatalog = originalLoadResourceCatalog;
+            render = originalRender;
+            clearTimeout(state.timer);
+            state.timer = null;
+            history.replaceState(null, "", originalHash);
+            state.renderedRouteKey = null;
+            state.renderedViewHtml = "";
+            originalRender();
+            schedule();
+          }
+        }, agentKey);
+        if (focusedStatusSyncContract.before.status !== "Running" ||
+            focusedStatusSyncContract.before.action !== "Stop agent" ||
+            !focusedStatusSyncContract.before.steadyActionPreserved ||
+            !focusedStatusSyncContract.before.steadyActionFocused ||
+            focusedStatusSyncContract.after.status !== "Succeeded" ||
+            focusedStatusSyncContract.after.sendPrompt !== "Send prompt" ||
+            !focusedStatusSyncContract.after.sendPromptFocused ||
+            focusedStatusSyncContract.conversationReads !== 0 ||
+            !focusedStatusSyncContract.workspacePreserved) {
+          throw new Error(`Focused workspace status controls did not reconcile in place: ${JSON.stringify(focusedStatusSyncContract)}`);
+        }
+        const navigationDuringPollContract = await page.evaluate(async (key) => {
+          const originalHash = location.hash;
+          const originalLoadResourceCatalog = loadResourceCatalog;
+          const originalFetch = window.fetch;
+          const originalRender = render;
+          let releaseCatalog;
+          let catalogEntered;
+          const catalogStarted = new Promise((resolve) => { catalogEntered = resolve; });
+          const catalogGate = new Promise((resolve) => { releaseCatalog = resolve; });
+          let conversationReads = 0;
+          let renderCalls = 0;
+          history.replaceState(null, "", routeHash({ type: "agent", key }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          originalRender();
+          loadResourceCatalog = async () => {
+            catalogEntered();
+            await catalogGate;
+            return originalLoadResourceCatalog();
+          };
+          window.fetch = async (input, init) => {
+            const requestUrl = new URL(typeof input === "string" ? input : input.url, location.href);
+            if (requestUrl.pathname.endsWith("/conversation")) conversationReads += 1;
+            return originalFetch(input, init);
+          };
+          render = (...args) => {
+            renderCalls += 1;
+            return originalRender(...args);
+          };
+          try {
+            const pendingRefresh = refresh({ force: true, forceConversation: true });
+            await catalogStarted;
+            history.replaceState(null, "", routeHash({ type: "agentSummary", key }));
+            state.renderedRouteKey = null;
+            state.renderedViewHtml = "";
+            originalRender();
+            releaseCatalog();
+            await pendingRefresh;
+            return {
+              route: parseRoute().type,
+              summaryPresent: Boolean(document.querySelector("[data-agent-summary-page]")),
+              conversationReads,
+              renderCalls,
+            };
+          } finally {
+            releaseCatalog();
+            window.fetch = originalFetch;
+            loadResourceCatalog = originalLoadResourceCatalog;
+            render = originalRender;
+            clearTimeout(state.timer);
+            state.timer = null;
+            history.replaceState(null, "", originalHash);
+            state.renderedRouteKey = null;
+            state.renderedViewHtml = "";
+            originalRender();
+            schedule();
+          }
+        }, agentKey);
+        if (navigationDuringPollContract.route !== "agentSummary" ||
+            !navigationDuringPollContract.summaryPresent ||
+            navigationDuringPollContract.conversationReads !== 0 ||
+            navigationDuringPollContract.renderCalls !== 0) {
+          throw new Error(`An older conversation poll replaced focused navigation: ${JSON.stringify(navigationDuringPollContract)}`);
+        }
         const attachmentPollRenderContract = await page.evaluate(async () => {
           clearTimeout(state.timer);
           state.timer = null;

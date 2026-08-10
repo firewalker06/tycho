@@ -5121,12 +5121,16 @@ module RemoteServerTest
            js[:body].include?("delete state.agentDetails[agent.key]"),
            "expected catalog revision changes to invalidate stale agent attachment details")
     assert(js[:body].include?("function preserveWorkspaceDuringPoll") &&
-           js[:body].include?("if (options.force || options.forceAttachment) return false") &&
+           js[:body].include?("if (options.forceAttachment) return false") &&
+           js[:body].include?("if (options.force && !options.preserveFocusedWorkspace) return false") &&
+           js[:body].include?("function focusedWorkspacePreservedDuringPoll") &&
+           js[:body].include?("function syncFocusedWorkspaceCatalog") &&
            js[:body].include?('els.view.querySelector("#inquiry-form")') &&
            js[:body].include?("if (preservedInquiryAgent) state.agentDetails[inquiryAgentKey] = preservedInquiryAgent") &&
-           js[:body].include?("if (!preserveWorkspace) await ensureRouteData(options)") &&
-           js[:body].scan("if (!preserveWorkspace)").length == 3,
-           "expected automatic attachment and inquiry polling to update state without rendering the workspace")
+           js[:body].include?("const preserveCurrentWorkspace = routeChangedDuringRefresh || preserveWorkspaceDuringPoll(options)") &&
+           js[:body].include?("if (!preserveCurrentWorkspace) await ensureRouteData(options)") &&
+           js[:body].include?("syncFocusedWorkspaceCatalog(currentRoute)"),
+           "expected focused workspace polling to reconcile catalog state without fetching or rendering route data")
     assert(js[:body].include?("state.preservePollContentDuringRender") &&
            js[:body].include?("replaceViewContent(html)"),
            "expected explicit attachment refreshes to replace preserved attachment content")

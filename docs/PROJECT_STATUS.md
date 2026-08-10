@@ -353,6 +353,7 @@ verify the bottle.
 - [x] Dedicated mobile structured inquiry submission UI
 - [x] Full-screen inquiry editor with trailing unstructured Leave feedback field
 - [x] Poll-safe inline and full-screen Conversation/inquiry forms that remain attached and focused during shell refreshes
+- [x] Focused Summary, Attachment, PR Diff, and agent-backed project Diff routes poll only the lightweight resource catalog, preserve their workspace DOM, and reconcile status/lifecycle controls in place; normal route polling resumes on Conversation and top-level live views
 - [x] Attachment detail context menus with exclusive Balanced/Widen/Full layouts, content/path copy, and forced cache refresh
 - [x] Responsive desktop/mobile shell with persistent, header-aligned in-shell desktop navigation across top-level and detail routes, consistently named New agent action, shared control sizing, and fixed-region safe-area handling
 - [x] Sticky Settings section navigator over one continuous page and copyable native session ID in Conversation Settings

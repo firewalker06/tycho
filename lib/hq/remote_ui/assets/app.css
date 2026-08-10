@@ -5997,6 +5997,12 @@ body:has(.inquiry-form-full-screen) {
   gap: 8px;
 }
 
+.agent-live-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .agent-running-indicator {
   display: inline-grid;
   place-items: center;
