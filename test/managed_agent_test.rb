@@ -1542,10 +1542,26 @@ module ManagedAgentTest
     env = agent.send(:external_process_environment, "BUNDLE_GEMFILE" => "/custom/Gemfile", "CUSTOM" => "1")
 
     assert(env["BUNDLE_BIN_PATH"].nil?, "expected Bundler bin path to be cleared for harnesses")
+    assert(env.key?("BUNDLER_SETUP") && env["BUNDLER_SETUP"].nil?,
+           "expected Bundler setup hook to be cleared for harnesses")
     assert(env["RUBYOPT"].nil?, "expected Ruby loader options to be cleared for harnesses")
     assert(env["GEM_HOME"].nil?, "expected Ruby gem home to be cleared for harnesses")
     assert(env["BUNDLE_GEMFILE"] == "/custom/Gemfile", "expected explicit harness env to remain authoritative")
     assert(env["CUSTOM"] == "1", "expected explicit harness env to be preserved")
+
+    runner_output = IO.popen(
+      agent.send(:external_process_environment, {}),
+      [
+        RbConfig.ruby,
+        "-I", File.expand_path("../lib", __dir__),
+        "-r", "hq/domain/agent_correction_runner",
+        "-e", 'STDOUT.write("runner-loaded")'
+      ],
+      err: %i[child out],
+      &:read
+    )
+    assert($?.success? && runner_output == "runner-loaded",
+           "expected sanitized environment to execute the correction runner, got #{runner_output.inspect}")
   end
 
   def assert_start_spawns_harness_through_validation_runner

@@ -1138,6 +1138,7 @@ module HQ
       {
         "BUNDLE_BIN_PATH" => nil,
         "BUNDLE_GEMFILE" => nil,
+        "BUNDLER_SETUP" => nil,
         "BUNDLER_VERSION" => nil,
         "GEM_HOME" => nil,
         "GEM_PATH" => nil,
