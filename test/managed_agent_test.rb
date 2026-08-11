@@ -35,12 +35,14 @@ module ManagedAgentTest
     assert_native_resume_includes_same_second_follow_up
     assert_response_style_can_be_disabled_and_run_session_is_recorded
     assert_agent_result_schema_describes_summary
+    assert_harness_structured_output_contracts
     assert_no_action_status_conflicts_are_normalized
     assert_agent_updates_replace_the_prior_base_prompt
     assert_initial_user_message_attachments_seed_memory
     assert_model_and_reasoning_effort_persist_and_update
     assert_legacy_run_commands_backfill_model_and_reasoning_effort
     assert_model_and_reasoning_effort_arguments_apply_to_harnesses
+    assert_opencode_schema_guidance_hidden_from_logs
     assert_start_records_missing_harness_without_spawning
     assert_poll_stops_stale_unstructured_output
     assert_poll_preserves_stale_structured_output
@@ -1264,17 +1266,90 @@ module ManagedAgentTest
       prompt: "System prompt",
       agent: "claude"
     )
-    claude_schema = JSON.parse(agent.send(:compact_claude_result_schema))
-    claude_statuses = claude_schema.dig("properties", "status", "enum")
-    assert(claude_statuses.include?("no_action_needed"),
-           "Claude compact result schema should allow no_action_needed")
-    assert(claude_schema.dig("properties", "status", "description") == status_description,
-           "Claude compact result schema should inherit canonical status guidance")
-    inquiry_description = claude_schema.dig("properties", "inquiry_json", "description").to_s
-    assert(inquiry_description.include?('"message"') && inquiry_description.include?('"fields"'),
-           "Claude compact result schema should describe the inquiry JSON shape")
+    claude_schema = JSON.parse(agent.send(:canonical_result_schema_json))
+    assert(claude_schema == schema,
+           "Claude should receive the same canonical result schema as Codex")
   ensure
     replace_constant(HQ, :AGENT_RESULT_SCHEMA, old_schema_path) if old_schema_path
+  end
+
+  def assert_harness_structured_output_contracts
+    schema = JSON.parse(File.read(HQ::AGENT_RESULT_SCHEMA))
+    claude = HQ::ManagedAgent.new(
+      key: "claude-output-contract",
+      name: "Claude Output Contract",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "System prompt",
+      agent: "claude"
+    )
+    command = claude.send(:build_command).fetch(:command)
+    claude_schema = JSON.parse(command.fetch(command.index("--json-schema") + 1))
+    assert(claude_schema == schema,
+           "Claude command should pass the canonical Codex schema without compatibility fields")
+
+    codex = HQ::ManagedAgent.new(
+      key: "codex-output-contract",
+      name: "Codex Output Contract",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "System prompt",
+      agent: "codex"
+    )
+    codex_prompt = codex.send(:prompt_for_execution, response_style: nil)
+    assert(!codex_prompt.include?("TYCHO STRUCTURED OUTPUT:"),
+           "Codex should continue relying on its native output schema")
+
+    opencode = HQ::ManagedAgent.new(
+      key: "opencode-output-contract",
+      name: "OpenCode Output Contract",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "System prompt",
+      agent: "opencode"
+    )
+    opencode_prompt = opencode.send(:prompt_for_execution, response_style: nil)
+    assert(opencode_prompt.include?("TYCHO STRUCTURED OUTPUT:"),
+           "cold OpenCode prompt should include structured-output guidance")
+    assert(opencode_prompt.include?(JSON.generate(schema)),
+           "cold OpenCode prompt should include the exact canonical schema")
+    visible_prompt = opencode.send(
+      :prompt_for_execution,
+      response_style: nil,
+      include_hidden_guidance: false
+    )
+    assert(!visible_prompt.include?("TYCHO STRUCTURED OUTPUT:"),
+           "OpenCode schema guidance should be omitted from the raw prompt header parsed by both UIs")
+    assert(!opencode.send(:composed_prompt).include?("TYCHO STRUCTURED OUTPUT:"),
+           "OpenCode schema guidance should remain outside persistent prompt memory")
+    memory = JSON.generate(opencode.send(:memory_store).events)
+    assert(!memory.include?("TYCHO STRUCTURED OUTPUT:"),
+           "OpenCode schema guidance should remain hidden from TUI and Remote UI history")
+
+    resumed = HQ::ManagedAgent.new(
+      key: "opencode-output-contract-resumed",
+      name: "OpenCode Output Contract Resumed",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "System prompt",
+      agent: "opencode",
+      session_id: "opencode-session",
+      runs: [
+        HQ::ManagedAgent::AgentRun.new(
+          started_at: Time.now - 60,
+          finished_at: Time.now - 30,
+          exit_code: 0,
+          status: "success"
+        )
+      ]
+    )
+    resumed_prompt = resumed.send(:prompt_for_execution, response_style: nil)
+    assert(!resumed_prompt.include?("TYCHO STRUCTURED OUTPUT:"),
+           "resumed OpenCode sessions should rely on the schema sent in their initial prompt")
   end
 
   def assert_no_action_status_conflicts_are_normalized
@@ -2063,6 +2138,57 @@ module ManagedAgentTest
            "expected custom harness env prefix to become child process environment")
   ensure
     HQ.custom_harnesses = old_harnesses if defined?(old_harnesses)
+  end
+
+  def assert_opencode_schema_guidance_hidden_from_logs
+    old_opencode_bin = ENV["TYCHO_OPENCODE_BIN"]
+    old_capture_path = ENV["TYCHO_TEST_OPENCODE_PROMPT_CAPTURE"]
+    Dir.mktmpdir("hq-opencode-schema-guidance-test") do |dir|
+      harness = File.join(dir, "opencode")
+      capture_path = File.join(dir, "prompt.txt")
+      File.write(harness, <<~RUBY)
+        #!/usr/bin/env ruby
+        File.write(ENV.fetch("TYCHO_TEST_OPENCODE_PROMPT_CAPTURE"), ARGV.last.to_s)
+      RUBY
+      File.chmod(0o755, harness)
+      ENV["TYCHO_OPENCODE_BIN"] = harness
+      ENV["TYCHO_TEST_OPENCODE_PROMPT_CAPTURE"] = capture_path
+
+      agent = HQ::ManagedAgent.new(
+        key: "opencode-hidden-schema",
+        name: "OpenCode Hidden Schema",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "System prompt",
+        agent: "opencode",
+        response_style: false,
+        log_path: File.join(dir, "opencode.raw.log")
+      )
+      agent.start!
+      deadline = Time.now + 5
+      sleep 0.05 until File.file?(capture_path) || Time.now >= deadline
+
+      assert(File.file?(capture_path), "expected fake OpenCode harness to capture its execution prompt")
+      assert(File.read(capture_path).include?("TYCHO STRUCTURED OUTPUT:"),
+             "expected OpenCode child process to receive hidden schema guidance")
+      prompt_header = File.read(agent.raw_log_path).split(HQ::ManagedAgent::PROCESS_OUTPUT_MARKER, 2).first
+      assert(!prompt_header.include?("TYCHO STRUCTURED OUTPUT:"),
+             "expected raw prompt header parsed by both UIs to omit hidden schema guidance")
+    ensure
+      agent&.retire_for_archive! if agent&.running?
+    end
+  ensure
+    if old_opencode_bin
+      ENV["TYCHO_OPENCODE_BIN"] = old_opencode_bin
+    else
+      ENV.delete("TYCHO_OPENCODE_BIN")
+    end
+    if old_capture_path
+      ENV["TYCHO_TEST_OPENCODE_PROMPT_CAPTURE"] = old_capture_path
+    else
+      ENV.delete("TYCHO_TEST_OPENCODE_PROMPT_CAPTURE")
+    end
   end
 
   def argument_after(command, flag)

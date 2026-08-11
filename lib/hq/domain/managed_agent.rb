@@ -422,7 +422,7 @@ module HQ
       end
       response_style_text = resolved_response_style
       response_style_source = response_style_source_for(response_style_text)
-      prompt_text = prompt_for_execution(response_style: response_style_text)
+      prompt_text = prompt_for_execution(response_style: response_style_text, include_hidden_guidance: false)
       execution = build_command
       command = execution.fetch(:command)
       environment = execution.fetch(:env, {})
@@ -926,7 +926,7 @@ module HQ
         opencode_executable: opencode_executable,
         last_message_file_path: last_message_file_path,
         result_schema_path: AGENT_RESULT_SCHEMA,
-        claude_result_schema: compact_claude_result_schema
+        claude_result_schema: canonical_result_schema_json
       )
     end
 
@@ -1645,7 +1645,7 @@ module HQ
       lines.join("\n")
     end
 
-    def prompt_for_execution(response_style: resolved_response_style)
+    def prompt_for_execution(response_style: resolved_response_style, include_hidden_guidance: true)
       base_prompt = unless native_resume?
                       composed_prompt
                     else
@@ -1654,13 +1654,17 @@ module HQ
                       latest = memory_store.latest_user_message_after(threshold, inclusive: true)
                       latest.to_s.strip.empty? ? "Continue from the current HQ managed-agent state." : latest.to_s
                     end
-      with_execution_guidance(base_prompt, response_style:)
+      with_execution_guidance(base_prompt, response_style:, include_hidden_guidance:)
     end
 
-    def with_execution_guidance(prompt, response_style: resolved_response_style)
+    def with_execution_guidance(prompt, response_style: resolved_response_style, include_hidden_guidance: true)
       text = prompt.to_s.rstrip
       unless response_style.to_s.empty? || text.include?(response_style.to_s)
         text = [text, "RESPONSE STYLE:\n#{response_style}"].reject(&:empty?).join("\n\n")
+      end
+      if include_hidden_guidance && opencode_agent? && !native_resume?
+        guidance = opencode_structured_output_guidance
+        text = [guidance, text].reject(&:empty?).join("\n\n") unless guidance.empty?
       end
       with_final_output_checklist(text)
     end
@@ -1795,33 +1799,24 @@ module HQ
       ExecutableResolver.command_for_tool("opencode")
     end
 
-    def compact_claude_result_schema
+    def canonical_result_schema_json
       return nil unless File.exist?(AGENT_RESULT_SCHEMA)
 
-      JSON.generate(claude_result_schema(JSON.parse(File.read(AGENT_RESULT_SCHEMA))))
+      JSON.generate(JSON.parse(File.read(AGENT_RESULT_SCHEMA)))
     rescue StandardError
       nil
     end
 
-    def claude_result_schema(canonical_schema)
-      properties = canonical_schema.fetch("properties", {})
-      {
-        "type" => "object",
-        "additionalProperties" => false,
-        "properties" => {
-          "status" => properties.fetch("status", { "type" => "string" }),
-          "summary" => properties.fetch("summary", { "type" => "string" }),
-          "inquiry_json" => {
-            "type" => "string",
-            "description" => 'JSON-encoded inquiry object shaped as {"message": string, "fields": [{"key": string, "label": string, "description": string|null, "input_type": "text"|"multiline"|"number"|"integer"|"boolean"|"select"|"multi_select", "required": boolean, "options": string[]|null}]}, or the literal string null when no inquiry is needed.'
-          },
-          "attachments_json" => {
-            "type" => "string",
-            "description" => "JSON-encoded attachments array, or the literal string null when no attachments are needed."
-          }
-        },
-        "required" => ["status", "summary", "inquiry_json", "attachments_json"]
-      }
+    def opencode_structured_output_guidance
+      schema = canonical_result_schema_json.to_s
+      return "" if schema.empty?
+
+      [
+        "TYCHO STRUCTURED OUTPUT:",
+        "Return exactly one JSON object matching the schema below as your final response.",
+        "Do not wrap the object in Markdown fences or add text before or after it.",
+        schema
+      ].join("\n")
     end
 
     def current_run_log_lines

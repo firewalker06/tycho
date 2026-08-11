@@ -118,12 +118,12 @@ logs.
 
 | Function | Codex | Claude | Cursor adaptation | OpenCode adaptation |
 | --- | --- | --- | --- | --- |
-| Schema enforcement | `--output-schema <agent_result.json>` on cold runs | `--json-schema <compact schema>` | Cursor has no known schema flag; use prompt-only best effort | No schema flag found in OpenCode CLI/config docs; use prompt-only best effort |
+| Schema enforcement | `--output-schema <agent_result.json>` | `--json-schema <agent_result.json>` with the same canonical shape | Cursor has no known schema flag; use prompt-only best effort | No schema flag found in OpenCode CLI/config docs; inject the canonical schema into the cold execution prompt only |
 | Structured result source | Last message output file and JSON agent messages | `StructuredOutput` tool or `result.structured_output` | Parse JSON object from result/assistant text, then fallback to prose summary | Parse a final JSON object from result/assistant events, then fallback to prose summary |
 | Required normalized shape | `status`, `summary`, optional `inquiry`, optional `attachments` | Same | Reuse `AgentResultNormalizer` after `AgentStructuredResult` learns Cursor payload shapes | Reuse `AgentResultNormalizer` after `AgentStructuredResult` learns OpenCode payload shapes |
 | Inquiry form | Generic from normalized structured result | Generic | Reuse unchanged | Reuse unchanged |
 | Attachments | Generic normalized links/files persisted into memory and attachments file | Generic | Reuse unchanged | Reuse unchanged; later pass initial local files with `opencode run --file` |
-| Final-output checklist | Appended to every execution prompt | Same | Reuse, but make Cursor prompt explicitly ask for a single JSON object because there is no schema enforcement | Reuse, but make OpenCode prompt explicitly ask for a single JSON object because there is no schema enforcement |
+| Final-output checklist | Appended to every execution prompt | Same | Reuse, but make Cursor prompt explicitly ask for a single JSON object because there is no schema enforcement | Reuse; cold OpenCode prompts also receive the exact canonical schema in a hidden execution-only block |
 
 ## Catalog, Readiness, And Model UX
 
@@ -242,7 +242,7 @@ Primary docs inspected: OpenCode CLI, config, agents, permissions, MCP servers, 
 | Tool calls | Adaptable, fixture-backed | Real completed `tool_use` events carry tool name, input, and output under `part.state`; a bash-denied fixture showed OpenCode hides/refuses Bash and may continue with other tools rather than emitting a separate denial event |
 | Usage/cost | Adaptable | Real `step_finish` events include `part.tokens` and `part.cost`; `stats` and session export remain diagnostic/backfill options |
 | Session id | Adaptable, fixture-backed | Use emitted session id if present; otherwise derive from session list/export only as a fallback |
-| Structured output | Partial, fixture-backed | No schema flag found in local help or official CLI docs. Use prompt-only final JSON instructions and Tycho's existing fallback parser |
+| Structured output | Partial, fixture-backed | No schema flag found in local help or official CLI docs. Cold runs receive the canonical result schema in execution-only guidance that is omitted from raw prompt headers and `memory.jsonl`; Tycho then uses its existing fallback parser |
 | Inquiry and attachments | Partial | Reuse Tycho normalizer after parser extracts a final JSON object; pass initial local files with `--file` later |
 | Native resume prompt policy | Adaptable | Once a session id is known, send only the latest user message using `--session <id>` like Codex/Claude native resume paths |
 

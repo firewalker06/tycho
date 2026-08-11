@@ -2,7 +2,7 @@
 name: SYSTEM_PROMPT_AUDIT
 description: Inventory of Tycho-authored system prompts and automatically injected managed-agent prompt context
 type: audit
-last_audited: 2026-07-12
+last_audited: 2026-08-11
 ---
 
 # System Prompt and Automatic Prompt Injection Audit
@@ -21,7 +21,7 @@ The stable system context at agent creation is two separate pinned memory events
 
 The audit originally found two high-priority contract mismatches and three lower-priority clarity risks. Follow-up work on 2026-07-11 and 2026-07-12 resolved them, including a later focused `no_action_needed` status-classification ambiguity:
 
-1. Resolved: `no_action_needed` is now allowed by the canonical schema and inherited by Claude's compact schema.
+1. Resolved: `no_action_needed` is allowed by the one canonical schema shared by Codex and Claude.
 2. Resolved: the Remote UI now consumes the backend-provided schedule system-message template, with an equivalent compatibility fallback.
 3. Resolved: editing an agent now replaces matching prior base-prompt events in `memory.jsonl`, deduplicating identical prior copies while preserving project context.
 4. Resolved: prompt transport and unsliced cold-replay documentation now match the command builders.
@@ -224,16 +224,15 @@ For `summary`, write a concise operator-facing Markdown summary of the outcome, 
 
 **Introduced:** Separately from prompt text by `AgentCommandBuilder`:
 
-- Cold Codex runs receive `--output-schema config/schemas/agent_result.json` and `-o <last-message path>`.
-- Resumed Codex runs receive only `-o`; the resume subcommand does not currently get `--output-schema`.
-- Claude-compatible runs receive a compact `--json-schema` on both cold and resumed runs.
-- OpenCode receives no schema option; output is best-effort and normalized after parsing.
+- Codex runs receive `--output-schema config/schemas/agent_result.json` and `-o <last-message path>`.
+- Claude-compatible runs receive the same canonical schema through `--json-schema` on cold and resumed runs.
+- Cold OpenCode runs receive the canonical schema in an execution-only `TYCHO STRUCTURED OUTPUT` prompt block because OpenCode has no schema option. The block is omitted from `memory.jsonl` and the raw `prompt=` header, keeping it out of the TUI and Remote UI. Resumed sessions rely on their initial context.
 
-**Content:** The canonical schema requires `status`, `summary`, `inquiry`, and `attachments`, and its status enum includes `no_action_needed`. The Claude projection keeps canonical `status` and `summary`, including that enum, but requires string fields `inquiry_json` and `attachments_json` because of Claude CLI schema constraints. Their descriptions tell the agent to return JSON-encoded values or the literal string `null`.
+**Content:** The canonical schema requires `status`, `summary`, `inquiry`, and `attachments`, and its status enum includes `no_action_needed`. All harnesses receive that exact shape: Codex and Claude through native schema flags, OpenCode through hidden cold-run guidance.
 
 **Purpose:** Constrain final agent output into the shape Tycho needs for statuses, summaries, structured inquiries, and artifact attachments.
 
-**Source:** `config/schemas/agent_result.json`, `ManagedAgent#claude_result_schema`, and `AgentCommandBuilder`.
+**Source:** `config/schemas/agent_result.json`, `ManagedAgent#canonical_result_schema_json`, `ManagedAgent#opencode_structured_output_guidance`, and `AgentCommandBuilder`.
 
 ### 11. Skill trigger insertion (user-mediated, not automatic context)
 
@@ -251,8 +250,8 @@ For `summary`, write a concise operator-facing Markdown summary of the outcome, 
 |---|---|---|---|---|---|---|
 | Normal agent creation | Persisted once | Persisted once | None yet | Resolved, not persisted to memory | Not until run | Not until run |
 | Scheduled agent creation | Persisted once | Custom or generated schedule context, persisted once | First run message is persisted as user text | Project setting inherited | Added only at execution | Harness-dependent |
-| Cold/non-resumed run | Replayed | Replayed with the current replacement base prompt | Entire promptable memory replayed | Added | Added | Codex/Claude enforced; OpenCode none |
-| Native resumed run | Not resent by Tycho | Not resent by Tycho | Latest user message only; attachment block may be included | Added | Added | Claude enforced; resumed Codex not enforced; OpenCode none |
+| Cold/non-resumed run | Replayed | Replayed with the current replacement base prompt | Entire promptable memory replayed | Added | Added | Codex/Claude enforced; OpenCode hidden prompt guidance |
+| Native resumed run | Not resent by Tycho | Not resent by Tycho | Latest user message only; attachment block may be included | Added | Added | Codex/Claude enforced; OpenCode relies on initial context |
 | Agent edit | Existing context retained | Matching prior base-prompt copies replaced by one new pinned event | Existing non-prompt history retained | Current template setting applied | Added on next run | Harness-dependent |
 | Legacy-agent load | Backfilled if exact current project block is absent | Existing prompt retained | Existing memory retained | Global default unless configured later | Added on next run | Harness-dependent |
 | Clone | Fresh project context | Cloned/current prompt becomes fresh system event | Source conversation is not copied | Source setting copied | Added on first clone run | Harness-dependent |
@@ -261,9 +260,9 @@ For `summary`, write a concise operator-facing Markdown summary of the outcome, 
 
 ### Resolved: `no_action_needed` schema parity
 
-`ManagedAgent::FINAL_OUTPUT_CHECKLIST`, the backend schedule contract, scheduler state handling, rendering, and schemas now all recognize `no_action_needed`. The canonical enum is the source for Claude's compact schema.
+`ManagedAgent::FINAL_OUTPUT_CHECKLIST`, the backend schedule contract, scheduler state handling, rendering, and the canonical schema now all recognize `no_action_needed`. Codex and Claude consume that schema unchanged, while OpenCode receives it in hidden initial guidance.
 
-**Resolution:** Added the enum value and regression coverage for both canonical and compact Claude schemas.
+**Resolution:** Added the enum value and regression coverage for the shared Codex/Claude schema and OpenCode prompt projection.
 
 ### Resolved: Remote UI and backend schedule defaults share one contract
 
@@ -319,7 +318,7 @@ The rest of that checklist asks for a concise summary and attachment reporting.
 
 Backend-generated schedule sessions include the same guidance in their stable system message. The Remote `/setup` payload exposes that schedule template with a `%{title}` placeholder, and the Remote UI uses it for schedule creation and editing. Its compatibility fallback carries the same wording.
 
-The canonical JSON schema now describes the complete status decision rule and quiet consequence; Claude inherits that property in its compact schema. Result normalization preserves legitimate no-op checks, converts `no_action_needed` with a structured inquiry to `input_required`, and converts high-confidence completed-work summaries to `success`.
+The canonical JSON schema now describes the complete status decision rule and quiet consequence; Claude receives it unchanged and OpenCode receives it in hidden initial guidance. Result normalization preserves legitimate no-op checks, converts `no_action_needed` with a structured inquiry to `input_required`, and converts high-confidence completed-work summaries to `success`.
 
 ### Observed Local Behavior
 

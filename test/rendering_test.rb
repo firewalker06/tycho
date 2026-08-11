@@ -2573,17 +2573,8 @@ module RenderingTest
     schema = command[command.index("--json-schema") + 1]
     assert(!schema.include?("\n"), "expected compact json schema without newlines")
     parsed = JSON.parse(schema)
-    assert(parsed["properties"].key?("inquiry_json"), "expected Claude schema to expose scalar inquiry JSON")
-    assert(parsed["properties"].key?("attachments_json"), "expected Claude schema to expose scalar attachments JSON")
-    assert(parsed.dig("properties", "inquiry_json", "type") == "string",
-           "expected Claude inquiry output to stay scalar")
-    assert(parsed.dig("properties", "attachments_json", "type") == "string",
-           "expected Claude attachments output to stay scalar")
-    assert(!schema.include?('"oneOf"'), "expected structured output schema to avoid unsupported oneOf")
-    assert(parsed["required"] == %w[status summary inquiry_json attachments_json],
-           "expected Claude schema to require scalar output fields")
-    assert(!parsed["properties"].key?("inquiry"), "expected Claude schema to avoid object root fields")
-    assert(!parsed["properties"].key?("attachments"), "expected Claude schema to avoid array root fields")
+    canonical = JSON.parse(File.read(HQ::AGENT_RESULT_SCHEMA))
+    assert(parsed == canonical, "expected Claude to receive the canonical Codex result schema")
   end
 
   def assert_agent_session_id_persists_and_renders

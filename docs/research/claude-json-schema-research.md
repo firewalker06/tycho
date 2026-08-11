@@ -37,9 +37,10 @@ The relevant flags surfaced by local help were:
 - `--include-hook-events`
 - `--json-schema`
 
-Installed version observed during this research:
+Installed versions observed during this research:
 
 - `2.1.94 (Claude Code)`
+- `2.1.220 (Claude Code)`
 
 ## Official Stream Message Types
 
@@ -64,3 +65,9 @@ The docs also state that:
 - Claude's currently documented stream surface is message-oriented, not item-oriented like Codex App Server `ThreadItem`.
 - If HQ wants a unified chat renderer, Claude output will likely need to be normalized from top-level message events into internal UI events such as `assistant_message`, `user_message`, `tool_activity`, and `result`.
 - Tool-use detail may still be available inside the Anthropic `Message` content blocks, but that is not exposed in the local help as a standalone schema artifact.
+
+## Tycho Result Schema Compatibility
+
+Tycho previously projected `inquiry` and `attachments` into JSON-encoded string fields because an older Claude Code path rejected the canonical nullable object and array schema. That workaround drifted from Codex: a real run omitted canonically required nullable attachment fields and needed two same-session corrections.
+
+Claude Code 2.1.220 accepts Tycho's canonical schema directly. A live Claude Sonnet 5 smoke run through the configured Bedrock-compatible harness returned `status`, `summary`, `inquiry: null`, and `attachments: null` under the exact schema used by Codex. New Claude-compatible runs therefore receive the canonical schema unchanged through `--json-schema`. The parser still decodes legacy `inquiry_json` and `attachments_json` fields so old logs remain readable.

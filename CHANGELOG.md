@@ -4,6 +4,9 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+- Give Codex and Claude-compatible agents the same canonical result schema, and
+  inject that schema into cold OpenCode execution prompts without exposing it in
+  raw prompt headers, memory, the TUI, or Remote UI.
 - Add a read-only Remote UI project workspace browser with multiserver routing,
   bounded directory listings, safe text previews, durable navigation, and
   server-enforced traversal, symlink, binary, size, VCS, and secret controls.
