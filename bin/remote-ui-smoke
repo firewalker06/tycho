@@ -2674,6 +2674,21 @@ def write_smoke_script(path)
           null,
           { timeout: 10_000 }
         );
+        await prContextPage.waitForFunction(
+          (key) => location.hash === `#agent/${encodeURIComponent(key)}`,
+          prContextAgentKey,
+          { timeout: 10_000 }
+        );
+        const resumedConversationPolling = await prContextPage.evaluate(() => ({
+          route: parseRoute().type,
+          timerActive: state.timer !== null,
+          subtitle: document.querySelector("#screen-subtitle")?.textContent.trim(),
+        }));
+        if (resumedConversationPolling.route !== "agent" ||
+            !resumedConversationPolling.timerActive ||
+            resumedConversationPolling.subtitle.startsWith("Conversation poll paused")) {
+          throw new Error(`Prompt submission did not resume conversation polling: ${JSON.stringify(resumedConversationPolling)}`);
+        }
         const sentContext = await prContextPage.evaluate((key) => {
           pendingAttachmentPayloads = window.__originalPendingAttachmentPayloads;
           const message = arrayValue(state.conversations[key]?.blocks)
@@ -4256,6 +4271,61 @@ def write_smoke_script(path)
             navigationDuringPollContract.conversationReads !== 0 ||
             navigationDuringPollContract.renderCalls !== 0) {
           throw new Error(`An older conversation poll replaced focused navigation: ${JSON.stringify(navigationDuringPollContract)}`);
+        }
+        const completionDuringNavigationContract = await page.evaluate(async ([sourceKey, targetKey]) => {
+          const originalHash = location.hash;
+          const originalLoadResourceCatalog = loadResourceCatalog;
+          const originalRender = render;
+          const originalTarget = state.agents.find((agent) => agent.key === targetKey);
+          let releaseCatalog;
+          let catalogEntered;
+          const catalogStarted = new Promise((resolve) => { catalogEntered = resolve; });
+          const catalogGate = new Promise((resolve) => { releaseCatalog = resolve; });
+          history.replaceState(null, "", routeHash({ type: "agent", key: sourceKey }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          originalRender();
+          if (originalTarget) {
+            originalTarget.status = "running";
+            originalTarget.running = true;
+            originalTarget.last_result = null;
+          }
+          loadResourceCatalog = async () => {
+            const catalog = await originalLoadResourceCatalog();
+            catalogEntered();
+            await catalogGate;
+            return catalog;
+          };
+          try {
+            const pendingRefresh = refresh({ force: true });
+            await catalogStarted;
+            history.replaceState(null, "", routeHash({ type: "agent", key: targetKey }));
+            state.renderedRouteKey = null;
+            state.renderedViewHtml = "";
+            originalRender();
+            releaseCatalog();
+            await pendingRefresh;
+            return {
+              route: parseRoute().type,
+              key: parseRoute().key,
+              timerActive: state.timer !== null,
+            };
+          } finally {
+            releaseCatalog();
+            loadResourceCatalog = originalLoadResourceCatalog;
+            clearTimeout(state.timer);
+            state.timer = null;
+            history.replaceState(null, "", originalHash);
+            state.renderedRouteKey = null;
+            state.renderedViewHtml = "";
+            originalRender();
+            schedule();
+          }
+        }, [agentKey, unscheduledAgentKey]);
+        if (completionDuringNavigationContract.route !== "agent" ||
+            completionDuringNavigationContract.key !== unscheduledAgentKey ||
+            !completionDuringNavigationContract.timerActive) {
+          throw new Error(`Agent completion redirected navigation to a paused summary: ${JSON.stringify(completionDuringNavigationContract)}`);
         }
         const attachmentPollRenderContract = await page.evaluate(async () => {
           clearTimeout(state.timer);
