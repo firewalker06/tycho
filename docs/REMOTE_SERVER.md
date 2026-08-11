@@ -387,7 +387,8 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `DELETE` | `/agents/{key}` | Archive one idle managed agent. |
 | `POST` | `/agents/archive` | Archive multiple idle managed agents from a `keys` array, returning archived, skipped, and failed keys. |
 | `GET` | `/agents/{key}/conversation` | Read the rendered conversation blocks for one agent. |
-| `GET` | `/agents/{key}/pull-requests` | List GitHub pull request links detected from one agent's attachments with snapshot freshness metadata. |
+| `GET` | `/agents/{key}/pull-requests` | List GitHub pull requests from that agent's persistent local catalog, including cached origin title and status, without waiting on GitHub. |
+| `POST` | `/agents/{key}/pull-requests/metadata/refresh` | Explicitly refresh GitHub metadata for the agent's cataloged pull requests without fetching patches. |
 | `GET` | `/agents/{key}/pull-requests/{id}/diff` | Read one saved pull request diff snapshot. |
 | `POST` | `/agents/{key}/pull-requests/{id}/refresh` | Fetch current PR metadata and patch content, then save a fresh diff snapshot. |
 | `POST` | `/agents/{key}/pull-requests/refresh` | Refresh every detected pull request diff for one agent. |

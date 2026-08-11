@@ -48,10 +48,13 @@ module HQ
 
       def initialize(path = File.join(HQ::AGENT_LOGS_DIR, "pull_request_diffs.json"))
         @path = path
+        @document_mutex = Mutex.new
+        @document_signature = nil
+        @document_cache = nil
       end
 
       def all
-        parsed = FileStore.read_json(@path, fallback: {})
+        parsed = document
         return {} unless parsed.is_a?(Hash)
         return parsed.fetch("snapshots", {}) if parsed["version"] == STORE_VERSION
 
@@ -62,7 +65,7 @@ module HQ
       end
 
       def fetch_snapshot(snapshot_id)
-        parsed = FileStore.read_json(@path, fallback: {})
+        parsed = document
         return nil unless parsed.is_a?(Hash) && parsed["version"] == STORE_VERSION
 
         parsed.fetch("history", {})[snapshot_id.to_s]
@@ -77,28 +80,161 @@ module HQ
       def save(snapshot)
         with_lock do
           id = snapshot.fetch("id")
-          snapshots = all
+          snapshots = all.dup
           snapshots[id] = snapshot
           snapshots = snapshots.sort_by { |_key, value| value["fetched_at"].to_s }.last(MAX_SNAPSHOTS).to_h
-          parsed = FileStore.read_json(@path, fallback: {})
-          history = parsed.is_a?(Hash) && parsed["version"] == STORE_VERSION ? parsed.fetch("history", {}) : {}
+          parsed = document
+          history = parsed.is_a?(Hash) && parsed["version"] == STORE_VERSION ? parsed.fetch("history", {}).dup : {}
           history[snapshot["snapshot_id"]] = snapshot if snapshot["snapshot_id"]
           history = history.sort_by { |_key, value| value["fetched_at"].to_s }.last(MAX_SNAPSHOTS).to_h
           FileStore.write_json(
             @path,
             { "version" => STORE_VERSION, "snapshots" => snapshots, "history" => history }
           )
+          invalidate_document_cache
         end
         snapshot
       end
 
       private
 
+      def document
+        signature = document_signature
+        @document_mutex.synchronize do
+          return @document_cache if @document_cache && @document_signature == signature
+
+          @document_cache = deep_freeze(FileStore.read_json(@path, fallback: {}))
+          @document_signature = signature
+          @document_cache
+        end
+      end
+
+      def deep_freeze(value)
+        case value
+        when Hash
+          value.each { |key, item| deep_freeze(key); deep_freeze(item) }
+        when Array
+          value.each { |item| deep_freeze(item) }
+        end
+        value.freeze
+      end
+
+      def document_signature
+        stat = File.stat(@path)
+        [stat.ino, stat.size, stat.mtime.to_i, stat.mtime.nsec]
+      rescue Errno::ENOENT
+        nil
+      end
+
+      def invalidate_document_cache
+        @document_mutex.synchronize do
+          @document_signature = nil
+          @document_cache = nil
+        end
+      end
+
       def with_lock
         FileUtils.mkdir_p(File.dirname(@path))
         File.open("#{@path}.lock", File::RDWR | File::CREAT, 0o600) do |lock|
           lock.flock(File::LOCK_EX)
           yield
+        ensure
+          lock.flock(File::LOCK_UN) rescue nil
+        end
+      end
+    end
+
+    class Catalog
+      STORE_VERSION = 1
+      METADATA_KEYS = %w[
+        title url state draft mergeable mergeable_state merged author base_sha head_sha base_ref head_ref
+        file_count additions deletions remote_updated_at
+      ].freeze
+
+      def initialize(path:)
+        @path = path
+      end
+
+      def all
+        parsed = FileStore.read_json(@path, fallback: {})
+        return {} unless parsed.is_a?(Hash) && parsed["version"] == STORE_VERSION
+
+        parsed.fetch("entries", {})
+      rescue StandardError => e
+        HQ.logger.warn("PRCatalog") { "Failed to load PR catalog from #{@path}: #{e.class} - #{e.message}" }
+        {}
+      end
+
+      def discover(references, metadata_by_id: {})
+        update do |entries|
+          changed = false
+          Array(references).each do |reference|
+            unless entries.key?(reference.id)
+              entries[reference.id] = reference_entry(reference, Time.now.iso8601)
+              changed = true
+            end
+            metadata = metadata_by_id[reference.id]
+            next unless metadata.is_a?(Hash) && !entries[reference.id]["metadata"].is_a?(Hash)
+
+            cache_metadata(
+              entries[reference.id],
+              metadata,
+              metadata["fetched_at"] || Time.now.iso8601,
+              source: "snapshot"
+            )
+            changed = true
+          end
+          changed
+        end
+      end
+
+      def save_metadata(reference, metadata)
+        save_all_metadata([[reference, metadata]])
+      end
+
+      def save_all_metadata(items)
+        items = Array(items)
+        refreshed_at = Time.now.iso8601
+        update do |entries|
+          items.each do |reference, metadata|
+            entries[reference.id] ||= reference_entry(reference, refreshed_at)
+            cache_metadata(entries[reference.id], metadata, refreshed_at, source: "github")
+          end
+          items.any?
+        end
+      end
+
+      private
+
+      def reference_entry(reference, discovered_at)
+        {
+          "id" => reference.id,
+          "provider" => reference.provider,
+          "repository" => reference.repository,
+          "number" => reference.number,
+          "url" => reference.url,
+          "discovered_at" => discovered_at
+        }.compact
+      end
+
+      def cache_metadata(entry, metadata, refreshed_at, source:)
+        entry["metadata"] = metadata.to_h
+          .select { |key, _value| METADATA_KEYS.include?(key.to_s) }
+          .transform_keys(&:to_s)
+        entry["metadata_refreshed_at"] = refreshed_at
+        entry["metadata_source"] = source
+      end
+
+      def update
+        FileUtils.mkdir_p(File.dirname(@path))
+        File.open("#{@path}.lock", File::RDWR | File::CREAT, 0o600) do |lock|
+          lock.flock(File::LOCK_EX)
+          entries = all
+          changed = yield entries
+          if changed
+            FileStore.write_json(@path, { "version" => STORE_VERSION, "entries" => entries })
+          end
+          entries
         ensure
           lock.flock(File::LOCK_UN) rescue nil
         end
@@ -243,6 +379,7 @@ module HQ
           "description" => metadata["body"] || reference.description,
           "state" => metadata["state"],
           "draft" => metadata["draft"],
+          "merged" => metadata["merged"],
           "author" => metadata["author"],
           "base_sha" => metadata["base_sha"],
           "head_sha" => metadata["head_sha"],
@@ -262,9 +399,14 @@ module HQ
         }.compact
       end
 
-      def reference_payload(reference, snapshot: nil, metadata: nil, error: nil)
+      def reference_payload(reference, snapshot: nil, metadata: nil, freshness_metadata: metadata, error: nil)
         payload = reference.to_h
-        payload["snapshot"] = snapshot_summary(snapshot, metadata:)
+        if metadata.is_a?(Hash)
+          Catalog::METADATA_KEYS.each do |key|
+            payload[key] = metadata[key] if metadata.key?(key)
+          end
+        end
+        payload["snapshot"] = snapshot_summary(snapshot, metadata: freshness_metadata)
         payload["error"] = error if error
         payload
       end

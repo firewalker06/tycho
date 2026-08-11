@@ -45,6 +45,7 @@ module PullRequestDiffTest
     assert_freshness_separates_code_and_activity
     assert_snapshot_identity_omits_agent_key
     assert_store_preserves_concurrent_snapshots
+    assert_store_reuses_and_invalidates_document_cache
     puts "pull_request_diff_test: ok"
   end
 
@@ -132,6 +133,26 @@ module PullRequestDiffTest
       snapshot = { "id" => "current", "snapshot_id" => "immutable-1", "fetched_at" => Time.now.iso8601 }
       store.save(snapshot)
       assert(store.fetch_snapshot("immutable-1") == snapshot, "expected immutable history to support changed-since-review")
+    end
+  end
+
+  def assert_store_reuses_and_invalidates_document_cache
+    Dir.mktmpdir("tycho-pr-diff-cache") do |dir|
+      path = File.join(dir, "snapshots.json")
+      store = HQ::PullRequestDiff::Store.new(path)
+      store.save("id" => "first", "snapshot_id" => "first-snapshot")
+      first_read = store.all
+      assert(store.all.equal?(first_read), "expected unchanged snapshot files to reuse the parsed document")
+      assert(first_read.frozen? && first_read.fetch("first").frozen?, "expected cached snapshots to be immutable")
+      begin
+        first_read.fetch("first")["snapshot_id"] = "mutated"
+      rescue FrozenError
+        nil
+      end
+      assert(store.fetch("first")["snapshot_id"] == "first-snapshot", "expected callers not to mutate cached snapshots")
+
+      HQ::PullRequestDiff::Store.new(path).save("id" => "second", "snapshot_id" => "second-snapshot")
+      assert(store.all.keys.sort == %w[first second], "expected external snapshot writes to invalidate the parsed document")
     end
   end
 

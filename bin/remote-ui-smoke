@@ -301,6 +301,26 @@ def associate_agent_schedule(logs_dir, agent_key)
   File.write(agents_path, JSON.pretty_generate(agents))
 end
 
+def associate_agent_pull_request(logs_dir, agent_key)
+  agents_path = File.join(logs_dir, "managed_agents.json")
+  agents = JSON.parse(File.read(agents_path))
+  agent = agents.find { |item| item["key"] == agent_key }
+  raise "Failed to find smoke agent #{agent_key.inspect}" unless agent
+
+  attachments_path = agent.fetch("log_path").sub(/\.raw\.log\z/, ".attachments.json")
+  File.write(
+    attachments_path,
+    JSON.pretty_generate(
+      "attachments" => [{
+        "kind" => "pull_request",
+        "title" => "Example PR",
+        "url" => "https://github.com/example/web/pull/123",
+        "created_at" => Time.now.iso8601
+      }]
+    )
+  )
+end
+
 def mark_schedule_daemon_running(logs_dir, pid)
   FileUtils.mkdir_p(logs_dir)
   now = Time.now.iso8601
@@ -384,6 +404,38 @@ def write_smoke_script(path)
         if (message.type() === "error") errors.push(message.text());
       });
       page.on("pageerror", (error) => errors.push(error.message));
+
+      async function captureVisibleComposer(filename) {
+        if (!captureDir) return;
+        const composer = page.locator("#composer:not([hidden])");
+        await composer.waitFor({ state: "visible", timeout: 10_000 });
+        const bounds = await composer.boundingBox();
+        if (!bounds) throw new Error("Visible composer had no screenshot bounds");
+        const viewport = page.viewportSize();
+        const padding = 36;
+        const x = Math.max(0, bounds.x - padding);
+        const y = Math.max(0, bounds.y - padding);
+        const clip = {
+          x,
+          y,
+          width: Math.min(viewport.width, bounds.x + bounds.width + padding) - x,
+          height: Math.min(viewport.height, bounds.y + bounds.height + padding) - y,
+        };
+        await page.screenshot({ path: path.join(captureDir, filename), clip });
+      }
+
+      async function ensureSkillAutocompleteVisible() {
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          if (await page.locator("[data-skill-autocomplete]:not(.hidden)").isVisible()) return;
+          await page.evaluate(() => {
+            const prompt = document.querySelector("#prompt-input");
+            prompt?.focus();
+            if (prompt) refreshSkillAutocomplete(prompt);
+          });
+          await page.waitForTimeout(100);
+        }
+        throw new Error("Skill autocomplete did not become visible");
+      }
 
       async function assertResourceCatalogCompatibility() {
         const catalogTimings = await page.evaluate(async () => {
@@ -1642,7 +1694,8 @@ def write_smoke_script(path)
         await agentsRegressionPage.close();
 
         const prContextPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
-        await prContextPage.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
+        const prContextAgentKey = unscheduledAgentKey;
+        await prContextPage.goto(`${baseUrl}/ui#agent/${encodeURIComponent(prContextAgentKey)}`, { waitUntil: "networkidle" });
         await prContextPage.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
         await prContextPage.evaluate((key) => {
           const agent = findAgent(key);
@@ -1652,12 +1705,992 @@ def write_smoke_script(path)
           ];
           state.renderedViewHtml = "";
           render();
-        }, agentKey);
+        }, prContextAgentKey);
         await prContextPage.click("#header-more-button");
-        await prContextPage.waitForSelector(`[data-open-agent-pr-diffs='${agentKey}']`, { state: "visible", timeout: 10_000 });
-        await prContextPage.click(`[data-open-agent-pr-diffs='${agentKey}']`);
+        await prContextPage.waitForSelector(`[data-open-agent-pr-diffs='${prContextAgentKey}']`, { state: "visible", timeout: 10_000 });
+        await prContextPage.click(`[data-open-agent-pr-diffs='${prContextAgentKey}']`);
         await prContextPage.waitForSelector(".agent-pr-diff-shell", { state: "visible", timeout: 10_000 });
         await prContextPage.waitForSelector(".agent-pr-diff-shell .empty-state", { state: "visible", timeout: 10_000 });
+        await prContextPage.click("[data-refresh-pr-diff]");
+        await prContextPage.waitForSelector("[data-select-pr-diff-line]", { state: "visible", timeout: 10_000 });
+        const prOriginMetadata = await prContextPage.evaluate((key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const item = state.pullRequests[key].items.find((candidate) => candidate.id === pullRequestId);
+          const result = {
+            itemTitle: item?.title,
+            navTitle: document.querySelector(".pr-diff-nav-item.active strong")?.textContent,
+            detailTitle: document.querySelector(".pr-diff-title-meta strong")?.textContent,
+            states: [],
+          };
+          [
+            { state: "open", draft: false, merged: false, expected: "Open" },
+            { state: "open", draft: true, merged: false, expected: "Draft" },
+            { state: "closed", draft: true, merged: false, expected: "Closed" },
+            { state: "closed", draft: false, merged: true, expected: "Merged" },
+          ].forEach((status) => {
+            Object.assign(item, status);
+            state.renderedViewHtml = "";
+            render();
+            result.states.push({
+              expected: status.expected,
+              badge: document.querySelector("[data-pr-status-badge]")?.textContent?.trim(),
+              navMeta: document.querySelector(".pr-diff-nav-item.active .pr-diff-nav-copy > span")?.textContent,
+            });
+          });
+          return result;
+        }, prContextAgentKey);
+        if (prOriginMetadata.itemTitle !== "Smoke pull request" ||
+            prOriginMetadata.navTitle !== "Smoke pull request" ||
+            prOriginMetadata.detailTitle !== "Smoke pull request" ||
+            prOriginMetadata.states.some((status) => (
+              status.badge !== status.expected || !status.navMeta?.includes(status.expected)
+            ))) {
+          throw new Error(`PR title or status did not reflect origin metadata: ${JSON.stringify(prOriginMetadata)}`);
+        }
+        const asynchronousDiffRenderContract = await prContextPage.evaluate(async () => {
+          const originalRenderDiffLine = renderDiffLine;
+          let renderCount = 0;
+          renderDiffLine = (...args) => {
+            renderCount += 1;
+            return originalRenderDiffLine(...args);
+          };
+          resetPullRequestDiffRender();
+          state.renderedViewHtml = "";
+          render();
+          const immediateRenderCount = renderCount;
+          const loadingBeforePaint = Boolean(document.querySelector(".pr-diff-loading-state"));
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const deferredRenderCount = renderCount - immediateRenderCount;
+          renderDiffLine = originalRenderDiffLine;
+          return { immediateRenderCount, deferredRenderCount, loadingBeforePaint };
+        });
+        if (asynchronousDiffRenderContract.immediateRenderCount !== 0 ||
+            asynchronousDiffRenderContract.deferredRenderCount < 1 ||
+            !asynchronousDiffRenderContract.loadingBeforePaint) {
+          throw new Error(`PR diff rendered in the route-switch frame: ${JSON.stringify(asynchronousDiffRenderContract)}`);
+        }
+        const refreshedSnapshotRenderContract = await prContextPage.evaluate(async (key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diffKey = pullRequestDiffKey(key, pullRequestId);
+          const originalDiff = state.pullRequestDiffs[diffKey];
+          const originalRenderDiffLine = renderDiffLine;
+          let renderCount = 0;
+          renderDiffLine = (...args) => {
+            renderCount += 1;
+            return originalRenderDiffLine(...args);
+          };
+          state.pullRequestDiffs[diffKey] = {
+            ...state.pullRequestDiffs[diffKey],
+            snapshot_id: `${state.pullRequestDiffs[diffKey].snapshot_id}-refreshed`,
+          };
+          state.renderedViewHtml = "";
+          render();
+          const immediateRenderCount = renderCount;
+          const loadingBeforePaint = Boolean(document.querySelector(".pr-diff-loading-state"));
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const deferredRenderCount = renderCount - immediateRenderCount;
+          renderDiffLine = originalRenderDiffLine;
+          state.pullRequestDiffs[diffKey] = originalDiff;
+          resetPullRequestDiffRender();
+          state.renderedViewHtml = "";
+          render();
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          return { immediateRenderCount, deferredRenderCount, loadingBeforePaint };
+        }, prContextAgentKey);
+        if (refreshedSnapshotRenderContract.immediateRenderCount !== 0 ||
+            refreshedSnapshotRenderContract.deferredRenderCount < 1 ||
+            !refreshedSnapshotRenderContract.loadingBeforePaint) {
+          throw new Error(`Refreshed PR diff rendered before the first paint: ${JSON.stringify(refreshedSnapshotRenderContract)}`);
+        }
+        const delayedConversationPattern = `**/agents/${encodeURIComponent(prContextAgentKey)}/conversation`;
+        const originalPullRequestHash = await prContextPage.evaluate(() => location.hash);
+        let releaseDelayedConversation;
+        const delayedConversationGate = new Promise((resolve) => {
+          releaseDelayedConversation = resolve;
+        });
+        const delayedConversationHandler = async (route) => {
+          await delayedConversationGate;
+          await route.continue();
+        };
+        await prContextPage.route(delayedConversationPattern, delayedConversationHandler);
+        const secondPullRequestId = await prContextPage.evaluate((key) => {
+          const current = state.pullRequests[key].items[0];
+          const id = `${current.id}-navigation-latency`;
+          state.pullRequests[key].items.push({
+            ...current,
+            id,
+            number: Number(current.number || 0) + 1,
+            title: "Navigation latency fixture",
+          });
+          state.renderedViewHtml = "";
+          render();
+          return id;
+        }, prContextAgentKey);
+        const navigationDiffPattern = `**/pull-requests/${encodeURIComponent(secondPullRequestId)}/diff`;
+        let resolveNavigationDiffRequest;
+        const navigationDiffRequest = new Promise((resolve) => {
+          resolveNavigationDiffRequest = resolve;
+        });
+        const navigationDiffHandler = async (route) => {
+          resolveNavigationDiffRequest();
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ diff: { id: secondPullRequestId, snapshot_id: "navigation-latency", files: [] } }),
+          });
+        };
+        await prContextPage.route(navigationDiffPattern, navigationDiffHandler);
+        const delayedConversationResponse = prContextPage.waitForResponse(
+          (response) => response.url().endsWith(`/agents/${encodeURIComponent(prContextAgentKey)}/conversation`),
+          { timeout: 10_000 }
+        );
+        await prContextPage.click(`.pr-diff-nav-item[href*='${encodeURIComponent(secondPullRequestId)}']`);
+        await prContextPage.waitForFunction(
+          (id) => location.hash.includes(encodeURIComponent(id)),
+          secondPullRequestId,
+          { timeout: 10_000 }
+        );
+        let navigationDiffTimeout;
+        await Promise.race([
+          navigationDiffRequest,
+          new Promise((_resolve, reject) => {
+            navigationDiffTimeout = setTimeout(
+              () => reject(new Error("PR diff request waited behind unrelated route data")),
+              10_000
+            );
+          }),
+        ]);
+        clearTimeout(navigationDiffTimeout);
+        releaseDelayedConversation();
+        await delayedConversationResponse;
+        await prContextPage.unroute(delayedConversationPattern, delayedConversationHandler);
+        await prContextPage.unroute(navigationDiffPattern, navigationDiffHandler);
+        await prContextPage.goto(`${baseUrl}/ui${originalPullRequestHash}`, { waitUntil: "networkidle" });
+        await prContextPage.waitForSelector("[data-select-pr-diff-line]", { state: "visible", timeout: 10_000 });
+        const preloadPullRequestId = await prContextPage.evaluate((key) => {
+          const current = state.pullRequests[key].items[0];
+          const id = `${current.id}-background-preload`;
+          state.pullRequests[key].items.push({
+            ...current,
+            id,
+            number: Number(current.number || 0) + 3,
+            title: "Background preload fixture",
+          });
+          return id;
+        }, prContextAgentKey);
+        const preloadPattern = `**/pull-requests/${encodeURIComponent(preloadPullRequestId)}/diff`;
+        let resolvePreloadRequest;
+        const preloadRequest = new Promise((resolve) => { resolvePreloadRequest = resolve; });
+        const preloadHandler = async (route) => {
+          resolvePreloadRequest();
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ diff: { id: preloadPullRequestId, snapshot_id: "background-preload", files: [] } }),
+          });
+        };
+        await prContextPage.route(preloadPattern, preloadHandler);
+        const preloadHash = await prContextPage.evaluate((key) => {
+          const route = parseRoute();
+          preloadSavedPullRequestDiffs(key, state.pullRequests[key].items, selectedPullRequestId(key, route.pullRequestId));
+          return location.hash;
+        }, prContextAgentKey);
+        let preloadTimeout;
+        await Promise.race([
+          preloadRequest,
+          new Promise((_resolve, reject) => {
+            preloadTimeout = setTimeout(
+              () => reject(new Error("Saved PR diff did not preload in the background")),
+              10_000
+            );
+          }),
+        ]);
+        clearTimeout(preloadTimeout);
+        await prContextPage.waitForFunction(
+          ({ key, id }) => {
+            const diff = state.pullRequestDiffs[pullRequestDiffKey(key, id)];
+            return diff && !diff.loading && !diff.error;
+          },
+          { key: prContextAgentKey, id: preloadPullRequestId },
+          { timeout: 10_000 }
+        );
+        const preloadStayedOnSelectedPullRequest = await prContextPage.evaluate((hash) => location.hash === hash, preloadHash);
+        await prContextPage.unroute(preloadPattern, preloadHandler);
+        if (!preloadStayedOnSelectedPullRequest) throw new Error("Background PR preload changed the selected route");
+        const prioritizedFetchContract = await prContextPage.evaluate(async (key) => {
+          const originalApiGet = apiGet;
+          const originalApiPost = apiPost;
+          const originalEnsureAgentPullRequests = ensureAgentPullRequests;
+          const ids = ["queue-background-1", "queue-background-2", "queue-foreground"];
+          const starts = [];
+          const releases = {};
+          const waitUntil = async (predicate, message) => {
+            const deadline = Date.now() + 10_000;
+            while (!predicate()) {
+              if (Date.now() > deadline) throw new Error(message);
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+          };
+          apiGet = async (path) => {
+            const id = ids.find((candidate) => path.includes(candidate));
+            if (!id) return originalApiGet(path);
+            starts.push(id);
+            if (id === ids[2]) return { diff: { id, snapshot_id: id, files: [] } };
+            await new Promise((resolve) => { releases[id] = resolve; });
+            return { diff: { id, snapshot_id: id, files: [] } };
+          };
+          let refreshGetRelease;
+          let refreshPostCount = 0;
+          apiPost = async (path, body) => {
+            if (!path.includes("queue-refresh")) return originalApiPost(path, body);
+            refreshPostCount += 1;
+            return { diff: { id: "queue-refresh", snapshot_id: "queue-refresh-post", files: [] } };
+          };
+          try {
+            const backgroundPromises = ids.map((id) => enqueuePullRequestDiffFetch(key, id, false, false, { background: true }));
+            await waitUntil(() => starts.length === 2, "background preloads did not fill their bounded capacity");
+            const selectedPromise = enqueuePullRequestDiffFetch(key, ids[2]);
+            await waitUntil(() => starts.includes(ids[2]), "selected PR remained queued behind background preloads");
+            const foregroundStartedBeforeRelease = !releases[ids[0]] && !releases[ids[1]]
+              ? false
+              : starts[2] === ids[2];
+            releases[ids[0]]();
+            releases[ids[1]]();
+            await Promise.all([...backgroundPromises, selectedPromise]);
+
+            const staleIds = ["stale-agent-1", "stale-agent-2", "stale-agent-queued"];
+            const staleStarts = [];
+            const staleReleases = {};
+            apiGet = async (path) => {
+              const id = staleIds.find((candidate) => path.includes(candidate));
+              if (!id) return originalApiGet(path);
+              staleStarts.push(id);
+              await new Promise((resolve) => { staleReleases[id] = resolve; });
+              return { diff: { id, snapshot_id: id, files: [] } };
+            };
+            const stalePromises = staleIds.map((id) => (
+              enqueuePullRequestDiffFetch(`${key}-stale`, id, false, false, { background: true })
+            ));
+            await waitUntil(() => staleStarts.length === 2, "stale agent preloads did not fill background capacity");
+            await ensureRouteData();
+            const staleQueuedRemoved = !state.pullRequestDiffFetches[pullRequestDiffKey(`${key}-stale`, staleIds[2])] &&
+              !staleStarts.includes(staleIds[2]);
+            staleReleases[staleIds[0]]();
+            staleReleases[staleIds[1]]();
+            await Promise.all(stalePromises);
+            const staleResultsDiscarded = staleIds.every((id) => !state.pullRequestDiffs[pullRequestDiffKey(`${key}-stale`, id)]);
+
+            apiGet = async (path) => {
+              if (!path.includes("queue-refresh")) return originalApiGet(path);
+              starts.push("queue-refresh-get");
+              await new Promise((resolve) => { refreshGetRelease = resolve; });
+              return { diff: { id: "queue-refresh", snapshot_id: "queue-refresh-get", files: [] } };
+            };
+            const staleGet = enqueuePullRequestDiffFetch(key, "queue-refresh", false, false, { background: true });
+            await waitUntil(() => Boolean(refreshGetRelease), "background refresh fixture did not start");
+            const explicitRefresh = enqueuePullRequestDiffFetch(key, "queue-refresh", true, true);
+            refreshGetRelease();
+            await Promise.all([staleGet, explicitRefresh]);
+            const refreshedSnapshot = state.pullRequestDiffs[pullRequestDiffKey(key, "queue-refresh")]?.snapshot_id;
+
+            const currentId = selectedPullRequestId(key, parseRoute().pullRequestId);
+            const currentKey = pullRequestDiffKey(key, currentId);
+            const currentDiff = state.pullRequestDiffs[currentKey];
+            ensureAgentPullRequests = async () => {};
+            apiPost = async (path, body) => {
+              if (!path.endsWith(`/agents/${encodeURIComponent(key)}/pull-requests/refresh`)) {
+                return originalApiPost(path, body);
+              }
+              return {
+                refreshed: [
+                  { ...currentDiff, id: currentId, snapshot_id: "refresh-all-selected" },
+                  ...Array.from({ length: MAX_CACHED_PR_DIFF_DATA + 2 }, (_, index) => ({
+                    id: `refresh-all-${index}`,
+                    snapshot_id: `refresh-all-${index}`,
+                    files: [],
+                  })),
+                ],
+                failed: [],
+              };
+            };
+            await refreshAllPullRequestDiffs(key);
+            const refreshAllBounded = state.pullRequestDiffDataOrder.size <= MAX_CACHED_PR_DIFF_DATA;
+            const refreshAllSelectedRetained = state.pullRequestDiffs[currentKey]?.snapshot_id === "refresh-all-selected";
+            state.pullRequestDiffs[currentKey] = currentDiff;
+            rememberPullRequestDiffData(currentKey);
+
+            for (let index = 0; index < MAX_CACHED_PR_DIFF_DATA + 2; index += 1) {
+              const cacheKey = pullRequestDiffKey(key, `bounded-${index}`);
+              state.pullRequestDiffs[cacheKey] = { id: `bounded-${index}`, files: [] };
+              rememberPullRequestDiffData(cacheKey);
+              rememberPullRequestDiffPreloadFailure(cacheKey);
+            }
+            state.pullRequestDiffs[currentKey] = currentDiff;
+            rememberPullRequestDiffData(currentKey);
+            const previousViewers = state.pullRequestDiffViewers;
+            state.pullRequestDiffViewers = new Map();
+            for (let index = 0; index < MAX_CACHED_PR_DIFF_VIEWERS + 2; index += 1) {
+              const viewer = document.createElement("section");
+              viewer.dataset.stateKey = `pr-diff-viewer:${key}:viewer-${index}`;
+              viewer.dataset.pollContentVersion = "snapshot:expanded";
+              cachePullRequestDiffViewer(viewer);
+            }
+            const viewerCacheKeys = Array.from(state.pullRequestDiffViewers.keys());
+            state.pullRequestDiffViewers = previousViewers;
+            return {
+              foregroundStartedBeforeRelease,
+              staleQueuedRemoved,
+              staleResultsDiscarded,
+              refreshPostCount,
+              refreshedSnapshot,
+              refreshAllBounded,
+              refreshAllSelectedRetained,
+              dataCacheSize: state.pullRequestDiffDataOrder.size,
+              failureCacheSize: state.pullRequestDiffPreloadFailures.size,
+              oldestDataEvicted: !state.pullRequestDiffDataOrder.has(pullRequestDiffKey(key, "bounded-0")),
+              oldestFailureEvicted: !state.pullRequestDiffPreloadFailures.has(pullRequestDiffKey(key, "bounded-0")),
+              viewerCacheSize: viewerCacheKeys.length,
+              oldestViewerEvicted: !viewerCacheKeys.some((cacheKey) => cacheKey.includes("viewer-0")),
+            };
+          } finally {
+            apiGet = originalApiGet;
+            apiPost = originalApiPost;
+            ensureAgentPullRequests = originalEnsureAgentPullRequests;
+          }
+        }, prContextAgentKey);
+        if (!prioritizedFetchContract.foregroundStartedBeforeRelease ||
+            !prioritizedFetchContract.staleQueuedRemoved ||
+            !prioritizedFetchContract.staleResultsDiscarded ||
+            prioritizedFetchContract.refreshPostCount !== 1 ||
+            prioritizedFetchContract.refreshedSnapshot !== "queue-refresh-post" ||
+            !prioritizedFetchContract.refreshAllBounded ||
+            !prioritizedFetchContract.refreshAllSelectedRetained ||
+            prioritizedFetchContract.dataCacheSize > 12 ||
+            prioritizedFetchContract.failureCacheSize > 12 ||
+            !prioritizedFetchContract.oldestDataEvicted ||
+            !prioritizedFetchContract.oldestFailureEvicted ||
+            prioritizedFetchContract.viewerCacheSize !== 6 ||
+            !prioritizedFetchContract.oldestViewerEvicted) {
+          throw new Error(`PR diff queue priority, refresh, or cache bounds failed: ${JSON.stringify(prioritizedFetchContract)}`);
+        }
+        const cachedSwitchIds = await prContextPage.evaluate(async (key) => {
+          const route = parseRoute();
+          const firstId = selectedPullRequestId(key, route.pullRequestId);
+          const firstItem = state.pullRequests[key].items.find((item) => item.id === firstId);
+          const firstDiff = state.pullRequestDiffs[pullRequestDiffKey(key, firstId)];
+          const secondId = `${firstId}-cached-switch`;
+          state.pullRequests[key].items.push({
+            ...firstItem,
+            id: secondId,
+            number: Number(firstItem.number || 0) + 2,
+            title: "Cached switch fixture",
+          });
+          state.pullRequestDiffs[pullRequestDiffKey(key, secondId)] = {
+            ...firstDiff,
+            id: secondId,
+            snapshot_id: "cached-switch",
+          };
+          state.renderedViewHtml = "";
+          render();
+          document.querySelector("[data-select-pr-diff-line]").click();
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          const firstComment = document.querySelector("[data-pr-context-comment]");
+          firstComment.value = "Persistent first PR comment";
+          firstComment.dispatchEvent(new Event("input", { bubbles: true }));
+          const firstViewer = document.querySelector("[data-pr-diff-viewer]");
+          const scrollStyle = document.createElement("style");
+          scrollStyle.id = "cached-pr-scroll-smoke-style";
+          scrollStyle.textContent = ".pr-diff-detail { height: 120px !important; overflow-y: auto !important; }";
+          document.head.append(scrollStyle);
+          const spacer = document.createElement("div");
+          spacer.style.height = "2000px";
+          spacer.dataset.cachedSwitchSpacer = "first";
+          firstViewer.append(spacer);
+          const firstDetail = firstViewer.closest(".pr-diff-detail");
+          void firstDetail.scrollHeight;
+          firstDetail.scrollTop = 140;
+          firstViewer.dataset.cachedSwitchProbe = "first";
+          window.__tychoCachedFirstViewer = firstViewer;
+          return { firstId, secondId };
+        }, prContextAgentKey);
+        await prContextPage.click(`.pr-diff-nav-item[href*='${encodeURIComponent(cachedSwitchIds.secondId)}']`);
+        await prContextPage.waitForSelector(`[data-pr-diff-viewer][data-pull-request-id='${cachedSwitchIds.secondId}']`, { state: "visible", timeout: 10_000 });
+        await prContextPage.evaluate(() => {
+          const secondViewer = document.querySelector("[data-pr-diff-viewer]");
+          const spacer = document.createElement("div");
+          spacer.style.height = "2400px";
+          spacer.dataset.cachedSwitchSpacer = "second";
+          secondViewer.append(spacer);
+          const secondDetail = secondViewer.closest(".pr-diff-detail");
+          void secondDetail.scrollHeight;
+          secondDetail.scrollTop = 240;
+          secondViewer.dataset.cachedSwitchProbe = "second";
+          window.__tychoCachedSecondViewer = secondViewer;
+        });
+        await prContextPage.click(`.pr-diff-nav-item[href*='${encodeURIComponent(cachedSwitchIds.firstId)}']`);
+        await prContextPage.waitForSelector(`[data-pr-diff-viewer][data-pull-request-id='${cachedSwitchIds.firstId}']`, { state: "visible", timeout: 10_000 });
+        const cachedFirstViewerContract = await prContextPage.evaluate(() => ({
+          reused: document.querySelector("[data-pr-diff-viewer]") === window.__tychoCachedFirstViewer &&
+            document.querySelector("[data-pr-diff-viewer]")?.dataset.cachedSwitchProbe === "first",
+          comment: document.querySelector("[data-pr-context-comment]")?.value,
+          selected: document.querySelectorAll("[data-select-pr-diff-line]:checked").length,
+          scrollTop: document.querySelector(".pr-diff-detail")?.scrollTop,
+        }));
+        const cachedFirstViewerReused = cachedFirstViewerContract.reused &&
+          cachedFirstViewerContract.comment === "Persistent first PR comment" &&
+          cachedFirstViewerContract.selected === 1 &&
+          Math.abs(cachedFirstViewerContract.scrollTop - 140) <= 1;
+        await prContextPage.click(`.pr-diff-nav-item[href*='${encodeURIComponent(cachedSwitchIds.secondId)}']`);
+        await prContextPage.waitForSelector(`[data-pr-diff-viewer][data-pull-request-id='${cachedSwitchIds.secondId}']`, { state: "visible", timeout: 10_000 });
+        const cachedSecondViewerContract = await prContextPage.evaluate(() => ({
+          reused: document.querySelector("[data-pr-diff-viewer]") === window.__tychoCachedSecondViewer &&
+            document.querySelector("[data-pr-diff-viewer]")?.dataset.cachedSwitchProbe === "second",
+          scrollTop: document.querySelector(".pr-diff-detail")?.scrollTop,
+          cacheKeys: Array.from(state.pullRequestDiffViewers.keys()),
+          currentKey: pollContentKey(document.querySelector("[data-pr-diff-viewer]")),
+          firstKey: pollContentKey(window.__tychoCachedFirstViewer),
+          secondKey: pollContentKey(window.__tychoCachedSecondViewer),
+        }));
+        const cachedSecondViewerReused = cachedSecondViewerContract.reused &&
+          Math.abs(cachedSecondViewerContract.scrollTop - 240) <= 1;
+        if (!cachedFirstViewerReused || !cachedSecondViewerReused) {
+          throw new Error(`Cached PR navigation lost viewer, form, selection, or scroll state: ${JSON.stringify({ cachedFirstViewerContract, cachedSecondViewerContract })}`);
+        }
+        await prContextPage.evaluate(() => document.querySelector("#cached-pr-scroll-smoke-style")?.remove());
+        await prContextPage.setViewportSize({ width: 390, height: 844 });
+        await prContextPage.evaluate(() => new Promise((resolve) => (
+          requestAnimationFrame(() => requestAnimationFrame(resolve))
+        )));
+        const mobileScrollContract = await prContextPage.evaluate(async ({ firstId, secondId }) => {
+          const switchTo = async (id) => {
+            Array.from(document.querySelectorAll(".pr-diff-nav-item"))
+              .find((item) => item.getAttribute("href")?.includes(encodeURIComponent(id)))
+              .click();
+            const deadline = Date.now() + 10_000;
+            const renderKeyPrefix = `${pullRequestDiffKey(parseRoute().key, id)}:`;
+            while (!state.pullRequestDiffRenderReadyKey.startsWith(renderKeyPrefix)) {
+              if (Date.now() > deadline) throw new Error(`Timed out rendering ${id}`);
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+          };
+          window.scrollTo(0, 500);
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          const secondTop = window.scrollY;
+          await switchTo(firstId);
+          window.scrollTo(0, 300);
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          const firstTop = window.scrollY;
+          await switchTo(secondId);
+          const restoredSecondTop = window.scrollY;
+          await switchTo(firstId);
+          return { firstTop, secondTop, restoredFirstTop: window.scrollY, restoredSecondTop };
+        }, cachedSwitchIds);
+        await prContextPage.setViewportSize({ width: 1280, height: 900 });
+        if (mobileScrollContract.firstTop < 1 || mobileScrollContract.secondTop < 1 ||
+            Math.abs(mobileScrollContract.restoredFirstTop - mobileScrollContract.firstTop) > 1 ||
+            Math.abs(mobileScrollContract.restoredSecondTop - mobileScrollContract.secondTop) > 1) {
+          throw new Error(`Cached mobile PR navigation lost page scroll: ${JSON.stringify(mobileScrollContract)}`);
+        }
+        await prContextPage.evaluate(({ key, id }) => {
+          const selection = pullRequestDiffSelection(key, id);
+          selection.anchor = null;
+          selection.lines = [];
+          selection.comment = "";
+          state.renderedViewHtml = "";
+          render();
+        }, { key: prContextAgentKey, id: cachedSwitchIds.firstId });
+        await prContextPage.waitForSelector(`[data-pr-diff-viewer][data-pull-request-id='${cachedSwitchIds.firstId}']`, { state: "visible", timeout: 10_000 });
+        const selectableLines = prContextPage.locator("[data-select-pr-diff-line]");
+        if (await selectableLines.count() !== 2) throw new Error("PR detail did not expose selectable changed lines");
+        const firstLine = selectableLines.nth(0);
+        const secondLine = selectableLines.nth(1);
+        if (!(await firstLine.getAttribute("aria-label"))?.includes("lib/example.rb")) {
+          throw new Error("PR diff line control is missing an accessible file and line label");
+        }
+        const rangeLimitContract = await prContextPage.evaluate(async (key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diffKey = pullRequestDiffKey(key, pullRequestId);
+          const diff = state.pullRequestDiffs[diffKey];
+          const originalLines = diff.files[0].hunks[0].lines;
+          diff.files[0].hunks[0].lines = Array.from({ length: 101 }, (_, index) => ({
+            kind: "context", old_number: index + 1, new_number: index + 1, content: `line ${index + 1}`,
+          }));
+          state.renderedViewHtml = "";
+          render();
+          selectPullRequestDiffLine({ dataset: {
+            agentKey: key,
+            pullRequestId,
+            snapshotId: diff.snapshot_id,
+            reviewLinePath: "lib/example.rb",
+            reviewLineHunk: "0",
+            reviewLineIndex: "0",
+          } }, false);
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          const selection = pullRequestDiffSelection(key, pullRequestId, diff.snapshot_id);
+          const inlineComment = document.querySelector("[data-pr-inline-comment]");
+          const longLines = Array.from(document.querySelectorAll("[data-select-pr-diff-line]"));
+          const inlinePlacement = Boolean(
+            inlineComment && longLines[0].compareDocumentPosition(inlineComment) & Node.DOCUMENT_POSITION_FOLLOWING &&
+            inlineComment.compareDocumentPosition(longLines[1]) & Node.DOCUMENT_POSITION_FOLLOWING
+          );
+          const focusedInlineComment = document.activeElement === document.querySelector("[data-pr-context-comment]");
+          selectPullRequestDiffLine({ dataset: {
+            agentKey: key,
+            pullRequestId,
+            snapshotId: diff.snapshot_id,
+            reviewLinePath: "lib/example.rb",
+            reviewLineHunk: "0",
+            reviewLineIndex: "100",
+          } }, true);
+          const message = document.querySelector("#growl")?.innerText || "";
+          diff.files[0].hunks[0].lines = originalLines;
+          selection.anchor = null;
+          selection.lines = [];
+          state.renderedViewHtml = "";
+          render();
+          return { message, inlinePlacement, focusedInlineComment };
+        }, prContextAgentKey);
+        if (!rangeLimitContract.message.includes("at most 100 contiguous lines") ||
+            !rangeLimitContract.inlinePlacement || !rangeLimitContract.focusedInlineComment) {
+          throw new Error(`PR long-hunk placement, focus, or range limit failed: ${JSON.stringify(rangeLimitContract)}`);
+        }
+        const diffErrorState = await prContextPage.evaluate((key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diffKey = pullRequestDiffKey(key, pullRequestId);
+          const original = state.pullRequestDiffs[diffKey];
+          state.pullRequestDiffs[diffKey] = { error: "stale fixture diff", files: [] };
+          state.renderedViewHtml = "";
+          render();
+          const visible = document.querySelector(".ui-alert")?.innerText || "";
+          state.pullRequestDiffs[diffKey] = original;
+          state.renderedViewHtml = "";
+          render();
+          return visible;
+        }, prContextAgentKey);
+        if (!diffErrorState.includes("Diff unavailable") || !diffErrorState.includes("stale fixture diff")) {
+          throw new Error(`PR diff errors are not visible: ${JSON.stringify(diffErrorState)}`);
+        }
+        const largeDiffSelectionContract = await prContextPage.evaluate(async (key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diff = state.pullRequestDiffs[pullRequestDiffKey(key, pullRequestId)];
+          const originalLines = diff.files[0].hunks[0].lines;
+          const originalSnapshotId = diff.snapshot_id;
+          const originalExpandAll = state.prDiffExpandAll[key];
+          diff.files[0].hunks[0].lines = Array.from({ length: 5_000 }, (_, index) => ({
+            kind: "context", old_number: index + 1, new_number: index + 1, content: `large diff line ${index + 1}`,
+          }));
+          state.renderedViewHtml = "";
+          const fullRenderStartedAt = performance.now();
+          render();
+          const fullRenderSyncMs = performance.now() - fullRenderStartedAt;
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          const fullRenderMs = performance.now() - fullRenderStartedAt;
+
+          const viewerBefore = document.querySelector("[data-pr-diff-viewer]");
+          const target = document.querySelectorAll("[data-select-pr-diff-line]")[900];
+          target.scrollIntoView({ block: "center", inline: "nearest" });
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          const scrollBefore = window.scrollY;
+          const lineTopBefore = target.closest(".diff-line").getBoundingClientRect().top;
+          const startedAt = performance.now();
+          target.click();
+          const selectionSyncMs = performance.now() - startedAt;
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const durationMs = performance.now() - startedAt;
+          const result = {
+            fullRenderMs,
+            fullRenderSyncMs,
+            durationMs,
+            selectionSyncMs,
+            viewerPersistent: viewerBefore === document.querySelector("[data-pr-diff-viewer]"),
+            scrollDelta: Math.abs(window.scrollY - scrollBefore),
+            lineDelta: Math.abs(target.closest(".diff-line").getBoundingClientRect().top - lineTopBefore),
+            formVisible: Boolean(document.querySelector("[data-pr-inline-comment]")),
+          };
+
+          const pollViewer = document.querySelector("[data-pr-diff-viewer]");
+          const pollComment = document.querySelector("[data-pr-context-comment]");
+          const pollScrollContainer = document.querySelector(".pr-diff-detail");
+          const pollScrollTop = window.scrollY;
+          const pollLineTop = target.closest(".diff-line").getBoundingClientRect().top;
+          const originalRenderDiffLine = renderDiffLine;
+          let pollDiffLineRenderCount = 0;
+          renderDiffLine = (...args) => {
+            pollDiffLineRenderCount += 1;
+            return originalRenderDiffLine(...args);
+          };
+          const pollRenderStartedAt = performance.now();
+          render({ preserveLiveEditor: true, preservePollContent: true });
+          result.pollRenderSyncMs = performance.now() - pollRenderStartedAt;
+          result.pollDiffLineRenderCount = pollDiffLineRenderCount;
+          renderDiffLine = originalRenderDiffLine;
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          result.pollViewerPersistent = pollViewer === document.querySelector("[data-pr-diff-viewer]");
+          result.pollCommentPersistent = pollComment === document.querySelector("[data-pr-context-comment]");
+          result.pollFocusPersistent = document.activeElement === pollComment;
+          result.pollContainerReplaced = pollScrollContainer !== document.querySelector(".pr-diff-detail");
+          result.pollScrollDelta = Math.abs(window.scrollY - pollScrollTop);
+          result.pollLineDelta = Math.abs(target.closest(".diff-line").getBoundingClientRect().top - pollLineTop);
+          pollComment.value = "Live comment text must not invalidate the diff shell.";
+          pollComment.dispatchEvent(new Event("input", { bubbles: true }));
+          let steadyPollDiffLineRenderCount = 0;
+          renderDiffLine = (...args) => {
+            steadyPollDiffLineRenderCount += 1;
+            return originalRenderDiffLine(...args);
+          };
+          const steadyPollStartedAt = performance.now();
+          render({ preserveLiveEditor: true, preservePollContent: true });
+          result.steadyPollRenderSyncMs = performance.now() - steadyPollStartedAt;
+          renderDiffLine = originalRenderDiffLine;
+          result.steadyPollDiffLineRenderCount = steadyPollDiffLineRenderCount;
+          result.steadyPollComment = document.querySelector("[data-pr-context-comment]")?.value;
+          result.steadyPollViewerPersistent = pollViewer === document.querySelector("[data-pr-diff-viewer]");
+
+          const item = state.pullRequests[key].items.find((candidate) => candidate.id === pullRequestId);
+          const originalTitle = item.title;
+          item.title = `${originalTitle} updated`;
+          let forcedRenderDiffLineCount = 0;
+          renderDiffLine = (...args) => {
+            forcedRenderDiffLineCount += 1;
+            return originalRenderDiffLine(...args);
+          };
+          render({ preserveLiveEditor: true, preservePollContent: false });
+          renderDiffLine = originalRenderDiffLine;
+          result.forcedRenderDiffLineCount = forcedRenderDiffLineCount;
+          result.forcedViewerPersistent = pollViewer === document.querySelector("[data-pr-diff-viewer]");
+          result.forcedCommentPersistent = pollComment === document.querySelector("[data-pr-context-comment]");
+          result.forcedTitleUpdated = document.querySelector(".pr-diff-title-meta strong")?.textContent === item.title;
+          item.title = originalTitle;
+
+          let changedSnapshotRenderCount = 0;
+          renderDiffLine = (...args) => {
+            changedSnapshotRenderCount += 1;
+            return originalRenderDiffLine(...args);
+          };
+          diff.snapshot_id = `${originalSnapshotId}-changed`;
+          render({ preserveLiveEditor: true, preservePollContent: true });
+          result.changedSnapshotImmediateRenderCount = changedSnapshotRenderCount;
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          renderDiffLine = originalRenderDiffLine;
+          result.changedSnapshotRenderCount = changedSnapshotRenderCount;
+          result.changedSnapshotViewerReplaced = pollViewer !== document.querySelector("[data-pr-diff-viewer]");
+
+          const changedSnapshotViewer = document.querySelector("[data-pr-diff-viewer]");
+          diff.snapshot_id = originalSnapshotId;
+          let collapsedRenderCount = 0;
+          renderDiffLine = (...args) => {
+            collapsedRenderCount += 1;
+            return originalRenderDiffLine(...args);
+          };
+          document.querySelector(`[data-toggle-pr-diff-expand-all="${CSS.escape(key)}"]`).click();
+          result.collapsedImmediateRenderCount = collapsedRenderCount;
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          renderDiffLine = originalRenderDiffLine;
+          result.collapsedRenderCount = collapsedRenderCount;
+          result.collapsedViewerReplaced = changedSnapshotViewer !== document.querySelector("[data-pr-diff-viewer]");
+          result.collapsedViewerPresent = Boolean(document.querySelector("[data-pr-diff-viewer]"));
+          result.collapsedLoadingVisible = Boolean(document.querySelector(".pr-diff-loading-state"));
+          result.collapsedFilesClosed = Array.from(document.querySelectorAll("[data-pr-diff-viewer] .diff-file"))
+            .every((detail) => !detail.open);
+
+          const selection = pullRequestDiffSelection(key, pullRequestId, diff.snapshot_id);
+          selection.anchor = null;
+          selection.lines = [];
+          selection.comment = "";
+          if (originalExpandAll === undefined) delete state.prDiffExpandAll[key];
+          else state.prDiffExpandAll[key] = originalExpandAll;
+          document.querySelectorAll(".pr-diff-detail .diff-file").forEach((detail) => {
+            detail.open = originalExpandAll !== false;
+          });
+          diff.files[0].hunks[0].lines = originalLines;
+          state.renderedViewHtml = "";
+          render();
+          return result;
+        }, prContextAgentKey);
+        if (!largeDiffSelectionContract.viewerPersistent || !largeDiffSelectionContract.formVisible ||
+            !largeDiffSelectionContract.pollViewerPersistent || !largeDiffSelectionContract.pollCommentPersistent ||
+            !largeDiffSelectionContract.pollFocusPersistent ||
+            largeDiffSelectionContract.pollContainerReplaced ||
+            largeDiffSelectionContract.pollDiffLineRenderCount !== 0 ||
+            !largeDiffSelectionContract.steadyPollViewerPersistent ||
+            largeDiffSelectionContract.steadyPollDiffLineRenderCount !== 0 ||
+            largeDiffSelectionContract.steadyPollComment !== "Live comment text must not invalidate the diff shell." ||
+            largeDiffSelectionContract.forcedRenderDiffLineCount !== 0 ||
+            !largeDiffSelectionContract.forcedViewerPersistent ||
+            !largeDiffSelectionContract.forcedCommentPersistent ||
+            !largeDiffSelectionContract.forcedTitleUpdated ||
+            largeDiffSelectionContract.changedSnapshotImmediateRenderCount !== 0 ||
+            largeDiffSelectionContract.changedSnapshotRenderCount !== 5_000 ||
+            !largeDiffSelectionContract.changedSnapshotViewerReplaced ||
+            largeDiffSelectionContract.collapsedImmediateRenderCount !== 0 ||
+            ![0, 5_000].includes(largeDiffSelectionContract.collapsedRenderCount) ||
+            !largeDiffSelectionContract.collapsedViewerReplaced ||
+            !largeDiffSelectionContract.collapsedViewerPresent ||
+            largeDiffSelectionContract.collapsedLoadingVisible ||
+            !largeDiffSelectionContract.collapsedFilesClosed ||
+            largeDiffSelectionContract.scrollDelta > 1 || largeDiffSelectionContract.lineDelta > 1 ||
+            largeDiffSelectionContract.pollScrollDelta > 1 || largeDiffSelectionContract.pollLineDelta > 1) {
+          throw new Error(`Large PR selection did not preserve the diff, form, or scroll: ${JSON.stringify(largeDiffSelectionContract)}`);
+        }
+        console.log(`PR rendering (5,000 lines): full ${largeDiffSelectionContract.fullRenderSyncMs.toFixed(1)}ms sync / selection ${largeDiffSelectionContract.selectionSyncMs.toFixed(1)}ms sync / first poll ${largeDiffSelectionContract.pollRenderSyncMs.toFixed(1)}ms sync / steady poll ${largeDiffSelectionContract.steadyPollRenderSyncMs.toFixed(1)}ms sync`);
+        await prContextPage.evaluate(async (key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diff = state.pullRequestDiffs[pullRequestDiffKey(key, pullRequestId)];
+          diff.files[0].hunks[0].lines[1].content = `new ${"wide-code-column ".repeat(24)}`;
+          diff.files[0].hunks[0].lines.push({
+            kind: "context", old_number: 2, new_number: 2, content: "following unselected line",
+          });
+          state.pullRequestDiffViewers.clear();
+          resetPullRequestDiffRender();
+          state.renderedViewHtml = "";
+          render();
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        }, prContextAgentKey);
+        await prContextPage.waitForSelector("[data-select-pr-diff-line]", { state: "visible", timeout: 10_000 });
+        await firstLine.click();
+        await secondLine.click({ modifiers: ["Shift"] });
+        await prContextPage.waitForSelector("[data-pr-inline-comment]", { state: "visible", timeout: 10_000 });
+        await prContextPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+        const rangeSelectionState = await prContextPage.evaluate((key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diff = state.pullRequestDiffs[pullRequestDiffKey(key, pullRequestId)];
+          const selection = pullRequestDiffSelection(key, pullRequestId, diff.snapshot_id);
+          return {
+            checked: document.querySelectorAll("[data-select-pr-diff-line]:checked").length,
+            selected: selection.lines.map((line) => line.line_index),
+            anchor: selection.anchor?.line_index,
+            snapshotId: diff.snapshot_id,
+            domSnapshotIds: Array.from(document.querySelectorAll("[data-select-pr-diff-line]"), (line) => line.dataset.snapshotId).slice(0, 3),
+          };
+        }, prContextAgentKey);
+        if (rangeSelectionState.checked !== 2) {
+          throw new Error(`PR line range did not select two lines: ${JSON.stringify(rangeSelectionState)}`);
+        }
+        const selectedRange = await prContextPage.evaluate((key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diff = state.pullRequestDiffs[pullRequestDiffKey(key, pullRequestId)];
+          const selection = pullRequestDiffSelection(key, pullRequestId, diff.snapshot_id);
+          return {
+            selected: document.querySelectorAll("[data-select-pr-diff-line]:checked").length,
+            selectedIndexes: selection.lines.map((line) => line.line_index),
+            anchorIndex: selection.anchor?.line_index,
+            selectionText: document.querySelector("[data-pr-inline-comment]")?.innerText,
+            overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        }, prContextAgentKey);
+        if (selectedRange.selected !== 2 || !selectedRange.selectionText?.includes("Commenting on") || selectedRange.overflow) {
+          throw new Error(`PR line range selection is not usable on mobile: ${JSON.stringify(selectedRange)}`);
+        }
+        await prContextPage.fill("[data-pr-context-comment]", "Clarify this mixed-side range.");
+        await prContextPage.setViewportSize({ width: 1210, height: 640 });
+        const landscapeInlineContract = await prContextPage.evaluate(() => {
+          const body = document.querySelector(".diff-file-body");
+          const panel = document.querySelector("[data-pr-inline-comment]");
+          const send = document.querySelector("[data-send-pr-diff-comment]");
+          const add = document.querySelector("[data-attach-pr-diff-selection]");
+          const selectedCheck = document.querySelector("[data-select-pr-diff-line]:checked + .diff-line-check");
+          const emptyCheck = document.querySelector("[data-select-pr-diff-line]:not(:checked) + .diff-line-check");
+          const nativeCheck = document.querySelector("[data-select-pr-diff-line]");
+          const bodyRect = body?.getBoundingClientRect();
+          const panelRect = panel?.getBoundingClientRect();
+          const sendRect = send?.getBoundingClientRect();
+          const addRect = add?.getBoundingClientRect();
+          return {
+            bodyWidth: bodyRect?.width,
+            panelWidth: panelRect?.width,
+            panelInside: panelRect.left >= bodyRect.left - 1 && panelRect.right <= bodyRect.right + 1,
+            actionsInside: [sendRect, addRect].every((rect) => rect.left >= bodyRect.left - 1 && rect.right <= bodyRect.right + 1),
+            sendVisible: getComputedStyle(send).visibility !== "hidden" && sendRect.width > 0,
+            nativeHidden: getComputedStyle(nativeCheck).opacity === "0",
+            selectedMark: selectedCheck?.textContent,
+            emptyMark: emptyCheck?.textContent,
+          };
+        });
+        if (!landscapeInlineContract.panelInside || !landscapeInlineContract.actionsInside ||
+            !landscapeInlineContract.sendVisible || !landscapeInlineContract.nativeHidden ||
+            landscapeInlineContract.selectedMark !== "✓" || landscapeInlineContract.emptyMark !== "") {
+          throw new Error(`Landscape inline comment or minimal line selector failed: ${JSON.stringify(landscapeInlineContract)}`);
+        }
+        await prContextPage.evaluate(() => {
+          document.querySelector("#growl")?.classList.add("hidden");
+          document.querySelector("[data-pr-inline-comment]")?.scrollIntoView({ block: "center", inline: "nearest" });
+        });
+        if (captureDir) await prContextPage.screenshot({ path: path.join(captureDir, "pr-context-selected-landscape.png"), fullPage: false });
+        await prContextPage.setViewportSize({ width: 390, height: 844 });
+        await prContextPage.evaluate(() => document.querySelector("#growl")?.classList.add("hidden"));
+        if (captureDir) await prContextPage.screenshot({ path: path.join(captureDir, "pr-context-selected-mobile.png"), fullPage: true });
+        const cancelContract = await prContextPage.evaluate(() => {
+          const viewer = document.querySelector("[data-pr-diff-viewer]");
+          const selectedLine = document.querySelector(".diff-line.selected");
+          const lineTop = selectedLine?.getBoundingClientRect().top;
+          const scrollTop = window.scrollY;
+          document.querySelector("[data-clear-pr-diff-selection]").click();
+          return {
+            viewerPersistent: viewer === document.querySelector("[data-pr-diff-viewer]"),
+            formRemoved: !document.querySelector("[data-pr-inline-comment]"),
+            selectedRows: document.querySelectorAll(".diff-line.selected").length,
+            checkedLines: document.querySelectorAll("[data-select-pr-diff-line]:checked").length,
+            selectedMarks: document.querySelectorAll(".diff-line-check.selected").length,
+            scrollDelta: Math.abs(window.scrollY - scrollTop),
+            lineDelta: Math.abs((selectedLine?.getBoundingClientRect().top || 0) - (lineTop || 0)),
+          };
+        });
+        if (!cancelContract.viewerPersistent || !cancelContract.formRemoved || cancelContract.selectedRows ||
+            cancelContract.checkedLines || cancelContract.selectedMarks || cancelContract.scrollDelta > 1 || cancelContract.lineDelta > 1) {
+          throw new Error(`Cancel did not clear the persistent PR comment UI in place: ${JSON.stringify(cancelContract)}`);
+        }
+        await prContextPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+        await firstLine.click();
+        await secondLine.click({ modifiers: ["Shift"] });
+        await prContextPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+        if (await prContextPage.locator("[data-select-pr-diff-line]:checked").count() !== 2) {
+          throw new Error("PR range could not be reselected after clearing it");
+        }
+        await prContextPage.keyboard.press("Escape");
+        if (await prContextPage.locator("[data-select-pr-diff-line]:checked").count()) {
+          const escapeState = await prContextPage.evaluate((key) => ({
+            route: parseRoute(),
+            selections: state.pullRequestDiffSelections,
+            speech: Boolean(state.speechRecognition),
+            key,
+          }), prContextAgentKey);
+          throw new Error(`Escape did not clear the active PR diff range: ${JSON.stringify(escapeState)}`);
+        }
+        await firstLine.click();
+        await secondLine.click({ modifiers: ["Shift"] });
+        await prContextPage.fill("[data-pr-context-comment]", "Clarify this mixed-side range.");
+        await prContextPage.evaluate(async () => refresh({ force: true, forceConversation: true }));
+        await prContextPage.waitForSelector("[data-select-pr-diff-line]:checked", { state: "visible", timeout: 10_000 });
+        const refreshedInlineComment = await prContextPage.inputValue("[data-pr-context-comment]");
+        if (await prContextPage.locator("[data-select-pr-diff-line]:checked").count() !== 2 ||
+            refreshedInlineComment !== "Clarify this mixed-side range.") {
+          throw new Error("PR line selection and comment did not survive a conversation refresh");
+        }
+        await prContextPage.click("[data-send-pr-diff-comment]");
+        await prContextPage.waitForFunction(
+          (key) => arrayValue(state.conversations[key]?.blocks)
+            .some((block) => block.role === "user" && block.content?.includes("Clarify this mixed-side range.")),
+          prContextAgentKey,
+          { timeout: 10_000 }
+        );
+        await prContextPage.waitForFunction((key) => !agentIsRunning(findAgent(key)), prContextAgentKey, { timeout: 10_000 });
+        await prContextPage.waitForFunction((key) => !state.pendingPullRequestCommentKeys.has(key), prContextAgentKey, { timeout: 10_000 });
+        if (await prContextPage.locator("[data-select-pr-diff-line]:checked").count()) {
+          throw new Error("Direct diff comment did not clear its completed selection");
+        }
+        await firstLine.click();
+        await secondLine.click({ modifiers: ["Shift"] });
+        await prContextPage.fill("[data-pr-context-comment]", "Combine this section with another.");
+        await prContextPage.click("[data-attach-pr-diff-selection]");
+        await prContextPage.waitForFunction(() => document.querySelectorAll("[data-pending-pr-context]").length === 1);
+        await prContextPage.click("[data-open-pr-context-composer]");
+        await prContextPage.waitForSelector("[data-pending-pr-context]", { state: "visible", timeout: 10_000 });
+        const pendingContext = await prContextPage.evaluate(() => ({
+          text: document.querySelector("[data-pending-pr-context]")?.innerText,
+          reviewButton: document.querySelector("[data-open-pr-context-composer]")?.innerText,
+          focused: document.activeElement?.id === "prompt-input",
+        }));
+        if (!pendingContext.text?.includes("example/web#123") ||
+            !pendingContext.text?.includes("lib/example.rb") ||
+            !pendingContext.text?.includes("mixed sides") ||
+            !pendingContext.text?.includes("Combine this section with another.") ||
+            !pendingContext.reviewButton?.includes("Review combined comment") ||
+            !pendingContext.focused) {
+          throw new Error(`Combined PR comment section is incomplete: ${JSON.stringify(pendingContext)}`);
+        }
+        await prContextPage.click("[data-remove-pr-context]");
+        if (await prContextPage.locator("[data-pending-pr-context]").count()) {
+          throw new Error("Pending PR context could not be removed");
+        }
+        await firstLine.click();
+        await secondLine.click({ modifiers: ["Shift"] });
+        await prContextPage.fill("[data-pr-context-comment]", "Duplicate range check.");
+        await prContextPage.click("[data-attach-pr-diff-selection]");
+        await firstLine.click();
+        await secondLine.click({ modifiers: ["Shift"] });
+        await prContextPage.fill("[data-pr-context-comment]", "Duplicate range check.");
+        await prContextPage.click("[data-attach-pr-diff-selection]");
+        if (await prContextPage.locator("[data-pending-pr-context]").count() !== 1 ||
+            !(await prContextPage.locator("#growl").innerText()).includes("already attached")) {
+          throw new Error("Duplicate PR context was not rejected visibly");
+        }
+        await prContextPage.evaluate(async (key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diff = state.pullRequestDiffs[pullRequestDiffKey(key, pullRequestId)];
+          diff.snapshot_id = "newer-snapshot";
+          state.renderedViewHtml = "";
+          render();
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        }, prContextAgentKey);
+        if (!(await prContextPage.locator("[data-pending-pr-context]").innerText()).includes("outdated")) {
+          throw new Error("Stale pending PR context is not called out before submission");
+        }
+        await prContextPage.evaluate(async (key) => {
+          const route = parseRoute();
+          const pullRequestId = selectedPullRequestId(key, route.pullRequestId);
+          const diff = state.pullRequestDiffs[pullRequestDiffKey(key, pullRequestId)];
+          diff.snapshot_id = document.querySelector("[data-pending-pr-context]")?.dataset.pendingPrContext
+            ? pendingPullRequestContextsFor(key)[0].snapshot_id
+            : diff.snapshot_id;
+          state.renderedViewHtml = "";
+          render();
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        }, prContextAgentKey);
+        await prContextPage.setViewportSize({ width: 1280, height: 800 });
+        await prContextPage.evaluate(() => document.querySelector("#growl")?.classList.add("hidden"));
+        if (captureDir) await prContextPage.screenshot({ path: path.join(captureDir, "pr-context-pending-desktop.png"), fullPage: true });
+        await prContextPage.evaluate(() => {
+          window.__originalPendingAttachmentPayloads = pendingAttachmentPayloads;
+          pendingAttachmentPayloads = async () => new Promise((resolve) => {
+            window.__releasePromptAttachmentPayloads = () => resolve([]);
+          });
+        });
+        await prContextPage.fill("#prompt-input", "Explain the selected change.");
+        await prContextPage.click("#composer button[type='submit']");
+        await prContextPage.waitForFunction(() => typeof window.__releasePromptAttachmentPayloads === "function");
+        await firstLine.click();
+        await prContextPage.fill("[data-pr-context-comment]", "A later comment section.");
+        await prContextPage.click("[data-attach-pr-diff-selection]");
+        if (await prContextPage.locator("[data-pending-pr-context]").count() !== 2) {
+          throw new Error("PR context could not be queued while another prompt payload was encoding");
+        }
+        await prContextPage.evaluate(() => window.__releasePromptAttachmentPayloads());
+        await prContextPage.waitForFunction(
+          () => {
+            const key = parseRoute().key;
+            return !state.pendingComposerKeys.has(key) && arrayValue(state.conversations[key]?.blocks)
+              .some((block) => block.content?.includes("Explain the selected change.") && block.content?.includes("Duplicate range check."));
+          },
+          null,
+          { timeout: 10_000 }
+        );
+        const sentContext = await prContextPage.evaluate((key) => {
+          pendingAttachmentPayloads = window.__originalPendingAttachmentPayloads;
+          const message = arrayValue(state.conversations[key]?.blocks)
+            .find((block) => block.content?.includes("Explain the selected change.") && block.content?.includes("[TYCHO_PR_DIFF_CONTEXT]"));
+          return {
+            content: message?.content || "",
+            pending: pendingPullRequestContextsFor(key).map((context) => context.lines.length),
+          };
+        }, prContextAgentKey);
+        if (!sentContext.content.includes('"repository":"example/web"') ||
+            !sentContext.content.includes('"path":"lib/example.rb"') ||
+            !sentContext.content.includes('"side":"left"') ||
+            !sentContext.content.includes('"side":"right"') ||
+            !sentContext.content.includes("Duplicate range check.") ||
+            JSON.stringify(sentContext.pending) !== "[1]") {
+          throw new Error(`Sent PR context lost metadata or consumed a later range: ${JSON.stringify(sentContext)}`);
+        }
         await prContextPage.close();
 
         const pausedReviewPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -1788,12 +2821,40 @@ def write_smoke_script(path)
         await reviewPage.close();
         }
 
-        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
+        const speechAgentKey = await page.evaluate(async () => {
+          const data = await apiPost("/agents", {
+            project_key: "web",
+            template_key: "custom",
+            name: "Speech Smoke Agent",
+            prompt: "Test speech input.",
+            agent: "codex",
+          });
+          state.agents.push(data.agent);
+          return data.agent.key;
+        });
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(speechAgentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
         await page.evaluate(() => {
           window.SpeechRecognition = class SmokeSpeechRecognition {
+            constructor() {
+              window.__speechRecognitionInstances ||= [];
+              window.__speechRecognitionInstances.push(this);
+            }
             start() { window.__speechRecognitionStarted = (window.__speechRecognitionStarted || 0) + 1; }
-            stop() {}
+            stop() {
+              this.stopped = true;
+              if (this.finalOnStop) {
+                this.onresult?.({
+                  resultIndex: 0,
+                  results: [{ isFinal: true, 0: { transcript: this.finalOnStop } }],
+                });
+              }
+              this.onend?.();
+            }
+            abort() {
+              this.aborted = true;
+              this.onerror?.({ error: "aborted" });
+            }
           };
           state.renderedViewHtml = "";
           render();
@@ -1805,9 +2866,46 @@ def write_smoke_script(path)
           els.view.append(hiddenComposer);
           document.activeElement?.blur();
         });
-        await page.keyboard.press("Meta+Shift+.");
+        await page.waitForTimeout(1200);
+        const speechIconContract = await page.evaluate(() => ({
+          icon: Boolean(document.querySelector('[data-toggle-speech-mode] path[d^="M12 2a3"]')),
+          state: document.querySelector("[data-toggle-speech-mode]")?.dataset.state,
+          label: document.querySelector("[data-toggle-speech-mode]")?.getAttribute("aria-label"),
+          inEditor: Boolean(document.querySelector(".composer-editor-shell > [data-speech-mode-control]")),
+          micTop: document.querySelector("[data-toggle-speech-mode]")?.getBoundingClientRect().top,
+          fullScreenTop: document.querySelector("[data-toggle-composer-full-screen]")?.getBoundingClientRect().top,
+        }));
+        if (!speechIconContract.icon || speechIconContract.state !== "idle" ||
+            !speechIconContract.label?.includes("Start speech recognition") ||
+            !speechIconContract.inEditor || speechIconContract.micTop <= speechIconContract.fullScreenTop) {
+          throw new Error(`Speech idle control is not clear or accessible: ${JSON.stringify(speechIconContract)}`);
+        }
+        await captureVisibleComposer("speech-idle-icon-desktop.png");
+        await page.click("[data-toggle-speech-mode]");
+        await page.evaluate(async () => refresh({ force: true, forceConversation: true }));
+        const listeningState = await page.evaluate(() => ({
+          state: document.querySelector("[data-toggle-speech-mode]")?.dataset.state,
+          status: document.querySelector("[data-speech-mode-status]")?.textContent,
+          interimResults: state.speechRecognition?.interimResults,
+          started: window.__speechRecognitionStarted,
+          composerState: document.querySelector("#composer")?.dataset.speechState,
+          pulse: getComputedStyle(document.querySelector(".composer-editor-shell")).animationName,
+          statusHidden: document.querySelector("[data-speech-mode-status]")?.classList.contains("sr-only"),
+        }));
+        if (listeningState.state !== "listening" || !listeningState.status?.includes("Listening") ||
+            !listeningState.interimResults || listeningState.started !== 1 ||
+            listeningState.composerState !== "listening" || !listeningState.pulse.includes("speech-listening") ||
+            !listeningState.statusHidden) {
+          throw new Error(`Speech listening state is incomplete: ${JSON.stringify(listeningState)}`);
+        }
+        await captureVisibleComposer("speech-listening-desktop.png");
         const speechShortcutContract = await page.evaluate((key) => {
           const recognition = state.speechRecognition;
+          recognition?.onresult?.({
+            resultIndex: 0,
+            results: [{ isFinal: false, 0: { transcript: "spoken" } }],
+          });
+          const interim = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] #prompt-input`)?.value;
           recognition?.onresult?.({
             resultIndex: 0,
             results: [{ isFinal: true, 0: { transcript: "spoken smoke" } }],
@@ -1816,19 +2914,36 @@ def write_smoke_script(path)
             started: window.__speechRecognitionStarted,
             selectedAgentKey: state.speechComposerKey,
             focusedPrompt: document.activeElement?.id === "prompt-input" && document.activeElement?.closest("#composer")?.dataset.agentKey === key,
+            interim,
             transcript: document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] #prompt-input`)?.value,
+            state: state.speechState,
+            status: document.querySelector("[data-speech-mode-status]")?.textContent,
             shortcutHint: document.querySelector("[data-toggle-speech-mode]")?.getAttribute("aria-label"),
           };
-        }, agentKey);
+        }, speechAgentKey);
         if (speechShortcutContract.started !== 1 ||
-            speechShortcutContract.selectedAgentKey !== agentKey ||
+            speechShortcutContract.selectedAgentKey !== speechAgentKey ||
             !speechShortcutContract.focusedPrompt ||
+            speechShortcutContract.interim !== "spoken" ||
             speechShortcutContract.transcript !== "spoken smoke" ||
+            speechShortcutContract.state !== "processing" ||
+            !speechShortcutContract.status?.includes("Transcript added") ||
             !speechShortcutContract.shortcutHint?.includes("Shift+.")) {
           throw new Error(`Speech shortcut did not select and focus the visible composer: ${JSON.stringify(speechShortcutContract)}`);
         }
-        if (captureDir) await page.screenshot({ path: path.join(captureDir, "speech-shortcut-desktop.png") });
+        await captureVisibleComposer("speech-transcribed-desktop.png");
         await page.evaluate(() => stopSpeechMode());
+        await page.click("#composer button[type='submit']");
+        await page.waitForFunction(
+          (key) => arrayValue(state.conversations[key]?.blocks).some((block) => block.role === "user" && block.content === "spoken smoke"),
+          speechAgentKey,
+          { timeout: 10_000 }
+        );
+        await page.waitForFunction((key) => !agentIsRunning(findAgent(key)), speechAgentKey, { timeout: 10_000 });
+        await page.evaluate(() => {
+          state.renderedViewHtml = "";
+          render();
+        });
         const speechGuardContract = await page.evaluate((key) => {
           const shortcut = (overrides = {}) => {
             let prevented = false;
@@ -1897,16 +3012,206 @@ def write_smoke_script(path)
           externalInput.remove();
           editable.remove();
           return results;
-        }, agentKey);
+        }, speechAgentKey);
         if (speechGuardContract.textInput.handled || speechGuardContract.textInput.prevented ||
             speechGuardContract.contentEditable.handled || speechGuardContract.contentEditable.prevented ||
             speechGuardContract.repeat.handled || speechGuardContract.composing.handled ||
             speechGuardContract.dialog.handled || speechGuardContract.dialog.prevented ||
-            speechGuardContract.unsupported.handled || speechGuardContract.unsupported.prevented ||
+            !speechGuardContract.unsupported.handled || !speechGuardContract.unsupported.prevented ||
             !speechGuardContract.multiple.handled || !speechGuardContract.focusedVisibleComposer ||
-            !speechGuardContract.disabledIgnored || speechGuardContract.activeKey !== agentKey) {
+            !speechGuardContract.disabledIgnored || speechGuardContract.activeKey !== speechAgentKey) {
           throw new Error(`Speech shortcut guards or composer selection failed: ${JSON.stringify(speechGuardContract)}`);
         }
+        const speechLifecycleContract = await page.evaluate(async (key) => {
+          const composer = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"]`);
+          const input = composer.querySelector("#prompt-input");
+          input.value = "before after";
+          input.setSelectionRange(6, 6);
+          startSpeechMode(composer);
+          const firstRecognition = state.speechRecognition;
+          firstRecognition.onresult({
+            resultIndex: 0,
+            results: [{ isFinal: true, 0: { transcript: "spoken words" } }],
+          });
+          const insertedAtCaret = input.value;
+          startSpeechMode(composer);
+          const repeatedStopped = firstRecognition.stopped === true && !state.speechRecognition;
+
+          input.value = "keep";
+          input.setSelectionRange(input.value.length, input.value.length);
+          startSpeechMode(composer);
+          const cleanStopRecognition = state.speechRecognition;
+          cleanStopRecognition.onresult({
+            resultIndex: 0,
+            results: [{ isFinal: false, 0: { transcript: "last words" } }],
+          });
+          cleanStopRecognition.finalOnStop = "last words finalized";
+          startSpeechMode(composer);
+          const cleanStopped = input.value;
+
+          input.value = "keep this";
+          input.setSelectionRange(4, 4);
+          startSpeechMode(composer);
+          const cancelRecognition = state.speechRecognition;
+          cancelRecognition.onresult({
+            resultIndex: 0,
+            results: [{ isFinal: false, 0: { transcript: " temporary" } }],
+          });
+          stopSpeechMode({ cancel: true });
+          const cancelled = input.value;
+
+          input.value = Array.from({ length: 24 }, (_, index) => `existing line ${index + 1}`).join("\\n");
+          input.setSelectionRange(input.value.length, input.value.length);
+          input.scrollTop = 0;
+          startSpeechMode(composer);
+          const scrollingRecognition = state.speechRecognition;
+          scrollingRecognition.onresult({
+            resultIndex: 0,
+            results: [{ isFinal: false, 0: { transcript: "spoken text at the end" } }],
+          });
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const speechFollow = {
+            scrollTop: input.scrollTop,
+            scrollHeight: input.scrollHeight,
+            clientHeight: input.clientHeight,
+          };
+          stopSpeechMode({ cancel: true });
+
+          const middleLines = Array.from({ length: 30 }, (_, index) => `middle line ${index + 1}`);
+          input.value = middleLines.join("\\n");
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          const middleCaret = middleLines.slice(0, 10).join("\\n").length;
+          input.setSelectionRange(middleCaret, middleCaret);
+          input.scrollTop = 80;
+          const middleOriginalScrollTop = input.scrollTop;
+          startSpeechMode(composer);
+          const middleRecognition = state.speechRecognition;
+          middleRecognition.onresult({
+            resultIndex: 0,
+            results: [{ isFinal: false, 0: { transcript: "spoken middle ".repeat(80) } }],
+          });
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const middleFollow = {
+            originalScrollTop: middleOriginalScrollTop,
+            followedScrollTop: input.scrollTop,
+            maxScrollTop: input.scrollHeight - input.clientHeight,
+          };
+          stopSpeechMode({ cancel: true });
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          middleFollow.restoredScrollTop = input.scrollTop;
+
+          startSpeechMode(composer);
+          const permissionRecognition = state.speechRecognition;
+          permissionRecognition.onerror({ error: "not-allowed" });
+          const permission = {
+            state: document.querySelector("[data-toggle-speech-mode]")?.dataset.state,
+            status: document.querySelector("[data-speech-mode-status]")?.textContent,
+            label: document.querySelector("[data-toggle-speech-mode]")?.getAttribute("aria-label"),
+          };
+
+          startSpeechMode(composer);
+          const networkRecognition = state.speechRecognition;
+          networkRecognition.onerror({ error: "network" });
+          const network = {
+            state: document.querySelector("[data-toggle-speech-mode]")?.dataset.state,
+            status: document.querySelector("[data-speech-mode-status]")?.textContent,
+          };
+
+          startSpeechMode(composer);
+          const rerenderRecognition = state.speechRecognition;
+          state.renderedViewHtml = "force speech cleanup";
+          render();
+          const rerenderPreserved = rerenderRecognition === state.speechRecognition && rerenderRecognition.stopped !== true;
+
+          const navigationComposer = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"]`);
+          stopSpeechMode({ cancel: true });
+          startSpeechMode(navigationComposer);
+          const navigationRecognition = state.speechRecognition;
+          window.dispatchEvent(new HashChangeEvent("hashchange"));
+          const navigationCleaned = navigationRecognition.stopped === true && !state.speechRecognition;
+
+          return {
+            insertedAtCaret, repeatedStopped, cleanStopped, cancelled, permission, network,
+            speechFollow, middleFollow, rerenderPreserved, navigationCleaned,
+          };
+        }, speechAgentKey);
+        if (speechLifecycleContract.insertedAtCaret !== "before spoken words after" ||
+            !speechLifecycleContract.repeatedStopped ||
+            speechLifecycleContract.cleanStopped !== "keep last words finalized" ||
+            speechLifecycleContract.cancelled !== "keep this" ||
+            speechLifecycleContract.speechFollow.scrollTop <= 0 ||
+            speechLifecycleContract.speechFollow.scrollTop + speechLifecycleContract.speechFollow.clientHeight <
+              speechLifecycleContract.speechFollow.scrollHeight - 2 ||
+            speechLifecycleContract.middleFollow.followedScrollTop <= speechLifecycleContract.middleFollow.originalScrollTop ||
+            speechLifecycleContract.middleFollow.followedScrollTop >= speechLifecycleContract.middleFollow.maxScrollTop - 2 ||
+            Math.abs(speechLifecycleContract.middleFollow.restoredScrollTop - speechLifecycleContract.middleFollow.originalScrollTop) > 1 ||
+            speechLifecycleContract.permission.state !== "error" ||
+            !speechLifecycleContract.permission.status?.includes("permission denied") ||
+            !speechLifecycleContract.permission.label?.includes("Speech recognition error") ||
+            !speechLifecycleContract.permission.label?.includes("permission denied") ||
+            speechLifecycleContract.network.state !== "error" ||
+            !speechLifecycleContract.network.status?.includes("network service") ||
+            !speechLifecycleContract.rerenderPreserved ||
+            !speechLifecycleContract.navigationCleaned) {
+          throw new Error(`Speech lifecycle, caret, permission, or cleanup failed: ${JSON.stringify(speechLifecycleContract)}`);
+        }
+        const speechFollowCapture = await page.evaluate(async (key) => {
+          const composer = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"]`);
+          const input = composer.querySelector("#prompt-input");
+          input.value = Array.from({ length: 24 }, (_, index) => `captured line ${index + 1}`).join("\\n");
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.setSelectionRange(input.value.length, input.value.length);
+          input.scrollTop = 0;
+          startSpeechMode(composer);
+          state.speechRecognition.onresult({
+            resultIndex: 0,
+            results: [{ isFinal: false, 0: { transcript: "spoken follow at the end" } }],
+          });
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          return {
+            value: input.value,
+            scrollTop: input.scrollTop,
+            scrollHeight: input.scrollHeight,
+            clientHeight: input.clientHeight,
+          };
+        }, speechAgentKey);
+        if (!speechFollowCapture.value.endsWith("spoken follow at the end") || speechFollowCapture.scrollTop <= 0 ||
+            speechFollowCapture.scrollTop + speechFollowCapture.clientHeight < speechFollowCapture.scrollHeight - 2) {
+          throw new Error(`Speech follow capture did not stay at the active transcript: ${JSON.stringify(speechFollowCapture)}`);
+        }
+        await captureVisibleComposer("speech-follow-scroll-desktop.png");
+        await page.evaluate(() => stopSpeechMode({ cancel: true }));
+        const unsupportedSpeechContract = await page.evaluate(() => {
+          const constructor = window.SpeechRecognition;
+          Object.defineProperties(window, {
+            SpeechRecognition: { configurable: true, value: undefined },
+            webkitSpeechRecognition: { configurable: true, value: undefined },
+          });
+          state.renderedViewHtml = "";
+          render();
+          const button = document.querySelector("[data-toggle-speech-mode]");
+          button.click();
+          const result = {
+            disabled: button.disabled,
+            state: button.dataset.state,
+            status: document.querySelector("[data-speech-mode-status]")?.textContent,
+            label: button.getAttribute("aria-label"),
+            growl: document.querySelector("#growl")?.innerText,
+          };
+          Object.defineProperty(window, "SpeechRecognition", { configurable: true, value: constructor });
+          state.pollDeferredUntil = 0;
+          schedule();
+          state.renderedViewHtml = "";
+          render();
+          return result;
+        });
+        if (unsupportedSpeechContract.disabled || unsupportedSpeechContract.state !== "unsupported" ||
+            !unsupportedSpeechContract.status?.includes("unavailable") ||
+            !unsupportedSpeechContract.label?.includes("Use the keyboard instead") ||
+            !unsupportedSpeechContract.growl?.includes("unavailable")) {
+          throw new Error(`Unsupported speech recognition is not actionable: ${JSON.stringify(unsupportedSpeechContract)}`);
+        }
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector("#header-schedule-menu:not(.hidden)", { state: "visible", timeout: 10_000 });
         const scheduleHeaderGeometry = await page.evaluate(() => {
           const scheduleTrigger = document.querySelector("[data-header-schedule-menu] > summary").getBoundingClientRect();
@@ -2214,10 +3519,14 @@ def write_smoke_script(path)
           const agent = findAgent(key);
           return agent && !agentIsRunning(agent);
         }, agentKey, { timeout: 10_000 });
+        await page.evaluate(() => {
+          state.renderedViewHtml = "";
+          render();
+        });
         await page.click("#prompt-input");
         await page.fill("#prompt-input", "$rev");
         await page.evaluate(() => refreshSkillAutocomplete(document.querySelector("#prompt-input")));
-        await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
+        await ensureSkillAutocompleteVisible();
         if (!(await page.locator("[data-skill-autocomplete-rescan]").isVisible())) {
           throw new Error("Skill autocomplete re-scan command was not visible");
         }
@@ -2225,7 +3534,7 @@ def write_smoke_script(path)
           if (typeof refresh !== "function") throw new Error("refresh function is unavailable");
           await refresh({ force: true, forceConversation: true });
         });
-        await page.waitForSelector("[data-skill-autocomplete]:not(.hidden)", { state: "visible", timeout: 10_000 });
+        await ensureSkillAutocompleteVisible();
         await page.waitForSelector("[data-skill-autocomplete-index]", { state: "visible", timeout: 10_000 });
         const stillAutocompleting = await page.locator("#prompt-input").inputValue();
         if (stillAutocompleting !== "$rev") {
@@ -2588,6 +3897,366 @@ def write_smoke_script(path)
           state.renderedViewHtml = "";
           render();
         }, agentKey);
+        const focusedCodeHighlightContract = await page.evaluate((key) => {
+          const originalHash = location.hash;
+          const originalPrism = window.Prism;
+          const originalRubyFailure = codeHighlighter.failedLanguages.ruby;
+          const attachment = {
+            id: "smoke-code-highlight",
+            agent_key: key,
+            type: "file",
+            title: "smoke.rb",
+            path: "/tmp/tycho-smoke/smoke.rb",
+            format: "text",
+            mime_type: "text/x-ruby",
+            content: `puts :smoke # ${"x".repeat(500)}`,
+          };
+          state.attachmentDetails[attachment.id] = attachment;
+          const agent = findAgent(key);
+          agent.attachments = [...(agent.attachments || []).filter((item) => item.id !== attachment.id), attachment];
+          window.Prism = null;
+          codeHighlighter.failedLanguages.ruby = true;
+          history.replaceState(null, "", routeHash({ type: "agentAttachment", key, attachmentId: attachment.id }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+          clearTimeout(state.timer);
+          state.timer = null;
+          const workspaceBefore = document.querySelector("[data-agent-workspace]");
+          const viewerBefore = document.querySelector(".attachment-code-viewer");
+          viewerBefore.scrollLeft = 80;
+          const codeBefore = viewerBefore.querySelector("code")?.textContent;
+          window.Prism = {
+            languages: { ruby: {} },
+            highlight: (source) => `<span class="token smoke-token">${escapeHtml(source)}</span>`,
+          };
+          delete codeHighlighter.failedLanguages.ruby;
+          renderCodeRoute("ruby");
+          const result = {
+            codeBefore,
+            highlighted: Boolean(document.querySelector(".attachment-code-viewer .smoke-token")),
+            scrollLeft: document.querySelector(".attachment-code-viewer")?.scrollLeft,
+            workspacePreserved: document.querySelector("[data-agent-workspace]") === workspaceBefore,
+          };
+          if (originalPrism === undefined) delete window.Prism;
+          else window.Prism = originalPrism;
+          if (originalRubyFailure === undefined) delete codeHighlighter.failedLanguages.ruby;
+          else codeHighlighter.failedLanguages.ruby = originalRubyFailure;
+          history.replaceState(null, "", originalHash);
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+          schedule();
+          return result;
+        }, agentKey);
+        if (!focusedCodeHighlightContract.codeBefore.startsWith("puts :smoke") ||
+            !focusedCodeHighlightContract.highlighted ||
+            focusedCodeHighlightContract.scrollLeft !== 80 ||
+            !focusedCodeHighlightContract.workspacePreserved) {
+          throw new Error(`Focused code highlighting replaced the workspace or failed to upgrade: ${JSON.stringify(focusedCodeHighlightContract)}`);
+        }
+        const focusedMarkdownUpgradeContract = await page.evaluate(() => {
+          const originalMarked = window.marked;
+          const originalPurify = window.DOMPurify;
+          const originalFailed = markdownParser.failed;
+          const workspace = document.querySelector("[data-agent-workspace]");
+          const fixture = document.createElement("div");
+          fixture.dataset.smokeMarkdownFixture = "true";
+          workspace.appendChild(fixture);
+          window.marked = null;
+          window.DOMPurify = null;
+          markdownParser.failed = false;
+          fixture.innerHTML = renderMarkdown("**focused markdown**", { menuScope: "smoke-focused-markdown" });
+          const storedBeforeUpgrade = state.markdownFallbacks.size;
+          window.marked = { parse: () => "<p><strong>focused markdown</strong></p>" };
+          window.DOMPurify = { sanitize: (html) => html };
+          renderMarkdownRoute();
+          const upgraded = Boolean(fixture.querySelector("strong"));
+          const workspacePreserved = document.querySelector("[data-agent-workspace]") === workspace;
+
+          window.marked = null;
+          window.DOMPurify = null;
+          markdownParser.failed = true;
+          state.markdownFallbacks.clear();
+          const failedHtml = renderMarkdown("**plain fallback**", { menuScope: "smoke-failed-markdown" });
+          const failedFallbackStored = state.markdownFallbacks.size;
+          window.marked = originalMarked;
+          window.DOMPurify = originalPurify;
+          markdownParser.failed = originalFailed;
+          fixture.remove();
+          return { storedBeforeUpgrade, upgraded, workspacePreserved, failedHtml, failedFallbackStored };
+        });
+        if (focusedMarkdownUpgradeContract.storedBeforeUpgrade < 1 ||
+            !focusedMarkdownUpgradeContract.upgraded ||
+            !focusedMarkdownUpgradeContract.workspacePreserved ||
+            focusedMarkdownUpgradeContract.failedHtml.includes("data-markdown-fallback-key") ||
+            focusedMarkdownUpgradeContract.failedFallbackStored !== 0) {
+          throw new Error(`Focused Markdown fallback upgrade or failure cleanup regressed: ${JSON.stringify(focusedMarkdownUpgradeContract)}`);
+        }
+        const focusedRoutePollingContract = await page.evaluate(async (key) => {
+          const originalHash = location.hash;
+          const originalFetch = window.fetch;
+          const originalRender = render;
+          const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+          const savedFullScreenComposerKeys = state.fullScreenComposerKeys;
+          const savedFullScreenInquiryKeys = state.fullScreenInquiryKeys;
+          const savedPollDeferredUntil = state.pollDeferredUntil;
+          const routes = [
+            { route: { type: "agentPullRequests", key }, workspacePaused: true, subtitle: "Conversation poll paused / PR details" },
+            { route: { type: "agentAttachment", key, attachmentId: "smoke-attachment-menu" }, workspacePaused: true, subtitle: "Conversation poll paused / attachment" },
+            { route: { type: "agentSummary", key }, workspacePaused: true, subtitle: "Conversation poll paused / summary" },
+            { route: { type: "projectDiff", key: "web", scope: "worktree", backTo: { type: "agent", key } }, workspacePaused: true, subtitle: "Conversation poll paused / project diff" },
+            { route: { type: "agent", key }, workspacePaused: false },
+          ];
+          let catalogReads = 0;
+          let conversationReads = 0;
+          let renderCalls = 0;
+          Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+          state.fullScreenComposerKeys = new Set();
+          state.fullScreenInquiryKeys = new Set();
+          state.pollDeferredUntil = 0;
+          window.fetch = async (input, init) => {
+            const requestUrl = new URL(typeof input === "string" ? input : input.url, location.href);
+            if (requestUrl.pathname === "/servers/resources") catalogReads += 1;
+            if (requestUrl.pathname.endsWith("/conversation")) conversationReads += 1;
+            return originalFetch(input, init);
+          };
+          render = (...args) => {
+            renderCalls += 1;
+            return originalRender(...args);
+          };
+          try {
+            const results = [];
+            for (const { route, workspacePaused, subtitle } of routes) {
+              clearTimeout(state.timer);
+              state.timer = null;
+              catalogReads = 0;
+              conversationReads = 0;
+              renderCalls = 0;
+              history.replaceState(null, "", routeHash(route));
+              await refresh({ force: true, forceConversation: true, preserveFocusedWorkspace: true });
+              results.push({ type: route.type, workspacePaused, expectedSubtitle: subtitle, subtitle: els.subtitle.textContent.trim(), catalogReads, conversationReads, renderCalls });
+            }
+            return results;
+          } finally {
+            window.fetch = originalFetch;
+            render = originalRender;
+            if (hiddenDescriptor) Object.defineProperty(document, "hidden", hiddenDescriptor);
+            else delete document.hidden;
+            state.fullScreenComposerKeys = savedFullScreenComposerKeys;
+            state.fullScreenInquiryKeys = savedFullScreenInquiryKeys;
+            state.pollDeferredUntil = savedPollDeferredUntil;
+            clearTimeout(state.timer);
+            state.timer = null;
+            history.replaceState(null, "", originalHash);
+            state.renderedRouteKey = null;
+            state.renderedViewHtml = "";
+            render();
+            schedule();
+          }
+        }, agentKey);
+        if (focusedRoutePollingContract.some((route) => (
+          route.catalogReads < 1 ||
+          (route.workspacePaused && route.subtitle !== route.expectedSubtitle) ||
+          (route.workspacePaused && (route.conversationReads !== 0 || route.renderCalls !== 0)) ||
+          (!route.workspacePaused && (route.conversationReads < 1 || route.renderCalls < 1))
+        ))) {
+          throw new Error(`Focused non-conversation routes performed workspace polling: ${JSON.stringify(focusedRoutePollingContract)}`);
+        }
+        const mobilePollingSubtitleHash = await page.evaluate(() => location.hash);
+        await page.setViewportSize({ width: 390, height: 844 });
+        const mobilePollingSubtitleContract = await page.evaluate((key) => {
+          history.replaceState(null, "", routeHash({ type: "agentPullRequests", key }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+          const subtitle = document.querySelector("#screen-subtitle .subtitle-status-text");
+          const styles = getComputedStyle(subtitle);
+          const headerRect = els.header.getBoundingClientRect();
+          const firstContentRect = els.view.firstElementChild?.getBoundingClientRect();
+          const result = {
+            text: subtitle?.textContent.trim(),
+            clientWidth: subtitle?.clientWidth || 0,
+            scrollWidth: subtitle?.scrollWidth || 0,
+            clientHeight: subtitle?.clientHeight || 0,
+            scrollHeight: subtitle?.scrollHeight || 0,
+            whiteSpace: styles.whiteSpace,
+            overflow: styles.overflow,
+            headerHeight: headerRect.height,
+            headerBottom: headerRect.bottom,
+            firstContentTop: firstContentRect?.top || 0,
+            detailHeaderHeight: parseFloat(getComputedStyle(els.view).getPropertyValue("--detail-header-height")) || 0,
+          };
+          return result;
+        }, agentKey);
+        if (!mobilePollingSubtitleContract.text.startsWith("Conversation poll paused") ||
+            mobilePollingSubtitleContract.whiteSpace === "nowrap" ||
+            mobilePollingSubtitleContract.scrollWidth > mobilePollingSubtitleContract.clientWidth + 1 ||
+            mobilePollingSubtitleContract.scrollHeight > mobilePollingSubtitleContract.clientHeight + 1 ||
+            Math.abs(mobilePollingSubtitleContract.detailHeaderHeight - Math.ceil(mobilePollingSubtitleContract.headerHeight)) > 1 ||
+            mobilePollingSubtitleContract.firstContentTop + 1 < mobilePollingSubtitleContract.headerBottom) {
+          throw new Error(`Mobile header clips the paused polling state: ${JSON.stringify(mobilePollingSubtitleContract)}`);
+        }
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await page.evaluate((hash) => {
+          history.replaceState(null, "", hash);
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+        }, mobilePollingSubtitleHash);
+        const focusedStatusSyncContract = await page.evaluate(async (key) => {
+          const originalHash = location.hash;
+          const originalLoadResourceCatalog = loadResourceCatalog;
+          const originalRender = render;
+          const agent = findAgent(key);
+          agent.running = true;
+          agent.status = "running";
+          agent.unread = false;
+          history.replaceState(null, "", routeHash({ type: "agentSummary", key }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          originalRender();
+          clearTimeout(state.timer);
+          state.timer = null;
+          const workspaceBefore = document.querySelector("[data-agent-workspace]");
+          const steadyActionBefore = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] [data-agent-action="stop"]`);
+          steadyActionBefore?.focus({ preventScroll: true });
+          syncFocusedWorkspaceCatalog(parseRoute());
+          const steadyActionAfter = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] [data-agent-action="stop"]`);
+          const before = {
+            status: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
+            action: document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] [data-agent-action="stop"]`)?.textContent.trim(),
+            steadyActionPreserved: steadyActionAfter === steadyActionBefore,
+            steadyActionFocused: document.activeElement === steadyActionBefore,
+          };
+          let renderCalls = 0;
+          let conversationReads = 0;
+          render = (...args) => {
+            renderCalls += 1;
+            return originalRender(...args);
+          };
+          loadResourceCatalog = async () => {
+            const data = await originalLoadResourceCatalog();
+            for (const server of data.servers || []) {
+              for (const item of server.agents || []) {
+                if (normalizeAgentResource(item, server)?.key !== key) continue;
+                item.running = false;
+                item.status = "succeeded";
+                item.unread = false;
+                item.awaiting_input = false;
+                item.blocked = false;
+                item.last_result = "success";
+              }
+            }
+            return data;
+          };
+          const originalFetch = window.fetch;
+          window.fetch = async (input, init) => {
+            const requestUrl = new URL(typeof input === "string" ? input : input.url, location.href);
+            if (requestUrl.pathname.endsWith("/conversation")) conversationReads += 1;
+            return originalFetch(input, init);
+          };
+          try {
+            await refresh({ preserveFocusedWorkspace: true });
+            return {
+              before,
+              after: {
+                status: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
+                sendPrompt: document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] button[type="submit"]`)?.textContent.trim(),
+                sendPromptFocused: document.activeElement === document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] button[type="submit"]`),
+              },
+              conversationReads,
+              renderCalls,
+              workspacePreserved: document.querySelector("[data-agent-workspace]") === workspaceBefore,
+            };
+          } finally {
+            window.fetch = originalFetch;
+            loadResourceCatalog = originalLoadResourceCatalog;
+            render = originalRender;
+            clearTimeout(state.timer);
+            state.timer = null;
+            history.replaceState(null, "", originalHash);
+            state.renderedRouteKey = null;
+            state.renderedViewHtml = "";
+            originalRender();
+            schedule();
+          }
+        }, agentKey);
+        if (focusedStatusSyncContract.before.status !== "Running" ||
+            focusedStatusSyncContract.before.action !== "Stop agent" ||
+            !focusedStatusSyncContract.before.steadyActionPreserved ||
+            !focusedStatusSyncContract.before.steadyActionFocused ||
+            focusedStatusSyncContract.after.status !== "Succeeded" ||
+            focusedStatusSyncContract.after.sendPrompt !== "Send prompt" ||
+            !focusedStatusSyncContract.after.sendPromptFocused ||
+            focusedStatusSyncContract.conversationReads !== 0 ||
+            !focusedStatusSyncContract.workspacePreserved) {
+          throw new Error(`Focused workspace status controls did not reconcile in place: ${JSON.stringify(focusedStatusSyncContract)}`);
+        }
+        const navigationDuringPollContract = await page.evaluate(async (key) => {
+          const originalHash = location.hash;
+          const originalLoadResourceCatalog = loadResourceCatalog;
+          const originalFetch = window.fetch;
+          const originalRender = render;
+          let releaseCatalog;
+          let catalogEntered;
+          const catalogStarted = new Promise((resolve) => { catalogEntered = resolve; });
+          const catalogGate = new Promise((resolve) => { releaseCatalog = resolve; });
+          let conversationReads = 0;
+          let renderCalls = 0;
+          history.replaceState(null, "", routeHash({ type: "agent", key }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          originalRender();
+          loadResourceCatalog = async () => {
+            catalogEntered();
+            await catalogGate;
+            return originalLoadResourceCatalog();
+          };
+          window.fetch = async (input, init) => {
+            const requestUrl = new URL(typeof input === "string" ? input : input.url, location.href);
+            if (requestUrl.pathname.endsWith("/conversation")) conversationReads += 1;
+            return originalFetch(input, init);
+          };
+          render = (...args) => {
+            renderCalls += 1;
+            return originalRender(...args);
+          };
+          try {
+            const pendingRefresh = refresh({ force: true, forceConversation: true });
+            await catalogStarted;
+            history.replaceState(null, "", routeHash({ type: "agentSummary", key }));
+            state.renderedRouteKey = null;
+            state.renderedViewHtml = "";
+            originalRender();
+            releaseCatalog();
+            await pendingRefresh;
+            return {
+              route: parseRoute().type,
+              summaryPresent: Boolean(document.querySelector("[data-agent-summary-page]")),
+              conversationReads,
+              renderCalls,
+            };
+          } finally {
+            releaseCatalog();
+            window.fetch = originalFetch;
+            loadResourceCatalog = originalLoadResourceCatalog;
+            render = originalRender;
+            clearTimeout(state.timer);
+            state.timer = null;
+            history.replaceState(null, "", originalHash);
+            state.renderedRouteKey = null;
+            state.renderedViewHtml = "";
+            originalRender();
+            schedule();
+          }
+        }, agentKey);
+        if (navigationDuringPollContract.route !== "agentSummary" ||
+            !navigationDuringPollContract.summaryPresent ||
+            navigationDuringPollContract.conversationReads !== 0 ||
+            navigationDuringPollContract.renderCalls !== 0) {
+          throw new Error(`An older conversation poll replaced focused navigation: ${JSON.stringify(navigationDuringPollContract)}`);
+        }
         const attachmentPollRenderContract = await page.evaluate(async () => {
           clearTimeout(state.timer);
           state.timer = null;
@@ -3551,6 +5220,8 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     agent_key = create_agent(base_url)
     unscheduled_agent_key = create_agent(base_url, name: "Unscheduled Smoke Agent")
     associate_agent_schedule(fixture.fetch(:logs_dir), agent_key)
+    associate_agent_pull_request(fixture.fetch(:logs_dir), agent_key)
+    associate_agent_pull_request(fixture.fetch(:logs_dir), unscheduled_agent_key)
     wait_for_resource_agents(base_url, [agent_key, unscheduled_agent_key])
     node_dir = File.join(dir, "node")
     install_playwright!(node_dir)

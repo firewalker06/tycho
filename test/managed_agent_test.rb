@@ -15,6 +15,7 @@ module ManagedAgentTest
     assert_new_agents_use_unique_log_stems
     assert_lifetime_run_count_survives_retained_window
     assert_completed_status_overrides_live_pid
+    assert_structured_result_status_overrides_transport_exit
     assert_start_finalizes_unpolled_previous_run
     assert_cli_status_finalizes_unpolled_dead_pid
     assert_start_reconciles_session_after_restart
@@ -98,6 +99,43 @@ module ManagedAgentTest
       assert(restored.run_count == 13, "expected a new run to advance the lifetime count past the retained window")
       assert(restored.runs.length == 10, "expected adding a run to retain only the latest 10 details")
     end
+  end
+
+  def assert_structured_result_status_overrides_transport_exit
+    run = HQ::ManagedAgent::AgentRun.new(
+      started_at: Time.utc(2026, 8, 10, 1),
+      finished_at: Time.utc(2026, 8, 10, 1, 1),
+      exit_code: 1,
+      status: "partial"
+    )
+    agent = HQ::ManagedAgent.new(
+      key: "structured-status-agent",
+      name: "Structured status",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "Prompt",
+      last_exit_code: 1,
+      runs: [run],
+      structured_result: { "status" => "partial", "summary" => "Work is ready; CI is flaky." }
+    )
+
+    assert(agent.status == "partial",
+           "expected a validated structured result to prevent a transport exit from rendering as failed")
+
+    agent.structured_result = { "status" => "success", "summary" => "Completed." }
+    assert(agent.status == "succeeded",
+           "expected a successful structured result to override a nonzero transport exit")
+
+    agent.structured_result = { "status" => "failed", "summary" => "Validation failed." }
+    agent.instance_variable_set(:@last_exit_code, 0)
+    assert(agent.status == "failed",
+           "expected an explicitly failed structured result to override a zero transport exit")
+
+    agent.structured_result = { "status" => "success", "summary" => "Stopped after completion." }
+    agent.instance_variable_set(:@last_exit_code, 143)
+    assert(agent.status == "stopped",
+           "expected an explicit stop exit to remain a lifecycle state despite a structured result")
   end
 
   def assert_completed_run_persists_cost_snapshot
@@ -1504,10 +1542,26 @@ module ManagedAgentTest
     env = agent.send(:external_process_environment, "BUNDLE_GEMFILE" => "/custom/Gemfile", "CUSTOM" => "1")
 
     assert(env["BUNDLE_BIN_PATH"].nil?, "expected Bundler bin path to be cleared for harnesses")
+    assert(env.key?("BUNDLER_SETUP") && env["BUNDLER_SETUP"].nil?,
+           "expected Bundler setup hook to be cleared for harnesses")
     assert(env["RUBYOPT"].nil?, "expected Ruby loader options to be cleared for harnesses")
     assert(env["GEM_HOME"].nil?, "expected Ruby gem home to be cleared for harnesses")
     assert(env["BUNDLE_GEMFILE"] == "/custom/Gemfile", "expected explicit harness env to remain authoritative")
     assert(env["CUSTOM"] == "1", "expected explicit harness env to be preserved")
+
+    runner_output = IO.popen(
+      agent.send(:external_process_environment, {}),
+      [
+        RbConfig.ruby,
+        "-I", File.expand_path("../lib", __dir__),
+        "-r", "hq/domain/agent_correction_runner",
+        "-e", 'STDOUT.write("runner-loaded")'
+      ],
+      err: %i[child out],
+      &:read
+    )
+    assert($?.success? && runner_output == "runner-loaded",
+           "expected sanitized environment to execute the correction runner, got #{runner_output.inspect}")
   end
 
   def assert_start_spawns_harness_through_validation_runner

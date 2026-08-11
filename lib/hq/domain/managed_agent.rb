@@ -597,8 +597,13 @@ module HQ
       return "blocked" if blocked?
       return "idle" if @started_at.nil? && last_run.nil?
       return "idle" if @last_exit_code.nil?
-      return "succeeded" if @last_exit_code.zero?
       return "stopped" if stopped_exit_code?
+
+      structured_status = @structured_result&.dig("status").to_s.strip
+      return "succeeded" if %w[success succeeded no_action_needed].include?(structured_status)
+      return "partial" if structured_status == "partial"
+      return "failed" if structured_status == "failed"
+      return "succeeded" if @last_exit_code.zero?
 
       "failed"
     end
@@ -627,6 +632,10 @@ module HQ
       derived_log_path("attachments.json")
     end
 
+    def pull_request_catalog_path
+      derived_log_path("pull_request_catalog.json")
+    end
+
     def invalidate_derived_logs!
       [conversation_log_path, system_log_path].each do |path|
         FileUtils.rm_f(path)
@@ -640,6 +649,9 @@ module HQ
         system_log_path,
         memory_path,
         attachments_path,
+        pull_request_catalog_path,
+        "#{pull_request_catalog_path}.bak",
+        "#{pull_request_catalog_path}.lock",
         invalid_structured_output_file_path,
         status_file_path,
         last_message_file_path,
@@ -1126,6 +1138,7 @@ module HQ
       {
         "BUNDLE_BIN_PATH" => nil,
         "BUNDLE_GEMFILE" => nil,
+        "BUNDLER_SETUP" => nil,
         "BUNDLER_VERSION" => nil,
         "GEM_HOME" => nil,
         "GEM_PATH" => nil,

@@ -26,10 +26,12 @@ module RemoteServerTest
     assert_remote_inquiry_payload_has_stable_id_and_guarded_answer
     assert_remote_agent_payload_includes_attachments
     assert_remote_agent_pull_request_diff_payload
+    assert_agent_pull_request_listing_avoids_eager_metadata_requests
     assert_concurrent_pull_request_diff_refreshes_are_coalesced
     assert_pull_request_review_refresh_reuses_metadata
     assert_pull_request_feature_gate_and_global_inbox
     assert_pull_request_line_handoff_uses_snapshot_context
+    assert_remote_prompt_accepts_pull_request_context
     assert_github_app_auth_routes
     assert_pull_request_posting_is_confirmed_stale_safe_and_idempotent
     assert_remote_prompt_accepts_uploaded_attachments
@@ -932,8 +934,10 @@ module RemoteServerTest
       reference = payload.first
       assert(reference["repository"] == "example/web", "expected GitHub repository to be parsed")
       assert(reference["number"] == 123, "expected GitHub PR number to be parsed")
-      assert(reference["error"].to_s.length.positive?,
-             "expected metadata errors to be reported without hiding PR references")
+      assert(reference["error"].nil?, "expected ordinary PR listing to avoid unavailable GitHub metadata")
+      metadata_refresh = service.refresh_agent_pull_request_metadata(created[:key])
+      assert(metadata_refresh[:failed].length == 1,
+             "expected explicit metadata refresh errors to be reported without hiding PR references")
 
       snapshot = {
         "id" => reference["id"],
@@ -942,7 +946,9 @@ module RemoteServerTest
         "repository" => "example/web",
         "number" => 123,
         "url" => "https://github.com/example/web/pull/123",
-        "title" => "Example PR",
+        "title" => "Origin PR title",
+        "state" => "open",
+        "draft" => true,
         "head_sha" => "abc1234",
         "base_sha" => "def5678",
         "fetched_at" => Time.now.iso8601,
@@ -964,6 +970,13 @@ module RemoteServerTest
       }
       HQ::PullRequestDiff::Store.new.save(snapshot)
 
+      listed_from_snapshot = service.agent_pull_requests(created[:key]).first
+      assert(listed_from_snapshot["title"] == "Origin PR title" &&
+             listed_from_snapshot["state"] == "open" && listed_from_snapshot["draft"] == true,
+             "expected saved origin metadata to backfill the agent PR catalog and listing")
+      assert(!listed_from_snapshot.fetch("snapshot").key?("fresh"),
+             "expected snapshot-seeded metadata to leave remote freshness unknown")
+
       diff = service.agent_pull_request_diff(created[:key], reference["id"])
       assert(diff["files"].first["path"] == "lib/example.rb", "expected saved PR diff snapshot to be returned")
 
@@ -973,26 +986,157 @@ module RemoteServerTest
     end
   end
 
+  def assert_agent_pull_request_listing_avoids_eager_metadata_requests
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      client = FakeGitHubReviewClient.new
+      snapshot_store = CountingPullRequestDiffStore.new(File.join(dir, "diffs.json"))
+      service = HQ::RemoteService.new(registry:, github_client: client, pull_request_diff_store: snapshot_store)
+      created = service.create_agent(
+        "project_key" => "web",
+        "template_key" => "custom",
+        "name" => "Many pull requests",
+        "prompt" => "Review pull requests.",
+        "agent" => "codex"
+      )
+      agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+      memory = HQ::AgentMemory.new(agent)
+      3.times do |index|
+        memory.append_attachment!(
+          {
+            "kind" => "link",
+            "title" => "PR #{index + 1}",
+            "url" => "https://github.com/example/web/pull/#{index + 1}"
+          },
+          created_at: Time.parse("2026-08-09 13:00:0#{index}")
+        )
+      end
+
+      listed = service.agent_pull_requests(created[:key])
+      metadata_requests = client.requests.count { |kind, path| kind == :get_json && path.include?("/pulls/") }
+
+      assert(listed.length == 3, "expected every attached pull request to be listed")
+      assert(metadata_requests.zero?,
+             "expected ordinary PR listing to avoid one blocking GitHub metadata request per pull request")
+      assert(snapshot_store.all_calls == 1,
+             "expected ordinary PR listing to parse the shared diff snapshot store only once")
+
+      server = HQ::RemoteServer.new
+      response = server.send(
+        :route,
+        service,
+        "POST",
+        "/agents/#{created[:key]}/pull-requests/metadata/refresh",
+        {},
+        nil
+      )
+      refreshed = response[:body]
+      metadata_requests = client.requests.count { |kind, path| kind == :get_json && path.include?("/pulls/") }
+      assert(metadata_requests == 3, "expected explicit metadata refresh to request each pull request once")
+      assert(refreshed[:pull_requests].all? { |item| item["title"] == "Shared PR" },
+             "expected refreshed GitHub metadata to be returned from the persistent catalog")
+      assert(refreshed[:pull_requests].all? { |item| item["metadata_refreshed_at"].to_s.length.positive? },
+             "expected cached PR metadata to expose its refresh time")
+      catalog = JSON.parse(File.read(agent.pull_request_catalog_path))
+      assert(catalog.fetch("entries").length == 3,
+             "expected newly discovered pull requests to be persisted in the agent-owned PR catalog")
+      assert(!File.exist?(File.join(HQ::AGENT_LOGS_DIR, "pull_request_catalog.json")),
+             "expected agent PR listing to avoid a shared cross-agent catalog")
+
+      second_created = service.create_agent(
+        "project_key" => "web",
+        "template_key" => "custom",
+        "name" => "Other pull requests",
+        "prompt" => "Review another list.",
+        "agent" => "codex"
+      )
+      second_agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == second_created[:key] }
+      HQ::AgentMemory.new(second_agent).append_attachment!(
+        {
+          "kind" => "link",
+          "title" => "Other PR",
+          "url" => "https://github.com/other/repository/pull/99"
+        },
+        created_at: Time.parse("2026-08-09 13:01:00")
+      )
+      requests_before_second_list = client.requests.length
+      second_list = service.agent_pull_requests(second_created[:key])
+      second_catalog = JSON.parse(File.read(second_agent.pull_request_catalog_path))
+      assert(second_list.length == 1 && client.requests.length == requests_before_second_list,
+             "expected another agent's PR list to remain network-free")
+      assert(second_agent.pull_request_catalog_path != agent.pull_request_catalog_path,
+             "expected each agent to own a distinct PR catalog path")
+      assert(second_catalog.fetch("entries").length == 1 && catalog.fetch("entries").length == 3,
+             "expected one agent's PR discovery to stay isolated from every other catalog")
+
+      restarted = HQ::RemoteService.new(registry:, github_client: FakeUnavailableGitHubClient.new)
+      cached = restarted.agent_pull_requests(created[:key])
+      assert(cached.length == 3 && cached.all? { |item| item["title"] == "Shared PR" },
+             "expected PR references and metadata to survive a Remote server restart")
+
+      catalog_paths = [
+        agent.pull_request_catalog_path,
+        "#{agent.pull_request_catalog_path}.bak",
+        "#{agent.pull_request_catalog_path}.lock"
+      ]
+      archive = agent.archive_logs!(File.join(dir, "archive"))
+      assert(catalog_paths.all? { |path| File.exist?(File.join(archive, File.basename(path))) },
+             "expected agent archive to move the PR catalog, backup, and lock sidecars")
+      assert(catalog_paths.none? { |path| File.exist?(path) },
+             "expected agent archive to leave no active PR catalog sidecars behind")
+    end
+  end
+
   def assert_concurrent_pull_request_diff_refreshes_are_coalesced
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
       client = BlockingGitHubDiffClient.new
+      registry = registry_for_project(dir, workspace)
       service = HQ::RemoteService.new(
-        registry: registry_for_project(dir, workspace),
+        registry:,
         github_client: client,
         pull_request_diff_store: HQ::PullRequestDiff::Store.new(File.join(dir, "diffs.json"))
       )
-      reference = HQ::PullRequestDiff.reference_from_url("https://github.com/example/web/pull/123")
-      first = Thread.new { service.send(:refresh_pull_request_snapshot, reference) }
+      agents = 2.times.map do |index|
+        created = service.create_agent(
+          "project_key" => "web",
+          "template_key" => "custom",
+          "name" => "Shared PR agent #{index + 1}",
+          "prompt" => "Review the shared PR.",
+          "agent" => "codex"
+        )
+        agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+        HQ::AgentMemory.new(agent).append_attachment!(
+          {
+            "kind" => "link",
+            "title" => "Shared PR",
+            "url" => "https://github.com/example/web/pull/123"
+          },
+          created_at: Time.parse("2026-08-09 13:02:0#{index}")
+        )
+        agent
+      end
+      references = agents.map { |agent| HQ::PullRequestDiff.references_for_agent(agent).fetch(0) }
+      first = Thread.new { service.send(:refresh_pull_request_snapshot, references.fetch(0)) }
       client.metadata_started.pop
-      second = Thread.new { service.send(:refresh_pull_request_snapshot, reference) }
+      second = Thread.new { service.send(:refresh_pull_request_snapshot, references.fetch(1)) }
+
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+      Thread.pass until second.status == "sleep" || Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+      follower_waiting = second.status == "sleep"
 
       client.release!
       [first, second].each(&:value)
 
+      assert(follower_waiting, "expected the second agent refresh to join the in-flight PR fetch")
       assert(client.metadata_requests == 1 && client.diff_requests == 1,
              "expected concurrent identical diff refreshes to share one metadata and diff fetch")
+      catalogs = agents.map { |agent| JSON.parse(File.read(agent.pull_request_catalog_path)) }
+      assert(catalogs.all? { |catalog| catalog.dig("entries", references.first.id, "metadata", "title") == "Shared PR" },
+             "expected every coalesced caller to persist metadata in its own agent catalog")
     end
   end
 
@@ -1122,6 +1266,90 @@ module RemoteServerTest
       retry_result = service.handoff_pull_request_review(reference.id, "agent_key" => created[:key], "note" => "Ignored", "start" => false, "idempotency_key" => "line-handoff-1",
                                                           "selection" => { "snapshot_id" => "snapshot-1", "lines" => [{ "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 }] })
       assert(retry_result[:idempotent] == true, "expected an idempotent handoff retry")
+    end
+  end
+
+  def assert_remote_prompt_accepts_pull_request_context
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      diff_store = HQ::PullRequestDiff::Store.new(File.join(dir, "composer-diffs.json"))
+      service = HQ::RemoteService.new(registry:, github_client: FakeGitHubReviewClient.new,
+                                      pull_request_diff_store: diff_store)
+      created = service.create_agent("project_key" => "web", "template_key" => "custom", "name" => "Composer",
+                                     "prompt" => "Work.", "agent" => "codex")
+      agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+      HQ::AgentMemory.new(agent).append_attachment!(
+        { "kind" => "link", "title" => "PR", "url" => "https://github.com/example/web/pull/123" }
+      )
+      HQ::AgentStore.new(registry.projects).save([agent])
+      reference = HQ::PullRequestDiff.reference_from_url("https://github.com/example/web/pull/123")
+      diff_store.save(
+        "id" => reference.id, "snapshot_id" => "composer-snapshot", "provider" => "github",
+        "repository" => "example/web", "number" => 123, "base_sha" => "base", "head_sha" => "head",
+        "diff_format" => HQ::PullRequestDiff::DIFF_FORMAT,
+        "files" => [{ "path" => "lib/example.rb", "hunks" => [{ "lines" => [
+          { "kind" => "removed", "old_number" => 3, "content" => "old" },
+          { "kind" => "added", "new_number" => 4, "content" => "new" }
+        ] }] }]
+      )
+
+      result = service.submit_prompt(created[:key],
+                                     "prompt" => "Explain this range.",
+                                     "pull_request_contexts" => [{
+                                       "pull_request_id" => reference.id,
+                                       "snapshot_id" => "composer-snapshot",
+                                       "comment" => "Explain why these two sides differ.",
+                                       "lines" => [
+                                         { "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 },
+                                         { "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 1 }
+                                       ]
+                                     }])
+      content = result[:conversation].last[:content]
+      assert(content.start_with?("Explain this range.") && content.include?(HQ::PullRequestSelection::OPEN),
+             "expected normal composer messages to include validated PR context")
+      assert(content.include?('"path":"lib/example.rb"') && content.include?('"side":"left"') &&
+             content.include?('"side":"right"') && content.include?('"old_number":3') &&
+             content.include?('"new_number":4') &&
+             content.include?("Comment on this range:\nExplain why these two sides differ."),
+             "expected PR context to carry repository file, side, and line metadata")
+
+      begin
+        service.submit_prompt(created[:key],
+                              "prompt" => "Oversized comment.",
+                              "pull_request_contexts" => [{
+                                "pull_request_id" => reference.id, "snapshot_id" => "composer-snapshot",
+                                "comment" => "x" * ((8 * 1024) + 1),
+                                "lines" => [{ "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 }]
+                              }])
+        raise "expected oversized PR comment to fail"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 400 && e.message.include?("at most 8 KB"),
+               "expected oversized PR comments to return a bounded input error")
+      end
+
+      begin
+        asset_pattern = File.join(HQ::AGENT_LOGS_DIR, "assets", created[:key], "**", "*")
+        asset_files_before = Dir.glob(asset_pattern).select { |path| File.file?(path) }
+        service.submit_prompt(created[:key],
+                              "prompt" => "Stale.",
+                              "attachments" => [{
+                                "filename" => "stale.txt", "mime_type" => "text/plain",
+                                "content_base64" => Base64.strict_encode64("must not be imported")
+                              }],
+                              "pull_request_contexts" => [{
+                                "pull_request_id" => reference.id, "snapshot_id" => "old",
+                                "lines" => [{ "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 }]
+                              }])
+        raise "expected stale composer PR context to fail"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("changed"),
+               "expected stale composer PR context to return an actionable conflict")
+        asset_files_after = Dir.glob(asset_pattern).select { |path| File.file?(path) }
+        assert(asset_files_after == asset_files_before,
+               "expected stale PR context validation to happen before uploaded files are written")
+      end
     end
   end
 
@@ -4874,7 +5102,7 @@ module RemoteServerTest
            js[:body].include?("function liveEditorRefreshPlan") &&
            js[:body].include?("function reconcileViewAroundEditor"),
            "expected polling renders to reconcile around stable Conversation and inquiry forms")
-    assert(js[:body].include?("replaceSiblingsAroundEditor") &&
+    assert(js[:body].include?("replaceSiblingsAroundAnchor") &&
            js[:body].include?('data-agent-running="${agentIsRunning(agent) ? "true" : "false"}"'),
            "expected live editor reconciliation to preserve controls without hiding real agent state transitions")
     assert(js[:body].include?("scrollContainers"),
@@ -4893,12 +5121,18 @@ module RemoteServerTest
            js[:body].include?("delete state.agentDetails[agent.key]"),
            "expected catalog revision changes to invalidate stale agent attachment details")
     assert(js[:body].include?("function preserveWorkspaceDuringPoll") &&
-           js[:body].include?("if (options.force || options.forceAttachment) return false") &&
+           js[:body].include?("if (options.forceAttachment) return false") &&
+           js[:body].include?("if (options.force && !options.preserveFocusedWorkspace) return false") &&
+           js[:body].include?("function focusedWorkspacePreservedDuringPoll") &&
+           js[:body].include?("function focusedWorkspacePollingSubtitle") &&
+           js[:body].include?("Conversation poll paused") &&
+           js[:body].include?("function syncFocusedWorkspaceCatalog") &&
            js[:body].include?('els.view.querySelector("#inquiry-form")') &&
            js[:body].include?("if (preservedInquiryAgent) state.agentDetails[inquiryAgentKey] = preservedInquiryAgent") &&
-           js[:body].include?("if (!preserveWorkspace) await ensureRouteData(options)") &&
-           js[:body].scan("if (!preserveWorkspace)").length == 3,
-           "expected automatic attachment and inquiry polling to update state without rendering the workspace")
+           js[:body].include?("const preserveCurrentWorkspace = routeChangedDuringRefresh || preserveWorkspaceDuringPoll(options)") &&
+           js[:body].include?("if (!preserveCurrentWorkspace) await ensureRouteData(options)") &&
+           js[:body].include?("syncFocusedWorkspaceCatalog(currentRoute)"),
+           "expected focused workspace polling to reconcile catalog state without fetching or rendering route data")
     assert(js[:body].include?("state.preservePollContentDuringRender") &&
            js[:body].include?("replaceViewContent(html)"),
            "expected explicit attachment refreshes to replace preserved attachment content")
@@ -5362,7 +5596,8 @@ module RemoteServerTest
            "expected Remote UI to clear the prompt before optimistic conversation rendering replaces the composer")
     assert(js[:body].include?("pendingConversationMessages"),
            "expected Remote UI to render optimistic pending chat messages")
-    assert(js[:body].include?("await apiPost(`/agents/${encodeURIComponent(key)}/messages`, { prompt, start: true, attachments });\n      removePendingConversationMessage(key, pendingMessageId, { render: false });"),
+    assert(js[:body].include?("pull_request_contexts: pullRequestContexts") &&
+           js[:body].include?("removePendingConversationMessage(key, pendingMessageId, { render: false });"),
            "expected Remote UI to remove optimistic chat before refreshing server-backed conversation")
     assert(js[:body].include?("loadingConversations"),
            "expected Remote UI to track conversation loading per agent")
@@ -6173,6 +6408,20 @@ module RemoteServerTest
         @released = true
         @condition.broadcast
       end
+    end
+  end
+
+  class CountingPullRequestDiffStore < HQ::PullRequestDiff::Store
+    attr_reader :all_calls
+
+    def initialize(path)
+      super
+      @all_calls = 0
+    end
+
+    def all
+      @all_calls += 1
+      super
     end
   end
 

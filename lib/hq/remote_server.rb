@@ -386,6 +386,9 @@ module HQ
           return ok(memory_rebuild: service.rebuild_agent_memory(key))
         end
         return ok(pull_requests: service.agent_pull_requests(key)) if method == "GET" && tail == ["pull-requests"]
+        if method == "POST" && tail == ["pull-requests", "metadata", "refresh"]
+          return ok(service.refresh_agent_pull_request_metadata(key))
+        end
         return ok(service.refresh_agent_pull_requests(key)) if method == "POST" && tail == ["pull-requests", "refresh"]
         if tail.length == 3 && tail.first == "pull-requests" && tail[2] == "diff"
           return ok(diff: service.agent_pull_request_diff(key, tail[1])) if method == "GET"
@@ -1453,6 +1456,8 @@ module HQ
       ".woff2" => "font/woff2"
     }.freeze
     MAX_PULL_REQUEST_INBOX_ITEMS = 100
+    MAX_PROMPT_PULL_REQUEST_CONTEXTS = 5
+    MAX_PROMPT_PULL_REQUEST_COMMENT_BYTES = 8 * 1024
     IMAGE_CONTENT_TYPES = {
       ".gif" => "image/gif",
       ".heic" => "image/heic",
@@ -1692,17 +1697,40 @@ module HQ
       ensure_github_enabled!
       agent = find_agent!(key)
       references = PullRequestDiff.references_for_agent(agent)
-      store = @pull_request_diff_store
-      provider = PullRequestDiff::GitHubProvider.new(client: @github_client)
+      snapshots = @pull_request_diff_store.all
+      catalog = pull_request_catalog(agent).discover(references, metadata_by_id: snapshots)
       references.map do |reference|
-        snapshot = store.fetch(reference.id)
-        begin
-          metadata = provider.metadata(reference)
-          PullRequestDiff.reference_payload(reference, snapshot:, metadata:)
-        rescue PullRequestDiff::Error => e
-          PullRequestDiff.reference_payload(reference, snapshot:, error: e.message)
-        end
+        pull_request_reference_payload(reference, catalog[reference.id], snapshots[reference.id])
       end
+    end
+
+    def refresh_agent_pull_request_metadata(key)
+      ensure_github_enabled!
+      agent = find_agent!(key)
+      references = PullRequestDiff.references_for_agent(agent)
+      catalog_store = pull_request_catalog(agent)
+      catalog_store.discover(references)
+      refreshed = []
+      failed = []
+      references.each do |reference|
+        refreshed << [reference, github_provider.metadata(reference)]
+      rescue PullRequestDiff::Error => e
+        failed << {
+          id: reference.id,
+          repository: reference.repository,
+          number: reference.number,
+          error: e.message
+        }
+      end
+      catalog = catalog_store.save_all_metadata(refreshed)
+      snapshots = @pull_request_diff_store.all
+      {
+        pull_requests: references.map do |reference|
+          pull_request_reference_payload(reference, catalog[reference.id], snapshots[reference.id])
+        end,
+        refreshed: refreshed.map { |reference, _metadata| reference.id },
+        failed:
+      }
     end
 
     def agent_pull_request_diff(key, id)
@@ -2622,8 +2650,10 @@ module HQ
 
     def submit_prompt(key, attrs)
       target = find_agent!(key)
+      pull_request_context = render_prompt_pull_request_contexts(target, attrs)
       attachments = import_prompt_attachments(target, attrs)
       text = prompt_text(attrs, attachments:)
+      text = [text, pull_request_context].reject(&:empty?).join("\n")
       target.add_user_message!(
         text,
         attachments:
@@ -3220,15 +3250,39 @@ module HQ
       PullRequestDiff::GitHubProvider.new(client: @github_client)
     end
 
+    def pull_request_reference_payload(reference, entry, snapshot)
+      entry ||= {}
+      metadata = entry["metadata"]
+      freshness_metadata = metadata if entry["metadata_source"] == "github"
+      payload = PullRequestDiff.reference_payload(reference, snapshot:, metadata:, freshness_metadata:)
+      if metadata.is_a?(Hash)
+        payload["metadata_refreshed_at"] = entry["metadata_refreshed_at"]
+      end
+      payload
+    end
+
+    def pull_request_catalog(agent)
+      PullRequestDiff::Catalog.new(path: agent.pull_request_catalog_path)
+    end
+
+    def persist_pull_request_metadata(reference, metadata)
+      return if reference.agent_key.to_s.empty?
+
+      agent = load_agents.find { |candidate| candidate.key == reference.agent_key }
+      pull_request_catalog(agent).save_metadata(reference, metadata) if agent
+    end
+
     def refresh_pull_request_snapshot(reference)
       refresh_pull_request_snapshot_fetch(reference).fetch(:snapshot)
     end
 
     def refresh_pull_request_snapshot_fetch(reference)
-      coalesce_pull_request_fetch(reference, "snapshot") do
+      refreshed = coalesce_pull_request_fetch(reference, "snapshot") do
         metadata, pull = github_provider.metadata_with_pull(reference)
-        { snapshot: save_pull_request_snapshot(reference, metadata), pull: }
+        { snapshot: save_pull_request_snapshot(reference, metadata), pull:, metadata: }
       end
+      persist_pull_request_metadata(reference, refreshed.fetch(:metadata))
+      refreshed
     end
 
     def refresh_pull_request_fetch(reference)
@@ -3765,6 +3819,32 @@ module HQ
       return "Please review the attached files." if attachments.any?
 
       raise Error.new("prompt is required")
+    end
+
+    def render_prompt_pull_request_contexts(target, attrs)
+      contexts = attrs["pull_request_contexts"]
+      return "" unless contexts.is_a?(Array) && contexts.any?
+      if contexts.length > MAX_PROMPT_PULL_REQUEST_CONTEXTS
+        raise Error.new("Attach at most #{MAX_PROMPT_PULL_REQUEST_CONTEXTS} pull request ranges.", status: 400)
+      end
+
+      rendered = contexts.map do |raw|
+        raise Error.new("Pull request context must be an object.", status: 400) unless raw.is_a?(Hash)
+
+        reference = pull_request_reference!(target, raw["pull_request_id"])
+        snapshot = @pull_request_diff_store.fetch(reference.id)
+        raise Error.new("Fetch the pull request diff before attaching lines.", status: 409) unless snapshot
+
+        rendered = PullRequestSelection.render(snapshot, raw)
+        comment = raw["comment"].to_s.strip
+        if comment.bytesize > MAX_PROMPT_PULL_REQUEST_COMMENT_BYTES
+          raise Error.new("Pull request comments must be at most 8 KB.", status: 400)
+        end
+        comment.empty? ? rendered : [rendered, "Comment on this range:\n#{comment}"].join("\n")
+      rescue PullRequestSelection::Error => e
+        raise Error.new(e.message, status: 409)
+      end
+      rendered.join("\n")
     end
 
     def inquiry_answer_with_feedback(answer, feedback, supplied:)
