@@ -458,8 +458,8 @@ module HQ
       log_file = File.open(@log_path, "a")
       launch = structured_output_runner_launch(command, environment)
       @pid = spawn(
-        external_process_environment(launch.fetch(:env)),
-        *launch.fetch(:command),
+        external_process_environment(launch.fetch(:env)).merge("TYCHO_STATUS_PATH" => status_path),
+        RbConfig.ruby, "-e", agent_runner_script, *launch.fetch(:command),
         chdir: @workspace, out: log_file, err: %i[child out], pgroup: true
       )
       log_file.close
@@ -492,7 +492,8 @@ module HQ
       return unless running?
 
       @stop_requested_at = Time.now
-      Process.kill("TERM", -@pid)
+      terminate_process_group!(term_timeout: 1.0)
+      poll! unless process_group_alive?
       HQ.logger.info("Agent") { "Stopped #{@key}" }
     rescue Errno::ESRCH, Errno::EPERM
       HQ.logger.warn("Agent") { "Failed to stop #{@key}: process not found or permission denied" }
@@ -574,7 +575,7 @@ module HQ
     end
 
     def completed_status_available?
-      status_file_paths.any? { |path| File.file?(path) }
+      status_file_paths.any? { |path| valid_status_file?(path) }
     end
 
     def own_process_group?(pid)
@@ -1078,9 +1079,14 @@ module HQ
           1
         end
         begin
-          File.write(ENV.fetch("TYCHO_STATUS_PATH"), status.to_s)
+          path = ENV.fetch("TYCHO_STATUS_PATH")
+          temporary_path = "\#{path}.tmp-\#{Process.pid}"
+          File.write(temporary_path, status.to_s)
+          File.rename(temporary_path, path)
         rescue StandardError
           nil
+        ensure
+          File.delete(temporary_path) if temporary_path && File.exist?(temporary_path)
         end
         exit(status)
       RUBY
@@ -1090,7 +1096,7 @@ module HQ
       thread = Thread.new do
         _waited_pid, status = Process.wait2(pid)
         begin
-          File.write(status_path, process_exit_code(status).to_s)
+          write_status_file(status_path, process_exit_code(status))
         rescue StandardError
           nil
         end
@@ -1106,6 +1112,14 @@ module HQ
       return 128 + status.termsig.to_i if status.signaled?
 
       status.exitstatus.to_i
+    end
+
+    def write_status_file(path, exit_code)
+      temporary_path = "#{path}.tmp-#{Process.pid}-#{Thread.current.object_id}"
+      File.write(temporary_path, Integer(exit_code).to_s)
+      File.rename(temporary_path, path)
+    ensure
+      FileUtils.rm_f(temporary_path) if temporary_path
     end
 
     def external_process_environment(environment)
@@ -1136,14 +1150,23 @@ module HQ
       if @pid && (monitor = @process_monitors&.delete(@pid))
         monitor.join(0.5)
       end
-      path = status_file_paths.find { |candidate| File.exist?(candidate) }
+      path = status_file_paths.find { |candidate| valid_status_file?(candidate) }
       return nil unless path
 
-      File.read(path).strip.to_i
+      Integer(File.read(path).strip, 10)
     rescue StandardError
       nil
     ensure
       FileUtils.rm_f(path) if path
+    end
+
+    def valid_status_file?(path)
+      return false unless File.file?(path)
+
+      Integer(File.read(path).strip, 10)
+      true
+    rescue ArgumentError, TypeError, SystemCallError
+      false
     end
 
     def finalize_latest_run!
@@ -1284,13 +1307,31 @@ module HQ
 
     def signal_process_group(signal)
       Process.kill(signal, -@pid)
-    rescue Errno::ESRCH, Errno::EPERM
+    rescue Errno::ESRCH
+      nil
+    rescue Errno::EPERM
       clear_foreign_pid!
     end
 
     def wait_until_not_running(timeout)
       deadline = Time.now + timeout.to_f
       while running? && Time.now < deadline
+        sleep 0.05
+      end
+    end
+
+    def process_group_alive?(pid = @pid)
+      return false unless pid
+
+      Process.kill(0, -pid)
+      true
+    rescue Errno::ESRCH, Errno::EPERM
+      false
+    end
+
+    def wait_until_process_group_stops(timeout)
+      deadline = Time.now + timeout.to_f
+      while process_group_alive? && Time.now < deadline
         sleep 0.05
       end
     end
@@ -1307,11 +1348,11 @@ module HQ
 
     def terminate_process_group!(term_timeout:, kill_timeout: 0.5)
       signal_process_group("TERM")
-      wait_until_not_running(term_timeout)
-      return unless running?
+      wait_until_process_group_stops(term_timeout)
+      return unless process_group_alive?
 
       signal_process_group("KILL")
-      wait_until_not_running(kill_timeout)
+      wait_until_process_group_stops(kill_timeout)
     end
 
     def stale_direct_output_wait(now:)

@@ -45,6 +45,10 @@ module ManagedAgentTest
     assert_poll_preserves_stale_structured_output
     assert_external_process_environment_removes_ruby_loader_state
     assert_start_spawns_harness_through_validation_runner
+    assert_started_agent_persists_status_after_launcher_exits
+    assert_incomplete_status_files_are_not_completion
+    assert_stop_kills_term_ignoring_harness_before_restart
+    assert_stop_finalizes_when_group_exits_before_signal
     assert_agent_runner_warns_when_command_cannot_execute
     puts "managed_agent_test: ok"
   end
@@ -1467,14 +1471,23 @@ module ManagedAgentTest
     return unless pid
 
     deadline = Time.now + timeout
-    loop do
-      Process.kill(0, pid)
-      break if Time.now >= deadline
-
+    while process_alive?(pid) && Time.now < deadline
       sleep 0.05
-    rescue Errno::ESRCH, Errno::EPERM
-      break
     end
+  end
+
+  def process_alive?(pid)
+    Process.kill(0, pid)
+    true
+  rescue Errno::ESRCH, Errno::EPERM
+    false
+  end
+
+  def process_group_alive?(pid)
+    Process.kill(0, -pid)
+    true
+  rescue Errno::ESRCH, Errno::EPERM
+    false
   end
 
   def assert_external_process_environment_removes_ruby_loader_state
@@ -1557,6 +1570,208 @@ module ManagedAgentTest
     end
   ensure
     HQ.custom_harnesses = old_harnesses if defined?(old_harnesses)
+  end
+
+  def assert_started_agent_persists_status_after_launcher_exits
+    old_harnesses = HQ.custom_harnesses
+    [[0, "succeeded"], [23, "failed"]].each do |exit_code, expected_status|
+      Dir.mktmpdir("hq-detached-agent-status-test") do |dir|
+        harness = File.join(dir, "detached-harness")
+        manifest_path = File.join(dir, "agent.json")
+        result_status = exit_code.zero? ? "success" : "failed"
+        payload = JSON.generate(
+          "type" => "assistant",
+          "session_id" => "detached-session",
+          "message" => {
+            "role" => "assistant",
+            "content" => [{
+              "type" => "tool_use",
+              "name" => "StructuredOutput",
+              "input" => {
+                "status" => result_status,
+                "summary" => "Detached run completed.",
+                "inquiry_json" => "null",
+                "attachments_json" => "null"
+              }
+            }]
+          }
+        )
+        File.write(harness, <<~SH)
+          #!/bin/sh
+          sleep 0.5
+          printf '%s\n' '#{payload}'
+          exit #{exit_code}
+        SH
+        File.chmod(0o755, harness)
+        HQ.custom_harnesses = [
+          HQ::HarnessConfig.new(
+            key: "detached-wrapper",
+            adapter: "claude",
+            execution_command: [harness]
+          )
+        ]
+
+        launcher_pid = fork do
+          agent = HQ::ManagedAgent.new(
+            key: "detached-wrapper-agent",
+            name: "Detached Wrapper Agent",
+            project_key: "demo",
+            template_key: "custom",
+            workspace: dir,
+            prompt: "System prompt",
+            agent: "detached-wrapper",
+            log_path: File.join(dir, "detached.raw.log")
+          )
+          agent.start!
+          File.write(manifest_path, JSON.generate(agent.to_hash))
+          exit!(0)
+        end
+        Process.wait(launcher_pid)
+
+        agent = HQ::ManagedAgent.from_hash(JSON.parse(File.read(manifest_path)))
+        status_path = agent.send(:status_file_path)
+        50.times do
+          break if agent.send(:valid_status_file?, status_path)
+
+          sleep 0.1
+        end
+        persisted_exit_code = Integer(File.read(status_path), 10) if File.file?(status_path)
+        agent.poll!
+
+        log = File.read(agent.log_path)
+        assert(persisted_exit_code == exit_code,
+               "expected detached exit #{exit_code} to publish atomically, log: #{log}")
+        assert(agent.last_exit_code == exit_code,
+               "expected the detached managed child to preserve exit code #{exit_code}")
+        assert(agent.status == expected_status,
+               "expected detached managed child status #{expected_status}, got #{agent.status.inspect}")
+        assert(agent.last_summary == "Detached run completed.",
+               "expected the detached managed child to preserve its structured summary")
+      end
+    end
+  ensure
+    HQ.custom_harnesses = old_harnesses if defined?(old_harnesses)
+  end
+
+  def assert_incomplete_status_files_are_not_completion
+    Dir.mktmpdir("hq-incomplete-status-test") do |dir|
+      agent = HQ::ManagedAgent.new(
+        key: "incomplete-status-agent",
+        name: "Incomplete Status Agent",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "System prompt",
+        log_path: File.join(dir, "incomplete.raw.log")
+      )
+      status_path = agent.send(:status_file_path)
+
+      ["", "not-an-exit-code"].each do |contents|
+        File.write(status_path, contents)
+        assert(!agent.send(:completed_status_available?),
+               "expected #{contents.inspect} not to mark the agent complete")
+        assert(agent.send(:read_exit_code).nil?, "expected #{contents.inspect} not to parse as exit code 0")
+        assert(File.exist?(status_path), "expected an incomplete status file to remain available for replacement")
+      end
+    end
+  end
+
+  def assert_stop_kills_term_ignoring_harness_before_restart
+    old_harnesses = HQ.custom_harnesses
+    Dir.mktmpdir("hq-term-ignoring-harness-test") do |dir|
+      harness = File.join(dir, "term-ignoring-harness")
+      child_pid_path = File.join(dir, "child.pid")
+      File.write(harness, <<~SH)
+        #!/bin/sh
+        trap '' TERM
+        echo $$ > '#{child_pid_path}'
+        sleep 30
+      SH
+      File.chmod(0o755, harness)
+      HQ.custom_harnesses = [
+        HQ::HarnessConfig.new(
+          key: "term-ignoring-wrapper",
+          adapter: "claude",
+          execution_command: [harness]
+        )
+      ]
+      agent = HQ::ManagedAgent.new(
+        key: "term-ignoring-agent",
+        name: "Term Ignoring Agent",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "System prompt",
+        agent: "term-ignoring-wrapper",
+        log_path: File.join(dir, "term-ignoring.raw.log")
+      )
+      agent.start!
+      wrapper_pid = agent.pid
+      deadline = Time.now + 5
+      sleep 0.05 until File.file?(child_pid_path) || Time.now >= deadline
+      child_pid = Integer(File.read(child_pid_path), 10)
+
+      agent.stop!
+      wait_for_process_exit(child_pid)
+
+      assert(!agent.send(:process_group_alive?, wrapper_pid),
+             "expected TERM-to-KILL escalation to remove the complete managed process group")
+      assert(!process_alive?(child_pid), "expected the TERM-ignoring harness to be killed")
+      assert(agent.status == "stopped", "expected the stopped run to finalize before restart")
+      assert(agent.pid.nil?, "expected stop to clear the completed process id before returning")
+      assert(agent.last_run.status == "stopped", "expected stop to finalize the persisted run before returning")
+
+      agent.start!
+      assert(agent.pid != wrapper_pid, "expected restart to use a new process-group leader")
+      assert(!process_group_alive?(wrapper_pid), "expected no old harness group to overlap the restarted run")
+    ensure
+      agent&.retire_for_archive!(timeout: 0.1) if agent&.running?
+      Process.kill("KILL", -wrapper_pid) if wrapper_pid && process_group_alive?(wrapper_pid)
+    end
+  ensure
+    HQ.custom_harnesses = old_harnesses if defined?(old_harnesses)
+  end
+
+  def assert_stop_finalizes_when_group_exits_before_signal
+    Dir.mktmpdir("hq-stop-exit-race-test") do |dir|
+      dead_pid = spawn(RbConfig.ruby, "-e", "exit 0")
+      Process.wait(dead_pid)
+      started_at = Time.now - 1
+      log_path = File.join(dir, "stop-exit-race.raw.log")
+      File.write(log_path, "=== process output ===\n")
+      run = HQ::ManagedAgent::AgentRun.new(
+        started_at: started_at,
+        status: "running",
+        log_path: log_path,
+        command: "finished-before-stop"
+      )
+      agent = HQ::ManagedAgent.new(
+        key: "stop-exit-race-agent",
+        name: "Stop Exit Race Agent",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "System prompt",
+        pid: dead_pid,
+        started_at: started_at,
+        log_path: log_path,
+        runs: [run]
+      )
+      File.write(agent.send(:status_file_path), "143")
+      original_running = agent.method(:running?)
+      running_checks = 0
+      agent.define_singleton_method(:running?) do
+        running_checks += 1
+        running_checks == 1 ? true : original_running.call
+      end
+
+      agent.stop!
+
+      assert(agent.pid.nil?, "expected an ESRCH stop race to clear pid through finalization")
+      assert(agent.last_exit_code == 143, "expected an ESRCH stop race to consume the published status")
+      assert(agent.status == "stopped", "expected an ESRCH stop race to finalize as stopped")
+      assert(agent.last_run.status == "stopped", "expected an ESRCH stop race to finalize its run")
+    end
   end
 
   def assert_start_records_missing_harness_without_spawning
