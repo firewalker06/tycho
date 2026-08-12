@@ -1620,7 +1620,11 @@ module HQ
       query = params["q"].to_s.strip.downcase
       archive_snapshot = @agent_archive_store.all
       active_keys = load_all_agents.map(&:key).sort
-      cache_key = [archive_snapshot.object_id, active_keys, project_key, query]
+      projects_by_key = @projects.to_h { |project| [project.key, project] }
+      project_search_revision = @projects.map do |project|
+        [project.key, project.name, project.group, project.branch]
+      end
+      cache_key = [archive_snapshot.object_id, active_keys, project_search_revision, project_key, query]
       records = @archived_query_lock.synchronize do
         @archived_query_cache[cache_key] ||= begin
           active_index = active_keys.to_h { |key| [key, true] }
@@ -1631,7 +1635,7 @@ module HQ
           unless query.empty?
             matches.select! do |record|
               agent = record.agent
-              project = @projects.find { |candidate| candidate.key == agent.project_key }
+              project = projects_by_key[agent.project_key]
               [
                 agent.key,
                 agent.display_name,
