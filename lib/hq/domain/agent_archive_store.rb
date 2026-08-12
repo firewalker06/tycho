@@ -24,7 +24,7 @@ module HQ
       signature = root_signature
       self.class.cache_mutex.synchronize do
         cached = self.class.snapshot_cache[@root]
-        return cached.fetch(:records) if cached&.fetch(:signature) == signature
+        return cached.fetch(:records) if cached && cached.fetch(:signature) == signature
       end
 
       loop do
@@ -35,7 +35,7 @@ module HQ
 
         self.class.cache_mutex.synchronize do
           cached = self.class.snapshot_cache[@root]
-          return cached.fetch(:records) if cached&.fetch(:signature) == signature
+          return cached.fetch(:records) if cached && cached.fetch(:signature) == signature
 
           self.class.snapshot_cache[@root] = { signature:, records: }
         end
