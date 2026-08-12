@@ -2,6 +2,7 @@
 
 require_relative "../registry"
 require_relative "agent_store"
+require_relative "agent_archive_store"
 require_relative "file_transaction"
 require_relative "project"
 require_relative "scheduler"
@@ -19,30 +20,36 @@ module HQ
       @scheduler = scheduler || Scheduler.new(registry:)
     end
 
-    def archive(project_key, now: Time.now)
+    def archive(project_key, now: Time.now, agents: nil)
       config = @registry.projects.find { |candidate| candidate.key == project_key.to_s }
       raise ArgumentError, "Unknown project: #{project_key}" unless config
 
       project = Project.new(config)
-      agents = @agent_store.load
+      agents ||= @agent_store.load
       project_agents = agents.select { |agent| agent.project_key == project.key }
       running = project_agents.select(&:running?)
-      unless running.empty?
-        raise ArgumentError, "Project #{project.key} has running agents: #{running.map(&:key).join(", ")}"
-      end
+      message = "Project #{project.key} has running agents: #{running.map(&:key).join(", ")}"
+      raise ArgumentError, message unless running.empty?
 
       FileTransaction.run(transaction_paths) do |transaction|
         project_archive = project.archive_logs!(now:)
         restore_project_logs(transaction, project, project_archive)
+        original_paths = project_agents.to_h do |agent|
+          [agent.key, agent.log_files.select { |path| File.exist?(path) }]
+        end
+        archived_by_key = @agent_store.archive_agents!(project_agents.map(&:key))
+        archived_directories = archived_by_key.values
+        fresh_archived_agents = AgentArchiveStore.new.all
+          .select { |record| archived_directories.include?(record.directory) }
+          .map(&:agent)
+        transaction.on_rollback { @agent_store.restore_archived_agents!(fresh_archived_agents) }
         agent_archives = project_agents.filter_map do |agent|
-          original_paths = agent.log_files.select { |path| File.exist?(path) }
-          destination = agent.archive_logs!
-          restore_agent_logs(transaction, original_paths, destination)
-          @scheduler.reconcile_archived_agent!(agent.key, archived_agent: agent, now:)
+          destination = archived_by_key.fetch(agent.key)
+          restore_agent_logs(transaction, original_paths.fetch(agent.key), destination)
+          reconcile_archived_agent(agent, now:)
           destination
         end
         @registry.archive_project!(project.key)
-        @agent_store.save(agents.reject { |agent| agent.project_key == project.key })
         Result.new(
           project: config,
           archived_agent_keys: project_agents.map(&:key),
@@ -54,11 +61,17 @@ module HQ
 
     private
 
+    def reconcile_archived_agent(agent, now:)
+      @scheduler.reconcile_archived_agent!(agent.key, archived_agent: agent, now:)
+    rescue StandardError => e
+      HQ.logger.warn("ProjectArchiver") { "Failed to reconcile schedule for #{agent.key}: #{e.message}" }
+      false
+    end
+
     def transaction_paths
       [
         @registry.path,
         @registry.archived_projects_path,
-        AGENTS_FILE,
         File.join(File.dirname(AGENTS_FILE), "usage_metrics.json"),
         SCHEDULES_FILE,
         SCHEDULES_STATE_FILE

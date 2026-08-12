@@ -19,17 +19,23 @@ module HQ
     end
 
     def load
-      identity = FileStore.read_json(@path, fallback: {})
-      return normalize(identity) unless identity["id"].to_s.empty?
+      FileUtils.mkdir_p(File.dirname(@path))
+      File.open("#{@path}.lock", File::RDWR | File::CREAT, 0o600) do |file|
+        file.flock(File::LOCK_EX)
+        identity = FileStore.read_json(@path, fallback: {})
+        return normalize(identity) unless identity["id"].to_s.empty?
 
-      identity = {
-        "schema_version" => SCHEMA_VERSION,
-        "id" => SecureRandom.uuid,
-        "name" => Socket.gethostname.to_s,
-        "created_at" => Time.now.utc.iso8601
-      }
-      FileStore.write_json(@path, identity)
-      identity
+        identity = {
+          "schema_version" => SCHEMA_VERSION,
+          "id" => SecureRandom.uuid,
+          "name" => Socket.gethostname.to_s,
+          "created_at" => Time.now.utc.iso8601
+        }
+        FileStore.write_json(@path, identity)
+        identity
+      ensure
+        file.flock(File::LOCK_UN)
+      end
     end
 
     private

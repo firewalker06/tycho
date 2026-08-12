@@ -2,9 +2,11 @@
 
 require "digest"
 require "fileutils"
+require "uri"
 
 require_relative "constants"
 require_relative "file_store"
+require_relative "project_workspace"
 require_relative "server_identity"
 
 module HQ
@@ -40,15 +42,12 @@ module HQ
     def validate!(parent:, child:, parent_server_id: nil)
       expected_server = server_identity.fetch("id")
       supplied_server = parent_server_id.to_s.strip
-      if !supplied_server.empty? && supplied_server != expected_server
-        raise Error, "Cross-server delegation is not allowed"
-      end
+      raise Error, "Cross-server delegation is not allowed" if !supplied_server.empty? && supplied_server != expected_server
       raise Error, "An agent cannot delegate to itself" if parent.key == child.key
 
       existing = relation_for_child(child.key)
-      if existing && existing.dig("parent", "agent_key") != parent.key
-        raise Error, "Agent #{child.key} already has a different parent"
-      end
+      existing_parent = existing&.dig("parent", "agent_key")
+      raise Error, "Agent #{child.key} already has a different parent" if existing_parent && existing_parent != parent.key
 
       ancestor = parent.key
       visited = {}
@@ -88,6 +87,7 @@ module HQ
 
       run = child.last_run
       return [nil, false] unless run
+
       status = child.effective_status.to_s
       return [nil, false] unless TERMINAL_STATUSES.include?(status)
 
@@ -104,9 +104,9 @@ module HQ
           "child" => relation.fetch("child"),
           "child_run_id" => run.run_id,
           "child_run_number" => child.run_count,
-          "child_native_session_id" => run.session_id.to_s.empty? ? nil : run.session_id,
+          "child_native_session_id" => run.session_id.to_s.empty? ? nil : safe_text(run.session_id, 500),
           "status" => status,
-          "summary" => child.last_summary.to_s[0, 4000],
+          "summary" => safe_text(child.last_summary, 4000),
           "inquiry" => safe_inquiry(child.latest_inquiry),
           "attachments" => safe_attachments(child.structured_result&.fetch("attachments", nil)),
           "created_at" => now.utc.iso8601,
@@ -144,10 +144,22 @@ module HQ
 
     def data
       payload = FileStore.read_json(@path, fallback: {})
+      stored_server = payload["server_id"].to_s
+      expected_server = server_identity.fetch("id")
+      mismatch = !stored_server.empty? && stored_server != expected_server
+      raise Error, "Delegation ledger belongs to a different Tycho server" if mismatch
+
+      relationships = Array(payload["relationships"])
+      invalid = relationships.any? do |relation|
+        [relation["server_id"], relation.dig("parent", "server_id"), relation.dig("child", "server_id")]
+          .compact.any? { |value| value != expected_server }
+      end
+      raise Error, "Delegation ledger contains ambiguous server identities" if invalid
+
       {
         "schema_version" => SCHEMA_VERSION,
-        "server_id" => server_identity.fetch("id"),
-        "relationships" => Array(payload["relationships"]),
+        "server_id" => expected_server,
+        "relationships" => relationships,
         "reports" => Array(payload["reports"])
       }
     end
@@ -171,13 +183,13 @@ module HQ
         "server_id" => server_identity.fetch("id"),
         "server_name" => server_identity.fetch("name"),
         "agent_key" => agent.key,
-        "name" => agent.display_name,
-        "project_key" => agent.project_key
+        "name" => safe_text(agent.display_name, 500),
+        "project_key" => safe_text(agent.project_key, 200)
       }
       if include_origin
         reference["run_id"] = agent.last_run&.run_id
         reference["run_number"] = agent.run_count
-        reference["native_session_id"] = agent.session_id unless agent.session_id.to_s.empty?
+        reference["native_session_id"] = safe_text(agent.session_id, 500) unless agent.session_id.to_s.empty?
       end
       reference.compact
     end
@@ -186,11 +198,14 @@ module HQ
       return nil unless value.is_a?(Hash)
 
       {
-        "message" => value["message"].to_s[0, 2000],
+        "message" => safe_text(value["message"], 2000),
         "fields" => Array(value["fields"]).first(20).filter_map do |field|
           next unless field.is_a?(Hash)
 
-          field.slice("key", "label", "description", "input_type", "required", "options")
+          sanitized = field.slice("key", "label", "description", "input_type", "required")
+          sanitized.transform_values! { |item| item.is_a?(String) ? safe_text(item, 500) : item }
+          sanitized["options"] = Array(field["options"]).first(20).map { |item| safe_text(item, 300) }
+          sanitized
         end
       }
     end
@@ -199,11 +214,50 @@ module HQ
       Array(values).first(20).filter_map do |attachment|
         next unless attachment.is_a?(Hash)
 
-        url = attachment["url"].to_s
-        next unless url.match?(%r{\Ahttps?://}i)
+        url = safe_http_url(attachment["url"])
+        next unless url
 
-        attachment.slice("type", "title", "url", "description", "mime_type")
+        {
+          "type" => attachment["type"].to_s == "link" ? "link" : "file",
+          "title" => safe_text(attachment["title"], 500),
+          "url" => url,
+          "description" => safe_text(attachment["description"], 1000),
+          "mime_type" => safe_text(attachment["mime_type"], 200)
+        }.compact
       end
+    end
+
+    def safe_http_url(value)
+      uri = URI.parse(value.to_s)
+      return nil unless %w[http https].include?(uri.scheme&.downcase)
+      return nil if uri.host.to_s.empty? || uri.userinfo
+
+      decoded_path = URI.decode_www_form_component(uri.path.to_s)
+      return nil if secret_value?(decoded_path) || decoded_path.match?(ProjectWorkspace::PRIVATE_KEY_MARKER)
+
+      uri.query = nil
+      uri.fragment = nil
+      uri.to_s
+    rescue URI::InvalidURIError
+      nil
+    end
+
+    def safe_text(value, length)
+      original = value.to_s
+      return "[REDACTED]" if original.match?(ProjectWorkspace::PRIVATE_KEY_MARKER)
+
+      text = original[0, length]
+        .gsub(/github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]+/i, "[REDACTED]")
+        .gsub(/(Bearer\s+)[^\s]+/i, "\\1[REDACTED]")
+        .gsub(/((?:api[_-]?key|access[_-]?token|auth[_-]?token|password|private[_-]?key|secret|token)\s*[:=]\s*)\S+/i,
+              "\\1[REDACTED]")
+      ProjectWorkspace::SECRET_VALUE_PATTERNS.each { |pattern| text = text.gsub(pattern, "[REDACTED]") }
+      text.gsub(/-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----.*?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/m,
+                "[REDACTED]")
+    end
+
+    def secret_value?(value)
+      ProjectWorkspace::SECRET_VALUE_PATTERNS.any? { |pattern| value.to_s.match?(pattern) }
     end
   end
 end

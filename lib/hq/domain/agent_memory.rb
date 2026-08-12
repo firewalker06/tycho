@@ -490,8 +490,8 @@ module HQ
       ensure
         file.flock(File::LOCK_UN)
       end
-    rescue StandardError
-      false
+    rescue StandardError => e
+      raise IOError, "Failed to append durable agent event: #{e.message}"
     end
 
     def read_attachment_records

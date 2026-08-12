@@ -1,10 +1,12 @@
 # frozen_string_literal: true
 
 require_relative "constants"
+require_relative "file_transaction"
 require_relative "file_store"
 require_relative "managed_agent"
 require_relative "delegation_coordinator"
 require_relative "schedule_store"
+require_relative "visibility"
 require_relative "../ui/rendering/styles"
 require "securerandom"
 
@@ -62,7 +64,7 @@ module HQ
       end
     end
 
-    def load_with_poll_events_unlocked
+    def load_with_poll_events_unlocked(process_delegations: true)
       return [[], []] unless File.exist?(AGENTS_FILE)
 
       changed = false
@@ -99,11 +101,13 @@ module HQ
       end
       changed = backfill_color_indexes!(agents) || changed
       changed = backfill_delegation_parents!(agents) || changed
-      changed = @delegation_coordinator.process!(agents) || changed
+      changed = @delegation_coordinator.process!(agents) || changed if process_delegations
       save_unlocked(agents) if changed
       [agents, events]
     rescue StandardError => e
       HQ.logger.warn("AgentStore") { "Failed to load agents from #{AGENTS_FILE}: #{e.class} - #{e.message}" }
+      raise if e.is_a?(IOError) || e.is_a?(DelegationStore::Error)
+
       [[], []]
     end
 
@@ -196,6 +200,93 @@ module HQ
       )
     end
 
+    def persist_with_delegation!(agents:, child:, parent_key: nil, parent_server_id: nil, creating: false)
+      key = parent_key.to_s.strip
+      with_exclusive_lock do
+        current, = load_with_poll_events_unlocked(process_delegations: false)
+        index = current.index { |agent| agent.key == child.key }
+        if !index && creating
+          current.unshift(child)
+        elsif !index
+          raise ArgumentError, "Unknown agent: #{child.key}"
+        else
+          child = current[index]
+        end
+        if key.empty?
+          save_unlocked(current) if creating
+          agents.replace(current)
+          return child
+        end
+
+        parent = current.find { |agent| agent.key == key }
+        paths = [AGENTS_FILE, DELEGATIONS_FILE, child.memory_path, parent&.memory_path].compact
+        FileTransaction.run(paths) do
+          associate_delegation!(agents: current, child:, parent_key: key, parent_server_id:)
+          save_unlocked(current)
+        end
+        agents.replace(current)
+        child
+      end
+    end
+
+    def restore_archived_agents!(archived_agents)
+      with_exclusive_lock do
+        current, = load_with_poll_events_unlocked(process_delegations: false)
+        existing = current.to_h { |agent| [agent.key, true] }
+        additions = Array(archived_agents).reject { |agent| existing[agent.key] }
+        save_unlocked(current + additions) unless additions.empty?
+      end
+    end
+
+    def start_agent!(key)
+      mutate do |agents, _events|
+        target = agents.find { |agent| agent.key == key.to_s }
+        raise ArgumentError, "Unknown agent: #{key}" unless target
+
+        target.start! unless target.running?
+        target
+      end
+    end
+
+    def stop_agent!(key)
+      mutate do |agents, _events|
+        target = agents.find { |agent| agent.key == key.to_s }
+        raise ArgumentError, "Unknown agent: #{key}" unless target
+
+        target.stop! if target.running?
+        target
+      end
+    end
+
+    def archive_agent!(key, root: AGENT_ARCHIVE_DIR)
+      archive_agents!([key], root:).fetch(key.to_s)
+    end
+
+    def archive_agents!(keys, root: AGENT_ARCHIVE_DIR)
+      with_exclusive_lock do
+        agents, = load_with_poll_events_unlocked(process_delegations: false)
+        requested = Array(keys).map(&:to_s).uniq
+        targets = requested.map do |key|
+          agents.find { |agent| agent.key == key } || raise(ArgumentError, "Unknown agent: #{key}")
+        end
+        raise ArgumentError, "Agent is running" if targets.any?(&:running?)
+
+        source_paths = targets.flat_map { |target| target.log_files.select { |path| File.exist?(path) } }
+        transaction = FileTransaction.new([AGENTS_FILE, *source_paths])
+        destinations = targets.to_h do |target|
+          target.mark_archived_visibility!(!HQ::Visibility.agent_visible?(target, @projects))
+          destination = target.archive_logs!(root)
+          transaction.on_rollback { remove_failed_archive(destination) }
+          [target.key, destination]
+        end
+        save_unlocked(agents.reject { |agent| requested.include?(agent.key) })
+        destinations
+      rescue StandardError
+        transaction&.rollback
+        raise
+      end
+    end
+
     def delegation_relationships(agent_key)
       @delegation_coordinator.relationships_for(agent_key)
     end
@@ -243,6 +334,15 @@ module HQ
       ensure
         file.flock(File::LOCK_UN)
       end
+    end
+
+    def remove_failed_archive(destination)
+      return unless File.directory?(destination)
+
+      Dir.children(destination).each { |name| FileUtils.rm_f(File.join(destination, name)) }
+      Dir.rmdir(destination)
+    rescue StandardError => e
+      HQ.logger.error("AgentStore") { "Failed to clean rolled-back archive #{destination}: #{e.message}" }
     end
 
     def attach_usage_metrics_store(agent)

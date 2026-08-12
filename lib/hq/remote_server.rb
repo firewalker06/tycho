@@ -1597,11 +1597,15 @@ module HQ
     end
 
     def agents
-      load_agents.map { |agent| agent_payload(agent) }
+      all_agents = load_all_agents
+      context = delegation_reference_context(all_agents)
+      visible_agents(all_agents).map { |agent| agent_payload(agent, reference_context: context) }
     end
 
     def resource_snapshot
-      agents = load_agents
+      all_agents = load_all_agents
+      agents = visible_agents(all_agents)
+      reference_context = delegation_reference_context(all_agents)
       agents_by_project = agents.group_by(&:project_key)
       {
         schema_version: RemoteResourceCatalog::SCHEMA_VERSION,
@@ -1609,7 +1613,7 @@ module HQ
         build: {
           version: HQ::VERSION
         },
-        agents: agents.map { |agent| agent_list_payload(agent) },
+        agents: agents.map { |agent| agent_list_payload(agent, reference_context:) },
         projects: visible_projects.map do |project|
           project_list_payload(project, agents: agents_by_project.fetch(project.key, []))
         end
@@ -2618,13 +2622,15 @@ module HQ
       blocks = AgentChatLog.new(target).chat_blocks
       return conversation_messages(target) if blocks.empty?
 
+      reference_context = delegation_reference_context
       blocks.map do |block|
+        content, metadata = sanitized_delegation_block(block.content.to_s, block.metadata, reference_context:)
         {
           kind: block.kind.to_s,
           role: block.role,
-          content: block.content.to_s,
+          content: content,
           tool_name: block.tool_name,
-          metadata: block.metadata,
+          metadata: metadata,
           created_at: block.created_at
         }.compact
       end
@@ -2653,7 +2659,7 @@ module HQ
 
     def submit_prompt(key, attrs)
       target = find_agent!(key)
-      associate_delegation_from_attrs!(target, attrs)
+      target = associate_delegation_from_attrs!(target, attrs)
       pull_request_context = render_prompt_pull_request_contexts(target, attrs)
       attachments = import_prompt_attachments(target, attrs)
       text = prompt_text(attrs, attachments:)
@@ -2662,8 +2668,8 @@ module HQ
         text,
         attachments:
       )
-      target.start! if truthy?(attrs["start"]) && !target.running?
       save_agent(target)
+      target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"]) && !target.running?
       { agent: agent_payload(target), conversation: conversation(target.key) }
     end
 
@@ -2684,23 +2690,22 @@ module HQ
       attachments = import_prompt_attachments(target, attrs)
       target.add_user_message!(answer, inquiry_id: expected_id, attachments:)
       target.add_user_message!(feedback, metadata: { "inquiry_feedback" => true }) unless feedback_embedded || feedback.empty?
-      target.start! if truthy?(attrs["start"]) && !target.running?
       save_agent(target)
+      target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"]) && !target.running?
       { agent: agent_payload(target), conversation: conversation(target.key) }
     end
 
     def start_agent(key, attrs = {})
       target = find_agent!(key)
-      associate_delegation_from_attrs!(target, attrs)
-      target.start! unless target.running?
+      target = associate_delegation_from_attrs!(target, attrs)
       save_agent(target)
+      target = @agent_store.start_agent!(target.key) unless target.running?
       { agent: agent_payload(target) }
     end
 
     def stop_agent(key)
       target = find_agent!(key)
-      target.stop!
-      save_agent(target)
+      target = @agent_store.stop_agent!(target.key)
       { agent: agent_payload(target) }
     end
 
@@ -2713,9 +2718,9 @@ module HQ
       @agent_store.ensure_project_context_prompt!(target, project)
       current = load_all_agents
       current.unshift(target)
-      associate_delegation_from_attrs!(target, attrs, agents: current)
-      target.start! if truthy?(attrs["start"])
+      target = associate_delegation_from_attrs!(target, attrs, agents: current, creating: true)
       save_agents(sort_agents(current))
+      target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"])
       agent_payload(target)
     end
 
@@ -2747,13 +2752,13 @@ module HQ
       target = @agent_store.clone_agent(source, existing_agents: current)
       target.update!(**agent_attrs(target, attrs, project: project, creating: false))
       @agent_store.ensure_project_context_prompt!(target, project)
-      target.start! if truthy?(attrs["start"])
 
-      archive_path = source.archive_logs! if archive_source
+      archive_path = @agent_store.archive_agent!(source.key) if archive_source
       schedule_reconciled = reconcile_archived_schedule_agent(source) if archive_source
       next_agents = current.reject { |agent| agent.key == target.key || (archive_source && agent.key == source.key) }
       next_agents.unshift(target)
       save_agents(sort_agents(next_agents))
+      target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"])
       HQ.hooks.publish("agent.cloned",
                        agent_key: target.key,
                        source_agent_key: source.key,
@@ -2776,10 +2781,8 @@ module HQ
       target = find_agent!(key)
       raise Error.new("Agent is running", status: 409) if target.running?
 
-      archive_path = target.archive_logs!
+      archive_path = @agent_store.archive_agent!(target.key)
       schedule_reconciled = reconcile_archived_schedule_agent(target)
-      remaining = load_all_agents.reject { |agent| agent.key == target.key }
-      save_agents(remaining)
       {
         archived: true,
         agent_key: target.key,
@@ -2811,17 +2814,15 @@ module HQ
           next
         end
 
+        archive_path = @agent_store.archive_agent!(target.key)
         archived << {
           agent_key: target.key,
-          archive_path: target.archive_logs!,
+          archive_path: archive_path,
           schedule_reconciled: reconcile_archived_schedule_agent(target)
         }
       rescue StandardError => e
         failed << { agent_key: key, error: e.message }
       end
-
-      archived_keys = archived.map { |item| item.fetch(:agent_key) }
-      save_agents(current.reject { |agent| archived_keys.include?(agent.key) }) if archived_keys.any?
 
       {
         archived: archived,
@@ -3165,8 +3166,15 @@ module HQ
 
     def find_agent_reference!(key)
       load_agents.find { |agent| agent.key == key.to_s } ||
-        @agent_archive_store.find(key)&.agent ||
+        visible_archived_agent(key) ||
         raise(Error.new("Unknown agent: #{key}", status: 404))
+    end
+
+    def visible_archived_agent(key)
+      agent = @agent_archive_store.find(key)&.agent
+      return nil unless agent && archived_agent_visible?(agent)
+
+      agent
     end
 
     def pull_request_reference!(agent, id)
@@ -3883,8 +3891,8 @@ module HQ
       raise Error.new(e.message, status: 400)
     end
 
-    def agent_payload(agent)
-      delegation = delegation_payload(agent)
+    def agent_payload(agent, reference_context: nil)
+      delegation = delegation_payload(agent, reference_context:)
       {
         key: agent.key,
         name: agent.display_name,
@@ -3929,7 +3937,7 @@ module HQ
       }
     end
 
-    def agent_list_payload(agent)
+    def agent_list_payload(agent, reference_context: nil)
       {
         key: agent.key,
         name: agent.display_name,
@@ -3955,30 +3963,41 @@ module HQ
         summary: agent.last_summary,
         revision: agent_revision(agent),
         archived: false,
-        delegation: delegation_payload(agent)
+        delegation: delegation_payload(agent, reference_context:)
       }
     end
 
-    def delegation_payload(agent)
+    def delegation_payload(agent, reference_context: nil)
+      reference_context ||= delegation_reference_context
       relationships = @agent_store.delegation_relationships(agent.key)
       parent_relation = relationships.fetch("parent")
       {
         server_id: @agent_store.delegation_coordinator.delegation_store.server_identity.fetch("id"),
-        parent: parent_relation ? reference_payload(parent_relation.fetch("parent")) : nil,
+        parent: parent_relation ? reference_payload(parent_relation.fetch("parent"), reference_context:) : nil,
         children: relationships.fetch("children").map do |relation|
-          reference_payload(relation.fetch("child"))
+          reference_payload(relation.fetch("child"), reference_context:)
         end
       }
     end
 
-    def reference_payload(reference)
+    def delegation_reference_context(active_agents = load_all_agents)
+      active = active_agents.to_h { |agent| [agent.key, agent] }
+      archived = @agent_archive_store.all.to_h { |record| [record.agent.key, record.agent] }
+      {
+        active:,
+        archived:,
+        visible_keys: visible_agents(active_agents).to_h { |agent| [agent.key, true] }
+      }
+    end
+
+    def reference_payload(reference, reference_context:)
       key = reference.fetch("agent_key")
-      active = load_all_agents.find { |candidate| candidate.key == key }
-      archived = active ? nil : @agent_archive_store.find(key)&.agent
+      active = reference_context.fetch(:active)[key]
+      archived = active ? nil : reference_context.fetch(:archived)[key]
       state = if active
-                visible_agents([active]).empty? ? "hidden" : "active"
+                reference_context.fetch(:visible_keys)[key] ? "active" : "hidden"
               elsif archived
-                "archived"
+                archived_agent_visible?(archived) ? "archived" : "hidden"
               else
                 "missing"
               end
@@ -3999,26 +4018,50 @@ module HQ
       payload.compact
     end
 
-    def associate_delegation_from_attrs!(target, attrs, agents: nil)
+    def archived_agent_visible?(agent)
+      hidden = agent.project_hidden_at_archive
+      return !hidden unless hidden.nil?
+
+      HQ::Visibility.agent_visible?(agent, @projects)
+    end
+
+    def associate_delegation_from_attrs!(target, attrs, agents: nil, creating: false)
       parent_key = attrs["parent_agent_key"].to_s.strip
-      return if parent_key.empty?
+      if parent_key.empty?
+        return target unless creating
+
+        return @agent_store.persist_with_delegation!(agents: agents || load_all_agents, child: target, creating: true)
+      end
 
       current = agents || load_all_agents
-      index = current.index { |agent| agent.key == target.key }
-      index ? current[index] = target : current.unshift(target)
       parent = current.find { |agent| agent.key == parent_key }
-      paths = [AGENTS_FILE, DELEGATIONS_FILE, target.memory_path, parent&.memory_path].compact
-      FileTransaction.run(paths) do
-        @agent_store.associate_delegation!(
-          agents: current,
-          child: target,
-          parent_key: parent_key,
-          parent_server_id: attrs["parent_server_id"]
-        )
-        save_agents(current)
+      unless parent && HQ::Visibility.agent_visible?(parent, @projects)
+        raise Error.new("Unknown parent agent: #{parent_key}", status: 404)
       end
+      @agent_store.persist_with_delegation!(
+        agents: current,
+        child: target,
+        parent_key: parent_key,
+        parent_server_id: attrs["parent_server_id"],
+        creating:
+      )
     rescue DelegationStore::Error => e
       raise Error.new(e.message, status: 409)
+    end
+
+    def sanitized_delegation_block(content, metadata, reference_context:)
+      data = metadata.is_a?(Hash) ? metadata.dup : metadata
+      reference = data.is_a?(Hash) ? data["agent_reference"] : nil
+      return [content, metadata] unless reference.is_a?(Hash)
+
+      payload = reference_payload(reference, reference_context:)
+      data["agent_reference"] = payload.transform_keys(&:to_s)
+      return [content, data] unless payload[:state] == "hidden"
+
+      data.delete("delegation_report")
+      replacement = content.start_with?("Delegated agent report:") ?
+        "Delegated agent report unavailable: hidden agent" : "Started hidden agent"
+      [replacement, data]
     end
 
     def truncate(text, length)

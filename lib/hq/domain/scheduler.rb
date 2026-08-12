@@ -294,8 +294,11 @@ module HQ
       agent = target || build_scheduled_agent(schedule, agents)
       due_at = state.next_due_at || now
       @agent_store.add_scheduled_message!(agent, schedule_key: schedule.key, message: message, due_at: due_at)
-      agent.start!
       agents.unshift(agent) unless target
+      @agent_store.save(agents)
+      agent = @agent_store.start_agent!(agent.key)
+      index = agents.index { |candidate| candidate.key == agent.key }
+      agents[index] = agent if index
 
       state.last_due_at = due_at
       state.last_started_at = agent.started_at || now

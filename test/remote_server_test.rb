@@ -2143,6 +2143,7 @@ module RemoteServerTest
       agents = [
         hidden_test_agent("web-charlie-agent-1", "web-charlie", workspaces["web-charlie"]),
         hidden_test_agent("worker-agent-1", "worker", workspaces["worker"]),
+        hidden_test_agent("worker-archived-agent", "worker", workspaces["worker"]),
         hidden_test_agent("docs-agent-1", "docs", workspaces["docs"])
       ]
       HQ::AgentStore.new(registry.projects).save(agents)
@@ -2157,6 +2158,19 @@ module RemoteServerTest
              "expected normal agent list to include visible project agents")
       assert(!visible_agent_keys.include?("worker-agent-1"),
              "expected normal agent list to omit agents for hidden projects")
+      begin
+        service.submit_prompt("docs-agent-1", "prompt" => "Attach", "parent_agent_key" => "worker-agent-1")
+        raise "expected hidden delegation parent to be rejected"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 404, "expected hidden delegation parent to be non-enumerable")
+      end
+      HQ::AgentStore.new(registry.projects).archive_agent!("worker-archived-agent")
+      begin
+        service.agent("worker-archived-agent")
+        raise "expected hidden archived agent detail to be hidden"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 404, "expected hidden archived agent detail to return 404")
+      end
       begin
         service.project("worker")
         raise "expected hidden project detail to be hidden"

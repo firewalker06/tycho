@@ -1029,8 +1029,8 @@ module HQ
       agents.unshift(agent)
       agent_store.save(agents)
 
-      started = agent.start!
-      save_agent_in_store(agent)
+      agent = agent_store.start_agent!(agent.key)
+      started = agent.running? || agent.last_run
 
       out.puts "Tycho Claude managed-agent diagnostic"
       out.puts "Agent: #{agent.key}"
@@ -1398,13 +1398,10 @@ module HQ
 
       existing = agent_store.load
       existing.unshift(agent)
-      persist_agents_with_parent!(agent_store, existing, agent, opts)
+      agent = persist_agents_with_parent!(agent_store, existing, agent, opts, creating: true)
 
       if opts[:run]
-        agent.start!
-        # Persist the same in-memory collection so a fast detached finalizer
-        # cannot be overwritten by a stale reloaded copy of this child.
-        agent_store.save(existing)
+        agent = agent_store.start_agent!(agent.key)
         unless agent.running?
           out.puts "Status: start failed — #{agent.last_run&.error || "unknown error"}" unless opts[:json]
           return 1
@@ -1463,9 +1460,8 @@ module HQ
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
       return failure("Agent #{agent_key} is already running", err: err) if agent.running?
 
-      persist_agents_with_parent!(store, agents, agent, opts)
-      agent.start!
-      store.save(agents)
+      agent = persist_agents_with_parent!(store, agents, agent, opts)
+      agent = store.start_agent!(agent.key)
       if agent.running?
         print_started_agent(agent_cli_payload(agent), json: opts[:json], out: out)
       else
@@ -1484,8 +1480,7 @@ module HQ
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
       return failure("Agent #{agent_key} is not running", err: err) unless agent.running?
 
-      agent.stop!
-      save_agent_in_store(agent)
+      agent = agent_store_for_all.stop_agent!(agent.key)
       print_simple_agent_action("Stopped", agent_cli_payload(agent), json: opts[:json], out: out)
       0
     rescue StandardError => e
@@ -1523,10 +1518,10 @@ module HQ
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
       return failure("Agent #{agent_key} is already running", err: err) if agent.running?
 
-      persist_agents_with_parent!(store, agents, agent, opts)
+      agent = persist_agents_with_parent!(store, agents, agent, opts)
       agent.add_user_message!(message)
-      agent.start!
       store.save(agents)
+      agent = store.start_agent!(agent.key)
       if agent.running?
         print_sent_agent(agent_cli_payload(agent), json: opts[:json], out: out)
       else
@@ -1546,9 +1541,7 @@ module HQ
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
       return failure("Agent #{agent_key} is running — stop it first", err: err) if agent.running?
 
-      archive_path = agent.archive_logs!
-      remaining = agents.reject { |a| a.key == agent_key.to_s }
-      agent_store_for_all.save(remaining)
+      archive_path = agent_store_for_all.archive_agent!(agent.key)
       result = { archived: true, agent_key: agent.key, archive_path: archive_path }.compact
       if opts[:json]
         out.puts JSON.pretty_generate(result)
@@ -1600,8 +1593,7 @@ module HQ
       out.puts "  Model:   #{clone.model || "(project default)"}"
 
       if opts[:run]
-        clone.start!
-        store.save(store.load.map { |a| a.key == clone.key ? clone : a })
+        clone = store.start_agent!(clone.key)
         if clone.running?
           out.puts "  Status:  running (pid #{clone.pid})"
           out.puts "  Log:     #{clone.raw_log_path}"
@@ -1973,6 +1965,9 @@ module HQ
         ["Archived", value["archived"] ? "yes" : "no"],
         ["Started by", value.dig("delegation", "parent", "name") ||
           value.dig("delegation", "parent", "agent_key") || "n/a"],
+        ["Delegated agents", Array(value.dig("delegation", "children")).map do |child|
+          child["name"] || child[:name] || child["agent_key"] || child[:agent_key]
+        end.join(", ").then { |names| names.empty? ? "n/a" : names }],
         ["Harness", value["agent"]],
         ["Model", value["model"] || "(project default)"],
         ["Status", value["status"]],
@@ -2182,16 +2177,8 @@ module HQ
       agent_store_for_all.save(agents)
     end
 
-    def persist_agents_with_parent!(store, agents, child, opts)
-      parent_key = opts[:parent_agent].to_s.strip
-      return store.save(agents) if parent_key.empty?
-
-      parent = agents.find { |agent| agent.key == parent_key }
-      paths = [AGENTS_FILE, DELEGATIONS_FILE, child.memory_path, parent&.memory_path].compact
-      FileTransaction.run(paths) do
-        store.associate_delegation!(agents:, child:, parent_key:)
-        store.save(agents)
-      end
+    def persist_agents_with_parent!(store, agents, child, opts, creating: false)
+      store.persist_with_delegation!(agents:, child:, parent_key: opts[:parent_agent], creating:)
     end
 
     def agent_cli_delegation(agent)

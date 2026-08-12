@@ -129,7 +129,8 @@ module HQ
     attr_reader :key, :name, :project_key, :template_key, :workspace, :prompt, :created_at, :started_at,
                 :finished_at, :pid, :last_exit_code, :log_path, :runs, :sandbox_mode, :agent, :messages, :skills,
                 :model, :reasoning_effort, :response_style, :session_id, :session_bootstrapped, :color_index, :summary,
-                :structured_result, :schedule_key, :cost_snapshot, :project_group, :delegation_parent, :archive_path
+                :structured_result, :schedule_key, :cost_snapshot, :project_group, :delegation_parent, :archive_path,
+                :project_hidden_at_archive
     attr_writer :summary, :structured_result, :cost_snapshot
 
     def usage_metrics_store=(store)
@@ -142,7 +143,7 @@ module HQ
                    model: nil, reasoning_effort: nil, response_style: nil, skills: nil, unread: false, session_id: nil,
                    session_bootstrapped: nil, color_index: nil, summary: nil, structured_result: nil, schedule_key: nil,
                    cost_snapshot: nil, total_run_count: nil, project_group: nil, delegation_parent: nil,
-                   archived: false, archive_path: nil)
+                   archived: false, archive_path: nil, project_hidden_at_archive: nil)
       @key = key
       @name = name
       @project_key = project_key
@@ -178,6 +179,7 @@ module HQ
       @delegation_parent = normalize_delegation_parent(delegation_parent)
       @archived = archived == true
       @archive_path = archive_path.to_s.empty? ? nil : archive_path.to_s
+      @project_hidden_at_archive = project_hidden_at_archive unless project_hidden_at_archive.nil?
     end
 
     def color_index=(value)
@@ -258,7 +260,8 @@ module HQ
         project_group: hash["project_group"],
         delegation_parent: hash["delegation_parent"],
         archived: hash["archived"],
-        archive_path: hash["archive_path"]
+        archive_path: hash["archive_path"],
+        project_hidden_at_archive: hash["project_hidden_at_archive"]
       )
     end
 
@@ -386,6 +389,7 @@ module HQ
       result["delegation_parent"] = @delegation_parent if @delegation_parent
       result["archived"] = true if archived?
       result["archive_path"] = @archive_path if archived? && @archive_path
+      result["project_hidden_at_archive"] = @project_hidden_at_archive unless @project_hidden_at_archive.nil?
       result
     end
 
@@ -395,6 +399,15 @@ module HQ
 
     def archived?
       @archived
+    end
+
+    def refresh_session_identity!
+      capture_session_id!
+      @session_id
+    end
+
+    def mark_archived_visibility!(hidden)
+      @project_hidden_at_archive = hidden == true
     end
 
     def scheduled?

@@ -1631,6 +1631,10 @@ module RenderingTest
     agent.define_singleton_method(:add_user_message!) { |_| submissions += 1 }
     agent.define_singleton_method(:start!) { nil }
     app.define_singleton_method(:save_agents!) { nil }
+    app.instance_variable_get(:@agent_store).define_singleton_method(:start_agent!) do |_key|
+      agent.start!
+      agent
+    end
 
     form = app.instance_variable_get(:@agent_chat_form).inquiry_form
     down = Bubbletea::KeyMessage.new(key_type: Bubbletea::KeyMessage::KEY_DOWN)
@@ -1685,6 +1689,10 @@ module RenderingTest
     app = build_input_required_chat_app
     agent = app.instance_variable_get(:@agents).first
     agent.define_singleton_method(:start!) { @started = true }
+    app.instance_variable_get(:@agent_store).define_singleton_method(:start_agent!) do |_key|
+      agent.start!
+      agent
+    end
 
     form = app.instance_variable_get(:@agent_chat_form).inquiry_form
     form.current_field.input.value = "Draft today's journal"
@@ -2230,6 +2238,9 @@ module RenderingTest
         prompt: "Test"
       )
       File.write(agent.raw_log_path, "raw output")
+      app.instance_variable_get(:@agent_store).define_singleton_method(:archive_agents!) do |_keys|
+        { agent.key => agent.archive_logs! }
+      end
       app.instance_variable_set(:@agents, [agent])
       app.send(:rebuild_agent_index!)
 
@@ -2311,6 +2322,10 @@ module RenderingTest
       end
       created_agent
     end
+    store.define_singleton_method(:start_agent!) do |_key|
+      created_agent.start!
+      created_agent
+    end
 
     _, command = app.send(:save_agent_editor)
 
@@ -2372,6 +2387,10 @@ module RenderingTest
       created_agent.define_singleton_method(:build_command) do
         { command: [RbConfig.ruby, "-e", "exit 0"] }
       end
+      created_agent
+    end
+    store.define_singleton_method(:start_agent!) do |_key|
+      created_agent.start!
       created_agent
     end
 
@@ -2470,6 +2489,9 @@ module RenderingTest
                                     ])
     FileUtils.mkdir_p(File.dirname(old_agent.raw_log_path))
     File.write(old_agent.raw_log_path, "old log\n")
+    app.instance_variable_get(:@agent_store).define_singleton_method(:archive_agent!) do |_key|
+      old_agent.archive_logs!
+    end
 
     app.update(key_message("C"))
 
@@ -3080,6 +3102,7 @@ module RenderingTest
     )
     agent.structured_result = structured_result
     agent.summary = structured_result["summary"]
+    app.instance_variable_get(:@agent_store).save([agent])
 
     app.instance_variable_set(:@agents, [agent])
     app.instance_variable_set(:@screen, :agents)
@@ -3136,6 +3159,7 @@ module RenderingTest
     )
     agent.structured_result = structured_result
     agent.summary = structured_result["summary"]
+    app.instance_variable_get(:@agent_store).save([agent])
 
     app.instance_variable_set(:@agents, [agent])
     app.instance_variable_set(:@screen, :agents)
@@ -3211,6 +3235,7 @@ module RenderingTest
     agent.structured_result = structured_result
     agent.summary = structured_result["summary"]
 
+    app.instance_variable_get(:@agent_store).save([agent])
     app.instance_variable_set(:@agents, [agent])
     app.instance_variable_set(:@screen, :agents)
     app.instance_variable_get(:@selected)[:agents] = 0

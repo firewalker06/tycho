@@ -22,6 +22,8 @@ module HQ
       parent = agents.find { |agent| agent.key == key }
       raise DelegationStore::Error, "Unknown parent agent: #{key}" unless parent
 
+      parent.refresh_session_identity!
+
       relation, created = delegation_store.attach!(
         parent:,
         child:,
@@ -29,18 +31,16 @@ module HQ
         now:
       )
       child.associate_parent!(relation.fetch("parent"))
-      if created
-        AgentMemory.new(parent).append_delegation_event!(
-          "Started agent #{child.display_name}",
-          event_id: "delegation-created:#{relation.fetch("id")}",
-          created_at: now,
-          metadata: {
-            "relationship_id" => relation.fetch("id"),
-            "event" => "agent_started",
-            "agent_reference" => relation.fetch("child")
-          }
-        )
-      end
+      AgentMemory.new(parent).append_delegation_event!(
+        "Started agent #{child.display_name}",
+        event_id: "delegation-created:#{relation.fetch("id")}",
+        created_at: now,
+        metadata: {
+          "relationship_id" => relation.fetch("id"),
+          "event" => "agent_started",
+          "agent_reference" => relation.fetch("child")
+        }
+      )
       [relation, created]
     end
 
@@ -110,8 +110,9 @@ module HQ
           next
         end
 
+        parent_workspace = canonical_workspace(parent.workspace)
         conflicts = agents.any? do |agent|
-          agent.key != parent.key && agent.workspace == parent.workspace && agent.running?
+          agent.key != parent.key && canonical_workspace(agent.workspace) == parent_workspace && agent.running?
         end
         if conflicts
           reports.each { |report| delegation_store.update_report!(report.fetch("id"), resume_state: "workspace_busy") }
@@ -121,8 +122,8 @@ module HQ
         parent.start!
         state = parent.running? ? "resumed" : "resume_failed"
         reports.each do |report|
-          delegation_store.update_report!(report.fetch("id"), resume_state: state,
-                                          resumed_at: (now if state == "resumed"))
+          options = { resume_state: state, resumed_at: (now if state == "resumed") }
+          delegation_store.update_report!(report.fetch("id"), **options)
         end
         changed = true
       end
@@ -150,6 +151,12 @@ module HQ
         "attachments" => report["attachments"]
       }.compact
       "Delegated agent report:\n#{JSON.pretty_generate(payload)}"
+    end
+
+    def canonical_workspace(path)
+      File.realpath(path.to_s)
+    rescue StandardError
+      File.expand_path(path.to_s)
     end
   end
 end

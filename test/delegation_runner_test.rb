@@ -30,7 +30,6 @@ module DelegationRunnerTest
       File.write(harness, <<~'RUBY')
         #!/usr/bin/env ruby
         require "json"
-        sleep 0.25
         output_index = ARGV.index("-o")
         output = output_index ? ARGV[output_index + 1] : nil
         payload = {
@@ -91,8 +90,8 @@ module DelegationRunnerTest
   end
 
   def run_cli(env, *args)
-    stdout, stderr, status = Open3.capture3(env, RbConfig.ruby, File.join(ROOT, "bin", "tycho"), *args,
-                                           chdir: ROOT)
+    command = [env, RbConfig.ruby, File.join(ROOT, "bin", "tycho"), *args]
+    stdout, stderr, status = Open3.capture3(*command, chdir: ROOT)
     raise "CLI failed: #{stderr}\n#{stdout}" unless status.success?
 
     stdout

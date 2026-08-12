@@ -13,6 +13,7 @@ require_relative "domain/constants"
 require_relative "domain/file_store"
 require_relative "domain/log_paths"
 require_relative "domain/project"
+require_relative "domain/project_archiver"
 require_relative "domain/managed_agent"
 require_relative "domain/agent_store"
 require_relative "domain/visibility"
@@ -965,8 +966,9 @@ def selected_screen_items
       agent = selected_agent
       return [self, nil] unless agent
 
-      agent.stop!
-      save_agents!
+      replacement = @agent_store.stop_agent!(agent.key)
+      @agents[@agents.index(agent)] = replacement
+      rebuild_agent_index!
       [self, schedule_action_poll]
     end
 
@@ -1094,10 +1096,9 @@ def selected_screen_items
       return [self, nil] unless agent
       return [self, nil] if agent.running?
 
-      agent.archive_logs!
+      @agent_store.archive_agent!(agent.key)
       reconcile_archived_schedule_agent(agent)
       @agents.delete(agent)
-      save_agents!
       rebuild_agent_index!
       @selected[:agents] = [@selected[:agents], @agents.length - 1].min
       @selected[:agents] = 0 if @selected[:agents].negative?
@@ -1155,10 +1156,11 @@ def selected_screen_items
       return [self, nil] unless agent
       return [self, nil] if agent.running?
 
-      agent.start!
+      replacement = @agent_store.start_agent!(agent.key)
+      @agents[@agents.index(agent)] = replacement
+      agent = replacement
       @agents.sort_by!(&:last_activity_at).reverse!
       @selected[:agents] = @agents.index(agent) || 0
-      save_agents!
       rebuild_agent_index!
       [self, schedule_action_poll]
     end
@@ -1189,18 +1191,13 @@ def selected_screen_items
       return [self, nil] unless project
       return [self, nil] if @agents_by_project[project.key].any?(&:running?)
 
-      archived_config = @registry.archive_project!(project.key)
-      return [self, nil] unless archived_config
-
-      destination = project.archive_logs!
-      @agents_by_project[project.key].each do |agent|
-        agent.archive_logs!
-        reconcile_archived_schedule_agent(agent)
-      end
-      @agents.reject! { |agent| agent.project_key == project.key }
-      save_agents!
+      merged = agents_with_hidden_projects(@agents)
+      result = ProjectArchiver.new(registry: @registry, agent_store: @agent_store)
+        .archive(project.key, agents: merged)
+      destination = result.project_log_archive
       load_registry!
       @agent_store = AgentStore.new(@all_projects)
+      @agents = @agent_store.load
       rebuild_agent_index!
       @selected[:projects] = [@selected[:projects], @projects.length - 1].min
       @selected[:projects] = 0 if @selected[:projects].negative?
@@ -1310,15 +1307,6 @@ def selected_screen_items
                          agent: agent.agent,
                          model: agent.model,
                          reasoning_effort: agent.reasoning_effort)
-        if @agent_editor.run_on_submit?
-          begin
-            agent.start!
-          rescue StandardError => e
-            @agent_editor.error_message = "Failed to start agent: #{e.message}"
-            return [self, nil]
-          end
-          command = schedule_action_poll
-        end
         @agents.unshift(agent)
         target_agent = agent
       else
@@ -1337,6 +1325,16 @@ def selected_screen_items
       @agents = sort_agents(@agents) unless name_only
       @selected[:agents] = @agents.index(target_agent) || 0
       save_agents!
+      if @agent_editor.mode == :create && @agent_editor.run_on_submit?
+        begin
+          target_agent = @agent_store.start_agent!(target_agent.key)
+          @agents[@agents.index { |item| item.key == target_agent.key }] = target_agent
+        rescue StandardError => e
+          @agent_editor.error_message = "Failed to start agent: #{e.message}"
+          return [self, nil]
+        end
+        command = schedule_action_poll
+      end
       rebuild_agent_index! unless name_only
 
       if @agent_editor.mode == :create
@@ -2217,8 +2215,12 @@ def selected_screen_items
       agent = @agent_chat_form.agent
       agent.add_user_message!(content)
       @agent_chat_form.composer.clear unless @agent_chat_form.inquiry_active?
-      agent.start! unless agent.running?
       save_agents!
+      unless agent.running?
+        replacement = @agent_store.start_agent!(agent.key)
+        @agents[@agents.index { |item| item.key == agent.key }] = replacement
+        @agent_chat_form.agent = replacement if @agent_chat_form.respond_to?(:agent=)
+      end
       sync_agent_chat_workspace!(force_bottom: true)
       [self, schedule_action_poll]
     end
