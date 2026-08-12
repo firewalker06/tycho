@@ -49,8 +49,8 @@ module HQ
       @read_timeout = read_timeout
     end
 
-    def request(method, path, body: nil)
-      uri = target_uri(path)
+    def request(method, path, body: nil, query: nil)
+      uri = target_uri(path, query)
       response = perform_request(method, uri, body)
       parse_response(response)
     rescue Net::OpenTimeout, Net::ReadTimeout
@@ -61,12 +61,12 @@ module HQ
 
     private
 
-    def target_uri(path)
+    def target_uri(path, query)
       suffix = path.to_s
       suffix = "/#{suffix}" unless suffix.start_with?("/")
       uri = @base_uri.dup
       uri.path = "#{@base_uri.path.to_s.sub(%r{/+\z}, "")}#{suffix}"
-      uri.query = nil
+      uri.query = query.to_s.empty? ? nil : query.to_s
       uri.fragment = nil
       uri
     end

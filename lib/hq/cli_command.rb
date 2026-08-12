@@ -17,6 +17,7 @@ require_relative "domain/file_transaction"
 require_relative "domain/github_api_client"
 require_relative "domain/scheduler"
 require_relative "domain/agent_store"
+require_relative "domain/agent_archive_store"
 require_relative "domain/usage_metrics"
 
 module HQ
@@ -179,8 +180,10 @@ module HQ
 
         desc "List managed agents"
         argument :project_key, required: false, desc: "Filter by project key"
+        option :archived, type: :boolean, default: false, desc: "List archived agents only"
+        option :include_archived, type: :boolean, default: false, desc: "Include archived agents with active agents"
         remote_options
-        usage_template "agent list [%{project_key}] [--server SERVER_KEY] [--json]"
+        usage_template "agent list [%{project_key}] [--archived|--include-archived] [--server SERVER_KEY] [--json]"
 
         def call(**opts)
           exit CLICommand.list_agents(opts[:project_key], opts, out: out, err: err)
@@ -1415,11 +1418,26 @@ module HQ
     end
 
     def list_agents(project_key, opts = {}, out: $stdout, err: $stderr)
+      return failure("Choose either --archived or --include-archived", err: err) if opts[:archived] && opts[:include_archived]
       return remote_list_agents(project_key, opts, out:, err:) if remote_requested?(opts)
 
-      agents = load_all_agents
+      active_agents = opts[:archived] ? [] : load_all_agents
+      archived_agents = if opts[:archived] || opts[:include_archived]
+                          AgentArchiveStore.new.all.map(&:agent).sort_by { |agent| agent.archived_at || Time.at(0) }.reverse
+                        else
+                          []
+                        end
+      agents = active_agents + archived_agents
       agents = agents.select { |a| a.project_key == project_key.to_s } if project_key
-      payload = agents.map { |agent| agent_cli_payload(agent) }
+      archive_fields = opts[:archived] || opts[:include_archived]
+      relationship_context = agent_cli_relationship_context
+      payload = agents.map do |agent|
+        agent_cli_payload(
+          agent,
+          delegation: agent_cli_delegation(agent, relationship_context: relationship_context),
+          archive_fields: archive_fields
+        )
+      end
       if opts[:json]
         out.puts JSON.pretty_generate(payload)
         return 0
@@ -1428,10 +1446,11 @@ module HQ
         out.puts project_key ? "No agents for project: #{project_key}" : "No agents found."
         return 0
       end
-      headers = %w[Key Project Name Parent Harness Status Runs]
+      headers = archive_fields ? %w[Key Project Name Parent Harness State Status Runs] : %w[Key Project Name Parent Harness Status Runs]
       rows = agents.map do |a|
-        [a.key, a.project_key, a.name, a.delegation_parent&.fetch("agent_key", nil) || "-", a.agent, a.status,
-         a.run_count.to_s]
+        row = [a.key, a.project_key, a.name, a.delegation_parent&.fetch("agent_key", nil) || "-", a.agent]
+        row << (a.archived? ? "archived" : "active") if archive_fields
+        row + [a.status, a.run_count.to_s]
       end
       out.puts agent_table(headers, rows)
       0
@@ -1442,10 +1461,10 @@ module HQ
     def agent_status(agent_key, opts = {}, out: $stdout, err: $stderr)
       return remote_agent_status(agent_key, opts, out:, err:) if remote_requested?(opts)
 
-      agent = load_all_agents.find { |a| a.key == agent_key.to_s }
+      agent = load_all_agents.find { |a| a.key == agent_key.to_s } || AgentArchiveStore.new.find(agent_key)&.agent
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
 
-      print_agent_status(agent_cli_payload(agent), json: opts[:json], out: out)
+      print_agent_status(agent_cli_payload(agent, archive_fields: agent.archived?), json: opts[:json], out: out)
       0
     rescue StandardError => e
       failure("Failed to get agent status: #{e.message}", err: err)
@@ -1457,6 +1476,7 @@ module HQ
       store = agent_store_for_all
       agents = store.load
       agent = agents.find { |a| a.key == agent_key.to_s }
+      return archived_agent_failure(agent_key, err:) if !agent && archived_agent?(agent_key)
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
       return failure("Agent #{agent_key} is already running", err: err) if agent.running?
 
@@ -1477,6 +1497,7 @@ module HQ
       return remote_agent_action(agent_key, "stop", opts, out:, err:) if remote_requested?(opts)
 
       agent = load_all_agents.find { |a| a.key == agent_key.to_s }
+      return archived_agent_failure(agent_key, err:) if !agent && archived_agent?(agent_key)
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
       return failure("Agent #{agent_key} is not running", err: err) unless agent.running?
 
@@ -1488,7 +1509,7 @@ module HQ
     end
 
     def agent_logs(agent_key, opts, out: $stdout, err: $stderr)
-      agent = load_all_agents.find { |a| a.key == agent_key.to_s }
+      agent = load_all_agents.find { |a| a.key == agent_key.to_s } || AgentArchiveStore.new.find(agent_key)&.agent
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
 
       log_path = case opts[:type].to_s
@@ -1515,6 +1536,7 @@ module HQ
       store = agent_store_for_all
       agents = store.load
       agent = agents.find { |a| a.key == agent_key.to_s }
+      return archived_agent_failure(agent_key, err:) if !agent && archived_agent?(agent_key)
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
       return failure("Agent #{agent_key} is already running", err: err) if agent.running?
 
@@ -1538,6 +1560,7 @@ module HQ
 
       agents = load_all_agents
       agent = agents.find { |a| a.key == agent_key.to_s }
+      return archived_agent_failure(agent_key, err:) if !agent && archived_agent?(agent_key)
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
       return failure("Agent #{agent_key} is running — stop it first", err: err) if agent.running?
 
@@ -1576,6 +1599,7 @@ module HQ
       registry = Registry.new
       agents = load_all_agents
       source = agents.find { |a| a.key == agent_key.to_s }
+      return archived_agent_failure(agent_key, err:) if !source && archived_agent?(agent_key)
       return failure("Unknown agent: #{agent_key}", err: err) unless source
 
       store = AgentStore.new(registry.projects)
@@ -1738,20 +1762,34 @@ module HQ
     end
 
     def remote_list_agents(project_key, opts, out:, err:)
-      agents = remote_client(opts[:server]).request("GET", "/agents").fetch("agents")
+      client = remote_client(opts[:server])
+      agents = opts[:archived] ? [] : client.request("GET", "/agents").fetch("agents")
+      if opts[:archived] || opts[:include_archived]
+        page = 1
+        loop do
+          query = URI.encode_www_form({ page: page, per_page: 100 })
+          response = client.request("GET", "/agents/archived", query: query)
+          agents.concat(response.fetch("agents"))
+          page = response.dig("pagination", "next_page")
+          break unless page
+        end
+      end
       agents = agents.select { |agent| agent["project_key"] == project_key.to_s } if project_key
-      agents = agents.map { |agent| remote_agent_payload(agent) }
+      archive_fields = opts[:archived] || opts[:include_archived]
+      agents = agents.map { |agent| remote_agent_payload(agent, archive_fields: archive_fields) }
       if opts[:json]
         out.puts JSON.pretty_generate(agents)
       elsif agents.empty?
         out.puts project_key ? "No agents for project: #{project_key}" : "No agents found."
       else
         rows = agents.map do |agent|
-          [agent["key"], agent["project_key"], agent["name"],
-           agent.dig("delegation", "parent", "agent_key") || "-", agent["agent"], agent["status"],
-           agent["run_count"].to_s]
+          row = [agent["key"], agent["project_key"], agent["name"],
+                 agent.dig("delegation", "parent", "agent_key") || "-", agent["agent"]]
+          row << (agent["archived"] ? "archived" : "active") if archive_fields
+          row + [agent["status"], agent["run_count"].to_s]
         end
-        out.puts agent_table(%w[Key Project Name Parent Harness Status Runs], rows)
+        headers = archive_fields ? %w[Key Project Name Parent Harness State Status Runs] : %w[Key Project Name Parent Harness Status Runs]
+        out.puts agent_table(headers, rows)
       end
       0
     rescue RemoteCLIClient::Error, KeyError => e
@@ -1760,7 +1798,7 @@ module HQ
 
     def remote_agent_status(agent_key, opts, out:, err:)
       payload = remote_client(opts[:server]).request("GET", remote_resource_path("agents", agent_key)).fetch("agent")
-      payload = remote_agent_payload(payload)
+      payload = remote_agent_payload(payload, archive_fields: payload["archived"] == true)
       print_agent_status(payload, json: opts[:json], out: out)
       0
     rescue RemoteCLIClient::Error, KeyError => e
@@ -1871,8 +1909,8 @@ module HQ
       }
     end
 
-    def remote_agent_payload(payload)
-      {
+    def remote_agent_payload(payload, archive_fields: false)
+      result = {
         "key" => payload["key"],
         "name" => payload["name"],
         "project_key" => payload["project_key"],
@@ -1894,6 +1932,8 @@ module HQ
         "archive_path" => payload["archive_path"],
         "delegation" => payload["delegation"]
       }
+      result["archived_at"] = payload["archived_at"] if archive_fields
+      result
     end
 
     def print_project_list(payload, json:, out:)
@@ -1910,9 +1950,9 @@ module HQ
       out.puts agent_table(%w[Key Name Group Status Path], rows)
     end
 
-    def agent_cli_payload(agent)
+    def agent_cli_payload(agent, delegation: nil, archive_fields: false)
       last = agent.last_run
-      {
+      result = {
         key: agent.key,
         name: agent.name,
         project_key: agent.project_key,
@@ -1932,8 +1972,10 @@ module HQ
         prompt: agent.prompt,
         archived: agent.archived?,
         archive_path: agent.archive_path,
-        delegation: agent_cli_delegation(agent)
+        delegation: delegation || agent_cli_delegation(agent)
       }
+      result[:archived_at] = agent.archived_at&.iso8601 if archive_fields
+      result
     end
 
     def print_created_agent(payload, json:, out:)
@@ -1980,6 +2022,7 @@ module HQ
         ["Workspace", value["workspace"]],
         ["Log", value["log_path"] || "n/a"]
       ]
+      rows.insert(5, ["Archived at", display_timestamp(value["archived_at"])]) if value["archived"]
       out.puts detail_table(rows)
     end
 
@@ -2181,13 +2224,29 @@ module HQ
       store.persist_with_delegation!(agents:, child:, parent_key: opts[:parent_agent], creating:)
     end
 
-    def agent_cli_delegation(agent)
-      relationships = agent_store_for_all.delegation_relationships(agent.key)
+    def agent_cli_delegation(agent, relationship_context: nil)
+      relationship_context ||= agent_cli_relationship_context
+      relationships = {
+        "parent" => relationship_context.fetch(:parents)[agent.key],
+        "children" => relationship_context.fetch(:children).fetch(agent.key, [])
+      }
       relation = relationships.fetch("parent")
       {
         parent: relation&.fetch("parent"),
         children: relationships.fetch("children").map { |child_relation| child_relation.fetch("child") }
       }
+    end
+
+    def agent_cli_relationship_context
+      agent_store_for_all.delegation_coordinator.relationship_index
+    end
+
+    def archived_agent?(agent_key)
+      !AgentArchiveStore.new.find(agent_key).nil?
+    end
+
+    def archived_agent_failure(agent_key, err:)
+      failure("Archived agent is read-only: #{agent_key}", err: err)
     end
 
     def agent_table(headers, rows)

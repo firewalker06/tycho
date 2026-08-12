@@ -130,7 +130,7 @@ module HQ
                 :finished_at, :pid, :last_exit_code, :log_path, :runs, :sandbox_mode, :agent, :messages, :skills,
                 :model, :reasoning_effort, :response_style, :session_id, :session_bootstrapped, :color_index, :summary,
                 :structured_result, :schedule_key, :cost_snapshot, :project_group, :delegation_parent, :archive_path,
-                :project_hidden_at_archive
+                :archived_at, :project_hidden_at_archive
     attr_writer :summary, :structured_result, :cost_snapshot
 
     def usage_metrics_store=(store)
@@ -143,7 +143,7 @@ module HQ
                    model: nil, reasoning_effort: nil, response_style: nil, skills: nil, unread: false, session_id: nil,
                    session_bootstrapped: nil, color_index: nil, summary: nil, structured_result: nil, schedule_key: nil,
                    cost_snapshot: nil, total_run_count: nil, project_group: nil, delegation_parent: nil,
-                   archived: false, archive_path: nil, project_hidden_at_archive: nil)
+                   archived: false, archive_path: nil, archived_at: nil, project_hidden_at_archive: nil)
       @key = key
       @name = name
       @project_key = project_key
@@ -179,6 +179,7 @@ module HQ
       @delegation_parent = normalize_delegation_parent(delegation_parent)
       @archived = archived == true
       @archive_path = archive_path.to_s.empty? ? nil : archive_path.to_s
+      @archived_at = archived_at
       @project_hidden_at_archive = project_hidden_at_archive unless project_hidden_at_archive.nil?
     end
 
@@ -261,6 +262,7 @@ module HQ
         delegation_parent: hash["delegation_parent"],
         archived: hash["archived"],
         archive_path: hash["archive_path"],
+        archived_at: parse_time(hash["archived_at"]),
         project_hidden_at_archive: hash["project_hidden_at_archive"]
       )
     end
@@ -389,6 +391,7 @@ module HQ
       result["delegation_parent"] = @delegation_parent if @delegation_parent
       result["archived"] = true if archived?
       result["archive_path"] = @archive_path if archived? && @archive_path
+      result["archived_at"] = @archived_at&.iso8601 if archived? && @archived_at
       result["project_hidden_at_archive"] = @project_hidden_at_archive unless @project_hidden_at_archive.nil?
       result
     end
@@ -715,6 +718,7 @@ module HQ
         File.join(destination, "usage_metrics.json"),
         { "schema_version" => UsageMetrics::Store::SCHEMA_VERSION, "runs" => archived_metrics }
       )
+      FileUtils.touch(root)
       destination
     end
 

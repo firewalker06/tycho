@@ -116,8 +116,54 @@ module RemoteServerTest
       archived = service.archive_agent(child[:key])
       archived_payload = service.agent(child[:key])
       assert(archived[:archived] && archived_payload[:archived], "expected archived child detail navigation")
+      assert(!archived_payload[:archived_at].to_s.empty?, "expected immutable archive time in detail")
       assert(archived_payload.dig(:delegation, :parent, :agent_key) == parent[:key],
              "expected archived child to retain parent link")
+
+      archive_index = service.archived_agents("page" => "1", "per_page" => "1", "q" => "Child")
+      assert(archive_index.dig(:pagination, :total) == 1 && archive_index.dig(:pagination, :page) == 1,
+             "expected paginated archived-agent discovery")
+      project_archive_index = service.archived_agents("q" => "Web")
+      assert(project_archive_index.dig(:pagination, :total) == 1,
+             "expected archive query to search project display names")
+      indexed = archive_index.fetch(:agents).fetch(0)
+      assert(indexed[:key] == child[:key] && indexed[:archived] && indexed[:archived_at],
+             "expected read-only archived identity in the archive index")
+      assert(indexed.dig(:delegation, :parent, :agent_key) == parent[:key],
+             "expected archive discovery to preserve delegation context")
+
+      request = Struct.new(:query_params).new({ "page" => "1", "per_page" => "100" })
+      routed = HQ::RemoteServer.new.send(:route, service, "GET", "/agents/archived", {}, request)
+      assert(routed.dig(:body, :agents, 0, :key) == child[:key], "expected archived-agent API route")
+
+      begin
+        service.start_agent(child[:key])
+        raise "expected archived mutation rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("read-only"),
+               "expected archived mutations to report an explicit read-only conflict")
+      end
+
+      begin
+        service.archived_agents("per_page" => "101")
+        raise "expected archive page limit rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 400, "expected invalid archive pagination to return 400")
+      end
+      begin
+        service.archived_agents("page" => "9" * 100)
+        raise "expected huge archive page rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 400, "expected huge archive pages to return 400")
+      end
+
+      service.archive_agent(parent[:key])
+      first_page = service.archived_agents("page" => "1", "per_page" => "1")
+      second_page = service.archived_agents("page" => "2", "per_page" => "1")
+      assert(first_page.dig(:pagination, :total) == 2 && first_page.dig(:pagination, :next_page) == 2 &&
+             second_page.dig(:pagination, :next_page).nil? &&
+             first_page.dig(:agents, 0, :key) != second_page.dig(:agents, 0, :key),
+             "expected stable multi-page archive ordering")
     end
   end
 
@@ -2165,6 +2211,18 @@ module RemoteServerTest
         assert(e.status == 404, "expected hidden delegation parent to be non-enumerable")
       end
       HQ::AgentStore.new(registry.projects).archive_agent!("worker-archived-agent")
+      assert(service.archived_agents.dig(:pagination, :total).zero?,
+             "expected hidden archives to stay out of discovery")
+      legacy_record = HQ::AgentArchiveStore.new.find("worker-archived-agent")
+      legacy_manifest = HQ::FileStore.read_json(legacy_record.manifest_path, fallback: {})
+      legacy_manifest.delete("project_hidden_at_archive")
+      HQ::FileStore.write_json(legacy_record.manifest_path, legacy_manifest)
+      FileUtils.touch(File.dirname(File.dirname(legacy_record.manifest_path)))
+      service_projects = service.instance_variable_get(:@projects)
+      service.instance_variable_set(:@projects, service_projects.reject { |project| project.key == "worker" })
+      assert(service.archived_agents.dig(:pagination, :total).zero?,
+             "expected legacy archives for missing projects to fail closed")
+      service.instance_variable_set(:@projects, service_projects)
       begin
         service.agent("worker-archived-agent")
         raise "expected hidden archived agent detail to be hidden"
@@ -2190,6 +2248,8 @@ module RemoteServerTest
              "expected group visibility change to reveal inherited projects")
       assert(service.agents.map { |agent| agent[:key] }.include?("worker-agent-1"),
              "expected group visibility change to reveal inherited project agents")
+      assert(service.archived_agents.dig(:pagination, :total).zero?,
+             "expected legacy archives without immutable visibility to remain hidden")
 
       service.update_hidden_setting("scope" => "project", "key" => "docs", "hidden" => true)
       assert(!service.projects.map { |project| project[:key] }.include?("docs"),

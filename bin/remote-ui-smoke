@@ -271,6 +271,15 @@ def create_agent(base_url, name: "Smoke Agent")
   JSON.parse(response.body).fetch("agent").fetch("key")
 end
 
+def archive_agent(base_url, agent_key)
+  uri = URI("#{base_url}/agents/#{agent_key}/archive")
+  request = Net::HTTP::Post.new(uri)
+  request["Content-Type"] = "application/json"
+  request.body = "{}"
+  response = Net::HTTP.start(uri.hostname, uri.port) { |http| http.request(request) }
+  raise "Failed to archive smoke agent: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
+end
+
 def wait_for_resource_agents(base_url, agent_keys)
   deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10
   loop do
@@ -388,6 +397,7 @@ def write_smoke_script(path)
       const baseUrl = process.env.TYCHO_REMOTE_UI_URL;
       const agentKey = process.env.TYCHO_REMOTE_UI_AGENT_KEY;
       const unscheduledAgentKey = process.env.TYCHO_REMOTE_UI_UNSCHEDULED_AGENT_KEY;
+      const archivedAgentKey = process.env.TYCHO_REMOTE_UI_ARCHIVED_AGENT_KEY;
       const chromePath = process.env.CHROME_PATH;
       const captureDir = process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "";
       const beforeCapture = process.env.TYCHO_REMOTE_UI_BEFORE_CAPTURE || "";
@@ -400,6 +410,10 @@ def write_smoke_script(path)
 
       const browser = await chromium.launch({ executablePath: chromePath, headless: true });
       const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      const archiveRequests = [];
+      page.on("request", (request) => {
+        if (request.url().includes("/agents/archived?")) archiveRequests.push(request.url());
+      });
       page.on("console", (message) => {
         if (message.type() === "error") errors.push(message.text());
       });
@@ -1088,6 +1102,7 @@ def write_smoke_script(path)
             mobileAgentToolbar.desktopActionsDisplay !== "none" ||
             mobileAgentToolbar.mobileMenuDisplay === "none" ||
             !mobileAgentToolbar.labels.includes("All servers") ||
+            !mobileAgentToolbar.labels.includes("Archived agents") ||
             !mobileAgentToolbar.labels.includes("Select agents")) {
           throw new Error(`Mobile Agents toolbar is not sticky and compact: ${JSON.stringify(mobileAgentToolbar)}`);
         }
@@ -1116,6 +1131,68 @@ def write_smoke_script(path)
             desktopAgentToolbar.visibleControlCount !== 3) {
           throw new Error(`Desktop Agents toolbar is not sticky with visible controls: ${JSON.stringify(desktopAgentToolbar)}`);
         }
+        await page.evaluate(() => {
+          state.projects = state.projects.filter((project) => !project.key.startsWith("toolbar-empty-"));
+          state.filters.server = "local";
+          render();
+        });
+        await page.selectOption("#agent-state-filter", "archived");
+        await page.waitForSelector(`[data-open-agent='${archivedAgentKey}']`, { state: "visible", timeout: 10_000 });
+        const archivedListContract = await page.evaluate(([archivedKey, activeKey]) => ({
+          archivedText: document.querySelector(`[data-open-agent='${archivedKey}']`)?.innerText || "",
+          activeVisible: Boolean(document.querySelector(`[data-open-agent='${activeKey}']`)),
+          summary: document.querySelector("#agent-results-summary")?.textContent || "",
+        }), [archivedAgentKey, agentKey]);
+        if (!archivedListContract.archivedText.includes("Archived · read-only") ||
+            archivedListContract.activeVisible ||
+            !archivedListContract.summary.includes("archived")) {
+          throw new Error(`Archived agent discovery is not explicit: ${JSON.stringify(archivedListContract)}`);
+        }
+        await page.evaluate(() => {
+          state.servers = state.servers.filter((server) => server.key !== "toolbar-peer");
+          document.querySelector("#growl")?.classList.add("hidden");
+          render();
+        });
+        if (captureDir) {
+          await page.screenshot({ path: path.join(captureDir, "archived-agents-desktop.png"), fullPage: true });
+          await page.setViewportSize({ width: 390, height: 844 });
+          await page.screenshot({ path: path.join(captureDir, "archived-agents-mobile.png"), fullPage: true });
+          await page.setViewportSize({ width: 1024, height: 768 });
+        }
+        await page.fill("#agent-filter", "Archived Smoke Agent");
+        await page.waitForFunction(() => document.querySelector("#agent-results-summary")?.textContent?.includes("1 agent match"));
+        await page.waitForTimeout(600);
+        const searchedRemotely = archiveRequests.some((url) => new URL(url).searchParams.get("q") === "Archived Smoke Agent");
+        if (!searchedRemotely) throw new Error("Archived agent search did not query the server-side archive index");
+        await page.fill("#agent-filter", "");
+        await page.waitForTimeout(350);
+        await page.waitForSelector(`[data-open-agent='${archivedAgentKey}']`, { state: "visible", timeout: 10_000 });
+        await page.click(`[data-open-agent='${archivedAgentKey}']`);
+        await page.waitForSelector(".agent-archive-banner", { state: "visible", timeout: 10_000 });
+        const archivedDetailContract = await page.evaluate(() => ({
+          banner: document.querySelector(".agent-archive-banner")?.innerText || "",
+          composer: Boolean(document.querySelector("#composer")),
+          mutableAction: Boolean(document.querySelector("[data-agent-action], [data-submit-prompt]")),
+        }));
+        if (!archivedDetailContract.banner.includes("read-only history") ||
+            archivedDetailContract.composer || archivedDetailContract.mutableAction) {
+          throw new Error(`Archived agent detail is not read-only: ${JSON.stringify(archivedDetailContract)}`);
+        }
+        await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
+        await page.selectOption("#agent-state-filter", "all");
+        await page.waitForSelector(`[data-open-agent='${archivedAgentKey}']`, { state: "visible", timeout: 10_000 });
+        if (await page.locator(`[data-open-agent='${agentKey}']`).count() !== 1) {
+          throw new Error("Combined agent filter did not retain active agents");
+        }
+        await page.selectOption("#agent-state-filter", "active");
+        await page.evaluate(() => {
+          state.servers = [
+            ...state.servers,
+            { key: "toolbar-peer", name: "Toolbar peer", local: false, status: "online", stale: false },
+          ];
+          state.filters.server = "";
+          render();
+        });
         const nowAgentCardContract = await page.evaluate((key) => {
           const source = findAgent(key) || state.agents[0];
           const fixture = document.createElement("div");
@@ -5289,10 +5366,12 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key = create_agent(base_url)
     unscheduled_agent_key = create_agent(base_url, name: "Unscheduled Smoke Agent")
+    archived_agent_key = create_agent(base_url, name: "Archived Smoke Agent")
     associate_agent_schedule(fixture.fetch(:logs_dir), agent_key)
     associate_agent_pull_request(fixture.fetch(:logs_dir), agent_key)
     associate_agent_pull_request(fixture.fetch(:logs_dir), unscheduled_agent_key)
     wait_for_resource_agents(base_url, [agent_key, unscheduled_agent_key])
+    archive_agent(base_url, archived_agent_key)
     node_dir = File.join(dir, "node")
     install_playwright!(node_dir)
     script = File.join(node_dir, "remote-ui-smoke.js")
@@ -5302,6 +5381,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       "TYCHO_REMOTE_UI_URL" => base_url,
       "TYCHO_REMOTE_UI_AGENT_KEY" => agent_key,
       "TYCHO_REMOTE_UI_UNSCHEDULED_AGENT_KEY" => unscheduled_agent_key,
+      "TYCHO_REMOTE_UI_ARCHIVED_AGENT_KEY" => archived_agent_key,
       "CHROME_PATH" => browser
     }
     if ENV["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"].to_s == "1"

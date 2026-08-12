@@ -66,14 +66,16 @@ tycho agent create global-web "Review the auth boundary" --parent-agent global-w
 
 ## `tycho agent list`
 
-List all managed agents, or filter to one project.
+List active managed agents, archived read-only history, or both. All modes can be filtered to one project or addressed through `--server`.
 
 ```bash
 tycho agent list                  # all agents
 tycho agent list my-project       # only agents for my-project
+tycho agent list --archived       # archived agents only
+tycho agent list --include-archived # active and archived agents
 ```
 
-Output columns: Key, Project, Name, Harness, Status, Runs.
+Output columns: Key, Project, Name, Parent, Harness, State, Status, Runs.
 
 ---
 

@@ -345,6 +345,7 @@ verify the bottle.
 - [x] Start / Stop an agent (`POST /agents/{key}/start`, `POST /agents/{key}/stop`)
 - [x] Creates / Edit an agent (`POST /agents`, `PATCH /agents/{key}`)
 - [x] Archive one agent (`DELETE /agents/{key}` or `POST /agents/{key}/archive`) or bulk archive idle agents (`POST /agents/archive`)
+- [x] Discover read-only archived agents through paginated API, CLI active/archive filters, and multiserver Remote UI filters without adding archives to active polling
 - [x] Project list/detail endpoints and mobile project detail screens
 - [x] Remote setup/readiness endpoint and Settings screen
 - [x] Remote Settings editor for the global `response_style.md` policy with atomic persistence and backup

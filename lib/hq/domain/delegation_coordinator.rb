@@ -59,11 +59,22 @@ module HQ
       resume_parents!(agents, now:) || changed
     end
 
-    def relationships_for(agent_key)
+    def relationships_for(agent_key, index: nil)
+      index ||= relationship_index
       {
-        "parent" => delegation_store.relation_for_child(agent_key),
-        "children" => delegation_store.children_for_parent(agent_key)
+        "parent" => index.fetch(:parents)[agent_key.to_s],
+        "children" => index.fetch(:children).fetch(agent_key.to_s, [])
       }
+    end
+
+    def relationship_index
+      parents = {}
+      children = Hash.new { |hash, key| hash[key] = [] }
+      delegation_store.relationships.each do |relation|
+        parents[relation.dig("child", "agent_key")] = relation
+        children[relation.dig("parent", "agent_key")] << relation
+      end
+      { parents:, children: }
     end
 
     private

@@ -182,6 +182,32 @@ module CLICommandTest
 
         archived_status = run_tycho(local_env, "agent", "status", agent_key, "--server", "peer", "--json")
         assert(archived_status.fetch(:status).success?, "expected archived remote agent history to remain addressable")
+        archived_list = run_tycho(local_env, "agent", "list", "--archived", "--server", "peer", "--json")
+        archived_list_payload = JSON.parse(archived_list.fetch(:stdout))
+        assert(archived_list.fetch(:status).success? && archived_list_payload.one? &&
+               archived_list_payload.fetch(0).fetch("key") == agent_key &&
+               archived_list_payload.fetch(0).fetch("archived") &&
+               !archived_list_payload.fetch(0).fetch("archived_at").to_s.empty?,
+               "expected remote CLI archived-agent discovery")
+        local_archived_list = run_tycho(server_env, "agent", "list", "--archived", "--json")
+        assert(local_archived_list.fetch(:status).success? &&
+               JSON.parse(local_archived_list.fetch(:stdout)).any? { |item| item["key"] == agent_key && item["archived"] },
+               "expected local CLI archived-agent discovery")
+        local_archived_run = run_tycho(server_env, "agent", "run", agent_key)
+        assert(!local_archived_run.fetch(:status).success? && local_archived_run.fetch(:stderr).include?("read-only"),
+               "expected local CLI mutations to identify archived agents")
+        conflicting_list = run_tycho(local_env, "agent", "list", "--archived", "--include-archived",
+                                     "--server", "peer")
+        assert(!conflicting_list.fetch(:status).success? && conflicting_list.fetch(:stderr).include?("either"),
+               "expected conflicting archive list flags to fail clearly")
+        active_list = JSON.parse(run_tycho(local_env, "agent", "list", "--server", "peer", "--json").fetch(:stdout))
+        assert(active_list.none? { |item| item["key"] == agent_key },
+               "expected the default agent list to remain active-only")
+        combined_list = JSON.parse(run_tycho(local_env, "agent", "list", "--include-archived",
+                                             "--server", "peer", "--json").fetch(:stdout))
+        assert(combined_list.any? { |item| item["key"] == agent_key && item["archived"] } &&
+               combined_list.any? { |item| item["key"] == parent_key && !item["archived"] },
+               "expected remote CLI combined active and archived discovery")
         unknown = run_tycho(local_env, "agent", "list", "--server", "unknown")
         assert(!unknown.fetch(:status).success? && unknown.fetch(:stderr).include?("Unknown remote server: unknown"),
                "expected a clear unknown-server error")

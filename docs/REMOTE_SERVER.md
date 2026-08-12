@@ -206,7 +206,7 @@ depend on a running local broker or any browser state.
 ```bash
 tycho project list --server office-mac [--json]
 tycho project show <project-key> --server office-mac [--json]
-tycho agent list [<project-key>] --server office-mac [--json]
+tycho agent list [<project-key>] [--archived|--include-archived] --server office-mac [--json]
 tycho agent status <agent-key> --server office-mac [--json]
 tycho agent create <project-key> <prompt> --server office-mac [--run] [--json]
 tycho agent run <agent-key> --server office-mac [--json]
@@ -381,6 +381,7 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/agents` | List active managed agents. |
+| `GET` | `/agents/archived` | List visible archived agents as read-only summaries. Supports `page`, `per_page` (maximum 100), `project_key`, and `q`. |
 | `POST` | `/agents` | Create a managed agent. |
 | `GET` | `/agents/{key}` | Read one managed agent. |
 | `PATCH` / `PUT` | `/agents/{key}` | Edit one idle managed agent. |
@@ -699,6 +700,16 @@ Response:
   "archive_path": "/Users/example/Code/hq/~/.tycho/logs/agents/archive/20260508-001431-web-charlie-agent-8"
 }
 ```
+
+### `GET /agents/archived`
+
+Returns a newest-first, read-only archive index. This endpoint does not place archives back in the active agent catalog or polling loop.
+
+```bash
+curl 'http://127.0.0.1:7373/agents/archived?page=1&per_page=50&q=auth&project_key=web'
+```
+
+The response contains `agents` plus `pagination.page`, `per_page`, `total`, `total_pages`, and `next_page`. Hidden project archives are omitted using visibility captured at archive time.
 
 ### `POST /agents/archive`
 
