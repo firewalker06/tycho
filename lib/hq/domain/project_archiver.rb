@@ -2,7 +2,6 @@
 
 require_relative "../registry"
 require_relative "agent_store"
-require_relative "agent_archive_store"
 require_relative "file_transaction"
 require_relative "project"
 require_relative "scheduler"
@@ -39,9 +38,11 @@ module HQ
         end
         archived_by_key = @agent_store.archive_agents!(project_agents.map(&:key))
         archived_directories = archived_by_key.values
-        fresh_archived_agents = AgentArchiveStore.new.all
-          .select { |record| archived_directories.include?(record.directory) }
-          .map(&:agent)
+        fresh_archived_agents = archived_directories.map do |directory|
+          ManagedAgent.from_hash(
+            FileStore.read_json(File.join(directory, "agent_manifest.json"), fallback: {})
+          )
+        end
         transaction.on_rollback { @agent_store.restore_archived_agents!(fresh_archived_agents) }
         agent_archives = project_agents.filter_map do |agent|
           destination = archived_by_key.fetch(agent.key)
