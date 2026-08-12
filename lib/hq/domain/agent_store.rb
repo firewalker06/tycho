@@ -3,6 +3,7 @@
 require_relative "constants"
 require_relative "file_store"
 require_relative "managed_agent"
+require_relative "delegation_coordinator"
 require_relative "schedule_store"
 require_relative "../ui/rendering/styles"
 require "securerandom"
@@ -33,11 +34,14 @@ module HQ
       format(scheduled_system_prompt_template, title:)
     end
 
-    def initialize(projects, usage_metrics_store: nil)
+    attr_reader :delegation_coordinator
+
+    def initialize(projects, usage_metrics_store: nil, delegation_coordinator: nil)
       @projects = projects
       @usage_metrics_store = usage_metrics_store || UsageMetrics.store(
         path: File.join(File.dirname(AGENTS_FILE), "usage_metrics.json")
       )
+      @delegation_coordinator = delegation_coordinator || DelegationCoordinator.new
     end
 
     def load
@@ -46,6 +50,19 @@ module HQ
     end
 
     def load_with_poll_events
+      with_exclusive_lock { load_with_poll_events_unlocked }
+    end
+
+    def mutate
+      with_exclusive_lock do
+        agents, events = load_with_poll_events_unlocked
+        result = yield agents, events
+        save_unlocked(agents)
+        result
+      end
+    end
+
+    def load_with_poll_events_unlocked
       return [[], []] unless File.exist?(AGENTS_FILE)
 
       changed = false
@@ -81,7 +98,9 @@ module HQ
         agent
       end
       changed = backfill_color_indexes!(agents) || changed
-      save(agents) if changed
+      changed = backfill_delegation_parents!(agents) || changed
+      changed = @delegation_coordinator.process!(agents) || changed
+      save_unlocked(agents) if changed
       [agents, events]
     rescue StandardError => e
       HQ.logger.warn("AgentStore") { "Failed to load agents from #{AGENTS_FILE}: #{e.class} - #{e.message}" }
@@ -89,6 +108,10 @@ module HQ
     end
 
     def save(agents)
+      with_exclusive_lock { save_unlocked(agents) }
+    end
+
+    def save_unlocked(agents)
       FileStore.write_json(AGENTS_FILE, agents.map(&:to_hash))
     end
 
@@ -163,6 +186,20 @@ module HQ
       )
     end
 
+    def associate_delegation!(agents:, child:, parent_key:, parent_server_id: nil, now: Time.now)
+      @delegation_coordinator.attach!(
+        agents:,
+        child:,
+        parent_key:,
+        parent_server_id:,
+        now:
+      )
+    end
+
+    def delegation_relationships(agent_key)
+      @delegation_coordinator.relationships_for(agent_key)
+    end
+
     def clone_agent(agent, existing_agents: load)
       now = Time.now
       key = next_agent_key(agent.project_key, existing_agents, now:)
@@ -197,6 +234,16 @@ module HQ
     end
 
     private
+
+    def with_exclusive_lock
+      FileUtils.mkdir_p(File.dirname(AGENTS_FILE))
+      File.open("#{AGENTS_FILE}.lock", File::RDWR | File::CREAT, 0o600) do |file|
+        file.flock(File::LOCK_EX)
+        yield
+      ensure
+        file.flock(File::LOCK_UN)
+      end
+    end
 
     def attach_usage_metrics_store(agent)
       agent.usage_metrics_store = @usage_metrics_store
@@ -233,6 +280,19 @@ module HQ
         assigned << agent
       end
       true
+    end
+
+    def backfill_delegation_parents!(agents)
+      changed = false
+      agents.each do |agent|
+        relation = @delegation_coordinator.delegation_store.relation_for_child(agent.key)
+        next unless relation
+        next if agent.delegation_parent
+
+        agent.associate_parent!(relation.fetch("parent"))
+        changed = true
+      end
+      changed
     end
 
     def running_for_poll_event?(agent)

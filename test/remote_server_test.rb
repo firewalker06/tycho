@@ -16,6 +16,7 @@ module RemoteServerTest
 
   def run!
     assert_remote_agent_lifecycle
+    assert_remote_agent_delegation_lifecycle
     assert_remote_agent_response_style_selection_is_independent
     assert_remote_archive_reconciles_scheduled_agent_state
     assert_remote_agent_bulk_archive
@@ -77,6 +78,47 @@ module RemoteServerTest
     assert_server_daemonizes_after_startup_to_log
     assert_server_prints_request_logs
     puts "remote_server_test: ok"
+  end
+
+  def assert_remote_agent_delegation_lifecycle
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      parent = service.create_agent(
+        "project_key" => "web", "name" => "Parent <script>", "prompt" => "Coordinate", "agent" => "codex"
+      )
+      child = service.create_agent(
+        "project_key" => "web", "name" => "Child", "prompt" => "Work", "agent" => "codex",
+        "parent_agent_key" => parent[:key]
+      )
+
+      assert(child.dig(:delegation, :parent, :agent_key) == parent[:key], "expected child started-by reference")
+      parent_payload = service.agent(parent[:key])
+      assert(parent_payload.dig(:delegation, :children, 0, :agent_key) == child[:key],
+             "expected parent delegated-agents reference")
+      conversation = service.conversation(parent[:key])
+      event = conversation.find { |block| block[:kind] == "delegation_event" }
+      assert(event && event.dig(:metadata, "agent_reference", "agent_key") == child[:key],
+             "expected explicit typed creation event")
+
+      repeated = service.submit_prompt(child[:key], "prompt" => "Continue", "parent_agent_key" => parent[:key])
+      assert(repeated[:agent].dig(:delegation, :parent, :agent_key) == parent[:key],
+             "expected idempotent message attachment")
+      begin
+        service.submit_prompt(parent[:key], "prompt" => "No", "parent_agent_key" => parent[:key])
+        raise "expected self-parent rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409, "expected self-parent conflict")
+      end
+
+      archived = service.archive_agent(child[:key])
+      archived_payload = service.agent(child[:key])
+      assert(archived[:archived] && archived_payload[:archived], "expected archived child detail navigation")
+      assert(archived_payload.dig(:delegation, :parent, :agent_key) == parent[:key],
+             "expected archived child to retain parent link")
+    end
   end
 
   def assert_remote_agent_payload_has_cost_snapshot
@@ -248,6 +290,8 @@ module RemoteServerTest
   def assert_remote_agent_lifecycle
     Dir.mktmpdir("hq-remote-test") do |dir|
       old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_delegations_file = replace_constant(HQ, :DELEGATIONS_FILE, File.join(dir, "agent_delegations.json"))
+      old_server_identity_file = replace_constant(HQ, :SERVER_IDENTITY_FILE, File.join(dir, "server_identity.json"))
       old_usage_metrics_file = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
       old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
       old_archive_dir = replace_constant(HQ, :AGENT_ARCHIVE_DIR, File.join(dir, "agents", "archive"))
@@ -284,6 +328,8 @@ module RemoteServerTest
       assert(service.agents.empty?, "expected archived agent to be removed from active list")
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+      replace_constant(HQ, :DELEGATIONS_FILE, old_delegations_file) if old_delegations_file
+      replace_constant(HQ, :SERVER_IDENTITY_FILE, old_server_identity_file) if old_server_identity_file
       replace_constant(HQ, :USAGE_METRICS_FILE, old_usage_metrics_file) if old_usage_metrics_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
       replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
@@ -5957,6 +6003,8 @@ module RemoteServerTest
   def with_remote_temp_store
     Dir.mktmpdir("hq-remote-test") do |dir|
       old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_delegations_file = replace_constant(HQ, :DELEGATIONS_FILE, File.join(dir, "agent_delegations.json"))
+      old_server_identity_file = replace_constant(HQ, :SERVER_IDENTITY_FILE, File.join(dir, "server_identity.json"))
       old_usage_metrics_file = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
       old_schedules_file = replace_constant(HQ, :SCHEDULES_FILE, File.join(dir, "config", "schedules.yml"))
       old_schedules_state_file = replace_constant(HQ, :SCHEDULES_STATE_FILE, File.join(dir, "schedules.json"))
@@ -5982,6 +6030,8 @@ module RemoteServerTest
       yield dir
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+      replace_constant(HQ, :DELEGATIONS_FILE, old_delegations_file) if old_delegations_file
+      replace_constant(HQ, :SERVER_IDENTITY_FILE, old_server_identity_file) if old_server_identity_file
       replace_constant(HQ, :USAGE_METRICS_FILE, old_usage_metrics_file) if old_usage_metrics_file
       replace_constant(HQ, :SCHEDULES_FILE, old_schedules_file) if old_schedules_file
       replace_constant(HQ, :SCHEDULES_STATE_FILE, old_schedules_state_file) if old_schedules_state_file

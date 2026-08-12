@@ -13,6 +13,7 @@ require "lipgloss"
 require_relative "domain/project"
 require_relative "domain/project_archiver"
 require_relative "domain/file_store"
+require_relative "domain/file_transaction"
 require_relative "domain/github_api_client"
 require_relative "domain/scheduler"
 require_relative "domain/agent_store"
@@ -164,6 +165,7 @@ module HQ
         option :name, desc: "Agent name override"
         option :template, desc: "Template key to use (defaults to project's first template)"
         option :run, type: :boolean, default: false, desc: "Start the agent immediately after creating"
+        option :parent_agent, desc: "Originating parent agent key on the same Tycho server"
         remote_options
         usage_template "agent create %{project_key} %{prompt} [--server SERVER_KEY] [--json]"
 
@@ -203,6 +205,7 @@ module HQ
 
         desc "Start (or re-run) an existing agent"
         argument :agent_key, required: true, desc: "Agent key"
+        option :parent_agent, desc: "Attach the originating parent before this run"
         remote_options
         usage_template "agent run %{agent_key} [--server SERVER_KEY] [--json]"
 
@@ -244,6 +247,7 @@ module HQ
         desc "Send a message to an agent and re-run it"
         argument :agent_key, required: true, desc: "Agent key"
         argument :message, required: true, desc: "Message to send"
+        option :parent_agent, desc: "Attach the originating parent before this run"
         remote_options
         usage_template "agent send %{agent_key} %{message} [--server SERVER_KEY] [--json]"
 
@@ -262,6 +266,15 @@ module HQ
 
         def call(agent_key:, **opts)
           exit CLICommand.archive_agent(agent_key, opts, out: out, err: err)
+        end
+      end
+
+      class AgentFinalize < Dry::CLI::Command
+        desc "Finalize a completed managed run and deliver delegation callbacks"
+        argument :agent_key, required: true, desc: "Agent key"
+
+        def call(agent_key:, **)
+          exit CLICommand.finalize_agent(agent_key, out: out, err: err)
         end
       end
 
@@ -287,6 +300,7 @@ module HQ
         prefix.register "logs", AgentLogs
         prefix.register "send", AgentSend
         prefix.register "archive", AgentArchive
+        prefix.register "finalize", AgentFinalize
         prefix.register "clone", AgentClone
       end
 
@@ -1384,14 +1398,12 @@ module HQ
 
       existing = agent_store.load
       existing.unshift(agent)
-      agent_store.save(existing)
+      persist_agents_with_parent!(agent_store, existing, agent, opts)
 
       if opts[:run]
         agent.start!
-        # Persist started state (pid, status, started_at) back to disk.
-        existing = agent_store.load
-        idx = existing.index { |a| a.key == agent.key }
-        existing[idx] = agent if idx
+        # Persist the same in-memory collection so a fast detached finalizer
+        # cannot be overwritten by a stale reloaded copy of this child.
         agent_store.save(existing)
         unless agent.running?
           out.puts "Status: start failed — #{agent.last_run&.error || "unknown error"}" unless opts[:json]
@@ -1419,9 +1431,10 @@ module HQ
         out.puts project_key ? "No agents for project: #{project_key}" : "No agents found."
         return 0
       end
-      headers = %w[Key Project Name Harness Status Runs]
+      headers = %w[Key Project Name Parent Harness Status Runs]
       rows = agents.map do |a|
-        [a.key, a.project_key, a.name, a.agent, a.status, a.run_count.to_s]
+        [a.key, a.project_key, a.name, a.delegation_parent&.fetch("agent_key", nil) || "-", a.agent, a.status,
+         a.run_count.to_s]
       end
       out.puts agent_table(headers, rows)
       0
@@ -1444,12 +1457,15 @@ module HQ
     def run_agent(agent_key, opts = {}, out: $stdout, err: $stderr)
       return remote_agent_action(agent_key, "start", opts, out:, err:) if remote_requested?(opts)
 
-      agent = load_all_agents.find { |a| a.key == agent_key.to_s }
+      store = agent_store_for_all
+      agents = store.load
+      agent = agents.find { |a| a.key == agent_key.to_s }
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
       return failure("Agent #{agent_key} is already running", err: err) if agent.running?
 
+      persist_agents_with_parent!(store, agents, agent, opts)
       agent.start!
-      save_agent_in_store(agent)
+      store.save(agents)
       if agent.running?
         print_started_agent(agent_cli_payload(agent), json: opts[:json], out: out)
       else
@@ -1501,13 +1517,16 @@ module HQ
     def send_agent_message(agent_key, message, opts = {}, out: $stdout, err: $stderr)
       return remote_send_agent_message(agent_key, message, opts, out:, err:) if remote_requested?(opts)
 
-      agent = load_all_agents.find { |a| a.key == agent_key.to_s }
+      store = agent_store_for_all
+      agents = store.load
+      agent = agents.find { |a| a.key == agent_key.to_s }
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
       return failure("Agent #{agent_key} is already running", err: err) if agent.running?
 
+      persist_agents_with_parent!(store, agents, agent, opts)
       agent.add_user_message!(message)
       agent.start!
-      save_agent_in_store(agent)
+      store.save(agents)
       if agent.running?
         print_sent_agent(agent_cli_payload(agent), json: opts[:json], out: out)
       else
@@ -1540,6 +1559,22 @@ module HQ
       0
     rescue StandardError => e
       failure("Failed to archive agent: #{e.message}", err: err)
+    end
+
+    def finalize_agent(agent_key, out: $stdout, err: $stderr)
+      store = agent_store_for_all
+      target = store.mutate do |agents, _events|
+        candidate = agents.find { |agent| agent.key == agent_key.to_s }
+        candidate&.poll!
+        store.delegation_coordinator.process!(agents)
+        candidate
+      end
+      return failure("Unknown agent: #{agent_key}", err:) unless target
+
+      out.puts "Finalized #{target.key}"
+      0
+    rescue StandardError => e
+      failure("Failed to finalize agent: #{e.message}", err:)
     end
 
     def clone_agent(agent_key, opts, out: $stdout, err: $stderr)
@@ -1693,6 +1728,7 @@ module HQ
         "prompt" => prompt.to_s,
         "start" => opts[:run] == true
       }
+      body["parent_agent_key"] = opts[:parent_agent].to_s.strip unless opts[:parent_agent].to_s.strip.empty?
       {
         name: "name",
         template: "template_key",
@@ -1719,9 +1755,11 @@ module HQ
         out.puts project_key ? "No agents for project: #{project_key}" : "No agents found."
       else
         rows = agents.map do |agent|
-          [agent["key"], agent["project_key"], agent["name"], agent["agent"], agent["status"], agent["run_count"].to_s]
+          [agent["key"], agent["project_key"], agent["name"],
+           agent.dig("delegation", "parent", "agent_key") || "-", agent["agent"], agent["status"],
+           agent["run_count"].to_s]
         end
-        out.puts agent_table(%w[Key Project Name Harness Status Runs], rows)
+        out.puts agent_table(%w[Key Project Name Parent Harness Status Runs], rows)
       end
       0
     rescue RemoteCLIClient::Error, KeyError => e
@@ -1747,8 +1785,10 @@ module HQ
         return failure("Agent #{agent_key} is not running", err: err)
       end
 
+      body = {}
+      body["parent_agent_key"] = opts[:parent_agent].to_s.strip unless opts[:parent_agent].to_s.strip.empty?
       payload = client
-        .request("POST", "#{remote_resource_path("agents", agent_key)}/#{action}")
+        .request("POST", "#{remote_resource_path("agents", agent_key)}/#{action}", body: body)
         .fetch("agent")
       payload = remote_agent_payload(payload)
       if action == "start"
@@ -1770,7 +1810,11 @@ module HQ
         .request(
           "POST",
           "#{remote_resource_path("agents", agent_key)}/messages",
-          body: { "prompt" => message.to_s, "start" => true }
+          body: {
+            "prompt" => message.to_s,
+            "start" => true,
+            "parent_agent_key" => opts[:parent_agent].to_s.strip
+          }.reject { |_key, value| value.to_s.empty? }
         )
         .fetch("agent")
       payload = remote_agent_payload(payload)
@@ -1853,7 +1897,10 @@ module HQ
         "last_run_at" => payload["started_at"],
         "workspace" => payload["workspace"],
         "log_path" => payload["log_path"],
-        "prompt" => payload["prompt"]
+        "prompt" => payload["prompt"],
+        "archived" => payload["archived"] == true,
+        "archive_path" => payload["archive_path"],
+        "delegation" => payload["delegation"]
       }
     end
 
@@ -1890,7 +1937,10 @@ module HQ
         last_run_at: last&.started_at&.iso8601,
         workspace: agent.workspace,
         log_path: agent.raw_log_path,
-        prompt: agent.prompt
+        prompt: agent.prompt,
+        archived: agent.archived?,
+        archive_path: agent.archive_path,
+        delegation: agent_cli_delegation(agent)
       }
     end
 
@@ -1904,6 +1954,7 @@ module HQ
       out.puts "  Harness: #{value["agent"]}"
       out.puts "  Model:   #{value["model"] || "(project default)"}"
       out.puts "  Prompt:  #{value["prompt"].to_s.lines.first&.chomp}"
+      out.puts "  Started by: #{value.dig("delegation", "parent", "agent_key")}" if value.dig("delegation", "parent")
       if value["running"]
         out.puts "  Status:  running (pid #{value["pid"]})"
         out.puts "  Log:     #{value["log_path"]}"
@@ -1919,6 +1970,9 @@ module HQ
         ["Name", value["name"]],
         ["Project", value["project_key"]],
         ["Schedule key", value["schedule_key"] || "n/a"],
+        ["Archived", value["archived"] ? "yes" : "no"],
+        ["Started by", value.dig("delegation", "parent", "name") ||
+          value.dig("delegation", "parent", "agent_key") || "n/a"],
         ["Harness", value["agent"]],
         ["Model", value["model"] || "(project default)"],
         ["Status", value["status"]],
@@ -2126,6 +2180,27 @@ module HQ
         agents.unshift(agent)
       end
       agent_store_for_all.save(agents)
+    end
+
+    def persist_agents_with_parent!(store, agents, child, opts)
+      parent_key = opts[:parent_agent].to_s.strip
+      return store.save(agents) if parent_key.empty?
+
+      parent = agents.find { |agent| agent.key == parent_key }
+      paths = [AGENTS_FILE, DELEGATIONS_FILE, child.memory_path, parent&.memory_path].compact
+      FileTransaction.run(paths) do
+        store.associate_delegation!(agents:, child:, parent_key:)
+        store.save(agents)
+      end
+    end
+
+    def agent_cli_delegation(agent)
+      relationships = agent_store_for_all.delegation_relationships(agent.key)
+      relation = relationships.fetch("parent")
+      {
+        parent: relation&.fetch("parent"),
+        children: relationships.fetch("children").map { |child_relation| child_relation.fetch("child") }
+      }
     end
 
     def agent_table(headers, rows)

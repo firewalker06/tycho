@@ -13,7 +13,23 @@ module RemoteUIAssetSnapshotTest
   def run!
     assert_loaded_daemon_keeps_one_asset_build
     assert_handoff_retry_key_is_cleared_after_success
+    assert_delegation_ui_uses_typed_safe_references
     puts "remote_ui_asset_snapshot_test: ok"
+  end
+
+  def assert_delegation_ui_uses_typed_safe_references
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    required = [
+      'block?.metadata?.agent_reference',
+      'escapeHtml(label)',
+      'escapeAttr(reference.key)',
+      'delegationOrderedAgents(agents)',
+      'agent?.archived) return { dock: "", overlay: "" }'
+    ]
+    missing = required.reject { |fragment| javascript.include?(fragment) }
+    raise "missing typed delegation UI safety contracts: #{missing.join(", ")}" unless missing.empty?
+
+    raise "agent lookalike text must not be linkified" if javascript.include?("linkifyAgent")
   end
 
   def assert_handoff_retry_key_is_cleared_after_success

@@ -316,6 +316,33 @@ module HQ
       )
     end
 
+    def append_delegation_event!(content, event_id:, created_at: Time.now, metadata: nil)
+      text = content.to_s.strip
+      id = event_id.to_s.strip
+      return false if text.empty? || id.empty?
+
+      append_unique_event!(id,
+                           "type" => "delegation_event",
+                           "content" => text,
+                           "created_at" => created_at.iso8601,
+                           "metadata" => (metadata.is_a?(Hash) ? metadata : {}).merge("event_id" => id))
+    end
+
+    def append_delegation_report!(content, report_id:, created_at: Time.now, metadata: nil)
+      text = content.to_s.strip
+      id = report_id.to_s.strip
+      return false if text.empty? || id.empty?
+
+      append_unique_event!(id,
+                           "type" => "user_message",
+                           "content" => text,
+                           "created_at" => created_at.iso8601,
+                           "metadata" => (metadata.is_a?(Hash) ? metadata : {}).merge(
+                             "delegation_callback" => true,
+                             "event_id" => id
+                           ))
+    end
+
     def append_run_summary!(summary:, status:, created_at: Time.now, metadata: nil)
       text = summary.to_s.strip
       return if text.empty?
@@ -441,6 +468,30 @@ module HQ
       File.open(path, "a:UTF-8") { |file| file.puts(JSON.generate(event.compact)) }
     rescue StandardError
       nil
+    end
+
+    def append_unique_event!(event_id, event)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.open(path, File::RDWR | File::CREAT, 0o600) do |file|
+        file.flock(File::LOCK_EX)
+        duplicate = file.each_line.any? do |line|
+          parsed = JSON.parse(line)
+          parsed.dig("metadata", "event_id").to_s == event_id
+        rescue JSON::ParserError
+          false
+        end
+        return false if duplicate
+
+        file.seek(0, IO::SEEK_END)
+        file.puts(JSON.generate(event.compact))
+        file.flush
+        file.fsync
+        true
+      ensure
+        file.flock(File::LOCK_UN)
+      end
+    rescue StandardError
+      false
     end
 
     def read_attachment_records

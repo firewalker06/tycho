@@ -23,8 +23,10 @@ require_relative "domain/constants"
 require_relative "domain/agent_attachment_store"
 require_relative "domain/agent_chat_log"
 require_relative "domain/agent_store"
+require_relative "domain/agent_archive_store"
 require_relative "domain/executable_resolver"
 require_relative "domain/file_store"
+require_relative "domain/file_transaction"
 require_relative "domain/git_diff"
 require_relative "domain/harness_catalog"
 require_relative "domain/push_notification_store"
@@ -401,7 +403,7 @@ module HQ
           return ok(service.answer_inquiry(key, tail[1], body))
         end
         return ok(service.submit_prompt(key, body)) if method == "POST" && [%w[messages], %w[prompt]].include?(tail)
-        return ok(service.start_agent(key)) if method == "POST" && tail == ["start"]
+        return ok(service.start_agent(key, body)) if method == "POST" && tail == ["start"]
         return ok(service.stop_agent(key)) if method == "POST" && tail == ["stop"]
         return created(service.clone_agent(key, body)) if method == "POST" && tail == ["clone"]
         return ok(service.archive_agent(key)) if method == "POST" && tail == ["archive"]
@@ -1484,6 +1486,7 @@ module HQ
       @registry = registry
       @projects = registry.projects.map { |config| Project.new(config) }
       @agent_store = AgentStore.new(@projects)
+      @agent_archive_store = AgentArchiveStore.new
       @push_subscription_store = push_subscription_store
       @push_notification_store = push_notification_store
       @web_push_notifier = web_push_notifier || WebPushNotifier.new(subscription_store: @push_subscription_store)
@@ -1614,7 +1617,7 @@ module HQ
     end
 
     def agent(key)
-      agent_payload(find_agent!(key))
+      agent_payload(find_agent_reference!(key))
     end
 
     def agent_debug(key)
@@ -2611,7 +2614,7 @@ module HQ
     end
 
     def conversation(key)
-      target = find_agent!(key)
+      target = find_agent_reference!(key)
       blocks = AgentChatLog.new(target).chat_blocks
       return conversation_messages(target) if blocks.empty?
 
@@ -2650,6 +2653,7 @@ module HQ
 
     def submit_prompt(key, attrs)
       target = find_agent!(key)
+      associate_delegation_from_attrs!(target, attrs)
       pull_request_context = render_prompt_pull_request_contexts(target, attrs)
       attachments = import_prompt_attachments(target, attrs)
       text = prompt_text(attrs, attachments:)
@@ -2685,8 +2689,9 @@ module HQ
       { agent: agent_payload(target), conversation: conversation(target.key) }
     end
 
-    def start_agent(key)
+    def start_agent(key, attrs = {})
       target = find_agent!(key)
+      associate_delegation_from_attrs!(target, attrs)
       target.start! unless target.running?
       save_agent(target)
       { agent: agent_payload(target) }
@@ -2706,10 +2711,10 @@ module HQ
       target = @agent_store.create_from_template(project, template_key)
       target.update!(**agent_attrs(target, attrs, project: project, creating: true))
       @agent_store.ensure_project_context_prompt!(target, project)
-      target.start! if truthy?(attrs["start"])
-
       current = load_all_agents
       current.unshift(target)
+      associate_delegation_from_attrs!(target, attrs, agents: current)
+      target.start! if truthy?(attrs["start"])
       save_agents(sort_agents(current))
       agent_payload(target)
     end
@@ -3155,6 +3160,12 @@ module HQ
 
     def find_agent!(key)
       load_agents.find { |agent| agent.key == key.to_s } ||
+        raise(Error.new("Unknown agent: #{key}", status: 404))
+    end
+
+    def find_agent_reference!(key)
+      load_agents.find { |agent| agent.key == key.to_s } ||
+        @agent_archive_store.find(key)&.agent ||
         raise(Error.new("Unknown agent: #{key}", status: 404))
     end
 
@@ -3873,6 +3884,7 @@ module HQ
     end
 
     def agent_payload(agent)
+      delegation = delegation_payload(agent)
       {
         key: agent.key,
         name: agent.display_name,
@@ -3910,7 +3922,10 @@ module HQ
         session_id: agent.session_id.to_s.empty? ? nil : agent.session_id,
         log_path: agent.raw_log_path,
         memory_path: agent.memory_path,
-        revision: agent_revision(agent)
+        revision: agent_revision(agent),
+        archived: agent.archived?,
+        archive_path: agent.archive_path,
+        delegation: delegation
       }
     end
 
@@ -3938,8 +3953,72 @@ module HQ
         last_exit_code: agent.last_exit_code,
         last_result: agent.last_result_label,
         summary: agent.last_summary,
-        revision: agent_revision(agent)
+        revision: agent_revision(agent),
+        archived: false,
+        delegation: delegation_payload(agent)
       }
+    end
+
+    def delegation_payload(agent)
+      relationships = @agent_store.delegation_relationships(agent.key)
+      parent_relation = relationships.fetch("parent")
+      {
+        server_id: @agent_store.delegation_coordinator.delegation_store.server_identity.fetch("id"),
+        parent: parent_relation ? reference_payload(parent_relation.fetch("parent")) : nil,
+        children: relationships.fetch("children").map do |relation|
+          reference_payload(relation.fetch("child"))
+        end
+      }
+    end
+
+    def reference_payload(reference)
+      key = reference.fetch("agent_key")
+      active = load_all_agents.find { |candidate| candidate.key == key }
+      archived = active ? nil : @agent_archive_store.find(key)&.agent
+      state = if active
+                visible_agents([active]).empty? ? "hidden" : "active"
+              elsif archived
+                "archived"
+              else
+                "missing"
+              end
+      payload = {
+        server_id: reference["server_id"],
+        agent_key: key,
+        state: state,
+        status: active&.status || archived&.status,
+        archived: state == "archived"
+      }
+      unless state == "hidden"
+        payload[:name] = reference["name"]
+        payload[:project_key] = reference["project_key"]
+        payload[:run_id] = reference["run_id"]
+        payload[:run_number] = reference["run_number"]
+        payload[:native_session_id] = reference["native_session_id"]
+      end
+      payload.compact
+    end
+
+    def associate_delegation_from_attrs!(target, attrs, agents: nil)
+      parent_key = attrs["parent_agent_key"].to_s.strip
+      return if parent_key.empty?
+
+      current = agents || load_all_agents
+      index = current.index { |agent| agent.key == target.key }
+      index ? current[index] = target : current.unshift(target)
+      parent = current.find { |agent| agent.key == parent_key }
+      paths = [AGENTS_FILE, DELEGATIONS_FILE, target.memory_path, parent&.memory_path].compact
+      FileTransaction.run(paths) do
+        @agent_store.associate_delegation!(
+          agents: current,
+          child: target,
+          parent_key: parent_key,
+          parent_server_id: attrs["parent_server_id"]
+        )
+        save_agents(current)
+      end
+    rescue DelegationStore::Error => e
+      raise Error.new(e.message, status: 409)
     end
 
     def truncate(text, length)

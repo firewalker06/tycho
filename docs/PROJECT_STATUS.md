@@ -10,9 +10,11 @@ type: project
 
 ## Last Updated
 
-2026-08-08
+2026-08-12
 
 ## Strategic Direction
+
+Managed agents support explicit same-server parent references, durable terminal report-back, safe automatic parent resume, archive-stable navigation, and typed Remote UI relationship links. See [AGENT_DELEGATION.md](./AGENT_DELEGATION.md) for the CLI/API and callback contract.
 
 
 Key references:

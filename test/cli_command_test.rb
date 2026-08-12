@@ -138,8 +138,9 @@ module CLICommandTest
         listed_payload = JSON.parse(listed.fetch(:stdout))
         assert(listed_payload.any? { |agent| agent["key"] == agent_key },
                "expected remote agent list to include created agent")
-        expected_agent_keys = %w[agent finished_at key last_exit_code last_run_at log_path model name pid project_key
-                                 prompt run_count running schedule_key started_at status workspace].sort
+        expected_agent_keys = %w[agent archive_path archived delegation finished_at key last_exit_code last_run_at
+                                 log_path model name pid project_key prompt run_count running schedule_key started_at
+                                 status workspace].sort
         assert(listed_payload.fetch(0).keys.sort == expected_agent_keys,
                "expected stable local/remote agent JSON fields")
         status = run_tycho(local_env, "agent", "status", agent_key, "--server", "peer", "--json")
@@ -158,13 +159,29 @@ module CLICommandTest
         assert(sent.fetch(:status).success? && JSON.parse(sent.fetch(:stdout)).fetch("running"),
                "expected remote agent send to append and start")
         run_tycho(local_env, "agent", "stop", agent_key, "--server", "peer", "--json")
+
+        parent = run_tycho(local_env, "agent", "create", "demo", "Coordinate children",
+                           "--name", "CLI parent", "--server", "peer", "--json")
+        parent_key = JSON.parse(parent.fetch(:stdout)).fetch("key")
+        delegated = run_tycho(local_env, "agent", "create", "demo", "Delegated work",
+                              "--parent-agent", parent_key, "--server", "peer", "--json")
+        delegated_payload = JSON.parse(delegated.fetch(:stdout))
+        assert(delegated.fetch(:status).success? &&
+               delegated_payload.dig("delegation", "parent", "agent_key") == parent_key,
+               "expected remote CLI creation to attach a server-local parent")
+        parent_status = run_tycho(local_env, "agent", "status", parent_key, "--server", "peer", "--json")
+        assert(JSON.parse(parent_status.fetch(:stdout)).dig("delegation", "children", 0, "agent_key") ==
+               delegated_payload.fetch("key"), "expected parent CLI JSON to list delegated children")
+        rejected_self = run_tycho(local_env, "agent", "run", parent_key,
+                                  "--parent-agent", parent_key, "--server", "peer")
+        assert(!rejected_self.fetch(:status).success?, "expected CLI self-parent rejection")
+
         archived = run_tycho(local_env, "agent", "archive", agent_key, "--server", "peer", "--json")
         assert(archived.fetch(:status).success? && JSON.parse(archived.fetch(:stdout)).fetch("archived"),
                "expected remote agent archive")
 
-        missing = run_tycho(local_env, "agent", "status", agent_key, "--server", "peer")
-        assert(!missing.fetch(:status).success? && missing.fetch(:stderr).include?("API error (HTTP 404)"),
-               "expected a clear remote API error")
+        archived_status = run_tycho(local_env, "agent", "status", agent_key, "--server", "peer", "--json")
+        assert(archived_status.fetch(:status).success?, "expected archived remote agent history to remain addressable")
         unknown = run_tycho(local_env, "agent", "list", "--server", "unknown")
         assert(!unknown.fetch(:status).success? && unknown.fetch(:stderr).include?("Unknown remote server: unknown"),
                "expected a clear unknown-server error")
