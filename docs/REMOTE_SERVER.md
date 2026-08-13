@@ -705,6 +705,8 @@ Response:
 
 Returns a newest-first, read-only archive index. This endpoint does not place archives back in the active agent catalog or polling loop.
 
+Remote UI does not browse this unbounded index from the Agents page. It resolves individual archives only through a typed agent reference or direct route, then renders the existing read-only detail and conversation.
+
 ```bash
 curl 'http://127.0.0.1:7373/agents/archived?page=1&per_page=50&q=auth&project_key=web'
 ```

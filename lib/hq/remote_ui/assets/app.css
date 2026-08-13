@@ -861,12 +861,6 @@ h3 {
   margin-left: auto;
 }
 
-.agent-filter-controls {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .agent-mobile-toolbar-menu {
   display: none;
   position: relative;

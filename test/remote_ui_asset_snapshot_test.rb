@@ -14,23 +14,22 @@ module RemoteUIAssetSnapshotTest
     assert_loaded_daemon_keeps_one_asset_build
     assert_handoff_retry_key_is_cleared_after_success
     assert_delegation_ui_uses_typed_safe_references
-    assert_archived_agents_are_discoverable_and_read_only
+    assert_archived_agents_are_reference_only_and_read_only
     puts "remote_ui_asset_snapshot_test: ok"
   end
 
-  def assert_archived_agents_are_discoverable_and_read_only
+  def assert_archived_agents_are_reference_only_and_read_only
     javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
     required = [
-      'data-filter-agent-state',
-      'loadArchivedAgents',
-      '/agents/archived?',
-      'params.set("q", search)',
-      'Archived · read-only',
       'if (!agent?.unread || agent.archived) return',
       'agent?.archived) return { dock: "", overlay: "" }'
     ]
     missing = required.reject { |fragment| javascript.include?(fragment) }
-    raise "missing archived-agent discovery contracts: #{missing.join(", ")}" unless missing.empty?
+    raise "missing archived-agent read-only contracts: #{missing.join(", ")}" unless missing.empty?
+
+    forbidden = ["data-filter-agent-state", "loadArchivedAgents", "/agents/archived?"]
+    present = forbidden.select { |fragment| javascript.include?(fragment) }
+    raise "archived agents must not be browsable from Agents: #{present.join(", ")}" unless present.empty?
   end
 
   def assert_delegation_ui_uses_typed_safe_references

@@ -410,10 +410,6 @@ def write_smoke_script(path)
 
       const browser = await chromium.launch({ executablePath: chromePath, headless: true });
       const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-      const archiveRequests = [];
-      page.on("request", (request) => {
-        if (request.url().includes("/agents/archived?")) archiveRequests.push(request.url());
-      });
       page.on("console", (message) => {
         if (message.type() === "error") errors.push(message.text());
       });
@@ -1102,7 +1098,6 @@ def write_smoke_script(path)
             mobileAgentToolbar.desktopActionsDisplay !== "none" ||
             mobileAgentToolbar.mobileMenuDisplay === "none" ||
             !mobileAgentToolbar.labels.includes("All servers") ||
-            !mobileAgentToolbar.labels.includes("Archived agents") ||
             !mobileAgentToolbar.labels.includes("Select agents")) {
           throw new Error(`Mobile Agents toolbar is not sticky and compact: ${JSON.stringify(mobileAgentToolbar)}`);
         }
@@ -1136,38 +1131,16 @@ def write_smoke_script(path)
           state.filters.server = "local";
           render();
         });
-        await page.selectOption("#agent-state-filter", "archived");
-        await page.waitForSelector(`[data-open-agent='${archivedAgentKey}']`, { state: "visible", timeout: 10_000 });
-        const archivedListContract = await page.evaluate(([archivedKey, activeKey]) => ({
-          archivedText: document.querySelector(`[data-open-agent='${archivedKey}']`)?.innerText || "",
-          activeVisible: Boolean(document.querySelector(`[data-open-agent='${activeKey}']`)),
-          summary: document.querySelector("#agent-results-summary")?.textContent || "",
-        }), [archivedAgentKey, agentKey]);
-        if (!archivedListContract.archivedText.includes("Archived · read-only") ||
-            archivedListContract.activeVisible ||
-            !archivedListContract.summary.includes("archived")) {
-          throw new Error(`Archived agent discovery is not explicit: ${JSON.stringify(archivedListContract)}`);
+        if (await page.locator(`[data-open-agent='${archivedAgentKey}']`).count() !== 0 ||
+            await page.locator("#agent-state-filter").count() !== 0) {
+          throw new Error("Archived agents must not be browsable from the Agents page");
         }
         await page.evaluate(() => {
           state.servers = state.servers.filter((server) => server.key !== "toolbar-peer");
           document.querySelector("#growl")?.classList.add("hidden");
           render();
         });
-        if (captureDir) {
-          await page.screenshot({ path: path.join(captureDir, "archived-agents-desktop.png"), fullPage: true });
-          await page.setViewportSize({ width: 390, height: 844 });
-          await page.screenshot({ path: path.join(captureDir, "archived-agents-mobile.png"), fullPage: true });
-          await page.setViewportSize({ width: 1024, height: 768 });
-        }
-        await page.fill("#agent-filter", "Archived Smoke Agent");
-        await page.waitForFunction(() => document.querySelector("#agent-results-summary")?.textContent?.includes("1 agent match"));
-        await page.waitForTimeout(600);
-        const searchedRemotely = archiveRequests.some((url) => new URL(url).searchParams.get("q") === "Archived Smoke Agent");
-        if (!searchedRemotely) throw new Error("Archived agent search did not query the server-side archive index");
-        await page.fill("#agent-filter", "");
-        await page.waitForTimeout(350);
-        await page.waitForSelector(`[data-open-agent='${archivedAgentKey}']`, { state: "visible", timeout: 10_000 });
-        await page.click(`[data-open-agent='${archivedAgentKey}']`);
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(archivedAgentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector(".agent-archive-banner", { state: "visible", timeout: 10_000 });
         const archivedDetailContract = await page.evaluate(() => ({
           banner: document.querySelector(".agent-archive-banner")?.innerText || "",
@@ -1178,13 +1151,16 @@ def write_smoke_script(path)
             archivedDetailContract.composer || archivedDetailContract.mutableAction) {
           throw new Error(`Archived agent detail is not read-only: ${JSON.stringify(archivedDetailContract)}`);
         }
-        await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
-        await page.selectOption("#agent-state-filter", "all");
-        await page.waitForSelector(`[data-open-agent='${archivedAgentKey}']`, { state: "visible", timeout: 10_000 });
-        if (await page.locator(`[data-open-agent='${agentKey}']`).count() !== 1) {
-          throw new Error("Combined agent filter did not retain active agents");
+        if (captureDir) {
+          await page.screenshot({ path: path.join(captureDir, "archived-agent-detail-desktop.png"), fullPage: true });
+          await page.setViewportSize({ width: 390, height: 844 });
+          await page.screenshot({ path: path.join(captureDir, "archived-agent-detail-mobile.png"), fullPage: true });
+          await page.setViewportSize({ width: 1024, height: 768 });
         }
-        await page.selectOption("#agent-state-filter", "active");
+        await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
+        if (await page.locator(`[data-open-agent='${agentKey}']`).count() !== 1) {
+          throw new Error("Agents page did not retain active agents after archived detail navigation");
+        }
         await page.evaluate(() => {
           state.servers = [
             ...state.servers,
