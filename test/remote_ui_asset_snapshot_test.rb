@@ -28,11 +28,19 @@ module RemoteUIAssetSnapshotTest
       'class="message delegation-callback-event"',
       "Number(report.child_run_number)",
       'success: "succeeded"',
+      "renderDelegationReferenceLink(reference)",
+      'iconSvg("squareArrowOutUpRight")',
+      'class="delegation-callback-excerpt"',
+      'aria-label="Copy report details"',
       "Report details"
     ]
     missing = required.reject { |fragment| javascript.include?(fragment) }
     raise "missing chronological callback presentation: #{missing.join(", ")}" unless missing.empty?
     raise "missing callback event styling" unless css.include?(".delegation-callback-event")
+    raise "missing three-line callback excerpt" unless css.include?("-webkit-line-clamp: 3")
+    callback_source = javascript[/function renderDelegationCallbackBlock.*?^}/m]
+    raise "missing callback renderer" unless callback_source
+    raise "callback must not repeat the full agent card" if callback_source.include?("renderAgentReference(reference)")
   end
 
   def assert_archived_agents_are_reference_only_and_read_only

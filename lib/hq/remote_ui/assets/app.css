@@ -3813,8 +3813,7 @@ select {
 }
 
 .delegation-event {
-  display: flex;
-  align-items: center;
+  display: grid;
   gap: 8px;
   width: calc(100% - 28px);
   margin-right: 28px;
@@ -3824,9 +3823,22 @@ select {
   font-size: 12px;
 }
 
+.delegation-event-header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.delegation-event-header .message-time,
+.delegation-callback-header .message-time {
+  color: var(--muted);
+}
+
 .delegation-event .agent-reference {
+  width: min(100%, 420px);
   min-height: 34px;
-  margin-left: auto;
 }
 
 .delegation-event-brand {
@@ -3863,18 +3875,41 @@ select {
   font-weight: 700;
 }
 
-.delegation-callback-header .message-time {
+.delegation-agent-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
   margin-left: auto;
+  border-radius: 5px;
+  color: var(--muted);
+  text-decoration: none;
 }
 
-.delegation-callback-event .agent-reference {
-  width: min(100%, 420px);
+.delegation-agent-link:hover,
+.delegation-agent-link:focus-visible {
+  background: var(--panel-soft);
+  color: var(--text);
 }
 
-.delegation-callback-event > p {
+.delegation-agent-link.unavailable {
+  opacity: 0.5;
+}
+
+.delegation-agent-link .ui-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.delegation-callback-excerpt {
+  display: -webkit-box;
+  overflow: hidden;
   margin: 0;
   font-size: 14px;
   line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .delegation-callback-details > summary {
@@ -3884,10 +3919,46 @@ select {
   font-size: 12px;
 }
 
-.delegation-callback-details pre {
+.delegation-report-code {
+  position: relative;
+  min-width: 0;
+  margin-top: 8px;
+}
+
+.delegation-report-code pre {
   overflow-x: auto;
-  margin: 8px 0 0;
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, var(--panel-soft));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 82%, black);
+  padding: 12px 42px 12px 12px;
+  line-height: 1.55;
   white-space: pre-wrap;
+}
+
+.delegation-report-copy {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, var(--panel-soft));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  color: var(--muted);
+}
+
+.delegation-report-copy:hover,
+.delegation-report-copy:focus-visible {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+.delegation-report-copy .ui-icon {
+  width: 15px;
+  height: 15px;
 }
 
 @media (max-width: 640px) {
@@ -3902,14 +3973,8 @@ select {
     margin-right: 0;
   }
 
-  .delegation-event {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
   .delegation-event .agent-reference {
     width: 100%;
-    margin-left: 0;
   }
 }
 

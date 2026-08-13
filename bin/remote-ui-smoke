@@ -1205,6 +1205,40 @@ def write_smoke_script(path)
           throw new Error("Orchestrator detail does not expose its delegated agents");
         }
         await page.waitForFunction(() => document.body.innerText.includes("Completed the focused review"), null, { timeout: 10_000 });
+        const delegationEventContract = await page.evaluate(() => {
+          const callback = document.querySelector(".delegation-callback-event");
+          const excerpt = callback?.querySelector(".delegation-callback-excerpt");
+          const started = document.querySelector(".delegation-event-header");
+          return {
+            callbackAgentCards: callback?.querySelectorAll(".agent-reference").length,
+            callbackLink: Boolean(callback?.querySelector(".delegation-agent-link[href]")),
+            excerptClamp: excerpt ? getComputedStyle(excerpt).webkitLineClamp : "",
+            startedHeader: started?.innerText || "",
+          };
+        });
+        if (delegationEventContract.callbackAgentCards !== 0 ||
+            !delegationEventContract.callbackLink ||
+            delegationEventContract.excerptClamp !== "3" ||
+            !delegationEventContract.startedHeader.includes("TYCHO") ||
+            !delegationEventContract.startedHeader.includes("Started agent")) {
+          throw new Error(`Delegation event presentation is not compact: ${JSON.stringify(delegationEventContract)}`);
+        }
+        await page.evaluate(() => {
+          navigator.clipboard.writeText = async (value) => {
+            window.__smokeCopiedDelegationReport = value;
+          };
+        });
+        await page.click(".delegation-callback-details > summary");
+        await page.click(".delegation-report-copy");
+        const copiedDelegationReport = await page.evaluate(() => window.__smokeCopiedDelegationReport);
+        const expectedDelegationReport = await page.locator(".delegation-report-copy").getAttribute("data-copy");
+        if (!copiedDelegationReport || copiedDelegationReport !== expectedDelegationReport) {
+          throw new Error("Delegation report code block did not copy its complete source");
+        }
+        if (captureDir) {
+          await page.locator(".delegation-callback-event").screenshot({ path: path.join(captureDir, "orchestration-callback-report.png") });
+        }
+        await page.click(".delegation-callback-details > summary");
         if (captureDir) {
           await page.locator(".agent-relationships").scrollIntoViewIfNeeded();
           await page.locator(".agent-relationships").screenshot({ path: path.join(captureDir, "orchestration-graph-desktop.png") });
