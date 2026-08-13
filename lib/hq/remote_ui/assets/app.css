@@ -3848,12 +3848,9 @@ select {
 }
 
 .delegation-callback-event {
-  display: grid;
   gap: 8px;
-  width: calc(100% - 28px);
-  margin-right: 28px;
-  border-left: 2px solid color-mix(in srgb, var(--success) 72%, var(--border));
-  padding: 8px 10px;
+  border-color: color-mix(in srgb, var(--success) 48%, var(--border));
+  background: color-mix(in srgb, var(--success) 4%, var(--panel));
 }
 
 .delegation-callback-header {
@@ -3861,6 +3858,9 @@ select {
   align-items: baseline;
   gap: 8px;
   min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .delegation-callback-header .message-time {
@@ -3873,7 +3873,8 @@ select {
 
 .delegation-callback-event > p {
   margin: 0;
-  line-height: 1.45;
+  font-size: 14px;
+  line-height: 1.55;
 }
 
 .delegation-callback-details > summary {
@@ -3896,8 +3897,7 @@ select {
   }
 
   .agent-relationships,
-  .delegation-event,
-  .delegation-callback-event {
+  .delegation-event {
     width: 100%;
     margin-right: 0;
   }

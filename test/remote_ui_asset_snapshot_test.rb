@@ -25,7 +25,7 @@ module RemoteUIAssetSnapshotTest
     required = [
       "block?.metadata?.delegation_callback === true",
       "renderDelegationCallbackBlock(block, index, options)",
-      'class="delegation-callback-event"',
+      'class="message delegation-callback-event"',
       "Number(report.child_run_number)",
       'success: "succeeded"',
       "Report details"
