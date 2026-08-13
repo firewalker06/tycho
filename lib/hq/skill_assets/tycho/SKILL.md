@@ -47,6 +47,7 @@ tycho agent create <project-key> <prompt> [options]
 | `--template KEY` | Template key (defaults to project's first template) |
 | `--run` | Start the agent immediately after creation |
 | `--parent-agent KEY` | Attach the originating agent/session on the same Tycho server |
+| `--root` | Explicitly create an unrelated root agent from inside a managed agent |
 
 ```bash
 # Create only
@@ -61,6 +62,16 @@ tycho agent create global-web "Review open PRs" --harness claude --model claude-
 # Delegate and report the child outcome back automatically
 tycho agent create global-web "Review the auth boundary" --parent-agent global-web-agent-123 --run
 ```
+
+### Delegating from a managed Tycho agent
+
+Use ordinary `agent create`. Tycho reads the current `TYCHO_AGENT_KEY` and links the new child automatically, so its terminal result returns to this agent even if `--parent-agent` is omitted:
+
+```bash
+tycho agent create global-web "Review the auth boundary" --run
+```
+
+Do not add `--root` for delegated work. `--root` is the explicit opt-out for intentionally unrelated work. When targeting `--server`, pass either `--parent-agent KEY` or `--root` because the local parent cannot be inferred safely on another server.
 
 ---
 

@@ -167,8 +167,10 @@ module HQ
         option :template, desc: "Template key to use (defaults to project's first template)"
         option :run, type: :boolean, default: false, desc: "Start the agent immediately after creating"
         option :parent_agent, desc: "Originating parent agent key on the same Tycho server"
+        option :root, type: :boolean, default: false,
+                      desc: "Create an unrelated root agent instead of inheriting the current managed agent"
         remote_options
-        usage_template "agent create %{project_key} %{prompt} [--server SERVER_KEY] [--json]"
+        usage_template "agent create %{project_key} %{prompt} [--parent-agent KEY|--root] [--server SERVER_KEY] [--json]"
 
         def call(project_key:, prompt:, **opts)
           exit CLICommand.create_agent(project_key, prompt, opts, out: out, err: err)
@@ -1364,6 +1366,7 @@ module HQ
     end
 
     def create_agent(project_key, prompt, opts, out: $stdout, err: $stderr)
+      opts = create_delegation_options(opts)
       return remote_create_agent(project_key, prompt, opts, out:, err:) if remote_requested?(opts)
 
       require_relative "registry"
@@ -1415,6 +1418,23 @@ module HQ
       0
     rescue StandardError => e
       failure("Failed to create agent: #{e.message}", err: err)
+    end
+
+    def create_delegation_options(opts)
+      opts = opts.dup
+      parent_key = opts[:parent_agent].to_s.strip
+      managed_parent_key = ENV["TYCHO_AGENT_KEY"].to_s.strip
+      root = opts[:root] == true
+      raise ArgumentError, "Choose either --parent-agent or --root" if root && !parent_key.empty?
+      return opts.merge(parent_agent: nil) if root
+      return opts.merge(parent_agent: parent_key) unless parent_key.empty?
+      return opts if managed_parent_key.empty?
+      if remote_requested?(opts)
+        raise ArgumentError,
+              "A managed agent cannot infer its parent on --server; pass --parent-agent KEY or --root"
+      end
+
+      opts.merge(parent_agent: managed_parent_key)
     end
 
     def list_agents(project_key, opts = {}, out: $stdout, err: $stderr)

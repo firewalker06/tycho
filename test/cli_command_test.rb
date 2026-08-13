@@ -535,6 +535,7 @@ module CLICommandTest
   end
 
   def run_tycho(env, *args, stdin_data: "")
+    env = { "TYCHO_AGENT_KEY" => nil }.merge(env)
     stdout, stderr, status = Open3.capture3(env, RbConfig.ruby, EXECUTABLE, *args,
                                             chdir: ROOT, stdin_data: stdin_data)
     { stdout: stdout, stderr: stderr, status: status }
