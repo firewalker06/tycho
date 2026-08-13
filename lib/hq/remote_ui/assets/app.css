@@ -3847,6 +3847,48 @@ select {
   white-space: pre-wrap;
 }
 
+.delegation-callback-event {
+  display: grid;
+  gap: 8px;
+  width: calc(100% - 28px);
+  margin-right: 28px;
+  border-left: 2px solid color-mix(in srgb, var(--success) 72%, var(--border));
+  padding: 8px 10px;
+}
+
+.delegation-callback-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.delegation-callback-header .message-time {
+  margin-left: auto;
+}
+
+.delegation-callback-event .agent-reference {
+  width: min(100%, 420px);
+}
+
+.delegation-callback-event > p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.delegation-callback-details > summary {
+  width: max-content;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.delegation-callback-details pre {
+  overflow-x: auto;
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 640px) {
   .agent-group .agent-row.delegated-agent-row {
     width: calc(100% - min(calc(var(--delegation-depth) * 14px), 42px));
@@ -3854,7 +3896,8 @@ select {
   }
 
   .agent-relationships,
-  .delegation-event {
+  .delegation-event,
+  .delegation-callback-event {
     width: 100%;
     margin-right: 0;
   }

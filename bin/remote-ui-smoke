@@ -1208,7 +1208,7 @@ def write_smoke_script(path)
         if (captureDir) {
           await page.locator(".agent-relationships").scrollIntoViewIfNeeded();
           await page.locator(".agent-relationships").screenshot({ path: path.join(captureDir, "orchestration-graph-desktop.png") });
-          await page.locator(".delegation-report-content").screenshot({ path: path.join(captureDir, "orchestration-callback-card.png") });
+          await page.locator(".delegation-callback-event").screenshot({ path: path.join(captureDir, "orchestration-callback-card.png") });
           await page.screenshot({ path: path.join(captureDir, "orchestration-parent-desktop.png"), fullPage: false });
           await page.setViewportSize({ width: 390, height: 844 });
           await page.locator(".agent-relationships").scrollIntoViewIfNeeded();

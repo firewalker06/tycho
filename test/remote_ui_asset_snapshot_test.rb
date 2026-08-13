@@ -14,8 +14,25 @@ module RemoteUIAssetSnapshotTest
     assert_loaded_daemon_keeps_one_asset_build
     assert_handoff_retry_key_is_cleared_after_success
     assert_delegation_ui_uses_typed_safe_references
+    assert_delegation_callbacks_are_chronological_events
     assert_archived_agents_are_reference_only_and_read_only
     puts "remote_ui_asset_snapshot_test: ok"
+  end
+
+  def assert_delegation_callbacks_are_chronological_events
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
+    required = [
+      "block?.metadata?.delegation_callback === true",
+      "renderDelegationCallbackBlock(block, index, options)",
+      'class="delegation-callback-event"',
+      "Number(report.child_run_number)",
+      'success: "succeeded"',
+      "Report details"
+    ]
+    missing = required.reject { |fragment| javascript.include?(fragment) }
+    raise "missing chronological callback presentation: #{missing.join(", ")}" unless missing.empty?
+    raise "missing callback event styling" unless css.include?(".delegation-callback-event")
   end
 
   def assert_archived_agents_are_reference_only_and_read_only
