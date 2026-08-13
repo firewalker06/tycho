@@ -57,7 +57,23 @@ def write_fixture(dir)
           project_key: web
           message: "Exercise scheduled agent controls."
   YAML
-  File.write(fake_codex_path, "#!/bin/sh\nexit 0\n")
+  File.write(fake_codex_path, <<~'RUBY')
+    #!/usr/bin/env ruby
+    require "json"
+    output_index = ARGV.index("-o")
+    output = output_index ? ARGV[output_index + 1] : nil
+    payload = {
+      "status" => "success",
+      "summary" => "Completed the focused review and returned concise findings.",
+      "inquiry" => nil,
+      "attachments" => nil
+    }
+    File.write(output, JSON.generate(payload)) if output
+    puts JSON.generate("type" => "thread.started", "thread_id" => "smoke-#{Process.pid}")
+    puts JSON.generate("type" => "item.completed", "item" => {
+      "type" => "agent_message", "text" => JSON.generate(payload)
+    })
+  RUBY
   File.chmod(0o755, fake_codex_path)
   File.write(fake_gh_path, <<~SH)
     #!/bin/sh
@@ -254,17 +270,19 @@ rescue Errno::ESRCH
   false
 end
 
-def create_agent(base_url, name: "Smoke Agent")
+def create_agent(base_url, name: "Smoke Agent", prompt: "Exercise Remote UI composer preservation.", parent_agent_key: nil)
   uri = URI("#{base_url}/agents")
   request = Net::HTTP::Post.new(uri)
   request["Content-Type"] = "application/json"
-  request.body = JSON.generate(
+  body = {
     project_key: "web",
     template_key: "custom",
     name: name,
-    prompt: "Exercise Remote UI composer preservation.",
+    prompt: prompt,
     agent: "codex"
-  )
+  }
+  body[:parent_agent_key] = parent_agent_key if parent_agent_key
+  request.body = JSON.generate(body)
   response = Net::HTTP.start(uri.hostname, uri.port) { |http| http.request(request) }
   raise "Failed to create smoke agent: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
 
@@ -278,6 +296,26 @@ def archive_agent(base_url, agent_key)
   request.body = "{}"
   response = Net::HTTP.start(uri.hostname, uri.port) { |http| http.request(request) }
   raise "Failed to archive smoke agent: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
+end
+
+def start_agent(base_url, agent_key)
+  uri = URI("#{base_url}/agents/#{agent_key}/start")
+  request = Net::HTTP::Post.new(uri)
+  request["Content-Type"] = "application/json"
+  request.body = "{}"
+  response = Net::HTTP.start(uri.hostname, uri.port) { |http| http.request(request) }
+  raise "Failed to start smoke agent: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
+end
+
+def wait_for_delegation_callback(base_url, parent_key)
+  deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 15
+  loop do
+    blocks = JSON.parse(Net::HTTP.get(URI("#{base_url}/agents/#{parent_key}/conversation"))).fetch("conversation")
+    return if blocks.any? { |block| block.dig("metadata", "delegation_callback") }
+    raise "Delegation callback did not reach #{parent_key}" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+    sleep 0.05
+  end
 end
 
 def wait_for_resource_agents(base_url, agent_keys)
@@ -398,6 +436,8 @@ def write_smoke_script(path)
       const agentKey = process.env.TYCHO_REMOTE_UI_AGENT_KEY;
       const unscheduledAgentKey = process.env.TYCHO_REMOTE_UI_UNSCHEDULED_AGENT_KEY;
       const archivedAgentKey = process.env.TYCHO_REMOTE_UI_ARCHIVED_AGENT_KEY;
+      const orchestratorAgentKey = process.env.TYCHO_REMOTE_UI_ORCHESTRATOR_AGENT_KEY;
+      const delegatedAgentKey = process.env.TYCHO_REMOTE_UI_DELEGATED_AGENT_KEY;
       const chromePath = process.env.CHROME_PATH;
       const captureDir = process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "";
       const beforeCapture = process.env.TYCHO_REMOTE_UI_BEFORE_CAPTURE || "";
@@ -1156,6 +1196,38 @@ def write_smoke_script(path)
           await page.setViewportSize({ width: 390, height: 844 });
           await page.screenshot({ path: path.join(captureDir, "archived-agent-detail-mobile.png"), fullPage: true });
           await page.setViewportSize({ width: 1024, height: 768 });
+        }
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(orchestratorAgentKey)}`, { waitUntil: "networkidle" });
+        await page.waitForSelector(".agent-reference", { state: "visible", timeout: 10_000 });
+        const orchestrationContract = await page.locator("body").innerText();
+        const delegatedReferenceCount = await page.locator(".agent-relationship-list .agent-reference").count();
+        if (!orchestrationContract.toLowerCase().includes("delegated agents") || delegatedReferenceCount !== 3) {
+          throw new Error("Orchestrator detail does not expose its delegated agents");
+        }
+        await page.waitForFunction(() => document.body.innerText.includes("Completed the focused review"), null, { timeout: 10_000 });
+        if (captureDir) {
+          await page.locator(".agent-relationships").scrollIntoViewIfNeeded();
+          await page.locator(".agent-relationships").screenshot({ path: path.join(captureDir, "orchestration-graph-desktop.png") });
+          await page.locator(".delegation-report-content").screenshot({ path: path.join(captureDir, "orchestration-callback-card.png") });
+          await page.screenshot({ path: path.join(captureDir, "orchestration-parent-desktop.png"), fullPage: false });
+          await page.setViewportSize({ width: 390, height: 844 });
+          await page.locator(".agent-relationships").scrollIntoViewIfNeeded();
+          await page.locator(".agent-relationships").screenshot({ path: path.join(captureDir, "orchestration-graph-mobile.png") });
+          await page.screenshot({ path: path.join(captureDir, "orchestration-parent-mobile.png"), fullPage: false });
+          await page.setViewportSize({ width: 1024, height: 768 });
+          await page.evaluate(() => {
+            const pane = document.querySelector("[data-agent-conversation-scroll]");
+            pane.scrollTop = pane.scrollHeight;
+          });
+          await page.screenshot({ path: path.join(captureDir, "orchestration-callback-desktop.png"), fullPage: false });
+        }
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(delegatedAgentKey)}`, { waitUntil: "networkidle" });
+        await page.waitForSelector(".agent-reference", { state: "visible", timeout: 10_000 });
+        if (!(await page.locator("body").innerText()).toLowerCase().includes("started by")) {
+          throw new Error("Delegated agent detail does not link to its orchestrator");
+        }
+        if (captureDir) {
+          await page.screenshot({ path: path.join(captureDir, "orchestration-child-desktop.png"), fullPage: false });
         }
         await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
         if (await page.locator(`[data-open-agent='${agentKey}']`).count() !== 1) {
@@ -5343,11 +5415,39 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     agent_key = create_agent(base_url)
     unscheduled_agent_key = create_agent(base_url, name: "Unscheduled Smoke Agent")
     archived_agent_key = create_agent(base_url, name: "Archived Smoke Agent")
+    orchestrator_agent_key = create_agent(
+      base_url,
+      name: "Checkout Orchestrator",
+      prompt: "Coordinate three focused reviews and synthesize the result."
+    )
+    delegated_agent_key = create_agent(
+      base_url,
+      name: "API contract review",
+      prompt: "Review the API contract and report concise findings.",
+      parent_agent_key: orchestrator_agent_key
+    )
+    security_agent_key = create_agent(
+      base_url,
+      name: "Security boundary review",
+      prompt: "Review trust boundaries and report concise findings.",
+      parent_agent_key: orchestrator_agent_key
+    )
+    mobile_agent_key = create_agent(
+      base_url,
+      name: "Mobile interaction review",
+      prompt: "Review mobile navigation and report concise findings.",
+      parent_agent_key: orchestrator_agent_key
+    )
     associate_agent_schedule(fixture.fetch(:logs_dir), agent_key)
     associate_agent_pull_request(fixture.fetch(:logs_dir), agent_key)
     associate_agent_pull_request(fixture.fetch(:logs_dir), unscheduled_agent_key)
-    wait_for_resource_agents(base_url, [agent_key, unscheduled_agent_key])
+    wait_for_resource_agents(
+      base_url,
+      [agent_key, unscheduled_agent_key, orchestrator_agent_key, delegated_agent_key, security_agent_key, mobile_agent_key]
+    )
     archive_agent(base_url, archived_agent_key)
+    start_agent(base_url, delegated_agent_key)
+    wait_for_delegation_callback(base_url, orchestrator_agent_key)
     node_dir = File.join(dir, "node")
     install_playwright!(node_dir)
     script = File.join(node_dir, "remote-ui-smoke.js")
@@ -5358,6 +5458,8 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       "TYCHO_REMOTE_UI_AGENT_KEY" => agent_key,
       "TYCHO_REMOTE_UI_UNSCHEDULED_AGENT_KEY" => unscheduled_agent_key,
       "TYCHO_REMOTE_UI_ARCHIVED_AGENT_KEY" => archived_agent_key,
+      "TYCHO_REMOTE_UI_ORCHESTRATOR_AGENT_KEY" => orchestrator_agent_key,
+      "TYCHO_REMOTE_UI_DELEGATED_AGENT_KEY" => delegated_agent_key,
       "CHROME_PATH" => browser
     }
     if ENV["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"].to_s == "1"
