@@ -4439,6 +4439,11 @@ module RemoteServerTest
            js[:body].include?("data-toggle-inquiry-full-screen") &&
            css[:body].include?(".inquiry-form-full-screen"),
            "expected inquiry answers to support full-screen editing")
+    assert(js[:body].include?('class="mobile-inquiry"') &&
+           js[:body].include?('data-state-key="mobile-inquiry:') &&
+           js[:body].include?("Answer required") &&
+           css[:body].include?(".mobile-inquiry > summary"),
+           "expected mobile inquiry answers to start in a collapsible disclosure")
     assert(js[:body].include?("Leave feedback") &&
            js[:body].include?('name="feedback"') &&
            js[:body].include?("const feedback = String(new FormData(form).get(\"feedback\")"),
@@ -5245,7 +5250,9 @@ module RemoteServerTest
            js[:body].include?("if (options.force && !options.preserveFocusedWorkspace) return false") &&
            js[:body].include?("function focusedWorkspacePreservedDuringPoll") &&
            js[:body].include?("function focusedWorkspacePollingSubtitle") &&
-           js[:body].include?("Conversation poll paused") &&
+           js[:body].include?('"Paused",') &&
+           js[:body].include?("agentProjectLabel(agent)") &&
+           js[:body].include?("serverDisplayName(resourceServer(agent.server_key))") &&
            js[:body].include?("function syncFocusedWorkspaceCatalog") &&
            js[:body].include?('els.view.querySelector("#inquiry-form")') &&
            js[:body].include?("if (preservedInquiryAgent) state.agentDetails[inquiryAgentKey] = preservedInquiryAgent") &&
@@ -5330,7 +5337,9 @@ module RemoteServerTest
            "expected detail header visibility to stay fixed instead of responding to scroll")
     assert(!js[:body].include?("detailFooterFocused"),
            "expected detail header to stay visible while the footer is focused")
-    assert(js[:body].include?("data-go-recent"), "expected Agent detail to show a Go to recent action")
+    assert(js[:body].include?("data-go-recent"), "expected Agent conversation detail to show a Go to recent action")
+    assert(js[:body].include?('!["summary", "attachment"].includes(detailKind)'),
+           "expected Summary and Attachment views to omit Go to recent")
     assert(js[:body].include?("function updateGoRecentVisibility"),
            "expected Agent detail to hide Go to recent at the bottom")
     assert(js[:body].include?("function scrollConversationToRecent"),
@@ -5557,6 +5566,9 @@ module RemoteServerTest
            "expected assistant messages to render as markdown")
     assert(js[:body].include?("function renderAgentSummaryContent"),
            "expected Agent summary text to render as markdown")
+    assert(js[:body].include?("function runSummaryDetailContent") &&
+           js[:body].include?('excerpt === `${status}: ${firstLine}` ? detail : content'),
+           "expected full Summary pages to remove duplicated status-prefixed excerpts")
     assert(js[:body].include?('viewerClassName: "markdown-viewer message-markdown-viewer"'),
            "expected chat markdown to use message-scoped markdown styling")
     assert(js[:body].include?('viewerClassName: "markdown-viewer agent-summary-markdown-viewer"'),

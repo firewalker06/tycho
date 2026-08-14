@@ -5837,6 +5837,66 @@ body:has(.inquiry-form-full-screen) {
   gap: 8px;
 }
 
+.mobile-inquiry {
+  min-width: 0;
+}
+
+.mobile-inquiry:not([open]) > .inquiry-form {
+  display: none;
+}
+
+.mobile-inquiry > summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning) 12%, var(--panel));
+  padding: 8px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.mobile-inquiry > summary::-webkit-details-marker {
+  display: none;
+}
+
+.mobile-inquiry-summary-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.mobile-inquiry-summary-copy strong {
+  color: var(--warning);
+  font-size: 13px;
+}
+
+.mobile-inquiry-summary-copy > span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-inquiry-chevron {
+  display: inline-grid;
+  place-items: center;
+  color: var(--muted);
+  transition: transform 120ms ease;
+}
+
+.mobile-inquiry[open] > summary {
+  margin-bottom: 6px;
+}
+
+.mobile-inquiry[open] .mobile-inquiry-chevron {
+  transform: rotate(180deg);
+}
+
 .inquiry-form-content {
   display: contents;
 }

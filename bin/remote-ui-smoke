@@ -2845,7 +2845,7 @@ def write_smoke_script(path)
         }));
         if (resumedConversationPolling.route !== "agent" ||
             !resumedConversationPolling.timerActive ||
-            resumedConversationPolling.subtitle.startsWith("Conversation poll paused")) {
+            resumedConversationPolling.subtitle.startsWith("Paused")) {
           throw new Error(`Prompt submission did not resume conversation polling: ${JSON.stringify(resumedConversationPolling)}`);
         }
         const sentContext = await prContextPage.evaluate((key) => {
@@ -3748,7 +3748,24 @@ def write_smoke_script(path)
           state.renderedViewHtml = "";
           render();
         }, agentKey);
+        await page.waitForSelector(".mobile-inquiry > summary", { state: "visible", timeout: 10_000 });
+        const collapsedInquiry = await page.evaluate(() => ({
+          open: document.querySelector(".mobile-inquiry")?.open,
+          formVisible: Boolean(document.querySelector("#inquiry-form")?.getClientRects().length),
+          summary: document.querySelector(".mobile-inquiry > summary")?.innerText,
+        }));
+        if (collapsedInquiry.open || collapsedInquiry.formVisible || !collapsedInquiry.summary?.includes("Answer required")) {
+          throw new Error(`Mobile inquiry is not collapsed by default: ${JSON.stringify(collapsedInquiry)}`);
+        }
+        await page.click(".mobile-inquiry > summary");
         await page.waitForSelector("#inquiry-form", { state: "visible", timeout: 10_000 });
+        await page.evaluate(() => {
+          state.renderedViewHtml = "";
+          render();
+        });
+        if ((await page.locator(".mobile-inquiry").getAttribute("open")) === null) {
+          throw new Error("Expanded mobile inquiry did not survive a render");
+        }
         const inquiryFieldLabels = await page.locator(".inquiry-fields > .inquiry-field > label").allTextContents();
         if (inquiryFieldLabels.at(-1)?.trim() !== "Leave feedback Optional") {
           throw new Error(`Leave feedback is not the last inquiry field: ${JSON.stringify(inquiryFieldLabels)}`);
@@ -4176,10 +4193,10 @@ def write_smoke_script(path)
           const savedFullScreenInquiryKeys = state.fullScreenInquiryKeys;
           const savedPollDeferredUntil = state.pollDeferredUntil;
           const routes = [
-            { route: { type: "agentPullRequests", key }, workspacePaused: true, subtitle: "Conversation poll paused / PR details" },
-            { route: { type: "agentAttachment", key, attachmentId: "smoke-attachment-menu" }, workspacePaused: true, subtitle: "Conversation poll paused / attachment" },
-            { route: { type: "agentSummary", key }, workspacePaused: true, subtitle: "Conversation poll paused / summary" },
-            { route: { type: "projectDiff", key: "web", scope: "worktree", backTo: { type: "agent", key } }, workspacePaused: true, subtitle: "Conversation poll paused / project diff" },
+            { route: { type: "agentPullRequests", key }, workspacePaused: true, subtitle: "Paused / Web / Host" },
+            { route: { type: "agentAttachment", key, attachmentId: "smoke-attachment-menu" }, workspacePaused: true, subtitle: "Paused / Web / Host" },
+            { route: { type: "agentSummary", key }, workspacePaused: true, subtitle: "Paused / Web / Host" },
+            { route: { type: "projectDiff", key: "web", scope: "worktree", backTo: { type: "agent", key } }, workspacePaused: true, subtitle: "Paused / Web / Host" },
             { route: { type: "agent", key }, workspacePaused: false },
           ];
           let catalogReads = 0;
@@ -4263,7 +4280,7 @@ def write_smoke_script(path)
           };
           return result;
         }, agentKey);
-        if (!mobilePollingSubtitleContract.text.startsWith("Conversation poll paused") ||
+        if (mobilePollingSubtitleContract.text !== "Paused / Web / Host" ||
             mobilePollingSubtitleContract.whiteSpace === "nowrap" ||
             mobilePollingSubtitleContract.scrollWidth > mobilePollingSubtitleContract.clientWidth + 1 ||
             mobilePollingSubtitleContract.scrollHeight > mobilePollingSubtitleContract.clientHeight + 1 ||
@@ -4600,8 +4617,9 @@ def write_smoke_script(path)
           open: document.querySelector("[data-attachment-viewer-menu]")?.open,
           bodyRight: document.querySelector(".attachment-viewer .agent-attachment-body")?.getBoundingClientRect().right,
           triggerRight: document.querySelector("[data-attachment-viewer-menu] > summary")?.getBoundingClientRect().right,
+          recent: Boolean(document.querySelector("[data-go-recent]")),
         }));
-        if (!attachmentMenu.open || attachmentMenu.path !== "/tmp/tycho-smoke/smoke.txt" || attachmentMenu.bodyRight !== attachmentMenu.triggerRight || !["Copy content", "Copy absolute path", "Download file", "Refresh cache", "Delete attachment"].every((label) => attachmentMenu.labels.includes(label))) {
+        if (!attachmentMenu.open || attachmentMenu.recent || attachmentMenu.path !== "/tmp/tycho-smoke/smoke.txt" || attachmentMenu.bodyRight !== attachmentMenu.triggerRight || !["Copy content", "Copy absolute path", "Download file", "Refresh cache", "Delete attachment"].every((label) => attachmentMenu.labels.includes(label))) {
           throw new Error(`Attachment context menu is incomplete: ${JSON.stringify(attachmentMenu)}`);
         }
         await page.click(".app-header");
@@ -4623,8 +4641,13 @@ def write_smoke_script(path)
           full: document.querySelector("[data-agent-workspace]")?.classList.contains("agent-workspace-full-view"),
           summary: Boolean(document.querySelector("[data-agent-summary-page]")),
           cost: document.querySelector("[data-agent-summary-page]")?.innerText,
+          recent: Boolean(document.querySelector("[data-go-recent]")),
+          deduplicated: runSummaryDetailContent({
+            content: "partial: First paragraph.\\n\\nFirst paragraph.\\n\\nSecond paragraph.",
+            metadata: { status: "partial" },
+          }),
         }));
-        if (summaryFullView.mode !== "full" || !summaryFullView.full || !summaryFullView.summary || !summaryFullView.cost.includes("$1.25+")) {
+        if (summaryFullView.mode !== "full" || !summaryFullView.full || !summaryFullView.summary || summaryFullView.recent || summaryFullView.deduplicated !== "First paragraph.\\n\\nSecond paragraph." || !summaryFullView.cost.includes("$1.25+")) {
           throw new Error(`Summary did not retain the shared full-view layout: ${JSON.stringify(summaryFullView)}`);
         }
 
