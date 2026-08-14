@@ -129,7 +129,8 @@ module HQ
     attr_reader :key, :name, :project_key, :template_key, :workspace, :prompt, :created_at, :started_at,
                 :finished_at, :pid, :last_exit_code, :log_path, :runs, :sandbox_mode, :agent, :messages, :skills,
                 :model, :reasoning_effort, :response_style, :session_id, :session_bootstrapped, :color_index, :summary,
-                :structured_result, :schedule_key, :cost_snapshot, :project_group
+                :structured_result, :schedule_key, :cost_snapshot, :project_group, :delegation_parent, :archive_path,
+                :archived_at, :project_hidden_at_archive
     attr_writer :summary, :structured_result, :cost_snapshot
 
     def usage_metrics_store=(store)
@@ -141,7 +142,8 @@ module HQ
                    stop_requested_at: nil, sandbox_mode: "danger-full-access", agent: "codex", messages: nil,
                    model: nil, reasoning_effort: nil, response_style: nil, skills: nil, unread: false, session_id: nil,
                    session_bootstrapped: nil, color_index: nil, summary: nil, structured_result: nil, schedule_key: nil,
-                   cost_snapshot: nil, total_run_count: nil, project_group: nil)
+                   cost_snapshot: nil, total_run_count: nil, project_group: nil, delegation_parent: nil,
+                   archived: false, archive_path: nil, archived_at: nil, project_hidden_at_archive: nil)
       @key = key
       @name = name
       @project_key = project_key
@@ -174,6 +176,11 @@ module HQ
       @schedule_key = normalize_schedule_key(schedule_key)
       @cost_snapshot = AgentCostSnapshot.normalize(cost_snapshot)
       @total_run_count = infer_total_run_count(total_run_count)
+      @delegation_parent = normalize_delegation_parent(delegation_parent)
+      @archived = archived == true
+      @archive_path = archive_path.to_s.empty? ? nil : archive_path.to_s
+      @archived_at = archived_at
+      @project_hidden_at_archive = project_hidden_at_archive unless project_hidden_at_archive.nil?
     end
 
     def color_index=(value)
@@ -251,7 +258,12 @@ module HQ
         schedule_key: hash["schedule_key"],
         cost_snapshot: hash["cost_snapshot"],
         total_run_count: hash["total_run_count"],
-        project_group: hash["project_group"]
+        project_group: hash["project_group"],
+        delegation_parent: hash["delegation_parent"],
+        archived: hash["archived"],
+        archive_path: hash["archive_path"],
+        archived_at: parse_time(hash["archived_at"]),
+        project_hidden_at_archive: hash["project_hidden_at_archive"]
       )
     end
 
@@ -376,11 +388,29 @@ module HQ
       result["schedule_key"] = @schedule_key unless @schedule_key.to_s.empty?
       result["cost_snapshot"] = @cost_snapshot if @cost_snapshot.is_a?(Hash) && !@cost_snapshot.empty?
       result["project_group"] = @project_group unless @project_group.empty?
+      result["delegation_parent"] = @delegation_parent if @delegation_parent
+      result["archived"] = true if archived?
+      result["archive_path"] = @archive_path if archived? && @archive_path
+      result["archived_at"] = @archived_at&.iso8601 if archived? && @archived_at
+      result["project_hidden_at_archive"] = @project_hidden_at_archive unless @project_hidden_at_archive.nil?
       result
     end
 
     def unread?
       @unread
+    end
+
+    def archived?
+      @archived
+    end
+
+    def refresh_session_identity!
+      capture_session_id!
+      @session_id
+    end
+
+    def mark_archived_visibility!(hidden)
+      @project_hidden_at_archive = hidden == true
     end
 
     def scheduled?
@@ -397,6 +427,16 @@ module HQ
 
       @project_group = normalized
       true
+    end
+
+    def associate_parent!(reference)
+      normalized = normalize_delegation_parent(reference)
+      raise ArgumentError, "Invalid delegation parent" unless normalized
+      if @delegation_parent && @delegation_parent != normalized
+        raise ArgumentError, "Agent #{@key} already has a different parent"
+      end
+
+      @delegation_parent ||= normalized
     end
 
     def display_name
@@ -458,7 +498,11 @@ module HQ
       log_file = File.open(@log_path, "a")
       launch = structured_output_runner_launch(command, environment)
       @pid = spawn(
-        external_process_environment(launch.fetch(:env)).merge("TYCHO_STATUS_PATH" => status_path),
+        external_process_environment(launch.fetch(:env)).merge(
+          "TYCHO_STATUS_PATH" => status_path,
+          "TYCHO_AGENT_KEY" => @key,
+          "TYCHO_EXECUTABLE" => File.join(ROOT_DIR, "bin", "tycho")
+        ),
         RbConfig.ruby, "-e", agent_runner_script, *launch.fetch(:command),
         chdir: @workspace, out: log_file, err: %i[child out], pgroup: true
       )
@@ -674,6 +718,7 @@ module HQ
         File.join(destination, "usage_metrics.json"),
         { "schema_version" => UsageMetrics::Store::SCHEMA_VERSION, "runs" => archived_metrics }
       )
+      FileUtils.touch(root)
       destination
     end
 
@@ -1099,6 +1144,13 @@ module HQ
           nil
         ensure
           File.delete(temporary_path) if temporary_path && File.exist?(temporary_path)
+        end
+        begin
+          executable = ENV.fetch("TYCHO_EXECUTABLE")
+          agent_key = ENV.fetch("TYCHO_AGENT_KEY")
+          system(RbConfig.ruby, executable, "agent", "finalize", agent_key, out: File::NULL, err: File::NULL)
+        rescue StandardError
+          nil
         end
         exit(status)
       RUBY
@@ -2033,6 +2085,22 @@ module HQ
 
     def memory_store
       @memory_store ||= AgentMemory.new(self)
+    end
+
+    def normalize_delegation_parent(value)
+      return nil unless value.is_a?(Hash)
+
+      server_id = value["server_id"].to_s.strip
+      agent_key = value["agent_key"].to_s.strip
+      return nil if server_id.empty? || agent_key.empty?
+
+      value.each_with_object({}) do |(key, item), result|
+        name = key.to_s
+        next unless %w[server_id server_name agent_key name project_key run_id run_number native_session_id].include?(name)
+        next if item.nil? || item.to_s.empty?
+
+        result[name] = item
+      end
     end
   end
 end

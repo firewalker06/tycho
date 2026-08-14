@@ -46,6 +46,8 @@ tycho agent create <project-key> <prompt> [options]
 | `--name NAME` | Override auto-generated agent name |
 | `--template KEY` | Template key (defaults to project's first template) |
 | `--run` | Start the agent immediately after creation |
+| `--parent-agent KEY` | Attach the originating agent/session on the same Tycho server |
+| `--root` | Explicitly create an unrelated root agent from inside a managed agent |
 
 ```bash
 # Create only
@@ -56,20 +58,35 @@ tycho agent create my-project "Fix failing tests in spec/models" --run
 
 # Specify harness and model
 tycho agent create global-web "Review open PRs" --harness claude --model claude-opus-4-5 --run
+
+# Delegate and report the child outcome back automatically
+tycho agent create global-web "Review the auth boundary" --parent-agent global-web-agent-123 --run
 ```
+
+### Delegating from a managed Tycho agent
+
+Use ordinary `agent create`. Tycho reads the current `TYCHO_AGENT_KEY` and links the new child automatically, so its terminal result returns to this agent even if `--parent-agent` is omitted:
+
+```bash
+tycho agent create global-web "Review the auth boundary" --run
+```
+
+Do not add `--root` for delegated work. `--root` is the explicit opt-out for intentionally unrelated work. When targeting `--server`, pass either `--parent-agent KEY` or `--root` because the local parent cannot be inferred safely on another server.
 
 ---
 
 ## `tycho agent list`
 
-List all managed agents, or filter to one project.
+List active managed agents, archived read-only history, or both. All modes can be filtered to one project or addressed through `--server`.
 
 ```bash
 tycho agent list                  # all agents
 tycho agent list my-project       # only agents for my-project
+tycho agent list --archived       # archived agents only
+tycho agent list --include-archived # active and archived agents
 ```
 
-Output columns: Key, Project, Name, Harness, Status, Runs.
+Output columns: Key, Project, Name, Parent, Harness, State, Status, Runs.
 
 ---
 
@@ -89,6 +106,7 @@ Start or re-run an existing agent (same as `create --run` but for agents that al
 
 ```bash
 tycho agent run my-project-agent-3
+tycho agent run my-project-agent-3 --parent-agent orchestrator-agent-key
 ```
 
 Prints the pid and log path on success.
@@ -126,6 +144,7 @@ Append a user message to the agent's conversation and start it. This is the prim
 
 ```bash
 tycho agent send my-project-agent-3 "The tests still fail on line 42 — try a different approach"
+tycho agent send my-project-agent-3 "Continue the delegated task" --parent-agent orchestrator-agent-key
 ```
 
 Errors if the agent is already running. Prints pid and log path on success.

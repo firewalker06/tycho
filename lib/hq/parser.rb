@@ -235,6 +235,16 @@ module HQ
             metadata: entry.metadata,
             created_at: entry.timestamp&.iso8601
           )
+        when :delegation_event
+          flush_summary.call
+          blocks << ChatBlock.new(
+            kind: :delegation_event,
+            role: nil,
+            content: entry.content,
+            tool_name: nil,
+            metadata: entry.metadata,
+            created_at: entry.timestamp&.iso8601
+          )
         else
           summary_group << entry
         end

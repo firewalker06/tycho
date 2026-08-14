@@ -16,6 +16,7 @@ module RemoteServerTest
 
   def run!
     assert_remote_agent_lifecycle
+    assert_remote_agent_delegation_lifecycle
     assert_remote_agent_response_style_selection_is_independent
     assert_remote_archive_reconciles_scheduled_agent_state
     assert_remote_agent_bulk_archive
@@ -77,6 +78,93 @@ module RemoteServerTest
     assert_server_daemonizes_after_startup_to_log
     assert_server_prints_request_logs
     puts "remote_server_test: ok"
+  end
+
+  def assert_remote_agent_delegation_lifecycle
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      parent = service.create_agent(
+        "project_key" => "web", "name" => "Parent <script>", "prompt" => "Coordinate", "agent" => "codex"
+      )
+      child = service.create_agent(
+        "project_key" => "web", "name" => "Child", "prompt" => "Work", "agent" => "codex",
+        "parent_agent_key" => parent[:key]
+      )
+
+      assert(child.dig(:delegation, :parent, :agent_key) == parent[:key], "expected child started-by reference")
+      parent_payload = service.agent(parent[:key])
+      assert(parent_payload.dig(:delegation, :children, 0, :agent_key) == child[:key],
+             "expected parent delegated-agents reference")
+      conversation = service.conversation(parent[:key])
+      event = conversation.find { |block| block[:kind] == "delegation_event" }
+      assert(event && event.dig(:metadata, "agent_reference", "agent_key") == child[:key],
+             "expected explicit typed creation event")
+
+      repeated = service.submit_prompt(child[:key], "prompt" => "Continue", "parent_agent_key" => parent[:key])
+      assert(repeated[:agent].dig(:delegation, :parent, :agent_key) == parent[:key],
+             "expected idempotent message attachment")
+      begin
+        service.submit_prompt(parent[:key], "prompt" => "No", "parent_agent_key" => parent[:key])
+        raise "expected self-parent rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409, "expected self-parent conflict")
+      end
+
+      archived = service.archive_agent(child[:key])
+      archived_payload = service.agent(child[:key])
+      assert(archived[:archived] && archived_payload[:archived], "expected archived child detail navigation")
+      assert(!archived_payload[:archived_at].to_s.empty?, "expected immutable archive time in detail")
+      assert(archived_payload.dig(:delegation, :parent, :agent_key) == parent[:key],
+             "expected archived child to retain parent link")
+
+      archive_index = service.archived_agents("page" => "1", "per_page" => "1", "q" => "Child")
+      assert(archive_index.dig(:pagination, :total) == 1 && archive_index.dig(:pagination, :page) == 1,
+             "expected paginated archived-agent discovery")
+      project_archive_index = service.archived_agents("q" => "Web")
+      assert(project_archive_index.dig(:pagination, :total) == 1,
+             "expected archive query to search project display names")
+      indexed = archive_index.fetch(:agents).fetch(0)
+      assert(indexed[:key] == child[:key] && indexed[:archived] && indexed[:archived_at],
+             "expected read-only archived identity in the archive index")
+      assert(indexed.dig(:delegation, :parent, :agent_key) == parent[:key],
+             "expected archive discovery to preserve delegation context")
+
+      request = Struct.new(:query_params).new({ "page" => "1", "per_page" => "100" })
+      routed = HQ::RemoteServer.new.send(:route, service, "GET", "/agents/archived", {}, request)
+      assert(routed.dig(:body, :agents, 0, :key) == child[:key], "expected archived-agent API route")
+
+      begin
+        service.start_agent(child[:key])
+        raise "expected archived mutation rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("read-only"),
+               "expected archived mutations to report an explicit read-only conflict")
+      end
+
+      begin
+        service.archived_agents("per_page" => "101")
+        raise "expected archive page limit rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 400, "expected invalid archive pagination to return 400")
+      end
+      begin
+        service.archived_agents("page" => "9" * 100)
+        raise "expected huge archive page rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 400, "expected huge archive pages to return 400")
+      end
+
+      service.archive_agent(parent[:key])
+      first_page = service.archived_agents("page" => "1", "per_page" => "1")
+      second_page = service.archived_agents("page" => "2", "per_page" => "1")
+      assert(first_page.dig(:pagination, :total) == 2 && first_page.dig(:pagination, :next_page) == 2 &&
+             second_page.dig(:pagination, :next_page).nil? &&
+             first_page.dig(:agents, 0, :key) != second_page.dig(:agents, 0, :key),
+             "expected stable multi-page archive ordering")
+    end
   end
 
   def assert_remote_agent_payload_has_cost_snapshot
@@ -248,6 +336,8 @@ module RemoteServerTest
   def assert_remote_agent_lifecycle
     Dir.mktmpdir("hq-remote-test") do |dir|
       old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_delegations_file = replace_constant(HQ, :DELEGATIONS_FILE, File.join(dir, "agent_delegations.json"))
+      old_server_identity_file = replace_constant(HQ, :SERVER_IDENTITY_FILE, File.join(dir, "server_identity.json"))
       old_usage_metrics_file = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
       old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
       old_archive_dir = replace_constant(HQ, :AGENT_ARCHIVE_DIR, File.join(dir, "agents", "archive"))
@@ -284,6 +374,8 @@ module RemoteServerTest
       assert(service.agents.empty?, "expected archived agent to be removed from active list")
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+      replace_constant(HQ, :DELEGATIONS_FILE, old_delegations_file) if old_delegations_file
+      replace_constant(HQ, :SERVER_IDENTITY_FILE, old_server_identity_file) if old_server_identity_file
       replace_constant(HQ, :USAGE_METRICS_FILE, old_usage_metrics_file) if old_usage_metrics_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
       replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
@@ -2097,6 +2189,7 @@ module RemoteServerTest
       agents = [
         hidden_test_agent("web-charlie-agent-1", "web-charlie", workspaces["web-charlie"]),
         hidden_test_agent("worker-agent-1", "worker", workspaces["worker"]),
+        hidden_test_agent("worker-archived-agent", "worker", workspaces["worker"]),
         hidden_test_agent("docs-agent-1", "docs", workspaces["docs"])
       ]
       HQ::AgentStore.new(registry.projects).save(agents)
@@ -2111,6 +2204,31 @@ module RemoteServerTest
              "expected normal agent list to include visible project agents")
       assert(!visible_agent_keys.include?("worker-agent-1"),
              "expected normal agent list to omit agents for hidden projects")
+      begin
+        service.submit_prompt("docs-agent-1", "prompt" => "Attach", "parent_agent_key" => "worker-agent-1")
+        raise "expected hidden delegation parent to be rejected"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 404, "expected hidden delegation parent to be non-enumerable")
+      end
+      HQ::AgentStore.new(registry.projects).archive_agent!("worker-archived-agent")
+      assert(service.archived_agents.dig(:pagination, :total).zero?,
+             "expected hidden archives to stay out of discovery")
+      legacy_record = HQ::AgentArchiveStore.new.find("worker-archived-agent")
+      legacy_manifest = HQ::FileStore.read_json(legacy_record.manifest_path, fallback: {})
+      legacy_manifest.delete("project_hidden_at_archive")
+      HQ::FileStore.write_json(legacy_record.manifest_path, legacy_manifest)
+      FileUtils.touch(File.dirname(File.dirname(legacy_record.manifest_path)))
+      service_projects = service.instance_variable_get(:@projects)
+      service.instance_variable_set(:@projects, service_projects.reject { |project| project.key == "worker" })
+      assert(service.archived_agents.dig(:pagination, :total).zero?,
+             "expected legacy archives for missing projects to fail closed")
+      service.instance_variable_set(:@projects, service_projects)
+      begin
+        service.agent("worker-archived-agent")
+        raise "expected hidden archived agent detail to be hidden"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 404, "expected hidden archived agent detail to return 404")
+      end
       begin
         service.project("worker")
         raise "expected hidden project detail to be hidden"
@@ -2130,6 +2248,8 @@ module RemoteServerTest
              "expected group visibility change to reveal inherited projects")
       assert(service.agents.map { |agent| agent[:key] }.include?("worker-agent-1"),
              "expected group visibility change to reveal inherited project agents")
+      assert(service.archived_agents.dig(:pagination, :total).zero?,
+             "expected legacy archives without immutable visibility to remain hidden")
 
       service.update_hidden_setting("scope" => "project", "key" => "docs", "hidden" => true)
       assert(!service.projects.map { |project| project[:key] }.include?("docs"),
@@ -5957,6 +6077,8 @@ module RemoteServerTest
   def with_remote_temp_store
     Dir.mktmpdir("hq-remote-test") do |dir|
       old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_delegations_file = replace_constant(HQ, :DELEGATIONS_FILE, File.join(dir, "agent_delegations.json"))
+      old_server_identity_file = replace_constant(HQ, :SERVER_IDENTITY_FILE, File.join(dir, "server_identity.json"))
       old_usage_metrics_file = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
       old_schedules_file = replace_constant(HQ, :SCHEDULES_FILE, File.join(dir, "config", "schedules.yml"))
       old_schedules_state_file = replace_constant(HQ, :SCHEDULES_STATE_FILE, File.join(dir, "schedules.json"))
@@ -5982,6 +6104,8 @@ module RemoteServerTest
       yield dir
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+      replace_constant(HQ, :DELEGATIONS_FILE, old_delegations_file) if old_delegations_file
+      replace_constant(HQ, :SERVER_IDENTITY_FILE, old_server_identity_file) if old_server_identity_file
       replace_constant(HQ, :USAGE_METRICS_FILE, old_usage_metrics_file) if old_usage_metrics_file
       replace_constant(HQ, :SCHEDULES_FILE, old_schedules_file) if old_schedules_file
       replace_constant(HQ, :SCHEDULES_STATE_FILE, old_schedules_state_file) if old_schedules_state_file

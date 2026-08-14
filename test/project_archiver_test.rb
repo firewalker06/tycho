@@ -20,7 +20,7 @@ module ProjectArchiverTest
       delegate.load
     end
 
-    def save(*)
+    def archive_agents!(*)
       raise message
     end
   end

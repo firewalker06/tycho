@@ -13,7 +13,63 @@ module RemoteUIAssetSnapshotTest
   def run!
     assert_loaded_daemon_keeps_one_asset_build
     assert_handoff_retry_key_is_cleared_after_success
+    assert_delegation_ui_uses_typed_safe_references
+    assert_delegation_callbacks_are_chronological_events
+    assert_archived_agents_are_reference_only_and_read_only
     puts "remote_ui_asset_snapshot_test: ok"
+  end
+
+  def assert_delegation_callbacks_are_chronological_events
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
+    required = [
+      "block?.metadata?.delegation_callback === true",
+      "renderDelegationCallbackBlock(block, index, options)",
+      'class="message delegation-callback-event"',
+      "Number(report.child_run_number)",
+      'success: "succeeded"',
+      "renderDelegationReferenceLink(reference)",
+      'iconSvg("squareArrowOutUpRight")',
+      'class="delegation-callback-excerpt"',
+      'aria-label="Copy report details"',
+      "Report details"
+    ]
+    missing = required.reject { |fragment| javascript.include?(fragment) }
+    raise "missing chronological callback presentation: #{missing.join(", ")}" unless missing.empty?
+    raise "missing callback event styling" unless css.include?(".delegation-callback-event")
+    raise "missing three-line callback excerpt" unless css.include?("-webkit-line-clamp: 3")
+    callback_source = javascript[/function renderDelegationCallbackBlock.*?^}/m]
+    raise "missing callback renderer" unless callback_source
+    raise "callback must not repeat the full agent card" if callback_source.include?("renderAgentReference(reference)")
+  end
+
+  def assert_archived_agents_are_reference_only_and_read_only
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    required = [
+      'if (!agent?.unread || agent.archived) return',
+      'agent?.archived) return { dock: "", overlay: "" }'
+    ]
+    missing = required.reject { |fragment| javascript.include?(fragment) }
+    raise "missing archived-agent read-only contracts: #{missing.join(", ")}" unless missing.empty?
+
+    forbidden = ["data-filter-agent-state", "loadArchivedAgents", "/agents/archived?"]
+    present = forbidden.select { |fragment| javascript.include?(fragment) }
+    raise "archived agents must not be browsable from Agents: #{present.join(", ")}" unless present.empty?
+  end
+
+  def assert_delegation_ui_uses_typed_safe_references
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    required = [
+      'block?.metadata?.agent_reference',
+      'escapeHtml(label)',
+      'escapeAttr(reference.key)',
+      'delegationOrderedAgents(agents)',
+      'agent?.archived) return { dock: "", overlay: "" }'
+    ]
+    missing = required.reject { |fragment| javascript.include?(fragment) }
+    raise "missing typed delegation UI safety contracts: #{missing.join(", ")}" unless missing.empty?
+
+    raise "agent lookalike text must not be linkified" if javascript.include?("linkifyAgent")
   end
 
   def assert_handoff_retry_key_is_cleared_after_success

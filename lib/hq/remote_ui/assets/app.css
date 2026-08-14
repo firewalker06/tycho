@@ -2650,6 +2650,12 @@ select {
   border-bottom-width: 0;
 }
 
+.agent-group .agent-row.delegated-agent-row {
+  width: calc(100% - min(calc(var(--delegation-depth) * 22px), 66px));
+  margin-left: min(calc(var(--delegation-depth) * 22px), 66px);
+  border-left: 2px solid color-mix(in srgb, var(--accent) 48%, var(--border));
+}
+
 .agent-ledger.ui-surface {
   display: grid;
   overflow: hidden;
@@ -3742,6 +3748,234 @@ select {
 
 .message-list {
   align-content: start;
+}
+
+.agent-relationships {
+  display: grid;
+  gap: 10px;
+  width: calc(100% - 28px);
+  margin: 0 28px 4px 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 4%, var(--panel));
+  padding: 10px;
+}
+
+.agent-relationship-section,
+.agent-relationship-list {
+  display: grid;
+  gap: 6px;
+}
+
+.agent-relationship-label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agent-reference {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel-raised, var(--panel));
+  padding: 6px 8px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.agent-reference:hover,
+.agent-reference:focus-visible {
+  border-color: var(--accent);
+}
+
+.agent-reference.unavailable {
+  opacity: 0.72;
+}
+
+.agent-reference-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.agent-reference-copy span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delegation-event {
+  display: grid;
+  gap: 8px;
+  width: calc(100% - 28px);
+  margin-right: 28px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 64%, var(--border));
+  padding: 5px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.delegation-event-header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.delegation-event-header .message-time,
+.delegation-callback-header .message-time {
+  color: var(--muted);
+}
+
+.delegation-event .agent-reference {
+  width: min(100%, 420px);
+  min-height: 34px;
+}
+
+.delegation-event-brand {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.delegation-report-content {
+  display: grid;
+  gap: 8px;
+}
+
+.delegation-report-content pre {
+  overflow-x: auto;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.delegation-callback-event {
+  gap: 8px;
+  border-color: color-mix(in srgb, var(--success) 48%, var(--border));
+  background: color-mix(in srgb, var(--success) 4%, var(--panel));
+}
+
+.delegation-callback-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.delegation-agent-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+  border-radius: 5px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.delegation-agent-link:hover,
+.delegation-agent-link:focus-visible {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+.delegation-agent-link.unavailable {
+  opacity: 0.5;
+}
+
+.delegation-agent-link .ui-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.delegation-callback-excerpt {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.delegation-callback-details > summary {
+  width: max-content;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.delegation-report-code {
+  position: relative;
+  min-width: 0;
+  margin-top: 8px;
+}
+
+.delegation-report-code pre {
+  overflow-x: auto;
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, var(--panel-soft));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 82%, black);
+  padding: 12px 42px 12px 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.delegation-report-copy {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, var(--panel-soft));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  color: var(--muted);
+}
+
+.delegation-report-copy:hover,
+.delegation-report-copy:focus-visible {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+.delegation-report-copy .ui-icon {
+  width: 15px;
+  height: 15px;
+}
+
+@media (max-width: 640px) {
+  .agent-group .agent-row.delegated-agent-row {
+    width: calc(100% - min(calc(var(--delegation-depth) * 14px), 42px));
+    margin-left: min(calc(var(--delegation-depth) * 14px), 42px);
+  }
+
+  .agent-relationships,
+  .delegation-event {
+    width: 100%;
+    margin-right: 0;
+  }
+
+  .delegation-event .agent-reference {
+    width: 100%;
+  }
 }
 
 .message {

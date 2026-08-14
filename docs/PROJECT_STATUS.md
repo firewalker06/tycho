@@ -10,9 +10,11 @@ type: project
 
 ## Last Updated
 
-2026-08-08
+2026-08-13
 
 ## Strategic Direction
+
+Managed agents support explicit same-server parent references, durable terminal report-back, safe automatic parent resume, archive-stable navigation, and typed Remote UI relationship links. See [AGENT_DELEGATION.md](./AGENT_DELEGATION.md) for the CLI/API and callback contract.
 
 
 Key references:
@@ -46,6 +48,7 @@ Key references:
 | Agent transport | Codex JSON output; Claude-compatible `--output-format stream-json` | Streaming logs render incrementally in the chat viewport |
 | Agent model controls | Optional per-agent `model` and `reasoning_effort`, inherited from project/template config and passed as harness run arguments | Model catalogs change outside Tycho; use harness discovery for suggestions where available, keep free-form fallback everywhere, and keep provider-specific thinking budgets out of first-version scope |
 | Managed-agent identity | Generate keys as `<project>-agent-<UTC timestamp with microseconds>`, adding a short random suffix only on an exact collision; retain legacy numeric keys when loading existing state | Timestamp identities remain sortable and avoid key reuse when agents are created concurrently or archived across Tycho instances |
+| Managed-agent CLI delegation | A local `tycho agent create` invoked inside a managed agent inherits `TYCHO_AGENT_KEY` as its parent; `--root` is the explicit opt-out, while `--server` requires an explicit parent or root choice | Delegation must remain durable even when a harness loads an outdated skill or omits `--parent-agent`, without guessing across server boundaries |
 | Cross-harness response style | Append the current `~/.tycho/config/response_style.md` policy to every cold and resumed run, with project/template override or opt-out; record the harness `session_id` on each run | Keep operator-facing prose consistent without coupling the policy to a harness-native role API or persisting it into conversation memory, while retaining the native session identity used for each run; explicit task formats remain higher priority |
 | Agent session strategy | Persist native Claude/Codex `session_id` per managed agent and resume after the first run; keep `memory.jsonl` as HQ's canonical transcript | Native resume recovers agent-side continuity and prompt-cache reuse. HQ only replays bounded `memory.jsonl` on first run or when no native session is known |
 | Structured output correction | Give Codex and Claude-compatible runs the same canonical agent-result schema, validate their final response, then allow two same-session corrections by default (`TYCHO_STRUCTURED_OUTPUT_CORRECTION_LIMIT`, clamped to `0..5`); give cold OpenCode runs the canonical schema as execution-only prompt guidance omitted from raw prompt headers, memory, and both conversation UIs | One contract prevents harness drift; invalid JSON must not become a successful result; same-session feedback avoids rerunning completed tools; prompt-only OpenCode gets the strongest available guidance without exposing internal schema text to operators |
@@ -343,6 +346,7 @@ verify the bottle.
 - [x] Start / Stop an agent (`POST /agents/{key}/start`, `POST /agents/{key}/stop`)
 - [x] Creates / Edit an agent (`POST /agents`, `PATCH /agents/{key}`)
 - [x] Archive one agent (`DELETE /agents/{key}` or `POST /agents/{key}/archive`) or bulk archive idle agents (`POST /agents/archive`)
+- [x] Discover read-only archived agents through paginated API and CLI filters; keep Remote UI archives reference-only and outside the unbounded Agents browser
 - [x] Project list/detail endpoints and mobile project detail screens
 - [x] Remote setup/readiness endpoint and Settings screen
 - [x] Remote Settings editor for the global `response_style.md` policy with atomic persistence and backup
