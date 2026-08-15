@@ -381,6 +381,7 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/agents` | List active managed agents. |
+| `GET` | `/activity` | Read the local server's compact in-memory agent activity snapshot. |
 | `GET` | `/agents/archived` | List visible archived agents as read-only summaries. Supports `page`, `per_page` (maximum 100), `project_key`, and `q`. |
 | `POST` | `/agents` | Create a managed agent. |
 | `GET` | `/agents/{key}` | Read one managed agent. |
@@ -415,6 +416,7 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `POST` | `/push/test` | Send a test notification to an enabled subscription. |
 | `POST` | `/server/restart` | Restart the `tycho serve` Remote server process when restart is available. |
 | `GET` | `/servers` | List the local server and configured broker targets. |
+| `GET` | `/servers/activity` | Read compact local and cached peer activity for unread counts and agent switching. |
 | `GET` | `/servers/resources` | Read the cached combined agent/project catalog and per-server health. |
 | `DELETE` | `/servers/:server_key/resources` | Forget one peer's persisted agents and projects without changing the peer configuration or remote data. |
 | `POST` | `/servers/resources/refresh` | Queue bounded background refreshes for all configured servers. |
@@ -443,6 +445,19 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 For peer resource routes, the browser may send `X-Tycho-Remote-Server-Token` when that peer's token lives in browser local storage. The broker converts it to the peer request's `Authorization: Bearer ...` header and does not persist it. The compatibility `/servers/{key}/proxy/{path}` route accepts only the same agent, project, and attachment roots; server-level paths are rejected.
 
 ## Endpoint Details
+
+### `GET /activity` and `GET /servers/activity`
+
+`GET /activity` returns the local server's compact in-memory agent activity
+snapshot. `GET /servers/activity` combines that live local snapshot with the
+cached peer catalog. Remote UI polls these endpoints independently from full
+page refreshes so unread counts, lifecycle state, and agent switching remain
+current while focused forms or detail views pause conversation polling.
+
+Both endpoints require the same bearer authentication as the rest of the JSON
+API and omit prompts, conversations, attachments, and other full agent detail.
+The local snapshot includes a monotonic revision; the combined response uses a
+content-derived revision so clients can skip unchanged updates.
 
 ### `POST /server/restart`
 

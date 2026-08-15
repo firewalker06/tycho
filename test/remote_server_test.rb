@@ -4115,6 +4115,9 @@ module RemoteServerTest
            "expected Conversation summary attachments to open as a menu")
     assert(css[:body].include?(".summary-attachment-list-full"),
            "expected detailed Summary pages to render full attachment lists")
+    assert(css[:body].include?(".summary-attachment-item") &&
+           css[:body].include?(".summary-attachment-download"),
+           "expected Summary attachments to pair detail links with quick download actions")
     assert(css[:body].include?(".summary-attachment-row"),
            "expected Summary attachments to render as block rows")
     assert(css[:body].include?(".attachment-text-viewer"), "expected Attachment detail to style plain text")
@@ -4774,7 +4777,10 @@ module RemoteServerTest
     assert(js[:body].include?('class="settings-section-nav ui-section-nav"') &&
            js[:body].include?('class="settings-section-panel ui-section-panel"') &&
            js[:body].include?('aria-current=') &&
-           js[:body].include?("function syncSettingsSectionNav"),
+           js[:body].include?("function syncSettingsSectionNav") &&
+           css[:body].include?(".settings-section-nav-shell") &&
+           css[:body].include?("flex-wrap: nowrap") &&
+           css[:body].include?("overflow-x: auto"),
            "expected Settings to keep a sticky in-page section navigator with active-section feedback")
     assert(response[:body].include?("ui-detail-header__back") &&
            response[:body].include?("ui-detail-header__identity") &&
@@ -5261,6 +5267,10 @@ module RemoteServerTest
            "expected Agent summary shortcut to navigate to the focused Summary page")
     assert(js[:body].include?("function renderAgentSummaryView"),
            "expected Agent summary to render as its own view")
+    assert(js[:body].include?("function runSummaryNavigation") &&
+           js[:body].include?('aria-label="${label}"') &&
+           js[:body].include?('title="${label}"'),
+           "expected focused Summary pages to navigate between run summaries")
     assert(!js[:body].include?("function toggleAgentSummary"),
            "expected Summary to use route navigation instead of a dock toggle")
     assert(js[:body].include?("function renderAgentSummaryToggle"),
@@ -5705,6 +5715,9 @@ module RemoteServerTest
            "expected Summary attachment menus to close on outside clicks")
     assert(js[:body].include?("renderSummaryAttachmentList"),
            "expected detailed Summary pages to render attachment list blocks")
+    assert(js[:body].include?('class="summary-attachment-download icon-button ui-button ui-icon-button"') &&
+           js[:body].include?('data-download-filename="${escapeAttr(title || "attachment")}"'),
+           "expected detailed Summary pages to download files without replacing their detail links")
     assert(js[:body].include?('kv("Est. Cost", sessionCostSnapshotText(summary.costSnapshot))'),
            "expected detailed Summary pages to render the finalized session-cost snapshot")
     assert(!js[:body].include?('kv("Completed", timeShort(summary.createdAt'),

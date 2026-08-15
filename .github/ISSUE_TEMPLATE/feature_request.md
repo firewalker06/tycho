@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an HQ improvement
+about: Suggest a Tycho improvement
 title: ""
 labels: enhancement
 assignees: ""
