@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a reproducible HQ bug
+about: Report a reproducible Tycho bug
 title: ""
 labels: bug
 assignees: ""
@@ -18,7 +18,7 @@ assignees: ""
 
 - Ruby:
 - OS:
-- HQ commit or version:
+- Tycho commit or version:
 - Optional tools involved:
 
 ## Logs Or Screenshots

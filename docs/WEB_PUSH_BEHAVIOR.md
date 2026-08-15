@@ -9,7 +9,7 @@ This note explains how Tycho Remote UI uses browser push notifications, notifica
 3. `RemoteService#dispatch_agent_push_events` builds a compact JSON payload for the event.
 4. `WebPushNotifier#send_payload!` sends that payload to every enabled browser subscription with VAPID authentication.
 5. `/service-worker.js` receives the push event, updates the installed-app badge when a `badge_count` is present, and calls `registration.showNotification(title, options)`.
-6. When the Remote UI page is open, `syncUnreadAlert()` also mirrors the unread-agent count into the app badge so foreground state and background push state stay aligned.
+6. When the Remote UI page is open, a compact activity poll reads the server-owned snapshot and calls `syncUnreadAlert()` to mirror the unread-agent count into the logo and app badge. Lifecycle mutations update that snapshot immediately, while the existing notification reconciliation pass catches external process completion; no additional server loop is created.
 7. Notification clicks focus an existing Tycho Remote tab when possible, otherwise they open the payload URL, usually `/#agent/{key}`.
 
 ## Deployment Coherence

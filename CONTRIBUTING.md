@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for working on HQ.
+Thanks for working on Tycho.
 
 ## Setup
 
@@ -25,7 +25,7 @@ Follow the existing Ruby style:
 - `SCREAMING_SNAKE_CASE` constants.
 - Small domain objects and focused rendering modules.
 
-behavior in domain objects. Keep rendering split between
+Keep behavior in domain objects. Keep rendering split between
 `lib/hq/ui/rendering.rb` and focused modules under `lib/hq/ui/rendering/`.
 
 ## Tests

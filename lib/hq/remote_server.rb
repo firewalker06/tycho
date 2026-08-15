@@ -21,6 +21,7 @@ require_relative "domain/project_workspace"
 require_relative "domain/attachment_normalizer"
 require_relative "domain/constants"
 require_relative "domain/agent_attachment_store"
+require_relative "domain/agent_activity_snapshot"
 require_relative "domain/agent_chat_log"
 require_relative "domain/agent_store"
 require_relative "domain/agent_archive_store"
@@ -50,6 +51,11 @@ module HQ
     DEFAULT_HOST = "127.0.0.1"
     DEFAULT_PORT = 7373
     AGENT_PUSH_POLL_INTERVAL = 5
+    ACTIVITY_AGENT_FIELDS = %i[
+      key name project_key template_key scheduled schedule_key agent model reasoning_effort status running unread
+      awaiting_input blocked run_count created_at started_at finished_at updated_at last_exit_code last_result summary
+      archived archived_at
+    ].freeze
     REMOTE_DAEMON_LOG_FILE = File.join(LOGS_DIR, "remote_server_daemon.log")
     RESTART_CACHE_RESET_HEADERS = {
       "Cache-Control" => "no-store, max-age=0, must-revalidate",
@@ -71,7 +77,7 @@ module HQ
     def initialize(host: DEFAULT_HOST, port: DEFAULT_PORT, public_url: nil, startup_messages: nil,
                    restart_command: nil, token: HQ.env("REMOTE_TOKEN"), logger: HQ.logger, output: $stdout,
                    daemonize_after_startup: false, daemon_log_path: REMOTE_DAEMON_LOG_FILE, daemonizer: nil,
-                   resource_catalog: nil, resource_snapshot_path: nil)
+                   resource_catalog: nil, resource_snapshot_path: nil, agent_activity_snapshot: nil)
       @host = host.to_s.empty? ? DEFAULT_HOST : host.to_s
       @port = port.to_i.positive? ? port.to_i : DEFAULT_PORT
       @public_url = public_url.to_s
@@ -84,6 +90,7 @@ module HQ
       @daemon_log_path = daemon_log_path.to_s.empty? ? REMOTE_DAEMON_LOG_FILE : daemon_log_path.to_s
       @daemonizer = daemonizer
       @resource_catalog = resource_catalog || RemoteResourceCatalog.new(snapshot_path: resource_snapshot_path)
+      @agent_activity_snapshot = agent_activity_snapshot || AgentActivitySnapshot.new
     end
 
     def start
@@ -172,8 +179,15 @@ module HQ
         return
       end
 
-      if request.method == "GET" && request.path == "/servers/resources"
-        result = ok(@resource_catalog.snapshot)
+      cached_read = if request.method == "GET" && request.path == "/servers/resources"
+                      @resource_catalog.snapshot
+                    elsif request.method == "GET" && request.path == "/servers/activity"
+                      activity_catalog
+                    elsif request.method == "GET" && request.path == "/activity"
+                      @agent_activity_snapshot.snapshot
+                    end
+      if cached_read
+        result = ok(cached_read)
         status = result.fetch(:status)
         write_http(client, status, result.fetch(:body))
         return
@@ -183,7 +197,8 @@ module HQ
         server_url: "http://#{@host}:#{@port}",
         public_url: @public_url,
         auth_required: !@token.empty?,
-        restartable: restartable?
+        restartable: restartable?,
+        agent_activity_snapshot: @agent_activity_snapshot
       )
       result = route(service, request.method, request.path, json_body(request), request)
       status = result.fetch(:status, 200)
@@ -228,7 +243,8 @@ module HQ
       @last_agent_push_poll = now
       service = RemoteService.new(server_url: "http://#{@host}:#{@port}",
                                   public_url: @public_url,
-                                  auth_required: !@token.empty?)
+                                  auth_required: !@token.empty?,
+                                  agent_activity_snapshot: @agent_activity_snapshot)
       service.dispatch_agent_push_notifications!
     rescue StandardError => e
       HQ.logger.warn("Push") { "Agent push notification poll failed: #{e.class} - #{e.message}" }
@@ -241,6 +257,7 @@ module HQ
         broker = RemoteBroker.new(registry: service.registry, server_url: service.server_url)
         @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
         return ok(servers: broker.servers) if method == "GET" && parts == ["servers"]
+        return ok(activity_catalog) if method == "GET" && parts == ["servers", "activity"]
         return ok(@resource_catalog.snapshot) if method == "GET" && parts == ["servers", "resources"]
         if method == "POST" && parts == ["servers", "resources", "refresh"]
           tokens = body["tokens"].is_a?(Hash) ? body["tokens"] : {}
@@ -306,6 +323,7 @@ module HQ
           return broker.proxy(parts[1], method, proxy_path, body, request)
         end
       end
+      return ok(service.agent_activity) if method == "GET" && parts == ["activity"]
       return ok(service.resource_snapshot) if method == "GET" && parts == ["resources"]
       return ok(service.metrics_query(request&.query_params || {})) if method == "GET" && parts == ["metrics"]
       return ok(service.metrics_backfill(body)) if method == "POST" && parts == ["metrics", "backfill"]
@@ -446,6 +464,37 @@ module HQ
       end
 
       raise Error.new("Not found", status: 404)
+    end
+
+    def activity_catalog
+      local = @agent_activity_snapshot.snapshot
+      catalog = @resource_catalog.snapshot
+      servers = Array(catalog[:servers]).map do |server|
+        source_agents = if server[:local] && local[:ready]
+                          local[:agents]
+                        else
+                          Array(server[:agents])
+                        end
+        agents = source_agents.map { |agent| agent.slice(*ACTIVITY_AGENT_FIELDS) }
+        {
+          key: server[:key],
+          name: server[:name],
+          icon: server[:icon],
+          local: server[:local],
+          status: server[:status],
+          stale: server[:stale],
+          ready: server[:local] ? local[:ready] : !server[:last_success_at].nil?,
+          agents: agents
+        }
+      end
+      activity = {
+        schema_version: AgentActivitySnapshot::SCHEMA_VERSION,
+        generated_at: Time.now.utc.iso8601,
+        unread_count: servers.sum { |server| server[:agents].count { |agent| agent[:unread] } },
+        servers: servers
+      }
+      activity[:revision] = Digest::SHA256.hexdigest(JSON.generate(activity.except(:generated_at)))
+      activity
     end
 
     def route_ui(path)
@@ -645,7 +694,8 @@ module HQ
         server_url: "http://#{@host}:#{@port}",
         public_url: @public_url,
         auth_required: !@token.empty?,
-        restartable: restartable?
+        restartable: restartable?,
+        agent_activity_snapshot: @agent_activity_snapshot
       )
       @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
       @resource_catalog.refresh(
@@ -1339,7 +1389,7 @@ module HQ
 
   class RemoteBroker
     LOOPBACK_PEER_KEY = /\Aloopback-(\d{1,5})\z/
-    RESOURCE_ROOTS = %w[agents projects attachments].freeze
+    RESOURCE_ROOTS = %w[activity agents projects attachments].freeze
 
     LocalServerConfig = Struct.new(:key, :name, :url, keyword_init: true) do
       def resolved_token
@@ -1485,7 +1535,8 @@ module HQ
                    skill_installer: nil,
                    github_client: GitHubAPIClient.new,
                    pull_request_diff_store: PullRequestDiff::Store.new,
-                   pull_request_review_store: PullRequestReview::Store.new)
+                   pull_request_review_store: PullRequestReview::Store.new,
+                   agent_activity_snapshot: AgentActivitySnapshot.new)
       @registry = registry
       @projects = registry.projects.map { |config| Project.new(config) }
       @agent_store = AgentStore.new(@projects)
@@ -1503,6 +1554,7 @@ module HQ
       @github_client = github_client
       @pull_request_diff_store = pull_request_diff_store
       @pull_request_review_store = pull_request_review_store
+      @agent_activity_snapshot = agent_activity_snapshot
       @pull_request_fetch_lock = Mutex.new
       @pull_request_fetches = {}
       @archived_query_lock = Mutex.new
@@ -1608,6 +1660,10 @@ module HQ
       visible_agents(all_agents).map do |agent|
         agent_payload(agent, reference_context: context, relationship_context: relationships)
       end
+    end
+
+    def agent_activity
+      @agent_activity_snapshot.snapshot
     end
 
     def archived_agents(params = {})
@@ -2667,6 +2723,7 @@ module HQ
     def dispatch_agent_push_notifications!
       agents, events = load_agents_with_events
       visible = visible_agents(agents)
+      @agent_activity_snapshot.replace!(visible)
       visible_keys = visible.map(&:key)
       dispatch_agent_push_events(events.select { |event| visible_keys.include?(event.agent_key) }, agents: visible)
     end
@@ -2750,6 +2807,7 @@ module HQ
       )
       save_agent(target)
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"]) && !target.running?
+      @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target), conversation: conversation(target.key) }
     end
 
@@ -2772,6 +2830,7 @@ module HQ
       target.add_user_message!(feedback, metadata: { "inquiry_feedback" => true }) unless feedback_embedded || feedback.empty?
       save_agent(target)
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"]) && !target.running?
+      @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target), conversation: conversation(target.key) }
     end
 
@@ -2780,12 +2839,14 @@ module HQ
       target = associate_delegation_from_attrs!(target, attrs)
       save_agent(target)
       target = @agent_store.start_agent!(target.key) unless target.running?
+      @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target) }
     end
 
     def stop_agent(key)
       target = find_agent!(key)
       target = @agent_store.stop_agent!(target.key)
+      @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target) }
     end
 
@@ -2801,6 +2862,7 @@ module HQ
       target = associate_delegation_from_attrs!(target, attrs, agents: current, creating: true)
       save_agents(sort_agents(current))
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"])
+      @agent_activity_snapshot.upsert!(target)
       agent_payload(target)
     end
 
@@ -2834,11 +2896,13 @@ module HQ
       @agent_store.ensure_project_context_prompt!(target, project)
 
       archive_path = @agent_store.archive_agent!(source.key) if archive_source
+      @agent_activity_snapshot.remove!(source.key) if archive_source
       schedule_reconciled = reconcile_archived_schedule_agent(source) if archive_source
       next_agents = current.reject { |agent| agent.key == target.key || (archive_source && agent.key == source.key) }
       next_agents.unshift(target)
       save_agents(sort_agents(next_agents))
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"])
+      @agent_activity_snapshot.upsert!(target)
       HQ.hooks.publish("agent.cloned",
                        agent_key: target.key,
                        source_agent_key: source.key,
@@ -2862,6 +2926,7 @@ module HQ
       raise Error.new("Agent is running", status: 409) if target.running?
 
       archive_path = @agent_store.archive_agent!(target.key)
+      @agent_activity_snapshot.remove!(target.key)
       schedule_reconciled = reconcile_archived_schedule_agent(target)
       {
         archived: true,
@@ -2895,6 +2960,7 @@ module HQ
         end
 
         archive_path = @agent_store.archive_agent!(target.key)
+        @agent_activity_snapshot.remove!(target.key)
         archived << {
           agent_key: target.key,
           archive_path: archive_path,
@@ -3090,6 +3156,7 @@ module HQ
     def load_all_agents
       agents, events = load_agents_with_events
       visible = visible_agents(agents)
+      @agent_activity_snapshot.replace!(visible)
       visible_keys = visible.map(&:key)
       dispatch_agent_push_events(events.select { |event| visible_keys.include?(event.agent_key) }, agents: visible)
       agents
@@ -3233,6 +3300,7 @@ module HQ
 
     def save_agents(agents)
       @agent_store.save(agents)
+      @agent_activity_snapshot.replace!(visible_agents(agents))
     end
 
     def sort_agents(agents)

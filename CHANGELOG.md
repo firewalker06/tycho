@@ -4,23 +4,55 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
-- Give Codex and Claude-compatible agents the same canonical result schema, and
-  inject that schema into cold OpenCode execution prompts without exposing it in
-  raw prompt headers, memory, the TUI, or Remote UI.
-- Add a read-only Remote UI project workspace browser with multiserver routing,
-  bounded directory listings, safe text previews, durable navigation, and
-  server-enforced traversal, symlink, binary, size, VCS, and secret controls.
-- Attach the structured-output runner's child stdin to the null device so
-  managed Codex agents start without waiting for input or failing with a
-  terminal I/O error.
-- Validate managed-agent structured output before success, request up to two
-  same-session corrections for Codex and Claude-compatible harnesses, and
-  preserve exhausted invalid responses in private diagnostic files while
-  surfacing each retry as a collapsed TYCHO system event block and actionable
-  exhausted failures in logs and Remote UI.
+## 0.10.0 - 2026-08-15
+
+### Highlights
+
+- Add durable parent-child agent delegation with CLI/API provenance, automatic
+  terminal reports to parent sessions, safe parent resume, and archive-stable
+  bidirectional navigation in Remote UI.
+- Add auditable run and native-session usage metrics with provider-correct token
+  and cost normalization, archive manifests, idempotent historical backfill,
+  CLI tables and JSON, and Remote API queries.
 - Add direct `--server` CLI targeting for remote project inspection and the
-  complete managed-agent lifecycle, with token/token_env authentication, JSON
-  output, and explicit transport, authentication, compatibility, and API errors.
+  complete managed-agent lifecycle. Store one bearer credential per stable
+  server key with login, logout, status, verify, and migration commands;
+  `token_env` remains supported and inline tokens remain a warned fallback
+  through v0.10.x.
+- Validate managed-agent structured output before success, request bounded
+  same-session corrections for Codex and Claude-compatible harnesses, preserve
+  exhausted invalid responses privately, and align the canonical result schema
+  across Codex, Claude-compatible harnesses, and cold OpenCode prompts.
+- Add a read-only Remote UI project workspace browser with multiserver routing,
+  bounded listings, safe text previews, durable navigation, and server-enforced
+  traversal, symlink, binary, size, VCS, and secret controls.
+
+### Other changes
+
+- Add Tycho skill status, install, and update flows for Codex, Claude Code, and
+  OpenCode, plus agent CLI installation guidance during onboarding.
+- Add selected pull-request diff lines to agent context, speed up PR detail
+  loading, and persist agent-owned PR catalogs and snapshots for fast switching.
+- Add a global speech-mode shortcut and refine speech following, inline comment
+  controls, Markdown code-block copy menus, and focused PR diff behavior.
+- Keep unread counts and agent switching live through compact activity endpoints
+  and independent Remote UI polling, including while focused views pause page
+  refreshes.
+- Keep the Settings section menu sticky in one horizontally scrollable row, add
+  previous/next run-summary navigation, and add quick file downloads beside
+  Summary attachment detail links.
+
+### Fixes
+
+- Retire expired Web Push subscriptions, renew stale browser subscriptions, keep
+  daemon API and browser asset builds coherent, and preserve Windows PWA display
+  and click routing.
+- Preserve structured inquiries, focused views, attachment menus, forms, and
+  polling state across desktop and mobile layouts.
+- Preserve CLI-launched agent exit status, clear leaked Bundler setup from agent
+  runners, and attach correction-runner stdin to the null device.
+- Fix mobile Quick Agent, attachment flyout, diff return, schedule menu, and
+  flexible popup layouts.
 
 ## 0.9.0 - 2026-07-31
 

@@ -1018,6 +1018,8 @@ def write_smoke_script(path)
           const saved = {
             agents: state.agents,
             agentDetails: state.agentDetails,
+            activityAgents: state.activityAgents,
+            activityReadyServerKeys: state.activityReadyServerKeys,
             projects: state.projects,
             projectDetails: state.projectDetails,
             servers: state.servers,
@@ -1037,6 +1039,8 @@ def write_smoke_script(path)
           });
 
           try {
+            state.activityAgents = new Map();
+            state.activityReadyServerKeys = new Set();
             state.agentDetails = {
               "agent-detail-revision-fixture": {
                 key: "agent-detail-revision-fixture",
@@ -1054,6 +1058,8 @@ def write_smoke_script(path)
           } finally {
             state.agents = saved.agents;
             state.agentDetails = saved.agentDetails;
+            state.activityAgents = saved.activityAgents;
+            state.activityReadyServerKeys = saved.activityReadyServerKeys;
             state.projects = saved.projects;
             state.projectDetails = saved.projectDetails;
             state.servers = saved.servers;
@@ -4299,6 +4305,10 @@ def write_smoke_script(path)
           const originalHash = location.hash;
           const originalLoadResourceCatalog = loadResourceCatalog;
           const originalRender = render;
+          const originalActivityReadyServerKeys = state.activityReadyServerKeys;
+          clearTimeout(state.activityTimer);
+          state.activityTimer = null;
+          state.activityReadyServerKeys = new Set();
           const agent = findAgent(key);
           agent.running = true;
           agent.status = "running";
@@ -4364,6 +4374,7 @@ def write_smoke_script(path)
             window.fetch = originalFetch;
             loadResourceCatalog = originalLoadResourceCatalog;
             render = originalRender;
+            state.activityReadyServerKeys = originalActivityReadyServerKeys;
             clearTimeout(state.timer);
             state.timer = null;
             history.replaceState(null, "", originalHash);
@@ -4371,6 +4382,7 @@ def write_smoke_script(path)
             state.renderedViewHtml = "";
             originalRender();
             schedule();
+            scheduleAgentActivity();
           }
         }, agentKey);
         if (focusedStatusSyncContract.before.status !== "Running" ||
@@ -4628,8 +4640,39 @@ def write_smoke_script(path)
         }
 
         await page.evaluate((key) => {
-          findAgent(key).cost_snapshot = { amount_usd: 1.25, coverage: "partial" };
-          history.replaceState(null, "", routeHash({ type: "agentSummary", key }));
+          const agent = findAgent(key);
+          const attachment = {
+            id: "summary-download-fixture",
+            kind: "file",
+            type: "file",
+            title: "summary-notes.md",
+            path: "/tmp/tycho-smoke/summary-notes.md",
+            blob_path: "/attachments/summary-download-fixture/blob",
+          };
+          agent.attachments = [...(agent.attachments || []).filter((item) => item.id !== attachment.id), attachment];
+          state.attachmentDetails[attachment.id] = attachment;
+          state.conversations[key] ||= { blocks: [] };
+          state.conversations[key].blocks = [
+            {
+              kind: "run_summary",
+              content: "Older summary content.",
+              created_at: "2026-08-15T01:00:00Z",
+              metadata: { summary_id: "summary-older", run_number: 1, status: "success", attachments: [] },
+            },
+            {
+              kind: "run_summary",
+              content: "Newer summary content.",
+              created_at: "2026-08-15T02:00:00Z",
+              metadata: {
+                summary_id: "summary-newer",
+                run_number: 2,
+                status: "partial",
+                attachments: [attachment],
+                cost_snapshot: { amount_usd: 1.25, coverage: "partial" },
+              },
+            },
+          ];
+          history.replaceState(null, "", routeHash({ type: "agentSummary", key, summaryId: "summary-newer" }));
           state.renderedRouteKey = null;
           state.renderedViewHtml = "";
           render();
@@ -4642,13 +4685,32 @@ def write_smoke_script(path)
           summary: Boolean(document.querySelector("[data-agent-summary-page]")),
           cost: document.querySelector("[data-agent-summary-page]")?.innerText,
           recent: Boolean(document.querySelector("[data-go-recent]")),
+          previousDisabled: document.querySelector("[aria-label='Previous summary']")?.disabled,
+          nextDisabled: document.querySelector("[aria-label='Next summary']")?.disabled,
+          downloadButtons: document.querySelectorAll("[data-agent-summary-page] .summary-attachment-download[data-download-attachment='summary-download-fixture']").length,
+          attachmentDetailHref: document.querySelector("[data-agent-summary-page] .summary-attachment-item .summary-attachment-row")?.getAttribute("href"),
           deduplicated: runSummaryDetailContent({
             content: "partial: First paragraph.\\n\\nFirst paragraph.\\n\\nSecond paragraph.",
             metadata: { status: "partial" },
           }),
         }));
-        if (summaryFullView.mode !== "full" || !summaryFullView.full || !summaryFullView.summary || summaryFullView.recent || summaryFullView.deduplicated !== "First paragraph.\\n\\nSecond paragraph." || !summaryFullView.cost.includes("$1.25+")) {
+        if (summaryFullView.mode !== "full" || !summaryFullView.full || !summaryFullView.summary || summaryFullView.recent ||
+            summaryFullView.previousDisabled || !summaryFullView.nextDisabled || summaryFullView.downloadButtons !== 1 ||
+            !summaryFullView.attachmentDetailHref?.includes("attachment/summary-download-fixture") ||
+            summaryFullView.deduplicated !== "First paragraph.\\n\\nSecond paragraph." || !summaryFullView.cost.includes("$1.25+")) {
           throw new Error(`Summary did not retain the shared full-view layout: ${JSON.stringify(summaryFullView)}`);
+        }
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "summary-navigation-download.png") });
+        await page.click("[aria-label='Previous summary']");
+        const previousSummary = await page.evaluate(() => ({
+          summaryId: parseRoute().summaryId,
+          content: document.querySelector("[data-agent-summary-page]")?.innerText,
+          previousDisabled: document.querySelector("[aria-label='Previous summary']")?.disabled,
+          nextDisabled: document.querySelector("[aria-label='Next summary']")?.disabled,
+        }));
+        if (previousSummary.summaryId !== "summary-older" || !previousSummary.content?.includes("Older summary content.") ||
+            !previousSummary.previousDisabled || previousSummary.nextDisabled) {
+          throw new Error(`Summary navigation did not move to the older run: ${JSON.stringify(previousSummary)}`);
         }
 
         await page.evaluate((key) => {
@@ -5124,17 +5186,28 @@ def write_smoke_script(path)
           const nav = document.querySelector(".settings-section-nav");
           const button = document.querySelector("[data-scroll-settings-section='settings-automation']");
           const panel = document.querySelector("#settings-panel-automation");
+          const shell = document.querySelector(".settings-section-nav-shell");
+          const buttonTops = Array.from(nav?.querySelectorAll("button") || [], (item) => Math.round(item.getBoundingClientRect().top));
           return {
             sharedNav: nav?.classList.contains("ui-section-nav"),
             current: button?.getAttribute("aria-current"),
             controls: button?.getAttribute("aria-controls"),
             sharedPanel: panel?.classList.contains("ui-section-panel"),
+            singleRow: new Set(buttonTops).size === 1,
+            horizontalScroll: getComputedStyle(nav).overflowX === "auto",
+            scrollable: nav.scrollWidth > nav.clientWidth,
+            sticky: getComputedStyle(shell).position === "sticky",
+            shellTop: Math.round(shell?.getBoundingClientRect().top || 0),
+            headerBottom: Math.round(document.querySelector(".app-header")?.getBoundingClientRect().bottom || 0),
           };
         });
         if (!settingsComposite.sharedNav || settingsComposite.current !== "location" ||
-            settingsComposite.controls !== "settings-panel-automation" || !settingsComposite.sharedPanel) {
+            settingsComposite.controls !== "settings-panel-automation" || !settingsComposite.sharedPanel ||
+            !settingsComposite.singleRow || !settingsComposite.horizontalScroll || !settingsComposite.scrollable ||
+            !settingsComposite.sticky || Math.abs(settingsComposite.shellTop - settingsComposite.headerBottom) > 1) {
           throw new Error(`Settings lost shared section navigation behavior: ${JSON.stringify(settingsComposite)}`);
         }
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "settings-horizontal-nav.png") });
         const loopDefaults = {
           interval: await page.locator("#session-loop-default-interval").inputValue(),
           endTime: await page.locator("#session-loop-default-end-time").inputValue(),

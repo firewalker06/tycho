@@ -4498,6 +4498,14 @@ select {
   margin-top: 12px;
 }
 
+.summary-attachment-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .summary-attachment-row {
   display: flex;
   align-items: center;
@@ -4512,6 +4520,10 @@ select {
   font: inherit;
   text-align: left;
   text-decoration: none;
+}
+
+.summary-attachment-download {
+  flex: 0 0 auto;
 }
 
 .summary-attachment-row:hover,
@@ -4813,6 +4825,25 @@ select {
 
 .agent-summary-viewer {
   align-self: start;
+}
+
+.agent-summary-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.agent-summary-navigation {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.agent-summary-navigation button:disabled {
+  opacity: .35;
+  cursor: default;
 }
 
 .agent-attachment-body {
@@ -7090,8 +7121,14 @@ body:has(.inquiry-form-full-screen) {
 }
 
 .settings-section-nav {
-  grid-template-columns: repeat(6, minmax(max-content, 1fr));
-  display: grid;
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+
+.settings-section-nav button {
+  flex: 1 0 max-content;
 }
 
 .settings-section-panel {
