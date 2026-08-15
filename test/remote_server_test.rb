@@ -22,6 +22,7 @@ module RemoteServerTest
     assert_remote_agent_bulk_archive
     assert_remote_agent_clone_archives_source_with_editable_name
     assert_remote_agent_payload_has_revision
+    assert_remote_agent_activity_snapshot
     assert_remote_agent_payload_has_cost_snapshot
     assert_remote_metrics_query_and_backfill_routes
     assert_remote_inquiry_payload_has_stable_id_and_guarded_answer
@@ -164,6 +165,33 @@ module RemoteServerTest
              second_page.dig(:pagination, :next_page).nil? &&
              first_page.dig(:agents, 0, :key) != second_page.dig(:agents, 0, :key),
              "expected stable multi-page archive ordering")
+    end
+  end
+
+  def assert_remote_agent_activity_snapshot
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      snapshot = HQ::AgentActivitySnapshot.new
+      service = HQ::RemoteService.new(registry: registry, agent_activity_snapshot: snapshot)
+      agent = service.create_agent(
+        "project_key" => "web", "name" => "Activity agent", "prompt" => "Observe", "agent" => "codex"
+      )
+      stored = HQ::AgentStore.new([]).load.find { |candidate| candidate.key == agent[:key] }
+      stored.mark_unread!
+      HQ::AgentStore.new([]).save([stored])
+      service.agents
+
+      server = HQ::RemoteServer.new(agent_activity_snapshot: snapshot)
+      response = server.send(:route, service, "GET", "/servers/activity", {}, nil)
+      activity = response.fetch(:body)
+      local = activity.fetch(:servers).find { |entry| entry[:key] == "local" }
+      assert(activity[:unread_count] == 1, "expected aggregate activity unread count")
+      assert(local[:ready] && local.dig(:agents, 0, :name) == "Activity agent",
+             "expected the activity endpoint to expose the shared local snapshot")
+      assert(local.dig(:agents, 0, :unread), "expected activity to include unread state")
+      assert(!local.dig(:agents, 0).key?(:prompt), "expected activity to omit full agent detail")
     end
   end
 
@@ -3546,7 +3574,12 @@ module RemoteServerTest
       write_project_workspace(workspace)
       registry = registry_for_project(dir, workspace)
       notifier = RecordingPushNotifier.new
-      service = HQ::RemoteService.new(registry: registry, web_push_notifier: notifier)
+      activity_snapshot = HQ::AgentActivitySnapshot.new
+      service = HQ::RemoteService.new(
+        registry: registry,
+        web_push_notifier: notifier,
+        agent_activity_snapshot: activity_snapshot
+      )
       started_at = Time.now - 60
 
       input_agent = stale_running_agent(
@@ -3590,6 +3623,9 @@ module RemoteServerTest
 
       result = service.dispatch_agent_push_notifications!
       assert(result[:events] == 2, "expected two agent push events")
+      input_activity = activity_snapshot.snapshot[:agents].find { |agent| agent[:key] == "web-agent-1" }
+      assert(input_activity[:awaiting_input] && input_activity[:unread],
+             "expected notification reconciliation to publish finalized inquiry activity")
       assert(notifier.payloads.length == 2, "expected two push payloads")
       assert(notifier.payloads.any? { |payload| payload[:title] == "Agent requires response" },
              "expected requires-response notification")
@@ -4379,6 +4415,16 @@ module RemoteServerTest
            "expected create-only agent submission to live behind a secondary option")
     assert(js[:content_type].include?("javascript"), "expected /ui.js to return JavaScript")
     assert(js[:body].include?("DEFAULT_REFRESH_INTERVALS"), "expected UI JavaScript to define refresh defaults")
+    assert(js[:body].include?("AGENT_ACTIVITY_POLL_INTERVALS") &&
+           js[:body].include?('brokerGet("/servers/activity")') &&
+           js[:body].include?("function pollAgentActivity") &&
+           js[:body].include?("function loadAgentActivity") &&
+           js[:body].include?('`/servers/${encodeURIComponent(server.key)}/activity`'),
+           "expected the logo agent activity to poll a dedicated lightweight endpoint")
+    assert(js[:body].include?("function mergeAgentActivity") &&
+           js[:body].include?("state.activityAppliedSequence") &&
+           js[:body].include?("syncUnreadAlert();"),
+           "expected activity polling to reject stale responses and update the logo without a page render")
     assert(js[:body].include?("window.TychoRemoteHelpers"),
            "expected the main Remote UI script to use the helper namespace")
     assert(js[:body].include?('updateViaCache: "none"'),
@@ -5821,6 +5867,9 @@ module RemoteServerTest
            js[:body].scan("state.fullScreenComposerKeys.delete(key);\n  schedule();").length >= 1 &&
            js[:body].scan("state.fullScreenInquiryKeys.delete(key);\n  schedule();").length >= 1,
            "expected full-screen Conversation and inquiry forms to pause automatic polling")
+    activity_poll = js[:body][/async function pollAgentActivity\(\).*?^}/m]
+    assert(activity_poll && !activity_poll.include?("fullScreenEditorOpen"),
+           "expected logo activity polling to continue while full-screen editors are open")
     assert(js[:body].include?('class="card agent-summary-card') &&
            js[:body].include?("serverIdentityBadge(agent, { compactHealth: true })") &&
            js[:body].include?('class="agent-card-status"') &&

@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-08-13
+2026-08-15
 
 ## Strategic Direction
 
@@ -73,6 +73,7 @@ Key references:
 | Remote UI control sizing | Shared 44 px control and touch-target tokens, 16 px mobile form text, visible focus states, and explicit validation/status text | Avoid mobile auto-zoom, undersized targets, color-only state, and inconsistent action geometry |
 | Remote UI design system | Keep a no-build internal system: semantic `--ds-*` tokens and reusable CSS components in `design_system.css`, product composition in `app.css`, and a static `/design-system` preview; migrate routes incrementally | Match the existing Ruby/vanilla-JS deployment, preserve behavior, make foundations governable, and avoid a framework or package rewrite |
 | Remote UI deployment coherence | Snapshot all browser assets and their shared hash when `tycho serve` starts; require a daemon restart to load source updates | Prevent an old Ruby API from serving a newer on-disk JavaScript client after a pull, which can break push subscription renewal and other cross-boundary flows |
+| Remote UI agent activity | Keep a server-owned in-memory activity snapshot updated by lifecycle mutations and the existing notification reconciliation pass; poll its compact read-only endpoint independently from page refreshes | Logo unread counts and agent switching stay current while forms pause page polling, without adding another server loop or letting slower catalog responses overwrite newer activity |
 | Remote multiserver resources | Keep one UI-serving broker, aggregate only compact Agent and Project resources through a disk-backed stale-while-revalidate catalog, and require explicit server identity for details and mutations | Combined lists stay responsive across peer failures and broker restarts; only a validated full snapshot may remove cached resources, while schedules, setup, GitHub, push, restart, and other server-level behavior remain local |
 | Project workspace browsing | Keep canonical path resolution, sensitive/generated-file policy, bounded listing, and text preview in `ProjectWorkspace`; expose only relative paths through project-scoped read-only endpoints | Remote and multiserver browsing must not leak host paths or let client routing bypass traversal, symlink, VCS, credential, binary, or size controls |
 | Remote credential ownership | Bind one bearer credential to each stable remote server key and verified scheme/host/effective-port origin; keep Tycho-managed values in atomic mode-`0600` `~/.tycho/config/remote_credentials.json`, with explicit per-server `token_env` overrides | CLI and broker share one resolver, multiple peers cannot select credentials by incidental names, origin changes require explicit recovery, and browser promotion removes its copy only after verified persistence |
@@ -358,6 +359,7 @@ verify the bottle.
 - [x] Full-screen inquiry editor with trailing unstructured Leave feedback field
 - [x] Poll-safe inline and full-screen Conversation/inquiry forms that remain attached and focused during shell refreshes
 - [x] Focused Summary, Attachment, PR Diff, and agent-backed project Diff routes show that conversation polling is paused, poll only the lightweight resource catalog, preserve their workspace DOM, and reconcile status/lifecycle controls in place; normal route polling resumes on Conversation and top-level live views
+- [x] Keep logo unread counts and agent switching live through a compact activity snapshot and independent client poll, including while full-screen forms pause page refreshes
 - [x] Attachment detail context menus with exclusive Balanced/Widen/Full layouts, content/path copy, and forced cache refresh
 - [x] Responsive desktop/mobile shell with persistent, header-aligned in-shell desktop navigation across top-level and detail routes, consistently named New agent action, shared control sizing, and fixed-region safe-area handling
 - [x] Sticky Settings section navigator over one continuous page and copyable native session ID in Conversation Settings
