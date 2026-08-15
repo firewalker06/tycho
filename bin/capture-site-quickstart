@@ -1,0 +1,332 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "net/http"
+require "open3"
+require "rbconfig"
+require "socket"
+require "tmpdir"
+require "timeout"
+require "time"
+require "uri"
+
+ROOT = File.expand_path("..", __dir__)
+OUTPUT_DIR = File.join(ROOT, "docs", "assets", "site-quickstart")
+VIEWPORT = { width: 1440, height: 900 }.freeze
+
+def free_port
+  server = TCPServer.new("127.0.0.1", 0)
+  server.addr[1]
+ensure
+  server&.close
+end
+
+def chrome_path
+  explicit = ENV["CHROME_PATH"].to_s
+  return explicit unless explicit.empty?
+
+  [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+  ].find { |path| File.executable?(path) }
+end
+
+def ensure_prerequisites!
+  raise "node is required for quickstart capture" unless system("node", "--version", out: File::NULL, err: File::NULL)
+  raise "npm is required for quickstart capture" unless system("npm", "--version", out: File::NULL, err: File::NULL)
+
+  browser = chrome_path
+  raise "Chrome/Chromium is required; set CHROME_PATH to the browser executable" unless browser
+
+  browser
+end
+
+def install_playwright!(node_dir)
+  FileUtils.mkdir_p(node_dir)
+  File.write(File.join(node_dir, "package.json"), JSON.generate("private" => true))
+  out, err, status = Open3.capture3(
+    "npm", "install", "--prefix", node_dir, "--no-audit", "--fund=false", "--ignore-scripts", "playwright"
+  )
+  return if status.success?
+
+  raise "Failed to install Playwright:\n#{out}\n#{err}"
+end
+
+def wait_for_remote(base_url, log_path)
+  Timeout.timeout(15) do
+    loop do
+      response = Net::HTTP.get_response(URI("#{base_url}/setup"))
+      return if response.is_a?(Net::HTTPSuccess)
+    rescue Errno::ECONNREFUSED, Errno::ECONNRESET
+      sleep 0.1
+    end
+  end
+rescue Timeout::Error
+  raise "Remote UI did not start:\n#{File.read(log_path)}"
+end
+
+def fixture_agent(key:, name:, project_key:, workspace:, status:, summary:, minutes_ago:, pid: nil)
+  now = Time.now
+  started_at = now - ((minutes_ago + 2) * 60)
+  finished_at = status == "running" ? nil : now - (minutes_ago * 60)
+  exit_code = status == "failed" ? 1 : (status == "running" ? nil : 0)
+  structured_status = status == "awaiting-input" ? "input_required" : status
+  structured_result = if status == "running"
+                        nil
+                      else
+                        {
+                          "status" => structured_status,
+                          "summary" => summary,
+                          "inquiry" => status == "awaiting-input" ? {
+                            "message" => "Choose the rollout window before continuing.",
+                            "fields" => [{
+                              "key" => "window",
+                              "label" => "Rollout window",
+                              "description" => "Select when the production rollout should begin.",
+                              "input_type" => "select",
+                              "options" => ["After peak traffic", "Next maintenance window"]
+                            }]
+                          } : nil,
+                          "attachments" => nil
+                        }
+                      end
+  log_path = File.join(ENV.fetch("TYCHO_CAPTURE_LOGS_ROOT"), "agents", "#{key}.raw.log")
+
+  {
+    "key" => key,
+    "name" => name,
+    "project_key" => project_key,
+    "template_key" => "custom",
+    "workspace" => workspace,
+    "prompt" => "Complete the focused #{name.downcase} task and report the result.",
+    "created_at" => (started_at - 120).iso8601,
+    "started_at" => started_at.iso8601,
+    "finished_at" => finished_at&.iso8601,
+    "pid" => pid,
+    "last_exit_code" => exit_code,
+    "log_path" => log_path,
+    "runs" => [{
+      "started_at" => started_at.iso8601,
+      "finished_at" => finished_at&.iso8601,
+      "exit_code" => exit_code,
+      "status" => structured_status,
+      "log_path" => log_path,
+      "command" => "codex exec --json",
+      "agent" => "codex",
+      "model" => "gpt-5.4",
+      "run_id" => "quickstart-#{key}"
+    }],
+    "total_run_count" => 1,
+    "sandbox_mode" => "danger-full-access",
+    "agent" => "codex",
+    "model" => "gpt-5.4",
+    "reasoning_effort" => "medium",
+    "unread" => status == "awaiting-input",
+    "summary" => summary,
+    "structured_result" => structured_result,
+    "color_index" => minutes_ago % 8
+  }.compact
+end
+
+def write_fixture(dir, running_pids)
+  config_dir = File.join(dir, "config")
+  logs_dir = File.join(dir, "logs")
+  atlas_workspace = File.join(dir, "workspaces", "atlas-web")
+  compass_workspace = File.join(dir, "workspaces", "compass-api")
+  [config_dir, logs_dir, atlas_workspace, compass_workspace, File.join(logs_dir, "agents")].each do |path|
+    FileUtils.mkdir_p(path)
+  end
+  ENV["TYCHO_CAPTURE_LOGS_ROOT"] = logs_dir
+
+  config_path = File.join(config_dir, "hq.yml")
+  prompts_path = File.join(config_dir, "system_prompts.yml")
+  response_style_path = File.join(config_dir, "response_style.md")
+  schedules_path = File.join(config_dir, "schedules.yml")
+  File.write(config_path, <<~YAML)
+    ---
+    projects:
+      - key: atlas-web
+        name: Atlas Web
+        path: #{atlas_workspace.inspect}
+        agent: codex
+        model: gpt-5.4
+        reasoning_effort: medium
+      - key: compass-api
+        name: Compass API
+        path: #{compass_workspace.inspect}
+        agent: codex
+        model: gpt-5.4
+        reasoning_effort: medium
+  YAML
+  File.write(prompts_path, "---\ncustom: \"Complete the requested task.\"\n")
+  File.write(response_style_path, "Write concise, operator-facing updates.\n")
+  File.write(schedules_path, "---\nschedules: []\n")
+
+  agents = [
+    fixture_agent(
+      key: "atlas-release-readiness", name: "Release readiness", project_key: "atlas-web",
+      workspace: atlas_workspace, status: "running", summary: "Checking the final release gates.", minutes_ago: 1,
+      pid: running_pids.fetch(0)
+    ),
+    fixture_agent(
+      key: "atlas-checkout-rollout", name: "Checkout rollout", project_key: "atlas-web",
+      workspace: atlas_workspace, status: "awaiting-input",
+      summary: "Choose the rollout window before continuing.", minutes_ago: 4
+    ),
+    fixture_agent(
+      key: "atlas-accessibility-audit", name: "Accessibility audit", project_key: "atlas-web",
+      workspace: atlas_workspace, status: "succeeded",
+      summary: "Verified keyboard navigation and focus order.", minutes_ago: 9
+    ),
+    fixture_agent(
+      key: "compass-contract-review", name: "API contract review", project_key: "compass-api",
+      workspace: compass_workspace, status: "succeeded",
+      summary: "Validated the public API contract and examples.", minutes_ago: 6
+    ),
+    fixture_agent(
+      key: "compass-webhook-tests", name: "Webhook test repair", project_key: "compass-api",
+      workspace: compass_workspace, status: "failed",
+      summary: "The webhook fixture still fails on retry ordering.", minutes_ago: 3
+    ),
+    fixture_agent(
+      key: "compass-dependency-refresh", name: "Dependency refresh", project_key: "compass-api",
+      workspace: compass_workspace, status: "running", summary: "Updating dependencies and running checks.",
+      minutes_ago: 2, pid: running_pids.fetch(1)
+    )
+  ]
+  File.write(File.join(logs_dir, "managed_agents.json"), JSON.pretty_generate(agents))
+
+  {
+    config_path: config_path,
+    prompts_path: prompts_path,
+    response_style_path: response_style_path,
+    schedules_path: schedules_path,
+    logs_dir: logs_dir
+  }
+end
+
+def write_capture_script(path)
+  File.write(path, <<~'JS')
+    const { chromium } = require("playwright");
+    const path = require("path");
+
+    async function main() {
+      const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH, headless: true });
+      const page = await browser.newPage({
+        viewport: { width: 1440, height: 900 },
+        colorScheme: "dark",
+        deviceScaleFactor: 1,
+      });
+      const errors = [];
+      const failedResponses = [];
+      page.on("console", (message) => {
+        if (message.type() === "error" && !message.text().startsWith("Failed to load resource:")) {
+          errors.push(message.text());
+        }
+      });
+      page.on("pageerror", (error) => errors.push(error.message));
+      page.on("response", (response) => {
+        if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.url()}`);
+      });
+
+      try {
+        await page.goto(`${process.env.TYCHO_REMOTE_UI_URL}/#agents`, { waitUntil: "networkidle" });
+        await page.locator("#quick-agent-fab").click();
+        await page.locator("#quick-agent-dialog[open]").waitFor({ state: "visible" });
+        await page.locator("#quick-agent-prompt").fill(
+          "Review the checkout rollout plan, verify the release gates, and summarize any operator action needed."
+        );
+        await page.locator("[data-quick-agent-toggle]").click();
+        await page.locator("#quick-agent-effort").waitFor({ state: "visible" });
+        await page.screenshot({
+          path: path.join(process.env.TYCHO_CAPTURE_OUTPUT_DIR, "quickstart-launch-v0.10.0.png"),
+          fullPage: false,
+        });
+
+        await page.keyboard.press("Escape");
+        await page.goto(`${process.env.TYCHO_REMOTE_UI_URL}/#agents`, { waitUntil: "networkidle" });
+        const rows = page.locator(".agent-row");
+        await rows.first().waitFor({ state: "visible" });
+        const rowCount = await rows.count();
+        if (rowCount !== 6) throw new Error(`Expected 6 complete agent rows, found ${rowCount}`);
+        const listBox = await page.locator(".agent-ledger").boundingBox();
+        if (!listBox || listBox.y + listBox.height > 900) {
+          throw new Error(`Complete agent list does not fit the capture viewport: ${JSON.stringify(listBox)}`);
+        }
+        await page.screenshot({
+          path: path.join(process.env.TYCHO_CAPTURE_OUTPUT_DIR, "quickstart-watch-v0.10.0.png"),
+          fullPage: false,
+        });
+
+        if (errors.length || failedResponses.length) {
+          throw new Error(`Browser errors: ${[...errors, ...failedResponses].join(" | ")}`);
+        }
+        console.log(`Captured launch modal and ${rowCount}-row agent list at 1440x900`);
+      } finally {
+        await browser.close();
+      }
+    }
+
+    main().catch((error) => {
+      console.error(error);
+      process.exit(1);
+    });
+  JS
+end
+
+def terminate_process_group(pid)
+  Process.kill("TERM", -pid)
+  Process.wait(pid)
+rescue Errno::ESRCH, Errno::ECHILD
+  nil
+end
+
+browser = ensure_prerequisites!
+FileUtils.mkdir_p(OUTPUT_DIR)
+
+Dir.mktmpdir("tycho-site-quickstart-capture") do |dir|
+  running_pids = 2.times.map do
+    Process.spawn("sleep", "600", pgroup: true, out: File::NULL, err: File::NULL)
+  end
+  fixture = write_fixture(dir, running_pids)
+  port = free_port
+  base_url = "http://127.0.0.1:#{port}"
+  server_log = File.join(dir, "remote-server.log")
+  server_env = {
+    "TYCHO_CONFIG_PATH" => fixture.fetch(:config_path),
+    "TYCHO_SYSTEM_PROMPTS_PATH" => fixture.fetch(:prompts_path),
+    "TYCHO_RESPONSE_STYLE_PATH" => fixture.fetch(:response_style_path),
+    "TYCHO_SCHEDULES_PATH" => fixture.fetch(:schedules_path),
+    "TYCHO_LOGS_ROOT" => fixture.fetch(:logs_dir),
+    "TYCHO_REMOTE_TOKEN" => ""
+  }
+  server_pid = Process.spawn(
+    server_env,
+    RbConfig.ruby, "bin/tycho", "serve", "--host", "127.0.0.1", "--port", port.to_s,
+    chdir: ROOT, out: [server_log, "w"], err: %i[child out], pgroup: true
+  )
+
+  begin
+    wait_for_remote(base_url, server_log)
+    node_dir = File.join(dir, "node")
+    install_playwright!(node_dir)
+    capture_script = File.join(node_dir, "capture.js")
+    write_capture_script(capture_script)
+    capture_env = {
+      "CHROME_PATH" => browser,
+      "TYCHO_REMOTE_UI_URL" => base_url,
+      "TYCHO_CAPTURE_OUTPUT_DIR" => OUTPUT_DIR
+    }
+    out, err, status = Open3.capture3(capture_env, "node", capture_script, chdir: node_dir)
+    puts out unless out.empty?
+    warn err unless err.empty?
+    raise "Quickstart capture failed" unless status.success?
+  ensure
+    terminate_process_group(server_pid)
+    running_pids.each { |pid| terminate_process_group(pid) }
+    ENV.delete("TYCHO_CAPTURE_LOGS_ROOT")
+  end
+end

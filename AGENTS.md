@@ -20,6 +20,7 @@ Runtime artifacts are written to `~/.tycho/logs/`, including app state files suc
 - `bundle exec bin/tycho metrics query [filters] [--json]` and `metrics backfill [--timezone ZONE]`: query or idempotently rebuild normalized run/native-session usage metrics.
 - `bin/test`: run the public CI-equivalent Ruby syntax and regression suite.
 - `bin/remote-ui-smoke`: start a throwaway Remote UI server with temp config/log roots, create a fixture agent, and run a Chrome/Playwright smoke check for composer refresh preservation and mobile dock layout.
+- `bin/capture-site-quickstart`: regenerate the v0.10.0 website launch and watch screenshots from deterministic synthetic Remote UI fixtures at 1440x900.
 - `bundle exec ruby -c bin/tycho`: syntax-check the main executable before opening a PR.
 - `bundle exec ruby test/registry_test.rb`: verify registry loading for split config and system prompt interpolation.
 - `bundle exec ruby test/parser_test.rb`: verify synthetic Claude parser fixture shapes.
