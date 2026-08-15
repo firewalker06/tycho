@@ -1,12 +1,12 @@
 ---
 name: PROJECT_STATUS
-description: HQ project status, key decisions, and roadmap
+description: Tycho project status, key decisions, and roadmap
 type: project
 ---
 
-# Project Status - HQ
+# Project Status - Tycho
 
-> **Purpose:** Living status document for HQ. Stable conventions and architectural guidance live in [CLAUDE.md](../CLAUDE.md); operational pitfalls live in [GOTCHAS.md](./GOTCHAS.md).
+> **Purpose:** Living status document for Tycho. Stable conventions and architectural guidance live in [CLAUDE.md](../CLAUDE.md); operational pitfalls live in [GOTCHAS.md](./GOTCHAS.md).
 
 ## Last Updated
 
@@ -90,18 +90,12 @@ Key references:
 
 ## Current Focus
 
-**v0.9 release**: persistent multiserver Agent and Project catalogs and the
-second Remote UI design-system pass are complete. The Remote UI now aggregates
-peer agents and projects through a stale-while-revalidate broker catalog, keeps
-server-qualified detail and mutation routes explicit, persists last-good peer
-snapshots, and shows each connected server's Tycho version in Settings with
-host-version mismatch detection. GitHub App groundwork is present, including
-device login, guarded review posting, and immutable diff snapshots, but the
-canonical App workflow is not applicable for general use yet and the Review
-Inbox route remains paused until discovery is redesigned around bounded
-incremental loading. The remaining v0.9.0 work is to merge the release-prep
-commit, tag the release, publish GitHub notes, update the Homebrew tap, and
-verify the bottle.
+**v0.10 release**: remote CLI control, server-owned credentials, structured
+output correction, auditable usage metrics, project workspace browsing, Tycho
+skill installation, pull-request context, and durable agent delegation are
+complete. Remote UI now keeps compact agent activity live independently from
+page polling, preserves focused work, and adds direct navigation across run
+summaries and their attachments.
 
 ## Roadmap
 
@@ -203,13 +197,24 @@ verify the bottle.
       confirmations, detail headers, and empty states
 - [x] Pause the eager Review Inbox until bounded discovery and loading are redesigned
 
+### v0.10 — Agent Operations and Observability ✓
+
+- [x] Add remote project and managed-agent CLI operations with private,
+      server-bound credential management
+- [x] Validate structured output and request bounded same-session corrections
+- [x] Add normalized run/native-session usage metrics and historical backfill
+- [x] Add safe Remote UI workspace browsing and Tycho skill installation
+- [x] Add selected PR diff context and persistent agent PR catalogs
+- [x] Add durable managed-agent delegation and terminal parent callbacks
+- [x] Keep agent activity live during focused Remote UI workflows
+
 ## Features Candidates
 
 ### Release Hardening
 
 - [ ] Formalize specs
 - [x] Stabilize source packaging and pre-release browser/TUI checks
-- [ ] Publish and verify the 0.9.0 Homebrew bottles
+- [x] Publish and verify the 0.9.0 Homebrew bottles
 
 ### Canonical Tycho GitHub App
 
