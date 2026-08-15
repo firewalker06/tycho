@@ -3504,8 +3504,10 @@ module HQ
     def dispatch_agent_push_events(events, agents:)
       totals = { events: 0, sent: 0, failed: 0, attempted: 0 }
       unread_count = agents.count(&:unread?)
-      Array(events).each do |event|
-        agent = agents.find { |candidate| candidate.key == event.agent_key }
+      event_agent_keys = Array(events).map(&:agent_key)
+      candidate_keys = (event_agent_keys + agents.select(&:unread?).map(&:key)).uniq
+      candidate_keys.each do |agent_key|
+        agent = agents.find { |candidate| candidate.key == agent_key }
         payload = agent && agent_push_payload(agent, unread_count: unread_count)
         next unless payload
 

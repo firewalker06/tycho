@@ -3581,6 +3581,13 @@ module RemoteServerTest
         File.write(File.join(HQ::AGENT_LOGS_DIR, "#{agent.key}.status"), "0")
       end
 
+      refreshed_agents = HQ::AgentStore.new([]).load
+      refreshed_input_agent = refreshed_agents.find { |agent| agent.key == "web-agent-1" }
+      assert(refreshed_input_agent.status == "awaiting-input",
+             "expected a normal agent refresh to observe the completed inquiry run")
+      assert(notifier.payloads.empty?,
+             "expected the independent refresh not to have access to the push notifier")
+
       result = service.dispatch_agent_push_notifications!
       assert(result[:events] == 2, "expected two agent push events")
       assert(notifier.payloads.length == 2, "expected two push payloads")
