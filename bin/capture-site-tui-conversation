@@ -1,0 +1,411 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "open3"
+require "tmpdir"
+require "time"
+
+ROOT = File.expand_path("..", __dir__)
+$LOAD_PATH.unshift(File.join(ROOT, "lib"))
+OUTPUT_DIR = File.join(ROOT, "docs", "assets", "site-homepage")
+OUTPUT_PATH = File.join(OUTPUT_DIR, "tui-conversation-v0.10.0.png")
+VIEWPORT = { width: 1440, height: 900 }.freeze
+TERMINAL = { columns: 140, rows: 47 }.freeze
+
+def chrome_path
+  explicit = ENV["CHROME_PATH"].to_s
+  return explicit unless explicit.empty?
+
+  [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+  ].find { |path| File.executable?(path) }
+end
+
+def ensure_prerequisites!
+  raise "node is required for TUI capture" unless system("node", "--version", out: File::NULL, err: File::NULL)
+  raise "npm is required for TUI capture" unless system("npm", "--version", out: File::NULL, err: File::NULL)
+
+  browser = chrome_path
+  raise "Chrome/Chromium is required; set CHROME_PATH to the browser executable" unless browser
+
+  browser
+end
+
+def install_playwright!(node_dir)
+  FileUtils.mkdir_p(node_dir)
+  File.write(File.join(node_dir, "package.json"), JSON.generate("private" => true))
+  out, err, status = Open3.capture3(
+    "npm", "install", "--prefix", node_dir, "--no-audit", "--fund=false", "--ignore-scripts", "playwright"
+  )
+  return if status.success?
+
+  raise "Failed to install Playwright:\n#{out}\n#{err}"
+end
+
+def fixture_agent(key:, name:, project_key:, workspace:, status:, minutes_ago:, summary: nil, selected: false)
+  reference = Time.parse("2026-08-16 09:30:00 +07:00")
+  started_at = reference - ((minutes_ago + 3) * 60)
+  finished_at = status == "running" ? nil : reference - (minutes_ago * 60)
+  exit_code = status == "failed" ? 1 : (status == "running" ? nil : 0)
+  log_path = File.join(ENV.fetch("TYCHO_CAPTURE_LOGS_ROOT"), "agents", "#{key}.raw.log")
+  run_status = status == "input_required" ? "input_required" : status
+  structured_result = if selected
+                        {
+                          "status" => "success",
+                          "summary" => summary,
+                          "inquiry" => nil,
+                          "attachments" => nil
+                        }
+                      end
+
+  HQ::ManagedAgent.new(
+    key: key,
+    name: name,
+    project_key: project_key,
+    template_key: "custom",
+    workspace: workspace,
+    prompt: "Complete the focused #{name.downcase} task with synthetic project data.",
+    created_at: started_at - 120,
+    started_at: started_at,
+    finished_at: finished_at,
+    pid: status == "running" ? Process.pid : nil,
+    last_exit_code: exit_code,
+    log_path: log_path,
+    runs: [
+      HQ::ManagedAgent::AgentRun.new(
+        started_at: started_at,
+        finished_at: finished_at,
+        exit_code: exit_code,
+        status: run_status,
+        log_path: log_path,
+        command: "codex exec --json",
+        agent: "codex",
+        model: "gpt-5.4",
+        run_id: "homepage-#{key}"
+      )
+    ],
+    agent: "codex",
+    model: "gpt-5.4",
+    reasoning_effort: "medium",
+    unread: status == "input_required",
+    summary: summary,
+    structured_result: structured_result,
+    color_index: minutes_ago % 8
+  )
+end
+
+def write_fixture(dir)
+  ENV.delete("NO_COLOR")
+  ENV["CLICOLOR_FORCE"] = "1"
+  ENV["TYCHO_LIPGLOSS_BACKEND"] = "compat"
+  config_dir = File.join(dir, "config")
+  logs_dir = File.join(dir, "logs")
+  atlas_workspace = File.join(dir, "workspaces", "atlas-studio")
+  relay_workspace = File.join(dir, "workspaces", "relay-api")
+  [config_dir, logs_dir, atlas_workspace, relay_workspace, File.join(logs_dir, "agents")].each do |path|
+    FileUtils.mkdir_p(path)
+  end
+  ENV["TYCHO_CAPTURE_LOGS_ROOT"] = logs_dir
+  ENV["TYCHO_LOGS_ROOT"] = logs_dir
+  ENV["TYCHO_CONFIG_PATH"] = File.join(config_dir, "hq.yml")
+  ENV["TYCHO_SYSTEM_PROMPTS_PATH"] = File.join(config_dir, "system_prompts.yml")
+  ENV["TYCHO_RESPONSE_STYLE_PATH"] = File.join(config_dir, "response_style.md")
+  ENV["TYCHO_SCHEDULES_PATH"] = File.join(config_dir, "schedules.yml")
+  ENV["TYCHO_GLAMOUR_SYNC"] = "1"
+
+  File.write(ENV.fetch("TYCHO_CONFIG_PATH"), <<~YAML)
+    ---
+    projects:
+      - key: atlas-studio
+        name: Atlas Studio
+        path: #{atlas_workspace.inspect}
+        agent: codex
+        model: gpt-5.4
+        reasoning_effort: medium
+      - key: relay-api
+        name: Relay API
+        path: #{relay_workspace.inspect}
+        agent: codex
+        model: gpt-5.4
+        reasoning_effort: medium
+  YAML
+  File.write(ENV.fetch("TYCHO_SYSTEM_PROMPTS_PATH"), "---\ncustom: Complete the requested task.\n")
+  File.write(ENV.fetch("TYCHO_RESPONSE_STYLE_PATH"), "Write concise, operator-facing updates.\n")
+  File.write(ENV.fetch("TYCHO_SCHEDULES_PATH"), "---\nschedules: []\n")
+  File.write(File.join(logs_dir, "managed_agents.json"), "[]\n")
+
+  {
+    atlas_workspace: atlas_workspace,
+    relay_workspace: relay_workspace,
+    logs_dir: logs_dir
+  }
+end
+
+def build_app(fixture)
+  require_relative "../lib/hq/app"
+
+  release_summary = "Release candidate validated: checks pass, rollout and rollback notes are complete."
+  agents = [
+    fixture_agent(
+      key: "atlas-accessibility-pass", name: "Accessibility pass", project_key: "atlas-studio",
+      workspace: fixture.fetch(:atlas_workspace), status: "succeeded", minutes_ago: 12
+    ),
+    fixture_agent(
+      key: "atlas-release-readiness", name: "Release readiness", project_key: "atlas-studio",
+      workspace: fixture.fetch(:atlas_workspace), status: "succeeded", minutes_ago: 2,
+      summary: release_summary, selected: true
+    ),
+    fixture_agent(
+      key: "atlas-rollout-window", name: "Rollout window", project_key: "atlas-studio",
+      workspace: fixture.fetch(:atlas_workspace), status: "input_required", minutes_ago: 5
+    ),
+    fixture_agent(
+      key: "relay-contract-review", name: "Contract review", project_key: "relay-api",
+      workspace: fixture.fetch(:relay_workspace), status: "succeeded", minutes_ago: 8
+    ),
+    fixture_agent(
+      key: "relay-retry-repair", name: "Retry repair", project_key: "relay-api",
+      workspace: fixture.fetch(:relay_workspace), status: "failed", minutes_ago: 6
+    ),
+    fixture_agent(
+      key: "relay-test-suite", name: "Test suite", project_key: "relay-api",
+      workspace: fixture.fetch(:relay_workspace), status: "running", minutes_ago: 1
+    )
+  ]
+  selected_agent = agents.find { |agent| agent.key == "atlas-release-readiness" }
+  memory = HQ::AgentMemory.new(selected_agent)
+  memory.write_events!([])
+  memory.append_user_message!(
+    "Review the release candidate, verify the automated checks and deployment notes, then tell me whether " \
+    "the staged rollout is ready to begin.",
+    created_at: Time.parse("2026-08-16 09:18:00 +07:00")
+  )
+  memory.append_assistant_message!(
+    "I’m checking the test results, release notes, and rollback steps now. I’ll call out any operator action " \
+    "before recommending the rollout.",
+    created_at: Time.parse("2026-08-16 09:18:08 +07:00")
+  )
+  memory.append_tool_summary!(
+    "Read the synthetic release checklist and compared the deployment manifest.",
+    tool_name: "Read",
+    created_at: Time.parse("2026-08-16 09:18:18 +07:00")
+  )
+  memory.append_tool_summary!(
+    "Ran the unit, integration, and smoke suites: 184 checks passed.",
+    tool_name: "Bash",
+    created_at: Time.parse("2026-08-16 09:18:34 +07:00")
+  )
+  memory.append_assistant_message!(
+    "The release candidate is ready.\n\n" \
+    "• 126 unit, 42 integration, and 16 smoke checks pass.\n" \
+    "• Deployment notes name the owner, health signals, and rollback steps.\n" \
+    "• The staged rollout can begin; no blocking operator action remains.",
+    created_at: Time.parse("2026-08-16 09:19:02 +07:00")
+  )
+  memory.append_run_summary!(
+    summary: release_summary,
+    status: "success",
+    created_at: Time.parse("2026-08-16 09:19:05 +07:00")
+  )
+
+  app = HQ::App.new
+  sorted_agents = app.send(:sort_agents, agents)
+  app.instance_variable_set(:@all_agents, sorted_agents)
+  app.instance_variable_set(:@agents, sorted_agents)
+  app.instance_variable_get(:@selected)[:agents] = sorted_agents.index(selected_agent)
+  app.instance_variable_set(:@screen, :agents)
+  app.instance_variable_set(:@last_refresh, Time.parse("2026-08-16 09:30:00 +07:00"))
+  app.send(:rebuild_agent_index!)
+  app.send(:apply_window_size, TERMINAL.fetch(:columns), TERMINAL.fetch(:rows))
+  app.send(:open_agent_chat_form)
+  app.instance_variable_get(:@agent_chat_form).composer.value = "Ask a follow-up about rollout monitoring"
+  app.send(:sync_agent_chat_workspace!, force_bottom: false)
+  app
+end
+
+def write_capture_script(path)
+  File.write(path, <<~'JS')
+    const { chromium } = require("playwright");
+    const fs = require("fs");
+
+    function escapeHtml(value) {
+      return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    }
+
+    function ansiToHtml(input) {
+      const colors = ["#111111", "#ff5f56", "#57d163", "#f3e678", "#6f72d9", "#ef7cc1", "#56c7d9", "#d8d8d8"];
+      const bright = ["#666b85", "#ff6e67", "#6ee783", "#fff28a", "#8b8ff0", "#ff92d3", "#70dceb", "#ffffff"];
+      let state = { fg: null, bg: null, bold: false, dim: false, italic: false, underline: false, reverse: false };
+      let output = "";
+      let open = false;
+      const parts = input.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "").split(/(\x1b\[[0-9;]*m)/);
+
+      function close() {
+        if (open) output += "</span>";
+        open = false;
+      }
+
+      function openSpan() {
+        const fg = state.reverse ? state.bg : state.fg;
+        const bg = state.reverse ? state.fg : state.bg;
+        const styles = [];
+        if (fg) styles.push(`color:${fg}`);
+        if (bg) styles.push(`background:${bg}`);
+        if (state.bold) styles.push("font-weight:700");
+        if (state.dim) styles.push("opacity:.72");
+        if (state.italic) styles.push("font-style:italic");
+        if (state.underline) styles.push("text-decoration:underline");
+        output += `<span style="${styles.join(";")}">`;
+        open = true;
+      }
+
+      function indexedColor(value) {
+        if (value < 8) return colors[value];
+        if (value < 16) return bright[value - 8];
+        if (value < 232) {
+          const cube = value - 16;
+          const levels = [0, 95, 135, 175, 215, 255];
+          return `rgb(${levels[Math.floor(cube / 36)]},${levels[Math.floor(cube / 6) % 6]},${levels[cube % 6]})`;
+        }
+        const gray = 8 + ((value - 232) * 10);
+        return `rgb(${gray},${gray},${gray})`;
+      }
+
+      for (const part of parts) {
+        if (!part) continue;
+        const match = part.match(/^\x1b\[([0-9;]*)m$/);
+        if (!match) {
+          if (!open) openSpan();
+          output += escapeHtml(part);
+          continue;
+        }
+        close();
+        const codes = match[1] === "" ? [0] : match[1].split(";").map(Number);
+        for (let index = 0; index < codes.length; index += 1) {
+          const code = codes[index];
+          if (code === 0) state = { fg: null, bg: null, bold: false, dim: false, italic: false, underline: false, reverse: false };
+          else if (code === 1) state.bold = true;
+          else if (code === 2) state.dim = true;
+          else if (code === 3) state.italic = true;
+          else if (code === 4) state.underline = true;
+          else if (code === 7) state.reverse = true;
+          else if (code === 22) { state.bold = false; state.dim = false; }
+          else if (code === 23) state.italic = false;
+          else if (code === 24) state.underline = false;
+          else if (code === 27) state.reverse = false;
+          else if (code >= 30 && code <= 37) state.fg = colors[code - 30];
+          else if (code >= 90 && code <= 97) state.fg = bright[code - 90];
+          else if (code >= 40 && code <= 47) state.bg = colors[code - 40];
+          else if (code >= 100 && code <= 107) state.bg = bright[code - 100];
+          else if (code === 39) state.fg = null;
+          else if (code === 49) state.bg = null;
+          else if ((code === 38 || code === 48) && codes[index + 1] === 2) {
+            const color = `rgb(${codes[index + 2]},${codes[index + 3]},${codes[index + 4]})`;
+            if (code === 38) state.fg = color;
+            else state.bg = color;
+            index += 4;
+          } else if ((code === 38 || code === 48) && codes[index + 1] === 5) {
+            const color = indexedColor(codes[index + 2]);
+            if (code === 38) state.fg = color;
+            else state.bg = color;
+            index += 2;
+          }
+        }
+      }
+      close();
+      return output;
+    }
+
+    async function main() {
+      const fixture = JSON.parse(fs.readFileSync(process.env.TYCHO_TUI_FIXTURE, "utf8"));
+      const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH, headless: true });
+      const page = await browser.newPage({ viewport: fixture.viewport, deviceScaleFactor: 1, colorScheme: "dark" });
+      try {
+        await page.setContent(`<!doctype html>
+          <html><head><meta charset="utf-8"><style>
+            * { box-sizing: border-box; }
+            html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #111111; }
+            body { padding: 10px 12px; }
+            pre { margin: 0; color: #d8d8d8; font: 16px/18px "FiraCode Nerd Font Mono", "SFMono-Regular", Menlo, monospace;
+                  white-space: pre; font-variant-ligatures: none; -webkit-font-smoothing: antialiased; }
+          </style></head><body><pre id="terminal">${ansiToHtml(fixture.ansi)}</pre></body></html>`);
+        await page.evaluate(() => document.fonts.ready);
+        const terminal = page.locator("#terminal");
+        const coloredSpans = terminal.locator('span[style*="color:"]');
+        const coloredSpanCount = await coloredSpans.count();
+        if (coloredSpanCount < 100) throw new Error(`Expected styled TUI output, found ${coloredSpanCount} colored spans`);
+        const text = await terminal.innerText();
+        for (const expected of ["Conversation", "Summary", "Compose", "Review the release candidate",
+                                "126 unit", "Ask a follow-up about rollout monitoring"]) {
+          if (!text.includes(expected)) throw new Error(`Missing TUI fixture text: ${expected}`);
+        }
+        const bounds = await terminal.boundingBox();
+        if (!bounds || bounds.x + bounds.width > fixture.viewport.width || bounds.y + bounds.height > fixture.viewport.height) {
+          throw new Error(`TUI capture is clipped: ${JSON.stringify(bounds)}`);
+        }
+        await page.screenshot({ path: process.env.TYCHO_TUI_OUTPUT, fullPage: false });
+        console.log(
+          `Captured ${fixture.columns}x${fixture.rows} styled TUI conversation at ` +
+          `${fixture.viewport.width}x${fixture.viewport.height}`
+        );
+      } finally {
+        await browser.close();
+      }
+    }
+
+    main().catch((error) => {
+      console.error(error);
+      process.exit(1);
+    });
+  JS
+end
+
+browser = ensure_prerequisites!
+FileUtils.mkdir_p(OUTPUT_DIR)
+
+Dir.mktmpdir("tycho-site-tui-capture") do |dir|
+  fixture = write_fixture(dir)
+  app = build_app(fixture)
+  ansi = app.view
+  raise "TUI renderer did not emit ANSI styling" unless ansi.include?("\e[")
+  warn ansi.scan(/\e\[[^m]*m/).uniq.first(20).inspect if ENV["TYCHO_CAPTURE_DEBUG"] == "1"
+  lines = ansi.lines.map(&:chomp)
+  raise "TUI rendered #{lines.length} lines into a #{TERMINAL.fetch(:rows)}-row fixture" if lines.length > TERMINAL.fetch(:rows)
+
+  widest = lines.map { |line| app.send(:visible_width, line) }.max.to_i
+  if widest > TERMINAL.fetch(:columns)
+    raise "TUI rendered a #{widest}-column line into a #{TERMINAL.fetch(:columns)}-column fixture"
+  end
+
+  node_dir = File.join(dir, "node")
+  install_playwright!(node_dir)
+  fixture_path = File.join(dir, "tui-fixture.json")
+  File.write(
+    fixture_path,
+    JSON.generate(
+      "ansi" => ansi,
+      "columns" => TERMINAL.fetch(:columns),
+      "rows" => TERMINAL.fetch(:rows),
+      "viewport" => VIEWPORT
+    )
+  )
+  capture_script = File.join(node_dir, "capture.js")
+  write_capture_script(capture_script)
+  capture_env = {
+    "CHROME_PATH" => browser,
+    "TYCHO_TUI_FIXTURE" => fixture_path,
+    "TYCHO_TUI_OUTPUT" => OUTPUT_PATH
+  }
+  out, err, status = Open3.capture3(capture_env, "node", capture_script, chdir: node_dir)
+  puts out unless out.empty?
+  warn err unless err.empty?
+  raise "TUI capture failed" unless status.success?
+ensure
+  %w[TYCHO_CAPTURE_LOGS_ROOT TYCHO_LOGS_ROOT TYCHO_CONFIG_PATH TYCHO_SYSTEM_PROMPTS_PATH
+     TYCHO_RESPONSE_STYLE_PATH TYCHO_SCHEDULES_PATH TYCHO_GLAMOUR_SYNC TYCHO_LIPGLOSS_BACKEND
+     NO_COLOR CLICOLOR_FORCE].each { |key| ENV.delete(key) }
+end

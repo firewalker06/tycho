@@ -136,7 +136,9 @@ def write_fixture(dir, running_pids)
   logs_dir = File.join(dir, "logs")
   atlas_workspace = File.join(dir, "workspaces", "atlas-web")
   compass_workspace = File.join(dir, "workspaces", "compass-api")
-  [config_dir, logs_dir, atlas_workspace, compass_workspace, File.join(logs_dir, "agents")].each do |path|
+  beacon_workspace = File.join(dir, "workspaces", "beacon-mobile")
+  [config_dir, logs_dir, atlas_workspace, compass_workspace, beacon_workspace,
+   File.join(logs_dir, "agents")].each do |path|
     FileUtils.mkdir_p(path)
   end
   ENV["TYCHO_CAPTURE_LOGS_ROOT"] = logs_dir
@@ -157,6 +159,12 @@ def write_fixture(dir, running_pids)
       - key: compass-api
         name: Compass API
         path: #{compass_workspace.inspect}
+        agent: codex
+        model: gpt-5.4
+        reasoning_effort: medium
+      - key: beacon-mobile
+        name: Beacon Mobile
+        path: #{beacon_workspace.inspect}
         agent: codex
         model: gpt-5.4
         reasoning_effort: medium
@@ -195,6 +203,21 @@ def write_fixture(dir, running_pids)
       key: "compass-dependency-refresh", name: "Dependency refresh", project_key: "compass-api",
       workspace: compass_workspace, status: "running", summary: "Updating dependencies and running checks.",
       minutes_ago: 2, pid: running_pids.fetch(1)
+    ),
+    fixture_agent(
+      key: "beacon-offline-sync", name: "Offline sync review", project_key: "beacon-mobile",
+      workspace: beacon_workspace, status: "succeeded",
+      summary: "Verified queued changes reconcile after reconnecting.", minutes_ago: 8
+    ),
+    fixture_agent(
+      key: "beacon-notification-copy", name: "Notification copy", project_key: "beacon-mobile",
+      workspace: beacon_workspace, status: "awaiting-input",
+      summary: "Choose the notification tone before continuing.", minutes_ago: 5
+    ),
+    fixture_agent(
+      key: "beacon-device-matrix", name: "Device matrix", project_key: "beacon-mobile",
+      workspace: beacon_workspace, status: "failed",
+      summary: "The compact-layout check still fails on one device size.", minutes_ago: 7
     )
   ]
   File.write(File.join(logs_dir, "managed_agents.json"), JSON.pretty_generate(agents))
@@ -251,10 +274,31 @@ def write_capture_script(path)
         const rows = page.locator(".agent-row");
         await rows.first().waitFor({ state: "visible" });
         const rowCount = await rows.count();
-        if (rowCount !== 6) throw new Error(`Expected 6 complete agent rows, found ${rowCount}`);
+        if (rowCount !== 9) throw new Error(`Expected 9 complete agent rows, found ${rowCount}`);
+        const groups = page.locator(".agent-group");
+        const groupCount = await groups.count();
+        if (groupCount !== 3) throw new Error(`Expected 3 project groups, found ${groupCount}`);
         const listBox = await page.locator(".agent-ledger").boundingBox();
-        if (!listBox || listBox.y + listBox.height > 900) {
+        if (!listBox) throw new Error("Agent list has no capture bounds");
+        const rowBoxes = await rows.evaluateAll((items) => items.map((item) => {
+          const rect = item.getBoundingClientRect();
+          return { top: rect.top, bottom: rect.bottom, height: rect.height };
+        }));
+        const incompleteRow = rowBoxes.find((box) => box.top < listBox.y || box.bottom > 900 || box.height < 40);
+        if (incompleteRow) {
+          throw new Error(`Agent row is clipped or incomplete: ${JSON.stringify(incompleteRow)}`);
+        }
+        const listBottom = listBox.y + listBox.height;
+        const bottomGap = 900 - listBottom;
+        if (listBottom > 900 || bottomGap < 24 || bottomGap > 96) {
           throw new Error(`Complete agent list does not fit the capture viewport: ${JSON.stringify(listBox)}`);
+        }
+        const overflow = await page.evaluate(() => ({
+          horizontal: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          vertical: document.documentElement.scrollHeight - document.documentElement.clientHeight,
+        }));
+        if (overflow.horizontal > 0 || overflow.vertical > 0) {
+          throw new Error(`Capture requires scrolling: ${JSON.stringify(overflow)}`);
         }
         await page.screenshot({
           path: path.join(process.env.TYCHO_CAPTURE_OUTPUT_DIR, "quickstart-watch-v0.10.0.png"),
@@ -264,7 +308,10 @@ def write_capture_script(path)
         if (errors.length || failedResponses.length) {
           throw new Error(`Browser errors: ${[...errors, ...failedResponses].join(" | ")}`);
         }
-        console.log(`Captured launch modal and ${rowCount}-row agent list at 1440x900`);
+        console.log(
+          `Captured launch modal and ${rowCount}-row/${groupCount}-group agent list at 1440x900 ` +
+          `(bottom gap ${Math.round(bottomGap)}px)`
+        );
       } finally {
         await browser.close();
       }
