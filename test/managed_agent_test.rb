@@ -48,6 +48,7 @@ module ManagedAgentTest
     assert_poll_preserves_stale_structured_output
     assert_external_process_environment_removes_ruby_loader_state
     assert_start_spawns_harness_through_validation_runner
+    assert_running_harness_persists_assistant_messages_incrementally
     assert_started_agent_persists_status_after_launcher_exits
     assert_incomplete_status_files_are_not_completion
     assert_stop_kills_term_ignoring_harness_before_restart
@@ -1701,6 +1702,90 @@ module ManagedAgentTest
     HQ.custom_harnesses = old_harnesses if defined?(old_harnesses)
   end
 
+  def assert_running_harness_persists_assistant_messages_incrementally
+    old_harnesses = HQ.custom_harnesses
+    Dir.mktmpdir("hq-incremental-harness-test") do |dir|
+      harness = File.join(dir, "incremental-harness")
+      progress = JSON.generate(
+        "type" => "assistant",
+        "session_id" => "incremental-session",
+        "message" => {
+          "role" => "assistant",
+          "content" => [{ "type" => "text", "text" => "Incremental progress." }]
+        }
+      )
+      result = JSON.generate(
+        "type" => "assistant",
+        "session_id" => "incremental-session",
+        "message" => {
+          "role" => "assistant",
+          "content" => [{
+            "type" => "tool_use",
+            "name" => "StructuredOutput",
+            "input" => {
+              "status" => "success",
+              "summary" => "Incremental final.",
+              "inquiry_json" => "null",
+              "attachments_json" => "null"
+            }
+          }]
+        }
+      )
+      File.write(harness, <<~SH)
+        #!/bin/sh
+        printf '%s\n' '#{progress}'
+        sleep 1
+        printf '%s\n' '#{result}'
+      SH
+      File.chmod(0o755, harness)
+      HQ.custom_harnesses = [
+        HQ::HarnessConfig.new(
+          key: "incremental-wrapper",
+          adapter: "claude",
+          execution_command: [harness]
+        )
+      ]
+      agent = HQ::ManagedAgent.new(
+        key: "incremental-wrapper-agent",
+        name: "Incremental Wrapper Agent",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "System prompt",
+        agent: "incremental-wrapper",
+        log_path: File.join(dir, "incremental.raw.log")
+      )
+
+      agent.start!
+      deadline = Time.now + 3
+      memory = HQ::AgentMemory.new(agent)
+      until memory.events.any? { |event| event["content"] == "Incremental progress." } || Time.now >= deadline
+        sleep 0.02
+      end
+
+      assert(agent.running?,
+             "expected harness to remain running after the progress event; events=#{memory.events.inspect}; " \
+             "raw=#{File.read(agent.raw_log_path).inspect}")
+      progress_event = memory.events.find { |event| event["content"] == "Incremental progress." }
+      assert(progress_event, "expected progress to persist before finalization")
+      assert(progress_event["run_id"] == agent.last_run.run_id, "expected progress to belong to the active run")
+      live_blocks = HQ::AgentChatLog.new(agent).chat_blocks
+      assert(live_blocks.count { |block| block.content == "Incremental progress." } == 1,
+             "expected sequenced memory to suppress duplicate raw-tail rendering")
+
+      deadline = Time.now + 5
+      while agent.running? && Time.now < deadline
+        sleep 0.05
+        agent.poll!
+      end
+      agent.poll!
+      progress_events = memory.events.select { |event| event["content"] == "Incremental progress." }
+      assert(progress_events.length == 1, "expected finalization replay not to duplicate progress")
+    end
+  ensure
+    HQ.custom_harnesses = old_harnesses if defined?(old_harnesses)
+  end
+
   def assert_started_agent_persists_status_after_launcher_exits
     old_harnesses = HQ.custom_harnesses
     [[0, "succeeded"], [23, "failed"]].each do |exit_code, expected_status|
@@ -2077,8 +2162,13 @@ module ManagedAgentTest
            "expected OpenCode command to include --model")
     assert(argument_after(opencode_command, "--variant") == "high",
            "expected OpenCode command to include --variant")
-    assert(opencode_command.include?("--dangerously-skip-permissions"),
-           "expected OpenCode full-access command to include dangerous permission flag")
+    assert(opencode_command.include?("--auto"),
+           "expected OpenCode full-access command to include current automatic permission flag")
+    assert(!opencode_command.include?("--dangerously-skip-permissions"),
+           "expected OpenCode command to omit the removed permission flag")
+    interactive_opencode = opencode.send(:command_builder, prompt: "").interactive.fetch(:command)
+    assert(interactive_opencode.include?("--auto"),
+           "expected interactive OpenCode full-access command to use current automatic permission flag")
 
     resumed = HQ::ManagedAgent.from_hash(opencode.to_hash.merge(
       "session_id" => "opencode-session-1",

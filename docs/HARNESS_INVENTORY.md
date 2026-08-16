@@ -85,7 +85,7 @@ logs.
 | Workspace | `-C <workspace>` on cold run | Process `chdir`, no explicit workspace flag | Cursor should pass `--workspace <workspace>` and also keep process `chdir` | Pass `--dir <workspace>` and keep process `chdir` |
 | Model | `--model <model>` | `--model <model>` | Cursor appears to support `--model`; pass when set | Pass `--model <provider/model>` when set |
 | Reasoning effort | `-c model_reasoning_effort="..."` | `--effort <value>` | No Tycho-equivalent Cursor flag found; hide or ignore effort for Cursor until CLI advertises one | Pass `--variant <value>`; OpenCode describes this as provider-specific reasoning effort |
-| Sandbox full access | `--dangerously-bypass-approvals-and-sandbox` | `--dangerously-skip-permissions` | Likely needs `--force`, `--trust`, `--approve-mcps`; decide whether `--sandbox disabled` is required for true full access | Use `--dangerously-skip-permissions`; explicit OpenCode `deny` permissions still win |
+| Sandbox full access | `--dangerously-bypass-approvals-and-sandbox` | `--dangerously-skip-permissions` | Likely needs `--force`, `--trust`, `--approve-mcps`; decide whether `--sandbox disabled` is required for true full access | Use OpenCode 1.18.4's `--auto`; explicit OpenCode `deny` permissions still win |
 | Sandbox restricted | `--full-auto --sandbox <mode>` on cold run | No non-danger mapping | Cursor has `--sandbox enabled`, but real restrictions depend on `.cursor/sandbox.json`; treat as partially supported | No direct Tycho sandbox-mode mapping; rely on OpenCode config/agent permissions (`allow`, `ask`, `deny`) |
 | Output files | `-o <last_message.json>` | Structured output is in stream | Cursor has no Tycho output file equivalent; structured result must come from stream text/result events | No output-file flag; structured result must come from `--format json` events or final assistant text |
 | Missing binary failure | Start records failed run with clear log entry | Same | Reuse once executable resolver knows Cursor | Reuse once executable resolver knows OpenCode |
@@ -187,7 +187,7 @@ logs.
 | Inquiry and attachments | Adaptable after structured normalization | Generic Tycho flows can consume normalized hashes; local file inputs can later map to `--file` |
 | Model selection | Adaptable | `--model <provider/model>` is supported by `opencode run` |
 | Reasoning effort | Adaptable | `--variant` maps reasonably to Tycho's effort field, but values are provider-specific |
-| Full access sandbox | Partial | `--dangerously-skip-permissions` auto-approves non-denied permissions; OpenCode `deny` rules still take precedence |
+| Full access sandbox | Partial | OpenCode 1.18.4's `--auto` approves permissions that are not denied; OpenCode `deny` rules still take precedence |
 | Restricted sandbox | Partial | Use OpenCode permission config (`allow`, `ask`, `deny`) rather than trying to emulate Codex sandbox modes |
 | Skill autocomplete | Adaptable with UX decision | Skill roots are documented, but OpenCode uses a native skill tool rather than a slash/dollar trigger |
 | Catalog/readiness | Adaptable with probing | `auth list`, `models`, `agent list`, and `debug paths` provide enough readiness data with timeouts/caching |
@@ -212,7 +212,7 @@ Primary docs inspected: OpenCode CLI, config, agents, permissions, MCP servers, 
 | Agent selection | `--agent` selects an OpenCode agent; `opencode agent list` lists primary/subagents | Tycho can expose model separately from harness; agent selection is probably an OpenCode-specific advanced option, not Tycho's `agent` field |
 | Session resume | `-s, --session` continues a session id; `-c, --continue` continues the last session; `--fork` can fork before continuing | Persist emitted OpenCode session id and resume with `--session <id>`; verified through a two-turn `tycho agent create --harness opencode --run` / `tycho agent send` smoke test |
 | Attachments | `-f, --file` attaches one or more files | Tycho already has attachment normalization; later integration can pass local file attachments through `--file` for initial prompts |
-| Dangerous mode | `--dangerously-skip-permissions` auto-approves permissions not explicitly denied | Map `danger-full-access` to this flag only when operator intent is clear; explicit deny rules still matter |
+| Automatic mode | OpenCode 1.18.4's `--auto` auto-approves permissions not explicitly denied | Map `danger-full-access` to this flag only when operator intent is clear; explicit deny rules still matter |
 | Interactive mode | `opencode run -i` runs direct interactive split-footer mode; plain `opencode [project]` starts TUI | Add an interactive command branch using either `opencode run -i` or plain `opencode`, then verify resume behavior |
 | Headless server | `opencode serve` starts an HTTP API server; `opencode acp` starts an Agent Client Protocol server | Tycho v1 can use `opencode run`; server/ACP are future integration paths if process-per-run becomes limiting |
 | Remote attach | `opencode run --attach http://localhost:4096` attaches to a running OpenCode server | Not needed for v1; useful if Tycho later manages an OpenCode server per project |
@@ -227,7 +227,7 @@ Primary docs inspected: OpenCode CLI, config, agents, permissions, MCP servers, 
 | Area | Fact | Tycho implication |
 | --- | --- | --- |
 | Built-in agents | Official docs describe primary agents `build` and `plan`, and subagents `general`, `explore`, and `scout`; local `agent list` also showed additional configured primary agents like `summary`, `title`, and `compaction` | Tycho should not equate OpenCode agents with Tycho harnesses. Harness remains `opencode`; OpenCode `--agent` is a harness-specific option or template setting |
-| Agent permissions | Official docs describe permission actions `allow`, `ask`, and `deny`; local `agent list` prints merged rules | Tycho sandbox mapping should rely on OpenCode permission config plus `--dangerously-skip-permissions`; do not assume Tycho can fully emulate Codex sandbox modes |
+| Agent permissions | Official docs describe permission actions `allow`, `ask`, and `deny`; local `agent list` prints merged rules | Tycho sandbox mapping should rely on OpenCode permission config plus `--auto`; do not assume Tycho can fully emulate Codex sandbox modes |
 | Plan-style operation | Official docs position `plan` as analysis/review without edits by default | Tycho can recommend `--agent plan` for review-only templates once adapter-specific template options exist |
 | MCP | Official docs support local and remote MCP servers configured under `mcp`; local CLI has `opencode mcp add/list/auth/logout/debug` | Tycho should not manage OpenCode MCP directly in v1; readiness can mention MCP availability and rely on OpenCode config |
 | Commands | Official docs support custom slash commands in global `~/.config/opencode/commands/` and project `.opencode/commands/` | This is parallel to Tycho skills, not a direct replacement. Skill autocomplete should not surface commands unless Tycho intentionally indexes them |

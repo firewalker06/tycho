@@ -442,6 +442,7 @@ def write_smoke_script(path)
       const captureDir = process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "";
       const beforeCapture = process.env.TYCHO_REMOTE_UI_BEFORE_CAPTURE || "";
       const skillsOnly = process.env.TYCHO_REMOTE_UI_SKILLS_ONLY === "1";
+      const titleCopyOnly = process.env.TYCHO_REMOTE_UI_TITLE_COPY_ONLY === "1";
       const draft = "Remote UI smoke draft " + Date.now();
       const errors = [];
 
@@ -1674,6 +1675,67 @@ def write_smoke_script(path)
         });
         await agentsRegressionPage.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await agentsRegressionPage.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+        await agentsRegressionPage.evaluate(() => {
+          Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: {
+              writeText: async (value) => {
+                window.__smokeCopiedAgentTitle = value;
+              },
+            },
+          });
+        });
+        const expectedAgentTitle = await agentsRegressionPage.locator("#screen-title").textContent();
+        const titleCopyButton = agentsRegressionPage.locator("#header-title-copy");
+        const mobileTitleCopyContract = await titleCopyButton.evaluate((button) => {
+          const rect = button.getBoundingClientRect();
+          return {
+            copyValue: button.dataset.copy,
+            label: button.getAttribute("aria-label"),
+            title: button.getAttribute("title"),
+            width: rect.width,
+            height: rect.height,
+            visible: getComputedStyle(button).display !== "none",
+            overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        });
+        if (!mobileTitleCopyContract.visible ||
+            mobileTitleCopyContract.copyValue !== expectedAgentTitle ||
+            mobileTitleCopyContract.label !== "Copy agent title" ||
+            mobileTitleCopyContract.title !== "Copy agent title" ||
+            mobileTitleCopyContract.width < 44 ||
+            mobileTitleCopyContract.height < 44 ||
+            mobileTitleCopyContract.overflow) {
+          throw new Error(`Mobile agent-title copy control lost its accessible responsive contract: ${JSON.stringify(mobileTitleCopyContract)}`);
+        }
+        await titleCopyButton.click();
+        await agentsRegressionPage.waitForSelector(".growl.done", { state: "visible", timeout: 10_000 });
+        const copiedAgentTitle = await agentsRegressionPage.evaluate(() => window.__smokeCopiedAgentTitle);
+        if (copiedAgentTitle !== expectedAgentTitle ||
+            await agentsRegressionPage.locator(".growl.done").textContent() !== "Copied to clipboard") {
+          throw new Error(`Agent-title copy lost its exact value or success feedback: ${JSON.stringify(copiedAgentTitle)}`);
+        }
+        await agentsRegressionPage.evaluate(() => {
+          navigator.clipboard.writeText = async () => { throw new Error("clipboard blocked"); };
+        });
+        await titleCopyButton.click();
+        await agentsRegressionPage.waitForSelector(".growl.fail", { state: "visible", timeout: 10_000 });
+        if (await agentsRegressionPage.locator(".growl.fail").textContent() !== "Copy failed") {
+          throw new Error("Agent-title copy failure feedback was unclear");
+        }
+        await agentsRegressionPage.setViewportSize({ width: 1024, height: 768 });
+        const desktopTitleCopyOverflow = await agentsRegressionPage.evaluate(() => (
+          document.documentElement.scrollWidth > document.documentElement.clientWidth
+        ));
+        if (desktopTitleCopyOverflow || !await titleCopyButton.isVisible()) {
+          throw new Error("Desktop agent-title copy control caused overflow or disappeared");
+        }
+        await agentsRegressionPage.setViewportSize({ width: 390, height: 844 });
+        if (titleCopyOnly) {
+          await agentsRegressionPage.close();
+          await browser.close();
+          return;
+        }
         await agentsRegressionPage.evaluate(() => {
           navigate({ type: "tab", tab: "agents" });
         });
