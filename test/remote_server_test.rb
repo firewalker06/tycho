@@ -4471,6 +4471,19 @@ module RemoteServerTest
            "expected copy buttons to be handled outside the main view")
     assert(js[:body].include?('showGrowl("Copied to clipboard", "done")'),
            "expected copy success to use growl feedback")
+    assert(response[:body].include?('id="header-title-copy"') &&
+           response[:body].include?('aria-label="Copy agent title"') &&
+           response[:body].include?('<span class="sr-only">Copy agent title</span>'),
+           "expected the Conversation header to expose an accessible agent-title copy control")
+    assert(js[:body].include?('setHeader(agent.name || agent.key, agentHeaderLabel(agent), "A", { copyTitle: agent.name || agent.key })') &&
+           js[:body].include?("function setHeaderTitleCopy") &&
+           js[:body].include?("els.titleCopy.dataset.copy = value") &&
+           js[:body].include?('els.titleCopy.removeAttribute("data-copy")'),
+           "expected only Agent conversation headers to copy the exact rendered title and clear stale copy data")
+    assert(css[:body].include?(".header-title-row") &&
+           css[:body].include?(".header-title-copy") &&
+           css[:body].include?("flex: 0 0 auto"),
+           "expected the title copy control to preserve truncation and responsive header layout")
     assert(!js[:body].include?('setConnection("Copied to clipboard")'),
            "expected copy success to avoid changing the header subtitle")
     assert(js[:body].include?("function copyableKv"),

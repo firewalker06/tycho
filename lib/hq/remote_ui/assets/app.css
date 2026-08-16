@@ -367,6 +367,33 @@ h3 {
   min-width: 0;
 }
 
+.header-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.header-title-row h1 {
+  min-width: 0;
+}
+
+.header-title-copy {
+  flex: 0 0 auto;
+  width: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+}
+
+.header-title-copy .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
 .title-block h1,
 .row-title strong,
 .card-title strong,
@@ -7485,6 +7512,17 @@ body:has(.inquiry-form-full-screen) {
     white-space: normal;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
+  }
+
+  .header-title-row {
+    align-items: flex-start;
+  }
+
+  .header-title-copy {
+    width: var(--touch-target);
+    min-width: var(--touch-target);
+    min-height: var(--touch-target);
+    margin-block: -8px;
   }
 
   .title-block p {
