@@ -9,8 +9,8 @@ For an agent with key `<key>`:
 
 | Store | Path | Written by | Read by |
 |---|---|---|---|
-| **Raw log** | `~/.tycho/logs/agents/<project-key>-<created-at>-<nonce>.raw.log` for new agents; legacy agents may still use `<key>.raw.log` | The agent process itself (stdout/JSON stream + `=== […] start ===` markers) | `Parser`, the chat viewport's *live-run* path, `AgentChatLog#rebuild_memory_from_raw_log!` |
-| **Memory** | Same stem as the raw log, with `.memory.jsonl` | `ManagedAgent#capture_run_memory!` after each run, `add_user_message!` on user send, `AgentChatLog#rebuild_memory_from_raw_log!` on demand | The chat viewport's *history* path, prompt composition |
+| **Raw log** | `~/.tycho/logs/agents/<project-key>-<created-at>-<nonce>.raw.log` for new agents; legacy agents may still use `<key>.raw.log` | `AgentStreamRecorder` tees unchanged harness stdout/stderr after the run marker | Recovery, diagnostics, and `AgentChatLog#rebuild_memory_from_raw_log!` |
+| **Memory** | Same stem as the raw log, with `.memory.jsonl` | `AgentEventJournal` for harness, user, delegation, callback, attachment, and run events | The chat viewport, prompt composition, and finalization reconciliation |
 | **Attachments** | Same stem as the raw log, with `.attachments.json` | `ManagedAgent#capture_run_memory!` when structured output includes attachments | The chat attachment summary and floating `ctrl+a` panel |
 | **Conversation/system snapshots** | Same stem as the raw log, with `.conversation.log` and `.system.log` | `AgentChatLog#ensure_generated` | External tools / human inspection only |
 
@@ -26,20 +26,22 @@ Remote UI observe archive/delete operations at different times.
 (`session_id`, `runs`, timestamps, etc.) is persisted, but conversation
 content lives entirely in `memory.jsonl`.
 
+Each new memory record has a top-level agent-wide `sequence`, durable
+`event_id`, `schema_version`, and `recorded_at`. Stream-derived events also
+carry `run_id`, `occurred_at`, and source-local sequence/offset metadata. The
+journal allocates sequence and appends under one exclusive lock. On the first
+post-upgrade append to a legacy file, it sequences the existing prefix in file
+order before storing the new event.
+
 ## Read paths in the TUI
 
-`AgentChatLog#chat_blocks` is what the chat viewport renders. It is a
-`memory + live` concatenation:
+`AgentChatLog#chat_blocks` projects `memory.jsonl` in durable sequence order.
+New runs append a `run_started` event before process launch, so their live
+conversation is journal-backed from the first harness event.
 
-```
-chat_blocks = memory_chat_blocks + live_run_chat_blocks
-```
-
-- `memory_chat_blocks` reads `memory.jsonl`. **No fallback.** If
-  `memory.jsonl` is missing or empty, the viewport is empty.
-- `live_run_chat_blocks` only fires when the agent is currently running
-  (`@agent.pid && !@agent.finished_at`); it parses the current run
-  segment of `raw.log` directly.
+- `memory_chat_blocks` is authoritative for sequenced runs.
+- `live_run_chat_blocks` remains only for a running legacy process that has no
+  projected event for its current `run_id`.
 
 There is a *separate* helper, `AgentChatLog#projection_entries`, that
 *does* fall back to a raw-log re-parse when `memory.jsonl` is absent —
@@ -51,25 +53,34 @@ prompts the user with "Rebuild memory.jsonl from raw.log? (y/n)" on
 open. The user can also press `R` (when the chat content area or
 summary is focused) at any time to re-trigger a rebuild.
 
-## Write path: `capture_run_memory!`
+## Write path: recorder plus finalization reconciliation
 
-Runs once per agent run, after the process exits:
+The checked-in runner owns the harness pipe:
 
 ```
-raw.log  ──Parser.parse_stream──▶  conversation, system entries
-                                    │
-                                    ▼
-                       For each entry, append to memory.jsonl:
-                         assistant_message
-                         tool_summary  (via compact_system_summary)
-                         token_usage
-                       Plus: inquiry_request (if pending)
-                             run_summary  (always)
+harness stdout/stderr ──▶ AgentStreamRecorder ──▶ raw.log (unchanged)
+                                  │
+                                  ▼
+                         AgentStreamProjector
+                                  │
+                                  ▼
+                         AgentEventJournal
+                                  │
+                                  ▼
+                         sequenced memory.jsonl
 ```
 
-`compact_system_summary` (in `ManagedAgent`) takes the parser's
-`SystemEntry`, extracts the first non-empty content line, and prepends
-the tool name:
+Codex `agent_message`, Claude complete assistant content blocks, and OpenCode
+text parts persist as soon as their complete line arrives. Tool and usage
+entries follow the same path. Claude token deltas are not enabled.
+
+After exit, `capture_run_memory!` replays the process-output segment through
+the same projector. Deterministic IDs derived from `run_id`, harness, source
+sequence, and semantic subtype make reconciliation idempotent. Finalization
+then records inquiries, attachments, cost metrics, and one run summary.
+
+The projector's compact tool summary takes the parser's `SystemEntry`,
+extracts the first non-empty content line, and prepends the tool name:
 
 - `tool_call`: `"<ToolName>: <first line>"`.
 - `tool_result`: `"tool result: <first line>"`.
@@ -244,10 +255,17 @@ model's rate. Startup remains O(1).
 - `lib/hq/parser/claude.rb` — per-tool body formatters.
 - `lib/hq/domain/agent_memory.rb` — append APIs, prompt/conversation
   message builders.
+- `lib/hq/domain/agent_event_journal.rb` — locked sequence allocation,
+  deduplication, legacy migration, and durable append/replace behavior.
+- `lib/hq/domain/agent_stream_recorder.rb` — detached harness pipe and raw-log
+  tee.
+- `lib/hq/domain/agent_stream_projector.rb` — line-oriented cross-harness
+  semantic projection.
 - `lib/hq/domain/agent_chat_log.rb` — viewport projection, raw-log
   rebuild.
 - `lib/hq/domain/managed_agent.rb` — `capture_run_memory!`,
   `compact_system_summary`, `prompt_for_execution`, `composed_prompt`.
 - `test/parser_test.rb` — pins per-tool parser output.
-- `test/memory_entries_test.rb` — pins per-tool memory.jsonl output
-  end-to-end through `capture_run_memory!`.
+- `test/agent_event_journal_test.rb` and `test/agent_stream_recorder_test.rb` —
+  pin ordering, concurrency, deduplication, and incremental persistence.
+- `test/memory_entries_test.rb` — pins finalization reconciliation output.

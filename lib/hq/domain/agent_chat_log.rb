@@ -87,6 +87,7 @@ module HQ
 
     def live_run_chat_blocks
       return [] unless @agent.pid && !@agent.finished_at
+      return [] if current_run_projected?
 
       raw_path = @agent.raw_log_path
       return [] unless File.exist?(raw_path)
@@ -98,6 +99,13 @@ module HQ
       Parser.compose_chat_blocks(conversation, system)
     rescue StandardError
       []
+    end
+
+    def current_run_projected?
+      run_id = @agent.runs.last&.run_id.to_s
+      return false if run_id.empty?
+
+      AgentMemory.new(@agent).events.any? { |event| event["run_id"].to_s == run_id }
     end
 
     def projection_entries
@@ -123,6 +131,7 @@ module HQ
       run_summary_number = 0
 
       events.each_with_index do |event, sequence|
+        sequence = event["sequence"] || sequence
         timestamp = parse_time(event["created_at"])
 
         case event["type"]
@@ -505,29 +514,7 @@ module HQ
     end
 
     def compact_rebuild_summary(entry)
-      case entry.type
-      when :tool_call
-        first_line = entry.content.to_s.lines.map(&:strip).find { |line| !line.empty? }
-        label = entry.tool_name.to_s.strip
-        summary = if label.empty?
-                    first_line
-                  elsif first_line && first_line != label
-                    "#{label}: #{first_line}"
-                  else
-                    label
-                  end
-        rebuild_summary_text(summary)
-      when :tool_result
-        first_line = entry.content.to_s.lines.map(&:strip).find { |line| !line.empty? }
-        rebuild_summary_text(first_line ? "tool result: #{first_line}" : nil)
-      end
-    end
-
-    def rebuild_summary_text(text)
-      value = text.to_s.strip
-      return nil if value.empty?
-
-      value
+      Parser.compact_memory_summary(entry)
     end
   end
 end

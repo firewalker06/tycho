@@ -167,10 +167,16 @@ module HQ
     end
 
     def event_sort_key(entry, fallback_sequence)
+      durable_sequence = entry.metadata&.dig("_sequence")
+      return [0, Integer(durable_sequence)] unless durable_sequence.nil?
+
       [
+        1,
         entry.timestamp || Time.at(0),
         entry_sequence(entry, fallback_sequence)
       ]
+    rescue ArgumentError, TypeError
+      [1, entry.timestamp || Time.at(0), entry_sequence(entry, fallback_sequence)]
     end
 
     def entry_sequence(entry, fallback_sequence)
@@ -346,6 +352,19 @@ module HQ
       end
 
       text.lines.first.to_s.strip
+    end
+
+    def compact_memory_summary(entry)
+      first_line = entry.content.to_s.lines.map(&:strip).find { |line| !line.empty? }
+      return nil unless first_line
+      return "tool result: #{first_line}" if entry.type == :tool_result
+      return nil unless entry.type == :tool_call
+
+      label = entry.tool_name.to_s.strip
+      return first_line if label.empty?
+      return label if first_line == label
+
+      "#{label}: #{first_line}"
     end
 
     def format_system_metadata(entry)

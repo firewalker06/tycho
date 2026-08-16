@@ -90,7 +90,7 @@ module HQ
       command = [@opencode_executable, "run", "--format", "json", "--dir", @workspace]
       command.concat(model_arguments)
       command.concat(opencode_variant_arguments)
-      command << "--dangerously-skip-permissions" if @sandbox_mode == "danger-full-access"
+      command << "--auto" if @sandbox_mode == "danger-full-access"
       command.concat(["--session", @session_id]) unless @session_id.empty?
       command << @prompt
       { command: command }
@@ -127,7 +127,7 @@ module HQ
       command = [@opencode_executable, "run", "--interactive", "--dir", @workspace]
       command.concat(model_arguments)
       command.concat(opencode_variant_arguments)
-      command << "--dangerously-skip-permissions" if @sandbox_mode == "danger-full-access"
+      command << "--auto" if @sandbox_mode == "danger-full-access"
       command.concat(["--session", @session_id]) unless @session_id.empty?
       { command: command }
     end

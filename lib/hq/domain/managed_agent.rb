@@ -5,6 +5,7 @@ require_relative "log_paths"
 require_relative "attachment_normalizer"
 require_relative "agent_command_builder"
 require_relative "agent_memory"
+require_relative "agent_stream_projector"
 require_relative "agent_result_normalizer"
 require_relative "agent_structured_result"
 require_relative "agent_correction_runner"
@@ -497,19 +498,7 @@ module HQ
 
       log_file = File.open(@log_path, "a")
       launch = structured_output_runner_launch(command, environment)
-      @pid = spawn(
-        external_process_environment(launch.fetch(:env)).merge(
-          "TYCHO_STATUS_PATH" => status_path,
-          "TYCHO_AGENT_KEY" => @key,
-          "TYCHO_EXECUTABLE" => File.join(ROOT_DIR, "bin", "tycho")
-        ),
-        RbConfig.ruby, "-e", agent_runner_script, *launch.fetch(:command),
-        chdir: @workspace, out: log_file, err: %i[child out], pgroup: true
-      )
-      log_file.close
-      monitor_agent_process(@pid, status_path)
-      HQ.logger.info("Agent") { "Started #{@key} (pid=#{@pid})" }
-      record_run!(AgentRun.new(
+      run = AgentRun.new(
         started_at: @started_at,
         status: "running",
         log_path: @log_path,
@@ -520,7 +509,26 @@ module HQ
         model: @model,
         log_start_offset: log_start_offset,
         run_id: SecureRandom.uuid
-      ))
+      )
+      memory_store.append_run_started!(run_id: run.run_id, created_at: @started_at)
+      @pid = spawn(
+        external_process_environment(launch.fetch(:env)).merge(
+          "TYCHO_STATUS_PATH" => status_path,
+          "TYCHO_AGENT_KEY" => @key,
+          "TYCHO_EXECUTABLE" => File.join(ROOT_DIR, "bin", "tycho"),
+          "TYCHO_STREAM_RECORDER_PATH" => File.expand_path("agent_stream_recorder", __dir__),
+          "TYCHO_RAW_LOG_PATH" => @log_path,
+          "TYCHO_MEMORY_PATH" => memory_path,
+          "TYCHO_AGENT_TYPE" => harness_adapter,
+          "TYCHO_RUN_ID" => run.run_id
+        ),
+        RbConfig.ruby, "-e", agent_runner_script, *launch.fetch(:command),
+        chdir: @workspace, out: log_file, err: %i[child out], pgroup: true
+      )
+      log_file.close
+      monitor_agent_process(@pid, status_path)
+      HQ.logger.info("Agent") { "Started #{@key} (pid=#{@pid})" }
+      record_run!(run)
       @structured_result = nil
       @summary = nil
       HQ.hooks.publish("agent.run.started",
@@ -1118,15 +1126,27 @@ module HQ
     def agent_runner_script
       <<~RUBY
         status = begin
-          result = system(*ARGV)
-          child = $?
-          if result.nil?
-            warn "failed to execute \#{ARGV.first.inspect} (exit 127)"
-            127
-          elsif child&.signaled?
-            128 + child.termsig.to_i
+          recorder_path = ENV["TYCHO_STREAM_RECORDER_PATH"].to_s
+          if !recorder_path.empty? && !ENV["TYCHO_MEMORY_PATH"].to_s.empty?
+            require recorder_path
+            HQ::AgentStreamRecorder.run(
+              command: ARGV,
+              raw_log_path: ENV.fetch("TYCHO_RAW_LOG_PATH"),
+              memory_path: ENV.fetch("TYCHO_MEMORY_PATH"),
+              agent_type: ENV.fetch("TYCHO_AGENT_TYPE"),
+              run_id: ENV.fetch("TYCHO_RUN_ID")
+            )
           else
-            child ? child.exitstatus.to_i : (result ? 0 : 1)
+            result = system(*ARGV)
+            child = $?
+            if result.nil?
+              warn "failed to execute \#{ARGV.first.inspect} (exit 127)"
+              127
+            elsif child&.signaled?
+              128 + child.termsig.to_i
+            else
+              child ? child.exitstatus.to_i : (result ? 0 : 1)
+            end
           end
         rescue SystemCallError => e
           warn e.message
@@ -1909,7 +1929,9 @@ module HQ
     end
 
     def capture_run_memory!(run)
-      conversation, system = Parser.parse_stream(current_run_log_lines, agent_type: @agent)
+      lines = current_run_log_lines
+      persist_stream_events!(run, lines)
+      _conversation, system = Parser.parse_stream(lines, agent_type: @agent)
       usage_entries = system.select { |entry| entry.type == :usage }
       @cost_snapshot = AgentCostSnapshot.advance(agent: self, run:, usage_entries:)
       if @usage_metrics_store
@@ -1918,51 +1940,6 @@ module HQ
           run:,
           usage_entries:,
           metrics_store: @usage_metrics_store
-        )
-      end
-
-      conversation.each do |entry|
-        next unless entry.role == "assistant"
-
-        memory_store.append_assistant_message!(
-          entry.content,
-          created_at: entry.timestamp || @finished_at || Time.now,
-          metadata: entry.metadata
-        )
-      end
-
-      system.each do |entry|
-        if entry.type == :validation_retry
-          memory_store.append_validation_retry!(
-            entry.content,
-            created_at: entry.timestamp || @finished_at || Time.now,
-            metadata: entry.metadata
-          )
-          next
-        end
-
-        if entry.type == :usage
-          memory_store.append_token_usage!(
-            entry.content,
-            created_at: entry.timestamp || @finished_at || Time.now,
-            metadata: entry.metadata
-          )
-          next
-        end
-
-        summary = compact_system_summary(entry)
-        next if summary.nil?
-
-        metadata = if entry.metadata.is_a?(Hash)
-                     entry.metadata.merge("type" => entry.type.to_s)
-                   else
-                     { "type" => entry.type.to_s }
-                   end
-        memory_store.append_tool_summary!(
-          summary,
-          tool_name: entry.tool_name,
-          created_at: entry.timestamp || @finished_at || Time.now,
-          metadata:
         )
       end
 
@@ -1981,7 +1958,8 @@ module HQ
         summary: @summary,
         status: effective_status,
         created_at: run.finished_at || @finished_at || Time.now,
-        metadata: run_summary_metadata
+        metadata: run_summary_metadata,
+        event_id: "#{durable_run_id(run)}:run-summary"
       )
       HQ.hooks.publish("agent.memory.captured",
                        agent_key: @key,
@@ -1989,6 +1967,32 @@ module HQ
                        status: effective_status.to_s)
     rescue StandardError => e
       HQ.logger.error("Agent") { "Memory capture failed for #{@key}: #{e.message}" }
+    end
+
+    def persist_stream_events!(run, lines)
+      output_lines = Array(lines)
+      marker_index = output_lines.rindex(PROCESS_OUTPUT_MARKER)
+      output_lines = output_lines[(marker_index + 1)..] || [] if marker_index
+      projector = AgentStreamProjector.new(
+        memory_path:,
+        agent_type: @agent,
+        run_id: durable_run_id(run)
+      )
+      output_lines.each_with_index do |line, source_sequence|
+        projector.project_line(
+          line,
+          source_sequence:,
+          occurred_at: run.finished_at || @finished_at || Time.now
+        )
+      end
+    end
+
+    def durable_run_id(run)
+      value = run&.run_id.to_s
+      return value unless value.empty?
+
+      seed = [@key, run&.started_at&.iso8601, run&.log_start_offset].join(":")
+      Digest::SHA256.hexdigest(seed)[0, 24]
     end
 
     def run_summary_metadata
@@ -2045,29 +2049,7 @@ module HQ
     end
 
     def compact_system_summary(entry)
-      case entry.type
-      when :tool_call
-        first_line = entry.content.to_s.lines.map(&:strip).find { |line| !line.empty? }
-        label = entry.tool_name.to_s.strip
-        summary = if label.empty?
-                    first_line
-                  elsif first_line && first_line != label
-                    "#{label}: #{first_line}"
-                  else
-                    label
-                  end
-        memory_summary_text(summary)
-      when :tool_result
-        first_line = entry.content.to_s.lines.map(&:strip).find { |line| !line.empty? }
-        memory_summary_text(first_line ? "tool result: #{first_line}" : nil)
-      end
-    end
-
-    def memory_summary_text(text)
-      value = text.to_s.strip
-      return nil if value.empty?
-
-      value
+      Parser.compact_memory_summary(entry)
     end
 
     def canonical_json_value(value)

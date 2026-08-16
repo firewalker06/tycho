@@ -96,25 +96,29 @@ one file to grep when debugging.
                          (summary lines)   |
                                            |
 
-  TUI Chat Viewport (hybrid rendering)
- ----------------------------------------
+  TUI Chat Viewport (durable incremental rendering)
+  ----------------------------------------
 
-  +-------------------+     +-------------------+
-  | memory.jsonl      |     | raw.log           |
-  | (history: past    |     | (live: current    |
-  |  runs, user msgs, |     |  run tool calls,  |
-  |  assistant msgs)  |     |  assistant msgs)  |
-  +--------+----------+     +--------+----------+
-           |                          |
-           v                          v
-      AgentChatLog.chat_blocks (merged ChatBlock[])
+  Harness process --> AgentStreamRecorder --> raw.log (unchanged)
+                              |
+                              v
+                     AgentStreamProjector
+                              |
+                              v
+                     AgentEventJournal
+                              |
+                              v
+                    memory.jsonl (agent-wide sequence)
+                              |
+                              v
+                   AgentChatLog.chat_blocks
                        |
                        v
                  TUI chat sidebar
-              (rendered in real-time)
+              (rendered incrementally)
 
   User sends message --> memory.jsonl --> appears immediately
-  Agent streams output -> raw.log ------> appears on next tick
-  Run finishes ---------> capture_run_memory! --> raw.log content
-                          moves into memory.jsonl as history
+  Agent streams output -> recorder -----> raw.log + memory.jsonl
+  Delegation events ----> memory.jsonl --> share the same sequence
+  Run finishes ---------> capture_run_memory! reconciles missing IDs
 ```
