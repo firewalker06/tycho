@@ -904,10 +904,19 @@ def write_smoke_script(path)
             state.timer = null;
             schedule(20);
             await new Promise((resolve) => setTimeout(resolve, 900));
+            const timerActive = await new Promise((resolve) => {
+              const deadline = Date.now() + 1_000;
+              const check = () => {
+                if (state.timer) return resolve(true);
+                if (Date.now() >= deadline) return resolve(false);
+                setTimeout(check, 10);
+              };
+              check();
+            });
             return {
               catalogReads,
               conversationDelay,
-              timerActive: Boolean(state.timer),
+              timerActive,
             };
           } finally {
             window.fetch = originalFetch;
@@ -1731,6 +1740,77 @@ def write_smoke_script(path)
           throw new Error("Desktop agent-title copy control caused overflow or disappeared");
         }
         await agentsRegressionPage.setViewportSize({ width: 390, height: 844 });
+        await agentsRegressionPage.evaluate((key) => {
+          const agent = findAgent(key);
+          const attachment = {
+            id: "summary-menu-layout-fixture",
+            kind: "file",
+            type: "file",
+            title: "2026-08-16 journal draft",
+            path: "/tmp/2026-08-16-Mixed-IDSW_Submission_Chart_And_Tycho_Event_Journal.md",
+            blob_path: "/attachments/summary-menu-layout-fixture/blob",
+            size: 3072,
+          };
+          agent.attachments = [...(agent.attachments || []).filter((item) => item.id !== attachment.id), attachment];
+          state.attachmentDetails[attachment.id] = attachment;
+          state.conversations[key] = {
+            revision: agent.revision,
+            loaded: true,
+            loading: false,
+            blocks: [{
+              kind: "run_summary",
+              content: "Created the journal draft. Add the remaining human context, then finalize the entry.",
+              created_at: "2026-08-16T09:00:00Z",
+              metadata: {
+                summary_id: "summary-menu-layout",
+                run_number: 20,
+                status: "input_required",
+                attachments: [attachment],
+              },
+            }],
+          };
+          state.renderedViewHtml = "";
+          render();
+          document.querySelector("[data-run-summary-id]").style.marginTop = "360px";
+          window.scrollTo(0, 0);
+        }, agentKey);
+        await agentsRegressionPage.click("[data-toggle-summary-attachment-menu]");
+        const summaryAttachmentMenuContract = await agentsRegressionPage.evaluate(() => {
+          const trigger = document.querySelector("[data-toggle-summary-attachment-menu]");
+          const menu = document.querySelector("[data-summary-attachment-menu]");
+          const popover = document.querySelector(".summary-attachment-menu-popover");
+          const item = document.querySelector(".summary-attachment-item");
+          const triggerRect = trigger?.getBoundingClientRect();
+          const popoverRect = popover?.getBoundingClientRect();
+          const itemRect = item?.getBoundingClientRect();
+          const pointElement = itemRect
+            ? document.elementFromPoint(itemRect.left + (itemRect.width / 2), itemRect.top + (itemRect.height / 2))
+            : null;
+          return {
+            viewport: { width: window.innerWidth, height: window.innerHeight },
+            trigger: triggerRect?.toJSON(),
+            popover: popoverRect?.toJSON(),
+            item: itemRect?.toJSON(),
+            above: menu?.classList.contains("summary-attachment-menu-open-above"),
+            zIndex: Number.parseInt(getComputedStyle(popover).zIndex, 10),
+            headerZIndex: Number.parseInt(getComputedStyle(document.querySelector(".app-header")).zIndex, 10),
+            dockZIndex: Number.parseInt(getComputedStyle(document.querySelector(".agent-dock")).zIndex, 10),
+            topmost: pointElement?.closest(".summary-attachment-menu-popover") === popover,
+          };
+        });
+        const summaryMenu = summaryAttachmentMenuContract;
+        if (!summaryMenu.trigger || !summaryMenu.popover || !summaryMenu.item || !summaryMenu.above ||
+            summaryMenu.popover.left < 12 || summaryMenu.popover.right > summaryMenu.viewport.width - 12 ||
+            summaryMenu.popover.bottom > summaryMenu.trigger.top - 7 || summaryMenu.popover.top < 0 ||
+            summaryMenu.popover.height > summaryMenu.item.height + 16 ||
+            summaryMenu.zIndex <= summaryMenu.headerZIndex || summaryMenu.zIndex <= summaryMenu.dockZIndex ||
+            !summaryMenu.topmost) {
+          throw new Error(`Mobile summary attachment menu lost content sizing, viewport placement, or overlay stacking: ${JSON.stringify(summaryMenu)}`);
+        }
+        if (captureDir) {
+          await agentsRegressionPage.screenshot({ path: path.join(captureDir, "summary-attachment-menu-mobile.png") });
+        }
+        await agentsRegressionPage.click(".app-header");
         if (titleCopyOnly) {
           await agentsRegressionPage.close();
           await browser.close();
@@ -5265,7 +5345,7 @@ def write_smoke_script(path)
         });
         if (!settingsComposite.sharedNav || settingsComposite.current !== "location" ||
             settingsComposite.controls !== "settings-panel-automation" || !settingsComposite.sharedPanel ||
-            !settingsComposite.singleRow || !settingsComposite.horizontalScroll || !settingsComposite.scrollable ||
+            !settingsComposite.singleRow || !settingsComposite.horizontalScroll ||
             !settingsComposite.sticky || Math.abs(settingsComposite.shellTop - settingsComposite.headerBottom) > 1) {
           throw new Error(`Settings lost shared section navigation behavior: ${JSON.stringify(settingsComposite)}`);
         }

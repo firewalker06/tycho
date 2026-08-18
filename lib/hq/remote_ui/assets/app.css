@@ -91,7 +91,7 @@ button.primary,
 }
 
 .button-link {
-  display: inline-flex;
+  display: inline-block;
   align-items: center;
   justify-content: center;
   min-height: 44px;
@@ -4467,11 +4467,9 @@ select {
   justify-self: start;
   flex: 0 0 auto;
   width: 42px;
-  height: 42px;
-  max-height: 42px;
 }
 
-.summary-attachment-menu > summary {
+.summary-attachment-menu > .summary-attachment-trigger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4486,15 +4484,16 @@ select {
   cursor: pointer;
 }
 
-.summary-attachment-menu > summary::-webkit-details-marker {
-  display: none;
+.summary-attachment-overlay-root {
+  position: fixed;
+  inset: 0;
+  z-index: var(--ds-z-dropdown);
+  pointer-events: none;
 }
 
 .summary-attachment-menu-popover {
   position: fixed;
-  top: var(--summary-attachment-popover-top, calc(100% + 8px));
-  left: var(--summary-attachment-popover-left, 0);
-  z-index: 18;
+  z-index: var(--ds-z-dropdown);
   width: min(360px, calc(100vw - 48px));
   max-height: min(48dvh, 360px);
   overflow-y: auto;
@@ -4504,15 +4503,11 @@ select {
   border-radius: 8px;
   background: color-mix(in srgb, var(--panel) 98%, transparent);
   box-shadow: var(--shadow);
+  pointer-events: auto;
 }
 
 .summary-attachment-menu-popover.ui-overlay-surface {
   border-color: color-mix(in srgb, var(--info) 46%, var(--border));
-}
-
-.summary-attachment-menu-open-above .summary-attachment-menu-popover {
-  top: auto;
-  bottom: var(--summary-attachment-popover-bottom, calc(100% + 8px));
 }
 
 .summary-attachment-list {

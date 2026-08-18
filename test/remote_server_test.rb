@@ -4113,6 +4113,10 @@ module RemoteServerTest
     assert(css[:body].include?(".summary-attachment-menu"), "expected Conversation summaries to style attachment menus")
     assert(css[:body].include?(".summary-attachment-menu-popover"),
            "expected Conversation summary attachments to open as a menu")
+    assert(css[:body].include?(".summary-attachment-overlay-root") &&
+           css[:body].include?("position: fixed") &&
+           css[:body].include?("z-index: var(--ds-z-dropdown)"),
+           "expected Conversation summary attachment menus to use a viewport overlay on the shared dropdown layer")
     assert(css[:body].include?(".summary-attachment-list-full"),
            "expected detailed Summary pages to render full attachment lists")
     assert(css[:body].include?(".summary-attachment-item") &&
@@ -5723,7 +5727,7 @@ module RemoteServerTest
     assert(js[:body].include?('data-state-key="summary-attachment-menu:${escapeAttr(summaryId)}"'),
            "expected Conversation summary attachment menus to preserve open state across polling")
     assert(js[:body].include?("function repositionOpenSummaryAttachmentMenus"),
-           "expected restored summary attachment menus to recompute fixed popover coordinates")
+           "expected restored summary attachment menus to recompute viewport-safe popover coordinates")
     assert(js[:body].include?("closeSummaryAttachmentMenus();"),
            "expected Summary attachment menus to close on outside clicks")
     assert(js[:body].include?("renderSummaryAttachmentList"),
