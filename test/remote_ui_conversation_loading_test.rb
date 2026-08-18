@@ -17,6 +17,7 @@ module RemoteUIConversationLoadingTest
       vm.runInContext(fs.readFileSync(process.argv[1], "utf8"), context);
 
       const conversationLoading = context.window.TychoRemoteHelpers.conversationLoading;
+      const agentComposerState = context.window.TychoRemoteHelpers.agentComposerState;
       const conversations = {
         alpha: { blocks: [], loaded: true, loading: false },
       };
@@ -33,6 +34,17 @@ module RemoteUIConversationLoadingTest
       const failed = checks.find(([, actual, expected]) => actual !== expected);
       if (failed) {
         const [label, actual, expected] = failed;
+        throw new Error(`${label}: expected ${expected}, got ${actual}`);
+      }
+
+      const composerChecks = [
+        ["normal agent", agentComposerState({}), "composer"],
+        ["pending inquiry detail", agentComposerState({ awaiting_input: true }), "inquiry-loading"],
+        ["loaded inquiry", agentComposerState({ awaiting_input: true, latest_inquiry: { id: "inquiry-1" } }), "inquiry"],
+      ];
+      const failedComposerCheck = composerChecks.find(([, actual, expected]) => actual !== expected);
+      if (failedComposerCheck) {
+        const [label, actual, expected] = failedComposerCheck;
         throw new Error(`${label}: expected ${expected}, got ${actual}`);
       }
     JAVASCRIPT

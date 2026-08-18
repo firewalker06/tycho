@@ -4506,6 +4506,16 @@ module RemoteServerTest
     assert(js[:body].include?("data-agent-dock"), "expected Agent detail composer to live in a dock")
     assert(js[:body].include?("function renderInquiryForm"),
            "expected Agent detail to render structured inquiry forms")
+    assert(js[:body].include?("function renderInquiryLoadingSkeleton") &&
+           js[:body].include?('composerState === "inquiry-loading"') &&
+           js[:body].include?('class="inquiry-loading-tools"') &&
+           js[:body].scan('class="inquiry-loading-tool"').length == 3 &&
+           js[:body].include?('class="inquiry-loading-submit"') &&
+           js[:body].include?('REMOTE_HELPERS.agentComposerState(agent) === "inquiry-loading"') &&
+           css[:body].include?(".inquiry-loading-skeleton") &&
+           css[:body].include?("@keyframes inquiry-loading-sweep") &&
+           css[:body].include?("@keyframes inquiry-loading-border"),
+           "expected pending inquiry detail to hide Summary and render a quiet animated form skeleton")
     assert(js[:body].include?('id="inquiry-form" class="inquiry-form${'),
            "expected inquiry answers to use a dedicated form")
     assert(js[:body].include?("fullScreenInquiryKeys") &&
