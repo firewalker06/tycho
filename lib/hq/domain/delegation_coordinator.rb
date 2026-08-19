@@ -5,6 +5,7 @@ require "json"
 require_relative "agent_archive_store"
 require_relative "agent_memory"
 require_relative "delegation_store"
+require_relative "agent_capability"
 
 module HQ
   class DelegationCoordinator
@@ -63,6 +64,35 @@ module HQ
 
     def set_connected!(child_key:, connected:, now: Time.now)
       delegation_store.set_connected!(child_key:, connected:, now:)
+    end
+
+    def accept_prompt!(child:, owner:, parent_key: nil, now: Time.now)
+      relation, counts, changed = delegation_store.accept_prompt!(
+        child_key: child.key,
+        owner:,
+        parent_key:,
+        now:
+      )
+      child.cancel_pending_inquiry!(created_at: now) if relation && owner.to_s == "parent"
+      [relation, counts, changed]
+    end
+
+    def accept_prompt_from!(child:, actor:, now: Time.now)
+      actor ||= AgentCapability.user_actor
+      return accept_prompt!(child:, owner: "user", now:) if actor.user?
+
+      delegation_store.validate_agent_prompt!(source_key: actor.agent_key, target_key: child.key)
+      relation = delegation_store.relation_for_child(child.key)
+      return [nil, { suppressed_reports: 0, cancelled_resumes: 0 }, false] unless relation
+      unless relation.dig("parent", "agent_key") == actor.agent_key
+        raise DelegationStore::Error, "Only the recorded parent can prompt a delegated child"
+      end
+
+      accept_prompt!(child:, owner: "parent", parent_key: actor.agent_key, now:)
+    end
+
+    def ownership_stamp(child_key)
+      delegation_store.ownership_stamp(child_key)
     end
 
     def relationships_for(agent_key, index: nil)
@@ -136,7 +166,8 @@ module HQ
           next
         end
 
-        parent.start!
+        stamp = ownership_stamp(parent.key)
+        stamp ? parent.start!(delegation_stamp: stamp) : parent.start!
         state = parent.running? ? "resumed" : "resume_failed"
         reports.each do |report|
           options = { resume_state: state, resumed_at: (now if state == "resumed") }
@@ -161,6 +192,7 @@ module HQ
         "agent" => report.fetch("child"),
         "run_id" => report["child_run_id"],
         "run_number" => report["child_run_number"],
+        "ownership_generation" => report["ownership_generation"],
         "native_session_id" => report["child_native_session_id"],
         "status" => report.fetch("status"),
         "summary" => report.fetch("summary"),

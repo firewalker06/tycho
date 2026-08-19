@@ -7,7 +7,7 @@ require_relative "../lib/hq/domain/delegation_coordinator"
 require_relative "../lib/hq/domain/managed_agent"
 
 class DelegationTest
-  FakeRun = Struct.new(:run_id, :session_id, keyword_init: true)
+  FakeRun = Struct.new(:run_id, :session_id, :delegation_owner, :delegation_generation, keyword_init: true)
 
   class FakeAgent
     attr_reader :key, :name, :project_key, :workspace, :last_run, :session_id, :structured_result, :memory_path
@@ -20,7 +20,12 @@ class DelegationTest
       @project_key = "demo"
       @workspace = workspace || File.join(root, "workspace")
       @memory_path = File.join(root, "#{key}.memory.jsonl")
-      @last_run = FakeRun.new(run_id: "run-#{key}", session_id: "session-#{key}")
+      @last_run = FakeRun.new(
+        run_id: "run-#{key}",
+        session_id: "session-#{key}",
+        delegation_owner: "parent",
+        delegation_generation: 1
+      )
       @session_id = @last_run.session_id
       @run_count = 1
       @status = status
@@ -28,6 +33,7 @@ class DelegationTest
       @running = running
       @structured_result = { "status" => status, "attachments" => attachments }
       @delegation_parent = nil
+      @inquiry_cancelled = false
     end
 
     def display_name = @name
@@ -39,7 +45,7 @@ class DelegationTest
     def archive_path = nil
     def refresh_session_identity! = @session_id
 
-    def start!
+    def start!(delegation_stamp: nil)
       @running = true
       true
     end
@@ -48,12 +54,23 @@ class DelegationTest
       @running = false
     end
 
-    def finish_run!(suffix)
+    def finish_run!(suffix, owner: "parent", generation: 1)
       @run_count += 1
-      @last_run = FakeRun.new(run_id: "run-#{@key}-#{suffix}", session_id: "session-#{@key}-#{suffix}")
+      @last_run = FakeRun.new(
+        run_id: "run-#{@key}-#{suffix}",
+        session_id: "session-#{@key}-#{suffix}",
+        delegation_owner: owner,
+        delegation_generation: generation
+      )
       @session_id = @last_run.session_id
       @running = false
     end
+
+    def cancel_pending_inquiry!(created_at: Time.now)
+      @inquiry_cancelled = true
+    end
+
+    def inquiry_cancelled? = @inquiry_cancelled
 
     def associate_parent!(reference)
       raise ArgumentError, "conflict" if @delegation_parent && @delegation_parent != reference
@@ -77,6 +94,8 @@ class DelegationTest
 
       relation, created = coordinator.attach!(agents:, child:, parent_key: parent.key)
       assert(created && relation.dig("parent", "run_id") == "run-parent", "expected origin run identity")
+      assert(relation["owner"] == "parent" && relation["ownership_generation"] == 1,
+             "expected a new relationship to start delegated")
       repeated, repeated_created = coordinator.attach!(agents:, child:, parent_key: parent.key)
       assert(!repeated_created && repeated["id"] == relation["id"], "expected idempotent same-parent attachment")
       assert_raises("self-parent") { coordinator.attach!(agents:, child: parent, parent_key: parent.key) }
@@ -96,6 +115,97 @@ class DelegationTest
       agents << grandchild
       coordinator.attach!(agents:, child: grandchild, parent_key: child.key)
       assert_raises("cycle") { coordinator.attach!(agents:, child: parent, parent_key: grandchild.key) }
+      child_actor = HQ::AgentCapability::Actor.new(type: "agent", agent_key: child.key, run_id: child.last_run.run_id)
+      assert_raises("upward prompt") do
+        coordinator.accept_prompt_from!(child: parent, actor: child_actor)
+      end
+      coordinator.accept_prompt_from!(child: grandchild, actor: child_actor)
+      assert(store.relation_for_child(grandchild.key)["owner"] == "parent",
+             "expected a verified parent prompt to preserve the child edge")
+
+      coordinator.accept_prompt_from!(child: grandchild, actor: HQ::AgentCapability.user_actor)
+      assert(store.relation_for_child(grandchild.key)["owner"] == "user",
+             "expected takeover to change only the selected edge")
+      assert(store.relation_for_child(child.key)["owner"] == "parent",
+             "expected nested delegation ownership to remain local")
+
+      takeover_parent = FakeAgent.new(key: "takeover-parent", root: dir,
+                                      workspace: File.join(dir, "takeover-parent-workspace"))
+      takeover_child = FakeAgent.new(key: "takeover-child", root: dir,
+                                     workspace: File.join(dir, "takeover-child-workspace"))
+      takeover_agents = [takeover_parent, takeover_child]
+      coordinator.attach!(agents: takeover_agents, child: takeover_child, parent_key: takeover_parent.key)
+      takeover_child.finish_run!("parent-owned", owner: "parent", generation: 1)
+      store.record_report!(child: takeover_child)
+      takeover_relation, takeover_counts, takeover_changed = coordinator.accept_prompt!(
+        child: takeover_child,
+        owner: "user"
+      )
+      assert(takeover_changed && takeover_relation["owner"] == "user" &&
+             takeover_relation["ownership_generation"] == 2, "expected direct user takeover")
+      assert(takeover_counts[:suppressed_reports] == 1, "expected takeover to suppress an undelivered report")
+      coordinator.process!(takeover_agents)
+      assert(store.reports.none? { |item| item["child_run_id"] == "run-takeover-child-parent-owned" },
+             "expected the superseded parent-owned run not to report")
+
+      takeover_child.finish_run!("user-owned", owner: "user", generation: 2)
+      reclaimed, _counts, reclaimed_changed = coordinator.accept_prompt!(
+        child: takeover_child,
+        owner: "parent",
+        parent_key: takeover_parent.key
+      )
+      assert(reclaimed_changed && reclaimed["owner"] == "parent" && reclaimed["ownership_generation"] == 3,
+             "expected a parent prompt to restore delegation")
+      assert(takeover_child.inquiry_cancelled?, "expected parent reclaim to cancel a pending inquiry")
+      coordinator.process!(takeover_agents)
+      assert(store.reports.none? { |item| item["child_run_id"] == "run-takeover-child-user-owned" },
+             "expected a user-owned run to remain ineligible after parent reclaim")
+
+      takeover_child.finish_run!("reclaimed", owner: "parent", generation: 3)
+      coordinator.process!(takeover_agents)
+      reclaimed_report = store.reports.find { |item| item["child_run_id"] == "run-takeover-child-reclaimed" }
+      assert(reclaimed_report && reclaimed_report["ownership_generation"] == 3,
+             "expected the reclaimed generation to report once")
+      assert_raises("wrong parent reclaim") do
+        coordinator.accept_prompt!(child: takeover_child, owner: "parent", parent_key: other_parent.key)
+      end
+
+      inquiry_child = HQ::ManagedAgent.new(
+        key: "inquiry-child",
+        name: "Inquiry child",
+        project_key: "demo",
+        template_key: "default",
+        workspace: File.join(dir, "inquiry-child-workspace"),
+        prompt: "Ask first",
+        log_path: File.join(dir, "inquiry-child.raw.log")
+      )
+      coordinator.attach!(agents: [takeover_parent, inquiry_child], child: inquiry_child,
+                          parent_key: takeover_parent.key)
+      HQ::AgentMemory.new(inquiry_child).append_inquiry_request!(
+        { "message" => "Choose", "fields" => [] },
+        inquiry_id: "inquiry-1"
+      )
+      coordinator.accept_prompt!(child: inquiry_child, owner: "parent", parent_key: takeover_parent.key)
+      assert(inquiry_child.latest_inquiry.nil?,
+             "expected a repeated parent prompt to cancel an obsolete inquiry without changing owner")
+
+      stamped_run = HQ::ManagedAgent::AgentRun.new(
+        run_id: "stamped-run",
+        delegation_owner: "parent",
+        delegation_generation: 7
+      )
+      reloaded_run = HQ::ManagedAgent::AgentRun.from_hash(stamped_run.to_hash)
+      assert(reloaded_run.delegation_owner == "parent" && reloaded_run.delegation_generation == 7,
+             "expected ownership stamps to survive managed-agent persistence")
+
+      unstamped_child = FakeAgent.new(key: "unstamped-child", root: dir,
+                                      workspace: File.join(dir, "unstamped-child-workspace"))
+      unstamped_child.finish_run!("legacy", owner: nil, generation: nil)
+      coordinator.attach!(agents: [takeover_parent, unstamped_child], child: unstamped_child,
+                          parent_key: takeover_parent.key)
+      coordinator.process!([takeover_parent, unstamped_child])
+      assert(store.reports.none? { |item| item["child_run_id"] == "run-unstamped-child-legacy" },
+             "expected an unstamped legacy run to fail closed")
 
       live_log = File.join(dir, "live-parent.raw.log")
       File.write(live_log, "{\"type\":\"thread.started\",\"thread_id\":\"native-live-session\"}\n")

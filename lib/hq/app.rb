@@ -2213,6 +2213,7 @@ def selected_screen_items
       return [self, nil] if content.empty?
 
       agent = @agent_chat_form.agent
+      @agent_store.accept_delegation_prompt!(agent, owner: "user")
       agent.add_user_message!(content)
       @agent_chat_form.composer.clear unless @agent_chat_form.inquiry_active?
       save_agents!

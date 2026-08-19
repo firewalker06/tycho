@@ -17,6 +17,7 @@ require_relative "domain/file_transaction"
 require_relative "domain/github_api_client"
 require_relative "domain/scheduler"
 require_relative "domain/agent_store"
+require_relative "domain/agent_capability"
 require_relative "domain/agent_archive_store"
 require_relative "domain/usage_metrics"
 
@@ -1405,6 +1406,7 @@ module HQ
       existing = agent_store.load
       existing.unshift(agent)
       agent = persist_agents_with_parent!(agent_store, existing, agent, opts, creating: true)
+      agent_store.accept_prompt_from!(agent, actor: opts.fetch(:actor), agents: existing) if agent.delegation_parent
 
       if opts[:run]
         agent = agent_store.start_agent!(agent.key)
@@ -1422,19 +1424,23 @@ module HQ
 
     def create_delegation_options(opts)
       opts = opts.dup
+      actor = agent_actor_from_environment
       parent_key = opts[:parent_agent].to_s.strip
-      managed_parent_key = ENV["TYCHO_AGENT_KEY"].to_s.strip
+      managed_parent_key = actor.agent? ? actor.agent_key : ""
       root = opts[:root] == true
       raise ArgumentError, "Choose either --parent-agent or --root" if root && !parent_key.empty?
-      return opts.merge(parent_agent: nil) if root
-      return opts.merge(parent_agent: parent_key) unless parent_key.empty?
-      return opts if managed_parent_key.empty?
+      if actor.agent? && !parent_key.empty? && parent_key != actor.agent_key
+        raise ArgumentError, "An agent can delegate only as itself"
+      end
+      return opts.merge(parent_agent: nil, actor:) if root
+      return opts.merge(parent_agent: parent_key, actor:) unless parent_key.empty?
+      return opts.merge(actor:) if managed_parent_key.empty?
       if remote_requested?(opts)
         raise ArgumentError,
               "A managed agent cannot infer its parent on --server; pass --parent-agent KEY or --root"
       end
 
-      opts.merge(parent_agent: managed_parent_key)
+      opts.merge(parent_agent: managed_parent_key, actor:)
     end
 
     def list_agents(project_key, opts = {}, out: $stdout, err: $stderr)
@@ -1491,6 +1497,7 @@ module HQ
     end
 
     def run_agent(agent_key, opts = {}, out: $stdout, err: $stderr)
+      opts = opts.merge(actor: agent_actor_from_environment)
       return remote_agent_action(agent_key, "start", opts, out:, err:) if remote_requested?(opts)
 
       store = agent_store_for_all
@@ -1551,6 +1558,7 @@ module HQ
     end
 
     def send_agent_message(agent_key, message, opts = {}, out: $stdout, err: $stderr)
+      opts = opts.merge(actor: agent_actor_from_environment)
       return remote_send_agent_message(agent_key, message, opts, out:, err:) if remote_requested?(opts)
 
       store = agent_store_for_all
@@ -1561,6 +1569,7 @@ module HQ
       return failure("Agent #{agent_key} is already running", err: err) if agent.running?
 
       agent = persist_agents_with_parent!(store, agents, agent, opts)
+      store.accept_prompt_from!(agent, actor: opts.fetch(:actor), agents: agents)
       agent.add_user_message!(message)
       store.save(agents)
       agent = store.start_agent!(agent.key)
@@ -2241,7 +2250,26 @@ module HQ
     end
 
     def persist_agents_with_parent!(store, agents, child, opts, creating: false)
-      store.persist_with_delegation!(agents:, child:, parent_key: opts[:parent_agent], creating:)
+      store.persist_with_delegation!(
+        agents:,
+        child:,
+        parent_key: opts[:parent_agent],
+        creating:,
+        actor: opts[:actor]
+      )
+    end
+
+    def agent_actor_from_environment
+      token = ENV["TYCHO_AGENT_CAPABILITY"].to_s.strip
+      claimed_key = ENV["TYCHO_AGENT_KEY"].to_s.strip
+      return AgentCapability.user_actor if token.empty? && claimed_key.empty?
+      raise AgentCapability::Error, "Missing agent capability" if token.empty?
+
+      actor = AgentCapability.new.verify(token)
+      if !claimed_key.empty? && actor.agent_key != claimed_key
+        raise AgentCapability::Error, "Agent capability does not match TYCHO_AGENT_KEY"
+      end
+      actor
     end
 
     def agent_cli_delegation(agent, relationship_context: nil)
@@ -2263,6 +2291,9 @@ module HQ
       relation.fetch(side).merge(
         "relationship_id" => relation.fetch("id"),
         "connected" => relation["connected"] != false,
+        "owner" => relation.fetch("owner", "parent"),
+        "ownership_generation" => relation.fetch("ownership_generation", 1),
+        "ownership_changed_at" => relation["ownership_changed_at"],
         "connection_changed_at" => relation["connection_changed_at"]
       ).compact
     end

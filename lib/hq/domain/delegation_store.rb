@@ -11,7 +11,8 @@ require_relative "server_identity"
 
 module HQ
   class DelegationStore
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
+    OWNERS = %w[parent user].freeze
     TERMINAL_STATUSES = %w[success succeeded no_action_needed partial failed blocked input_required stopped].freeze
 
     class Error < ArgumentError; end
@@ -61,6 +62,21 @@ module HQ
       existing
     end
 
+    def validate_agent_prompt!(source_key:, target_key:)
+      source = source_key.to_s
+      target = target_key.to_s
+      ancestor = relation_for_child(source)&.dig("parent", "agent_key")
+      visited = {}
+      while ancestor
+        raise Error, "An agent cannot prompt its parent or another ancestor" if ancestor == target
+        break if visited[ancestor]
+
+        visited[ancestor] = true
+        ancestor = relation_for_child(ancestor)&.dig("parent", "agent_key")
+      end
+      true
+    end
+
     def attach!(parent:, child:, parent_server_id: nil, now: Time.now)
       with_lock do
         existing = validate!(parent:, child:, parent_server_id:)
@@ -73,12 +89,53 @@ module HQ
           "parent" => agent_reference(parent, include_origin: true),
           "child" => agent_reference(child, include_origin: false),
           "connected" => true,
+          "owner" => "parent",
+          "ownership_generation" => 1,
           "created_at" => now.utc.iso8601
         }
         payload = data
         payload.fetch("relationships") << relation
         write(payload)
         [relation, true]
+      end
+    end
+
+    def ownership_stamp(child_key)
+      relation = relation_for_child(child_key)
+      return nil unless relation
+
+      {
+        "relationship_id" => relation.fetch("id"),
+        "owner" => relation.fetch("owner", "parent"),
+        "generation" => relation.fetch("ownership_generation", 1)
+      }
+    end
+
+    def accept_prompt!(child_key:, owner:, parent_key: nil, now: Time.now)
+      requested_owner = owner.to_s
+      raise Error, "Unknown delegation owner: #{owner}" unless OWNERS.include?(requested_owner)
+
+      with_lock do
+        payload = data
+        relation = payload.fetch("relationships").find do |item|
+          item.dig("child", "agent_key") == child_key.to_s
+        end
+        return [nil, { suppressed_reports: 0, cancelled_resumes: 0 }, false] unless relation
+        if requested_owner == "parent" && relation.dig("parent", "agent_key") != parent_key.to_s
+          raise Error, "Only the recorded parent can reclaim this delegation"
+        end
+
+        current_owner = relation.fetch("owner", "parent")
+        return [relation, { suppressed_reports: 0, cancelled_resumes: 0 }, false] if current_owner == requested_owner
+
+        changed_at = now.utc.iso8601
+        relation["owner"] = requested_owner
+        relation["ownership_generation"] = relation.fetch("ownership_generation", 1).to_i + 1
+        relation["ownership_changed_at"] = changed_at
+        removed_runs = remove_undelivered_reports!(payload, relation)
+        cancelled_resumes = cancel_pending_resumes!(payload, relation, state: requested_owner, now: changed_at)
+        write(payload)
+        [relation, { suppressed_reports: removed_runs.length, cancelled_resumes: cancelled_resumes }, true]
       end
     end
 
@@ -138,6 +195,12 @@ module HQ
           item.dig("child", "agent_key") == child.key.to_s
         end
         return [nil, false] unless relation
+        run_owner = run.respond_to?(:delegation_owner) ? run.delegation_owner.to_s : ""
+        run_generation = run.respond_to?(:delegation_generation) ? run.delegation_generation : nil
+        current_generation = relation.fetch("ownership_generation", 1)
+        eligible = run_owner == "parent" && run_generation.is_a?(Integer) &&
+                   run_generation == current_generation
+        return [nil, false] unless eligible
         unless relation["connected"] != false
           removed_runs = remove_undelivered_reports!(payload, relation)
           changed = relation["last_disconnected_run_id"] != run.run_id || removed_runs.any?
@@ -158,6 +221,7 @@ module HQ
           "child" => relation.fetch("child"),
           "child_run_id" => run.run_id,
           "child_run_number" => child.run_count,
+          "ownership_generation" => current_generation,
           "child_native_session_id" => run.session_id.to_s.empty? ? nil : safe_text(run.session_id, 500),
           "status" => status,
           "summary" => safe_text(child.last_summary, 4000),
@@ -207,6 +271,18 @@ module HQ
       removed_run_ids
     end
 
+    def cancel_pending_resumes!(payload, relation, state:, now:)
+      payload.fetch("reports").count do |report|
+        next false unless report["relationship_id"] == relation["id"]
+        next false if report["delivered_at"].to_s.empty? || !report["resumed_at"].to_s.empty?
+        next false unless %w[queued parent_running workspace_busy].include?(report["resume_state"])
+
+        report["resume_state"] = state.to_s == "user" ? "takeover" : "ownership_changed"
+        report["resume_cancelled_at"] = now
+        true
+      end
+    end
+
     def data
       payload = FileStore.read_json(@path, fallback: {})
       stored_server = payload["server_id"].to_s
@@ -214,7 +290,12 @@ module HQ
       mismatch = !stored_server.empty? && stored_server != expected_server
       raise Error, "Delegation ledger belongs to a different Tycho server" if mismatch
 
-      relationships = Array(payload["relationships"])
+      relationships = Array(payload["relationships"]).map do |relation|
+        relation.merge(
+          "owner" => relation.fetch("owner", "parent"),
+          "ownership_generation" => relation.fetch("ownership_generation", 1)
+        )
+      end
       invalid = relationships.any? do |relation|
         [relation["server_id"], relation.dig("parent", "server_id"), relation.dig("child", "server_id")]
           .compact.any? { |value| value != expected_server }

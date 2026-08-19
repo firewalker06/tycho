@@ -43,8 +43,9 @@ module HQ
       @config = config
       @base_uri = URI.parse(config.url)
       @credential_resolver = credential_resolver
-      @credential = credential || resolve_credential(config)
-      @token = @credential.token.to_s
+      @agent_capability = ENV["TYCHO_AGENT_CAPABILITY"].to_s.strip
+      @credential = @agent_capability.empty? ? (credential || resolve_credential(config)) : nil
+      @token = @credential&.token.to_s
       @open_timeout = open_timeout
       @read_timeout = read_timeout
     end
@@ -82,6 +83,7 @@ module HQ
       request = request_class.new(uri)
       request["Accept"] = "application/json"
       request["Authorization"] = "Bearer #{@token}" unless @token.empty?
+      request["X-Tycho-Agent-Capability"] = @agent_capability unless @agent_capability.empty?
       if request.request_body_permitted?
         request["Content-Type"] = "application/json"
         request.body = JSON.generate(body || {})
@@ -100,13 +102,13 @@ module HQ
       status = response.code.to_i
       payload = parse_json(response.body)
       if status.between?(200, 299)
-        @credential_resolver&.verified!(@credential, @config)
+        @credential_resolver&.verified!(@credential, @config) if @credential
         return payload
       end
 
       message = error_message(payload, response)
       if status == 401 || status == 403
-        @credential_resolver&.rejected!(@credential, @config)
+        @credential_resolver&.rejected!(@credential, @config) if @credential
         raise Error.new("Remote server #{server_key} authentication failed", kind: :authentication, status: status)
       end
       if status == 404 && message == "Not found"

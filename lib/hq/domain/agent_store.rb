@@ -5,6 +5,7 @@ require_relative "file_transaction"
 require_relative "file_store"
 require_relative "managed_agent"
 require_relative "delegation_coordinator"
+require_relative "agent_capability"
 require_relative "schedule_store"
 require_relative "visibility"
 require_relative "../ui/rendering/styles"
@@ -200,10 +201,11 @@ module HQ
       )
     end
 
-    def persist_with_delegation!(agents:, child:, parent_key: nil, parent_server_id: nil, creating: false)
+    def persist_with_delegation!(agents:, child:, parent_key: nil, parent_server_id: nil, creating: false, actor: nil)
       key = parent_key.to_s.strip
       with_exclusive_lock do
         current, = load_with_poll_events_unlocked(process_delegations: false)
+        validate_actor!(current, actor) if actor&.agent?
         index = current.index { |agent| agent.key == child.key }
         if !index && creating
           current.unshift(child)
@@ -218,10 +220,15 @@ module HQ
           return child
         end
 
+        if actor&.agent? && actor.agent_key != key
+          raise DelegationStore::Error, "An agent can delegate only as itself"
+        end
+
         parent = current.find { |agent| agent.key == key }
         paths = [AGENTS_FILE, DELEGATIONS_FILE, child.memory_path, parent&.memory_path].compact
         FileTransaction.run(paths) do
-          associate_delegation!(agents: current, child:, parent_key: key, parent_server_id:)
+          _relation, created = associate_delegation!(agents: current, child:, parent_key: key, parent_server_id:)
+          @delegation_coordinator.accept_prompt!(child:, owner: "user") if created && actor&.user?
           save_unlocked(current)
         end
         agents.replace(current)
@@ -243,9 +250,22 @@ module HQ
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
 
-        target.start! unless target.running?
+        unless target.running?
+          stamp = @delegation_coordinator.ownership_stamp(target.key)
+          stamp ? target.start!(delegation_stamp: stamp) : target.start!
+        end
         target
       end
+    end
+
+    def accept_delegation_prompt!(child, owner:, parent_key: nil, now: Time.now)
+      @delegation_coordinator.accept_prompt!(child:, owner:, parent_key:, now:)
+    end
+
+    def accept_prompt_from!(child, actor:, agents: nil, now: Time.now)
+      current = agents || load
+      validate_actor!(current, actor) if actor&.agent?
+      @delegation_coordinator.accept_prompt_from!(child:, actor:, now:)
     end
 
     def stop_agent!(key)
@@ -341,6 +361,14 @@ module HQ
     end
 
     private
+
+    def validate_actor!(agents, actor)
+      source = agents.find { |agent| agent.key == actor.agent_key }
+      valid_run = source && source.runs.any? { |run| run.run_id == actor.run_id }
+      raise DelegationStore::Error, "Agent capability does not match a managed run" unless valid_run
+
+      source
+    end
 
     def with_exclusive_lock
       FileUtils.mkdir_p(File.dirname(AGENTS_FILE))

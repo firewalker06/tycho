@@ -3831,6 +3831,34 @@ select {
   padding: 0;
 }
 
+.agent-relationship-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.agent-ownership-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--border));
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.agent-ownership-badge.takeover {
+  border-color: color-mix(in srgb, var(--warning) 62%, var(--border));
+  background: color-mix(in srgb, var(--warning) 9%, transparent);
+  color: var(--warning);
+}
+
 .agent-reference {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

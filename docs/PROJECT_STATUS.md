@@ -10,11 +10,11 @@ type: project
 
 ## Last Updated
 
-2026-08-18
+2026-08-19
 
 ## Strategic Direction
 
-Managed agents support explicit same-server parent references, durable terminal report-back, safe automatic parent resume, reversible callback disconnects, archive-stable navigation, and typed Remote UI relationship links. See [AGENT_DELEGATION.md](./AGENT_DELEGATION.md) for the CLI/API and callback contract.
+Managed agents support explicit same-server parent references, ownership generations for direct-user takeover and parent reclaim, durable terminal report-back, safe automatic parent resume, reversible callback disconnects, archive-stable navigation, and typed Remote UI relationship links. See [AGENT_DELEGATION.md](./AGENT_DELEGATION.md) for the CLI/API and callback contract.
 
 
 Key references:
@@ -49,6 +49,7 @@ Key references:
 | Agent model controls | Optional per-agent `model` and `reasoning_effort`, inherited from project/template config and passed as harness run arguments | Model catalogs change outside Tycho; use harness discovery for suggestions where available, keep free-form fallback everywhere, and keep provider-specific thinking budgets out of first-version scope |
 | Managed-agent identity | Generate keys as `<project>-agent-<UTC timestamp with microseconds>`, adding a short random suffix only on an exact collision; retain legacy numeric keys when loading existing state | Timestamp identities remain sortable and avoid key reuse when agents are created concurrently or archived across Tycho instances |
 | Managed-agent CLI delegation | A local `tycho agent create` invoked inside a managed agent inherits `TYCHO_AGENT_KEY` as its parent; `--root` is the explicit opt-out, while `--server` requires an explicit parent or root choice | Delegation must remain durable even when a harness loads an outdated skill or omits `--parent-agent`, without guessing across server boundaries |
+| Delegation ownership | Persist `parent`/`user` ownership and a monotonic generation on each relationship; stamp delegated runs and report only matching parent-owned generations | Direct user takeover must suppress stale callbacks immediately, while a later parent prompt can reclaim only that edge without results crossing ownership boundaries |
 | Cross-harness response style | Append the current `~/.tycho/config/response_style.md` policy to every cold and resumed run, with project/template override or opt-out; record the harness `session_id` on each run | Keep operator-facing prose consistent without coupling the policy to a harness-native role API or persisting it into conversation memory, while retaining the native session identity used for each run; explicit task formats remain higher priority |
 | Agent session strategy | Persist native Claude/Codex `session_id` per managed agent and resume after the first run; keep `memory.jsonl` as HQ's canonical transcript | Native resume recovers agent-side continuity and prompt-cache reuse. HQ only replays bounded `memory.jsonl` on first run or when no native session is known |
 | Structured output correction | Give Codex and Claude-compatible runs the same canonical agent-result schema, validate their final response, then allow two same-session corrections by default (`TYCHO_STRUCTURED_OUTPUT_CORRECTION_LIMIT`, clamped to `0..5`); give cold OpenCode runs the canonical schema as execution-only prompt guidance omitted from raw prompt headers, memory, and both conversation UIs | One contract prevents harness drift; invalid JSON must not become a successful result; same-session feedback avoids rerunning completed tools; prompt-only OpenCode gets the strongest available guidance without exposing internal schema text to operators |
@@ -93,7 +94,10 @@ Key references:
 **v0.10 release**: remote CLI control, server-owned credentials, structured
 output correction, auditable usage metrics, project workspace browsing, Tycho
 skill installation, pull-request context, and durable agent delegation are
-complete. Remote UI now keeps compact agent activity live independently from
+complete. Ownership-aware takeover/report routing now includes edge-local
+generations, run stamps, stale-report suppression, parent-reclaim inquiry
+cancellation, signed per-run capabilities, and ancestor-operation rejection.
+Remote UI now keeps compact agent activity live independently from
 page polling, preserves focused work, and adds direct navigation across run
 summaries and their attachments.
 
@@ -207,6 +211,7 @@ summaries and their attachments.
 - [x] Add selected PR diff context and persistent agent PR catalogs
 - [x] Add durable managed-agent delegation and terminal parent callbacks
 - [x] Keep agent activity live during focused Remote UI workflows
+- [x] Add verified provenance and ancestor-operation rejection for delegated agents
 
 ## Features Candidates
 

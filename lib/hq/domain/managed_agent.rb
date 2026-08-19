@@ -17,6 +17,7 @@ require_relative "../parser"
 require_relative "agent_chat_log"
 require_relative "process_liveness"
 require_relative "agent_cost_snapshot"
+require_relative "agent_capability"
 require_relative "file_store"
 require_relative "usage_metrics"
 require "digest"
@@ -57,7 +58,7 @@ module HQ
 
     AgentRun = Struct.new(
       :started_at, :finished_at, :exit_code, :status, :log_path, :command, :session_id, :response_style_source,
-      :agent, :model, :log_start_offset, :run_id,
+      :agent, :model, :log_start_offset, :run_id, :delegation_owner, :delegation_generation,
       keyword_init: true
     ) do
       def self.from_hash(hash)
@@ -76,7 +77,9 @@ module HQ
           agent: hash["agent"],
           model: hash["model"],
           log_start_offset: log_start_offset,
-          run_id: hash["run_id"]
+          run_id: hash["run_id"],
+          delegation_owner: hash["delegation_owner"],
+          delegation_generation: hash["delegation_generation"]
         )
       end
 
@@ -95,6 +98,8 @@ module HQ
         result["model"] = model unless model.to_s.empty?
         result["log_start_offset"] = log_start_offset if log_start_offset.is_a?(Integer) && log_start_offset >= 0
         result["run_id"] = run_id unless run_id.to_s.empty?
+        result["delegation_owner"] = delegation_owner unless delegation_owner.to_s.empty?
+        result["delegation_generation"] = delegation_generation if delegation_generation.is_a?(Integer)
         result
       end
     end
@@ -452,7 +457,7 @@ module HQ
       @unread = false
     end
 
-    def start!
+    def start!(delegation_stamp: nil)
       return if running?
 
       finalize_previous_run!
@@ -508,13 +513,17 @@ module HQ
         agent: @agent,
         model: @model,
         log_start_offset: log_start_offset,
-        run_id: SecureRandom.uuid
+        run_id: SecureRandom.uuid,
+        delegation_owner: delegation_stamp&.fetch("owner", nil),
+        delegation_generation: delegation_stamp&.fetch("generation", nil)
       )
+      capability = AgentCapability.new.issue(agent_key: @key, run_id: run.run_id, now: @started_at)
       memory_store.append_run_started!(run_id: run.run_id, created_at: @started_at)
       @pid = spawn(
         external_process_environment(launch.fetch(:env)).merge(
           "TYCHO_STATUS_PATH" => status_path,
           "TYCHO_AGENT_KEY" => @key,
+          "TYCHO_AGENT_CAPABILITY" => capability,
           "TYCHO_EXECUTABLE" => File.join(ROOT_DIR, "bin", "tycho"),
           "TYCHO_STREAM_RECORDER_PATH" => File.expand_path("agent_stream_recorder", __dir__),
           "TYCHO_RAW_LOG_PATH" => @log_path,
@@ -818,6 +827,14 @@ module HQ
                          project_key: @project_key,
                          answer: text)
       end
+    end
+
+    def cancel_pending_inquiry!(created_at: Time.now)
+      inquiry_id = latest_inquiry_id.to_s
+      return false if inquiry_id.empty?
+
+      memory_store.append_inquiry_cancelled!(created_at:, inquiry_id:)
+      true
     end
 
     def add_assistant_message!(content)

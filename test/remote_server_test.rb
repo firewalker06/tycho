@@ -97,6 +97,9 @@ module RemoteServerTest
 
       assert(child.dig(:delegation, :parent, :agent_key) == parent[:key], "expected child started-by reference")
       assert(child.dig(:delegation, :parent, :connected), "expected delegation callbacks to start connected")
+      assert(child.dig(:delegation, :parent, :owner) == "user" &&
+             child.dig(:delegation, :parent, :ownership_generation) == 2,
+             "expected a user-created relationship prompt to enter takeover")
       parent_payload = service.agent(parent[:key])
       assert(parent_payload.dig(:delegation, :children, 0, :agent_key) == child[:key],
              "expected parent delegated-agents reference")
@@ -120,6 +123,57 @@ module RemoteServerTest
       repeated = service.submit_prompt(child[:key], "prompt" => "Continue", "parent_agent_key" => parent[:key])
       assert(repeated[:agent].dig(:delegation, :parent, :agent_key) == parent[:key],
              "expected idempotent message attachment")
+      assert(repeated[:agent].dig(:delegation, :parent, :owner) == "user" &&
+             repeated[:agent].dig(:delegation, :parent, :ownership_generation) == 2,
+             "expected an unverified parent label not to reclaim delegation")
+
+      taken_over = service.submit_prompt(child[:key], "prompt" => "I will handle this directly")
+      assert(taken_over[:agent].dig(:delegation, :parent, :owner) == "user" &&
+             taken_over[:agent].dig(:delegation, :parent, :ownership_generation) == 2,
+             "expected a direct user prompt to take over the delegated child")
+
+      records = JSON.parse(File.read(HQ::AGENTS_FILE))
+      parent_record = records.find { |record| record["key"] == parent[:key] }
+      parent_record["runs"] = [{ "run_id" => "parent-run", "status" => "success" }]
+      parent_record["total_run_count"] = 1
+      File.write(HQ::AGENTS_FILE, JSON.pretty_generate(records))
+      parent_actor = HQ::AgentCapability::Actor.new(type: "agent", agent_key: parent[:key], run_id: "parent-run")
+      capability = HQ::AgentCapability.new.issue(agent_key: parent[:key], run_id: "parent-run")
+      request_class = HQ::RemoteServer.const_get(:Request)
+      capability_request = request_class.new(
+        method: "GET",
+        path: "/agents",
+        query: "",
+        headers: { "x-tycho-agent-capability" => capability },
+        body: ""
+      )
+      protected_server = HQ::RemoteServer.new(token: "user-token")
+      assert(protected_server.send(:authorized?, capability_request),
+             "expected a run capability to authorize the bounded agent API")
+      capability_request.path = "/projects"
+      assert(!protected_server.send(:authorized?, capability_request),
+             "expected a run capability not to authorize unrelated user APIs")
+      reclaimed = service.submit_prompt(
+        child[:key],
+        { "prompt" => "Resume delegated work", "parent_agent_key" => parent[:key] },
+        actor: parent_actor
+      )
+      assert(reclaimed[:agent].dig(:delegation, :parent, :owner) == "parent" &&
+             reclaimed[:agent].dig(:delegation, :parent, :ownership_generation) == 3,
+             "expected a later parent prompt to restore delegation")
+
+      records = JSON.parse(File.read(HQ::AGENTS_FILE))
+      child_record = records.find { |record| record["key"] == child[:key] }
+      child_record["runs"] = [{ "run_id" => "child-run", "status" => "success" }]
+      child_record["total_run_count"] = 1
+      File.write(HQ::AGENTS_FILE, JSON.pretty_generate(records))
+      child_actor = HQ::AgentCapability::Actor.new(type: "agent", agent_key: child[:key], run_id: "child-run")
+      begin
+        service.submit_prompt(parent[:key], { "prompt" => "Upward prompt" }, actor: child_actor)
+        raise "expected upward prompt rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 403, "expected ancestor prompts to be forbidden")
+      end
       begin
         service.submit_prompt(parent[:key], "prompt" => "No", "parent_agent_key" => parent[:key])
         raise "expected self-parent rejection"
@@ -378,6 +432,7 @@ module RemoteServerTest
     Dir.mktmpdir("hq-remote-test") do |dir|
       old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
       old_delegations_file = replace_constant(HQ, :DELEGATIONS_FILE, File.join(dir, "agent_delegations.json"))
+      old_capability_file = replace_constant(HQ, :AGENT_CAPABILITY_FILE, File.join(dir, "agent_capability.json"))
       old_server_identity_file = replace_constant(HQ, :SERVER_IDENTITY_FILE, File.join(dir, "server_identity.json"))
       old_usage_metrics_file = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
       old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
@@ -416,6 +471,7 @@ module RemoteServerTest
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :DELEGATIONS_FILE, old_delegations_file) if old_delegations_file
+      replace_constant(HQ, :AGENT_CAPABILITY_FILE, old_capability_file) if old_capability_file
       replace_constant(HQ, :SERVER_IDENTITY_FILE, old_server_identity_file) if old_server_identity_file
       replace_constant(HQ, :USAGE_METRICS_FILE, old_usage_metrics_file) if old_usage_metrics_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
@@ -3974,6 +4030,8 @@ module RemoteServerTest
            "expected Agent detail shortcuts to float above the dock")
     assert(css[:body].include?(".go-recent-fab"), "expected Agent detail to include Go to recent")
     assert(css[:body].include?(".agent-settings-panel"), "expected Agent settings to render in the header")
+    assert(css[:body].include?(".agent-ownership-badge.takeover"),
+           "expected takeover relationships to have a distinct visual state")
     assert(css[:body].include?(".header-more-panel"), "expected header More menus to render as dropdown panels")
     assert(css[:body].include?(".more-menu-item"), "expected header More menus to style compact menu rows")
     assert(css[:body].include?(".more-menu-item.single-line"),
@@ -4328,6 +4386,9 @@ module RemoteServerTest
            helpers_js[:body].include?("function attachmentBlobPath"),
            "expected Remote UI attachment target primitives to live in the helper asset")
     js = server.send(:route_ui, "/ui.js")
+    assert(js[:body].include?('ownership === "takeover" ? "Takeover" : "Delegation"') &&
+           js[:body].include?("ownership_generation"),
+           "expected relationship rows to expose delegation ownership and generation")
     assert(js[:body].include?("function renderSkillInstallation") &&
            js[:body].include?('data-skill-action="install"') &&
            js[:body].include?('data-skill-action="update"') &&
@@ -6206,6 +6267,7 @@ module RemoteServerTest
     Dir.mktmpdir("hq-remote-test") do |dir|
       old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
       old_delegations_file = replace_constant(HQ, :DELEGATIONS_FILE, File.join(dir, "agent_delegations.json"))
+      old_capability_file = replace_constant(HQ, :AGENT_CAPABILITY_FILE, File.join(dir, "agent_capability.json"))
       old_server_identity_file = replace_constant(HQ, :SERVER_IDENTITY_FILE, File.join(dir, "server_identity.json"))
       old_usage_metrics_file = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
       old_schedules_file = replace_constant(HQ, :SCHEDULES_FILE, File.join(dir, "config", "schedules.yml"))
@@ -6233,6 +6295,7 @@ module RemoteServerTest
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :DELEGATIONS_FILE, old_delegations_file) if old_delegations_file
+      replace_constant(HQ, :AGENT_CAPABILITY_FILE, old_capability_file) if old_capability_file
       replace_constant(HQ, :SERVER_IDENTITY_FILE, old_server_identity_file) if old_server_identity_file
       replace_constant(HQ, :USAGE_METRICS_FILE, old_usage_metrics_file) if old_usage_metrics_file
       replace_constant(HQ, :SCHEDULES_FILE, old_schedules_file) if old_schedules_file

@@ -65,7 +65,7 @@ tycho agent create global-web "Review the auth boundary" --parent-agent global-w
 
 ### Delegating from a managed Tycho agent
 
-Use ordinary `agent create`. Tycho reads the current `TYCHO_AGENT_KEY` and links the new child automatically, so its terminal result returns to this agent even if `--parent-agent` is omitted:
+Use ordinary `agent create`. Tycho verifies the current run capability, matches it to `TYCHO_AGENT_KEY`, and links the new child automatically, so its terminal result returns to this agent even if `--parent-agent` is omitted:
 
 ```bash
 tycho agent create global-web "Review the auth boundary" --run

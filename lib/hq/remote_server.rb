@@ -24,6 +24,7 @@ require_relative "domain/agent_attachment_store"
 require_relative "domain/agent_activity_snapshot"
 require_relative "domain/agent_chat_log"
 require_relative "domain/agent_store"
+require_relative "domain/agent_capability"
 require_relative "domain/agent_archive_store"
 require_relative "domain/executable_resolver"
 require_relative "domain/file_store"
@@ -252,6 +253,7 @@ module HQ
 
     def route(service, method, path, body, request = nil)
       parts = path.split("/").reject(&:empty?)
+      actor = request_actor(request)
 
       if parts.first == "servers"
         broker = RemoteBroker.new(registry: service.registry, server_url: service.server_url)
@@ -331,7 +333,7 @@ module HQ
         return ok(service.archived_agents(request&.query_params || {}))
       end
       return ok(agents: service.agents) if method == "GET" && parts == ["agents"]
-      return created(agent: service.create_agent(body)) if method == "POST" && parts == ["agents"]
+      return created(agent: service.create_agent(body, actor:)) if method == "POST" && parts == ["agents"]
       return ok(schedules: service.schedules, daemon: service.schedule_daemon) if method == "GET" && parts == ["schedules"]
       return created(schedule: service.create_schedule(body)) if method == "POST" && parts == ["schedules"]
       return ok(service.reload_schedules) if method == "POST" && parts == ["schedules", "reload"]
@@ -422,10 +424,10 @@ module HQ
         end
         return ok(agent: service.mark_agent_read(key)) if method == "PUT" && tail == ["reading"]
         if method == "POST" && tail.length == 3 && tail.first == "inquiries" && tail[2] == "answer"
-          return ok(service.answer_inquiry(key, tail[1], body))
+          return ok(service.answer_inquiry(key, tail[1], body, actor:))
         end
-        return ok(service.submit_prompt(key, body)) if method == "POST" && [%w[messages], %w[prompt]].include?(tail)
-        return ok(service.start_agent(key, body)) if method == "POST" && tail == ["start"]
+        return ok(service.submit_prompt(key, body, actor:)) if method == "POST" && [%w[messages], %w[prompt]].include?(tail)
+        return ok(service.start_agent(key, body, actor:)) if method == "POST" && tail == ["start"]
         return ok(service.stop_agent(key)) if method == "POST" && tail == ["stop"]
         return created(service.clone_agent(key, body)) if method == "POST" && tail == ["clone"]
         return ok(service.archive_agent(key)) if method == "POST" && tail == ["archive"]
@@ -578,7 +580,24 @@ module HQ
 
       auth = request["Authorization"].to_s
       token = auth.sub(/\ABearer\s+/i, "")
-      token == @token
+      return true if token == @token
+
+      authorized_agent_capability_request?(request)
+    end
+
+    def authorized_agent_capability_request?(request)
+      capability = request["X-Tycho-Agent-Capability"].to_s.strip
+      return false if capability.empty?
+
+      AgentCapability.new.verify(capability)
+      parts = request.path.split("/").reject(&:empty?)
+      return true if request.method == "GET" && (parts == ["agents"] ||
+        (parts.length == 2 && parts.first == "agents"))
+      return true if request.method == "POST" && parts == ["agents"]
+      request.method == "POST" && parts.length == 3 && parts.first == "agents" &&
+        %w[messages prompt start].include?(parts.last)
+    rescue AgentCapability::Error
+      false
     end
 
     def unauthenticated_non_loopback?
@@ -711,6 +730,16 @@ module HQ
 
     def remote_server_token(request)
       request&.[]("X-Tycho-Remote-Server-Token").to_s
+    end
+
+    def request_actor(request)
+      headers = request.respond_to?(:headers) && request.headers.is_a?(Hash) ? request.headers : {}
+      token = (headers["x-tycho-agent-capability"] || headers["X-Tycho-Agent-Capability"]).to_s.strip
+      return AgentCapability.user_actor if token.empty?
+
+      AgentCapability.new.verify(token)
+    rescue AgentCapability::Error => e
+      raise Error.new(e.message, status: 403)
     end
 
     def log_server(line)
@@ -2795,13 +2824,15 @@ module HQ
       agent_payload(target)
     end
 
-    def submit_prompt(key, attrs)
+    def submit_prompt(key, attrs = {}, actor: AgentCapability.user_actor, **attribute_keywords)
+      attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
       target = find_agent!(key)
-      target = associate_delegation_from_attrs!(target, attrs)
+      target = associate_delegation_from_attrs!(target, attrs, actor:)
       pull_request_context = render_prompt_pull_request_contexts(target, attrs)
       attachments = import_prompt_attachments(target, attrs)
       text = prompt_text(attrs, attachments:)
       text = [text, pull_request_context].reject(&:empty?).join("\n")
+      @agent_store.accept_prompt_from!(target, actor:)
       target.add_user_message!(
         text,
         attachments:
@@ -2810,9 +2841,14 @@ module HQ
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"]) && !target.running?
       @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target), conversation: conversation(target.key) }
+    rescue DelegationStore::Error => e
+      raise Error.new(e.message, status: actor&.agent? ? 403 : 409)
     end
 
-    def answer_inquiry(key, inquiry_id, attrs)
+    def answer_inquiry(key, inquiry_id, attrs = {}, actor: AgentCapability.user_actor, **attribute_keywords)
+      attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
+      raise Error.new("Agent capabilities cannot answer user inquiries", status: 403) if actor.agent?
+
       target = find_agent!(key)
       inquiry = target.latest_inquiry
       raise Error.new("No pending inquiry", status: 409) unless inquiry
@@ -2827,6 +2863,7 @@ module HQ
       feedback = attrs["feedback"].to_s.strip
       answer, feedback_embedded = inquiry_answer_with_feedback(answer, feedback, supplied: attrs.key?("feedback"))
       attachments = import_prompt_attachments(target, attrs)
+      @agent_store.accept_delegation_prompt!(target, owner: "user")
       target.add_user_message!(answer, inquiry_id: expected_id, attachments:)
       target.add_user_message!(feedback, metadata: { "inquiry_feedback" => true }) unless feedback_embedded || feedback.empty?
       save_agent(target)
@@ -2866,9 +2903,10 @@ module HQ
       raise Error.new("Unknown agent: #{key}", status: 404)
     end
 
-    def start_agent(key, attrs = {})
+    def start_agent(key, attrs = {}, actor: AgentCapability.user_actor, **attribute_keywords)
+      attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
       target = find_agent!(key)
-      target = associate_delegation_from_attrs!(target, attrs)
+      target = associate_delegation_from_attrs!(target, attrs, actor:)
       save_agent(target)
       target = @agent_store.start_agent!(target.key) unless target.running?
       @agent_activity_snapshot.upsert!(target)
@@ -2882,7 +2920,8 @@ module HQ
       { agent: agent_payload(target) }
     end
 
-    def create_agent(attrs)
+    def create_agent(attrs = {}, actor: AgentCapability.user_actor, **attribute_keywords)
+      attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
       project = find_project!(attrs["project_key"])
       template_key = attrs["template_key"].to_s
       template_key = project.agent_templates.first&.key.to_s if template_key.empty?
@@ -2891,11 +2930,14 @@ module HQ
       @agent_store.ensure_project_context_prompt!(target, project)
       current = load_all_agents
       current.unshift(target)
-      target = associate_delegation_from_attrs!(target, attrs, agents: current, creating: true)
+      target = associate_delegation_from_attrs!(target, attrs, agents: current, creating: true, actor:)
+      @agent_store.accept_prompt_from!(target, actor:, agents: current) if target.delegation_parent
       save_agents(sort_agents(current))
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"])
       @agent_activity_snapshot.upsert!(target)
       agent_payload(target)
+    rescue DelegationStore::Error => e
+      raise Error.new(e.message, status: actor&.agent? ? 403 : 409)
     end
 
     def update_agent(key, attrs)
@@ -4190,6 +4232,9 @@ module HQ
       reference_payload(relation.fetch(side), reference_context:).merge(
         relationship_id: relation.fetch("id"),
         connected: relation["connected"] != false,
+        owner: relation.fetch("owner", "parent"),
+        ownership_generation: relation.fetch("ownership_generation", 1),
+        ownership_changed_at: relation["ownership_changed_at"],
         connection_changed_at: relation["connection_changed_at"]
       ).compact
     end
@@ -4241,8 +4286,15 @@ module HQ
       !hidden unless hidden.nil?
     end
 
-    def associate_delegation_from_attrs!(target, attrs, agents: nil, creating: false)
+    def associate_delegation_from_attrs!(target, attrs, agents: nil, creating: false,
+                                         actor: AgentCapability.user_actor)
       parent_key = attrs["parent_agent_key"].to_s.strip
+      if actor.agent?
+        if !parent_key.empty? && parent_key != actor.agent_key
+          raise Error.new("An agent can delegate only as itself", status: 403)
+        end
+        parent_key = actor.agent_key if creating && parent_key.empty?
+      end
       if parent_key.empty?
         return target unless creating
 
@@ -4259,7 +4311,8 @@ module HQ
         child: target,
         parent_key: parent_key,
         parent_server_id: attrs["parent_server_id"],
-        creating:
+        creating:,
+        actor:
       )
     rescue DelegationStore::Error => e
       raise Error.new(e.message, status: 409)

@@ -136,8 +136,8 @@ module HQ
     def latest_inquiry_event(fallback: nil)
       events = read_events
       has_request = events.any? { |event| event["type"] == "inquiry_request" }
-      has_response = events.any? { |event| event["type"] == "inquiry_response" }
-      return fallback unless has_request || has_response
+      has_resolution = events.any? { |event| %w[inquiry_response inquiry_cancelled].include?(event["type"]) }
+      return fallback unless has_request || has_resolution
 
       unresolved_inquiry_event(events)
     rescue StandardError
@@ -406,6 +406,18 @@ module HQ
       )
     end
 
+    def append_inquiry_cancelled!(created_at: Time.now, inquiry_id: nil)
+      id = inquiry_id.to_s.strip
+      return if id.empty?
+
+      append_event!(
+        "type" => "inquiry_cancelled",
+        "content" => "Inquiry cancelled by a new parent prompt",
+        "created_at" => created_at.iso8601,
+        "metadata" => { "inquiry_id" => id }
+      )
+    end
+
     def append_attachment!(attachment, created_at: Time.now)
       attachment = normalize_attachments([attachment]).first
       return unless attachment.is_a?(Hash)
@@ -655,13 +667,13 @@ module HQ
       inquiry = events.reverse.find { |event| event["type"] == "inquiry_request" }
       return nil unless inquiry
 
-      response = events.reverse.find { |event| event["type"] == "inquiry_response" }
+      response = events.reverse.find { |event| %w[inquiry_response inquiry_cancelled].include?(event["type"]) }
       return inquiry unless response
 
       inquiry_id = inquiry_id_for_event(inquiry)
       unless inquiry_id.to_s.empty?
         matching_response = events.reverse.find do |event|
-          event["type"] == "inquiry_response" && inquiry_id_for_event(event) == inquiry_id
+          %w[inquiry_response inquiry_cancelled].include?(event["type"]) && inquiry_id_for_event(event) == inquiry_id
         end
         if matching_response
           response = matching_response
