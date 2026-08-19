@@ -51,12 +51,18 @@ module HQ
         changed ||= created
       end
 
-      pending = delegation_store.reports.select { |report| report["delivered_at"].to_s.empty? }
+      pending = delegation_store.reports.select do |report|
+        report["delivered_at"].to_s.empty? && report["suppressed_at"].to_s.empty?
+      end
       pending.each do |report|
         changed = deliver_report!(report, agents, now:) || changed
       end
 
       resume_parents!(agents, now:) || changed
+    end
+
+    def set_connected!(child_key:, connected:, now: Time.now)
+      delegation_store.set_connected!(child_key:, connected:, now:)
     end
 
     def relationships_for(agent_key, index: nil)

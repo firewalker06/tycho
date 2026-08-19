@@ -64,6 +64,11 @@ module RemoteUIAssetSnapshotTest
       'escapeHtml(label)',
       'escapeAttr(reference.key)',
       'delegationOrderedAgents(agents)',
+      'data-set-delegation-connection',
+      'iconSvg(connected ? "unlink" : "link")',
+      'renderAgentReference(reference, { embedded: true })',
+      'function updateDelegationConnection',
+      '/delegation`, { connected: nextConnected }',
       'agent?.archived) return { dock: "", overlay: "" }'
     ]
     missing = required.reject { |fragment| javascript.include?(fragment) }

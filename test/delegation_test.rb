@@ -48,6 +48,13 @@ class DelegationTest
       @running = false
     end
 
+    def finish_run!(suffix)
+      @run_count += 1
+      @last_run = FakeRun.new(run_id: "run-#{@key}-#{suffix}", session_id: "session-#{@key}-#{suffix}")
+      @session_id = @last_run.session_id
+      @running = false
+    end
+
     def associate_parent!(reference)
       raise ArgumentError, "conflict" if @delegation_parent && @delegation_parent != reference
       return @delegation_parent if @delegation_parent
@@ -121,6 +128,43 @@ class DelegationTest
       callback_events = events.select { |event| event.dig("metadata", "delegation_callback") }
       assert(callback_events.length == 1, "expected callback message deduplication")
       assert(events.any? { |event| event["type"] == "delegation_event" }, "expected contextual creation event")
+
+      quiet_parent = FakeAgent.new(key: "quiet-parent", root: dir,
+                                   workspace: File.join(dir, "quiet-parent-workspace"))
+      quiet_child = FakeAgent.new(key: "quiet-child", root: dir,
+                                  workspace: File.join(dir, "quiet-child-workspace"))
+      quiet_agents = [quiet_parent, quiet_child]
+      quiet_relation, = coordinator.attach!(agents: quiet_agents, child: quiet_child, parent_key: quiet_parent.key)
+      store.record_report!(child: quiet_child)
+      disconnected, disconnect_counts, changed = coordinator.set_connected!(child_key: quiet_child.key, connected: false)
+      assert(changed && disconnected["connected"] == false, "expected reversible delegation disconnect")
+      assert(disconnect_counts[:suppressed_reports] == 1, "expected queued callback suppression")
+      coordinator.process!(quiet_agents)
+      quiet_report = store.reports.find { |item| item["relationship_id"] == quiet_relation["id"] }
+      assert(quiet_report.nil?, "expected disconnected reports to be absent from the delivery ledger")
+      quiet_child.finish_run!("while-disconnected")
+      coordinator.process!(quiet_agents)
+      quiet_report = store.reports.find { |item| item["relationship_id"] == quiet_relation["id"] }
+      assert(quiet_report.nil?, "expected future disconnected runs not to enter the delivery ledger")
+      quiet_events = File.readlines(quiet_parent.memory_path).map { |line| JSON.parse(line) }
+      assert(quiet_events.none? { |event| event.dig("metadata", "delegation_callback") },
+             "expected disconnected child not to ping its parent")
+      assert(!quiet_parent.running?, "expected disconnected parent not to resume")
+
+      reconnected, _reconnect_counts, reconnected_changed = coordinator.set_connected!(
+        child_key: quiet_child.key, connected: true
+      )
+      assert(reconnected_changed && reconnected["connected"], "expected delegation reconnect")
+      coordinator.process!(quiet_agents)
+      quiet_events = File.readlines(quiet_parent.memory_path).map { |line| JSON.parse(line) }
+      assert(quiet_events.none? { |event| event.dig("metadata", "delegation_callback") },
+             "expected reconnect not to deliver a previously suppressed report")
+
+      quiet_child.finish_run!("after-reconnect")
+      coordinator.process!(quiet_agents)
+      quiet_events = File.readlines(quiet_parent.memory_path).map { |line| JSON.parse(line) }
+      assert(quiet_events.count { |event| event.dig("metadata", "delegation_callback") } == 1,
+             "expected later child runs to report after reconnect")
 
       %w[failed blocked input_required].each do |status|
         terminal = FakeAgent.new(key: "child-#{status}", root: dir, status: status, workspace: File.join(dir, status))

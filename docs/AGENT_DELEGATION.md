@@ -26,9 +26,11 @@ tycho agent create PROJECT "Independent work" --root --run
 
 The same options work with `--server SERVER_KEY`. Both agents must exist on that target server. Remote API callers pass `parent_agent_key` to `POST /agents`, `POST /agents/:key/messages`, or `POST /agents/:key/start`. They may also pass `parent_server_id`; when present it must equal the target server's stable instance ID. Repeating the same child/parent attachment is idempotent. Self-parenting, cycles, unknown parents, conflicting re-parenting, and another server ID are rejected without changing the child.
 
+The Remote UI can soft-disconnect an active child from its parent callback using `PATCH /agents/:child/delegation` with `{"connected":false}`. The relationship stays visible and continues to participate in cycle and re-parenting validation, but queued reports are removed and future child reports are not added to the delivery ledger, so they cannot reach or resume the parent. Reconnect with `{"connected":true}`. Runs completed while disconnected are not replayed after reconnect; only later child runs report back. A callback already written to parent history cannot be retracted, though disconnecting cancels a queued automatic resume when possible.
+
 Delegation is deliberately server-local. To delegate on a configured Remote server, address that server with `--server` and create both agents there. Remote UI preserves each server's routing key while it combines those independent graphs; it never joins agents across servers. A duplicate or changed instance UUID fails closed instead of guessing which server owns a reference.
 
-CLI JSON, `GET /agents`, and `GET /agents/:key` include `delegation.parent` and `delegation.children`. References carry a stable server instance ID, immutable display metadata, and the parent's originating managed run ID, run number, and native session ID when available.
+CLI JSON, `GET /agents`, and `GET /agents/:key` include `delegation.parent` and `delegation.children`. References carry the relationship ID and connection state, a stable server instance ID, immutable display metadata, and the parent's originating managed run ID, run number, and native session ID when available.
 
 ## Callback decision
 
@@ -40,7 +42,7 @@ The detached child runner invokes `tycho agent finalize CHILD_KEY` when the harn
 
 ## Persistence and archives
 
-`~/.tycho/logs/agent_delegations.json` is the relationship/report ledger. `~/.tycho/config/server_identity.json` stores the server instance UUID. A child also stores its immutable parent snapshot in `managed_agents.json` and its archived `agent_manifest.json`. Parent history contains a typed `agent_started` event; callback messages carry typed reference metadata, so Remote UI only links known records and never linkifies arbitrary text.
+`~/.tycho/logs/agent_delegations.json` is the relationship/report ledger, including soft-disconnect state. Disconnected runs are intentionally absent from its report queue. `~/.tycho/config/server_identity.json` stores the server instance UUID. A child also stores its immutable parent snapshot in `managed_agents.json` and its archived `agent_manifest.json`. Parent history contains a typed `agent_started` event; callback messages carry typed reference metadata, so Remote UI only links known records and never linkifies arbitrary text.
 
 Archiving either side does not delete the ledger. Archived agent detail and conversation routes are read-only, so links keep working regardless of archive order.
 

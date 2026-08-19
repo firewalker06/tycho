@@ -1276,6 +1276,22 @@ def write_smoke_script(path)
         if (!(await page.locator("body").innerText()).toLowerCase().includes("started by")) {
           throw new Error("Delegated agent detail does not link to its orchestrator");
         }
+        const delegationConnection = page.locator(`[data-set-delegation-connection='${delegatedAgentKey}']`);
+        if (await delegationConnection.count() !== 1 || await delegationConnection.getAttribute("aria-label") !== "Disconnect delegation reports") {
+          throw new Error("Delegated agent detail does not expose its disconnect control");
+        }
+        await delegationConnection.click();
+        await page.waitForSelector("[data-confirmation-accept]", { state: "visible", timeout: 10_000 });
+        await page.click("[data-confirmation-accept]");
+        await page.waitForFunction((key) => {
+          const control = document.querySelector(`[data-set-delegation-connection='${CSS.escape(key)}']`);
+          return control?.getAttribute("aria-label") === "Reconnect delegation reports" && document.body.innerText.includes("Reports disconnected");
+        }, delegatedAgentKey, { timeout: 10_000 });
+        await page.click(`[data-set-delegation-connection='${delegatedAgentKey}']`);
+        await page.waitForFunction((key) => {
+          const control = document.querySelector(`[data-set-delegation-connection='${CSS.escape(key)}']`);
+          return control?.getAttribute("aria-label") === "Disconnect delegation reports" && !document.body.innerText.includes("Reports disconnected");
+        }, delegatedAgentKey, { timeout: 10_000 });
         if (captureDir) {
           await page.screenshot({ path: path.join(captureDir, "orchestration-child-desktop.png"), fullPage: false });
         }
@@ -1705,6 +1721,7 @@ def write_smoke_script(path)
             width: rect.width,
             height: rect.height,
             visible: getComputedStyle(button).display !== "none",
+            conversationPaddingTop: getComputedStyle(document.querySelector(".agent-conversation-scroll")).paddingTop,
             overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
           };
         });
@@ -1714,6 +1731,7 @@ def write_smoke_script(path)
             mobileTitleCopyContract.title !== "Copy agent title" ||
             mobileTitleCopyContract.width < 44 ||
             mobileTitleCopyContract.height < 44 ||
+            mobileTitleCopyContract.conversationPaddingTop !== "0px" ||
             mobileTitleCopyContract.overflow) {
           throw new Error(`Mobile agent-title copy control lost its accessible responsive contract: ${JSON.stringify(mobileTitleCopyContract)}`);
         }
@@ -1732,12 +1750,113 @@ def write_smoke_script(path)
         if (await agentsRegressionPage.locator(".growl.fail").textContent() !== "Copy failed") {
           throw new Error("Agent-title copy failure feedback was unclear");
         }
-        await agentsRegressionPage.setViewportSize({ width: 1024, height: 768 });
-        const desktopTitleCopyOverflow = await agentsRegressionPage.evaluate(() => (
-          document.documentElement.scrollWidth > document.documentElement.clientWidth
-        ));
-        if (desktopTitleCopyOverflow || !await titleCopyButton.isVisible()) {
-          throw new Error("Desktop agent-title copy control caused overflow or disappeared");
+        await agentsRegressionPage.setViewportSize({ width: 1200, height: 800 });
+        await agentsRegressionPage.waitForTimeout(250);
+        await agentsRegressionPage.evaluate((key) => {
+          const conversation = state.conversations[key];
+          const messages = Array.from({ length: 18 }, (_, index) => ({
+            kind: "message",
+            role: index % 2 === 0 ? "user" : "assistant",
+            content: index % 2 === 0
+              ? `Conversation request ${index / 2 + 1}: verify the desktop scrolling inset.`
+              : "Verified that the initial inset scrolls away with the conversation content.",
+            created_at: new Date(Date.UTC(2026, 7, 19, 4, index)).toISOString(),
+          }));
+          conversation.blocks = messages;
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+          document.querySelector("[data-agent-conversation-scroll]").scrollTop = 0;
+        }, agentKey);
+        await agentsRegressionPage.waitForTimeout(50);
+        await agentsRegressionPage.evaluate(() => {
+          document.querySelector("[data-agent-conversation-scroll]").scrollTop = 0;
+        });
+        const desktopHeaderContract = await agentsRegressionPage.evaluate(() => {
+          const shell = document.querySelector(".app-shell");
+          const header = document.querySelector(".app-header");
+          const content = document.querySelector(".content");
+          const workspace = document.querySelector(".agent-workspace");
+          const nav = document.querySelector(".bottom-nav");
+          const conversation = document.querySelector(".agent-conversation-scroll");
+          const dock = document.querySelector(".agent-dock");
+          const copy = document.querySelector("#header-title-copy");
+          const shellRect = shell.getBoundingClientRect();
+          const headerRect = header.getBoundingClientRect();
+          const contentRect = content.getBoundingClientRect();
+          const navRect = nav.getBoundingClientRect();
+          const conversationRect = conversation.getBoundingClientRect();
+          const dockRect = dock.getBoundingClientRect();
+          const dockStyle = getComputedStyle(dock);
+          const copyRect = copy.getBoundingClientRect();
+          return {
+            copyWidth: copyRect.width,
+            copyHeight: copyRect.height,
+            shellTopBorder: getComputedStyle(shell).borderTopWidth,
+            headerLeftBorder: getComputedStyle(header).borderLeftWidth,
+            rightGap: Math.abs(shellRect.right - headerRect.right),
+            contentTopGap: Math.abs(contentRect.top - headerRect.bottom),
+            navTopGap: navRect.top - shellRect.top,
+            conversationViewportGap: conversationRect.top - headerRect.bottom,
+            conversationPaddingTop: getComputedStyle(conversation).paddingTop,
+            firstMessageGap: document.querySelector(".agent-conversation-scroll .message").getBoundingClientRect().top - conversationRect.top,
+            conversationScrollable: conversation.scrollHeight > conversation.clientHeight,
+            dockBottomGap: document.documentElement.clientHeight - dockRect.bottom,
+            dockTopLeftRadius: dockStyle.borderTopLeftRadius,
+            dockTopRightRadius: dockStyle.borderTopRightRadius,
+            dockBottomLeftRadius: dockStyle.borderBottomLeftRadius,
+            dockBottomRightRadius: dockStyle.borderBottomRightRadius,
+            workspaceRowGap: getComputedStyle(workspace).rowGap,
+            overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        });
+        if (desktopHeaderContract.copyWidth > 24 ||
+            desktopHeaderContract.copyHeight > 24 ||
+            desktopHeaderContract.shellTopBorder !== "1px" ||
+            desktopHeaderContract.headerLeftBorder !== "1px" ||
+            desktopHeaderContract.rightGap > 1 ||
+            desktopHeaderContract.contentTopGap > 1 ||
+            desktopHeaderContract.navTopGap < 12 ||
+            Math.abs(desktopHeaderContract.conversationViewportGap) > 1 ||
+            desktopHeaderContract.conversationPaddingTop !== "8px" ||
+            desktopHeaderContract.firstMessageGap < 8 ||
+            !desktopHeaderContract.conversationScrollable ||
+            Math.abs(desktopHeaderContract.dockBottomGap) > 1 ||
+            desktopHeaderContract.dockTopLeftRadius !== "0px" ||
+            desktopHeaderContract.dockTopRightRadius !== "0px" ||
+            desktopHeaderContract.dockBottomLeftRadius === "0px" ||
+            desktopHeaderContract.dockBottomRightRadius === "0px" ||
+            desktopHeaderContract.workspaceRowGap !== "0px" ||
+            desktopHeaderContract.overflow ||
+            !await titleCopyButton.isVisible()) {
+          throw new Error(`Desktop header edge contract regressed: ${JSON.stringify(desktopHeaderContract)}`);
+        }
+        if (captureDir) {
+          await agentsRegressionPage.evaluate(() => {
+            document.querySelectorAll(".growl").forEach((growl) => growl.remove());
+          });
+          await agentsRegressionPage.screenshot({
+            path: path.join(captureDir, "conversation-desktop-top.png"),
+            fullPage: false,
+          });
+        }
+        const scrolledConversationContract = await agentsRegressionPage.evaluate(() => {
+          const conversation = document.querySelector("[data-agent-conversation-scroll]");
+          const header = document.querySelector(".app-header");
+          conversation.scrollTop = 160;
+          return {
+            scrollTop: conversation.scrollTop,
+            viewportGap: conversation.getBoundingClientRect().top - header.getBoundingClientRect().bottom,
+          };
+        });
+        if (scrolledConversationContract.scrollTop < 8 || Math.abs(scrolledConversationContract.viewportGap) > 1) {
+          throw new Error(`Desktop conversation kept a blank strip after scrolling: ${JSON.stringify(scrolledConversationContract)}`);
+        }
+        if (captureDir) {
+          await agentsRegressionPage.screenshot({
+            path: path.join(captureDir, "conversation-desktop-scrolled.png"),
+            fullPage: false,
+          });
         }
         await agentsRegressionPage.setViewportSize({ width: 390, height: 844 });
         await agentsRegressionPage.evaluate((key) => {
@@ -2510,6 +2629,11 @@ def write_smoke_script(path)
           render();
         }, { key: prContextAgentKey, id: cachedSwitchIds.firstId });
         await prContextPage.waitForSelector(`[data-pr-diff-viewer][data-pull-request-id='${cachedSwitchIds.firstId}']`, { state: "visible", timeout: 10_000 });
+        const prDiffTopGap = await prContextPage.evaluate(() => (
+          document.querySelector(".agent-detail-pane").getBoundingClientRect().top -
+          document.querySelector(".app-header").getBoundingClientRect().bottom
+        ));
+        if (prDiffTopGap < 8) throw new Error(`PR diff viewport touched the header border: ${prDiffTopGap}`);
         const selectableLines = prContextPage.locator("[data-select-pr-diff-line]");
         if (await selectableLines.count() !== 2) throw new Error("PR detail did not expose selectable changed lines");
         const firstLine = selectableLines.nth(0);
@@ -4708,6 +4832,10 @@ def write_smoke_script(path)
           const actions = document.querySelector(".attachment-viewer-actions").getBoundingClientRect();
           const header = document.querySelector(".attachment-viewer .section-label");
           const headerRect = header.getBoundingClientRect();
+          const conversationPane = document.querySelector(".agent-conversation-pane").getBoundingClientRect();
+          const dock = document.querySelector(".agent-dock");
+          const dockRect = dock.getBoundingClientRect();
+          const dockStyle = getComputedStyle(dock);
           const navigationBottom = document.querySelector(".agent-attachment-shell > .attachment-nav-drawer")?.getBoundingClientRect().bottom;
           const viewerTop = document.querySelector(".agent-attachment-shell > .agent-attachment-viewer")?.getBoundingClientRect().top;
           return {
@@ -4722,10 +4850,27 @@ def write_smoke_script(path)
             headerText: header.textContent.trim(),
             attachmentTriggerRight: attachmentTrigger.right,
             bodyRight: body.right,
+            focusedTopGap: document.querySelector(".agent-detail-pane").getBoundingClientRect().top -
+              document.querySelector(".app-header").getBoundingClientRect().bottom,
+            conversationTopGap: document.querySelector(".agent-conversation-pane").getBoundingClientRect().top -
+              document.querySelector(".app-header").getBoundingClientRect().bottom,
+            conversationDockGap: dockRect.top - conversationPane.bottom,
+            dockBottomGap: document.documentElement.clientHeight - dockRect.bottom,
+            workspaceRowGap: getComputedStyle(document.querySelector(".agent-workspace")).rowGap,
+            dockTopLeftRadius: dockStyle.borderTopLeftRadius,
+            dockTopRightRadius: dockStyle.borderTopRightRadius,
+            dockBottomLeftRadius: dockStyle.borderBottomLeftRadius,
+            dockBottomRightRadius: dockStyle.borderBottomRightRadius,
           };
         });
-        if (viewTriggerGeometry.viewRight > viewTriggerGeometry.pageContextLeft || viewTriggerGeometry.headerTopDelta > 1 || !viewTriggerGeometry.viewMenuInHeader || viewTriggerGeometry.viewMenuInAttachment || viewTriggerGeometry.viewerGap < 0 || viewTriggerGeometry.viewerGap > 12 || viewTriggerGeometry.actionsTopInset < 4 || viewTriggerGeometry.headerClearance < 4 || viewTriggerGeometry.headerText !== "File" || viewTriggerGeometry.attachmentTriggerRight !== viewTriggerGeometry.bodyRight) {
+        if (viewTriggerGeometry.viewRight > viewTriggerGeometry.pageContextLeft || viewTriggerGeometry.headerTopDelta > 1 || !viewTriggerGeometry.viewMenuInHeader || viewTriggerGeometry.viewMenuInAttachment || viewTriggerGeometry.viewerGap < 0 || viewTriggerGeometry.viewerGap > 12 || viewTriggerGeometry.actionsTopInset < 4 || viewTriggerGeometry.headerClearance < 4 || viewTriggerGeometry.headerText !== "File" || viewTriggerGeometry.attachmentTriggerRight !== viewTriggerGeometry.bodyRight || viewTriggerGeometry.focusedTopGap < 8 || Math.abs(viewTriggerGeometry.conversationTopGap) > 1 || Math.abs(viewTriggerGeometry.conversationDockGap) > 1 || Math.abs(viewTriggerGeometry.dockBottomGap) > 1 || viewTriggerGeometry.workspaceRowGap !== "0px" || viewTriggerGeometry.dockTopLeftRadius !== "0px" || viewTriggerGeometry.dockTopRightRadius !== "0px" || viewTriggerGeometry.dockBottomLeftRadius === "0px" || viewTriggerGeometry.dockBottomRightRadius === "0px") {
           throw new Error(`Focused view menu is not beside the page context: ${JSON.stringify(viewTriggerGeometry)}`);
+        }
+        if (captureDir) {
+          await page.screenshot({
+            path: path.join(captureDir, "attachment-balanced-continuous-form.png"),
+            fullPage: false,
+          });
         }
 
         await page.click("[data-focused-view-menu] > summary");
@@ -4819,6 +4964,14 @@ def write_smoke_script(path)
           state.renderedViewHtml = "";
           render();
         }, agentKey);
+        if (captureDir) {
+          await page.click("[data-focused-view-menu] > summary");
+          await page.click("[data-set-agent-detail-view][data-view-mode='balanced']");
+          await page.screenshot({
+            path: path.join(captureDir, "summary-balanced-continuous-form.png"),
+            fullPage: false,
+          });
+        }
         await page.click("[data-focused-view-menu] > summary");
         await page.click("[data-set-agent-detail-view][data-view-mode='full']");
         const summaryFullView = await page.evaluate(() => ({
@@ -4831,6 +4984,8 @@ def write_smoke_script(path)
           nextDisabled: document.querySelector("[aria-label='Next summary']")?.disabled,
           downloadButtons: document.querySelectorAll("[data-agent-summary-page] .summary-attachment-download[data-download-attachment='summary-download-fixture']").length,
           attachmentDetailHref: document.querySelector("[data-agent-summary-page] .summary-attachment-item .summary-attachment-row")?.getAttribute("href"),
+          focusedTopGap: document.querySelector(".agent-detail-pane").getBoundingClientRect().top -
+            document.querySelector(".app-header").getBoundingClientRect().bottom,
           deduplicated: runSummaryDetailContent({
             content: "partial: First paragraph.\\n\\nFirst paragraph.\\n\\nSecond paragraph.",
             metadata: { status: "partial" },
@@ -4838,6 +4993,7 @@ def write_smoke_script(path)
         }));
         if (summaryFullView.mode !== "full" || !summaryFullView.full || !summaryFullView.summary || summaryFullView.recent ||
             summaryFullView.previousDisabled || !summaryFullView.nextDisabled || summaryFullView.downloadButtons !== 1 ||
+            summaryFullView.focusedTopGap < 8 ||
             !summaryFullView.attachmentDetailHref?.includes("attachment/summary-download-fixture") ||
             summaryFullView.deduplicated !== "First paragraph.\\n\\nSecond paragraph." || !summaryFullView.cost.includes("$1.25+")) {
           throw new Error(`Summary did not retain the shared full-view layout: ${JSON.stringify(summaryFullView)}`);
@@ -4881,8 +5037,10 @@ def write_smoke_script(path)
           diff: Boolean(document.querySelector(".agent-workspace-project-diff .diff-viewer")),
           full: document.querySelector("[data-agent-workspace]")?.classList.contains("agent-workspace-full-view"),
           wide: document.querySelector("[data-agent-workspace]")?.classList.contains("agent-workspace-detail-wide"),
+          focusedTopGap: document.querySelector(".agent-detail-pane").getBoundingClientRect().top -
+            document.querySelector(".app-header").getBoundingClientRect().bottom,
         }));
-        if (dirtyDiffDefaultView.mode !== "balanced" || !dirtyDiffDefaultView.diff || dirtyDiffDefaultView.full || dirtyDiffDefaultView.wide) {
+        if (dirtyDiffDefaultView.mode !== "balanced" || !dirtyDiffDefaultView.diff || dirtyDiffDefaultView.full || dirtyDiffDefaultView.wide || dirtyDiffDefaultView.focusedTopGap < 8) {
           throw new Error(`Dirty diff did not start in the shared balanced layout: ${JSON.stringify(dirtyDiffDefaultView)}`);
         }
         await page.click("[data-focused-view-menu] > summary");

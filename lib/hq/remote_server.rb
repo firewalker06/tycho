@@ -397,6 +397,7 @@ module HQ
         tail = parts.drop(2)
         return ok(agent: service.agent(key)) if method == "GET" && tail.empty?
         return ok(agent: service.update_agent(key, body)) if %w[PATCH PUT].include?(method) && tail.empty?
+        return ok(service.update_agent_delegation(key, body)) if %w[PATCH PUT].include?(method) && tail == ["delegation"]
         return ok(service.archive_agent(key)) if method == "DELETE" && tail.empty?
         return created(service.create_agent_loop(key, body)) if method == "POST" && tail == ["loop-schedule"]
         return ok(conversation: service.conversation(key)) if method == "GET" && tail == ["conversation"]
@@ -2834,6 +2835,37 @@ module HQ
       { agent: agent_payload(target), conversation: conversation(target.key) }
     end
 
+    def update_agent_delegation(key, attrs)
+      connected = attrs["connected"]
+      unless [true, false].include?(connected)
+        raise Error.new("connected must be true or false", status: 422)
+      end
+
+      child, relation, counts, changed = @agent_store.set_delegation_connected!(key, connected:) do |candidate|
+        unless HQ::Visibility.agent_visible?(candidate, @projects)
+          raise Error.new("Unknown agent: #{key}", status: 404)
+        end
+      end
+      {
+        agent: agent_payload(child),
+        relationship: {
+          id: relation.fetch("id"),
+          connected: relation["connected"] != false,
+          changed: changed
+        },
+        suppressed_reports: counts.fetch(:suppressed_reports),
+        cancelled_resumes: counts.fetch(:cancelled_resumes)
+      }
+    rescue DelegationStore::Error => e
+      raise Error.new(e.message, status: 409)
+    rescue ArgumentError
+      if visible_archived_agent(key)
+        raise Error.new("Archived agent is read-only: #{key}", status: 409)
+      end
+
+      raise Error.new("Unknown agent: #{key}", status: 404)
+    end
+
     def start_agent(key, attrs = {})
       target = find_agent!(key)
       target = associate_delegation_from_attrs!(target, attrs)
@@ -4147,11 +4179,19 @@ module HQ
       parent_relation = relationships.fetch("parent")
       {
         server_id: @agent_store.delegation_coordinator.delegation_store.server_identity.fetch("id"),
-        parent: parent_relation ? reference_payload(parent_relation.fetch("parent"), reference_context:) : nil,
+        parent: parent_relation ? delegation_reference_payload(parent_relation, "parent", reference_context:) : nil,
         children: relationships.fetch("children").map do |relation|
-          reference_payload(relation.fetch("child"), reference_context:)
+          delegation_reference_payload(relation, "child", reference_context:)
         end
       }
+    end
+
+    def delegation_reference_payload(relation, side, reference_context:)
+      reference_payload(relation.fetch(side), reference_context:).merge(
+        relationship_id: relation.fetch("id"),
+        connected: relation["connected"] != false,
+        connection_changed_at: relation["connection_changed_at"]
+      ).compact
     end
 
     def delegation_relationship_context

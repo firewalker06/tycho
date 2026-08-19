@@ -11,7 +11,7 @@ require_relative "server_identity"
 
 module HQ
   class DelegationStore
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
     TERMINAL_STATUSES = %w[success succeeded no_action_needed partial failed blocked input_required stopped].freeze
 
     class Error < ArgumentError; end
@@ -72,6 +72,7 @@ module HQ
           "server_name" => server_identity.fetch("name"),
           "parent" => agent_reference(parent, include_origin: true),
           "child" => agent_reference(child, include_origin: false),
+          "connected" => true,
           "created_at" => now.utc.iso8601
         }
         payload = data
@@ -81,19 +82,72 @@ module HQ
       end
     end
 
-    def record_report!(child:, now: Time.now)
-      relation = relation_for_child(child.key)
-      return [nil, false] unless relation
+    def set_connected!(child_key:, connected:, now: Time.now)
+      raise Error, "connected must be true or false" unless [true, false].include?(connected)
 
+      with_lock do
+        payload = data
+        relation = payload.fetch("relationships").find do |item|
+          item.dig("child", "agent_key") == child_key.to_s
+        end
+        raise Error, "Agent #{child_key} has no delegation parent" unless relation
+
+        current = relation["connected"] != false
+        if current == connected
+          removed_runs = connected ? [] : remove_undelivered_reports!(payload, relation)
+          relation["last_disconnected_run_id"] = removed_runs.last if removed_runs.any?
+          write(payload) if removed_runs.any?
+          return [relation, { suppressed_reports: removed_runs.length, cancelled_resumes: 0 }, removed_runs.any?]
+        end
+
+        changed_at = now.utc.iso8601
+        relation["connected"] = connected
+        relation["connection_changed_at"] = changed_at
+        relation[connected ? "reconnected_at" : "disconnected_at"] = changed_at
+        counts = { suppressed_reports: 0, cancelled_resumes: 0 }
+        unless connected
+          removed_runs = remove_undelivered_reports!(payload, relation)
+          relation["last_disconnected_run_id"] = removed_runs.last if removed_runs.any?
+          counts[:suppressed_reports] = removed_runs.length
+          payload.fetch("reports").each do |report|
+            next unless report["relationship_id"] == relation["id"]
+
+            if !report["delivered_at"].to_s.empty? && report["resumed_at"].to_s.empty? &&
+               %w[queued parent_running workspace_busy].include?(report["resume_state"])
+              report["resume_state"] = "disconnected"
+              report["resume_cancelled_at"] = changed_at
+              counts[:cancelled_resumes] += 1
+            end
+          end
+        end
+        write(payload)
+        [relation, counts, true]
+      end
+    end
+
+    def record_report!(child:, now: Time.now)
       run = child.last_run
       return [nil, false] unless run
 
       status = child.effective_status.to_s
       return [nil, false] unless TERMINAL_STATUSES.include?(status)
 
-      report_id = Digest::SHA256.hexdigest("delegation-report-v1\0#{relation.fetch("id")}\0#{run.run_id}")
       with_lock do
         payload = data
+        relation = payload.fetch("relationships").find do |item|
+          item.dig("child", "agent_key") == child.key.to_s
+        end
+        return [nil, false] unless relation
+        unless relation["connected"] != false
+          removed_runs = remove_undelivered_reports!(payload, relation)
+          changed = relation["last_disconnected_run_id"] != run.run_id || removed_runs.any?
+          relation["last_disconnected_run_id"] = run.run_id
+          write(payload) if changed
+          return [nil, changed]
+        end
+        return [nil, false] if relation["last_disconnected_run_id"] == run.run_id
+
+        report_id = Digest::SHA256.hexdigest("delegation-report-v1\0#{relation.fetch("id")}\0#{run.run_id}")
         existing = payload.fetch("reports").find { |item| item["id"] == report_id }
         return [existing, false] if existing
 
@@ -141,6 +195,17 @@ module HQ
     end
 
     private
+
+    def remove_undelivered_reports!(payload, relation)
+      reports = payload.fetch("reports")
+      removed_run_ids = []
+      reports.delete_if do |report|
+        removable = report["relationship_id"] == relation["id"] && report["delivered_at"].to_s.empty?
+        removed_run_ids << report["child_run_id"] if removable && !report["child_run_id"].to_s.empty?
+        removable
+      end
+      removed_run_ids
+    end
 
     def data
       payload = FileStore.read_json(@path, fallback: {})

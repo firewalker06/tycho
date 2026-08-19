@@ -96,9 +96,22 @@ module RemoteServerTest
       )
 
       assert(child.dig(:delegation, :parent, :agent_key) == parent[:key], "expected child started-by reference")
+      assert(child.dig(:delegation, :parent, :connected), "expected delegation callbacks to start connected")
       parent_payload = service.agent(parent[:key])
       assert(parent_payload.dig(:delegation, :children, 0, :agent_key) == child[:key],
              "expected parent delegated-agents reference")
+
+      disconnected = HQ::RemoteServer.new.send(
+        :route, service, "PATCH", "/agents/#{child[:key]}/delegation", { "connected" => false }, nil
+      )
+      assert(disconnected.dig(:body, :agent, :delegation, :parent, :connected) == false,
+             "expected child detail to expose a soft-disconnected parent")
+      disconnected_parent = service.agent(parent[:key])
+      assert(disconnected_parent.dig(:delegation, :children, 0, :connected) == false,
+             "expected parent detail to expose the disconnected child")
+      reconnected = service.update_agent_delegation(child[:key], "connected" => true)
+      assert(reconnected.dig(:agent, :delegation, :parent, :connected),
+             "expected soft-disconnected delegation to reconnect")
       conversation = service.conversation(parent[:key])
       event = conversation.find { |block| block[:kind] == "delegation_event" }
       assert(event && event.dig(:metadata, "agent_reference", "agent_key") == child[:key],
@@ -4486,7 +4499,14 @@ module RemoteServerTest
            "expected only Agent conversation headers to copy the exact rendered title and clear stale copy data")
     assert(css[:body].include?(".header-title-row") &&
            css[:body].include?(".header-title-copy") &&
-           css[:body].include?("flex: 0 0 auto"),
+           css[:body].include?("flex: 0 0 auto") &&
+           css[:body].include?("width: 24px") &&
+           css[:body].include?("border-top: 1px solid var(--border)") &&
+           css[:body].include?("width: calc(100% + 12px)") &&
+           css[:body].include?("margin-top: calc(var(--safe-area-top) + 12px)") &&
+           css[:body].include?(".agent-workspace.has-detail") &&
+           css[:body].include?(".agent-detail-pane") &&
+           css[:body].include?("margin-top: 8px"),
            "expected the title copy control to preserve truncation and responsive header layout")
     assert(!js[:body].include?('setConnection("Copied to clipboard")'),
            "expected copy success to avoid changing the header subtitle")
@@ -5416,9 +5436,9 @@ module RemoteServerTest
            css[:body].include?(".bottom-nav.subpage-nav") &&
            css[:body].include?(".app-shell:has(> .bottom-nav:not(.hidden))"),
            "expected wide-screen primary navigation to persist across detail routes")
-    assert(css[:body].include?("margin-top: var(--safe-area-top)") &&
+    assert(css[:body].include?("margin-top: calc(var(--safe-area-top) + 12px)") &&
            css[:body].include?("grid-row: 1 / span 2"),
-           "expected the wide-screen sidebar top to align with the header")
+           "expected the wide-screen sidebar to clear the page top border")
     assert(js[:body].include?('els.header.classList.remove("header-hidden")'),
            "expected detail header rendering to clear stale hidden state")
     assert(js[:body].include?("function syncDetailHeaderLayout"),

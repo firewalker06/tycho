@@ -291,6 +291,22 @@ module HQ
       @delegation_coordinator.relationships_for(agent_key)
     end
 
+    def set_delegation_connected!(child_key, connected:, now: Time.now)
+      with_exclusive_lock do
+        agents, = load_with_poll_events_unlocked(process_delegations: false)
+        child = agents.find { |agent| agent.key == child_key.to_s }
+        raise ArgumentError, "Unknown agent: #{child_key}" unless child
+        yield child if block_given?
+
+        relation, counts, changed = @delegation_coordinator.set_connected!(
+          child_key: child.key,
+          connected:,
+          now:
+        )
+        [child, relation, counts, changed]
+      end
+    end
+
     def clone_agent(agent, existing_agents: load)
       now = Time.now
       key = next_agent_key(agent.project_key, existing_agents, now:)

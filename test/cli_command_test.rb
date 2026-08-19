@@ -167,7 +167,8 @@ module CLICommandTest
                               "--parent-agent", parent_key, "--server", "peer", "--json")
         delegated_payload = JSON.parse(delegated.fetch(:stdout))
         assert(delegated.fetch(:status).success? &&
-               delegated_payload.dig("delegation", "parent", "agent_key") == parent_key,
+               delegated_payload.dig("delegation", "parent", "agent_key") == parent_key &&
+               delegated_payload.dig("delegation", "parent", "connected") == true,
                "expected remote CLI creation to attach a server-local parent")
         parent_status = run_tycho(local_env, "agent", "status", parent_key, "--server", "peer", "--json")
         assert(JSON.parse(parent_status.fetch(:stdout)).dig("delegation", "children", 0, "agent_key") ==

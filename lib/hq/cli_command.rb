@@ -2252,9 +2252,19 @@ module HQ
       }
       relation = relationships.fetch("parent")
       {
-        parent: relation&.fetch("parent"),
-        children: relationships.fetch("children").map { |child_relation| child_relation.fetch("child") }
+        parent: relation ? agent_cli_delegation_reference(relation, "parent") : nil,
+        children: relationships.fetch("children").map do |child_relation|
+          agent_cli_delegation_reference(child_relation, "child")
+        end
       }
+    end
+
+    def agent_cli_delegation_reference(relation, side)
+      relation.fetch(side).merge(
+        "relationship_id" => relation.fetch("id"),
+        "connected" => relation["connected"] != false,
+        "connection_changed_at" => relation["connection_changed_at"]
+      ).compact
     end
 
     def agent_cli_relationship_context
