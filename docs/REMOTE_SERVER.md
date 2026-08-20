@@ -493,7 +493,7 @@ Returns active agents:
 
 Creates a new agent from a project template and persists it to `~/.tycho/logs/managed_agents.json`.
 
-`POST /agents`, `POST /agents/{key}/messages`, and `POST /agents/{key}/start` accept an optional `parent_agent_key`. The parent must be active on this server. An optional `parent_server_id` must match this server's stable instance ID; cross-server delegation is rejected. Repeating the same association is idempotent, while self-parenting, cycles, unknown parents, and conflicting re-parenting return a conflict.
+`POST /agents`, `POST /agents/{key}/messages`, and `POST /agents/{key}/start` accept an optional `parent_agent_key`. Tycho trusts that key as a declaration that the operation came from the parent; omitting it makes a message a direct user takeover. The parent must be active on this server. An optional `parent_server_id` must match this server's stable instance ID; cross-server delegation is rejected. Repeating the same association is idempotent, while self-parenting, cycles, unknown parents, and conflicting re-parenting return a conflict.
 
 Agent list/detail payloads expose `delegation.parent` and `delegation.children`. Terminal child runs durably enqueue a concise callback and safely resume a stopped parent as documented in [AGENT_DELEGATION.md](./AGENT_DELEGATION.md). `GET /agents/{key}` and `GET /agents/{key}/conversation` remain available read-only after archival so stored relationship links continue to resolve.
 

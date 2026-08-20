@@ -17,7 +17,7 @@ require_relative "domain/file_transaction"
 require_relative "domain/github_api_client"
 require_relative "domain/scheduler"
 require_relative "domain/agent_store"
-require_relative "domain/agent_capability"
+require_relative "domain/delegation_actor"
 require_relative "domain/agent_archive_store"
 require_relative "domain/usage_metrics"
 
@@ -169,7 +169,7 @@ module HQ
         option :run, type: :boolean, default: false, desc: "Start the agent immediately after creating"
         option :parent_agent, desc: "Originating parent agent key on the same Tycho server"
         option :root, type: :boolean, default: false,
-                      desc: "Create an unrelated root agent instead of inheriting the current managed agent"
+                      desc: "Explicitly create an unrelated root agent"
         remote_options
         usage_template "agent create %{project_key} %{prompt} [--parent-agent KEY|--root] [--server SERVER_KEY] [--json]"
 
@@ -1424,23 +1424,15 @@ module HQ
 
     def create_delegation_options(opts)
       opts = opts.dup
-      actor = agent_actor_from_environment
       parent_key = opts[:parent_agent].to_s.strip
-      managed_parent_key = actor.agent? ? actor.agent_key : ""
       root = opts[:root] == true
       raise ArgumentError, "Choose either --parent-agent or --root" if root && !parent_key.empty?
-      if actor.agent? && !parent_key.empty? && parent_key != actor.agent_key
-        raise ArgumentError, "An agent can delegate only as itself"
-      end
-      return opts.merge(parent_agent: nil, actor:) if root
-      return opts.merge(parent_agent: parent_key, actor:) unless parent_key.empty?
-      return opts.merge(actor:) if managed_parent_key.empty?
-      if remote_requested?(opts)
-        raise ArgumentError,
-              "A managed agent cannot infer its parent on --server; pass --parent-agent KEY or --root"
-      end
 
-      opts.merge(parent_agent: managed_parent_key, actor:)
+      parent_key = "" if root
+      opts.merge(
+        parent_agent: parent_key.empty? ? nil : parent_key,
+        actor: delegation_actor(parent_key)
+      )
     end
 
     def list_agents(project_key, opts = {}, out: $stdout, err: $stderr)
@@ -1497,7 +1489,7 @@ module HQ
     end
 
     def run_agent(agent_key, opts = {}, out: $stdout, err: $stderr)
-      opts = opts.merge(actor: agent_actor_from_environment)
+      opts = opts.merge(actor: delegation_actor(opts[:parent_agent]))
       return remote_agent_action(agent_key, "start", opts, out:, err:) if remote_requested?(opts)
 
       store = agent_store_for_all
@@ -1508,6 +1500,7 @@ module HQ
       return failure("Agent #{agent_key} is already running", err: err) if agent.running?
 
       agent = persist_agents_with_parent!(store, agents, agent, opts)
+      store.accept_prompt_from!(agent, actor: opts.fetch(:actor), agents: agents) if agent.delegation_parent
       agent = store.start_agent!(agent.key)
       if agent.running?
         print_started_agent(agent_cli_payload(agent), json: opts[:json], out: out)
@@ -1558,7 +1551,7 @@ module HQ
     end
 
     def send_agent_message(agent_key, message, opts = {}, out: $stdout, err: $stderr)
-      opts = opts.merge(actor: agent_actor_from_environment)
+      opts = opts.merge(actor: delegation_actor(opts[:parent_agent]))
       return remote_send_agent_message(agent_key, message, opts, out:, err:) if remote_requested?(opts)
 
       store = agent_store_for_all
@@ -2259,17 +2252,11 @@ module HQ
       )
     end
 
-    def agent_actor_from_environment
-      token = ENV["TYCHO_AGENT_CAPABILITY"].to_s.strip
-      claimed_key = ENV["TYCHO_AGENT_KEY"].to_s.strip
-      return AgentCapability.user_actor if token.empty? && claimed_key.empty?
-      raise AgentCapability::Error, "Missing agent capability" if token.empty?
+    def delegation_actor(parent_key)
+      key = parent_key.to_s.strip
+      return DelegationActor.user_actor if key.empty?
 
-      actor = AgentCapability.new.verify(token)
-      if !claimed_key.empty? && actor.agent_key != claimed_key
-        raise AgentCapability::Error, "Agent capability does not match TYCHO_AGENT_KEY"
-      end
-      actor
+      DelegationActor.parent_actor(key)
     end
 
     def agent_cli_delegation(agent, relationship_context: nil)

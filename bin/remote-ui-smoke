@@ -298,13 +298,26 @@ def archive_agent(base_url, agent_key)
   raise "Failed to archive smoke agent: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
 end
 
-def start_agent(base_url, agent_key)
+def start_agent(base_url, agent_key, parent_agent_key: nil)
   uri = URI("#{base_url}/agents/#{agent_key}/start")
   request = Net::HTTP::Post.new(uri)
   request["Content-Type"] = "application/json"
-  request.body = "{}"
+  body = {}
+  body[:parent_agent_key] = parent_agent_key if parent_agent_key
+  request.body = JSON.generate(body)
   response = Net::HTTP.start(uri.hostname, uri.port) { |http| http.request(request) }
   raise "Failed to start smoke agent: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
+end
+
+def send_agent_message(base_url, agent_key, prompt, parent_agent_key: nil, start: false)
+  uri = URI("#{base_url}/agents/#{agent_key}/messages")
+  request = Net::HTTP::Post.new(uri)
+  request["Content-Type"] = "application/json"
+  body = { prompt: prompt, start: start }
+  body[:parent_agent_key] = parent_agent_key if parent_agent_key
+  request.body = JSON.generate(body)
+  response = Net::HTTP.start(uri.hostname, uri.port) { |http| http.request(request) }
+  raise "Failed to message smoke agent: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
 end
 
 def wait_for_delegation_callback(base_url, parent_key)
@@ -438,6 +451,7 @@ def write_smoke_script(path)
       const archivedAgentKey = process.env.TYCHO_REMOTE_UI_ARCHIVED_AGENT_KEY;
       const orchestratorAgentKey = process.env.TYCHO_REMOTE_UI_ORCHESTRATOR_AGENT_KEY;
       const delegatedAgentKey = process.env.TYCHO_REMOTE_UI_DELEGATED_AGENT_KEY;
+      const takeoverAgentKey = process.env.TYCHO_REMOTE_UI_TAKEOVER_AGENT_KEY;
       const chromePath = process.env.CHROME_PATH;
       const captureDir = process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "";
       const beforeCapture = process.env.TYCHO_REMOTE_UI_BEFORE_CAPTURE || "";
@@ -1276,6 +1290,9 @@ def write_smoke_script(path)
         if (!(await page.locator("body").innerText()).toLowerCase().includes("started by")) {
           throw new Error("Delegated agent detail does not link to its orchestrator");
         }
+        if (await page.locator(".agent-ownership-badge").count() !== 0) {
+          throw new Error("Normal delegated ownership should not display a badge");
+        }
         const delegationConnection = page.locator(`[data-set-delegation-connection='${delegatedAgentKey}']`);
         if (await delegationConnection.count() !== 1 || await delegationConnection.getAttribute("aria-label") !== "Disconnect delegation reports") {
           throw new Error("Delegated agent detail does not expose its disconnect control");
@@ -1294,6 +1311,14 @@ def write_smoke_script(path)
         }, delegatedAgentKey, { timeout: 10_000 });
         if (captureDir) {
           await page.screenshot({ path: path.join(captureDir, "orchestration-child-desktop.png"), fullPage: false });
+        }
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(takeoverAgentKey)}`, { waitUntil: "networkidle" });
+        await page.waitForSelector(".agent-ownership-badge.takeover", { state: "visible", timeout: 10_000 });
+        const takeoverBadges = page.locator(".agent-ownership-badge.takeover");
+        const takeoverBadgeCount = await takeoverBadges.count();
+        const takeoverBadgeText = takeoverBadgeCount === 1 ? (await takeoverBadges.innerText()).trim() : "";
+        if (takeoverBadgeCount !== 1 || takeoverBadgeText.toLowerCase() !== "takeover") {
+          throw new Error(`User-owned delegated agent should display one Takeover badge: ${JSON.stringify({ takeoverBadgeCount, takeoverBadgeText })}`);
         }
         await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
         if (await page.locator(`[data-open-agent='${agentKey}']`).count() !== 1) {
@@ -5868,6 +5893,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       prompt: "Review mobile navigation and report concise findings.",
       parent_agent_key: orchestrator_agent_key
     )
+    send_agent_message(base_url, security_agent_key, "Take over this review directly.")
     associate_agent_schedule(fixture.fetch(:logs_dir), agent_key)
     associate_agent_pull_request(fixture.fetch(:logs_dir), agent_key)
     associate_agent_pull_request(fixture.fetch(:logs_dir), unscheduled_agent_key)
@@ -5876,7 +5902,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       [agent_key, unscheduled_agent_key, orchestrator_agent_key, delegated_agent_key, security_agent_key, mobile_agent_key]
     )
     archive_agent(base_url, archived_agent_key)
-    start_agent(base_url, delegated_agent_key)
+    start_agent(base_url, delegated_agent_key, parent_agent_key: orchestrator_agent_key)
     wait_for_delegation_callback(base_url, orchestrator_agent_key)
     node_dir = File.join(dir, "node")
     install_playwright!(node_dir)
@@ -5890,6 +5916,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       "TYCHO_REMOTE_UI_ARCHIVED_AGENT_KEY" => archived_agent_key,
       "TYCHO_REMOTE_UI_ORCHESTRATOR_AGENT_KEY" => orchestrator_agent_key,
       "TYCHO_REMOTE_UI_DELEGATED_AGENT_KEY" => delegated_agent_key,
+      "TYCHO_REMOTE_UI_TAKEOVER_AGENT_KEY" => security_agent_key,
       "CHROME_PATH" => browser
     }
     if ENV["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"].to_s == "1"

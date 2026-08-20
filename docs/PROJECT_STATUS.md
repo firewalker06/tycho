@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-08-19
+2026-08-20
 
 ## Strategic Direction
 
@@ -46,9 +46,10 @@ Key references:
 | Multi-file lifecycle writes | `FileTransaction` snapshots config/state files and runs compensating log moves around project archival and session-loop creation | A failed downstream step must restore project, agent, schedule, memory, and log state instead of leaving a partially completed lifecycle operation |
 | External command capture | `CommandRunner` owns bounded process-group execution for harness discovery; GitHub integration uses direct HTTPS after resolving a GitHub App session or the compatibility credential from `gh auth token` | One process owner preserves signal exit status for tools, while GitHub API behavior remains isolated from CLI response formats |
 | Agent transport | Codex JSON output, Claude-compatible `--output-format stream-json`, and OpenCode JSON pass through `AgentStreamRecorder`, which preserves `raw.log` and projects complete semantic events immediately | One recorder gives every harness the same durable streaming path without changing native wire formats |
+| Managed-agent environment boundary | Clear server-only `TYCHO_GITHUB_TOKEN` and `TYCHO_REMOTE_TOKEN` values at the harness spawn boundary; delegation uses an explicit trusted parent key instead of an injected capability | A daemon may load server credentials from `.env`, but managed harnesses must not inherit those bearer credentials |
 | Agent model controls | Optional per-agent `model` and `reasoning_effort`, inherited from project/template config and passed as harness run arguments | Model catalogs change outside Tycho; use harness discovery for suggestions where available, keep free-form fallback everywhere, and keep provider-specific thinking budgets out of first-version scope |
 | Managed-agent identity | Generate keys as `<project>-agent-<UTC timestamp with microseconds>`, adding a short random suffix only on an exact collision; retain legacy numeric keys when loading existing state | Timestamp identities remain sortable and avoid key reuse when agents are created concurrently or archived across Tycho instances |
-| Managed-agent CLI delegation | A local `tycho agent create` invoked inside a managed agent inherits `TYCHO_AGENT_KEY` as its parent; `--root` is the explicit opt-out, while `--server` requires an explicit parent or root choice | Delegation must remain durable even when a harness loads an outdated skill or omits `--parent-agent`, without guessing across server boundaries |
+| Managed-agent CLI delegation | `--parent-agent KEY` explicitly declares delegated ownership locally and remotely; omitting it creates a root or takes over an existing child, while `--root` is an explicit unrelated-root marker | The same visible command semantics apply across custom and resumed harnesses without secret capability propagation |
 | Delegation ownership | Persist `parent`/`user` ownership and a monotonic generation on each relationship; stamp delegated runs and report only matching parent-owned generations | Direct user takeover must suppress stale callbacks immediately, while a later parent prompt can reclaim only that edge without results crossing ownership boundaries |
 | Cross-harness response style | Append the current `~/.tycho/config/response_style.md` policy to every cold and resumed run, with project/template override or opt-out; record the harness `session_id` on each run | Keep operator-facing prose consistent without coupling the policy to a harness-native role API or persisting it into conversation memory, while retaining the native session identity used for each run; explicit task formats remain higher priority |
 | Agent session strategy | Persist native Claude/Codex `session_id` per managed agent and resume after the first run; keep `memory.jsonl` as HQ's canonical transcript | Native resume recovers agent-side continuity and prompt-cache reuse. HQ only replays bounded `memory.jsonl` on first run or when no native session is known |

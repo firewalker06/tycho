@@ -5,7 +5,7 @@ require "json"
 require_relative "agent_archive_store"
 require_relative "agent_memory"
 require_relative "delegation_store"
-require_relative "agent_capability"
+require_relative "delegation_actor"
 
 module HQ
   class DelegationCoordinator
@@ -78,7 +78,7 @@ module HQ
     end
 
     def accept_prompt_from!(child:, actor:, now: Time.now)
-      actor ||= AgentCapability.user_actor
+      actor ||= DelegationActor.user_actor
       return accept_prompt!(child:, owner: "user", now:) if actor.user?
 
       delegation_store.validate_agent_prompt!(source_key: actor.agent_key, target_key: child.key)

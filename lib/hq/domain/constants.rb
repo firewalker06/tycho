@@ -73,7 +73,6 @@ module HQ
   LOGS_DIR = USER_LOGS_DIR
   AGENTS_FILE = File.join(LOGS_DIR, "managed_agents.json")
   DELEGATIONS_FILE = File.join(LOGS_DIR, "agent_delegations.json")
-  AGENT_CAPABILITY_FILE = env_present("AGENT_CAPABILITY_PATH", File.join(USER_CONFIG_DIR, "agent_capability.json"))
   SERVER_IDENTITY_FILE = File.join(USER_CONFIG_DIR, "server_identity.json")
   USAGE_METRICS_FILE = File.join(LOGS_DIR, "usage_metrics.json")
   REMOTE_RESOURCES_FILE = File.join(LOGS_DIR, "remote_resources.json")

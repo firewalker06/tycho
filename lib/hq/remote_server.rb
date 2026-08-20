@@ -24,7 +24,7 @@ require_relative "domain/agent_attachment_store"
 require_relative "domain/agent_activity_snapshot"
 require_relative "domain/agent_chat_log"
 require_relative "domain/agent_store"
-require_relative "domain/agent_capability"
+require_relative "domain/delegation_actor"
 require_relative "domain/agent_archive_store"
 require_relative "domain/executable_resolver"
 require_relative "domain/file_store"
@@ -253,7 +253,7 @@ module HQ
 
     def route(service, method, path, body, request = nil)
       parts = path.split("/").reject(&:empty?)
-      actor = request_actor(request)
+      actor = request_actor(body)
 
       if parts.first == "servers"
         broker = RemoteBroker.new(registry: service.registry, server_url: service.server_url)
@@ -580,24 +580,7 @@ module HQ
 
       auth = request["Authorization"].to_s
       token = auth.sub(/\ABearer\s+/i, "")
-      return true if token == @token
-
-      authorized_agent_capability_request?(request)
-    end
-
-    def authorized_agent_capability_request?(request)
-      capability = request["X-Tycho-Agent-Capability"].to_s.strip
-      return false if capability.empty?
-
-      AgentCapability.new.verify(capability)
-      parts = request.path.split("/").reject(&:empty?)
-      return true if request.method == "GET" && (parts == ["agents"] ||
-        (parts.length == 2 && parts.first == "agents"))
-      return true if request.method == "POST" && parts == ["agents"]
-      request.method == "POST" && parts.length == 3 && parts.first == "agents" &&
-        %w[messages prompt start].include?(parts.last)
-    rescue AgentCapability::Error
-      false
+      token == @token
     end
 
     def unauthenticated_non_loopback?
@@ -732,14 +715,11 @@ module HQ
       request&.[]("X-Tycho-Remote-Server-Token").to_s
     end
 
-    def request_actor(request)
-      headers = request.respond_to?(:headers) && request.headers.is_a?(Hash) ? request.headers : {}
-      token = (headers["x-tycho-agent-capability"] || headers["X-Tycho-Agent-Capability"]).to_s.strip
-      return AgentCapability.user_actor if token.empty?
+    def request_actor(body)
+      parent_key = body.is_a?(Hash) ? body["parent_agent_key"].to_s.strip : ""
+      return DelegationActor.user_actor if parent_key.empty?
 
-      AgentCapability.new.verify(token)
-    rescue AgentCapability::Error => e
-      raise Error.new(e.message, status: 403)
+      DelegationActor.parent_actor(parent_key)
     end
 
     def log_server(line)
@@ -2824,8 +2804,9 @@ module HQ
       agent_payload(target)
     end
 
-    def submit_prompt(key, attrs = {}, actor: AgentCapability.user_actor, **attribute_keywords)
+    def submit_prompt(key, attrs = {}, actor: nil, **attribute_keywords)
       attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
+      actor ||= delegation_actor_from_attrs(attrs)
       target = find_agent!(key)
       target = associate_delegation_from_attrs!(target, attrs, actor:)
       pull_request_context = render_prompt_pull_request_contexts(target, attrs)
@@ -2842,12 +2823,12 @@ module HQ
       @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target), conversation: conversation(target.key) }
     rescue DelegationStore::Error => e
-      raise Error.new(e.message, status: actor&.agent? ? 403 : 409)
+      raise Error.new(e.message, status: actor&.parent? ? 403 : 409)
     end
 
-    def answer_inquiry(key, inquiry_id, attrs = {}, actor: AgentCapability.user_actor, **attribute_keywords)
+    def answer_inquiry(key, inquiry_id, attrs = {}, actor: DelegationActor.user_actor, **attribute_keywords)
       attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
-      raise Error.new("Agent capabilities cannot answer user inquiries", status: 403) if actor.agent?
+      raise Error.new("Parent-declared requests cannot answer user inquiries", status: 403) if actor.parent?
 
       target = find_agent!(key)
       inquiry = target.latest_inquiry
@@ -2903,10 +2884,12 @@ module HQ
       raise Error.new("Unknown agent: #{key}", status: 404)
     end
 
-    def start_agent(key, attrs = {}, actor: AgentCapability.user_actor, **attribute_keywords)
+    def start_agent(key, attrs = {}, actor: nil, **attribute_keywords)
       attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
+      actor ||= delegation_actor_from_attrs(attrs)
       target = find_agent!(key)
       target = associate_delegation_from_attrs!(target, attrs, actor:)
+      @agent_store.accept_prompt_from!(target, actor:) if target.delegation_parent
       save_agent(target)
       target = @agent_store.start_agent!(target.key) unless target.running?
       @agent_activity_snapshot.upsert!(target)
@@ -2920,8 +2903,9 @@ module HQ
       { agent: agent_payload(target) }
     end
 
-    def create_agent(attrs = {}, actor: AgentCapability.user_actor, **attribute_keywords)
+    def create_agent(attrs = {}, actor: nil, **attribute_keywords)
       attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
+      actor ||= delegation_actor_from_attrs(attrs)
       project = find_project!(attrs["project_key"])
       template_key = attrs["template_key"].to_s
       template_key = project.agent_templates.first&.key.to_s if template_key.empty?
@@ -2937,7 +2921,7 @@ module HQ
       @agent_activity_snapshot.upsert!(target)
       agent_payload(target)
     rescue DelegationStore::Error => e
-      raise Error.new(e.message, status: actor&.agent? ? 403 : 409)
+      raise Error.new(e.message, status: actor&.parent? ? 403 : 409)
     end
 
     def update_agent(key, attrs)
@@ -4287,13 +4271,12 @@ module HQ
     end
 
     def associate_delegation_from_attrs!(target, attrs, agents: nil, creating: false,
-                                         actor: AgentCapability.user_actor)
+                                         actor: DelegationActor.user_actor)
       parent_key = attrs["parent_agent_key"].to_s.strip
-      if actor.agent?
+      if actor.parent?
         if !parent_key.empty? && parent_key != actor.agent_key
           raise Error.new("An agent can delegate only as itself", status: 403)
         end
-        parent_key = actor.agent_key if creating && parent_key.empty?
       end
       if parent_key.empty?
         return target unless creating
@@ -4316,6 +4299,13 @@ module HQ
       )
     rescue DelegationStore::Error => e
       raise Error.new(e.message, status: 409)
+    end
+
+    def delegation_actor_from_attrs(attrs)
+      parent_key = attrs["parent_agent_key"].to_s.strip
+      return DelegationActor.user_actor if parent_key.empty?
+
+      DelegationActor.parent_actor(parent_key)
     end
 
     def sanitized_delegation_block(content, metadata, reference_context:)

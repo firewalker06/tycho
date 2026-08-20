@@ -1615,7 +1615,13 @@ module ManagedAgentTest
       agent: "claude"
     )
 
-    env = agent.send(:external_process_environment, "BUNDLE_GEMFILE" => "/custom/Gemfile", "CUSTOM" => "1")
+    env = agent.send(
+      :external_process_environment,
+      "BUNDLE_GEMFILE" => "/custom/Gemfile",
+      "CUSTOM" => "1",
+      "TYCHO_GITHUB_TOKEN" => "must-not-reach-agent",
+      "TYCHO_REMOTE_TOKEN" => "must-not-reach-agent"
+    )
 
     assert(env["BUNDLE_BIN_PATH"].nil?, "expected Bundler bin path to be cleared for harnesses")
     assert(env.key?("BUNDLER_SETUP") && env["BUNDLER_SETUP"].nil?,
@@ -1624,6 +1630,10 @@ module ManagedAgentTest
     assert(env["GEM_HOME"].nil?, "expected Ruby gem home to be cleared for harnesses")
     assert(env["BUNDLE_GEMFILE"] == "/custom/Gemfile", "expected explicit harness env to remain authoritative")
     assert(env["CUSTOM"] == "1", "expected explicit harness env to be preserved")
+    assert(env.key?("TYCHO_GITHUB_TOKEN") && env["TYCHO_GITHUB_TOKEN"].nil?,
+           "expected the legacy GitHub token to be removed from harnesses")
+    assert(env.key?("TYCHO_REMOTE_TOKEN") && env["TYCHO_REMOTE_TOKEN"].nil?,
+           "expected the Remote API bearer token to be removed from harnesses")
 
     runner_output = IO.popen(
       agent.send(:external_process_environment, {}),

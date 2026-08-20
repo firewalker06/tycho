@@ -64,7 +64,9 @@ Managed agents are configured from project settings in `~/.tycho/config/hq.yml`,
 
 Tycho appends the current `~/.tycho/config/response_style.md` policy to cold and resumed execution prompts. Project/template `response_style` may override it or disable it with `false`.
 
-Each managed run receives a signed `TYCHO_AGENT_CAPABILITY` bound to its agent key and run ID. Agent-originated prompt and delegation operations must validate that capability through `AgentStore`/`DelegationCoordinator`; never trust `TYCHO_AGENT_KEY`, `parent_agent_key`, or another caller-supplied actor label as authority. Direct user prompts enter Takeover before delivery, verified parent prompts restore Delegation, and children cannot prompt or delegate to ancestors. Preserve ownership generations and run stamps when changing lifecycle paths.
+Delegation uses an explicit trusted parent declaration. CLI callers pass `--parent-agent KEY`; Remote API callers pass `parent_agent_key`. A message without a parent key enters Takeover, while a message with the recorded parent key preserves or restores Delegation. `TYCHO_AGENT_KEY` is an informational helper only and never causes implicit parent inference. Preserve server-local topology validation, ownership generations, run stamps, callback deduplication, and ancestor-prompt rejection when changing lifecycle paths.
+
+Managed harnesses inherit the Tycho process environment except for Ruby/Bundler loader state and server-only credentials. Keep `TYCHO_GITHUB_TOKEN` and `TYCHO_REMOTE_TOKEN` removed at the harness spawn boundary. Remote CLI operations use the configured Remote credential store; never expose the server bearer token in prompts, logs, results, or attachments.
 
 Log viewing now stays in-app via sidebar panes. Preserve the in-app log/detail/chat/form behavior, and keep the `g` shortcut opening the selected project in a terminal.
 

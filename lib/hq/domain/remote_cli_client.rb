@@ -43,8 +43,7 @@ module HQ
       @config = config
       @base_uri = URI.parse(config.url)
       @credential_resolver = credential_resolver
-      @agent_capability = ENV["TYCHO_AGENT_CAPABILITY"].to_s.strip
-      @credential = @agent_capability.empty? ? (credential || resolve_credential(config)) : nil
+      @credential = credential || resolve_credential(config)
       @token = @credential&.token.to_s
       @open_timeout = open_timeout
       @read_timeout = read_timeout
@@ -83,7 +82,6 @@ module HQ
       request = request_class.new(uri)
       request["Accept"] = "application/json"
       request["Authorization"] = "Bearer #{@token}" unless @token.empty?
-      request["X-Tycho-Agent-Capability"] = @agent_capability unless @agent_capability.empty?
       if request.request_body_permitted?
         request["Content-Type"] = "application/json"
         request.body = JSON.generate(body || {})

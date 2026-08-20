@@ -17,7 +17,6 @@ require_relative "../parser"
 require_relative "agent_chat_log"
 require_relative "process_liveness"
 require_relative "agent_cost_snapshot"
-require_relative "agent_capability"
 require_relative "file_store"
 require_relative "usage_metrics"
 require "digest"
@@ -111,6 +110,10 @@ module HQ
                                 "if nothing remains to do afterward. `no_action_needed` is a quiet outcome that " \
                                 "suppresses operator unread and push notifications, so do not use it as a synonym " \
                                 "for \"finished\" or \"no next steps.\""
+    SERVER_ONLY_ENVIRONMENT_KEYS = %w[
+      TYCHO_GITHUB_TOKEN
+      TYCHO_REMOTE_TOKEN
+    ].freeze
     FINAL_OUTPUT_CHECKLIST = "For `summary`, write a concise operator-facing Markdown summary of the outcome, " \
                              "key changes or findings, blockers, and next steps in 1-3 short paragraphs or bullets. " \
                              "#{NO_ACTION_STATUS_GUIDANCE} " \
@@ -517,13 +520,11 @@ module HQ
         delegation_owner: delegation_stamp&.fetch("owner", nil),
         delegation_generation: delegation_stamp&.fetch("generation", nil)
       )
-      capability = AgentCapability.new.issue(agent_key: @key, run_id: run.run_id, now: @started_at)
       memory_store.append_run_started!(run_id: run.run_id, created_at: @started_at)
       @pid = spawn(
         external_process_environment(launch.fetch(:env)).merge(
           "TYCHO_STATUS_PATH" => status_path,
           "TYCHO_AGENT_KEY" => @key,
-          "TYCHO_AGENT_CAPABILITY" => capability,
           "TYCHO_EXECUTABLE" => File.join(ROOT_DIR, "bin", "tycho"),
           "TYCHO_STREAM_RECORDER_PATH" => File.expand_path("agent_stream_recorder", __dir__),
           "TYCHO_RAW_LOG_PATH" => @log_path,
@@ -1224,7 +1225,7 @@ module HQ
     end
 
     def external_process_environment(environment)
-      {
+      sanitized = {
         "BUNDLE_BIN_PATH" => nil,
         "BUNDLE_GEMFILE" => nil,
         "BUNDLER_SETUP" => nil,
@@ -1234,6 +1235,8 @@ module HQ
         "RUBYLIB" => nil,
         "RUBYOPT" => nil
       }.merge(environment)
+      SERVER_ONLY_ENVIRONMENT_KEYS.each { |key| sanitized[key] = nil }
+      sanitized
     end
 
     def last_message_file_path

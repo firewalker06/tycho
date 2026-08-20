@@ -115,15 +115,15 @@ class DelegationTest
       agents << grandchild
       coordinator.attach!(agents:, child: grandchild, parent_key: child.key)
       assert_raises("cycle") { coordinator.attach!(agents:, child: parent, parent_key: grandchild.key) }
-      child_actor = HQ::AgentCapability::Actor.new(type: "agent", agent_key: child.key, run_id: child.last_run.run_id)
+      child_actor = HQ::DelegationActor.parent_actor(child.key)
       assert_raises("upward prompt") do
         coordinator.accept_prompt_from!(child: parent, actor: child_actor)
       end
       coordinator.accept_prompt_from!(child: grandchild, actor: child_actor)
       assert(store.relation_for_child(grandchild.key)["owner"] == "parent",
-             "expected a verified parent prompt to preserve the child edge")
+             "expected a parent-declared prompt to preserve the child edge")
 
-      coordinator.accept_prompt_from!(child: grandchild, actor: HQ::AgentCapability.user_actor)
+      coordinator.accept_prompt_from!(child: grandchild, actor: HQ::DelegationActor.user_actor)
       assert(store.relation_for_child(grandchild.key)["owner"] == "user",
              "expected takeover to change only the selected edge")
       assert(store.relation_for_child(child.key)["owner"] == "parent",

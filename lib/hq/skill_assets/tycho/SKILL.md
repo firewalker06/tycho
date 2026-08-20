@@ -1,6 +1,6 @@
 ---
 name: tycho
-description: Manages Tycho-monitored projects and managed agents. Use when the user asks to check status, create/list/run/stop/send/archive/clone agents, or control schedules for any project.
+description: Manages Tycho projects, managed agents, delegation, and schedules. Use when the user asks to check status; create/list/run/stop/send/archive/clone agents; delegate work between agents; troubleshoot parent ownership or callbacks; or control schedules for any project.
 ---
 
 # Tycho CLI Skill
@@ -47,7 +47,7 @@ tycho agent create <project-key> <prompt> [options]
 | `--template KEY` | Template key (defaults to project's first template) |
 | `--run` | Start the agent immediately after creation |
 | `--parent-agent KEY` | Attach the originating agent/session on the same Tycho server |
-| `--root` | Explicitly create an unrelated root agent from inside a managed agent |
+| `--root` | Explicitly create an unrelated root agent |
 
 ```bash
 # Create only
@@ -65,13 +65,35 @@ tycho agent create global-web "Review the auth boundary" --parent-agent global-w
 
 ### Delegating from a managed Tycho agent
 
-Use ordinary `agent create`. Tycho verifies the current run capability, matches it to `TYCHO_AGENT_KEY`, and links the new child automatically, so its terminal result returns to this agent even if `--parent-agent` is omitted:
+Pass this managed agent's key explicitly. Tycho treats `--parent-agent` as the trusted declaration that the prompt came from the parent, links the child, and returns each terminal delegated run to that parent:
 
 ```bash
-tycho agent create global-web "Review the auth boundary" --run
+"${TYCHO_EXECUTABLE:-tycho}" agent create global-web "Review the auth boundary" \
+  --parent-agent "${TYCHO_AGENT_KEY:?Missing TYCHO_AGENT_KEY}" --run
 ```
 
-Do not add `--root` for delegated work. `--root` is the explicit opt-out for intentionally unrelated work. When targeting `--server`, pass either `--parent-agent KEY` or `--root` because the local parent cannot be inferred safely on another server.
+Omitting `--parent-agent` creates an unrelated root agent. `--root` makes that choice explicit. The same rule applies with `--server`.
+
+### Parent declaration
+
+Tycho does not issue or require a delegation token. `--parent-agent KEY` and the Remote API's `parent_agent_key` are trusted parent declarations:
+
+- With a parent key, a create, send, or run operation is delegated and its terminal run reports back.
+- Without a parent key, a message to an existing delegated child is a direct user prompt and enters Takeover.
+- A later operation with the recorded parent key restores Delegation.
+- `TYCHO_AGENT_KEY` identifies the current managed agent so it can supply its own key explicitly; Tycho never infers ownership from that environment variable.
+
+The declaration is not cryptographic authentication. Use it only with the actual recorded parent. Tycho still rejects unknown parents, self-parenting, cycles, conflicting re-parenting, and ancestor prompts.
+
+### Ownership and callback rules
+
+- Keep delegation server-local. Self-parenting, cycles, unknown parents, conflicting re-parenting, and ancestor prompting are invalid.
+- Treat a direct user prompt to a delegated child as Takeover. It changes the edge owner to `user`, advances its ownership generation, suppresses pending reports, and cancels queued parent resumes.
+- Let only a prompt declared with the recorded parent key restore Delegation. Parent reclaim advances the generation and cancels any unresolved child inquiry before storing the prompt.
+- Expect every terminal delegated run to create one deduplicated report when callbacks are connected. Tycho stamps ownership at launch and rejects stale generations.
+- Let Tycho deliver eligible terminal reports and resume the parent. It waits while the parent or another agent in the same workspace is running.
+- Treat callback disconnect as suppression, not deletion. Disconnected runs are not replayed after reconnect, and archived parents receive history without being resumed.
+- Read the UI conservatively: Tycho shows `Takeover` only while a delegated edge is user-owned. It does not show a normal `Delegation` badge.
 
 ---
 
