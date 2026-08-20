@@ -76,6 +76,7 @@ Key references:
 | Remote UI design system | Keep a no-build internal system: semantic `--ds-*` tokens and reusable CSS components in `design_system.css`, product composition in `app.css`, and a static `/design-system` preview; migrate routes incrementally | Match the existing Ruby/vanilla-JS deployment, preserve behavior, make foundations governable, and avoid a framework or package rewrite |
 | Remote UI deployment coherence | Snapshot all browser assets and their shared hash when `tycho serve` starts; require a daemon restart to load source updates | Prevent an old Ruby API from serving a newer on-disk JavaScript client after a pull, which can break push subscription renewal and other cross-boundary flows |
 | Remote UI agent activity | Keep a server-owned in-memory activity snapshot updated by lifecycle mutations and the existing notification reconciliation pass; poll its compact read-only endpoint independently from page refreshes | Logo unread counts and agent switching stay current while forms pause page polling, without adding another server loop or letting slower catalog responses overwrite newer activity |
+| Remote UI linked-agent navigation | Expose direct parent/child links beside composer attachments and mark linked sessions in the quick agent switcher; clicking the link symbol or pressing Tab drills into the selected agent's direct links | Delegation topology stays reachable after the conversation's relationship card scrolls out of view without adding another route or duplicating relationship state |
 | Remote multiserver resources | Keep one UI-serving broker, aggregate only compact Agent and Project resources through a disk-backed stale-while-revalidate catalog, and require explicit server identity for details and mutations | Combined lists stay responsive across peer failures and broker restarts; only a validated full snapshot may remove cached resources, while schedules, setup, GitHub, push, restart, and other server-level behavior remain local |
 | Project workspace browsing | Keep canonical path resolution, sensitive/generated-file policy, bounded listing, and text preview in `ProjectWorkspace`; expose only relative paths through project-scoped read-only endpoints | Remote and multiserver browsing must not leak host paths or let client routing bypass traversal, symlink, VCS, credential, binary, or size controls |
 | Remote credential ownership | Bind one bearer credential to each stable remote server key and verified scheme/host/effective-port origin; keep Tycho-managed values in atomic mode-`0600` `~/.tycho/config/remote_credentials.json`, with explicit per-server `token_env` overrides | CLI and broker share one resolver, multiple peers cannot select credentials by incidental names, origin changes require explicit recovery, and browser promotion removes its copy only after verified persistence |
@@ -97,10 +98,11 @@ output correction, auditable usage metrics, project workspace browsing, Tycho
 skill installation, pull-request context, and durable agent delegation are
 complete. Ownership-aware takeover/report routing now includes edge-local
 generations, run stamps, stale-report suppression, parent-reclaim inquiry
-cancellation, signed per-run capabilities, and ancestor-operation rejection.
+cancellation, explicit trusted parent declarations, and ancestor-operation rejection.
 Remote UI now keeps compact agent activity live independently from
 page polling, preserves focused work, and adds direct navigation across run
-summaries and their attachments.
+summaries, attachments, and linked agents from both the composer and quick
+agent switcher.
 
 ## Roadmap
 

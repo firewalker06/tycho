@@ -1230,10 +1230,70 @@ def write_smoke_script(path)
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(orchestratorAgentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector(".agent-reference", { state: "visible", timeout: 10_000 });
         const orchestrationContract = await page.locator("body").innerText();
-        const delegatedReferenceCount = await page.locator(".agent-relationship-list .agent-reference").count();
+        const delegatedReferenceCount = await page.locator(".message-list > .agent-relationships .agent-relationship-list .agent-reference").count();
         if (!orchestrationContract.toLowerCase().includes("delegated agents") || delegatedReferenceCount !== 3) {
           throw new Error("Orchestrator detail does not expose its delegated agents");
         }
+        const linkedAgentsToggle = page.locator(".send-tools [data-toggle-linked-agents]");
+        if (await linkedAgentsToggle.count() !== 1 || await linkedAgentsToggle.getAttribute("aria-expanded") !== "false") {
+          throw new Error("Agent composer does not expose the linked-agents shortcut next to its attachment controls");
+        }
+        await linkedAgentsToggle.click();
+        await page.waitForSelector("[data-linked-agents-flyout]:not(.hidden)", { state: "visible", timeout: 10_000 });
+        const linkedFlyoutReferences = await page.locator("[data-linked-agents-flyout] .agent-reference").count();
+        if (linkedFlyoutReferences !== 3 || await linkedAgentsToggle.getAttribute("aria-expanded") !== "true") {
+          throw new Error(`Linked-agents composer flyout is incomplete: ${JSON.stringify({ linkedFlyoutReferences })}`);
+        }
+        if (captureDir) await page.locator("[data-linked-agents-flyout]").screenshot({ path: path.join(captureDir, "linked-agents-flyout-desktop.png") });
+        await page.keyboard.press("Escape");
+        if (await linkedAgentsToggle.getAttribute("aria-expanded") !== "false") {
+          throw new Error("Escape did not close the linked-agents composer flyout");
+        }
+        await page.click("#header-mark");
+        await page.waitForSelector("#unread-agents-panel:not(.hidden)", { state: "visible", timeout: 10_000 });
+        const switcherLinkedSymbol = page.locator(`[data-show-linked-agents='${orchestratorAgentKey}']`);
+        if (await switcherLinkedSymbol.count() !== 1) {
+          throw new Error("Quick agent navigation does not mark agents with links");
+        }
+        await switcherLinkedSymbol.click();
+        await page.waitForSelector(".unread-panel-header.linked", { state: "visible", timeout: 10_000 });
+        const linkedSwitcherReferences = await page.locator(".unread-panel-list [data-open-agent]").count();
+        if (linkedSwitcherReferences !== 3 || await page.locator("[data-unread-agent-search]").getAttribute("placeholder") !== "Search linked agents") {
+          throw new Error(`Quick agent linked list is incomplete: ${JSON.stringify({ linkedSwitcherReferences })}`);
+        }
+        if (captureDir) await page.locator("#unread-agents-panel").screenshot({ path: path.join(captureDir, "linked-agents-switcher-desktop.png") });
+        await page.click("[data-show-all-switcher-agents]");
+        await page.evaluate((key) => {
+          const agents = filterQuickSwitchAgents();
+          state.unreadPanelSelectedIndex = agents.findIndex((agent) => agent.key === key);
+          renderUnreadPanelResults(agents);
+        }, orchestratorAgentKey);
+        await page.keyboard.press("Tab");
+        await page.waitForSelector(".unread-panel-header.linked", { state: "visible", timeout: 10_000 });
+        if (await page.locator(".unread-panel-list [data-open-agent]").count() !== 3) {
+          throw new Error("Tab did not switch quick agent navigation to linked agents");
+        }
+        await page.keyboard.press("Escape");
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.click("[data-toggle-linked-agents]");
+        await page.waitForSelector("[data-linked-agents-flyout]:not(.hidden)", { state: "visible", timeout: 10_000 });
+        const mobileLinkedFlyout = await page.locator("[data-linked-agents-flyout]").boundingBox();
+        if (!mobileLinkedFlyout || mobileLinkedFlyout.x < 0 || mobileLinkedFlyout.y < 0 ||
+            mobileLinkedFlyout.x + mobileLinkedFlyout.width > 390 || mobileLinkedFlyout.y + mobileLinkedFlyout.height > 844) {
+          throw new Error(`Linked-agents flyout is cropped on mobile: ${JSON.stringify(mobileLinkedFlyout)}`);
+        }
+        if (captureDir) await page.locator("[data-linked-agents-flyout]").screenshot({ path: path.join(captureDir, "linked-agents-flyout-mobile.png") });
+        await page.keyboard.press("Escape");
+        await page.click("#header-mark");
+        await page.click(`[data-show-linked-agents='${orchestratorAgentKey}']`);
+        const mobileLinkedSwitcher = await page.locator("#unread-agents-panel").boundingBox();
+        if (!mobileLinkedSwitcher || mobileLinkedSwitcher.x < 0 || mobileLinkedSwitcher.y < 0 ||
+            mobileLinkedSwitcher.x + mobileLinkedSwitcher.width > 390 || mobileLinkedSwitcher.y + mobileLinkedSwitcher.height > 844) {
+          throw new Error(`Linked-agents switcher is cropped on mobile: ${JSON.stringify(mobileLinkedSwitcher)}`);
+        }
+        if (captureDir) await page.locator("#unread-agents-panel").screenshot({ path: path.join(captureDir, "linked-agents-switcher-mobile.png") });
+        await page.keyboard.press("Escape");
+        await page.setViewportSize({ width: 1024, height: 768 });
         await page.waitForFunction(() => document.body.innerText.includes("Completed the focused review"), null, { timeout: 10_000 });
         const delegationEventContract = await page.evaluate(() => {
           const callback = document.querySelector(".delegation-callback-event");
@@ -1293,7 +1353,7 @@ def write_smoke_script(path)
         if (await page.locator(".agent-ownership-badge").count() !== 0) {
           throw new Error("Normal delegated ownership should not display a badge");
         }
-        const delegationConnection = page.locator(`[data-set-delegation-connection='${delegatedAgentKey}']`);
+        const delegationConnection = page.locator(`.message-list > .agent-relationships [data-set-delegation-connection='${delegatedAgentKey}']`);
         if (await delegationConnection.count() !== 1 || await delegationConnection.getAttribute("aria-label") !== "Disconnect delegation reports") {
           throw new Error("Delegated agent detail does not expose its disconnect control");
         }
@@ -1301,12 +1361,12 @@ def write_smoke_script(path)
         await page.waitForSelector("[data-confirmation-accept]", { state: "visible", timeout: 10_000 });
         await page.click("[data-confirmation-accept]");
         await page.waitForFunction((key) => {
-          const control = document.querySelector(`[data-set-delegation-connection='${CSS.escape(key)}']`);
+          const control = document.querySelector(`.message-list > .agent-relationships [data-set-delegation-connection='${CSS.escape(key)}']`);
           return control?.getAttribute("aria-label") === "Reconnect delegation reports" && document.body.innerText.includes("Reports disconnected");
         }, delegatedAgentKey, { timeout: 10_000 });
-        await page.click(`[data-set-delegation-connection='${delegatedAgentKey}']`);
+        await page.click(`.message-list > .agent-relationships [data-set-delegation-connection='${delegatedAgentKey}']`);
         await page.waitForFunction((key) => {
-          const control = document.querySelector(`[data-set-delegation-connection='${CSS.escape(key)}']`);
+          const control = document.querySelector(`.message-list > .agent-relationships [data-set-delegation-connection='${CSS.escape(key)}']`);
           return control?.getAttribute("aria-label") === "Disconnect delegation reports" && !document.body.innerText.includes("Reports disconnected");
         }, delegatedAgentKey, { timeout: 10_000 });
         if (captureDir) {
