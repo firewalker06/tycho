@@ -25,18 +25,25 @@ module RemoteUIAssetSnapshotTest
     css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
     helpers = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app_helpers.js"))
     required = [
-      "circlePause:",
-      "circleCheck:",
-      "circleX:",
-      'return "circlePause"',
-      'return "circleCheck"',
-      'return "circleX"',
+      "pause:",
+      "check:",
+      "ban:",
+      '<rect width="4" height="16" x="14" y="4" rx="1"></rect>',
+      '<path d="M20 6 9 17l-5-5"></path>',
+      '<path d="m4.9 4.9 14.2 14.2"></path>',
+      'return "pause"',
+      'return "check"',
+      'return "ban"',
+      'case "no_action_needed":',
+      ".agent-status-icon.done",
+      ".agent-status-icon.fail",
+      "color: var(--muted);",
       'role="img" aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}"',
       "function agentStatusIcon(status, label",
       ".agent-status-icon {"
     ]
     missing = required.reject { |fragment| javascript.include?(fragment) || css.include?(fragment) }
-    raise "missing Lucide status icon contract: #{missing.join(", ")}" unless missing.empty?
+    raise "missing exact Lucide status icon contract: #{missing.join(", ")}" unless missing.empty?
 
     forbidden = ["✅", "⏸️", "🚫"]
     present = forbidden.select { |emoji| javascript.include?(emoji) || helpers.include?(emoji) }

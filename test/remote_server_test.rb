@@ -4471,15 +4471,18 @@ module RemoteServerTest
            "expected one semantic mapping for legacy product status classes")
     assert(js[:body].include?("function agentStatusBadge") &&
            js[:body].include?("function agentStatusIconName") &&
-           js[:body].include?('return "circlePause"') &&
-           js[:body].include?('return "circleCheck"') &&
-           js[:body].include?('return "circleX"') &&
+           js[:body].include?('return "pause"') &&
+           js[:body].include?('return "check"') &&
+           js[:body].include?('return "ban"') &&
+           js[:body].include?('<path d="M20 6 9 17l-5-5"></path>') &&
+           js[:body].include?('<path d="m4.9 4.9 14.2 14.2"></path>') &&
+           js[:body].include?('case "no_action_needed":') &&
            js[:body].include?('role="img" aria-label="${escapeAttr(label)}"') &&
            js[:body].include?("agentStatusBadge(agent") &&
            !helpers_js[:body].include?("✅".b) &&
            !helpers_js[:body].include?("⏸️".b) &&
            !helpers_js[:body].include?("🚫".b),
-           "expected agent status surfaces to use accessible Lucide icons without emoji")
+           "expected agent status surfaces to use exact accessible Lucide icons without emoji")
     assert(js[:body].scan("statusBadge(").length >= 25 &&
            js[:body].scan("statusMarkAttributes(").length >= 15,
            "expected representative agent, schedule, setup, project, and diff states to use the semantic status contract")

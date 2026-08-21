@@ -1097,12 +1097,13 @@ def write_smoke_script(path)
         }
         const agentStatusIconContract = await page.evaluate(() => {
           return [
-            ["stopped", "circlePause", "Stopped"],
-            ["succeeded", "circleCheck", "Succeeded"],
-            ["failed", "circleX", "Failed"],
-            ["cancelled", "circleX", "Cancelled"],
-            ["blocked", "circleX", "Blocked"],
-          ].map(([status, iconName, label]) => {
+            ["stopped", "pause", "Stopped", "rect[x='6'][y='4'][width='4'][height='16'][rx='1']", "need"],
+            ["succeeded", "check", "Succeeded", "path[d='M20 6 9 17l-5-5']", "done"],
+            ["failed", "ban", "Failed", "path[d='m4.9 4.9 14.2 14.2']", "fail"],
+            ["cancelled", "ban", "Cancelled", "path[d='m4.9 4.9 14.2 14.2']", "fail"],
+            ["blocked", "ban", "Blocked", "path[d='m4.9 4.9 14.2 14.2']", "fail"],
+            ["no_action_needed", "check", "No Action Needed", "path[d='M20 6 9 17l-5-5']", "detail"],
+          ].map(([status, iconName, label, iconPath, className]) => {
             const host = document.createElement("div");
             host.innerHTML = agentStatusBadge({ status });
             document.body.append(host);
@@ -1112,25 +1113,31 @@ def write_smoke_script(path)
               status,
               iconName: agentStatusIconName(status),
               hasSvg: Boolean(mark?.querySelector("svg")),
-              hasLucideCircle: Boolean(mark?.querySelector("circle[cx='12'][cy='12'][r='10']")),
+              hasOfficialPath: Boolean(mark?.querySelector(iconPath)),
               label: mark?.getAttribute("aria-label"),
               title: mark?.getAttribute("title"),
               visibleText: mark?.textContent.trim(),
               hasBadge: Boolean(host.querySelector(".agent-status-badge, .ui-badge, .pill, .chip")),
               border: style?.borderTopStyle,
               background: style?.backgroundColor,
+              color: style?.color,
               expectedIconName: iconName,
               expectedLabel: label,
+              expectedClassName: className,
+              className: mark?.className,
             };
             host.remove();
             return result;
           });
         });
+        const noActionIcon = agentStatusIconContract.find((item) => item.status === "no_action_needed");
+        const succeededIcon = agentStatusIconContract.find((item) => item.status === "succeeded");
         if (agentStatusIconContract.some((item) =>
-          item.iconName !== item.expectedIconName || !item.hasSvg || !item.hasLucideCircle ||
+          item.iconName !== item.expectedIconName || !item.hasSvg || !item.hasOfficialPath ||
           item.label !== item.expectedLabel || item.title !== item.expectedLabel || item.visibleText ||
-          item.hasBadge || item.border !== "none" || item.background !== "rgba(0, 0, 0, 0)")) {
-          throw new Error(`Agent status icons lost their Lucide, accessibility, or unboxed treatment: ${JSON.stringify(agentStatusIconContract)}`);
+          item.hasBadge || item.border !== "none" || item.background !== "rgba(0, 0, 0, 0)" ||
+          !item.className?.includes(item.expectedClassName)) || noActionIcon?.color === succeededIcon?.color) {
+          throw new Error(`Agent status icons lost their exact Lucide, grey no-action, accessibility, or unboxed treatment: ${JSON.stringify(agentStatusIconContract)}`);
         }
         const degradedActivityContract = await page.evaluate(() => {
           const merged = window.TychoRemoteHelpers.mergeActivityServers(
@@ -4964,7 +4971,7 @@ def write_smoke_script(path)
             !focusedStatusSyncContract.before.steadyActionFocused ||
             focusedStatusSyncContract.after.status !== "" ||
             focusedStatusSyncContract.after.statusIconLabel !== "Succeeded" ||
-            focusedStatusSyncContract.after.statusIconName !== "circleCheck" ||
+            focusedStatusSyncContract.after.statusIconName !== "check" ||
             focusedStatusSyncContract.after.visibleStatusText !== "" ||
             focusedStatusSyncContract.after.sendPrompt !== "Send prompt" ||
             !focusedStatusSyncContract.after.sendPromptFocused ||
