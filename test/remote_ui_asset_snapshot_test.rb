@@ -53,6 +53,7 @@ module RemoteUIAssetSnapshotTest
       ".agent-status-icon.done",
       ".agent-status-icon.running",
       ".agent-status-icon.fail",
+      ".resource-stale :is(.agent-status-icon, .status-mark, .ui-status, .server-identity-badge)",
       "color: var(--muted);",
       "color: var(--accent);",
       'normalizedStatus === "unread" ? "need"',
