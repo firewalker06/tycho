@@ -29,21 +29,6 @@ module RemoteUIStateReconciliationTest
         throw new Error(`catalog reconciliation did not mark the merged detail stale: ${JSON.stringify(reconciled)}`);
       }
 
-      const statusChecks = [
-        ["stopped", "⏸️"],
-        ["paused", "⏸️"],
-        ["succeeded", "✅"],
-        ["success", "✅"],
-        ["failed", "🚫"],
-        ["cancelled", "🚫"],
-        ["blocked", "🚫"],
-        ["running", ""],
-      ];
-      for (const [status, expected] of statusChecks) {
-        const actual = helpers.agentStatusIcon(status);
-        if (actual !== expected) throw new Error(`${status}: expected ${expected}, got ${actual}`);
-      }
-
       const activityServers = helpers.mergeActivityServers(
         [
           { key: "healthy", ready: true, agents: [{ key: "healthy-old" }] },

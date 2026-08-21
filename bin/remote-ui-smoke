@@ -1097,28 +1097,47 @@ def write_smoke_script(path)
         }
         const agentStatusIconContract = await page.evaluate(() => {
           return [
-            ["stopped", "⏸️", "Stopped"],
-            ["succeeded", "✅", "Succeeded"],
-            ["failed", "🚫", "Failed"],
-            ["cancelled", "🚫", "Cancelled"],
-            ["blocked", "🚫", "Blocked"],
-          ].map(([status, icon, label]) => {
+            ["stopped", "pause", "Stopped", "rect[x='6'][y='4'][width='4'][height='16'][rx='1']", "need"],
+            ["succeeded", "check", "Succeeded", "path[d='M20 6 9 17l-5-5']", "done"],
+            ["failed", "ban", "Failed", "path[d='m4.9 4.9 14.2 14.2']", "fail"],
+            ["cancelled", "ban", "Cancelled", "path[d='m4.9 4.9 14.2 14.2']", "fail"],
+            ["blocked", "ban", "Blocked", "path[d='m4.9 4.9 14.2 14.2']", "fail"],
+            ["no_action_needed", "check", "No Action Needed", "path[d='M20 6 9 17l-5-5']", "detail"],
+          ].map(([status, iconName, label, iconPath, className]) => {
             const host = document.createElement("div");
             host.innerHTML = agentStatusBadge({ status });
-            const badge = host.querySelector(".agent-status-badge");
-            const mark = badge?.querySelector(".agent-status-icon");
-            return {
+            document.body.append(host);
+            const mark = host.querySelector(".agent-status-icon");
+            const style = mark ? getComputedStyle(mark) : null;
+            const result = {
               status,
-              icon: mark?.textContent,
-              decorative: mark?.getAttribute("aria-hidden"),
-              labelPresent: badge?.textContent.includes(label),
-              expectedIcon: icon,
+              iconName: agentStatusIconName(status),
+              hasSvg: Boolean(mark?.querySelector("svg")),
+              hasOfficialPath: Boolean(mark?.querySelector(iconPath)),
+              label: mark?.getAttribute("aria-label"),
+              title: mark?.getAttribute("title"),
+              visibleText: mark?.textContent.trim(),
+              hasBadge: Boolean(host.querySelector(".agent-status-badge, .ui-badge, .pill, .chip")),
+              border: style?.borderTopStyle,
+              background: style?.backgroundColor,
+              color: style?.color,
+              expectedIconName: iconName,
+              expectedLabel: label,
+              expectedClassName: className,
+              className: mark?.className,
             };
+            host.remove();
+            return result;
           });
         });
+        const noActionIcon = agentStatusIconContract.find((item) => item.status === "no_action_needed");
+        const succeededIcon = agentStatusIconContract.find((item) => item.status === "succeeded");
         if (agentStatusIconContract.some((item) =>
-          item.icon !== item.expectedIcon || item.decorative !== "true" || !item.labelPresent)) {
-          throw new Error(`Agent status icons lost their text or accessibility contract: ${JSON.stringify(agentStatusIconContract)}`);
+          item.iconName !== item.expectedIconName || !item.hasSvg || !item.hasOfficialPath ||
+          item.label !== item.expectedLabel || item.title !== item.expectedLabel || item.visibleText ||
+          item.hasBadge || item.border !== "none" || item.background !== "rgba(0, 0, 0, 0)" ||
+          !item.className?.includes(item.expectedClassName)) || noActionIcon?.color === succeededIcon?.color) {
+          throw new Error(`Agent status icons lost their exact Lucide, grey no-action, accessibility, or unboxed treatment: ${JSON.stringify(agentStatusIconContract)}`);
         }
         const degradedActivityContract = await page.evaluate(() => {
           const merged = window.TychoRemoteHelpers.mergeActivityServers(
@@ -3984,20 +4003,39 @@ def write_smoke_script(path)
         await page.waitForSelector(".agent-row[data-open-agent]", { state: "visible", timeout: 10_000 });
         const scheduledAgentListStatus = await page.evaluate((key) => {
           const row = Array.from(document.querySelectorAll(".agent-row[data-open-agent]")).find((item) => item.dataset.openAgent === key);
-          const icon = row?.querySelector(".status-mark");
-          const label = row?.querySelector(".pill.info");
-          return {
-            found: Boolean(row && icon && label),
-            scheduleIcon: Boolean(icon?.querySelector('path[d="M8 2v4"]')),
+          const icon = row?.querySelector(":scope > .agent-status-icon");
+          const comparison = document.createElement("span");
+          comparison.className = "agent-status-icon";
+          document.body.append(comparison);
+          const mutedColor = getComputedStyle(comparison).color;
+          const result = {
+            found: Boolean(row && icon),
+            checkIcon: Boolean(icon?.querySelector('path[d="M20 6 9 17l-5-5"]')),
+            scheduleAffordance: Boolean(row?.querySelector('[data-agent-role="scheduled"]')),
+            scheduleStatusMark: Boolean(row?.querySelector(':scope > .status-mark path[d="M8 2v4"]')),
+            detailClass: icon?.classList.contains("detail"),
             iconColor: icon ? getComputedStyle(icon).color : "",
-            labelColor: label ? getComputedStyle(label).color : "",
+            mutedColor,
+            label: icon?.getAttribute("aria-label"),
+            title: icon?.getAttribute("title"),
+            visibleText: icon?.textContent.trim(),
+            hasBadge: Boolean(row?.querySelector(":scope > .pill, :scope > .chip, :scope > .ui-badge")),
           };
+          comparison.remove();
+          return result;
         }, agentKey);
-        if (!scheduledAgentListStatus.found || !scheduledAgentListStatus.scheduleIcon || scheduledAgentListStatus.iconColor !== scheduledAgentListStatus.labelColor) {
-          throw new Error(`Scheduled agent list icon does not match no-action status: ${JSON.stringify(scheduledAgentListStatus)}`);
+        if (!scheduledAgentListStatus.found || !scheduledAgentListStatus.checkIcon || !scheduledAgentListStatus.scheduleAffordance ||
+            scheduledAgentListStatus.scheduleStatusMark || !scheduledAgentListStatus.detailClass ||
+            scheduledAgentListStatus.iconColor !== scheduledAgentListStatus.mutedColor ||
+            scheduledAgentListStatus.label !== "No action" || scheduledAgentListStatus.title !== "No action" ||
+            scheduledAgentListStatus.visibleText || scheduledAgentListStatus.hasBadge) {
+          throw new Error(`Scheduled no-action agent row lost its muted standalone Check status: ${JSON.stringify(scheduledAgentListStatus)}`);
         }
         await page.evaluate((key) => {
-          scheduleForAgent(findAgent(key)).status = "stopped";
+          const agent = findAgent(key);
+          agent.last_result = "";
+          agent.status = "idle";
+          scheduleForAgent(agent).status = "stopped";
           state.renderedViewHtml = "";
           render();
         }, agentKey);
@@ -4921,8 +4959,9 @@ def write_smoke_script(path)
               before,
               after: {
                 status: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
-                statusIcon: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.textContent.trim(),
-                statusIconHidden: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.getAttribute("aria-hidden"),
+                statusIconLabel: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.getAttribute("aria-label"),
+                statusIconName: agentStatusIconName("succeeded"),
+                visibleStatusText: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
                 sendPrompt: document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] button[type="submit"]`)?.textContent.trim(),
                 sendPromptFocused: document.activeElement === document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] button[type="submit"]`),
               },
@@ -4949,9 +4988,10 @@ def write_smoke_script(path)
             focusedStatusSyncContract.before.action !== "Stop agent" ||
             !focusedStatusSyncContract.before.steadyActionPreserved ||
             !focusedStatusSyncContract.before.steadyActionFocused ||
-            focusedStatusSyncContract.after.status !== "✅Succeeded" ||
-            focusedStatusSyncContract.after.statusIcon !== "✅" ||
-            focusedStatusSyncContract.after.statusIconHidden !== "true" ||
+            focusedStatusSyncContract.after.status !== "" ||
+            focusedStatusSyncContract.after.statusIconLabel !== "Succeeded" ||
+            focusedStatusSyncContract.after.statusIconName !== "check" ||
+            focusedStatusSyncContract.after.visibleStatusText !== "" ||
             focusedStatusSyncContract.after.sendPrompt !== "Send prompt" ||
             !focusedStatusSyncContract.after.sendPromptFocused ||
             focusedStatusSyncContract.conversationReads !== 0 ||

@@ -4470,12 +4470,19 @@ module RemoteServerTest
            js[:body].include?('fail: "danger"'),
            "expected one semantic mapping for legacy product status classes")
     assert(js[:body].include?("function agentStatusBadge") &&
-           js[:body].include?('class="agent-status-icon" aria-hidden="true"') &&
+           js[:body].include?("function agentStatusIconName") &&
+           js[:body].include?('return "pause"') &&
+           js[:body].include?('return "check"') &&
+           js[:body].include?('return "ban"') &&
+           js[:body].include?('<path d="M20 6 9 17l-5-5"></path>') &&
+           js[:body].include?('<path d="m4.9 4.9 14.2 14.2"></path>') &&
+           js[:body].include?('case "no_action_needed":') &&
+           js[:body].include?('role="img" aria-label="${escapeAttr(label)}"') &&
            js[:body].include?("agentStatusBadge(agent") &&
-           helpers_js[:body].include?('return "⏸️"'.b) &&
-           helpers_js[:body].include?('return "✅"'.b) &&
-           helpers_js[:body].include?('return "🚫"'.b),
-           "expected agent status surfaces to pair accessible text with the requested status icons")
+           !helpers_js[:body].include?("✅".b) &&
+           !helpers_js[:body].include?("⏸️".b) &&
+           !helpers_js[:body].include?("🚫".b),
+           "expected agent status surfaces to use exact accessible Lucide icons without emoji")
     assert(js[:body].scan("statusBadge(").length >= 25 &&
            js[:body].scan("statusMarkAttributes(").length >= 15,
            "expected representative agent, schedule, setup, project, and diff states to use the semantic status contract")
@@ -5101,14 +5108,16 @@ module RemoteServerTest
            "expected inline schedules to avoid unavailable message-file requests")
     assert(js[:body].include?("calendarCheck2"),
            "expected Remote UI schedule surfaces to use the calendar-check-2 icon")
-    assert(js[:body].include?("function agentIconName") &&
-           js[:body].include?("? \"calendarCheck2\" : \"robot\""),
-           "expected Remote UI scheduled agent rows to use the schedule icon")
+    assert(js[:body].include?("function agentListStatusIcon") &&
+           js[:body].include?("function agentIdentityIcon") &&
+           js[:body].include?('label: "Scheduled agent", role: "scheduled"') &&
+           js[:body].include?("statusIcon || agentIdentityIcon(agent)"),
+           "expected scheduled agent rows to preserve scheduling without replacing terminal status icons")
     assert(js[:body].include?("function scheduledAgentIconStatusClass") &&
            js[:body].include?("if (!schedule) return statusClass(agent);") &&
            js[:body].include?('if (scheduleStatus === "stopped") return "fail";') &&
            js[:body].include?('if (scheduleStatus === "paused"') &&
-           js[:body].include?('status-mark ${scheduledAgentIconStatusClass(agent)}'),
+           js[:body].include?('status-mark ${escapeAttr(className)}'),
            "expected stopped and paused schedules to override associated agent icon colors")
     assert(js[:body].include?('class="schedule-details" data-state-key="schedule-now-details"'),
            "expected Remote UI schedule rows to be collapsed by default")
