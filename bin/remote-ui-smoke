@@ -545,6 +545,81 @@ def write_smoke_script(path)
         }
       }
 
+      async function assertNowStatusIcons() {
+        const result = await page.evaluate(() => {
+          const original = {
+            agents: state.agents,
+            schedules: state.schedules,
+            scheduleDaemon: state.scheduleDaemon,
+          };
+          const source = state.agents[0];
+          if (!source) throw new Error("Now status icon fixture needs an agent");
+
+          state.agents = [
+            {
+              ...source,
+              key: "running-status-icon",
+              name: "Work in flight",
+              status: "running",
+              running: true,
+              unread: false,
+              awaiting_input: false,
+              blocked: false,
+              last_result: "",
+            },
+            {
+              ...source,
+              key: "unread-status-icon",
+              name: "Fresh result",
+              status: "success",
+              running: false,
+              unread: true,
+              awaiting_input: false,
+              blocked: false,
+            },
+          ];
+          state.schedules = [];
+          state.scheduleDaemon = {};
+          renderNow();
+
+          const rows = Array.from(document.querySelectorAll(".agent-summary-card")).map((row) => {
+            const icon = row.querySelector(".agent-status-icon");
+            const styles = icon ? getComputedStyle(icon) : null;
+            return {
+              label: row.querySelector(".card-title strong")?.textContent,
+              iconClass: icon?.className || "",
+              iconLabel: icon?.getAttribute("aria-label"),
+              iconTitle: icon?.getAttribute("title"),
+              iconText: icon?.textContent.trim() || "",
+              hasPill: Boolean(icon?.parentElement?.querySelector(".ui-badge, .pill, .chip, .agent-status-badge")),
+              background: styles?.backgroundColor,
+              border: styles?.borderWidth,
+              radius: styles?.borderRadius,
+            };
+          });
+
+          state.agents = original.agents;
+          state.schedules = original.schedules;
+          state.scheduleDaemon = original.scheduleDaemon;
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+          return rows;
+        });
+
+        const running = result.find((row) => row.iconLabel === "Running");
+        const unread = result.find((row) => row.iconLabel === "Unread");
+        const iconIsStandalone = (row) => row && !row.iconText && !row.hasPill &&
+          (row.background === "rgba(0, 0, 0, 0)" || row.background === "transparent") &&
+          row.border === "0px" && row.radius === "0px";
+        if (!running?.iconClass.includes("running") || running.iconTitle !== "Running" || !iconIsStandalone(running)) {
+          throw new Error(`Now running status icon lost its standalone accessible treatment: ${JSON.stringify(running)}`);
+        }
+        if (!unread?.iconClass.includes("need") || unread.iconTitle !== "Unread" || !iconIsStandalone(unread)) {
+          throw new Error(`Now unread status icon lost its standalone accessible treatment: ${JSON.stringify(unread)}`);
+        }
+      }
+
       async function assertEditorExcludedFromRefresh(selector, label, focusSelector) {
         if (focusSelector) await page.focus(focusSelector);
         const result = await page.evaluate(({ selector, label }) => {
@@ -718,6 +793,7 @@ def write_smoke_script(path)
 
       try {
         await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
+        await assertNowStatusIcons();
         if (skillsOnly) {
           await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
           await page.waitForSelector("#settings-skills", { state: "visible", timeout: 10_000 });
@@ -1622,7 +1698,11 @@ def write_smoke_script(path)
           const excerptStyle = excerpt ? getComputedStyle(excerpt) : null;
           const result = {
             found: Boolean(card && status && excerpt && subtitle),
-            statusLabel: status?.querySelector(":scope > .ui-status")?.textContent.trim(),
+            statusIconLabel: status?.querySelector(".agent-status-icon")?.getAttribute("aria-label"),
+            statusIconTitle: status?.querySelector(".agent-status-icon")?.getAttribute("title"),
+            statusIconClass: status?.querySelector(".agent-status-icon")?.className,
+            statusIconText: status?.querySelector(".agent-status-icon")?.textContent.trim(),
+            statusPill: Boolean(status?.querySelector(".agent-status-badge")),
             ownerIcon: Boolean(status?.querySelector(".server-metadata-badge svg")),
             healthLabel: status?.querySelector(".server-health-icon-badge")?.getAttribute("aria-label"),
             healthIcon: Boolean(status?.querySelector(".server-health-icon-badge svg")),
@@ -1636,7 +1716,11 @@ def write_smoke_script(path)
           return result;
         }, agentKey);
         if (!nowAgentCardContract.found ||
-            nowAgentCardContract.statusLabel !== "Running" ||
+            nowAgentCardContract.statusIconLabel !== "Running" ||
+            nowAgentCardContract.statusIconTitle !== "Running" ||
+            !nowAgentCardContract.statusIconClass?.includes("running") ||
+            nowAgentCardContract.statusIconText ||
+            nowAgentCardContract.statusPill ||
             !nowAgentCardContract.ownerIcon ||
             nowAgentCardContract.healthLabel !== "Online" ||
             !nowAgentCardContract.healthIcon ||

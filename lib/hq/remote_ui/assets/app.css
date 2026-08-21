@@ -2583,6 +2583,10 @@ select {
   color: var(--ok);
 }
 
+.agent-status-icon.running {
+  color: var(--accent);
+}
+
 .agent-status-icon.fail {
   color: var(--danger);
 }
