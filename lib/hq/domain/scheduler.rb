@@ -99,6 +99,27 @@ module HQ
       result
     end
 
+    def remove(key)
+      schedule = find_schedule!(key)
+      agents = load_agents
+      detached = agents.select { |agent| agent.schedule_key.to_s == schedule.key }
+      state = store.load[schedule.key]
+
+      FileTransaction.run([schedule_registry.path, store.path, AGENTS_FILE]) do
+        schedule_registry.delete(schedule.key)
+        store.delete(schedule.key)
+        detached.each do |agent|
+          project = @projects.find { |candidate| candidate.key == agent.project_key }
+          agent.detach_schedule!(template_key: project&.agent_templates&.first&.key)
+        end
+        @agent_store.save(agents) if detached.any?
+      end
+
+      publish("schedule.removed", schedule, state || ScheduleState.new(key: schedule.key),
+              agent_keys: detached.map(&:key))
+      { schedule: schedule_payload(schedule, state || ScheduleState.new(key: schedule.key)), agents: detached }
+    end
+
     def create_agent_loop!(agent:, agents:, schedule_key:, name:, interval_minutes:, ends_at:, message:, now: Time.now)
       raise LoopStartError, "Stop the running agent before starting a loop" if agent.running?
       unless agent.schedule_key.to_s.empty?

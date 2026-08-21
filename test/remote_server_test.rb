@@ -62,6 +62,7 @@ module RemoteServerTest
     assert_remote_broker_lists_configured_servers
     assert_remote_resource_catalog_combines_and_retains_peer_resources
     assert_remote_broker_proxies_configured_server_requests
+    assert_remote_broker_logs_recoverable_activity_5xx
     assert_remote_broker_proxies_loopback_peer_requests
     assert_remote_server_persists_added_servers
     assert_remote_server_allows_tailnet_ad_hoc_servers
@@ -2604,6 +2605,32 @@ module RemoteServerTest
       assert(loop_state.last_target_key == loop_agent[:key] && loop_state.run_count == 1,
              "expected the immediate first loop run to use the existing session")
 
+      loop_memory_before_removal = File.binread(
+        service.send(:load_all_agents).find { |item| item.key == loop_agent[:key] }.memory_path
+      )
+      removed_loop = server.send(:route, service, "DELETE", "/schedules/review-loop", {}, nil)
+      assert(removed_loop.dig(:body, :deleted), "expected conversation schedule removal to delete the schedule")
+      assert(removed_loop.dig(:body, :detached_agent_keys) == [loop_agent[:key]],
+             "expected schedule removal to identify the preserved session")
+      assert(removed_loop.dig(:body, :agents, 0, :key) == loop_agent[:key],
+             "expected schedule removal to return every detached agent for immediate reconciliation")
+      assert(removed_loop.dig(:body, :agent, :key) == loop_agent[:key] &&
+             removed_loop.dig(:body, :agent, :schedule_key).nil? &&
+             removed_loop.dig(:body, :agent, :scheduled) == false,
+             "expected schedule removal to return an immediately detached agent payload")
+      detached_loop_agent = service.send(:load_all_agents).find { |item| item.key == loop_agent[:key] }
+      assert(detached_loop_agent && detached_loop_agent.schedule_key.nil? && !detached_loop_agent.scheduled?,
+             "expected the scheduled session to remain active as an ordinary agent")
+      assert(File.binread(detached_loop_agent.memory_path) == loop_memory_before_removal,
+             "expected schedule removal to preserve the complete session memory")
+      assert(!HQ::ScheduleStore.new.load.key?("review-loop") &&
+             YAML.safe_load_file(HQ::SCHEDULES_FILE).fetch("schedules").none? { |item| item["key"] == "review-loop" },
+             "expected schedule removal to stop future automatic runs in config and runtime state")
+      ordinary_prompt = service.submit_prompt(loop_agent[:key], "prompt" => "Continue manually.", "start" => false)
+      assert(ordinary_prompt.dig(:agent, :schedule_key).nil? &&
+             ordinary_prompt.fetch(:conversation).any? { |block| block[:content] == "Continue manually." },
+             "expected the detached agent to accept ordinary prompts without losing history")
+
       paused = server.send(:route, service, "POST", "/schedules/weekday/pause", {}, nil)
       assert(paused.dig(:body, :schedule, :paused), "expected schedule pause route")
 
@@ -3393,6 +3420,55 @@ module RemoteServerTest
                "expected loopback peer API request to be proxied")
         assert(!requests.last.fetch(:headers, {}).key?("authorization"),
                "expected ad hoc loopback peer proxy to avoid forwarding browser authorization")
+      end
+    end
+  end
+
+  def assert_remote_broker_logs_recoverable_activity_5xx
+    handler = lambda do |request|
+      assert(request[:path] == "/activity", "expected focused peer activity request")
+      {
+        status: 503,
+        content_type: "application/json",
+        body: JSON.generate(error: "temporary failure for super-secret")
+      }
+    end
+
+    with_fixture_http_server(handler) do |target_url|
+      Dir.mktmpdir("tycho-peer-activity") do |dir|
+        workspace = File.join(dir, "workspace")
+        write_project_workspace(workspace)
+        config_path = File.join(dir, "hq.yml")
+        prompts_path = File.join(dir, "system_prompts.yml")
+        File.write(config_path, <<~YAML)
+          projects:
+            - key: web
+              name: Web
+              path: #{workspace}
+          remote_servers:
+            - key: failing-peer
+              name: Failing peer
+              url: #{target_url}
+        YAML
+        File.write(prompts_path, "custom: Default prompt for %{project_key}.\n")
+        registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
+        log_output = StringIO.new
+        logger = Logger.new(log_output)
+        broker = HQ::RemoteBroker.new(registry: registry, logger: logger)
+        request = HQ::RemoteServer.const_get(:Request).new(
+          method: "GET",
+          path: "/servers/failing-peer/activity",
+          headers: { "x-tycho-remote-server-token" => "super-secret" },
+          body: ""
+        )
+
+        response = broker.proxy("failing-peer", "GET", "/activity", {}, request)
+        assert(response[:status] == 503, "expected peer 5xx activity responses to remain recoverable broker results")
+        log = log_output.string
+        assert(log.include?("failing-peer") && log.include?("/activity") && log.include?("status=503") &&
+               log.include?("treating as recoverable"),
+               "expected peer activity failure logs to include safe peer, path, status, and recovery context")
+        assert(!log.include?("super-secret"), "expected peer activity failure logs to omit credentials")
       end
     end
   end
@@ -4393,6 +4469,13 @@ module RemoteServerTest
            js[:body].include?('done: "success"') &&
            js[:body].include?('fail: "danger"'),
            "expected one semantic mapping for legacy product status classes")
+    assert(js[:body].include?("function agentStatusBadge") &&
+           js[:body].include?('class="agent-status-icon" aria-hidden="true"') &&
+           js[:body].include?("agentStatusBadge(agent") &&
+           helpers_js[:body].include?('return "⏸️"'.b) &&
+           helpers_js[:body].include?('return "✅"'.b) &&
+           helpers_js[:body].include?('return "🚫"'.b),
+           "expected agent status surfaces to pair accessible text with the requested status icons")
     assert(js[:body].scan("statusBadge(").length >= 25 &&
            js[:body].scan("statusMarkAttributes(").length >= 15,
            "expected representative agent, schedule, setup, project, and diff states to use the semantic status contract")
@@ -4495,6 +4578,12 @@ module RemoteServerTest
            js[:body].include?("state.activityAppliedSequence") &&
            js[:body].include?("syncUnreadAlert();"),
            "expected activity polling to reject stale responses and update the logo without a page render")
+    assert(js[:body].include?("REMOTE_HELPERS.mergeActivityServers") &&
+           js[:body].include?("Peer activity fetch degraded") &&
+           js[:body].include?("retrying automatically") &&
+           js[:body].include?('return "Degraded"') &&
+           js[:body].include?("server-activity-error"),
+           "expected peer activity 5xx failures to degrade independently with an automatic retry signal")
     assert(js[:body].include?("window.TychoRemoteHelpers"),
            "expected the main Remote UI script to use the helper namespace")
     assert(js[:body].include?('updateViaCache: "none"'),
@@ -4565,7 +4654,7 @@ module RemoteServerTest
     assert(js[:body].include?("kv-copy-button"),
            "expected copyable key/value rows to render a copy control")
     assert(js[:body].include?('["Raw log", agent.log_path]') &&
-           js[:body].include?("settings.map(([label, value]) => copyableKv(label, value))"),
+           js[:body].include?('label === "Status" ? agentStatusKv(agent, { copyable: true }) : copyableKv(label, value)'),
            "expected Conversation settings rows to be copyable")
     assert(js[:body].include?('copyableKv("Path", project.path)') &&
            js[:body].include?('copyableKv("Templates",'),
@@ -4681,7 +4770,7 @@ module RemoteServerTest
     assert(js[:body].scan("window.confirm").length == 1,
            "expected window.confirm to remain only as the unsupported-browser fallback")
     assert(js[:body].include?('confirmLabel: "Remove response style"') &&
-           js[:body].include?('confirmLabel: "Delete schedule"') &&
+           js[:body].include?('confirmLabel: agent ? "Remove schedule" : "Delete schedule"') &&
            js[:body].include?('confirmLabel: "Delete attachment"'),
            "expected representative destructive workflows to use explicit confirmation labels")
     assert(helpers_js[:body].include?("function parseBackToRoute"),
@@ -5045,6 +5134,11 @@ module RemoteServerTest
            js[:body].include?('label: "Run now"') &&
            js[:body].include?('const toggleAction = blocked ? "resume" : "pause"'),
            "expected scheduled agent headers to expose run and pause/resume controls")
+    assert(js[:body].include?('label: "Remove schedule"') &&
+           js[:body].include?("data-remove-agent-schedule") &&
+           js[:body].include?("Schedule removed; conversation kept") &&
+           js[:body].include?("The agent and its full session history will remain available"),
+           "expected scheduled conversations to remove automation with confirmed history-preserving UX")
     assert(js[:body].include?("data-new-schedule"),
            "expected Remote UI to expose schedule creation")
     assert(js[:body].include?("${renderScheduleDaemonActions(daemon, schedules)}") &&
@@ -5402,9 +5496,10 @@ module RemoteServerTest
            js[:body].include?("function transplantPreservedPollContent") &&
            js[:body].include?("data-preserve-poll-content"),
            "expected scheduled polling to retain unchanged attachment content DOM")
-    assert(js[:body].include?("detailRevision !== catalogRevision") &&
-           js[:body].include?("delete state.agentDetails[agent.key]"),
-           "expected catalog revision changes to invalidate stale agent attachment details")
+    assert(js[:body].include?("REMOTE_HELPERS.reconcileAgentDetail(detail, agent)") &&
+           js[:body].include?("focusedAgent?.detail_stale") &&
+           js[:body].include?("await ensureAgentDetail(focusedAgent.key)"),
+           "expected catalog revision changes to retain attachments while refreshing stale focused details")
     assert(js[:body].include?("function preserveWorkspaceDuringPoll") &&
            js[:body].include?("if (options.forceAttachment) return false") &&
            js[:body].include?("if (options.force && !options.preserveFocusedWorkspace) return false") &&

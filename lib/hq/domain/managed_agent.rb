@@ -423,11 +423,18 @@ module HQ
     end
 
     def scheduled?
-      @template_key.to_s == "scheduled"
+      !@schedule_key.to_s.empty?
     end
 
     def associate_schedule!(schedule_key)
       @schedule_key = normalize_schedule_key(schedule_key)
+    end
+
+    def detach_schedule!(template_key: nil)
+      @schedule_key = nil
+      replacement = template_key.to_s.strip
+      @template_key = replacement if @template_key.to_s == "scheduled" && !replacement.empty?
+      self
     end
 
     def reconcile_project_group!(value)

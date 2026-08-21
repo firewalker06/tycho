@@ -1077,7 +1077,8 @@ def write_smoke_script(path)
             applyResourceCatalog(resource("revision-2"));
             return {
               unchangedPreserved,
-              changedInvalidated: !state.agentDetails["agent-detail-revision-fixture"],
+              changedPreserved: state.agentDetails["agent-detail-revision-fixture"]?.attachments?.[0]?.id === "existing-attachment",
+              changedMarkedStale: state.agentDetails["agent-detail-revision-fixture"]?.detail_stale === true,
             };
           } finally {
             state.agents = saved.agents;
@@ -1089,8 +1090,62 @@ def write_smoke_script(path)
             state.servers = saved.servers;
           }
         });
-        if (!agentDetailRevisionContract.unchangedPreserved || !agentDetailRevisionContract.changedInvalidated) {
+        if (!agentDetailRevisionContract.unchangedPreserved ||
+            !agentDetailRevisionContract.changedPreserved ||
+            !agentDetailRevisionContract.changedMarkedStale) {
           throw new Error(`Agent detail cache did not follow catalog revisions: ${JSON.stringify(agentDetailRevisionContract)}`);
+        }
+        const agentStatusIconContract = await page.evaluate(() => {
+          return [
+            ["stopped", "⏸️", "Stopped"],
+            ["succeeded", "✅", "Succeeded"],
+            ["failed", "🚫", "Failed"],
+            ["cancelled", "🚫", "Cancelled"],
+            ["blocked", "🚫", "Blocked"],
+          ].map(([status, icon, label]) => {
+            const host = document.createElement("div");
+            host.innerHTML = agentStatusBadge({ status });
+            const badge = host.querySelector(".agent-status-badge");
+            const mark = badge?.querySelector(".agent-status-icon");
+            return {
+              status,
+              icon: mark?.textContent,
+              decorative: mark?.getAttribute("aria-hidden"),
+              labelPresent: badge?.textContent.includes(label),
+              expectedIcon: icon,
+            };
+          });
+        });
+        if (agentStatusIconContract.some((item) =>
+          item.icon !== item.expectedIcon || item.decorative !== "true" || !item.labelPresent)) {
+          throw new Error(`Agent status icons lost their text or accessibility contract: ${JSON.stringify(agentStatusIconContract)}`);
+        }
+        const degradedActivityContract = await page.evaluate(() => {
+          const merged = window.TychoRemoteHelpers.mergeActivityServers(
+            [
+              { key: "healthy", name: "Healthy", status: "online", agents: [{ key: "old" }] },
+              { key: "failing", name: "Failing", status: "online", agents: [{ key: "retained" }] },
+            ],
+            [
+              { serverKey: "healthy", ready: true, agents: [{ key: "fresh" }] },
+              { serverKey: "failing", failed: true, status: 503, retryAfterMs: 3000, error: "Activity unavailable; retrying automatically" },
+            ]
+          );
+          const host = document.createElement("div");
+          host.innerHTML = renderServerRow(merged[1]);
+          return {
+            healthyUpdated: merged[0].agents[0].key === "fresh",
+            failingRetained: merged[1].agents[0].key === "retained",
+            health: host.querySelector(".ui-status")?.textContent.trim(),
+            signal: host.querySelector("[role='status']")?.textContent.trim(),
+            retryAfterMs: merged[1].activity_retry_after_ms,
+          };
+        });
+        if (!degradedActivityContract.healthyUpdated || !degradedActivityContract.failingRetained ||
+            degradedActivityContract.health !== "Degraded" ||
+            !degradedActivityContract.signal?.includes("retrying automatically") ||
+            degradedActivityContract.retryAfterMs !== 3000) {
+          throw new Error(`Peer activity degradation is not isolated or actionable: ${JSON.stringify(degradedActivityContract)}`);
         }
         const daemonMenuLayout = await page.evaluate(() => {
           const details = document.querySelector("[data-state-key='schedule-now-details']");
@@ -3892,6 +3947,22 @@ def write_smoke_script(path)
         if (scheduleHeaderGeometry.scheduleRight > scheduleHeaderGeometry.contextLeft || scheduleHeaderGeometry.topDelta > 1) {
           throw new Error(`Schedule menu is not beside the page context: ${JSON.stringify(scheduleHeaderGeometry)}`);
         }
+        await page.click("[data-header-schedule-menu] > summary");
+        await page.click("[data-remove-agent-schedule]");
+        await page.waitForSelector("#confirmation-dialog[open]", { state: "visible", timeout: 10_000 });
+        const removeScheduleConfirmation = await page.evaluate(() => ({
+          title: document.querySelector("#confirmation-title")?.textContent,
+          description: document.querySelector("#confirmation-description")?.textContent,
+          confirmLabel: document.querySelector("[data-confirmation-accept]")?.textContent,
+          cancelFocused: document.activeElement?.hasAttribute("data-confirmation-cancel"),
+        }));
+        if (!removeScheduleConfirmation.title?.includes("Remove schedule from") ||
+            !removeScheduleConfirmation.description?.includes("full session history") ||
+            removeScheduleConfirmation.confirmLabel !== "Remove schedule" ||
+            !removeScheduleConfirmation.cancelFocused) {
+          throw new Error(`Schedule removal confirmation is incomplete: ${JSON.stringify(removeScheduleConfirmation)}`);
+        }
+        await page.click("[data-confirmation-cancel]");
         const scheduleStatusColors = await page.evaluate((key) => {
           const agent = findAgent(key);
           agent.last_result = "no action";
@@ -4850,6 +4921,8 @@ def write_smoke_script(path)
               before,
               after: {
                 status: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
+                statusIcon: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.textContent.trim(),
+                statusIconHidden: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.getAttribute("aria-hidden"),
                 sendPrompt: document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] button[type="submit"]`)?.textContent.trim(),
                 sendPromptFocused: document.activeElement === document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] button[type="submit"]`),
               },
@@ -4876,7 +4949,9 @@ def write_smoke_script(path)
             focusedStatusSyncContract.before.action !== "Stop agent" ||
             !focusedStatusSyncContract.before.steadyActionPreserved ||
             !focusedStatusSyncContract.before.steadyActionFocused ||
-            focusedStatusSyncContract.after.status !== "Succeeded" ||
+            focusedStatusSyncContract.after.status !== "✅Succeeded" ||
+            focusedStatusSyncContract.after.statusIcon !== "✅" ||
+            focusedStatusSyncContract.after.statusIconHidden !== "true" ||
             focusedStatusSyncContract.after.sendPrompt !== "Send prompt" ||
             !focusedStatusSyncContract.after.sendPromptFocused ||
             focusedStatusSyncContract.conversationReads !== 0 ||
