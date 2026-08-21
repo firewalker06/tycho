@@ -5108,14 +5108,16 @@ module RemoteServerTest
            "expected inline schedules to avoid unavailable message-file requests")
     assert(js[:body].include?("calendarCheck2"),
            "expected Remote UI schedule surfaces to use the calendar-check-2 icon")
-    assert(js[:body].include?("function agentIconName") &&
-           js[:body].include?("? \"calendarCheck2\" : \"robot\""),
-           "expected Remote UI scheduled agent rows to use the schedule icon")
+    assert(js[:body].include?("function agentListStatusIcon") &&
+           js[:body].include?("function agentIdentityIcon") &&
+           js[:body].include?('label: "Scheduled agent", role: "scheduled"') &&
+           js[:body].include?("statusIcon || agentIdentityIcon(agent)"),
+           "expected scheduled agent rows to preserve scheduling without replacing terminal status icons")
     assert(js[:body].include?("function scheduledAgentIconStatusClass") &&
            js[:body].include?("if (!schedule) return statusClass(agent);") &&
            js[:body].include?('if (scheduleStatus === "stopped") return "fail";') &&
            js[:body].include?('if (scheduleStatus === "paused"') &&
-           js[:body].include?('status-mark ${scheduledAgentIconStatusClass(agent)}'),
+           js[:body].include?('status-mark ${escapeAttr(className)}'),
            "expected stopped and paused schedules to override associated agent icon colors")
     assert(js[:body].include?('class="schedule-details" data-state-key="schedule-now-details"'),
            "expected Remote UI schedule rows to be collapsed by default")

@@ -35,6 +35,8 @@ module RemoteUIAssetSnapshotTest
       'return "check"',
       'return "ban"',
       'case "no_action_needed":',
+      "function agentListStatusIcon(agent)",
+      'label: "Scheduled agent", role: "scheduled"',
       ".agent-status-icon.done",
       ".agent-status-icon.fail",
       "color: var(--muted);",

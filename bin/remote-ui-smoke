@@ -4003,20 +4003,39 @@ def write_smoke_script(path)
         await page.waitForSelector(".agent-row[data-open-agent]", { state: "visible", timeout: 10_000 });
         const scheduledAgentListStatus = await page.evaluate((key) => {
           const row = Array.from(document.querySelectorAll(".agent-row[data-open-agent]")).find((item) => item.dataset.openAgent === key);
-          const icon = row?.querySelector(".status-mark");
-          const label = row?.querySelector(".pill.info");
-          return {
-            found: Boolean(row && icon && label),
-            scheduleIcon: Boolean(icon?.querySelector('path[d="M8 2v4"]')),
+          const icon = row?.querySelector(":scope > .agent-status-icon");
+          const comparison = document.createElement("span");
+          comparison.className = "agent-status-icon";
+          document.body.append(comparison);
+          const mutedColor = getComputedStyle(comparison).color;
+          const result = {
+            found: Boolean(row && icon),
+            checkIcon: Boolean(icon?.querySelector('path[d="M20 6 9 17l-5-5"]')),
+            scheduleAffordance: Boolean(row?.querySelector('[data-agent-role="scheduled"]')),
+            scheduleStatusMark: Boolean(row?.querySelector(':scope > .status-mark path[d="M8 2v4"]')),
+            detailClass: icon?.classList.contains("detail"),
             iconColor: icon ? getComputedStyle(icon).color : "",
-            labelColor: label ? getComputedStyle(label).color : "",
+            mutedColor,
+            label: icon?.getAttribute("aria-label"),
+            title: icon?.getAttribute("title"),
+            visibleText: icon?.textContent.trim(),
+            hasBadge: Boolean(row?.querySelector(":scope > .pill, :scope > .chip, :scope > .ui-badge")),
           };
+          comparison.remove();
+          return result;
         }, agentKey);
-        if (!scheduledAgentListStatus.found || !scheduledAgentListStatus.scheduleIcon || scheduledAgentListStatus.iconColor !== scheduledAgentListStatus.labelColor) {
-          throw new Error(`Scheduled agent list icon does not match no-action status: ${JSON.stringify(scheduledAgentListStatus)}`);
+        if (!scheduledAgentListStatus.found || !scheduledAgentListStatus.checkIcon || !scheduledAgentListStatus.scheduleAffordance ||
+            scheduledAgentListStatus.scheduleStatusMark || !scheduledAgentListStatus.detailClass ||
+            scheduledAgentListStatus.iconColor !== scheduledAgentListStatus.mutedColor ||
+            scheduledAgentListStatus.label !== "No action" || scheduledAgentListStatus.title !== "No action" ||
+            scheduledAgentListStatus.visibleText || scheduledAgentListStatus.hasBadge) {
+          throw new Error(`Scheduled no-action agent row lost its muted standalone Check status: ${JSON.stringify(scheduledAgentListStatus)}`);
         }
         await page.evaluate((key) => {
-          scheduleForAgent(findAgent(key)).status = "stopped";
+          const agent = findAgent(key);
+          agent.last_result = "";
+          agent.status = "idle";
+          scheduleForAgent(agent).status = "stopped";
           state.renderedViewHtml = "";
           render();
         }, agentKey);
