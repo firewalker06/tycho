@@ -28,18 +28,36 @@ module RemoteUIAssetSnapshotTest
       "pause:",
       "check:",
       "ban:",
+      "messageSquareDot:",
+      "sportShoe:",
       '<rect width="4" height="16" x="14" y="4" rx="1"></rect>',
       '<path d="M20 6 9 17l-5-5"></path>',
       '<path d="m4.9 4.9 14.2 14.2"></path>',
+      '<path d="M12.7 3H4a2 2 0 0 0-2 2v16.286a.71.71 0 0 0 1.212.502l2.202-2.202A2 2 0 0 1 6.828 19H20a2 2 0 0 0 2-2v-4.7"></path>',
+      '<circle cx="19" cy="6" r="3"></circle>',
+      '<path d="m15 10.42 4.8-5.07"></path>',
       'return "pause"',
       'return "check"',
       'return "ban"',
+      'case "unread":',
+      'return "messageSquareDot"',
+      'case "running":',
+      'return "sportShoe"',
       'case "no_action_needed":',
       "function agentListStatusIcon(agent)",
+      "const statusIcon = agentListStatusIcon(agent);",
+      "function renderNow()",
+      "const unreadSection = unread.length > 0",
+      "const runningSection = running.length > 0",
       'label: "Scheduled agent", role: "scheduled"',
       ".agent-status-icon.done",
+      ".agent-status-icon.running",
       ".agent-status-icon.fail",
+      ".resource-stale :is(.agent-status-icon, .status-mark, .ui-status, .server-identity-badge)",
       "color: var(--muted);",
+      "color: var(--accent);",
+      'normalizedStatus === "unread" ? "need"',
+      'normalizedStatus === "running" ? "running"',
       'role="img" aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}"',
       "function agentStatusIcon(status, label",
       ".agent-status-icon {"
@@ -54,6 +72,7 @@ module RemoteUIAssetSnapshotTest
     icon_renderer = javascript[/function agentStatusIcon\(status, label.*?^}/m]
     raise "missing agent status indicator renderer" unless icon_renderer
     raise "status icon renderer must not emit badge styling" if icon_renderer.include?("ui-badge")
+    raise "status icon renderer must not emit visible status text" if icon_renderer.include?("escapeHtml(label)")
 
     icon_styles = css[/\.agent-status-icon \{.*?^}/m]
     raise "missing standalone status icon styles" unless icon_styles

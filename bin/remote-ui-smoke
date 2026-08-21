@@ -545,6 +545,81 @@ def write_smoke_script(path)
         }
       }
 
+      async function assertNowStatusIcons() {
+        const result = await page.evaluate(() => {
+          const original = {
+            agents: state.agents,
+            schedules: state.schedules,
+            scheduleDaemon: state.scheduleDaemon,
+          };
+          const source = state.agents[0];
+          if (!source) throw new Error("Now status icon fixture needs an agent");
+
+          state.agents = [
+            {
+              ...source,
+              key: "running-status-icon",
+              name: "Work in flight",
+              status: "running",
+              running: true,
+              unread: false,
+              awaiting_input: false,
+              blocked: false,
+              last_result: "",
+            },
+            {
+              ...source,
+              key: "unread-status-icon",
+              name: "Fresh result",
+              status: "success",
+              running: false,
+              unread: true,
+              awaiting_input: false,
+              blocked: false,
+            },
+          ];
+          state.schedules = [];
+          state.scheduleDaemon = {};
+          renderNow();
+
+          const rows = Array.from(document.querySelectorAll(".agent-summary-card")).map((row) => {
+            const icon = row.querySelector(".agent-status-icon");
+            const styles = icon ? getComputedStyle(icon) : null;
+            return {
+              label: row.querySelector(".card-title strong")?.textContent,
+              iconClass: icon?.className || "",
+              iconLabel: icon?.getAttribute("aria-label"),
+              iconTitle: icon?.getAttribute("title"),
+              iconText: icon?.textContent.trim() || "",
+              hasPill: Boolean(icon?.parentElement?.querySelector(".ui-badge, .pill, .chip, .agent-status-badge")),
+              background: styles?.backgroundColor,
+              border: styles?.borderWidth,
+              radius: styles?.borderRadius,
+            };
+          });
+
+          state.agents = original.agents;
+          state.schedules = original.schedules;
+          state.scheduleDaemon = original.scheduleDaemon;
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+          return rows;
+        });
+
+        const running = result.find((row) => row.iconLabel === "Running");
+        const unread = result.find((row) => row.iconLabel === "Unread");
+        const iconIsStandalone = (row) => row && !row.iconText && !row.hasPill &&
+          (row.background === "rgba(0, 0, 0, 0)" || row.background === "transparent") &&
+          row.border === "0px" && row.radius === "0px";
+        if (!running?.iconClass.includes("running") || running.iconTitle !== "Running" || !iconIsStandalone(running)) {
+          throw new Error(`Now running status icon lost its standalone accessible treatment: ${JSON.stringify(running)}`);
+        }
+        if (!unread?.iconClass.includes("need") || unread.iconTitle !== "Unread" || !iconIsStandalone(unread)) {
+          throw new Error(`Now unread status icon lost its standalone accessible treatment: ${JSON.stringify(unread)}`);
+        }
+      }
+
       async function assertEditorExcludedFromRefresh(selector, label, focusSelector) {
         if (focusSelector) await page.focus(focusSelector);
         const result = await page.evaluate(({ selector, label }) => {
@@ -718,6 +793,7 @@ def write_smoke_script(path)
 
       try {
         await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
+        await assertNowStatusIcons();
         if (skillsOnly) {
           await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
           await page.waitForSelector("#settings-skills", { state: "visible", timeout: 10_000 });
@@ -1622,7 +1698,11 @@ def write_smoke_script(path)
           const excerptStyle = excerpt ? getComputedStyle(excerpt) : null;
           const result = {
             found: Boolean(card && status && excerpt && subtitle),
-            statusLabel: status?.querySelector(":scope > .ui-status")?.textContent.trim(),
+            statusIconLabel: status?.querySelector(".agent-status-icon")?.getAttribute("aria-label"),
+            statusIconTitle: status?.querySelector(".agent-status-icon")?.getAttribute("title"),
+            statusIconClass: status?.querySelector(".agent-status-icon")?.className,
+            statusIconText: status?.querySelector(".agent-status-icon")?.textContent.trim(),
+            statusPill: Boolean(status?.querySelector(".agent-status-badge")),
             ownerIcon: Boolean(status?.querySelector(".server-metadata-badge svg")),
             healthLabel: status?.querySelector(".server-health-icon-badge")?.getAttribute("aria-label"),
             healthIcon: Boolean(status?.querySelector(".server-health-icon-badge svg")),
@@ -1636,7 +1716,11 @@ def write_smoke_script(path)
           return result;
         }, agentKey);
         if (!nowAgentCardContract.found ||
-            nowAgentCardContract.statusLabel !== "Running" ||
+            nowAgentCardContract.statusIconLabel !== "Running" ||
+            nowAgentCardContract.statusIconTitle !== "Running" ||
+            !nowAgentCardContract.statusIconClass?.includes("running") ||
+            nowAgentCardContract.statusIconText ||
+            nowAgentCardContract.statusPill ||
             !nowAgentCardContract.ownerIcon ||
             nowAgentCardContract.healthLabel !== "Online" ||
             !nowAgentCardContract.healthIcon ||
@@ -4921,7 +5005,10 @@ def write_smoke_script(path)
           syncFocusedWorkspaceCatalog(parseRoute());
           const steadyActionAfter = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] [data-agent-action="stop"]`);
           const before = {
-            status: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
+            statusIconLabel: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.getAttribute("aria-label"),
+            statusIconTitle: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.getAttribute("title"),
+            statusIconName: agentStatusIconName("running"),
+            visibleStatusText: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
             action: document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] [data-agent-action="stop"]`)?.textContent.trim(),
             steadyActionPreserved: steadyActionAfter === steadyActionBefore,
             steadyActionFocused: document.activeElement === steadyActionBefore,
@@ -4958,8 +5045,8 @@ def write_smoke_script(path)
             return {
               before,
               after: {
-                status: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
                 statusIconLabel: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.getAttribute("aria-label"),
+                statusIconTitle: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.getAttribute("title"),
                 statusIconName: agentStatusIconName("succeeded"),
                 visibleStatusText: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
                 sendPrompt: document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] button[type="submit"]`)?.textContent.trim(),
@@ -4984,12 +5071,15 @@ def write_smoke_script(path)
             scheduleAgentActivity();
           }
         }, agentKey);
-        if (focusedStatusSyncContract.before.status !== "Running" ||
+        if (focusedStatusSyncContract.before.statusIconLabel !== "Running" ||
+            focusedStatusSyncContract.before.statusIconTitle !== "Running" ||
+            focusedStatusSyncContract.before.statusIconName !== "sportShoe" ||
+            focusedStatusSyncContract.before.visibleStatusText !== "" ||
             focusedStatusSyncContract.before.action !== "Stop agent" ||
             !focusedStatusSyncContract.before.steadyActionPreserved ||
             !focusedStatusSyncContract.before.steadyActionFocused ||
-            focusedStatusSyncContract.after.status !== "" ||
             focusedStatusSyncContract.after.statusIconLabel !== "Succeeded" ||
+            focusedStatusSyncContract.after.statusIconTitle !== "Succeeded" ||
             focusedStatusSyncContract.after.statusIconName !== "check" ||
             focusedStatusSyncContract.after.visibleStatusText !== "" ||
             focusedStatusSyncContract.after.sendPrompt !== "Send prompt" ||
@@ -5558,12 +5648,14 @@ def write_smoke_script(path)
         const stalePeerAppearance = await page.locator("[data-open-agent='design-peer/peer-agent']").evaluate((row) => ({
           rowIsStale: row.classList.contains("resource-stale"),
           groupIsStale: row.closest(".agent-group")?.classList.contains("resource-stale"),
-          status: row.querySelector(".ui-status")?.textContent.trim(),
-          statusOpacity: Number.parseFloat(getComputedStyle(row.querySelector(".ui-status")).opacity),
+          statusIconLabel: row.querySelector(".agent-status-icon")?.getAttribute("aria-label"),
+          statusIconText: row.querySelector(".agent-status-icon")?.textContent.trim(),
+          statusOpacity: Number.parseFloat(getComputedStyle(row.querySelector(".agent-status-icon")).opacity),
           healthIcon: Boolean(row.closest(".agent-group")?.querySelector(".server-health-icon-badge svg")),
         }));
         if (!stalePeerAppearance.rowIsStale || !stalePeerAppearance.groupIsStale ||
-            stalePeerAppearance.status !== "Running" || stalePeerAppearance.statusOpacity >= 0.8 ||
+            stalePeerAppearance.statusIconLabel !== "Running" || stalePeerAppearance.statusIconText ||
+            stalePeerAppearance.statusOpacity >= 0.8 ||
             !stalePeerAppearance.healthIcon) {
           throw new Error(`Stale peer project and agent were not visually subdued: ${JSON.stringify(stalePeerAppearance)}`);
         }

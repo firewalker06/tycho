@@ -2583,6 +2583,10 @@ select {
   color: var(--ok);
 }
 
+.agent-status-icon.running {
+  color: var(--accent);
+}
+
 .agent-status-icon.fail {
   color: var(--danger);
 }
@@ -2929,7 +2933,7 @@ select {
   font-weight: 600;
 }
 
-.resource-stale :is(.status-mark, .ui-status, .server-identity-badge) {
+.resource-stale :is(.agent-status-icon, .status-mark, .ui-status, .server-identity-badge) {
   opacity: 0.68;
 }
 
