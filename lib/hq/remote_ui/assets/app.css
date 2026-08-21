@@ -5983,6 +5983,167 @@ select {
   gap: 8px;
 }
 
+.prompt-queue {
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel));
+}
+
+.prompt-queue > summary {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+  padding: 8px 10px;
+}
+
+.prompt-queue > summary::-webkit-details-marker {
+  display: none;
+}
+
+.prompt-queue > summary > span:first-child {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.prompt-queue > summary strong {
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
+.prompt-queue > summary span span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-queue-chevron .ui-icon {
+  width: 16px;
+  height: 16px;
+  transition: transform 120ms ease;
+}
+
+.prompt-queue[open] .prompt-queue-chevron .ui-icon {
+  transform: rotate(180deg);
+}
+
+.prompt-queue-body {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding: 8px;
+}
+
+.prompt-queue-list {
+  display: grid;
+  max-height: 240px;
+  gap: 7px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.prompt-queue-entry {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel-soft);
+  padding: 8px;
+}
+
+.prompt-queue-entry-copy {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 7px;
+}
+
+.prompt-queue-entry-copy > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.prompt-queue-entry-copy strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.prompt-queue-entry-copy small,
+.prompt-queue-blocked {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.prompt-queue-position {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.prompt-queue-entry-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.prompt-queue-entry-actions button {
+  min-height: 34px;
+  padding: 5px 9px;
+}
+
+.prompt-queue-edit {
+  display: grid;
+  gap: 6px;
+}
+
+.prompt-queue-edit.hidden {
+  display: none;
+}
+
+.prompt-queue-edit label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.prompt-queue-edit textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.prompt-queue-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--danger) 7%, var(--panel));
+  padding: 8px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.prompt-queue-blocked {
+  margin: 0;
+}
+
 .composer-editor-shell {
   position: relative;
   display: grid;

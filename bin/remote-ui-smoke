@@ -5075,7 +5075,7 @@ def write_smoke_script(path)
             focusedStatusSyncContract.before.statusIconTitle !== "Running" ||
             focusedStatusSyncContract.before.statusIconName !== "sportShoe" ||
             focusedStatusSyncContract.before.visibleStatusText !== "" ||
-            focusedStatusSyncContract.before.action !== "Stop agent" ||
+            focusedStatusSyncContract.before.action !== "Stop" ||
             !focusedStatusSyncContract.before.steadyActionPreserved ||
             !focusedStatusSyncContract.before.steadyActionFocused ||
             focusedStatusSyncContract.after.statusIconLabel !== "Succeeded" ||

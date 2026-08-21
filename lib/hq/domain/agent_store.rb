@@ -55,16 +55,16 @@ module HQ
       with_exclusive_lock { load_with_poll_events_unlocked }
     end
 
-    def mutate
+    def mutate(dispatch_prompt_queues: true)
       with_exclusive_lock do
-        agents, events = load_with_poll_events_unlocked
+        agents, events = load_with_poll_events_unlocked(dispatch_prompt_queues:)
         result = yield agents, events
         save_unlocked(agents)
         result
       end
     end
 
-    def load_with_poll_events_unlocked(process_delegations: true)
+    def load_with_poll_events_unlocked(process_delegations: true, dispatch_prompt_queues: true)
       return [[], []] unless File.exist?(AGENTS_FILE)
 
       changed = false
@@ -102,6 +102,7 @@ module HQ
       changed = backfill_color_indexes!(agents) || changed
       changed = backfill_delegation_parents!(agents) || changed
       changed = @delegation_coordinator.process!(agents) || changed if process_delegations
+      changed = dispatch_prompt_queues!(agents) || changed if dispatch_prompt_queues
       save_unlocked(agents) if changed
       [agents, events]
     rescue StandardError => e
@@ -244,7 +245,7 @@ module HQ
     end
 
     def start_agent!(key)
-      mutate do |agents, _events|
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
 
@@ -271,6 +272,47 @@ module HQ
         raise ArgumentError, "Unknown agent: #{key}" unless target
 
         target.stop! if target.running?
+        target
+      end
+    end
+
+    def enqueue_prompt!(key, prompt:, attachments: nil, accepted_at: nil)
+      mutate do |agents, _events|
+        target = agents.find { |agent| agent.key == key.to_s }
+        raise ArgumentError, "Unknown agent: #{key}" unless target
+        raise ArgumentError, "Agent is no longer running" unless target.running?
+
+        [target, target.enqueue_prompt!(prompt:, attachments:, accepted_at: accepted_at || Time.now)]
+      end
+    end
+
+    def edit_queued_prompt!(key, entry_id, prompt:)
+      mutate do |agents, _events|
+        target = agents.find { |agent| agent.key == key.to_s }
+        raise ArgumentError, "Unknown agent: #{key}" unless target
+
+        [target, target.edit_queued_prompt!(entry_id, prompt:)]
+      end
+    end
+
+    def delete_queued_prompt!(key, entry_id)
+      mutate do |agents, _events|
+        target = agents.find { |agent| agent.key == key.to_s }
+        raise ArgumentError, "Unknown agent: #{key}" unless target
+
+        [target, target.delete_queued_prompt!(entry_id)]
+      end
+    end
+
+    def retry_prompt_queue!(key)
+      mutate do |agents, _events|
+        target = agents.find { |agent| agent.key == key.to_s }
+        raise ArgumentError, "Unknown agent: #{key}" unless target
+        raise ArgumentError, "No queued dispatch is waiting for retry" unless target.prompt_queue_dispatch_error
+        raise ArgumentError, "An inquiry must be answered before retrying queued work" if target.latest_inquiry
+
+        target.clear_prompt_queue_dispatch_error!
+        dispatch_prompt_queue!(target, agents)
         target
       end
     end
@@ -358,6 +400,53 @@ module HQ
     end
 
     private
+
+    def dispatch_prompt_queues!(agents)
+      changed = false
+      agents.each do |agent|
+        next unless agent.prompt_queue_dispatchable?
+
+        changed = dispatch_prompt_queue!(agent, agents) || changed
+      end
+      changed
+    end
+
+    def dispatch_prompt_queue!(agent, agents)
+      claim = agent.claim_pending_prompts!
+      return false unless claim
+
+      # Persist the claim before preparing or launching so another Tycho
+      # process can never claim the same accepted entries.
+      save_unlocked(agents)
+      if agent.prepare_prompt_queue_claim!
+        save_unlocked(agents)
+      end
+
+      baseline = claim["baseline_run_count"].to_i
+      accepted = begin
+        stamp = @delegation_coordinator.ownership_stamp(agent.key)
+        stamp ? agent.start!(delegation_stamp: stamp) : agent.start!
+      rescue StandardError => e
+        agent.fail_prompt_queue_dispatch!(dispatch_failure_message(e.message))
+        save_unlocked(agents)
+        return true
+      end
+
+      if accepted && agent.run_count > baseline
+        agent.complete_prompt_queue_claim!
+      else
+        detail = agent.last_summary.to_s.strip
+        agent.fail_prompt_queue_dispatch!(dispatch_failure_message(detail))
+      end
+      save_unlocked(agents)
+      true
+    end
+
+    def dispatch_failure_message(detail)
+      suffix = detail.to_s.strip
+      suffix = "The agent run was not accepted." if suffix.empty?
+      "Queued work was retained. Fix the start failure, then choose Retry queue. #{suffix}"
+    end
 
     def with_exclusive_lock
       FileUtils.mkdir_p(File.dirname(AGENTS_FILE))
