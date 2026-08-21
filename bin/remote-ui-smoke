@@ -5005,7 +5005,10 @@ def write_smoke_script(path)
           syncFocusedWorkspaceCatalog(parseRoute());
           const steadyActionAfter = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] [data-agent-action="stop"]`);
           const before = {
-            status: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
+            statusIconLabel: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.getAttribute("aria-label"),
+            statusIconTitle: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.getAttribute("title"),
+            statusIconName: agentStatusIconName("running"),
+            visibleStatusText: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
             action: document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] [data-agent-action="stop"]`)?.textContent.trim(),
             steadyActionPreserved: steadyActionAfter === steadyActionBefore,
             steadyActionFocused: document.activeElement === steadyActionBefore,
@@ -5068,7 +5071,10 @@ def write_smoke_script(path)
             scheduleAgentActivity();
           }
         }, agentKey);
-        if (focusedStatusSyncContract.before.status !== "Running" ||
+        if (focusedStatusSyncContract.before.statusIconLabel !== "Running" ||
+            focusedStatusSyncContract.before.statusIconTitle !== "Running" ||
+            focusedStatusSyncContract.before.statusIconName !== "sportShoe" ||
+            focusedStatusSyncContract.before.visibleStatusText !== "" ||
             focusedStatusSyncContract.before.action !== "Stop agent" ||
             !focusedStatusSyncContract.before.steadyActionPreserved ||
             !focusedStatusSyncContract.before.steadyActionFocused ||
