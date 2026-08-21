@@ -35,12 +35,12 @@ module HQ
           pending: "\u{f111}",
           dim: "\u{f111}",
           running: "\u{f0150}",
-          succeeded: "✅",
-          failed: "🚫",
-          stopped: "⏸️",
+          succeeded: "\u{f058}",
+          failed: "\u{f057}",
+          stopped: "\u{f04d}",
           awaiting_input: "\u{f059}",
           partial: "\u{f0c8}",
-          blocked: "🚫",
+          blocked: "\u{f05e}",
           unknown: "\u{f111}"
         }.freeze
 

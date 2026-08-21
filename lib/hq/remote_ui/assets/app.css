@@ -2566,17 +2566,29 @@ select {
   font-weight: var(--ds-weight-medium);
 }
 
-.kv .agent-status-icon + span,
-.agent-reference-copy .agent-status-icon + span {
-  margin-left: 4px;
+.agent-status-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
 }
 
-.agent-status-badge .agent-status-icon + span {
-  margin-left: 0;
+.agent-status-icon .ui-icon {
+  width: 18px;
+  height: 18px;
 }
 
-.agent-status-badge {
-  gap: 4px;
+.agent-status-icon.done {
+  color: var(--ok);
+}
+
+.agent-status-icon.fail {
+  color: var(--danger);
+}
+
+.agent-status-icon.need {
+  color: var(--warning);
 }
 
 .status-mark[data-intent="warning"],

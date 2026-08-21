@@ -44,6 +44,7 @@ module RenderingTest
     assert_rendered_lines_fit_screen_width
     assert_list_sidebar_renders_agent_names
     assert_list_sidebar_renders_project_status_icons
+    assert_terminal_agent_status_icons_do_not_use_emoji
     assert_list_sidebar_scrolls_to_selected_agent
     assert_agent_unread_cursor_and_chat_clear
     assert_finished_agent_poll_marks_unread
@@ -121,6 +122,13 @@ module RenderingTest
     ENV["TYCHO_CONFIG_PATH"] = old_config_path if defined?(old_config_path)
     FileUtils.rm_rf(fixture_dir) if defined?(fixture_dir)
     FileUtils.rm_rf(TEST_LOGS_ROOT)
+  end
+
+  def assert_terminal_agent_status_icons_do_not_use_emoji
+    icons = HQ::UI::Rendering::Styles::STATUS_ICONS
+    %i[succeeded failed stopped blocked].each do |key|
+      assert(!["✅", "⏸️", "🚫"].include?(icons.fetch(key)), "expected #{key} TUI status to avoid emoji")
+    end
   end
 
   def write_rendering_config_fixture(dir)

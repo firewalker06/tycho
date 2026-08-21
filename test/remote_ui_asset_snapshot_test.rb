@@ -16,7 +16,41 @@ module RemoteUIAssetSnapshotTest
     assert_delegation_ui_uses_typed_safe_references
     assert_delegation_callbacks_are_chronological_events
     assert_archived_agents_are_reference_only_and_read_only
+    assert_agent_status_icons_use_lucide_without_badges
     puts "remote_ui_asset_snapshot_test: ok"
+  end
+
+  def assert_agent_status_icons_use_lucide_without_badges
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
+    helpers = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app_helpers.js"))
+    required = [
+      "circlePause:",
+      "circleCheck:",
+      "circleX:",
+      'return "circlePause"',
+      'return "circleCheck"',
+      'return "circleX"',
+      'role="img" aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}"',
+      "function agentStatusIcon(status, label",
+      ".agent-status-icon {"
+    ]
+    missing = required.reject { |fragment| javascript.include?(fragment) || css.include?(fragment) }
+    raise "missing Lucide status icon contract: #{missing.join(", ")}" unless missing.empty?
+
+    forbidden = ["✅", "⏸️", "🚫"]
+    present = forbidden.select { |emoji| javascript.include?(emoji) || helpers.include?(emoji) }
+    raise "status icons must not use emoji: #{present.join(", ")}" unless present.empty?
+
+    icon_renderer = javascript[/function agentStatusIcon\(status, label.*?^}/m]
+    raise "missing agent status indicator renderer" unless icon_renderer
+    raise "status icon renderer must not emit badge styling" if icon_renderer.include?("ui-badge")
+
+    icon_styles = css[/\.agent-status-icon \{.*?^}/m]
+    raise "missing standalone status icon styles" unless icon_styles
+    forbidden_styles = %w[background border padding border-radius]
+    styled = forbidden_styles.select { |property| icon_styles.include?(property) }
+    raise "status icon styles must not create a badge: #{styled.join(", ")}" unless styled.empty?
   end
 
   def assert_delegation_callbacks_are_chronological_events

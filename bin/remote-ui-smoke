@@ -1097,28 +1097,40 @@ def write_smoke_script(path)
         }
         const agentStatusIconContract = await page.evaluate(() => {
           return [
-            ["stopped", "⏸️", "Stopped"],
-            ["succeeded", "✅", "Succeeded"],
-            ["failed", "🚫", "Failed"],
-            ["cancelled", "🚫", "Cancelled"],
-            ["blocked", "🚫", "Blocked"],
-          ].map(([status, icon, label]) => {
+            ["stopped", "circlePause", "Stopped"],
+            ["succeeded", "circleCheck", "Succeeded"],
+            ["failed", "circleX", "Failed"],
+            ["cancelled", "circleX", "Cancelled"],
+            ["blocked", "circleX", "Blocked"],
+          ].map(([status, iconName, label]) => {
             const host = document.createElement("div");
             host.innerHTML = agentStatusBadge({ status });
-            const badge = host.querySelector(".agent-status-badge");
-            const mark = badge?.querySelector(".agent-status-icon");
-            return {
+            document.body.append(host);
+            const mark = host.querySelector(".agent-status-icon");
+            const style = mark ? getComputedStyle(mark) : null;
+            const result = {
               status,
-              icon: mark?.textContent,
-              decorative: mark?.getAttribute("aria-hidden"),
-              labelPresent: badge?.textContent.includes(label),
-              expectedIcon: icon,
+              iconName: agentStatusIconName(status),
+              hasSvg: Boolean(mark?.querySelector("svg")),
+              hasLucideCircle: Boolean(mark?.querySelector("circle[cx='12'][cy='12'][r='10']")),
+              label: mark?.getAttribute("aria-label"),
+              title: mark?.getAttribute("title"),
+              visibleText: mark?.textContent.trim(),
+              hasBadge: Boolean(host.querySelector(".agent-status-badge, .ui-badge, .pill, .chip")),
+              border: style?.borderTopStyle,
+              background: style?.backgroundColor,
+              expectedIconName: iconName,
+              expectedLabel: label,
             };
+            host.remove();
+            return result;
           });
         });
         if (agentStatusIconContract.some((item) =>
-          item.icon !== item.expectedIcon || item.decorative !== "true" || !item.labelPresent)) {
-          throw new Error(`Agent status icons lost their text or accessibility contract: ${JSON.stringify(agentStatusIconContract)}`);
+          item.iconName !== item.expectedIconName || !item.hasSvg || !item.hasLucideCircle ||
+          item.label !== item.expectedLabel || item.title !== item.expectedLabel || item.visibleText ||
+          item.hasBadge || item.border !== "none" || item.background !== "rgba(0, 0, 0, 0)")) {
+          throw new Error(`Agent status icons lost their Lucide, accessibility, or unboxed treatment: ${JSON.stringify(agentStatusIconContract)}`);
         }
         const degradedActivityContract = await page.evaluate(() => {
           const merged = window.TychoRemoteHelpers.mergeActivityServers(
@@ -4921,8 +4933,9 @@ def write_smoke_script(path)
               before,
               after: {
                 status: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
-                statusIcon: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.textContent.trim(),
-                statusIconHidden: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.getAttribute("aria-hidden"),
+                statusIconLabel: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.getAttribute("aria-label"),
+                statusIconName: agentStatusIconName("succeeded"),
+                visibleStatusText: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
                 sendPrompt: document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] button[type="submit"]`)?.textContent.trim(),
                 sendPromptFocused: document.activeElement === document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] button[type="submit"]`),
               },
@@ -4949,9 +4962,10 @@ def write_smoke_script(path)
             focusedStatusSyncContract.before.action !== "Stop agent" ||
             !focusedStatusSyncContract.before.steadyActionPreserved ||
             !focusedStatusSyncContract.before.steadyActionFocused ||
-            focusedStatusSyncContract.after.status !== "✅Succeeded" ||
-            focusedStatusSyncContract.after.statusIcon !== "✅" ||
-            focusedStatusSyncContract.after.statusIconHidden !== "true" ||
+            focusedStatusSyncContract.after.status !== "" ||
+            focusedStatusSyncContract.after.statusIconLabel !== "Succeeded" ||
+            focusedStatusSyncContract.after.statusIconName !== "circleCheck" ||
+            focusedStatusSyncContract.after.visibleStatusText !== "" ||
             focusedStatusSyncContract.after.sendPrompt !== "Send prompt" ||
             !focusedStatusSyncContract.after.sendPromptFocused ||
             focusedStatusSyncContract.conversationReads !== 0 ||

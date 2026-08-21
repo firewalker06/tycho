@@ -175,7 +175,7 @@ Generated Remote UI markup uses `metadataBadge(label, "pill" | "chip")`. The sec
 | `success` | Healthy or completed state | Succeeded, scheduled, ready, clean, fresh |
 | `danger` | Failed, blocked, stopped, or invalid state | Blocked, failed, missing, stopped |
 
-Agent status badges keep their text label and add a decorative state icon where the outcome has one: `⏸️` for paused or stopped, `✅` for succeeded, and `🚫` for failed, cancelled, or blocked. The icon is `aria-hidden`; the visible label remains the accessible status.
+Remote UI agent outcomes use standalone Lucide status icons: `circlePause` for paused or stopped, `circleCheck` for succeeded, and `circleX` for failed, cancelled, or blocked. These indicators have an accessible name through `aria-label` and `title`, but no visible text, badge background, border, or padding. Terminal surfaces retain their plain status text and do not use emoji for these states.
 
 Visible labels carry the meaning. Color is reinforcement. Product status icons remain `aria-hidden` when an adjacent badge supplies the text. Neutral product states such as Idle, Fixed, and Read only still use `ui-status`; factual context uses `ui-metadata-badge`.
 
