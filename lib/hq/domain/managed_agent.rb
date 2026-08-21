@@ -830,6 +830,19 @@ module HQ
       end
     end
 
+    def message_author_metadata(actor)
+      return nil unless actor&.parent?
+      return nil unless @delegation_parent&.fetch("agent_key", nil) == actor.agent_key
+
+      author = @delegation_parent.each_with_object({ "type" => "agent" }) do |(key, value), result|
+        next unless %w[server_id server_name agent_key name project_key].include?(key)
+        next if value.nil? || value.to_s.empty?
+
+        result[key] = value
+      end
+      { "message_author" => author }
+    end
+
     def cancel_pending_inquiry!(created_at: Time.now)
       inquiry_id = latest_inquiry_id.to_s
       return false if inquiry_id.empty?
@@ -1670,7 +1683,7 @@ module HQ
           memory_store.append_system_prompt!(text, created_at: created_at, prompt_role:)
         when "user"
           attachments = message.metadata.is_a?(Hash) ? message.metadata["attachments"] : nil
-          memory_store.append_user_message!(text, created_at: created_at, attachments:)
+          memory_store.append_user_message!(text, created_at: created_at, attachments:, metadata: message.metadata)
         when "assistant"
           memory_store.append_assistant_message!(text, created_at: created_at)
         end

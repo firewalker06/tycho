@@ -55,7 +55,7 @@ module HQ
     ACTIVITY_AGENT_FIELDS = %i[
       key name project_key template_key scheduled schedule_key agent model reasoning_effort status running unread
       awaiting_input blocked run_count created_at started_at finished_at updated_at last_exit_code last_result summary
-      archived archived_at
+      archived archived_at delegation
     ].freeze
     REMOTE_DAEMON_LOG_FILE = File.join(LOGS_DIR, "remote_server_daemon.log")
     RESTART_CACHE_RESET_HEADERS = {
@@ -2816,7 +2816,8 @@ module HQ
       @agent_store.accept_prompt_from!(target, actor:)
       target.add_user_message!(
         text,
-        attachments:
+        attachments:,
+        metadata: target.message_author_metadata(actor)
       )
       save_agent(target)
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"]) && !target.running?
@@ -4310,8 +4311,13 @@ module HQ
 
     def sanitized_delegation_block(content, metadata, reference_context:)
       data = metadata.is_a?(Hash) ? metadata.dup : metadata
+      author = data.is_a?(Hash) ? data["message_author"] : nil
+      if author.is_a?(Hash) && author["type"] == "agent" && !author["agent_key"].to_s.empty?
+        payload = reference_payload(author, reference_context:)
+        data["message_author"] = { "type" => "agent" }.merge(payload.transform_keys(&:to_s))
+      end
       reference = data.is_a?(Hash) ? data["agent_reference"] : nil
-      return [content, metadata] unless reference.is_a?(Hash)
+      return [content, data] unless reference.is_a?(Hash)
 
       payload = reference_payload(reference, reference_context:)
       data["agent_reference"] = payload.transform_keys(&:to_s)

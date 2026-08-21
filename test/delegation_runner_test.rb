@@ -77,12 +77,17 @@ module DelegationRunnerTest
       child = run_cli(
         managed_agent_env,
         "agent", "create", "uploads", "Finish delegated work",
-        "--parent-agent", parent_key, "--run", "--json"
+        "--parent-agent", parent_key, "--json"
       )
       child_key = JSON.parse(child).fetch("key")
       unless JSON.parse(child).dig("delegation", "parent", "agent_key") == parent_key
         raise "explicit parent key did not create a delegated child"
       end
+      run_cli(
+        managed_agent_env,
+        "agent", "send", child_key, "Execute the delegated work",
+        "--parent-agent", parent_key, "--json"
+      )
       unrelated = run_cli(managed_agent_env, "agent", "create", "demo", "Create unrelated root", "--root", "--json")
       if JSON.parse(unrelated).dig("delegation", "parent")
         raise "--root unexpectedly created a parent relationship"
@@ -114,6 +119,15 @@ module DelegationRunnerTest
       callback = events.find { |event| event.dig("metadata", "delegation_callback") }
       raise "missing detached callback message" unless callback
       raise "callback did not name child" unless callback.dig("metadata", "agent_reference", "agent_key") == child_key
+
+      child_record = JSON.parse(File.read(agents_path)).find { |agent| agent["key"] == child_key }
+      child_memory_path = child_record.fetch("log_path").sub(/\.raw\.log\z/, ".memory.jsonl")
+      child_events = File.readlines(child_memory_path).map { |line| JSON.parse(line) }
+      signed_prompt = child_events.find { |event| event["content"] == "Execute the delegated work" }
+      unless signed_prompt&.dig("metadata", "message_author", "agent_key") == parent_key &&
+             signed_prompt.dig("metadata", "message_author", "name") == parent_payload.fetch("name")
+        raise "local --parent-agent send did not persist the parent signature"
+      end
 
       ledger = JSON.parse(File.read(File.join(logs, "agent_delegations.json")))
       reports = ledger.fetch("reports").select { |report| report.dig("child", "agent_key") == child_key }

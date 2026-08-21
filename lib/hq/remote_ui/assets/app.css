@@ -406,6 +406,60 @@ h3 {
   white-space: nowrap;
 }
 
+.agent-name-inline,
+.agent-name-role-icons,
+.agent-name-role-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.agent-name-inline {
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.agent-name-role-icons {
+  flex: 0 0 auto;
+  gap: 3px;
+}
+
+.agent-name-role-icon {
+  flex: 0 0 auto;
+}
+
+.agent-name-role-icon .ui-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.agent-name-role-icon.orchestrator {
+  color: var(--accent);
+}
+
+.agent-name-role-icon.subagent {
+  color: var(--accent);
+}
+
+.agent-name-role-icon.takeover {
+  color: var(--warning);
+}
+
+.agent-name-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-title .agent-name-label,
+.card-title .agent-name-label,
+.agent-reference-copy .agent-name-label {
+  color: inherit;
+  font-size: inherit;
+}
+
 .title-block p,
 .meta-line,
 .row-title span,
@@ -853,38 +907,31 @@ h3 {
   gap: 7px;
 }
 
-.switcher-linked-symbol {
-  position: relative;
+.switcher-agent-title-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.switcher-agent-title-line .agent-name-inline {
+  flex: 0 1 auto;
+}
+
+.switcher-agent-title-line .switcher-linked-symbol {
   display: inline-grid;
-  width: 34px;
-  min-width: 34px;
-  height: 34px;
+  flex: 0 0 auto;
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--border));
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-radius: 4px;
   color: var(--accent);
 }
 
-.switcher-linked-symbol .ui-icon {
+.switcher-agent-title-line .switcher-linked-symbol .ui-icon {
   width: 16px;
   height: 16px;
-}
-
-.switcher-linked-symbol > span {
-  position: absolute;
-  top: -6px;
-  right: -5px;
-  min-width: 16px;
-  height: 16px;
-  border: 1px solid var(--panel);
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--bg);
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 14px;
-  text-align: center;
 }
 
 .switcher-agent-row:hover .switcher-linked-symbol,
@@ -4335,6 +4382,11 @@ select {
 
 .message.user .message-role {
   justify-content: flex-end;
+}
+
+.message.user.parent-agent-message .message-role {
+  color: var(--accent);
+  text-transform: none;
 }
 
 .message.inquiry-response {

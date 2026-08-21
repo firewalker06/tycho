@@ -126,11 +126,19 @@ module RemoteServerTest
       assert(repeated[:agent].dig(:delegation, :parent, :owner) == "parent" &&
              repeated[:agent].dig(:delegation, :parent, :ownership_generation) == 1,
              "expected a repeated parent declaration to preserve delegation")
+      signed_prompt = repeated[:conversation].find { |block| block[:content] == "Continue" }
+      assert(signed_prompt&.dig(:metadata, "message_author", "type") == "agent" &&
+             signed_prompt.dig(:metadata, "message_author", "agent_key") == parent[:key] &&
+             signed_prompt.dig(:metadata, "message_author", "name") == "Parent <script>",
+             "expected a parent-declared prompt to persist its agent signature")
 
       taken_over = service.submit_prompt(child[:key], "prompt" => "I will handle this directly")
       assert(taken_over[:agent].dig(:delegation, :parent, :owner) == "user" &&
              taken_over[:agent].dig(:delegation, :parent, :ownership_generation) == 2,
              "expected a direct user prompt to take over the delegated child")
+      direct_prompt = taken_over[:conversation].find { |block| block[:content] == "I will handle this directly" }
+      assert(!direct_prompt&.dig(:metadata, "message_author"),
+             "expected a direct user prompt to remain unsigned")
 
       reclaimed = service.submit_prompt(
         child[:key], "prompt" => "Resume delegated work", "parent_agent_key" => parent[:key]
@@ -217,20 +225,30 @@ module RemoteServerTest
       agent = service.create_agent(
         "project_key" => "web", "name" => "Activity agent", "prompt" => "Observe", "agent" => "codex"
       )
-      stored = HQ::AgentStore.new([]).load.find { |candidate| candidate.key == agent[:key] }
+      child = service.create_agent(
+        "project_key" => "web", "name" => "Activity child", "prompt" => "Delegate", "agent" => "codex",
+        "parent_agent_key" => agent[:key]
+      )
+      stored_agents = HQ::AgentStore.new([]).load
+      stored = stored_agents.find { |candidate| candidate.key == agent[:key] }
       stored.mark_unread!
-      HQ::AgentStore.new([]).save([stored])
+      HQ::AgentStore.new([]).save(stored_agents)
       service.agents
 
       server = HQ::RemoteServer.new(agent_activity_snapshot: snapshot)
       response = server.send(:route, service, "GET", "/servers/activity", {}, nil)
       activity = response.fetch(:body)
       local = activity.fetch(:servers).find { |entry| entry[:key] == "local" }
+      parent_activity = local.fetch(:agents).find { |entry| entry[:key] == agent[:key] }
+      child_activity = local.fetch(:agents).find { |entry| entry[:key] == child[:key] }
       assert(activity[:unread_count] == 1, "expected aggregate activity unread count")
-      assert(local[:ready] && local.dig(:agents, 0, :name) == "Activity agent",
+      assert(local[:ready] && parent_activity[:name] == "Activity agent",
              "expected the activity endpoint to expose the shared local snapshot")
-      assert(local.dig(:agents, 0, :unread), "expected activity to include unread state")
-      assert(!local.dig(:agents, 0).key?(:prompt), "expected activity to omit full agent detail")
+      assert(parent_activity[:unread], "expected activity to include unread state")
+      assert(parent_activity.dig(:delegation, :children, 0, :agent_key) == child[:key] &&
+             child_activity.dig(:delegation, :parent, :agent_key) == agent[:key],
+             "expected activity to include compact delegation topology")
+      assert(!parent_activity.key?(:prompt), "expected activity to omit full agent detail")
     end
   end
 
@@ -4524,7 +4542,7 @@ module RemoteServerTest
            response[:body].include?('aria-label="Copy agent title"') &&
            response[:body].include?('<span class="sr-only">Copy agent title</span>'),
            "expected the Conversation header to expose an accessible agent-title copy control")
-    assert(js[:body].include?('setHeader(agent.name || agent.key, agentHeaderLabel(agent), "A", { copyTitle: agent.name || agent.key })') &&
+    assert(js[:body].include?('setHeader(agent.name || agent.key, agentHeaderLabel(agent), "A", { agentTitle: agent, copyTitle: agent.name || agent.key })') &&
            js[:body].include?("function setHeaderTitleCopy") &&
            js[:body].include?("els.titleCopy.dataset.copy = value") &&
            js[:body].include?('els.titleCopy.removeAttribute("data-copy")'),
@@ -5850,6 +5868,39 @@ module RemoteServerTest
            "expected usage completion labels to render the Lucide check-check icon")
     assert(js[:body].include?("iconSvg(\"hammer\")"),
            "expected tool chat labels to render the hammer icon")
+    assert(js[:body].include?('icon: "hardHat"') &&
+           js[:body].include?('data-agent-role="${role}"') &&
+           js[:body].include?('label: "Orchestrator"'),
+           "expected orchestrator names to render an accessible hard-hat role icon")
+    assert(js[:body].include?('icon: "hammer"') &&
+           js[:body].include?('label: "Subagent"'),
+           "expected delegated subagent names to render an accessible hammer role icon")
+    assert(js[:body].include?('icon: "shieldUser"') &&
+           js[:body].include?('label: "Taken-over subagent"'),
+           "expected taken-over subagent names to render an accessible shield-user role icon")
+    assert(css[:body].include?(".agent-name-inline") &&
+           css[:body].include?("display: inline-flex;"),
+           "expected delegation role icons to remain inline with agent names")
+    assert(css[:body].include?(".agent-name-role-icon.subagent {\n  color: var(--accent);") &&
+           css[:body].include?(".agent-name-role-icon.takeover {\n  color: var(--warning);"),
+           "expected agent-controlled roles to be purple and user takeover roles to be orange")
+    assert(js[:body].include?("options.agentTitle") &&
+           js[:body].include?("els.title.innerHTML = agentNameHtml(options.agentTitle);"),
+           "expected Conversation headers to render agent role icons")
+    assert(js[:body].include?("function agentReferenceNameHtml") &&
+           js[:body].include?("renderAgentReference(reference, { embedded: true, relationshipRole })"),
+           "expected connected-agent references to render delegation role icons")
+    assert(js[:body].include?("function parentAgentMessageAuthor") &&
+           js[:body].include?('parentAgentMessage(block) ? "parent-agent-message"') &&
+           js[:body].include?('if (parentAgentMessage(block)) return iconSvg("hardHat")'),
+           "expected parent-authored user messages to show the signing agent")
+    assert(css[:body].include?(".message.user.parent-agent-message .message-role") &&
+           css[:body].include?("text-transform: none;"),
+           "expected parent-authored messages to retain the right-aligned user treatment with an agent signature")
+    assert(js[:body].include?('class="switcher-agent-title-line">${agentNameHtml(agent)}${linkedSymbol}') &&
+           js[:body].include?('aria-label="Show linked agents"') &&
+           !js[:body].include?('${iconSvg("link")}<span>${escapeHtml(String(linkedCount))}</span>'),
+           "expected Quick Agents to place a count-free linked control beside the agent name")
     assert(js[:body].include?("function replaceView"), "expected UI JavaScript to centralize view replacement")
     assert(js[:body].include?("FORM_DRAFT_STORAGE_PREFIX"),
            "expected Remote UI to persist blurred text form drafts")

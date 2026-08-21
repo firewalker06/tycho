@@ -49,7 +49,7 @@ module HQ
 
     def snapshot
       @mutex.synchronize do
-        agents = @agents.values.sort_by { |agent| agent.fetch(:key) }.map(&:dup)
+        agents = activity_agents_with_topology
         {
           schema_version: SCHEMA_VERSION,
           revision: @revision,
@@ -95,8 +95,55 @@ module HQ
         last_result: agent.last_result_label,
         summary: agent.last_summary,
         archived: agent.archived?,
-        archived_at: agent.archived_at&.iso8601
+        archived_at: agent.archived_at&.iso8601,
+        delegation: {
+          parent: activity_parent_reference(agent.delegation_parent),
+          children: []
+        }
       }
+    end
+
+    def activity_agents_with_topology
+      agents = @agents.values.sort_by { |agent| agent.fetch(:key) }.map do |agent|
+        copy = agent.dup
+        delegation = agent.fetch(:delegation)
+        copy[:delegation] = {
+          parent: delegation[:parent]&.dup,
+          children: []
+        }
+        copy
+      end
+      by_key = agents.to_h { |agent| [agent.fetch(:key), agent] }
+
+      agents.each do |child|
+        parent = child.dig(:delegation, :parent)
+        next unless parent
+
+        parent_key = parent.fetch(:agent_key)
+        parent[:state] = by_key.key?(parent_key) ? "active" : "missing"
+        owner = by_key[parent_key]
+        owner[:delegation][:children] << activity_child_reference(child, parent) if owner
+      end
+      agents
+    end
+
+    def activity_parent_reference(reference)
+      return nil unless reference.is_a?(Hash)
+
+      %w[server_id server_name agent_key name project_key].each_with_object({}) do |key, result|
+        value = reference[key]
+        result[key.to_sym] = value unless value.nil? || value.to_s.empty?
+      end
+    end
+
+    def activity_child_reference(child, parent)
+      {
+        server_id: parent[:server_id],
+        agent_key: child.fetch(:key),
+        name: child[:name],
+        project_key: child[:project_key],
+        state: "active"
+      }.compact
     end
   end
 end

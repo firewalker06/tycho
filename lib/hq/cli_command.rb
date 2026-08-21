@@ -1563,7 +1563,7 @@ module HQ
 
       agent = persist_agents_with_parent!(store, agents, agent, opts)
       store.accept_prompt_from!(agent, actor: opts.fetch(:actor), agents: agents)
-      agent.add_user_message!(message)
+      agent.add_user_message!(message, metadata: agent.message_author_metadata(opts.fetch(:actor)))
       store.save(agents)
       agent = store.start_agent!(agent.key)
       if agent.running?
