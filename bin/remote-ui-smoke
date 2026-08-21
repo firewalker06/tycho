@@ -5042,8 +5042,8 @@ def write_smoke_script(path)
             return {
               before,
               after: {
-                status: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
                 statusIconLabel: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.getAttribute("aria-label"),
+                statusIconTitle: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.getAttribute("title"),
                 statusIconName: agentStatusIconName("succeeded"),
                 visibleStatusText: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
                 sendPrompt: document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] button[type="submit"]`)?.textContent.trim(),
@@ -5072,8 +5072,8 @@ def write_smoke_script(path)
             focusedStatusSyncContract.before.action !== "Stop agent" ||
             !focusedStatusSyncContract.before.steadyActionPreserved ||
             !focusedStatusSyncContract.before.steadyActionFocused ||
-            focusedStatusSyncContract.after.status !== "" ||
             focusedStatusSyncContract.after.statusIconLabel !== "Succeeded" ||
+            focusedStatusSyncContract.after.statusIconTitle !== "Succeeded" ||
             focusedStatusSyncContract.after.statusIconName !== "check" ||
             focusedStatusSyncContract.after.visibleStatusText !== "" ||
             focusedStatusSyncContract.after.sendPrompt !== "Send prompt" ||
