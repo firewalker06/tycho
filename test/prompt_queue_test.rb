@@ -198,6 +198,12 @@ module PromptQueueTest
         follow_up_pid = pids.last
         service.submit_prompt(agent.key, "prompt" => "next batch", "start" => true)
 
+        # A still-running older Tycho process can rewrite the agent record
+        # without fields introduced by the newer server.
+        rewritten = store.load.find { |candidate| candidate.key == agent.key }
+        rewritten.last_run.run_scoped_status = false
+        store.save([rewritten])
+
         # The previous run's monitor can finish after its finalizer starts the
         # successor. Its late status write must not apply to that successor.
         File.write(stale_status_path, "0")
@@ -325,7 +331,7 @@ module PromptQueueTest
 
     Process.kill("TERM", -pid)
     Process.wait(pid)
-  rescue Errno::ESRCH, Errno::ECHILD
+  rescue Errno::ESRCH, Errno::EPERM, Errno::ECHILD
     nil
   end
 

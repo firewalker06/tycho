@@ -828,7 +828,7 @@ module HQ
         "#{pull_request_catalog_path}.lock",
         invalid_structured_output_file_path,
         *status_file_paths,
-        *@runs.filter_map { |run| run_status_file_path(run.run_id) if run.run_scoped_status },
+        *@runs.filter_map { |run| run_status_file_path(run.run_id) unless run.run_id.to_s.empty? },
         last_message_file_path,
         legacy_status_file_path,
         legacy_last_message_file_path
@@ -1256,13 +1256,13 @@ module HQ
     end
 
     def status_file_path
-      return run_status_file_path(last_run.run_id) if last_run&.run_scoped_status
+      return run_status_file_path(last_run.run_id) unless last_run&.run_id.to_s.empty?
 
       unscoped_status_file_path
     end
 
     def status_file_paths
-      return [run_status_file_path(last_run.run_id)] if last_run&.run_scoped_status
+      return [run_status_file_path(last_run.run_id)] unless last_run&.run_id.to_s.empty?
 
       [unscoped_status_file_path, legacy_status_file_path].uniq
     end
@@ -1395,6 +1395,11 @@ module HQ
         monitor.join(0.5)
       end
       path = status_file_paths.find { |candidate| valid_status_file?(candidate) }
+      if !path && last_run && !last_run.run_scoped_status
+        path = [unscoped_status_file_path, legacy_status_file_path].find do |candidate|
+          valid_status_file?(candidate)
+        end
+      end
       return nil unless path
 
       Integer(File.read(path).strip, 10)
