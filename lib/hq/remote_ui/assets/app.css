@@ -1196,6 +1196,13 @@ textarea {
   margin-top: 0;
 }
 
+.server-activity-error {
+  display: block;
+  margin-top: 4px;
+  color: var(--warning);
+  font-size: 12px;
+}
+
 .server-target-line {
   min-width: 0;
   overflow: hidden;
@@ -2557,6 +2564,19 @@ select {
 .ui-status {
   background: color-mix(in srgb, currentColor 9%, var(--panel-soft));
   font-weight: var(--ds-weight-medium);
+}
+
+.kv .agent-status-icon + span,
+.agent-reference-copy .agent-status-icon + span {
+  margin-left: 4px;
+}
+
+.agent-status-badge .agent-status-icon + span {
+  margin-left: 0;
+}
+
+.agent-status-badge {
+  gap: 4px;
 }
 
 .status-mark[data-intent="warning"],

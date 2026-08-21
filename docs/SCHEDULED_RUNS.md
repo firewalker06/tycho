@@ -36,6 +36,7 @@ Each schedule has two editable prompt fields: a system message for the schedule-
 - No-action outcomes: scheduled agents should return structured status `no_action_needed` only when a successful observational check finds no new condition requiring action and completes no requested action or deliverable. Completed changes, answers, commits, reviews, and deliverables use `success` even when no next step remains. Tycho records a no-action result as the schedule's last outcome but does not mark the agent unread or send success/push notifications.
 - Schedule prompt parity: the backend exposes one title-aware schedule system-message template through `/setup`; the Remote UI consumes it and keeps an equivalent compatibility fallback for older servers.
 - Resume behavior: resuming a stopped schedule keeps the schedule-owned session, records a resume boundary, and waits until the next scheduled run.
+- Removal behavior: deleting a schedule detaches its active agent in the same persisted operation. The agent, transcript, attachments, and native session stay available as an ordinary conversation while future automatic runs stop.
 - Success notifications: notify only on first success and first success after failure, including the next scheduled run time.
 
 ## Current Design
@@ -240,6 +241,7 @@ GET  /schedules/:key
 POST /schedules/:key/run
 POST /schedules/:key/pause
 POST /schedules/:key/resume
+DELETE /schedules/:key
 POST /schedules/reload
 POST /schedules/daemon/start
 POST /schedules/daemon/stop

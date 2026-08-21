@@ -1407,10 +1407,11 @@ module HQ
       end
     end
 
-    def initialize(registry:, server_url: nil, timeout: RemoteClient::DEFAULT_TIMEOUT)
+    def initialize(registry:, server_url: nil, timeout: RemoteClient::DEFAULT_TIMEOUT, logger: HQ.logger)
       @registry = registry
       @server_url = server_url.to_s
       @timeout = timeout
+      @logger = logger
       @credential_resolver = RemoteCredentialResolver.new(store: RemoteCredentialStore.new(registry: registry))
     end
 
@@ -1426,15 +1427,31 @@ module HQ
         raise RemoteServer::Error.new("Peer access is limited to agents, projects, and attachments", status: 404)
       end
 
-      RemoteClient.new(
+      response = RemoteClient.new(
         config,
         timeout: @timeout,
         token_override: remote_server_token(request),
         credential_resolver: @credential_resolver
       ).request(method, path, body:, query: request&.query)
+      log_recoverable_activity_failure(config.key, method, path, response) if response[:status].to_i >= 500
+      response
     end
 
     private
+
+    def log_recoverable_activity_failure(peer_key, method, path, response)
+      return unless path.to_s.split("/").reject(&:empty?).first == "activity"
+      response_body = response[:body]
+      error = if response_body.is_a?(Hash)
+                response_body[:error] || response_body["error"]
+              end
+      return if error.to_s.include?("rejected broker credentials")
+
+      @logger.warn("RemoteBroker") do
+        "Peer activity fetch failed peer=#{peer_key.inspect} method=#{method.to_s.upcase} " \
+          "path=#{path.to_s.inspect} status=#{response[:status].to_i}; treating as recoverable"
+      end
+    end
 
     def remote_configs
       Array(@registry.remote_servers)
@@ -2244,9 +2261,15 @@ module HQ
     end
 
     def delete_schedule(key)
-      schedule_registry.delete(key)
-      ScheduleStore.new.delete(key)
-      { deleted: true, key: key.to_s }
+      result = scheduler.remove(key)
+      detached_agents = result.fetch(:agents)
+      {
+        deleted: true,
+        key: key.to_s,
+        detached_agent_keys: detached_agents.map(&:key),
+        agents: detached_agents.map { |agent| agent_payload(agent) },
+        agent: detached_agents.one? ? agent_payload(detached_agents.first) : nil
+      }
     rescue ScheduleRegistry::Error => e
       raise Error.new(e.message, status: 404)
     end

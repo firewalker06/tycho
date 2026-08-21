@@ -91,6 +91,9 @@ module HQ
           "no_action_needed" => { label: "no action", style: :dim },
           "error" => { label: "error", style: :fail },
           "failed" => { label: "error", style: :fail },
+          "cancelled" => { label: "cancelled", style: :fail },
+          "canceled" => { label: "cancelled", style: :fail },
+          "paused" => { label: "paused", style: :maintenance },
           "stopped" => { label: "stopped", style: :maintenance },
           "partial" => { label: "partial", style: :warning },
           "blocked" => { label: "blocked", style: :fail },
@@ -104,8 +107,8 @@ module HQ
           when "running" then Styles::STATUS_ICONS[:running]
           when "succeeded", "success", "completed" then Styles::STATUS_ICONS[:succeeded]
           when "no_action_needed" then Styles::STATUS_ICONS[:dim]
-          when "failed", "error" then Styles::STATUS_ICONS[:failed]
-          when "stopped" then Styles::STATUS_ICONS[:stopped]
+          when "failed", "error", "cancelled", "canceled" then Styles::STATUS_ICONS[:failed]
+          when "paused", "stopped" then Styles::STATUS_ICONS[:stopped]
           when "awaiting-input", "input_required" then Styles::STATUS_ICONS[:awaiting_input]
           when "partial" then Styles::STATUS_ICONS[:partial]
           when "blocked" then Styles::STATUS_ICONS[:blocked]
