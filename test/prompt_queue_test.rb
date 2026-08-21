@@ -15,6 +15,7 @@ module PromptQueueTest
     assert_claim_race_starts_one_combined_run
     assert_dispatch_failure_retains_one_prepared_batch_for_retry
     assert_entries_accepted_after_claim_form_a_consecutive_batch
+    assert_late_status_write_cannot_finish_successor_run
     assert_active_and_restorable_inquiries_block_dispatch
     assert_manual_prompt_retires_inquiry_without_dropping_queue
     puts "prompt_queue_test: ok"
@@ -182,6 +183,37 @@ module PromptQueueTest
     end
   end
 
+  def assert_late_status_write_cannot_finish_successor_run
+    with_queue_store do |registry, workspace|
+      agent = terminal_agent(workspace)
+      stale_status_path = agent.send(:status_file_path)
+      agent.enqueue_prompt!(prompt: "first batch")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+      service = HQ::RemoteService.new(registry:)
+
+      follow_up_pid = nil
+      with_stubbed_running_start do |pids|
+        service.agent(agent.key)
+        follow_up_pid = pids.last
+        service.submit_prompt(agent.key, "prompt" => "next batch", "start" => true)
+
+        # The previous run's monitor can finish after its finalizer starts the
+        # successor. Its late status write must not apply to that successor.
+        File.write(stale_status_path, "0")
+        current = service.agent(agent.key)
+        assert(current[:running], "expected a late status write not to finish the successor run")
+        assert(current.dig(:prompt_queue, "entries").length == 1,
+               "expected the next batch to remain queued behind the successor run")
+        persisted = store.load.find { |candidate| candidate.key == agent.key }
+        assert(persisted.run_count == 2,
+               "expected a stale status file not to launch an overlapping third run")
+      end
+    ensure
+      stop_process(follow_up_pid)
+    end
+  end
+
   def assert_manual_prompt_retires_inquiry_without_dropping_queue
     with_queue_store do |registry, workspace|
       inquiry = { "message" => "Need approval", "fields" => [] }
@@ -269,12 +301,14 @@ module PromptQueueTest
       now = Time.now
       pid = Process.spawn(RbConfig.ruby, "-e", "sleep 60", pgroup: true, out: File::NULL, err: File::NULL)
       pids << pid
+      run_id = SecureRandom.uuid
       @started_at = now
       @finished_at = nil
       @last_exit_code = nil
       @pid = pid
       @runs << HQ::ManagedAgent::AgentRun.new(
-        run_id: SecureRandom.uuid, started_at: now, status: "running", log_path: raw_log_path,
+        run_id: run_id, run_scoped_status: true, started_at: now,
+        status: "running", log_path: raw_log_path,
         command: "stubbed-running", delegation_owner: delegation_stamp&.fetch("owner", nil),
         delegation_generation: delegation_stamp&.fetch("generation", nil)
       )

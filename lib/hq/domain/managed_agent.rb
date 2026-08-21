@@ -57,7 +57,7 @@ module HQ
 
     AgentRun = Struct.new(
       :started_at, :finished_at, :exit_code, :status, :log_path, :command, :session_id, :response_style_source,
-      :agent, :model, :log_start_offset, :run_id, :delegation_owner, :delegation_generation,
+      :agent, :model, :log_start_offset, :run_id, :run_scoped_status, :delegation_owner, :delegation_generation,
       keyword_init: true
     ) do
       def self.from_hash(hash)
@@ -77,6 +77,7 @@ module HQ
           model: hash["model"],
           log_start_offset: log_start_offset,
           run_id: hash["run_id"],
+          run_scoped_status: hash["run_scoped_status"] == true,
           delegation_owner: hash["delegation_owner"],
           delegation_generation: hash["delegation_generation"]
         )
@@ -97,6 +98,7 @@ module HQ
         result["model"] = model unless model.to_s.empty?
         result["log_start_offset"] = log_start_offset if log_start_offset.is_a?(Integer) && log_start_offset >= 0
         result["run_id"] = run_id unless run_id.to_s.empty?
+        result["run_scoped_status"] = true if run_scoped_status
         result["delegation_owner"] = delegation_owner unless delegation_owner.to_s.empty?
         result["delegation_generation"] = delegation_generation if delegation_generation.is_a?(Integer)
         result
@@ -595,7 +597,8 @@ module HQ
       @last_exit_code = nil
       @stop_requested_at = nil
       mark_read!
-      status_path = status_file_path
+      run_id = SecureRandom.uuid
+      status_path = run_status_file_path(run_id)
       FileUtils.rm_f(status_path)
       FileUtils.rm_f(last_message_file_path)
       FileUtils.rm_f(invalid_structured_output_file_path)
@@ -624,7 +627,8 @@ module HQ
         agent: @agent,
         model: @model,
         log_start_offset: log_start_offset,
-        run_id: SecureRandom.uuid,
+        run_id: run_id,
+        run_scoped_status: true,
         delegation_owner: delegation_stamp&.fetch("owner", nil),
         delegation_generation: delegation_stamp&.fetch("generation", nil)
       )
@@ -823,7 +827,8 @@ module HQ
         "#{pull_request_catalog_path}.bak",
         "#{pull_request_catalog_path}.lock",
         invalid_structured_output_file_path,
-        status_file_path,
+        *status_file_paths,
+        *@runs.filter_map { |run| run_status_file_path(run.run_id) if run.run_scoped_status },
         last_message_file_path,
         legacy_status_file_path,
         legacy_last_message_file_path
@@ -1251,11 +1256,24 @@ module HQ
     end
 
     def status_file_path
-      derived_log_path("status")
+      return run_status_file_path(last_run.run_id) if last_run&.run_scoped_status
+
+      unscoped_status_file_path
     end
 
     def status_file_paths
-      [status_file_path, legacy_status_file_path].uniq
+      return [run_status_file_path(last_run.run_id)] if last_run&.run_scoped_status
+
+      [unscoped_status_file_path, legacy_status_file_path].uniq
+    end
+
+    def run_status_file_path(run_id)
+      token = Digest::SHA256.hexdigest(run_id.to_s)[0, 24]
+      derived_log_path("run-#{token}.status")
+    end
+
+    def unscoped_status_file_path
+      derived_log_path("status")
     end
 
     def legacy_status_file_path
