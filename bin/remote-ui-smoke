@@ -5648,12 +5648,14 @@ def write_smoke_script(path)
         const stalePeerAppearance = await page.locator("[data-open-agent='design-peer/peer-agent']").evaluate((row) => ({
           rowIsStale: row.classList.contains("resource-stale"),
           groupIsStale: row.closest(".agent-group")?.classList.contains("resource-stale"),
-          status: row.querySelector(".ui-status")?.textContent.trim(),
-          statusOpacity: Number.parseFloat(getComputedStyle(row.querySelector(".ui-status")).opacity),
+          statusIconLabel: row.querySelector(".agent-status-icon")?.getAttribute("aria-label"),
+          statusIconText: row.querySelector(".agent-status-icon")?.textContent.trim(),
+          statusOpacity: Number.parseFloat(getComputedStyle(row.querySelector(".agent-status-icon")).opacity),
           healthIcon: Boolean(row.closest(".agent-group")?.querySelector(".server-health-icon-badge svg")),
         }));
         if (!stalePeerAppearance.rowIsStale || !stalePeerAppearance.groupIsStale ||
-            stalePeerAppearance.status !== "Running" || stalePeerAppearance.statusOpacity >= 0.8 ||
+            stalePeerAppearance.statusIconLabel !== "Running" || stalePeerAppearance.statusIconText ||
+            stalePeerAppearance.statusOpacity >= 0.8 ||
             !stalePeerAppearance.healthIcon) {
           throw new Error(`Stale peer project and agent were not visually subdued: ${JSON.stringify(stalePeerAppearance)}`);
         }
