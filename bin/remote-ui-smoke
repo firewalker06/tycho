@@ -3461,18 +3461,55 @@ def write_smoke_script(path)
         if (captureDir) await prContextPage.screenshot({ path: path.join(captureDir, "pr-context-pending-desktop.png"), fullPage: true });
         await prContextPage.evaluate(() => {
           window.__originalPendingAttachmentPayloads = pendingAttachmentPayloads;
-          pendingAttachmentPayloads = async () => new Promise((resolve) => {
-            window.__releasePromptAttachmentPayloads = () => resolve([]);
-          });
+          let delayed = false;
+          pendingAttachmentPayloads = async (...args) => {
+            if (delayed) return window.__originalPendingAttachmentPayloads(...args);
+            delayed = true;
+            return new Promise((resolve) => {
+              window.__releasePromptAttachmentPayloads = () => resolve([]);
+            });
+          };
         });
         await prContextPage.fill("#prompt-input", "Explain the selected change.");
         await prContextPage.click("#composer button[type='submit']");
         await prContextPage.waitForFunction(() => typeof window.__releasePromptAttachmentPayloads === "function");
+        const optimisticComposerContract = await prContextPage.evaluate((key) => {
+          const button = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] button[type="submit"]`);
+          const input = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] #prompt-input`);
+          return {
+            action: button?.textContent.trim(),
+            disabled: button?.disabled,
+            inputDisabled: input?.disabled,
+            placeholder: input?.placeholder,
+          };
+        }, prContextAgentKey);
+        if (optimisticComposerContract.action !== "Queue" || optimisticComposerContract.disabled ||
+            optimisticComposerContract.inputDisabled || optimisticComposerContract.placeholder !== "Queue another prompt") {
+          throw new Error(`Composer did not become an enabled queue form before POST completed: ${JSON.stringify(optimisticComposerContract)}`);
+        }
+        const optimisticQueueContract = await prContextPage.evaluate((key) => {
+          const entry = addOptimisticPromptQueueEntry(key, "Queued while the first prompt is encoding.");
+          state.renderedViewHtml = "";
+          render();
+          const result = {
+            visible: document.querySelector("[data-prompt-queue]")?.textContent.includes(entry.prompt),
+            stored: JSON.parse(localStorage.getItem(optimisticPromptQueueStorageKey(key)) || "[]")
+              .some((storedEntry) => storedEntry.id === entry.id),
+            enabled: !document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] button[type="submit"]`)?.disabled,
+          };
+          removeOptimisticPromptQueueEntry(key, entry.id);
+          state.renderedViewHtml = "";
+          render();
+          return result;
+        }, prContextAgentKey);
+        if (!optimisticQueueContract.visible || !optimisticQueueContract.stored || !optimisticQueueContract.enabled) {
+          throw new Error(`Queued prompt was not shown and persisted optimistically: ${JSON.stringify(optimisticQueueContract)}`);
+        }
         await firstLine.click();
         await prContextPage.fill("[data-pr-context-comment]", "A later comment section.");
         await prContextPage.click("[data-attach-pr-diff-selection]");
-        if (await prContextPage.locator("[data-pending-pr-context]").count() !== 2) {
-          throw new Error("PR context could not be queued while another prompt payload was encoding");
+        if (await prContextPage.locator("[data-pending-pr-context]").count() !== 1) {
+          throw new Error("A new PR context was not kept separate while another prompt payload was encoding");
         }
         await prContextPage.evaluate(() => window.__releasePromptAttachmentPayloads());
         await prContextPage.waitForFunction(
@@ -4038,6 +4075,101 @@ def write_smoke_script(path)
         }
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector("#header-schedule-menu:not(.hidden)", { state: "visible", timeout: 10_000 });
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await page.evaluate((key) => {
+          const agent = findAgent(key);
+          agent.running = true;
+          agent.status = "running";
+          history.replaceState(null, "", routeHash({ type: "agent", key }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
+        const desktopStopAction = await page.evaluate(() => {
+          const actions = document.querySelector("[data-agent-floating-actions]");
+          const summary = actions?.querySelector("[data-open-agent-summary]");
+          const stop = actions?.querySelector('[data-agent-action="stop"]');
+          const composer = document.querySelector("#composer");
+          return {
+            found: Boolean(actions && summary && stop && composer),
+            rightAligned: stop?.getBoundingClientRect().right >= summary?.getBoundingClientRect().right,
+            aboveComposer: actions?.getBoundingClientRect().bottom <= composer?.getBoundingClientRect().top,
+            squareIcon: Boolean(stop?.querySelector('rect[width="18"][height="18"][x="3"][y="3"]')),
+            composerStop: Boolean(composer?.querySelector('[data-agent-action="stop"]')),
+          };
+        });
+        if (!desktopStopAction.found || !desktopStopAction.rightAligned || !desktopStopAction.aboveComposer ||
+            !desktopStopAction.squareIcon || desktopStopAction.composerStop) {
+          throw new Error(`Desktop Stop action is not in the top shortcut row: ${JSON.stringify(desktopStopAction)}`);
+        }
+        if (captureDir) {
+          await page.evaluate(() => {
+            clearTimeout(state.growlTimer);
+            state.growlTimer = null;
+            els.growl?.classList.add("hidden");
+          });
+          await page.screenshot({ path: path.join(captureDir, "stop-action-conversation-desktop.png"), fullPage: false });
+        }
+
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.evaluate(() => {
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+        });
+        const mobileStopAction = await page.evaluate(() => ({
+          visible: Boolean(document.querySelector('[data-agent-floating-actions] [data-agent-action="stop"]')),
+          composerStop: Boolean(document.querySelector('#composer [data-agent-action="stop"]')),
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        }));
+        if (!mobileStopAction.visible || mobileStopAction.composerStop || mobileStopAction.overflow) {
+          throw new Error(`Mobile Stop action lost the shared top placement: ${JSON.stringify(mobileStopAction)}`);
+        }
+        if (captureDir) {
+          await page.screenshot({ path: path.join(captureDir, "stop-action-conversation-mobile.png"), fullPage: false });
+        }
+
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await page.evaluate((key) => {
+          const agent = findAgent(key);
+          const attachment = {
+            id: "stop-action-attachment-fixture",
+            kind: "file",
+            type: "file",
+            title: "implementation-notes.md",
+            path: "/tmp/tycho-smoke/implementation-notes.md",
+            content: "# Implementation notes\\n\\nAttachment-focused Stop action verification.",
+          };
+          agent.attachments = [...(agent.attachments || []).filter((item) => item.id !== attachment.id), attachment];
+          state.attachmentDetails[attachment.id] = attachment;
+          history.replaceState(null, "", routeHash({ type: "agentAttachment", key, attachmentId: attachment.id }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
+        const attachmentStopAction = await page.evaluate(() => ({
+          workspace: Boolean(document.querySelector(".agent-workspace-attachment.has-detail")),
+          visible: Boolean(document.querySelector('[data-agent-dock] [data-agent-floating-actions] [data-agent-action="stop"]')),
+          summary: Boolean(document.querySelector('[data-agent-dock] [data-open-agent-summary]')),
+          composerStop: Boolean(document.querySelector('#composer [data-agent-action="stop"]')),
+        }));
+        if (!attachmentStopAction.workspace || !attachmentStopAction.visible || !attachmentStopAction.summary ||
+            attachmentStopAction.composerStop) {
+          throw new Error(`Attachment Stop action lost the shared top placement: ${JSON.stringify(attachmentStopAction)}`);
+        }
+        if (captureDir) {
+          await page.screenshot({ path: path.join(captureDir, "stop-action-attachment-desktop.png"), fullPage: false });
+        }
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.evaluate((key) => {
+          const agent = findAgent(key);
+          agent.running = false;
+          agent.status = "succeeded";
+          history.replaceState(null, "", routeHash({ type: "agent", key }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
         const scheduleHeaderGeometry = await page.evaluate(() => {
           const scheduleTrigger = document.querySelector("[data-header-schedule-menu] > summary").getBoundingClientRect();
           const contextTrigger = document.querySelector("#header-more-button").getBoundingClientRect();
@@ -4125,11 +4257,15 @@ def write_smoke_script(path)
         }, agentKey);
         const stoppedAgentListIcon = await page.evaluate((key) => {
           const row = Array.from(document.querySelectorAll(".agent-row[data-open-agent]")).find((item) => item.dataset.openAgent === key);
-          const icon = row?.querySelector(".status-mark");
-          return { found: Boolean(icon), failClass: icon?.classList.contains("fail") };
+          const icon = row?.querySelector(":scope > .agent-status-icon");
+          return {
+            found: Boolean(icon),
+            checkIcon: Boolean(icon?.querySelector('path[d="M20 6 9 17l-5-5"]')),
+            label: icon?.getAttribute("aria-label"),
+          };
         }, agentKey);
-        if (!stoppedAgentListIcon.found || !stoppedAgentListIcon.failClass) {
-          throw new Error(`Stopped schedule agent-list icon is not red: ${JSON.stringify(stoppedAgentListIcon)}`);
+        if (!stoppedAgentListIcon.found || !stoppedAgentListIcon.checkIcon || stoppedAgentListIcon.label !== "Idle") {
+          throw new Error(`Idle agent-list icon did not retain the rebased status contract: ${JSON.stringify(stoppedAgentListIcon)}`);
         }
         await page.evaluate((key) => {
           scheduleForAgent(findAgent(key)).status = "scheduled";
@@ -5000,16 +5136,17 @@ def write_smoke_script(path)
           clearTimeout(state.timer);
           state.timer = null;
           const workspaceBefore = document.querySelector("[data-agent-workspace]");
-          const steadyActionBefore = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] [data-agent-action="stop"]`);
+          const steadyActionBefore = document.querySelector(`[data-agent-floating-actions] [data-agent-action="stop"][data-agent-key="${CSS.escape(key)}"]`);
           steadyActionBefore?.focus({ preventScroll: true });
           syncFocusedWorkspaceCatalog(parseRoute());
-          const steadyActionAfter = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] [data-agent-action="stop"]`);
+          const steadyActionAfter = document.querySelector(`[data-agent-floating-actions] [data-agent-action="stop"][data-agent-key="${CSS.escape(key)}"]`);
           const before = {
             statusIconLabel: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.getAttribute("aria-label"),
             statusIconTitle: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"] .agent-status-icon`)?.getAttribute("title"),
             statusIconName: agentStatusIconName("running"),
             visibleStatusText: document.querySelector(`[data-agent-live-status="${CSS.escape(key)}"]`)?.textContent.trim(),
-            action: document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"] [data-agent-action="stop"]`)?.textContent.trim(),
+            action: document.querySelector(`[data-agent-floating-actions] [data-agent-action="stop"][data-agent-key="${CSS.escape(key)}"]`)?.textContent.trim(),
+            actionIcon: document.querySelector(`[data-agent-floating-actions] [data-agent-action="stop"] .ui-icon rect`)?.getAttribute("width"),
             steadyActionPreserved: steadyActionAfter === steadyActionBefore,
             steadyActionFocused: document.activeElement === steadyActionBefore,
           };
@@ -5075,7 +5212,8 @@ def write_smoke_script(path)
             focusedStatusSyncContract.before.statusIconTitle !== "Running" ||
             focusedStatusSyncContract.before.statusIconName !== "sportShoe" ||
             focusedStatusSyncContract.before.visibleStatusText !== "" ||
-            focusedStatusSyncContract.before.action !== "Stop agent" ||
+            focusedStatusSyncContract.before.action !== "Stop" ||
+            focusedStatusSyncContract.before.actionIcon !== "18" ||
             !focusedStatusSyncContract.before.steadyActionPreserved ||
             !focusedStatusSyncContract.before.steadyActionFocused ||
             focusedStatusSyncContract.after.statusIconLabel !== "Succeeded" ||

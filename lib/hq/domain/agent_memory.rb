@@ -183,6 +183,20 @@ module HQ
       nil
     end
 
+    def user_message_with_metadata(expected)
+      read_events.reverse_each do |event|
+        next unless event["type"] == "user_message"
+        next unless metadata_matches?(event["metadata"], expected)
+
+        text = event["content"].to_s.strip
+        return message_with_attachment_context(text, event) unless text.empty?
+      end
+
+      nil
+    rescue StandardError
+      nil
+    end
+
     def append_system_prompt!(content, created_at: Time.now, prompt_role: nil)
       text = content.to_s
       return if text.empty?

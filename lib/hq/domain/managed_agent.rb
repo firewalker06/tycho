@@ -57,7 +57,7 @@ module HQ
 
     AgentRun = Struct.new(
       :started_at, :finished_at, :exit_code, :status, :log_path, :command, :session_id, :response_style_source,
-      :agent, :model, :log_start_offset, :run_id, :delegation_owner, :delegation_generation,
+      :agent, :model, :log_start_offset, :run_id, :run_scoped_status, :delegation_owner, :delegation_generation,
       keyword_init: true
     ) do
       def self.from_hash(hash)
@@ -77,6 +77,7 @@ module HQ
           model: hash["model"],
           log_start_offset: log_start_offset,
           run_id: hash["run_id"],
+          run_scoped_status: hash["run_scoped_status"] == true,
           delegation_owner: hash["delegation_owner"],
           delegation_generation: hash["delegation_generation"]
         )
@@ -97,6 +98,7 @@ module HQ
         result["model"] = model unless model.to_s.empty?
         result["log_start_offset"] = log_start_offset if log_start_offset.is_a?(Integer) && log_start_offset >= 0
         result["run_id"] = run_id unless run_id.to_s.empty?
+        result["run_scoped_status"] = true if run_scoped_status
         result["delegation_owner"] = delegation_owner unless delegation_owner.to_s.empty?
         result["delegation_generation"] = delegation_generation if delegation_generation.is_a?(Integer)
         result
@@ -139,7 +141,8 @@ module HQ
                 :finished_at, :pid, :last_exit_code, :log_path, :runs, :sandbox_mode, :agent, :messages, :skills,
                 :model, :reasoning_effort, :response_style, :session_id, :session_bootstrapped, :color_index, :summary,
                 :structured_result, :schedule_key, :cost_snapshot, :project_group, :delegation_parent, :archive_path,
-                :archived_at, :project_hidden_at_archive
+                :archived_at, :project_hidden_at_archive, :prompt_queue, :prompt_queue_claim,
+                :prompt_queue_dispatch_error
     attr_writer :summary, :structured_result, :cost_snapshot
 
     def usage_metrics_store=(store)
@@ -152,7 +155,8 @@ module HQ
                    model: nil, reasoning_effort: nil, response_style: nil, skills: nil, unread: false, session_id: nil,
                    session_bootstrapped: nil, color_index: nil, summary: nil, structured_result: nil, schedule_key: nil,
                    cost_snapshot: nil, total_run_count: nil, project_group: nil, delegation_parent: nil,
-                   archived: false, archive_path: nil, archived_at: nil, project_hidden_at_archive: nil)
+                   archived: false, archive_path: nil, archived_at: nil, project_hidden_at_archive: nil,
+                   prompt_queue: nil, prompt_queue_claim: nil, prompt_queue_dispatch_error: nil)
       @key = key
       @name = name
       @project_key = project_key
@@ -190,6 +194,9 @@ module HQ
       @archive_path = archive_path.to_s.empty? ? nil : archive_path.to_s
       @archived_at = archived_at
       @project_hidden_at_archive = project_hidden_at_archive unless project_hidden_at_archive.nil?
+      @prompt_queue = normalize_prompt_queue(prompt_queue)
+      @prompt_queue_claim = normalize_prompt_queue_claim(prompt_queue_claim)
+      @prompt_queue_dispatch_error = normalize_prompt_queue_dispatch_error(prompt_queue_dispatch_error)
     end
 
     def color_index=(value)
@@ -272,7 +279,10 @@ module HQ
         archived: hash["archived"],
         archive_path: hash["archive_path"],
         archived_at: parse_time(hash["archived_at"]),
-        project_hidden_at_archive: hash["project_hidden_at_archive"]
+        project_hidden_at_archive: hash["project_hidden_at_archive"],
+        prompt_queue: hash["prompt_queue"],
+        prompt_queue_claim: hash["prompt_queue_claim"],
+        prompt_queue_dispatch_error: hash["prompt_queue_dispatch_error"]
       )
     end
 
@@ -402,7 +412,100 @@ module HQ
       result["archive_path"] = @archive_path if archived? && @archive_path
       result["archived_at"] = @archived_at&.iso8601 if archived? && @archived_at
       result["project_hidden_at_archive"] = @project_hidden_at_archive unless @project_hidden_at_archive.nil?
+      result["prompt_queue"] = @prompt_queue unless @prompt_queue.empty?
+      result["prompt_queue_claim"] = @prompt_queue_claim if @prompt_queue_claim
+      result["prompt_queue_dispatch_error"] = @prompt_queue_dispatch_error if @prompt_queue_dispatch_error
       result
+    end
+
+    def enqueue_prompt!(prompt:, attachments: nil, accepted_at: Time.now, id: SecureRandom.uuid)
+      entry = {
+        "id" => id.to_s,
+        "prompt" => prompt.to_s.strip,
+        "attachments" => normalize_attachments(attachments) || [],
+        "accepted_at" => accepted_at.utc.iso8601(6)
+      }
+      raise ArgumentError, "Queued prompt is required" if entry["prompt"].empty?
+
+      @prompt_queue << entry
+      entry
+    end
+
+    def edit_queued_prompt!(id, prompt:, updated_at: Time.now)
+      entry = @prompt_queue.find { |candidate| candidate["id"] == id.to_s }
+      raise ArgumentError, "Unknown queued prompt: #{id}" unless entry
+
+      text = prompt.to_s.strip
+      raise ArgumentError, "Queued prompt is required" if text.empty?
+
+      entry["prompt"] = text
+      entry["updated_at"] = updated_at.utc.iso8601(6)
+      entry
+    end
+
+    def delete_queued_prompt!(id)
+      index = @prompt_queue.index { |candidate| candidate["id"] == id.to_s }
+      raise ArgumentError, "Unknown queued prompt: #{id}" unless index
+
+      @prompt_queue.delete_at(index)
+    end
+
+    def claim_pending_prompts!(claimed_at: Time.now)
+      return @prompt_queue_claim if @prompt_queue_claim
+      return nil if @prompt_queue.empty?
+
+      @prompt_queue_claim = {
+        "id" => SecureRandom.uuid,
+        "entries" => @prompt_queue,
+        "claimed_at" => claimed_at.utc.iso8601(6),
+        "baseline_run_count" => run_count,
+        "message_appended" => false
+      }
+      @prompt_queue = []
+      @prompt_queue_dispatch_error = nil
+      @prompt_queue_claim
+    end
+
+    def prepare_prompt_queue_claim!
+      claim = @prompt_queue_claim
+      return false unless claim
+      return false if claim["message_appended"]
+
+      entries = Array(claim["entries"])
+      prompt = entries.map { |entry| entry["prompt"].to_s.strip }.reject(&:empty?).join("\n\n---\n\n")
+      attachments = entries.flat_map { |entry| Array(entry["attachments"]) }
+      add_user_message!(prompt, attachments:, metadata: { "prompt_queue_claim_id" => claim["id"] })
+      claim["message_appended"] = true
+      true
+    end
+
+    def complete_prompt_queue_claim!
+      @prompt_queue_claim = nil
+      @prompt_queue_dispatch_error = nil
+    end
+
+    def fail_prompt_queue_dispatch!(message, failed_at: Time.now)
+      @prompt_queue_dispatch_error = {
+        "message" => message.to_s.strip,
+        "failed_at" => failed_at.utc.iso8601(6),
+        "retryable" => true
+      }
+    end
+
+    def clear_prompt_queue_dispatch_error!
+      @prompt_queue_dispatch_error = nil
+    end
+
+    def queued_prompts
+      claimed = Array(@prompt_queue_claim&.fetch("entries", nil)).map do |entry|
+        entry.merge("state" => @prompt_queue_dispatch_error ? "failed" : "dispatching")
+      end
+      claimed + @prompt_queue.map { |entry| entry.merge("state" => "queued") }
+    end
+
+    def prompt_queue_dispatchable?
+      !running? && latest_inquiry.nil? && last_run &&
+        ((@prompt_queue_claim && @prompt_queue_dispatch_error.nil?) || (!@prompt_queue.empty? && !@prompt_queue_claim))
     end
 
     def unread?
@@ -494,7 +597,8 @@ module HQ
       @last_exit_code = nil
       @stop_requested_at = nil
       mark_read!
-      status_path = status_file_path
+      run_id = SecureRandom.uuid
+      status_path = run_status_file_path(run_id)
       FileUtils.rm_f(status_path)
       FileUtils.rm_f(last_message_file_path)
       FileUtils.rm_f(invalid_structured_output_file_path)
@@ -523,7 +627,8 @@ module HQ
         agent: @agent,
         model: @model,
         log_start_offset: log_start_offset,
-        run_id: SecureRandom.uuid,
+        run_id: run_id,
+        run_scoped_status: true,
         delegation_owner: delegation_stamp&.fetch("owner", nil),
         delegation_generation: delegation_stamp&.fetch("generation", nil)
       )
@@ -722,7 +827,8 @@ module HQ
         "#{pull_request_catalog_path}.bak",
         "#{pull_request_catalog_path}.lock",
         invalid_structured_output_file_path,
-        status_file_path,
+        *status_file_paths,
+        *@runs.filter_map { |run| run_status_file_path(run.run_id) unless run.run_id.to_s.empty? },
         last_message_file_path,
         legacy_status_file_path,
         legacy_last_message_file_path
@@ -1150,11 +1256,24 @@ module HQ
     end
 
     def status_file_path
-      derived_log_path("status")
+      return run_status_file_path(last_run.run_id) unless last_run&.run_id.to_s.empty?
+
+      unscoped_status_file_path
     end
 
     def status_file_paths
-      [status_file_path, legacy_status_file_path].uniq
+      return [run_status_file_path(last_run.run_id)] unless last_run&.run_id.to_s.empty?
+
+      [unscoped_status_file_path, legacy_status_file_path].uniq
+    end
+
+    def run_status_file_path(run_id)
+      token = Digest::SHA256.hexdigest(run_id.to_s)[0, 24]
+      derived_log_path("run-#{token}.status")
+    end
+
+    def unscoped_status_file_path
+      derived_log_path("status")
     end
 
     def legacy_status_file_path
@@ -1276,6 +1395,11 @@ module HQ
         monitor.join(0.5)
       end
       path = status_file_paths.find { |candidate| valid_status_file?(candidate) }
+      if !path && last_run && !last_run.run_scoped_status
+        path = [unscoped_status_file_path, legacy_status_file_path].find do |candidate|
+          valid_status_file?(candidate)
+        end
+      end
       return nil unless path
 
       Integer(File.read(path).strip, 10)
@@ -1649,6 +1773,55 @@ module HQ
       result_normalizer.normalize_attachments(value)
     end
 
+    def normalize_prompt_queue(value)
+      Array(value).filter_map { |entry| normalize_prompt_queue_entry(entry) }
+    end
+
+    def normalize_prompt_queue_claim(value)
+      return nil unless value.is_a?(Hash)
+
+      id = value["id"].to_s.strip
+      entries = normalize_prompt_queue(value["entries"])
+      return nil if id.empty? || entries.empty?
+
+      {
+        "id" => id,
+        "entries" => entries,
+        "claimed_at" => value["claimed_at"].to_s,
+        "baseline_run_count" => value["baseline_run_count"].to_i,
+        "message_appended" => value["message_appended"] == true
+      }
+    end
+
+    def normalize_prompt_queue_dispatch_error(value)
+      return nil unless value.is_a?(Hash)
+
+      message = value["message"].to_s.strip
+      return nil if message.empty?
+
+      {
+        "message" => message,
+        "failed_at" => value["failed_at"].to_s,
+        "retryable" => value["retryable"] != false
+      }
+    end
+
+    def normalize_prompt_queue_entry(value)
+      return nil unless value.is_a?(Hash)
+
+      id = value["id"].to_s.strip
+      prompt = value["prompt"].to_s.strip
+      return nil if id.empty? || prompt.empty?
+
+      {
+        "id" => id,
+        "prompt" => prompt,
+        "attachments" => normalize_attachments(value["attachments"]) || [],
+        "accepted_at" => value["accepted_at"].to_s,
+        "updated_at" => value["updated_at"].to_s.empty? ? nil : value["updated_at"].to_s
+      }.compact
+    end
+
     def normalize_attachment(value)
       result_normalizer.normalize_attachment(value)
     end
@@ -1758,7 +1931,14 @@ module HQ
     end
 
     def prompt_for_execution(response_style: resolved_response_style, include_hidden_guidance: true)
-      base_prompt = unless native_resume?
+      claimed_prompt = if @prompt_queue_claim&.fetch("message_appended", false)
+                         memory_store.user_message_with_metadata(
+                           "prompt_queue_claim_id" => @prompt_queue_claim["id"]
+                         )
+                       end
+      base_prompt = if !claimed_prompt.to_s.strip.empty?
+                      claimed_prompt
+                    elsif !native_resume?
                       composed_prompt
                     else
                       threshold = last_run&.finished_at || @finished_at || @started_at

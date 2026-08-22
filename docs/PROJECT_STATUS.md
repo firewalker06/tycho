@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-08-20
+2026-08-21
 
 ## Strategic Direction
 
@@ -77,6 +77,7 @@ Key references:
 | Remote UI deployment coherence | Snapshot all browser assets and their shared hash when `tycho serve` starts; require a daemon restart to load source updates | Prevent an old Ruby API from serving a newer on-disk JavaScript client after a pull, which can break push subscription renewal and other cross-boundary flows |
 | Remote UI agent activity | Keep a server-owned in-memory activity snapshot updated by lifecycle mutations and the existing notification reconciliation pass; poll its compact read-only endpoint independently from page refreshes | Logo unread counts and agent switching stay current while forms pause page polling, without adding another server loop or letting slower catalog responses overwrite newer activity |
 | Remote UI linked-agent navigation | Expose direct parent/child links beside composer attachments and mark linked sessions in the quick agent switcher; clicking the link symbol or pressing Tab drills into the selected agent's direct links | Delegation topology stays reachable after the conversation's relationship card scrolls out of view without adding another route or duplicating relationship state |
+| Running-agent prompt queue | Persist accepted queue entries and one durable claim in each managed-agent record; claim and dispatch under the existing agent-store lock, retain prepared claims on start failure, and let later accepted entries form the next batch. Remote UI keeps the composer enabled, renders client-ID-backed optimistic entries from local storage, and places Stop in the shared top action row. | Server acceptance order survives reloads, multiple clients cannot double-claim work, retry cannot duplicate the prepared user message, unresolved inquiries remain authoritative blockers, and rapid queue submissions stay visible and usable before network reconciliation. |
 | Remote multiserver resources | Keep one UI-serving broker, aggregate only compact Agent and Project resources through a disk-backed stale-while-revalidate catalog, and require explicit server identity for details and mutations | Combined lists stay responsive across peer failures and broker restarts; only a validated full snapshot may remove cached resources, while schedules, setup, GitHub, push, restart, and other server-level behavior remain local |
 | Project workspace browsing | Keep canonical path resolution, sensitive/generated-file policy, bounded listing, and text preview in `ProjectWorkspace`; expose only relative paths through project-scoped read-only endpoints | Remote and multiserver browsing must not leak host paths or let client routing bypass traversal, symlink, VCS, credential, binary, or size controls |
 | Remote credential ownership | Bind one bearer credential to each stable remote server key and verified scheme/host/effective-port origin; keep Tycho-managed values in atomic mode-`0600` `~/.tycho/config/remote_credentials.json`, with explicit per-server `token_env` overrides | CLI and broker share one resolver, multiple peers cannot select credentials by incidental names, origin changes require explicit recovery, and browser promotion removes its copy only after verified persistence |
@@ -102,7 +103,14 @@ cancellation, explicit trusted parent declarations, and ancestor-operation rejec
 Remote UI now keeps compact agent activity live independently from
 page polling, preserves focused work, and adds direct navigation across run
 summaries, attachments, and linked agents from both the composer and quick
-agent switcher.
+agent switcher. Running agents now accept ordinary Remote UI prompts into a
+synchronized, editable server-side queue. The composer switches immediately
+into queue mode without blocking on submission, shows locally persisted
+optimistic entries until the server accepts their stable client IDs, and keeps
+Stop in the shared top action row across conversation and attachment layouts.
+Terminal runs claim pending entries as one ordered follow-up prompt, while
+inquiries and retryable start failures retain the queue without silently
+advancing the conversation.
 
 ## Roadmap
 
@@ -215,6 +223,7 @@ agent switcher.
 - [x] Add durable managed-agent delegation and terminal parent callbacks
 - [x] Keep agent activity live during focused Remote UI workflows
 - [x] Add verified provenance and ancestor-operation rejection for delegated agents
+- [x] Add persistent, multi-client prompt queueing for running agents
 
 ## Features Candidates
 

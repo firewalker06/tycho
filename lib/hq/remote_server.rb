@@ -426,6 +426,11 @@ module HQ
         if method == "POST" && tail.length == 3 && tail.first == "inquiries" && tail[2] == "answer"
           return ok(service.answer_inquiry(key, tail[1], body, actor:))
         end
+        if tail.length == 2 && tail.first == "prompt-queue"
+          return ok(service.edit_queued_prompt(key, tail[1], body)) if %w[PATCH PUT].include?(method)
+          return ok(service.delete_queued_prompt(key, tail[1])) if method == "DELETE"
+        end
+        return ok(service.retry_prompt_queue(key)) if method == "POST" && tail == ["prompt-queue", "retry"]
         return ok(service.submit_prompt(key, body, actor:)) if method == "POST" && [%w[messages], %w[prompt]].include?(tail)
         return ok(service.start_agent(key, body, actor:)) if method == "POST" && tail == ["start"]
         return ok(service.stop_agent(key)) if method == "POST" && tail == ["stop"]
@@ -2836,7 +2841,30 @@ module HQ
       attachments = import_prompt_attachments(target, attrs)
       text = prompt_text(attrs, attachments:)
       text = [text, pull_request_context].reject(&:empty?).join("\n")
+      if target.running?
+        begin
+          target, entry = @agent_store.enqueue_prompt!(
+            target.key,
+            prompt: text,
+            attachments:,
+            id: prompt_client_request_id(attrs)
+          )
+          @agent_activity_snapshot.upsert!(target)
+          return {
+            queued: true,
+            queue_entry: prompt_queue_entry_payload(target, entry),
+            agent: agent_payload(target),
+            conversation: conversation(target.key)
+          }
+        rescue ArgumentError => e
+          raise unless e.message == "Agent is no longer running"
+
+          target = find_agent!(key)
+        end
+      end
+
       @agent_store.accept_prompt_from!(target, actor:)
+      target.cancel_pending_inquiry! if target.latest_inquiry
       target.add_user_message!(
         text,
         attachments:,
@@ -2848,6 +2876,34 @@ module HQ
       { agent: agent_payload(target), conversation: conversation(target.key) }
     rescue DelegationStore::Error => e
       raise Error.new(e.message, status: actor&.parent? ? 403 : 409)
+    end
+
+    def edit_queued_prompt(key, entry_id, attrs)
+      prompt = required_text(attrs, "prompt", fallback: "content")
+      target, entry = @agent_store.edit_queued_prompt!(key, entry_id, prompt:)
+      @agent_activity_snapshot.upsert!(target)
+      { queue_entry: prompt_queue_entry_payload(target, entry), agent: agent_payload(target) }
+    rescue ArgumentError => e
+      status = e.message.start_with?("Unknown queued prompt") ? 404 : 409
+      raise Error.new(e.message, status:)
+    end
+
+    def delete_queued_prompt(key, entry_id)
+      target, entry = @agent_store.delete_queued_prompt!(key, entry_id)
+      Array(entry["attachments"]).each { |attachment| cleanup_uploaded_attachment_file(target, attachment) }
+      @agent_activity_snapshot.upsert!(target)
+      { deleted: prompt_queue_entry_payload(target, entry), agent: agent_payload(target) }
+    rescue ArgumentError => e
+      status = e.message.start_with?("Unknown queued prompt") ? 404 : 409
+      raise Error.new(e.message, status:)
+    end
+
+    def retry_prompt_queue(key)
+      target = @agent_store.retry_prompt_queue!(key)
+      @agent_activity_snapshot.upsert!(target)
+      { agent: agent_payload(target), conversation: conversation(target.key) }
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
     end
 
     def answer_inquiry(key, inquiry_id, attrs = {}, actor: DelegationActor.user_actor, **attribute_keywords)
@@ -4162,6 +4218,7 @@ module HQ
         summary: agent.last_summary,
         cost_snapshot: agent.cost_snapshot,
         latest_inquiry: inquiry_payload(agent),
+        prompt_queue: prompt_queue_payload(agent),
         attachments: attachment_payloads(agent),
         skills: agent.skills,
         skill_trigger: SkillDiscovery.trigger_for(agent.agent),
@@ -4200,6 +4257,8 @@ module HQ
         last_exit_code: agent.last_exit_code,
         last_result: agent.last_result_label,
         summary: agent.last_summary,
+        prompt_queue_count: agent.queued_prompts.length,
+        prompt_queue_dispatch_error: agent.prompt_queue_dispatch_error,
         revision: agent_revision(agent),
         archived: agent.archived?,
         archived_at: agent.archived_at&.iso8601,
@@ -4599,6 +4658,34 @@ module HQ
       payload["run_started_at"] = agent.last_run&.started_at&.iso8601 || agent.started_at&.iso8601
       payload["run_finished_at"] = agent.last_run&.finished_at&.iso8601 || agent.finished_at&.iso8601
       payload
+    end
+
+    def prompt_queue_payload(agent)
+      {
+        "entries" => agent.queued_prompts.map { |entry| prompt_queue_entry_payload(agent, entry) },
+        "dispatch_error" => agent.prompt_queue_dispatch_error,
+        "blocked_by_inquiry" => !agent.latest_inquiry.nil?
+      }
+    end
+
+    def prompt_client_request_id(attrs)
+      value = attrs["client_request_id"].to_s.strip
+      return nil unless value.match?(/\Aclient-[a-zA-Z0-9-]{1,100}\z/)
+
+      value
+    end
+
+    def prompt_queue_entry_payload(_agent, entry)
+      {
+        "id" => entry["id"],
+        "prompt" => entry["prompt"],
+        "accepted_at" => entry["accepted_at"],
+        "updated_at" => entry["updated_at"],
+        "state" => entry["state"] || "queued",
+        "attachments" => Array(entry["attachments"]).map do |attachment|
+          attachment.slice("id", "type", "kind", "title", "mime_type", "size_bytes", "created_at")
+        end
+      }.compact
     end
 
     def deep_dup_hash(value)
