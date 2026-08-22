@@ -2843,7 +2843,12 @@ module HQ
       text = [text, pull_request_context].reject(&:empty?).join("\n")
       if target.running?
         begin
-          target, entry = @agent_store.enqueue_prompt!(target.key, prompt: text, attachments:)
+          target, entry = @agent_store.enqueue_prompt!(
+            target.key,
+            prompt: text,
+            attachments:,
+            id: prompt_client_request_id(attrs)
+          )
           @agent_activity_snapshot.upsert!(target)
           return {
             queued: true,
@@ -4661,6 +4666,13 @@ module HQ
         "dispatch_error" => agent.prompt_queue_dispatch_error,
         "blocked_by_inquiry" => !agent.latest_inquiry.nil?
       }
+    end
+
+    def prompt_client_request_id(attrs)
+      value = attrs["client_request_id"].to_s.strip
+      return nil unless value.match?(/\Aclient-[a-zA-Z0-9-]{1,100}\z/)
+
+      value
     end
 
     def prompt_queue_entry_payload(_agent, entry)

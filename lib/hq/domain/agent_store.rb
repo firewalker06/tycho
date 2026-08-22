@@ -276,13 +276,15 @@ module HQ
       end
     end
 
-    def enqueue_prompt!(key, prompt:, attachments: nil, accepted_at: nil)
+    def enqueue_prompt!(key, prompt:, attachments: nil, accepted_at: nil, id: nil)
       mutate do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
         raise ArgumentError, "Agent is no longer running" unless target.running?
 
-        [target, target.enqueue_prompt!(prompt:, attachments:, accepted_at: accepted_at || Time.now)]
+        attributes = { prompt:, attachments:, accepted_at: accepted_at || Time.now }
+        attributes[:id] = id if id
+        [target, target.enqueue_prompt!(**attributes)]
       end
     end
 

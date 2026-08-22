@@ -5380,9 +5380,11 @@ module RemoteServerTest
            "expected composers to expose a discoverable Speech mode control")
     assert(js[:body].include?("aria-keyshortcuts="),
            "expected Speech mode control to expose its shortcut to assistive technology")
-    assert(js[:body].include?('type="submit" data-agent-key="${escapeAttr(agent.key)}" ${sending ? "disabled" : ""}>Queue</button>') &&
-           js[:body].include?('data-agent-action="stop" data-agent-key="${escapeAttr(agent.key)}">Stop</button>'),
-           "expected running agents to expose Queue while retaining Stop")
+    assert(js[:body].include?('type="submit" data-agent-key="${escapeAttr(agent.key)}">Queue</button>') &&
+           js[:body].include?('class="agent-floating-pill stop-fab"') &&
+           js[:body].include?('data-agent-action="stop" data-agent-key="${escapeAttr(agent.key)}"') &&
+           js[:body].include?('iconSvg("square")'),
+           "expected running agents to expose Queue in the composer and Stop in the top action row")
     assert(js[:body].include?("function renderPromptQueue") &&
            js[:body].include?('data-state-key="agent-prompt-queue:${escapeAttr(agent.key)}"'),
            "expected Agent detail to render a persistent expandable prompt queue")
@@ -5505,7 +5507,7 @@ module RemoteServerTest
            js[:body].include?("function reconcileViewAroundEditor"),
            "expected polling renders to reconcile around stable Conversation and inquiry forms")
     assert(js[:body].include?("replaceSiblingsAroundAnchor") &&
-           js[:body].include?('data-agent-running="${agentIsRunning(agent) ? "true" : "false"}"'),
+           js[:body].include?('data-agent-running="${running ? "true" : "false"}"'),
            "expected live editor reconciliation to preserve controls without hiding real agent state transitions")
     assert(js[:body].include?("scrollContainers"),
            "expected polling snapshots to preserve scroll positions for restored controls")
@@ -6033,12 +6035,17 @@ module RemoteServerTest
     assert(js[:body].include?("restoreFormDrafts();"),
            "expected Remote UI to restore form drafts after rendering")
     assert(js[:body].include?("function setFormPending"),
-           "expected Remote UI to disable submitted forms while requests are pending")
+           "expected non-composer Remote UI forms to disable controls while requests are pending")
     assert(js[:body].include?("pendingComposerKeys"),
            "expected Remote UI chat composer sending state to survive optimistic conversation re-renders")
-    assert(js[:body].include?('input.placeholder = "sending...";'),
-           "expected Remote UI chat composer to show a sending placeholder while prompt submission is pending")
-    assert(js[:body].include?("setComposerSending(form, true);\n    clearFormDraft(form);") &&
+    assert(js[:body].include?("agentComposerRunning(findAgent(key))") &&
+           js[:body].include?('type="submit" data-agent-key="${escapeAttr(agent.key)}">Queue</button>'),
+           "expected an in-flight first prompt to switch immediately to an enabled queue composer")
+    assert(js[:body].include?("OPTIMISTIC_PROMPT_QUEUE_STORAGE_PREFIX") &&
+           js[:body].include?("addOptimisticPromptQueueEntry") &&
+           js[:body].include?("reconcileOptimisticPromptQueue(agent)"),
+           "expected optimistic queued prompts to persist locally until server reconciliation")
+    assert(js[:body].include?("if (!queueing) setComposerSending(form, true);") &&
            js[:body].include?('const pendingMessageId = queueing ? "" : addPendingConversationMessage'),
            "expected Remote UI to clear ordinary prompts before optimistic rendering and omit queued prompts from conversation")
     assert(js[:body].include?("pendingConversationMessages"),

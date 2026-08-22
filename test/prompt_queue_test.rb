@@ -34,6 +34,7 @@ module PromptQueueTest
           service.submit_prompt(
             agent.key,
             "prompt" => "queued #{index + 1}",
+            "client_request_id" => "client-queue-test-#{index + 1}",
             "start" => true,
             "attachments" => index.zero? ? [{
               "filename" => "notes.txt",
@@ -47,6 +48,8 @@ module PromptQueueTest
       assert(responses.all? { |response| response[:queued] }, "expected running submissions to enqueue")
       persisted = second.agent(agent.key).dig(:prompt_queue, "entries")
       assert(persisted.length == 4, "expected all clients to see four persisted queue entries")
+      assert(persisted.map { |entry| entry.fetch("id") }.sort == 4.times.map { |index| "client-queue-test-#{index + 1}" },
+             "expected client queue IDs to survive server acceptance for optimistic reconciliation")
       accepted = persisted.map { |entry| entry.fetch("accepted_at") }
       assert(accepted == accepted.sort, "expected server acceptance order to be stable")
       assert(persisted.flat_map { |entry| entry.fetch("attachments") }.any? { |item| item["title"] == "notes.txt" },
