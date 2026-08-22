@@ -4474,9 +4474,16 @@ module RemoteServerTest
            js[:body].include?('return "pause"') &&
            js[:body].include?('return "check"') &&
            js[:body].include?('return "ban"') &&
+           js[:body].include?('case "awaiting-input":') &&
+           js[:body].include?('case "input-required":') &&
+           js[:body].include?('case "input_required":') &&
+           js[:body].include?('return "badgeQuestionMark"') &&
            js[:body].include?('<path d="M20 6 9 17l-5-5"></path>') &&
            js[:body].include?('<path d="m4.9 4.9 14.2 14.2"></path>') &&
            js[:body].include?('case "no_action_needed":') &&
+           js[:body].include?('case "partial":') &&
+           js[:body].include?('case "idle":') &&
+           js[:body].include?('normalizedStatus === "unread" || inquiryStatus ? "need"') &&
            js[:body].include?('role="img" aria-label="${escapeAttr(label)}"') &&
            js[:body].include?("agentStatusBadge(agent") &&
            !helpers_js[:body].include?("✅".b) &&
