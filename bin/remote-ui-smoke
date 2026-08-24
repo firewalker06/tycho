@@ -4581,6 +4581,17 @@ def write_smoke_script(path)
         }
         await page.click(".mobile-inquiry > summary");
         await page.waitForSelector("#inquiry-form", { state: "visible", timeout: 10_000 });
+        const expandedInquiryHeader = await page.evaluate(() => ({
+          banners: document.querySelectorAll(".mobile-inquiry > #inquiry-form .inquiry-banner").length,
+          fullScreenInHeader: Boolean(document.querySelector(".mobile-inquiry > summary [data-toggle-inquiry-full-screen]")),
+          title: document.querySelector(".mobile-inquiry > summary strong")?.textContent,
+          subtitle: document.querySelector(".mobile-inquiry > summary .mobile-inquiry-summary-copy > span")?.textContent,
+        }));
+        if (expandedInquiryHeader.banners !== 0 || !expandedInquiryHeader.fullScreenInHeader ||
+            expandedInquiryHeader.title !== "Answer required" ||
+            expandedInquiryHeader.subtitle !== "Choose the next step.") {
+          throw new Error(`Expanded mobile inquiry duplicated or changed its header: ${JSON.stringify(expandedInquiryHeader)}`);
+        }
         await page.evaluate(() => {
           state.renderedViewHtml = "";
           render();
