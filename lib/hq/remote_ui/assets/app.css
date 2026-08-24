@@ -6383,7 +6383,7 @@ body:has(.inquiry-form-full-screen) {
 
 .mobile-inquiry > summary {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--border));
@@ -6423,6 +6423,12 @@ body:has(.inquiry-form-full-screen) {
   place-items: center;
   color: var(--muted);
   transition: transform 120ms ease;
+}
+
+.mobile-inquiry > summary .mobile-inquiry-full-screen-button {
+  position: static;
+  width: 36px;
+  min-height: 36px;
 }
 
 .mobile-inquiry[open] > summary {

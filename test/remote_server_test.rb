@@ -4698,8 +4698,11 @@ module RemoteServerTest
     assert(js[:body].include?('class="mobile-inquiry"') &&
            js[:body].include?('data-state-key="mobile-inquiry:') &&
            js[:body].include?("Answer required") &&
+           js[:body].include?('${compact ? "" : inquiryBanner}') &&
+           js[:body].include?('${fullScreenButton}') &&
+           css[:body].include?(".mobile-inquiry > summary .mobile-inquiry-full-screen-button") &&
            css[:body].include?(".mobile-inquiry > summary"),
-           "expected mobile inquiry answers to start in a collapsible disclosure")
+           "expected mobile inquiry answers to use one collapsible header with the full-screen action")
     assert(js[:body].include?("Leave feedback") &&
            js[:body].include?('name="feedback"') &&
            js[:body].include?("const feedback = String(new FormData(form).get(\"feedback\")"),
