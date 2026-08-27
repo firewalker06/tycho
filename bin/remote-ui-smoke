@@ -41,6 +41,7 @@ def write_fixture(dir)
     projects:
       - key: web
         name: Web
+        group: Personal
         path: #{workspace.inspect}
         agent: codex
         pr_url: https://github.com/example/web/pull/123
@@ -2337,6 +2338,22 @@ def write_smoke_script(path)
           }));
           throw new Error(`Unscheduled agent missing from combined list: ${JSON.stringify(agentState)} / ${error.message}`);
         }
+        await agentsRegressionPage.fill("#agent-filter", "unscheduled");
+        if (await agentsRegressionPage.locator(".agent-row[data-open-agent]").count() !== 1 ||
+            await agentsRegressionPage.locator(".agent-name-label .agent-search-match").innerText() !== "Unscheduled") {
+          throw new Error("Agents filter did not isolate and highlight an agent-name match");
+        }
+        await agentsRegressionPage.fill("#agent-filter", "web");
+        if (await agentsRegressionPage.locator(".agent-group-project-title .agent-search-match").count() !== 1 ||
+            await agentsRegressionPage.locator(".agent-group-project-title .agent-search-match").innerText() !== "Web") {
+          throw new Error("Agents filter did not highlight a project-name match");
+        }
+        await agentsRegressionPage.fill("#agent-filter", "personal");
+        if (await agentsRegressionPage.locator(".agent-row[data-open-agent]").count() < 2 ||
+            await agentsRegressionPage.locator(".agent-search-match").count() !== 0) {
+          throw new Error("Agents filter exposed an invisible group-name match");
+        }
+        await agentsRegressionPage.fill("#agent-filter", "");
         await agentsRegressionPage.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await agentsRegressionPage.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
         await agentsRegressionPage.click("#header-mark");
@@ -2355,8 +2372,18 @@ def write_smoke_script(path)
         const switcherSearchNodeStable = await agentsRegressionPage.locator("#unread-agent-search").evaluate((input) => input.__tychoSearchNodeProbe === true);
         if (!switcherSearchNodeStable) throw new Error("Agent switcher search replaced its focused input while typing");
         await agentsRegressionPage.waitForSelector(`[data-open-agent='${unscheduledAgentKey}']`, { state: "visible", timeout: 10_000 });
-        if (await agentsRegressionPage.locator(".switcher-agent-row").count() !== 1) {
-          throw new Error("Agent switcher search did not filter the agent list");
+        if (await agentsRegressionPage.locator(".switcher-agent-row").count() !== 1 ||
+            await agentsRegressionPage.locator(".switcher-agent-row .agent-name-label .agent-search-match").innerText() !== "Unscheduled") {
+          throw new Error("Agent switcher search did not filter and highlight the agent-name match");
+        }
+        await agentsRegressionPage.fill("#unread-agent-search", "web");
+        if (await agentsRegressionPage.locator(".switcher-agent-row .row-title > span .agent-search-match").count() !== switcherAgentCount) {
+          throw new Error("Agent switcher search did not highlight project-name matches");
+        }
+        await agentsRegressionPage.fill("#unread-agent-search", "personal");
+        if (await agentsRegressionPage.locator(".switcher-agent-row").count() !== switcherAgentCount ||
+            await agentsRegressionPage.locator(".switcher-agent-row .agent-search-match").count() !== 0) {
+          throw new Error("Agent switcher exposed an invisible group-name match");
         }
         await agentsRegressionPage.press("#unread-agent-search", "Escape");
         if (await agentsRegressionPage.locator("#unread-agent-search").inputValue() !== "" ||
