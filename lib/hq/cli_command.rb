@@ -20,6 +20,7 @@ require_relative "domain/agent_store"
 require_relative "domain/delegation_actor"
 require_relative "domain/agent_archive_store"
 require_relative "domain/usage_metrics"
+require_relative "domain/server_identity"
 
 module HQ
   module CLICommand
@@ -308,6 +309,30 @@ module HQ
         prefix.register "archive", AgentArchive
         prefix.register "finalize", AgentFinalize
         prefix.register "clone", AgentClone
+      end
+
+      class Memory < Dry::CLI::Command
+        desc "Retrieve memory handoffs"
+
+        def call(**)
+          exit CLICommand.usage("Missing memory command", err: err)
+        end
+      end
+
+      class MemoryHandoffs < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Print successful Second Brain handoffs with Tycho provenance"
+        remote_options
+        usage_template "memory handoffs [--server SERVER_KEY] [--json]"
+
+        def call(**opts)
+          exit CLICommand.memory_handoffs(opts, out: out, err: err)
+        end
+      end
+
+      register "memory", Memory do |prefix|
+        prefix.register "handoffs", MemoryHandoffs
       end
 
       class Server < Dry::CLI::Command
@@ -1488,6 +1513,39 @@ module HQ
       failure("Failed to get agent status: #{e.message}", err: err)
     end
 
+    def memory_handoffs(opts = {}, out: $stdout, err: $stderr)
+      return remote_memory_handoffs(opts, out:, err:) if remote_requested?(opts)
+
+      projects = registry_projects.each_with_object({}) do |project, result|
+        result[project.key] = project.group if %w[Personal Cookpad].include?(project.group.to_s)
+      end
+      runs = load_all_agents.flat_map do |agent|
+        next [] unless projects.key?(agent.project_key)
+
+        agent.runs.filter_map do |run|
+          handoff = MemoryHandoff.normalize(run.metadata.is_a?(Hash) ? run.metadata["memory_handoff"] : nil)
+          next unless run.run_id.to_s.strip != "" && run.finished_at && run.status == "success" && handoff
+
+          {
+            run_id: run.run_id,
+            finished_at: run.finished_at.iso8601,
+            status: run.status,
+            project: agent.project_key,
+            metadata: { memory_handoff: handoff }
+          }
+        end
+      end
+      payload = {
+        server: ServerIdentity.load.fetch("id"),
+        projects: projects,
+        runs: runs.sort_by { |run| [run[:finished_at], run[:run_id]] }
+      }
+      print_memory_handoffs(payload, json: opts[:json], out:)
+      0
+    rescue StandardError => e
+      failure("Failed to get memory handoffs: #{e.message}", err: err)
+    end
+
     def run_agent(agent_key, opts = {}, out: $stdout, err: $stderr)
       opts = opts.merge(actor: delegation_actor(opts[:parent_agent]))
       return remote_agent_action(agent_key, "start", opts, out:, err:) if remote_requested?(opts)
@@ -1827,6 +1885,14 @@ module HQ
       failure(e.message, err: err)
     end
 
+    def remote_memory_handoffs(opts, out:, err:)
+      payload = remote_client(opts[:server]).request("GET", "/memory-handoffs")
+      print_memory_handoffs(payload, json: opts[:json], out:)
+      0
+    rescue RemoteCLIClient::Error, KeyError => e
+      failure(e.message, err: err)
+    end
+
     def remote_agent_action(agent_key, action, opts, out:, err:)
       client = remote_client(opts[:server])
       current = client.request("GET", remote_resource_path("agents", agent_key)).fetch("agent")
@@ -2046,6 +2112,23 @@ module HQ
       ]
       rows.insert(5, ["Archived at", display_timestamp(value["archived_at"])]) if value["archived"]
       out.puts detail_table(rows)
+    end
+
+    def print_memory_handoffs(payload, json:, out:)
+      return out.puts(JSON.pretty_generate(payload)) if json
+
+      value = payload.transform_keys(&:to_s)
+      runs = Array(value["runs"])
+      out.puts "Server: #{value["server"]}"
+      out.puts "No memory handoffs found." if runs.empty?
+      return if runs.empty?
+
+      rows = runs.map do |run|
+        handoff = run["metadata"] || run[:metadata] || {}
+        handoff = handoff["memory_handoff"] || handoff[:memory_handoff] || {}
+        [run["run_id"] || run[:run_id], run["finished_at"] || run[:finished_at], run["project"] || run[:project], handoff["outcome"] || handoff[:outcome]]
+      end
+      out.puts agent_table(%w[Run Finished Project Outcome], rows)
     end
 
     def print_started_agent(payload, json:, out:)

@@ -40,6 +40,7 @@ require_relative "domain/response_style_policy"
 require_relative "domain/remote_credential_store"
 require_relative "domain/schedule_daemon_supervisor"
 require_relative "domain/scheduler"
+require_relative "domain/server_identity"
 require_relative "domain/skill_discovery"
 require_relative "domain/skill_installer"
 require_relative "domain/onboarding"
@@ -382,6 +383,7 @@ module HQ
         return created(service.post_pull_request_review(id, body)) if method == "POST" && tail == ["reviews"]
       end
       return ok(service.search_index) if method == "GET" && parts == ["search"]
+      return ok(service.memory_handoffs) if method == "GET" && parts == ["memory-handoffs"]
       return accepted(schedule_restart!, headers: RESTART_CACHE_RESET_HEADERS) if method == "POST" && parts == ["server", "restart"]
       return ok(service.push_config) if method == "GET" && parts == ["push", "config"]
       return ok(service.push_status(body)) if method == "POST" && parts == ["push", "status"]
@@ -1790,6 +1792,37 @@ module HQ
 
     def agent(key)
       agent_payload(find_agent_reference!(key))
+    end
+
+    # A compact, source-shaped feed for Second Brain reconciliation. The group
+    # map is deliberately live configuration, while run provenance stays in
+    # the persisted run record.
+    def memory_handoffs
+      projects = @projects.each_with_object({}) do |project, result|
+        group = project.group.to_s
+        result[project.key] = group if %w[Personal Cookpad].include?(group)
+      end
+      runs = load_all_agents.flat_map do |agent|
+        next [] unless projects.key?(agent.project_key)
+
+        agent.runs.filter_map do |run|
+          handoff = MemoryHandoff.normalize(run.metadata.is_a?(Hash) ? run.metadata["memory_handoff"] : nil)
+          next unless run.run_id.to_s.strip != "" && run.finished_at && run.status == "success" && handoff
+
+          {
+            run_id: run.run_id,
+            finished_at: run.finished_at.iso8601,
+            status: run.status,
+            project: agent.project_key,
+            metadata: { memory_handoff: handoff }
+          }
+        end
+      end
+      {
+        server: ServerIdentity.load.fetch("id"),
+        projects: projects,
+        runs: runs.sort_by { |run| [run[:finished_at], run[:run_id]] }
+      }
     end
 
     def agent_debug(key)

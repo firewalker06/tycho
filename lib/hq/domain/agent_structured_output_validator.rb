@@ -66,6 +66,9 @@ module HQ
       end
 
       errors = []
+      if schema["minLength"].is_a?(Integer) && value.is_a?(String) && value.length < schema["minLength"]
+        errors << error("too_short", path, "String is shorter than the minimum length", min_length: schema["minLength"])
+      end
       if schema["enum"].is_a?(Array) && !schema["enum"].include?(value)
         errors << error("invalid_enum", path, "Value is not an allowed enum member", allowed: schema["enum"])
       end

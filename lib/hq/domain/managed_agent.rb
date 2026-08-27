@@ -7,6 +7,7 @@ require_relative "agent_command_builder"
 require_relative "agent_memory"
 require_relative "agent_stream_projector"
 require_relative "agent_result_normalizer"
+require_relative "memory_handoff"
 require_relative "agent_structured_result"
 require_relative "agent_correction_runner"
 require_relative "response_style_policy"
@@ -58,6 +59,7 @@ module HQ
     AgentRun = Struct.new(
       :started_at, :finished_at, :exit_code, :status, :log_path, :command, :session_id, :response_style_source,
       :agent, :model, :log_start_offset, :run_id, :run_scoped_status, :delegation_owner, :delegation_generation,
+      :metadata,
       keyword_init: true
     ) do
       def self.from_hash(hash)
@@ -79,7 +81,8 @@ module HQ
           run_id: hash["run_id"],
           run_scoped_status: hash["run_scoped_status"] == true,
           delegation_owner: hash["delegation_owner"],
-          delegation_generation: hash["delegation_generation"]
+          delegation_generation: hash["delegation_generation"],
+          metadata: hash["metadata"].is_a?(Hash) ? hash["metadata"] : {}
         )
       end
 
@@ -101,6 +104,7 @@ module HQ
         result["run_scoped_status"] = true if run_scoped_status
         result["delegation_owner"] = delegation_owner unless delegation_owner.to_s.empty?
         result["delegation_generation"] = delegation_generation if delegation_generation.is_a?(Integer)
+        result["metadata"] = metadata if metadata.is_a?(Hash) && !metadata.empty?
         result
       end
     end
@@ -1429,6 +1433,7 @@ module HQ
       capture_session_id!
       run.session_id = @session_id unless @session_id.to_s.empty?
       build_summary!
+      persist_memory_handoff!(run)
       capture_run_memory!(run)
       add_assistant_message!(@summary) if @summary
       HQ.hooks.publish("agent.run.finalized",
@@ -1456,6 +1461,16 @@ module HQ
       else
         "Run finished"
       end
+    end
+
+    def persist_memory_handoff!(run)
+      return unless run.status == "success"
+
+      handoff = MemoryHandoff.normalize(@structured_result&.fetch("memory_handoff", nil))
+      return unless handoff
+
+      run.metadata = (run.metadata.is_a?(Hash) ? run.metadata.dup : {})
+      run.metadata["memory_handoff"] = handoff
     end
 
     def normalize_structured_result(parsed)

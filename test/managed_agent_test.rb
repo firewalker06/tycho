@@ -1660,7 +1660,7 @@ module ManagedAgentTest
           echo "managed child stdin was not the null device"
           exit 42
         fi
-        printf '%s\n' '{"type":"assistant","session_id":"validation-session","message":{"role":"assistant","content":[{"type":"tool_use","name":"StructuredOutput","input":{"status":"success","summary":"Validated through runner.","inquiry_json":"null","attachments_json":"null"}}]}}'
+        printf '%s\n' '{"type":"assistant","session_id":"validation-session","message":{"role":"assistant","content":[{"type":"tool_use","name":"StructuredOutput","input":{"status":"success","summary":"Validated through runner.","inquiry_json":"null","attachments_json":"null","memory_handoff":null}}]}}'
         exit 0
       SH
       File.chmod(0o755, harness)
@@ -1736,7 +1736,8 @@ module ManagedAgentTest
               "status" => "success",
               "summary" => "Incremental final.",
               "inquiry_json" => "null",
-              "attachments_json" => "null"
+              "attachments_json" => "null",
+              "memory_handoff" => nil
             }
           }]
         }
@@ -1815,7 +1816,8 @@ module ManagedAgentTest
                 "status" => result_status,
                 "summary" => "Detached run completed.",
                 "inquiry_json" => "null",
-                "attachments_json" => "null"
+                "attachments_json" => "null",
+                "memory_handoff" => nil
               }
             }]
           }
