@@ -4917,7 +4917,7 @@ module RemoteServerTest
     assert(!js[:body].include?(["This", "server"].join(" ")) &&
            js[:body].include?('return server.local ? "Host"'),
            "expected local ownership text to use Host")
-    assert(js[:body].include?('renderAgentRow(agent, { serverIcon: true })') &&
+    assert(js[:body].include?('renderAgentRow(agent, { serverIcon: true, query })') &&
            js[:body].include?('class="agent-server-inline"') &&
            css[:body].include?(".agent-server-inline > .ui-icon"),
            "expected flat Agent rows to show the local or peer server icon")
@@ -6020,7 +6020,7 @@ module RemoteServerTest
     assert(css[:body].include?(".message.user.parent-agent-message .message-role") &&
            css[:body].include?("text-transform: none;"),
            "expected parent-authored messages to retain the right-aligned user treatment with an agent signature")
-    assert(js[:body].include?('class="switcher-agent-title-line">${agentNameHtml(agent)}${linkedSymbol}') &&
+    assert(js[:body].include?('class="switcher-agent-title-line">${agentNameHtml(agent, state.unreadPanelQuery)}${linkedSymbol}') &&
            js[:body].include?('aria-label="Show linked agents"') &&
            !js[:body].include?('${iconSvg("link")}<span>${escapeHtml(String(linkedCount))}</span>'),
            "expected Quick Agents to place a count-free linked control beside the agent name")
@@ -6157,8 +6157,8 @@ module RemoteServerTest
            "expected Agents tab group sorting to compare project display names")
     assert(helpers_js[:body].include?("function compareAgentsByName"),
            "expected Agents tab to sort agents alphabetically within each project group")
-    assert(js[:body].include?("projectMatches(project, query)"),
-           "expected Agents tab filtering to match project fields")
+    assert(js[:body].include?("rankMatchingAgents(serverFilteredAgents(), query, compareAgentsForCurrentSort)"),
+           "expected Agents tab filtering to use ranked agent search")
     assert(!js[:body].include?("No managed agents"),
            "expected Agents tab to omit redundant zero-agent empty rows")
     assert(js[:body].include?("agent-group-create"),

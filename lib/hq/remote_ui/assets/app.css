@@ -453,6 +453,13 @@ h3 {
   white-space: nowrap;
 }
 
+.agent-search-match {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: inherit;
+  padding: 0 1px;
+}
+
 .row-title .agent-name-label,
 .card-title .agent-name-label,
 .agent-reference-copy .agent-name-label {
