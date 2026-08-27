@@ -36,6 +36,11 @@ module RenderingTest
     assert_missing_config_opens_onboarding_panel
     assert_onboarding_welcome_creates_sandbox_project
     assert_main_screen_shows_detail_panel_and_footer
+    assert_schedule_screen_exposes_management_shortcuts
+    assert_schedule_management_shortcuts_dispatch_actions
+    assert_schedule_run_reports_failure
+    assert_schedule_run_requires_resume
+    assert_schedule_toggle_pauses_active_schedule
     assert_empty_project_state_mentions_new_project_shortcut
     assert_empty_agent_state_mentions_new_agent_shortcut
     assert_terminal_shortcut_is_ctrl_g_and_global
@@ -129,6 +134,80 @@ module RenderingTest
     %i[succeeded failed stopped blocked].each do |key|
       assert(!["✅", "⏸️", "🚫"].include?(icons.fetch(key)), "expected #{key} TUI status to avoid emoji")
     end
+  end
+
+  def assert_schedule_screen_exposes_management_shortcuts
+    output = render_main_screen(:schedules, width: 160, height: 30)
+
+    assert(output.include?("s: run now"), "expected schedule footer to expose immediate run control")
+    assert(output.include?("p: pause/resume"), "expected schedule footer to expose pause/resume control")
+  end
+
+  def assert_schedule_management_shortcuts_dispatch_actions
+    app = HQ::App.allocate
+    app.instance_variable_set(:@screen, :schedules)
+    app.instance_variable_set(:@schedules, [{ key: "weekday", name: "Weekday", status: "scheduled" }])
+    app.instance_variable_set(:@selected, { schedules: 0 })
+    actions = []
+    app.define_singleton_method(:run_selected_schedule) { actions << :run; [self, nil] }
+    app.define_singleton_method(:toggle_selected_schedule) { actions << :toggle; [self, nil] }
+
+    app.send(:handle_key, "s")
+    app.send(:handle_key, "p")
+
+    assert(actions == %i[run toggle], "expected schedule shortcuts to dispatch run and pause/resume actions")
+  end
+
+  def assert_schedule_run_reports_failure
+    app = schedule_action_test_app(status: "scheduled")
+    scheduler = Object.new
+    scheduler.define_singleton_method(:run_now) { |_key| { status: :failed, error: "agent unavailable" } }
+    app.define_singleton_method(:build_scheduler) { scheduler }
+    app.define_singleton_method(:load_agents!) { nil }
+    app.define_singleton_method(:load_schedules!) { nil }
+    app.define_singleton_method(:schedule_action_poll) { :poll }
+
+    _, command = app.send(:run_selected_schedule)
+
+    assert(command == :poll, "expected schedule run to continue polling agent state")
+    assert(app.instance_variable_get(:@schedule_action_message).nil?, "expected failed run to clear success feedback")
+    assert(app.instance_variable_get(:@schedule_action_error) == "Run failed: agent unavailable",
+           "expected failed run feedback to include the scheduler error")
+  end
+
+  def assert_schedule_toggle_pauses_active_schedule
+    app = schedule_action_test_app(status: "scheduled")
+    calls = []
+    scheduler = Object.new
+    scheduler.define_singleton_method(:pause) { |key| calls << [:pause, key] }
+    scheduler.define_singleton_method(:resume) { |key| calls << [:resume, key] }
+    app.define_singleton_method(:build_scheduler) { scheduler }
+    app.define_singleton_method(:load_schedules!) { nil }
+
+    app.send(:toggle_selected_schedule)
+
+    assert(calls == [[:pause, "weekday"]], "expected active schedule toggle to pause the selected schedule")
+    assert(app.instance_variable_get(:@schedule_action_message) == "Paused Weekday.",
+           "expected schedule pause feedback")
+  end
+
+  def assert_schedule_run_requires_resume
+    app = schedule_action_test_app(status: "stopped")
+    app.define_singleton_method(:build_scheduler) { raise "scheduler should not run" }
+
+    _, command = app.send(:run_selected_schedule)
+
+    assert(command.nil?, "expected stopped schedule run to remain idle")
+    assert(app.instance_variable_get(:@schedule_action_error) == "Resume Weekday before running it.",
+           "expected stopped schedule run to require explicit resume")
+  end
+
+  def schedule_action_test_app(status:)
+    app = HQ::App.allocate
+    app.instance_variable_set(:@screen, :schedules)
+    app.instance_variable_set(:@schedules, [{ key: "weekday", name: "Weekday", status: status }])
+    app.instance_variable_set(:@selected, { schedules: 0 })
+    app
   end
 
   def write_rendering_config_fixture(dir)

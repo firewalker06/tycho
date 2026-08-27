@@ -87,6 +87,8 @@ module HQ
       @schedules = []
       @schedule_daemon = {}
       @schedule_error = nil
+      @schedule_action_message = nil
+      @schedule_action_error = nil
       @known_agent_keys = []
       @agents_by_project = Hash.new { |hash, key| hash[key] = [] }
       @agent_editor = nil
@@ -240,7 +242,9 @@ module HQ
       when "C"
         clone_selected_agent
       when "s"
-        start_selected_agent
+        @screen == :schedules ? run_selected_schedule : start_selected_agent
+      when "p"
+        toggle_selected_schedule
       when "R"
         rerun_selected_agent
       when "t"
@@ -648,7 +652,7 @@ module HQ
     end
 
     def load_schedules!
-      current_scheduler = Scheduler.new(registry: @registry)
+      current_scheduler = build_scheduler
       @schedules = current_scheduler.list
       @schedule_daemon = current_scheduler.daemon_state.to_hash
       @schedule_error = nil
@@ -660,6 +664,79 @@ module HQ
       @schedules = []
       @schedule_daemon = {}
       @schedule_error = e.message
+    end
+
+    def run_selected_schedule
+      schedule = selected_schedule
+      return [self, nil] unless @screen == :schedules && schedule
+      if schedule_blocked?(schedule)
+        @schedule_action_message = nil
+        @schedule_action_error = "Resume #{schedule_label(schedule)} before running it."
+        return [self, nil]
+      end
+
+      result = build_scheduler.run_now(schedule.fetch(:key))
+      load_agents!
+      load_schedules!
+      if result.fetch(:status) == :failed
+        @schedule_action_message = nil
+        @schedule_action_error = "Run failed: #{result.fetch(:error, "Unknown error")}"
+      else
+        @schedule_action_error = nil
+        @schedule_action_message = schedule_run_message(schedule, result)
+      end
+      [self, schedule_action_poll]
+    rescue StandardError => e
+      record_schedule_action_error("Run failed", e)
+    end
+
+    def toggle_selected_schedule
+      schedule = selected_schedule
+      return [self, nil] unless @screen == :schedules && schedule
+
+      scheduler = build_scheduler
+      if schedule_blocked?(schedule)
+        scheduler.resume(schedule.fetch(:key))
+        action = "Resumed"
+      else
+        scheduler.pause(schedule.fetch(:key))
+        action = "Paused"
+      end
+      @schedule_action_error = nil
+      @schedule_action_message = "#{action} #{schedule_label(schedule)}."
+      load_schedules!
+      [self, nil]
+    rescue StandardError => e
+      record_schedule_action_error("Update failed", e)
+    end
+
+    def schedule_run_message(schedule, result)
+      label = schedule_label(schedule)
+      case result.fetch(:status)
+      when :started then "Started #{label}."
+      when :queued then "Queued #{label}."
+      when :skipped then "Skipped #{label}."
+      else "#{label}: #{result.fetch(:status)}."
+      end
+    end
+
+    def build_scheduler
+      Scheduler.new(registry: @registry)
+    end
+
+    def schedule_label(schedule)
+      schedule[:name].to_s.empty? ? schedule.fetch(:key).to_s : schedule[:name].to_s
+    end
+
+    def schedule_blocked?(schedule)
+      schedule[:paused] || %w[paused stopped].include?(schedule[:status].to_s)
+    end
+
+    def record_schedule_action_error(prefix, error)
+      @schedule_action_message = nil
+      @schedule_action_error = "#{prefix}: #{error.message}"
+      HQ.logger.warn("Schedule") { @schedule_action_error }
+      [self, nil]
     end
 
     def save_agents!

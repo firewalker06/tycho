@@ -832,7 +832,7 @@ module HQ
           hint = case @screen
                  when :agents then "#{Styles::KEYS[:tab]}/1-3: switch  #{Styles::MARKERS[:bullet_sep]}  j/k: nav  #{Styles::MARKERS[:bullet_sep]}  v: detail  #{Styles::MARKERS[:bullet_sep]}  #{sidebar_hint_text}  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}G: term  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}T: agent term  #{Styles::MARKERS[:bullet_sep]}  c/C: chat/clone  #{Styles::MARKERS[:bullet_sep]}  s: start  #{Styles::MARKERS[:bullet_sep]}  R: rerun  #{Styles::MARKERS[:bullet_sep]}  t: stop  #{Styles::MARKERS[:bullet_sep]}  e: edit  #{Styles::MARKERS[:bullet_sep]}  x: delete  #{Styles::MARKERS[:bullet_sep]}  l/L: log  #{Styles::MARKERS[:bullet_sep]}  r: refresh  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}R: restart  #{Styles::MARKERS[:bullet_sep]}  q: quit"
                  when :projects then "#{Styles::KEYS[:tab]}/1-3: switch  #{Styles::MARKERS[:bullet_sep]}  j/k: nav  #{Styles::MARKERS[:bullet_sep]}  v: detail  #{Styles::MARKERS[:bullet_sep]}  #{sidebar_hint_text}  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}G: term  #{Styles::MARKERS[:bullet_sep]}  n: new agent  #{Styles::MARKERS[:bullet_sep]}  N: new project  #{Styles::MARKERS[:bullet_sep]}  x: archive  #{Styles::MARKERS[:bullet_sep]}  r: refresh  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}R: restart  #{Styles::MARKERS[:bullet_sep]}  q: quit"
-                 when :schedules then "#{Styles::KEYS[:tab]}/1-3: switch  #{Styles::MARKERS[:bullet_sep]}  j/k: nav  #{Styles::MARKERS[:bullet_sep]}  v: detail  #{Styles::MARKERS[:bullet_sep]}  #{sidebar_hint_text}  #{Styles::MARKERS[:bullet_sep]}  r: refresh  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}R: restart  #{Styles::MARKERS[:bullet_sep]}  q: quit"
+                 when :schedules then "#{Styles::KEYS[:tab]}/1-3: switch  #{Styles::MARKERS[:bullet_sep]}  j/k: nav  #{Styles::MARKERS[:bullet_sep]}  v: detail  #{Styles::MARKERS[:bullet_sep]}  #{sidebar_hint_text}  #{Styles::MARKERS[:bullet_sep]}  s: run now  #{Styles::MARKERS[:bullet_sep]}  p: pause/resume  #{Styles::MARKERS[:bullet_sep]}  r: refresh  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}R: restart  #{Styles::MARKERS[:bullet_sep]}  q: quit"
                  end
           hint = "esc: close  #{Styles::MARKERS[:bullet_sep]}  #{hint}" if overlay_open?
 
@@ -886,6 +886,9 @@ module HQ
           lines << format_detail_row("Last agent", schedule[:last_target_key] || "n/a")
           lines << format_detail_row("Runs", schedule[:run_count].to_i.to_s)
           lines << format_detail_row("Skips", schedule[:skip_count].to_i.to_s)
+          lines << ""
+          lines << healthy_style.render(@schedule_action_message) if @schedule_action_message
+          lines << fail_style.render(@schedule_action_error) if @schedule_action_error
           lines.join("\n")
         end
 

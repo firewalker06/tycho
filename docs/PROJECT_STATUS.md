@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-08-21
+2026-08-24
 
 ## Strategic Direction
 
@@ -293,7 +293,7 @@ advancing the conversation.
 - [x] Append the final-output attachment checklist at scheduled execution time without storing repeated checklist text in memory
 - [x] Add Remote JSON API schedule list/run/pause/resume/reload
 - [x] Show schedules and daemon freshness in the TUI and Remote UI Now view
-- [ ] Add TUI schedule management
+- [x] Add TUI schedule run-now and pause/resume management
 - [x] Add Remote UI schedule management
 - [x] Add configurable Remote UI session loops with prompt templates and end-of-day expiry
 
