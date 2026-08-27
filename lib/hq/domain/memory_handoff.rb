@@ -26,6 +26,7 @@ module HQ
 
       OPTIONAL_FIELDS.each do |field|
         next unless value.key?(field)
+        next if value[field].nil?
 
         result[field] = string_list(value[field])
         return nil unless result[field]

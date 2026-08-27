@@ -71,19 +71,25 @@ module HQ
   end
 
   # Keep existing user-owned schemas valid as the structured result contract
-  # grows. This is additive and leaves all other custom schema choices intact.
+  # grows. This changes only the owned memory_handoff property and root field.
   def self.migrate_agent_result_schema!(path)
     source = File.join(BUNDLED_CONFIG_DIR, "schemas", "agent_result.json")
     current = JSON.parse(File.read(path))
     bundled = JSON.parse(File.read(source))
     properties = current["properties"]
-    return path unless properties.is_a?(Hash) && !properties.key?("memory_handoff")
+    return path unless properties.is_a?(Hash)
 
     handoff = bundled.dig("properties", "memory_handoff")
     return path unless handoff.is_a?(Hash)
 
+    changed = properties["memory_handoff"] != handoff
     properties["memory_handoff"] = handoff
-    File.write(path, "#{JSON.pretty_generate(current)}\n")
+    required = Array(current["required"])
+    unless required.include?("memory_handoff")
+      current["required"] = required + ["memory_handoff"]
+      changed = true
+    end
+    File.write(path, "#{JSON.pretty_generate(current)}\n") if changed
     path
   rescue JSON::ParserError, SystemCallError
     path

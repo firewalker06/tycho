@@ -1789,7 +1789,8 @@ module RemoteServerTest
               "status" => "success",
               "summary" => "Prompt accepted.",
               "inquiry" => nil,
-              "attachments" => nil
+              "attachments" => nil,
+              "memory_handoff" => nil
             ))
           end
           exit 0

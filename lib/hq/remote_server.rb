@@ -4241,7 +4241,6 @@ module HQ
         awaiting_input: agent.status == "awaiting-input",
         blocked: agent.status == "blocked",
         run_count: agent.run_count,
-        runs: agent.runs.map(&:to_hash),
         created_at: agent.created_at&.iso8601,
         started_at: agent.started_at&.iso8601,
         finished_at: agent.finished_at&.iso8601,

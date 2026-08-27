@@ -84,7 +84,7 @@
       }
     },
     "memory_handoff": {
-      "type": "object",
+      "type": ["object", "null"],
       "description": "For a successful run that should enter Second Brain, provide the concise semantic handoff. Tycho stores it with run-owned provenance; do not include run IDs, server, project, timestamps, or group here.",
       "additionalProperties": false,
       "properties": {
@@ -92,11 +92,11 @@
         "decisions": { "type": "array", "items": { "type": "string" } },
         "continuing_context": { "type": "string" },
         "references": { "type": "array", "items": { "type": "string" } },
-        "lessons": { "type": "array", "items": { "type": "string" } },
-        "promotion_candidates": { "type": "array", "items": { "type": "string" } }
+        "lessons": { "type": ["array", "null"], "items": { "type": "string" } },
+        "promotion_candidates": { "type": ["array", "null"], "items": { "type": "string" } }
       },
-      "required": ["outcome", "decisions", "continuing_context", "references"]
+      "required": ["outcome", "decisions", "continuing_context", "references", "lessons", "promotion_candidates"]
     }
   },
-  "required": ["status", "summary", "inquiry", "attachments"]
+  "required": ["status", "summary", "inquiry", "attachments", "memory_handoff"]
 }

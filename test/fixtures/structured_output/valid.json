@@ -2,5 +2,6 @@
   "status": "success",
   "summary": "Structured output accepted.",
   "inquiry": null,
-  "attachments": null
+  "attachments": null,
+  "memory_handoff": null
 }

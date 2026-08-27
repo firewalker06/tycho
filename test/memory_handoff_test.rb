@@ -16,6 +16,7 @@ module MemoryHandoffTest
     assert_contract_normalizes_only_valid_payloads
     assert_agent_run_round_trips_metadata
     assert_schema_rejects_incomplete_handoff
+    assert_schema_has_strict_compatible_handoff_shape
     assert_schema_migration_is_additive
     puts "memory_handoff_test: ok"
   end
@@ -30,6 +31,9 @@ module MemoryHandoffTest
     }
     normalized = HQ::MemoryHandoff.normalize(handoff)
     assert(normalized == handoff, "expected valid handoff to survive normalization")
+    strict_optional = handoff.merge("lessons" => nil, "promotion_candidates" => nil)
+    assert(HQ::MemoryHandoff.normalize(strict_optional) == handoff.reject { |key, _| key == "lessons" },
+           "expected strict nullable optional fields to be omitted from persisted metadata")
     assert(HQ::MemoryHandoff.normalize(handoff.merge("outcome" => "  ")).nil?,
            "expected blank outcome to be rejected")
     assert(HQ::MemoryHandoff.normalize(handoff.merge("server" => "not-semantic")).nil?,
@@ -57,6 +61,24 @@ module MemoryHandoffTest
            "expected non-empty outcome validation")
   end
 
+  def assert_schema_has_strict_compatible_handoff_shape
+    schema = JSON.parse(File.read(SCHEMA_PATH))
+    handoff = schema.dig("properties", "memory_handoff")
+    assert(schema.fetch("required").include?("memory_handoff"), "expected root handoff field to be required")
+    assert(handoff.fetch("type") == %w[object null], "expected nullable root handoff")
+    assert(handoff.fetch("required").sort == handoff.fetch("properties").keys.sort,
+           "expected strict schema to require every handoff property")
+    %w[lessons promotion_candidates].each do |field|
+      assert(handoff.dig("properties", field, "type") == %w[array null], "expected nullable #{field}")
+    end
+    valid = {
+      "status" => "success", "summary" => "Done", "inquiry" => nil, "attachments" => nil,
+      "memory_handoff" => nil
+    }
+    assert(HQ::AgentStructuredOutputValidator.new(schema:).validate(valid).valid?,
+           "expected nullable handoff to validate through Tycho's schema path")
+  end
+
   def assert_schema_migration_is_additive
     Dir.mktmpdir("tycho-memory-handoff-schema") do |dir|
       path = File.join(dir, "agent_result.json")
@@ -64,8 +86,10 @@ module MemoryHandoffTest
       HQ.migrate_agent_result_schema!(path)
       migrated = JSON.parse(File.read(path))
       assert(migrated.dig("properties", "status", "type") == "string", "expected existing schema fields to survive")
+      assert(migrated.fetch("required").include?("memory_handoff"), "expected required root handoff migration")
       assert(migrated.dig("properties", "memory_handoff", "required") ==
-             %w[outcome decisions continuing_context references], "expected additive handoff schema migration")
+             %w[outcome decisions continuing_context references lessons promotion_candidates],
+             "expected strict handoff schema migration")
     end
   end
 
