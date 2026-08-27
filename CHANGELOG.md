@@ -4,6 +4,30 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.10.1 - 2026-08-27
+
+### Highlights
+
+- Keep agent conversations live while a harness runs: Tycho now projects
+  sequenced events into its durable conversation journal as they arrive, with
+  loading feedback while history is opening.
+- Let users queue follow-up prompts for a running agent. Queue entries persist
+  and preserve submission order across refreshes and retryable start failures;
+  the Remote UI keeps the composer usable and displays optimistic entries until
+  the server confirms them.
+- Make delegated-agent work clearer and safer. Direct user messages explicitly
+  take over a child session, parent prompts can reclaim it, and both the Remote
+  UI and agent switcher provide direct parent/child navigation.
+- Improve Remote UI agent health and lifecycle visibility with reliability
+  cards, clearer status icons, stale-state treatment, and refresh safeguards.
+- Rank agent search results and highlight the matched text, so the most useful
+  result is easier to find quickly. (#85)
+
+### Fixes
+
+- Keep attachment popovers above surrounding Remote UI content and preserve a
+  consistent mobile inquiry header.
+
 ## 0.10.0 - 2026-08-15
 
 ### Highlights

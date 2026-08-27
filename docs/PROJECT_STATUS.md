@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-08-21
+2026-08-27
 
 ## Strategic Direction
 
@@ -94,7 +94,7 @@ Key references:
 
 ## Current Focus
 
-**v0.10 release**: remote CLI control, server-owned credentials, structured
+**v0.10.1 release**: remote CLI control, server-owned credentials, structured
 output correction, auditable usage metrics, project workspace browsing, Tycho
 skill installation, pull-request context, and durable agent delegation are
 complete. Ownership-aware takeover/report routing now includes edge-local
@@ -110,7 +110,12 @@ optimistic entries until the server accepts their stable client IDs, and keeps
 Stop in the shared top action row across conversation and attachment layouts.
 Terminal runs claim pending entries as one ordered follow-up prompt, while
 inquiries and retryable start failures retain the queue without silently
-advancing the conversation.
+advancing the conversation. The release also keeps live agent conversations in
+a durable incremental journal, makes delegation takeover and parent reclaim
+explicit, surfaces linked-agent navigation, improves Remote UI lifecycle and
+reliability visibility, and ranks agent search results with matched-text
+highlights. Schedule-management work remains on `wip/tui-schedule-management`
+for a later release.
 
 ## Roadmap
 
