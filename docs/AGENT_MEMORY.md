@@ -248,6 +248,26 @@ path for agents created before cost tracking; legacy Codex runs without
 per-run model provenance remain unpriced rather than receiving the current
 model's rate. Startup remains O(1).
 
+## Second Brain handoffs
+
+Each `AgentRun` may include a `metadata.memory_handoff` object. It stores only
+the semantic handoff body: `outcome`, `decisions`, `continuing_context`, and
+`references`, with optional `lessons` and `promotion_candidates`. Run ID,
+status, project, timestamps, project group, and server identity remain
+Tycho-owned provenance outside that object.
+
+Tycho persists a validated handoff only when a run finalizes with structured
+status `success`. Older runs and successful runs without a handoff remain
+readable and are simply absent from the feed. Existing user copies of
+`schemas/agent_result.json` receive the additive `memory_handoff` definition
+when Tycho starts; no other schema fields are changed.
+
+Use `bin/tycho memory handoffs --json` locally, or add `--server SERVER_KEY`
+for a configured remote Tycho. Remote Sessions also exposes the same
+source-shaped JSON at `GET /memory-handoffs`. The payload is intended for the
+Second Brain reconciler and includes only live `Personal` and `Cookpad`
+projects plus their successful persisted handoffs.
+
 ## See also
 
 - `docs/research/tool_log_shapes.md` — per-tool raw-log JSON shapes and

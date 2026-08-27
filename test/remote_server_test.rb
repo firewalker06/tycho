@@ -24,6 +24,7 @@ module RemoteServerTest
     assert_remote_agent_payload_has_revision
     assert_remote_agent_activity_snapshot
     assert_remote_agent_payload_has_cost_snapshot
+    assert_remote_memory_handoffs
     assert_remote_metrics_query_and_backfill_routes
     assert_remote_inquiry_payload_has_stable_id_and_guarded_answer
     assert_remote_agent_payload_includes_attachments
@@ -213,6 +214,36 @@ module RemoteServerTest
              second_page.dig(:pagination, :next_page).nil? &&
              first_page.dig(:agents, 0, :key) != second_page.dig(:agents, 0, :key),
              "expected stable multi-page archive ordering")
+    end
+  end
+
+  def assert_remote_memory_handoffs
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      File.write(registry.path, File.read(registry.path).sub("group: Core", "group: Personal"))
+      registry.load!
+      service = HQ::RemoteService.new(registry: registry)
+      created = service.create_agent("project_key" => "web", "name" => "Memory", "prompt" => "Capture", "agent" => "codex")
+      store = HQ::AgentStore.new(registry.projects.map { |config| HQ::Project.new(config) })
+      agent = store.load.find { |item| item.key == created[:key] }
+      agent.runs << HQ::ManagedAgent::AgentRun.new(
+        run_id: "run-memory-1", status: "success", finished_at: Time.parse("2026-08-26 10:00:00 UTC"),
+        metadata: {
+          "memory_handoff" => {
+            "outcome" => "Captured handoff", "decisions" => [], "continuing_context" => "", "references" => []
+          }
+        }
+      )
+      store.save([agent])
+
+      payload = service.memory_handoffs
+      assert(payload[:projects] == { "web" => "Personal" }, "expected live eligible group provenance")
+      assert(payload[:runs].first.dig(:metadata, :memory_handoff, "outcome") == "Captured handoff",
+             "expected successful persisted handoff in source feed")
+      response = HQ::RemoteServer.new.send(:route, service, "GET", "/memory-handoffs", {}, nil)
+      assert(response.dig(:body, :runs, 0, :run_id) == "run-memory-1", "expected API handoff retrieval")
     end
   end
 

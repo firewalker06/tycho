@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "attachment_normalizer"
+require_relative "memory_handoff"
 
 module HQ
   class AgentResultNormalizer
@@ -23,6 +24,8 @@ module HQ
       result["inquiry"] = inquiry if inquiry
       attachments = normalize_attachments(parsed["attachments"])
       result["attachments"] = attachments if attachments
+      memory_handoff = MemoryHandoff.normalize(parsed["memory_handoff"])
+      result["memory_handoff"] = memory_handoff if memory_handoff
       result
     end
 
