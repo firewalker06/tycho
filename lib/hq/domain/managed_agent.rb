@@ -1427,6 +1427,8 @@ module HQ
       return unless run
       return unless run.status == "running"
 
+      # A completed status file can make running? false while the wrapper process is still alive.
+      @pid = nil
       run.finished_at = @finished_at
       run.exit_code = @last_exit_code
       run.status = status
