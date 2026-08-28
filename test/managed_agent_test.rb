@@ -14,7 +14,7 @@ module ManagedAgentTest
   def run!
     assert_new_agents_use_unique_log_stems
     assert_lifetime_run_count_survives_retained_window
-    assert_completed_status_overrides_live_pid
+    assert_completed_status_finalizes_live_pid
     assert_structured_result_status_overrides_transport_exit
     assert_start_finalizes_unpolled_previous_run
     assert_cli_status_finalizes_unpolled_dead_pid
@@ -500,26 +500,58 @@ module ManagedAgentTest
     replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
   end
 
-  def assert_completed_status_overrides_live_pid
+  def assert_completed_status_finalizes_live_pid
     old_logs_dir = nil
     Dir.mktmpdir("hq-managed-agent-status-test") do |dir|
       logs_dir = File.join(dir, "agents")
       FileUtils.mkdir_p(logs_dir)
       old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, logs_dir)
+      started_at = Time.now - 1
+      log_path = File.join(logs_dir, "demo.raw.log")
+      memory_handoff = {
+        "outcome" => "Captured completed run",
+        "decisions" => [],
+        "continuing_context" => "",
+        "references" => []
+      }
+      File.write(log_path, "")
       agent = HQ::ManagedAgent.new(
         key: "demo-agent-status",
         name: "Demo",
         project_key: "demo",
         template_key: "custom",
         workspace: dir,
-        prompt: "Test"
+        prompt: "Test",
+        started_at: started_at,
+        log_path: log_path,
+        runs: [HQ::ManagedAgent::AgentRun.new(
+          started_at: started_at,
+          status: "running",
+          log_path: log_path,
+          run_id: "completed-status-run",
+          run_scoped_status: true
+        )]
       )
       live_process_group = Process.getpgrp
       agent.instance_variable_set(:@pid, live_process_group)
+      File.write(agent.send(:last_message_file_path), JSON.generate(
+        "status" => "success",
+        "summary" => "Completed with a handoff.",
+        "inquiry" => nil,
+        "attachments" => nil,
+        "memory_handoff" => memory_handoff
+      ))
       File.write(agent.send(:status_file_path), "0")
 
       assert(!agent.running?,
              "expected an authoritative completion status to override a live or reused pid")
+      agent.poll!
+      assert(agent.last_run.status == "success",
+             "expected finalization to preserve the terminal run status after consuming the status file")
+      assert(agent.last_run.metadata["memory_handoff"] == memory_handoff,
+             "expected finalization to persist the completed run's memory handoff")
+      assert(agent.to_hash.dig("runs", 0, "metadata", "memory_handoff") == memory_handoff,
+             "expected the completed run's memory handoff to survive agent serialization")
     ensure
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
     end
