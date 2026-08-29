@@ -1028,9 +1028,9 @@ module HQ
     end
 
     def last_summary
-      return "No runs yet" unless last_run
+      return "No runs yet" if run_count.zero?
 
-      structured_summary || inquiry_message || @summary || "No runs yet"
+      structured_summary || inquiry_message || @summary || (status == "running" ? "Run in progress" : "Run summary unavailable")
     end
 
     def latest_inquiry

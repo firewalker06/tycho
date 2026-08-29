@@ -22,6 +22,7 @@ module RemoteServerTest
     assert_remote_agent_bulk_archive
     assert_remote_agent_clone_archives_source_with_editable_name
     assert_remote_agent_payload_has_revision
+    assert_remote_agent_payload_distinguishes_running_history_from_never_run
     assert_remote_agent_activity_snapshot
     assert_remote_agent_payload_has_cost_snapshot
     assert_remote_memory_handoffs
@@ -752,6 +753,39 @@ module RemoteServerTest
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
       replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+    end
+  end
+
+  def assert_remote_agent_payload_distinguishes_running_history_from_never_run
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      running = HQ::ManagedAgent.new(
+        key: "running-history-payload",
+        name: "Running history payload",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: workspace,
+        prompt: "Prompt",
+        total_run_count: 2,
+        runs: [HQ::ManagedAgent::AgentRun.new(status: "running")]
+      )
+      running.define_singleton_method(:running?) { true }
+      never_run = HQ::ManagedAgent.new(
+        key: "never-run-payload",
+        name: "Never run payload",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: workspace,
+        prompt: "Prompt"
+      )
+
+      assert(service.send(:agent_payload, running)[:summary] == "Run in progress",
+             "expected Remote UI payload to show a running summary for recorded history")
+      assert(service.send(:agent_payload, never_run)[:summary] == "No runs yet",
+             "expected Remote UI payload to preserve the never-run empty state")
     end
   end
 

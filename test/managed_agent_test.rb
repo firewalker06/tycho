@@ -14,6 +14,8 @@ module ManagedAgentTest
   def run!
     assert_new_agents_use_unique_log_stems
     assert_lifetime_run_count_survives_retained_window
+    assert_running_agent_with_history_has_in_progress_summary
+    assert_never_run_agent_keeps_empty_summary
     assert_completed_status_finalizes_live_pid
     assert_structured_result_status_overrides_transport_exit
     assert_start_finalizes_unpolled_previous_run
@@ -102,6 +104,38 @@ module ManagedAgentTest
       assert(restored.run_count == 13, "expected a new run to advance the lifetime count past the retained window")
       assert(restored.runs.length == 10, "expected adding a run to retain only the latest 10 details")
     end
+  end
+
+  def assert_running_agent_with_history_has_in_progress_summary
+    agent = HQ::ManagedAgent.new(
+      key: "running-history-agent",
+      name: "Running history",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "Prompt",
+      total_run_count: 2,
+      runs: [HQ::ManagedAgent::AgentRun.new(status: "running")]
+    )
+    agent.define_singleton_method(:running?) { true }
+
+    assert(agent.run_count == 2, "expected persisted lifetime run history to be retained")
+    assert(agent.last_summary == "Run in progress",
+           "expected a running agent with history not to render as never run")
+  end
+
+  def assert_never_run_agent_keeps_empty_summary
+    agent = HQ::ManagedAgent.new(
+      key: "never-run-agent",
+      name: "Never run",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "Prompt"
+    )
+
+    assert(agent.run_count.zero?, "expected a fresh agent to have no recorded runs")
+    assert(agent.last_summary == "No runs yet", "expected a fresh agent to retain the empty state")
   end
 
   def assert_structured_result_status_overrides_transport_exit
