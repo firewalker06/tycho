@@ -508,7 +508,7 @@ module HQ
     end
 
     def prompt_queue_dispatchable?
-      !running? && latest_inquiry.nil? && last_run &&
+      !running? && !inquiry_blocking_prompt_queue? && last_run &&
         ((@prompt_queue_claim && @prompt_queue_dispatch_error.nil?) || (!@prompt_queue.empty? && !@prompt_queue_claim))
     end
 
@@ -961,11 +961,44 @@ module HQ
     end
 
     def cancel_pending_inquiry!(created_at: Time.now)
-      inquiry_id = latest_inquiry_id.to_s
+      inquiry_id = (latest_inquiry_id || suspended_inquiry_id).to_s
       return false if inquiry_id.empty?
 
       memory_store.append_inquiry_cancelled!(created_at:, inquiry_id:)
       true
+    end
+
+    def suspended_inquiry
+      memory_store.suspended_inquiry
+    end
+
+    def suspended_inquiry_id
+      memory_store.suspended_inquiry_id
+    end
+
+    def inquiry_blocking_prompt_queue?
+      !latest_inquiry.nil? || !suspended_inquiry.nil?
+    end
+
+    def suspend_inquiry!(inquiry_id, created_at: Time.now)
+      expected_id = latest_inquiry_id.to_s
+      return false if expected_id.empty? || inquiry_id.to_s != expected_id
+
+      memory_store.append_inquiry_suspended!(created_at:, inquiry_id: expected_id)
+    end
+
+    def restore_inquiry!(inquiry_id, created_at: Time.now)
+      expected_id = suspended_inquiry_id.to_s
+      return false if expected_id.empty? || inquiry_id.to_s != expected_id
+
+      memory_store.append_inquiry_restored!(created_at:, inquiry_id: expected_id)
+    end
+
+    def retire_suspended_inquiry!(inquiry_id, created_at: Time.now)
+      expected_id = suspended_inquiry_id.to_s
+      return false if expected_id.empty? || inquiry_id.to_s != expected_id
+
+      memory_store.append_inquiry_retired!(created_at:, inquiry_id: expected_id)
     end
 
     def add_assistant_message!(content)

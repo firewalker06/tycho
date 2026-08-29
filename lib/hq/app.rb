@@ -2213,8 +2213,29 @@ def selected_screen_items
       return [self, nil] if content.empty?
 
       agent = @agent_chat_form.agent
-      @agent_store.accept_delegation_prompt!(agent, owner: "user")
-      agent.add_user_message!(content)
+      if @agent_chat_form.inquiry_active?
+        @agent_store.accept_delegation_prompt!(agent, owner: "user")
+        agent.add_user_message!(content)
+      else
+        begin
+          agent = @agent_store.accept_ordinary_prompt!(
+            agent.key,
+            text: content,
+            attachments: [],
+            actor: HQ::DelegationActor.user_actor,
+            retire_inquiry_id: agent.suspended_inquiry_id
+          )
+        rescue ArgumentError => e
+          agent = @agent_store.load.find { |item| item.key == agent.key } || agent
+          @agent_chat_form.agent = agent if @agent_chat_form.respond_to?(:agent=)
+          sync_agent_chat_workspace!
+          @agent_chat_form.inquiry_form.error_message = e.message if @agent_chat_form.inquiry_active?
+          return [self, nil]
+        end
+        index = @agents.index { |item| item.key == agent.key }
+        @agents[index] = agent if index
+        @agent_chat_form.agent = agent if @agent_chat_form.respond_to?(:agent=)
+      end
       @agent_chat_form.composer.clear unless @agent_chat_form.inquiry_active?
       save_agents!
       unless agent.running?

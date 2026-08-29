@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-08-27
+2026-08-29
 
 ## Strategic Direction
 
@@ -66,6 +66,7 @@ Key references:
 | Conversation block scrolling | Initial chat load bottom-aligns the latest block when it fits, oversized blocks start at row 1, and navigation scrolls only enough to reveal the selected block | The selected label/cursor must remain visible and predictable while keeping surrounding recent context on first open |
 | Conversation viewport offsets | Block `line_offset` / `line_height` are derived from the final rendered rows; long unbroken preview tokens are hard-wrapped before entering the viewport, and footer debug is computed after viewport sync | Bubbles `Viewport` counts newline-separated lines, while terminals visually wrap long tokens; stale or mismatched offsets cause misleading `visible 0/0` debug and cropped selected blocks |
 | Inquiry submission | Gated review step inside a rounded box | Prevents accidental structured submissions |
+| Inquiry suspension | Record dismiss, restore, and ordinary-prompt retirement as inquiry-ID-scoped events in the canonical agent journal; keep active and restorable inquiries as prompt-queue blockers | Dismissal remains durable across clients without rewriting conversation history, stale clients cannot transition a different inquiry, and only the ordinary composer that rendered the suspended inquiry may retire it |
 | Input handling | `BubbleteaInput` patches `Bubbletea::Program#poll_event` with a Ruby-side queue | Fixes multi-byte / bracketed paste truncation in Bubbles `TextInput`/`TextArea` |
 | Logging | Centralized `HQ.logger` (stdlib `Logger`), daily rotation, 7-day retention | Single sink for lifecycle, config, process, and silently-rescued errors |
 | Skill discovery | Enumerate SKILL.md from `~/.claude/skills` + workspace `.claude/skills` (Claude-compatible harnesses) and `~/.codex/skills` + `~/.agents/skills` + workspace `.agents/skills` (Codex) | Per-agent trigger character (`/` vs `$`) surfaced in the chat composer |

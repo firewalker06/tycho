@@ -4690,6 +4690,33 @@ def write_smoke_script(path)
         }
         await page.click(".mobile-inquiry > summary");
         await page.waitForSelector("#inquiry-form", { state: "visible", timeout: 10_000 });
+        await page.click("#inquiry-form .composer-action-menu > summary");
+        await page.waitForSelector('[data-inquiry-lifecycle-action="dismiss"]', { state: "visible", timeout: 10_000 });
+        const dismissActionContract = await page.evaluate(() => ({
+          menuLabel: document.querySelector("#inquiry-form .composer-action-menu > summary")?.getAttribute("aria-label"),
+          actionLabel: document.querySelector('[data-inquiry-lifecycle-action="dismiss"]')?.getAttribute("aria-label"),
+        }));
+        if (dismissActionContract.menuLabel !== "Inquiry actions" || dismissActionContract.actionLabel !== "Dismiss inquiry") {
+          throw new Error(`Inquiry dismiss context menu is not accessible: ${JSON.stringify(dismissActionContract)}`);
+        }
+        await page.evaluate((key) => {
+          state.pendingInquiryActions.set(key, "dismiss");
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
+        const dismissPendingContract = await page.evaluate(() => ({
+          label: document.querySelector("#inquiry-form .composer-action-menu > summary")?.getAttribute("aria-label"),
+          busy: document.querySelector("#inquiry-form .composer-action-menu > summary")?.getAttribute("aria-busy"),
+          disabled: document.querySelector('[data-inquiry-lifecycle-action="dismiss"]')?.disabled,
+        }));
+        if (dismissPendingContract.label !== "Dismissing inquiry" || dismissPendingContract.busy !== "true" || !dismissPendingContract.disabled) {
+          throw new Error(`Inquiry dismiss pending state is not accessible: ${JSON.stringify(dismissPendingContract)}`);
+        }
+        await page.evaluate((key) => {
+          state.pendingInquiryActions.delete(key);
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
         const expandedInquiryHeader = await page.evaluate(() => ({
           banners: document.querySelectorAll(".mobile-inquiry > #inquiry-form .inquiry-banner").length,
           fullScreenInHeader: Boolean(document.querySelector(".mobile-inquiry > summary [data-toggle-inquiry-full-screen]")),
@@ -4832,6 +4859,7 @@ def write_smoke_script(path)
         await page.evaluate((key) => {
           clearFormDraft(document.querySelector("#inquiry-form"));
           const agent = findAgent(key);
+          agent.suspended_inquiry = agent.latest_inquiry;
           agent.latest_inquiry = null;
           state.fullScreenInquiryKeys.delete(key);
           state.conversations[key].blocks.push({
@@ -4845,6 +4873,17 @@ def write_smoke_script(path)
           render();
         }, agentKey);
         await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+        await page.click("#composer .composer-action-menu > summary");
+        await page.waitForSelector('[data-inquiry-lifecycle-action="restore"]', { state: "visible", timeout: 10_000 });
+        const restoreActionLabel = await page.locator('[data-inquiry-lifecycle-action="restore"]').getAttribute("aria-label");
+        if (restoreActionLabel !== "Restore inquiry") {
+          throw new Error(`Composer restore context menu is not accessible: ${JSON.stringify(restoreActionLabel)}`);
+        }
+        await page.evaluate((key) => {
+          findAgent(key).suspended_inquiry = null;
+          state.renderedViewHtml = "";
+          render();
+        }, agentKey);
         const inquiryResponseFields = await page.evaluate(() => {
           const replies = Array.from(document.querySelectorAll(".message.inquiry-response"));
           const reply = replies.at(-1);

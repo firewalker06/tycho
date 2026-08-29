@@ -311,10 +311,70 @@ module HQ
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
         raise ArgumentError, "No queued dispatch is waiting for retry" unless target.prompt_queue_dispatch_error
-        raise ArgumentError, "An inquiry must be answered before retrying queued work" if target.latest_inquiry
+        raise ArgumentError, "An inquiry must be resolved before retrying queued work" if target.inquiry_blocking_prompt_queue?
 
         target.clear_prompt_queue_dispatch_error!
         dispatch_prompt_queue!(target, agents)
+        target
+      end
+    end
+
+    def suspend_inquiry!(key, inquiry_id)
+      mutate do |agents, _events|
+        target = find_agent_in!(agents, key)
+        raise ArgumentError, "Inquiry has changed; refresh and try again" unless target.suspend_inquiry!(inquiry_id)
+
+        target
+      end
+    end
+
+    def restore_inquiry!(key, inquiry_id)
+      mutate do |agents, _events|
+        target = find_agent_in!(agents, key)
+        raise ArgumentError, "Inquiry is no longer restorable; refresh and try again" unless target.restore_inquiry!(inquiry_id)
+
+        target
+      end
+    end
+
+    def accept_ordinary_prompt!(key, text:, attachments:, actor:, retire_inquiry_id: nil)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = find_agent_in!(agents, key)
+        active_id = target.latest_inquiry_id.to_s
+        suspended_id = target.suspended_inquiry_id.to_s
+        supplied_id = retire_inquiry_id.to_s
+        unless active_id.empty?
+          raise ArgumentError, "Inquiry has changed; refresh and try again" unless supplied_id.empty?
+
+          target.cancel_pending_inquiry!
+        end
+        if suspended_id.empty?
+          raise ArgumentError, "Inquiry is no longer restorable; refresh and try again" unless supplied_id.empty?
+        elsif supplied_id.empty? || supplied_id != suspended_id
+          raise ArgumentError, "Inquiry has changed; refresh and try again"
+        else
+          target.retire_suspended_inquiry!(suspended_id)
+        end
+
+        accept_prompt_from!(target, actor:, agents:)
+        target.add_user_message!(text, attachments:, metadata: target.message_author_metadata(actor))
+        target
+      end
+    end
+
+    def answer_inquiry!(key, inquiry_id:, answer:, attachments:, feedback: nil, feedback_embedded: false)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = find_agent_in!(agents, key)
+        expected_id = target.latest_inquiry_id.to_s
+        if expected_id.empty? || inquiry_id.to_s != expected_id
+          raise ArgumentError, "Inquiry has changed; refresh and try again"
+        end
+
+        accept_delegation_prompt!(target, owner: "user")
+        target.add_user_message!(answer, inquiry_id: expected_id, attachments:)
+        unless feedback_embedded || feedback.to_s.empty?
+          target.add_user_message!(feedback, metadata: { "inquiry_feedback" => true })
+        end
         target
       end
     end
@@ -402,6 +462,10 @@ module HQ
     end
 
     private
+
+    def find_agent_in!(agents, key)
+      agents.find { |agent| agent.key == key.to_s } || raise(ArgumentError, "Unknown agent: #{key}")
+    end
 
     def dispatch_prompt_queues!(agents)
       changed = false

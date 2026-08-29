@@ -136,12 +136,35 @@ module HQ
     def latest_inquiry_event(fallback: nil)
       events = read_events
       has_request = events.any? { |event| event["type"] == "inquiry_request" }
-      has_resolution = events.any? { |event| %w[inquiry_response inquiry_cancelled].include?(event["type"]) }
-      return fallback unless has_request || has_resolution
+      has_lifecycle = events.any? { |event| inquiry_lifecycle_event?(event) }
+      return fallback unless has_request || has_lifecycle
 
-      unresolved_inquiry_event(events)
+      active_inquiry_event(events)
     rescue StandardError
       fallback
+    end
+
+    def suspended_inquiry
+      event = suspended_inquiry_event
+      return nil unless event
+
+      metadata = event["metadata"]
+      metadata.is_a?(Hash) ? metadata["inquiry"] : nil
+    rescue StandardError
+      nil
+    end
+
+    def suspended_inquiry_event
+      suspended_inquiry_event_from(read_events)
+    rescue StandardError
+      nil
+    end
+
+    def suspended_inquiry_id
+      event = suspended_inquiry_event
+      event ? inquiry_id_for_event(event) : nil
+    rescue StandardError
+      nil
     end
 
     def latest_inquiry_id(fallback: nil)
@@ -432,6 +455,18 @@ module HQ
       )
     end
 
+    def append_inquiry_suspended!(created_at: Time.now, inquiry_id: nil)
+      append_inquiry_lifecycle!("inquiry_suspended", "Inquiry dismissed", created_at:, inquiry_id:)
+    end
+
+    def append_inquiry_restored!(created_at: Time.now, inquiry_id: nil)
+      append_inquiry_lifecycle!("inquiry_restored", "Inquiry restored", created_at:, inquiry_id:)
+    end
+
+    def append_inquiry_retired!(created_at: Time.now, inquiry_id: nil)
+      append_inquiry_lifecycle!("inquiry_retired", "Inquiry retired by an ordinary prompt", created_at:, inquiry_id:)
+    end
+
     def append_attachment!(attachment, created_at: Time.now)
       attachment = normalize_attachments([attachment]).first
       return unless attachment.is_a?(Hash)
@@ -678,29 +713,55 @@ module HQ
     end
 
     def unresolved_inquiry_event(events)
-      inquiry = events.reverse.find { |event| event["type"] == "inquiry_request" }
-      return nil unless inquiry
+      active_inquiry_event(events) || suspended_inquiry_event_from(events)
+    end
 
-      response = events.reverse.find { |event| %w[inquiry_response inquiry_cancelled].include?(event["type"]) }
-      return inquiry unless response
+    def active_inquiry_event(events)
+      inquiry_event_for_state(events, "active")
+    end
 
+    def suspended_inquiry_event_from(events)
+      inquiry_event_for_state(events, "suspended")
+    end
+
+    def inquiry_event_for_state(events, expected_state)
+      inquiry_index = events.rindex { |event| event["type"] == "inquiry_request" }
+      return nil unless inquiry_index
+
+      inquiry = events[inquiry_index]
       inquiry_id = inquiry_id_for_event(inquiry)
-      unless inquiry_id.to_s.empty?
-        matching_response = events.reverse.find do |event|
-          %w[inquiry_response inquiry_cancelled].include?(event["type"]) && inquiry_id_for_event(event) == inquiry_id
-        end
-        if matching_response
-          response = matching_response
-        elsif !inquiry_id_for_event(response).to_s.empty?
-          return inquiry
-        end
+      lifecycle = Array(events[(inquiry_index + 1)..]).reverse.find do |event|
+        next false unless inquiry_lifecycle_event?(event)
+
+        event_id = inquiry_id_for_event(event)
+        inquiry_id.to_s.empty? ? event_id.to_s.empty? : event_id == inquiry_id
       end
+      inquiry_state_for_lifecycle(lifecycle) == expected_state ? inquiry : nil
+    end
 
-      inquiry_time = parse_time(inquiry["created_at"])
-      response_time = parse_time(response["created_at"])
-      return inquiry if inquiry_time && response_time && inquiry_time > response_time
+    def inquiry_lifecycle_event?(event)
+      %w[inquiry_response inquiry_cancelled inquiry_suspended inquiry_restored inquiry_retired].include?(event["type"])
+    end
 
-      nil
+    def inquiry_state_for_lifecycle(event)
+      case event&.fetch("type", nil)
+      when nil, "inquiry_restored" then "active"
+      when "inquiry_suspended" then "suspended"
+      else "retired"
+      end
+    end
+
+    def append_inquiry_lifecycle!(type, content, created_at:, inquiry_id:)
+      id = inquiry_id.to_s.strip
+      return false if id.empty?
+
+      journal.append({
+        "type" => type,
+        "content" => content,
+        "created_at" => created_at.iso8601,
+        "metadata" => { "inquiry_id" => id }
+      })
+      true
     end
 
     def format_inquiry_context(event)
