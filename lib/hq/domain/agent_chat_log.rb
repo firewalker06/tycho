@@ -190,6 +190,17 @@ module HQ
           )
           chat_system << entry
           system_log << entry
+        when "stream_status"
+          metadata = merge_sequence_metadata(event["metadata"], sequence)
+          entry = Parser::SystemEntry.new(
+            type: metadata["type"] == "error" ? :error : :status,
+            content: event["content"].to_s,
+            timestamp:,
+            tool_name: nil,
+            metadata: metadata
+          )
+          chat_system << entry if entry.type == :error
+          system_log << entry
         when "delegation_event"
           entry = Parser::SystemEntry.new(
             type: :delegation_event,
@@ -437,6 +448,17 @@ module HQ
               "created_at" => cursor.iso8601,
               "metadata" => entry.metadata.is_a?(Hash) ? entry.metadata : nil
             }.compact
+            next
+          end
+          if %i[error status].include?(entry.type)
+            metadata = entry.metadata.is_a?(Hash) ? entry.metadata.dup : {}
+            metadata["type"] = entry.type.to_s
+            events << {
+              "type" => "stream_status",
+              "content" => entry.content.to_s,
+              "created_at" => cursor.iso8601,
+              "metadata" => metadata
+            }
             next
           end
 

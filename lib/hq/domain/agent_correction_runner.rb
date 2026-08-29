@@ -104,6 +104,8 @@ module HQ
         parsed = JSON.parse(line)
         id = if @config.fetch("harness_adapter") == "codex"
                parsed["thread_id"] || parsed["session_id"]
+             elsif @config.fetch("harness_adapter") == "pi"
+               parsed["id"] if parsed["type"] == "session"
              else
                parsed["session_id"] || parsed.dig("session", "id")
              end

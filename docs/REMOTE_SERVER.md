@@ -143,7 +143,7 @@ The top-level mobile tabs are `Now`, `Agents`, and `Settings`. Agents is the can
 
 Settings → Configuration explains that response style is shared writing guidance for tone, clarity, and prose rather than task instructions. A missing policy stays collapsed behind **Add response style**. Once saved, the compact summary shows an excerpt, **Edit response style**, and a trash action that removes the global policy after confirmation. Opening the editor prefills existing content, while saving or canceling returns to the compact summary. Conversation Settings records whether the displayed agent run used the **Global**, **Custom**, or **Disabled** response-style source and combines model and reasoning effort into one row. It reads and writes `~/.tycho/config/response_style.md` by default, or `TYCHO_RESPONSE_STYLE_PATH` when configured. Saves use Tycho's atomic file store and retain the previous file as `response_style.md.bak`; focused edits survive polling refreshes.
 
-Settings → Skills reports the bundled Tycho skill as missing, installed, outdated, blocked, or errored for Codex, Claude Code, and OpenCode. Install and update are separate confirmed actions, target each harness's official personal skill directory, and report the exact skills changed. See [TYCHO_SKILLS.md](./TYCHO_SKILLS.md) for source, ownership, checksum, path, and verification details.
+Settings → Skills reports the bundled Tycho skill as missing, installed, outdated, blocked, or errored for Codex, Claude Code, OpenCode, and Pi. Install and update are separate confirmed actions, target each harness's official personal skill directory, and report the exact skills changed. See [TYCHO_SKILLS.md](./TYCHO_SKILLS.md) for source, ownership, checksum, path, and verification details.
 
 The Conversation composer has a full-screen editor for longer prompts. It opens as an accessible modal with a constrained writing canvas, focus containment, visual-viewport sizing for mobile keyboards, and only an X close control—no editor header or explanatory copy. Inline and full-screen Conversation and inquiry forms are stable islands during polling: surrounding conversation state refreshes without detaching, blurring, or reconstructing the live form control. Draft text, focus, selection, attachments, and editor mode therefore survive same-route polling refreshes. Drafts save locally while typing and survive reloads; route navigation, sending, the X control, or one Escape press exits full screen without discarding the draft.
 
@@ -887,7 +887,7 @@ Returns Remote UI readiness metadata: local URL, public Tailscale/MagicDNS URL, 
 
 ### `GET /skills`
 
-Returns the source/version/verification guidance and missing, installed, outdated, blocked, or error state for Codex, Claude Code, and OpenCode. Paths are resolved against the Tycho server user's home directory.
+Returns the source/version/verification guidance and missing, installed, outdated, blocked, or error state for Codex, Claude Code, OpenCode, and Pi. Paths are resolved against the Tycho server user's home directory.
 
 ### `POST /skills/{harness}/install`
 

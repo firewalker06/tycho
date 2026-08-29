@@ -10,7 +10,7 @@ type: reference
 
 Tycho scheduled runs are driven by `tycho schedule daemon`. Definitions live in `~/.tycho/config/schedules.yml`, mutable runtime state lives in `~/.tycho/logs/schedules.json`, daemon heartbeat state lives in `~/.tycho/logs/scheduler_daemon.json`, and cron syntax is validated before any long-running scheduler loop starts. The TUI and Remote UI are management surfaces, but neither owns the clock.
 
-The current scope is intentionally narrow: schedules own one persistent managed agent session each. There are no shell commands, agent-template selections, ad hoc existing-agent targets, or agent clones. The first due run creates the schedule-owned agent; later due runs append a scheduled user message to that same agent and start another `ManagedAgent` run so native Codex/Claude/OpenCode session resume can preserve context.
+The current scope is intentionally narrow: schedules own one persistent managed agent session each. There are no shell commands, agent-template selections, ad hoc existing-agent targets, or agent clones. The first due run creates the schedule-owned agent; later due runs append a scheduled user message to that same agent and start another `ManagedAgent` run so native Codex/Claude/OpenCode/Pi session resume can preserve context.
 
 Each schedule has two editable prompt fields: a system message for the schedule-owned agent session, and a run message sent as the next user message each time the schedule runs. The Remote UI edits both in one schedule form and saves the run message inline in `~/.tycho/config/schedules.yml`; legacy `message_file` schedules still load, but saving them from the Remote UI converts them to inline run messages. On failure or required human input, stop the schedule and notify via web push. On success, notify only on the first successful run and the first successful run after a prior failure; both success notifications should include the next scheduled run time.
 
@@ -43,7 +43,7 @@ Each schedule has two editable prompt fields: a system message for the schedule-
 
 ### Architecture To Reuse
 
-- `ManagedAgent#start!` spawns Codex/Claude-compatible runs as detached child processes, writes raw logs, tracks `pid`, preserves native `session_id`, clears derived logs, and emits lifecycle hooks.
+- `ManagedAgent#start!` spawns built-in and Claude-compatible runs as detached child processes, writes raw logs, tracks `pid`, preserves native `session_id`, clears derived logs, and emits lifecycle hooks.
 - `AgentStore#load_with_poll_events` restores persisted agents from `~/.tycho/logs/managed_agents.json`, polls running processes, marks completed runs unread, and produces transition events for push notifications.
 - `RemoteService` already exposes start/stop/chat/archive operations for agents, setup readiness, push notifications, and project refresh.
 - The TUI has 30-second full refresh and 10-second action/agent polling, but it is an interactive client rather than a reliable background daemon.

@@ -47,10 +47,11 @@ module SkillInstallerTest
       expected = {
         "codex" => File.join(home, ".agents", "skills"),
         "claude" => File.join(home, ".claude", "skills"),
-        "opencode" => File.join(home, ".config", "opencode", "skills")
+        "opencode" => File.join(home, ".config", "opencode", "skills"),
+        "pi" => File.join(home, ".pi", "agent", "skills")
       }
       statuses = installer.statuses
-      assert(statuses.map { |item| item[:harness] } == %w[codex claude opencode], "expected supported harness order")
+      assert(statuses.map { |item| item[:harness] } == %w[codex claude opencode pi], "expected supported harness order")
       statuses.each do |item|
         assert(item[:status] == "missing", "expected #{item[:harness]} to start missing")
         assert(item[:target_path] == expected.fetch(item[:harness]), "expected official #{item[:harness]} skill path")

@@ -26,7 +26,11 @@ module HQ
     end
 
     def trigger_for(agent_kind)
-      HQ.harness_adapter(agent_kind) == "claude" ? "/" : "$"
+      case HQ.harness_adapter(agent_kind)
+      when "claude" then "/"
+      when "pi" then "/skill:"
+      else "$"
+      end
     end
 
     def skill_files(root)
@@ -59,6 +63,13 @@ module HQ
           File.expand_path("~/.agents/skills"),
           workspace.empty? ? nil : File.join(workspace, ".opencode", "skills"),
           workspace.empty? ? nil : File.join(workspace, ".claude", "skills"),
+          workspace.empty? ? nil : File.join(workspace, ".agents", "skills")
+        ]
+      when "pi"
+        [
+          File.expand_path("~/.pi/agent/skills"),
+          File.expand_path("~/.agents/skills"),
+          workspace.empty? ? nil : File.join(workspace, ".pi", "skills"),
           workspace.empty? ? nil : File.join(workspace, ".agents", "skills")
         ]
       else

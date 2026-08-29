@@ -30,6 +30,7 @@ install/build dependency, not a Tycho runtime subprocess dependency.
 | `codex` | Built-in Codex managed-agent harness | Soft feature fail. Agent start records a failed run if the executable is missing | Warn if missing; hard fail only for a Codex-agent profile |
 | `claude` | Built-in Claude managed-agent harness | Soft feature fail. Agent start records a failed run if the executable is missing | Warn if missing; hard fail only for a Claude-agent profile |
 | `opencode` | Built-in OpenCode managed-agent harness | Soft feature fail. Agent start records a failed run if the executable is missing | Warn if missing; hard fail only for an OpenCode-agent profile |
+| `pi` | Built-in Pi Coding Agent harness (`@mariozechner/pi-coding-agent` 0.73.1 contract) | Soft feature fail. Agent start records a failed run if the executable is missing or no authenticated model is available | Warn if missing; hard fail only for a Pi-agent profile |
 | Custom Claude-compatible harnesses | Project-specific managed-agent execution | Soft feature fail. Tycho checks the configured executable before starting the agent | Validate configured command and warn with the harness key |
 | `tailscale` | Remote UI auto-bind, MagicDNS URL, HTTPS Serve detection, terminal QR URL | Soft fail. Missing or stopped Tailscale returns `nil`; `tycho serve` falls back to localhost | Warn only when remote/tailnet access is requested |
 | `osascript` | macOS terminal automation for Ghostty, iTerm, and Apple Terminal command launches | Soft fail. Tycho logs AppleScript failures and keeps the TUI running | Check only on macOS; warn if absent or if terminal automation is requested |
@@ -61,6 +62,8 @@ The setup script should respect the same executable overrides that Tycho uses:
 | `TYCHO_SCHEDULER_DAEMON_PATH` | Override scheduler daemon heartbeat path |
 | `TYCHO_CODEX_BIN` | Override Codex executable |
 | `TYCHO_CLAUDE_BIN` | Override Claude executable |
+| `TYCHO_OPENCODE_BIN` | Override OpenCode executable |
+| `TYCHO_PI_BIN` | Override Pi Coding Agent executable |
 | `TYCHO_TAILSCALE_BIN` | Override Tailscale executable |
 | `TYCHO_LOGS_ROOT` | Override runtime logs directory |
 | `TYCHO_REMOTE_TOKEN` | Protect non-loopback Remote UI/API access |
@@ -86,6 +89,7 @@ Escalate optional tools to hard requirements for specific feature profiles:
 
 ```bash
 bin/setup --profile codex --profile claude
+bin/setup --profile pi
 bin/setup --profile all
 ```
 
@@ -127,7 +131,7 @@ Recommended soft failures:
 - Git is missing.
 - Tailscale is missing or stopped.
 - `osascript`, `open`, or `wezterm` terminal automation is unavailable.
-- Codex, Claude, or custom harnesses are missing when the user did not request
+- Codex, Claude, OpenCode, Pi, or custom harnesses are missing when the user did not request
   that agent profile.
 - Browser push prerequisites are missing.
 

@@ -19,6 +19,7 @@ module UsageMetricsTest
     assert_codex_cumulative_usage_is_normalized_and_idempotent
     assert_managed_run_finalization_persists_once
     assert_claude_model_usage_preserves_mixed_model_attribution
+    assert_pi_usage_and_cost_are_summed_without_estimation
     assert_unknown_ids_models_and_prices_stay_unknown
     assert_retries_resumes_filters_and_report_statistics
     assert_start_failure_is_ingested_immediately
@@ -80,6 +81,40 @@ module UsageMetricsTest
              stored.dig("estimated_cost", "pricing", "version_unknown_reason").include?("did not report"),
              "expected an explicit unknown Claude pricing version")
       assert(store.sessions.fetch(0)["mixed_model"] == true, "expected mixed-model session marker")
+    end
+  end
+
+  def assert_pi_usage_and_cost_are_summed_without_estimation
+    with_store do |store|
+      first = run("pi-run-1", 13, session_id: "pi-session-1", model: "openai-codex/gpt-5.4")
+      second = run("pi-run-2", 14, session_id: "pi-session-1", model: "openai-codex/gpt-5.4")
+      fixture_agent = agent("pi", "openai-codex/gpt-5.4", [first], session_id: "pi-session-1")
+      lines = [
+        '{"type":"message_end","message":{"role":"assistant","model":"gpt-5.4","provider":"openai-codex","content":[],"usage":{"input":10,"output":2,"cacheRead":3,"cacheWrite":1,"cost":{"total":0.01}},"stopReason":"toolUse"}}',
+        '{"type":"message_end","message":{"role":"assistant","model":"gpt-5.4","provider":"openai-codex","content":[],"usage":{"input":20,"output":4,"cacheRead":5,"cacheWrite":0,"cost":{"total":0.02}},"stopReason":"stop"}}'
+      ]
+      first_record = normalize(fixture_agent, first, usage_entries(lines, "pi"))
+      fixture_agent.runs << second
+      second_record = normalize(fixture_agent, second, usage_entries(lines.last(1), "pi"))
+      store.upsert(first_record)
+      store.upsert(second_record)
+
+      assert(first_record.dig("tokens", "input_tokens") == 30,
+             "expected Pi input tokens to sum across tool-loop messages")
+      assert(first_record.dig("tokens", "output_tokens") == 6, "expected Pi output tokens to sum")
+      assert(first_record["observed_models"] == ["openai-codex/gpt-5.4"],
+             "expected Pi observed models to retain provider qualification")
+      assert_close(first_record.dig("estimated_cost", "amount_usd"), 0.03)
+      assert(first_record.dig("estimated_cost", "source") == "pi_reported_estimate",
+             "expected Pi-reported cost without model-price estimation")
+      assert(first_record.dig("estimated_cost", "pricing", "version").nil?,
+             "expected unknown Pi pricing version to remain unknown")
+
+      session = store.sessions.fetch(0)
+      assert(session["run_count"] == 2 && session["observed_models"] == ["openai-codex/gpt-5.4"],
+             "expected qualified Pi model aggregation across resumed runs")
+      assert(session["mixed_model"] == false,
+             "expected configured and observed provider-qualified Pi models not to appear mixed")
     end
   end
 

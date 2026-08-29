@@ -12,6 +12,8 @@ module HarnessCatalogTest
     assert_codex_catalog_probe_times_out_hung_cli
     assert_timeout_handles_term_exit_without_double_wait
     assert_opencode_auth_table_strips_status_glyphs
+    assert_pi_models_drive_catalog_and_auth_readiness
+    assert_pi_empty_model_catalog_reports_auth_not_ready
     puts "harness_catalog_test: ok"
   end
 
@@ -92,6 +94,55 @@ module HarnessCatalogTest
       providers = HQ::HarnessCatalog.opencode_auth_providers(executable)
       assert(providers == %w[anthropic google],
              "expected OpenCode auth providers without table glyphs, got #{providers.inspect}")
+    end
+  end
+  def assert_pi_models_drive_catalog_and_auth_readiness
+    Dir.mktmpdir("hq-harness-catalog-test") do |dir|
+      executable = File.join(dir, "pi")
+      File.write(executable, <<~SH)
+        #!/bin/sh
+        if [ "$1" = "--version" ]; then
+          printf '0.73.1\n'
+        elif [ "$1" = "--list-models" ]; then
+          printf 'provider      model       context  max-out  thinking  images\n'
+          printf 'openai-codex  gpt-5.4     272K     128K     yes       yes\n'
+          printf 'anthropic     sonnet-4.5  200K     64K      yes       yes\n'
+        fi
+      SH
+      FileUtils.chmod(0o755, executable)
+      resolution = Struct.new(:command) { def available? = true }.new(executable)
+
+      catalog = HQ::HarnessCatalog.pi_catalog(resolution)
+      assert(catalog[:model_suggestions].map { |item| item[:value] } ==
+             %w[openai-codex/gpt-5.4 anthropic/sonnet-4.5],
+             "expected Pi provider-qualified model values")
+      assert(catalog[:auth_ready] && catalog[:auth_providers] == %w[openai-codex anthropic],
+             "expected Pi model availability to report authentication readiness")
+      assert(catalog[:version] == "0.73.1", "expected Pi version readiness")
+      assert(catalog[:safety_gaps].any? { |gap| gap.include?("no sandbox equivalent") },
+             "expected explicit Pi safety gap")
+    end
+  end
+
+  def assert_pi_empty_model_catalog_reports_auth_not_ready
+    Dir.mktmpdir("hq-harness-catalog-test") do |dir|
+      executable = File.join(dir, "pi")
+      File.write(executable, <<~SH)
+        #!/bin/sh
+        if [ "$1" = "--version" ]; then
+          printf '0.73.1\n'
+        elif [ "$1" = "--list-models" ]; then
+          printf 'No models available. Authenticate a provider first.\n'
+        fi
+      SH
+      FileUtils.chmod(0o755, executable)
+      resolution = Struct.new(:command) { def available? = true }.new(executable)
+
+      catalog = HQ::HarnessCatalog.pi_catalog(resolution)
+      assert(catalog[:model_suggestions].empty?, "expected an empty Pi model catalog")
+      assert(!catalog[:auth_ready], "expected an empty Pi model catalog to report authentication not ready")
+      assert(catalog[:catalog_source].include?("unauthenticated"),
+             "expected unauthenticated Pi catalog source")
     end
   end
 

@@ -1158,6 +1158,7 @@ module HQ
         claude_command_prefix: claude_command_prefix,
         claude_command_environment: claude_command_environment,
         opencode_executable: opencode_executable,
+        pi_executable: pi_executable,
         last_message_file_path: last_message_file_path,
         result_schema_path: AGENT_RESULT_SCHEMA,
         claude_result_schema: canonical_result_schema_json
@@ -1199,7 +1200,7 @@ module HQ
     end
 
     def structured_output_correction_supported?
-      File.file?(AGENT_RESULT_SCHEMA) && %w[codex claude].include?(harness_adapter)
+      File.file?(AGENT_RESULT_SCHEMA) && %w[codex claude pi].include?(harness_adapter)
     end
 
     def structured_output_correction_limit
@@ -2004,8 +2005,8 @@ module HQ
       unless response_style.to_s.empty? || text.include?(response_style.to_s)
         text = [text, "RESPONSE STYLE:\n#{response_style}"].reject(&:empty?).join("\n\n")
       end
-      if include_hidden_guidance && opencode_agent? && !native_resume?
-        guidance = opencode_structured_output_guidance
+      if include_hidden_guidance && prompt_only_structured_output_agent? && !native_resume?
+        guidance = prompt_only_structured_output_guidance
         text = [guidance, text].reject(&:empty?).join("\n\n") unless guidance.empty?
       end
       with_final_output_checklist(text)
@@ -2024,7 +2025,7 @@ module HQ
 
     def native_resume?
       return false if @session_id.to_s.empty?
-      return false unless %w[codex claude opencode].include?(harness_adapter)
+      return false unless %w[codex claude opencode pi].include?(harness_adapter)
 
       claude_like_agent? ? @session_bootstrapped : @runs.any?
     end
@@ -2039,6 +2040,14 @@ module HQ
 
     def opencode_agent?
       harness_adapter == "opencode"
+    end
+
+    def pi_agent?
+      harness_adapter == "pi"
+    end
+
+    def prompt_only_structured_output_agent?
+      opencode_agent? || pi_agent?
     end
 
     def harness_adapter
@@ -2141,6 +2150,10 @@ module HQ
       ExecutableResolver.command_for_tool("opencode")
     end
 
+    def pi_executable
+      ExecutableResolver.command_for_tool("pi")
+    end
+
     def canonical_result_schema_json
       return nil unless File.exist?(AGENT_RESULT_SCHEMA)
 
@@ -2149,7 +2162,7 @@ module HQ
       nil
     end
 
-    def opencode_structured_output_guidance
+    def prompt_only_structured_output_guidance
       schema = canonical_result_schema_json.to_s
       return "" if schema.empty?
 
@@ -2306,6 +2319,8 @@ module HQ
                event["session_id"] || event["sessionID"] || event["sessionId"] ||
                  event.dig("session", "id") || event.dig("session", "session_id") ||
                  (event["id"] if event["type"].to_s.include?("session"))
+             elsif pi_agent?
+               event["id"] if event["type"] == "session"
              else
                event["session_id"]
              end

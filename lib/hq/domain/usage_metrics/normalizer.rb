@@ -29,7 +29,13 @@ module HQ
       def record
         provider = ProviderTelemetry.for(harness)
         adapter = provider.adapter
-        normalized = provider.codex? ? codex_usage(provider) : per_run_usage(provider)
+        normalized = if provider.codex?
+                       codex_usage(provider)
+                     elsif provider.adapter == "pi"
+                       pi_usage(provider)
+                     else
+                       per_run_usage(provider)
+                     end
         native_session_id = present(@run.session_id) || present(@agent.session_id)
         inferred_fields = Array(@inference["inferred_fields"]).map(&:to_s).uniq
         unknown_reasons = Array(normalized.fetch("unknown_reasons"))
@@ -137,6 +143,46 @@ module HQ
         }
       end
 
+      def pi_usage(provider)
+        entries = @usage_entries.select { |entry| event_type(entry) == provider.event_type }
+        token_values = entries.filter_map { |entry| token_hash(metadata(entry)["usage"], require_codex_core: false) }
+        tokens = unless token_values.empty?
+                   token_values.each_with_object({}) do |values, total|
+                     values.each { |key, value| total[key] = total.fetch(key, 0) + value }
+                   end
+                 end
+        observed = entries.flat_map { |entry| pi_observed_models(entry) }.uniq.sort
+        cost = provider.reported_cost(entries) { |entry| numeric(metadata(entry)["total_cost_usd"]) }
+        reasons = []
+        reasons << "Pi did not report usage telemetry" if entries.empty?
+        reasons << "Pi did not report token telemetry" unless tokens
+        reasons << "Pi did not report a run cost" if cost.nil?
+        {
+          "tokens" => tokens,
+          "cumulative_tokens" => nil,
+          "observed_models" => observed,
+          "model_attribution" => observed.map { |model| { "observed_model" => model } },
+          "estimated_cost" => cost_payload(
+            cost,
+            "pi_reported_estimate",
+            {
+              "source" => "pi_reported_total",
+              "version" => nil,
+              "version_unknown_reason" => "Pi did not report a pricing version"
+            },
+            cost.nil? ? "Pi did not report a run cost" : nil
+          ),
+          "telemetry_completeness" => if entries.empty?
+                                        "unknown"
+                                      elsif tokens && !cost.nil?
+                                        "complete"
+                                      else
+                                        "partial"
+                                      end,
+          "unknown_reasons" => reasons
+        }
+      end
+
       def claude_model_attribution(entry)
         usage = metadata(entry)["model_usage"]
         return [] unless usage.is_a?(Hash)
@@ -163,6 +209,16 @@ module HQ
         model ? [model] : []
       end
 
+      def pi_observed_models(entry)
+        details = metadata(entry)
+        model = present(details["model"])
+        return [] unless model
+        return [model] if model.include?("/")
+
+        provider = present(details["provider"])
+        [provider ? "#{provider}/#{model}" : model]
+      end
+
       def provenance
         events = @usage_entries.map do |entry|
           safe = safe_usage_metadata(metadata(entry))
@@ -183,7 +239,7 @@ module HQ
       def safe_usage_metadata(value)
         allowed = %w[
           event_type total_cost_usd usage model model_usage subtype is_error duration_ms duration_api_ms
-          num_turns session_id
+          num_turns session_id provider
         ]
         value.select { |key, _entry| allowed.include?(key.to_s) }
       end

@@ -5,7 +5,7 @@ module HQ
     def initialize(agent:, harness_adapter:, workspace:, sandbox_mode:, model:, reasoning_effort:,
                    session_id:, session_bootstrapped:, prompt:, codex_executable:, claude_command_prefix:,
                    claude_command_environment: {},
-                   opencode_executable:, last_message_file_path:, result_schema_path:, claude_result_schema:)
+                   opencode_executable:, pi_executable:, last_message_file_path:, result_schema_path:, claude_result_schema:)
       @agent = agent
       @harness_adapter = harness_adapter
       @workspace = workspace
@@ -19,6 +19,7 @@ module HQ
       @claude_command_prefix = claude_command_prefix
       @claude_command_environment = claude_command_environment
       @opencode_executable = opencode_executable
+      @pi_executable = pi_executable
       @last_message_file_path = last_message_file_path
       @result_schema_path = result_schema_path
       @claude_result_schema = claude_result_schema
@@ -28,6 +29,7 @@ module HQ
       return build_claude_command if claude_like_agent?
       return build_codex_command if codex_agent?
       return build_opencode_command if opencode_agent?
+      return build_pi_command if pi_agent?
 
       raise "Unsupported managed-agent harness #{@agent.inspect}"
     end
@@ -41,6 +43,7 @@ module HQ
       end
       return build_interactive_codex_command if codex_agent?
       return build_interactive_opencode_command if opencode_agent?
+      return build_interactive_pi_command if pi_agent?
 
       raise "Unsupported managed-agent harness #{@agent.inspect}"
     end
@@ -96,6 +99,16 @@ module HQ
       { command: command }
     end
 
+    def build_pi_command
+      command = [@pi_executable, "--mode", "json"]
+      command.concat(model_arguments)
+      command.concat(pi_thinking_arguments)
+      command.concat(pi_safety_arguments)
+      command.concat(["--session", @session_id]) unless @session_id.empty?
+      command << @prompt
+      { command: command }
+    end
+
     def build_interactive_codex_command
       command = [@codex_executable]
       command.concat(model_arguments)
@@ -132,6 +145,15 @@ module HQ
       { command: command }
     end
 
+    def build_interactive_pi_command
+      command = [@pi_executable]
+      command.concat(model_arguments)
+      command.concat(pi_thinking_arguments)
+      command.concat(pi_safety_arguments)
+      command.concat(["--session", @session_id]) unless @session_id.empty?
+      { command: command }
+    end
+
     def build_claude_like_command(command_prefix:, env: {})
       command = command_prefix.dup
       command.concat(model_arguments)
@@ -160,6 +182,16 @@ module HQ
       @reasoning_effort.to_s.empty? ? [] : ["--variant", @reasoning_effort]
     end
 
+    def pi_thinking_arguments
+      @reasoning_effort.to_s.empty? ? [] : ["--thinking", @reasoning_effort]
+    end
+
+    def pi_safety_arguments
+      return [] if @sandbox_mode == "danger-full-access"
+
+      ["--tools", "read,grep,find,ls"]
+    end
+
     def claude_like_agent?
       @harness_adapter == "claude"
     end
@@ -170,6 +202,10 @@ module HQ
 
     def opencode_agent?
       @harness_adapter == "opencode"
+    end
+
+    def pi_agent?
+      @harness_adapter == "pi"
     end
   end
 end

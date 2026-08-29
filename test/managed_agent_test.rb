@@ -21,6 +21,7 @@ module ManagedAgentTest
     assert_start_finalizes_unpolled_previous_run
     assert_cli_status_finalizes_unpolled_dead_pid
     assert_start_reconciles_session_after_restart
+    assert_pi_session_identity_is_captured_and_resumed
     assert_fallback_summary_uses_assistant_message_not_tool_json
     assert_utf8_raw_log_captures_memory_under_ascii_default_external
     assert_opencode_fallback_summary_uses_text_event_not_prompt
@@ -122,6 +123,42 @@ module ManagedAgentTest
     assert(agent.run_count == 2, "expected persisted lifetime run history to be retained")
     assert(agent.last_summary == "Run in progress",
            "expected a running agent with history not to render as never run")
+  end
+
+  def assert_pi_session_identity_is_captured_and_resumed
+    Dir.mktmpdir("hq-pi-session-test") do |dir|
+      log_path = File.join(dir, "pi.raw.log")
+      fixture = File.read(File.join(__dir__, "fixtures", "parser", "pi", "structured.jsonl"))
+      File.write(log_path, fixture)
+      run = HQ::ManagedAgent::AgentRun.new(
+        started_at: Time.utc(2026, 8, 21),
+        finished_at: Time.utc(2026, 8, 21, 0, 1),
+        status: "succeeded",
+        log_path: log_path,
+        log_start_offset: 0,
+        agent: "pi"
+      )
+      agent = HQ::ManagedAgent.new(
+        key: "pi-session-agent",
+        name: "Pi Session",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "System prompt",
+        agent: "pi",
+        started_at: run.started_at,
+        finished_at: run.finished_at,
+        log_path: log_path,
+        runs: [run]
+      )
+
+      agent.send(:capture_session_id!)
+      assert(agent.session_id == "00000000-1111-4222-8333-444444444444",
+             "expected Pi JSON session header identity to persist")
+      command = agent.send(:build_command).fetch(:command)
+      assert(argument_after(command, "--session") == agent.session_id,
+             "expected the next Pi run to resume the captured session")
+    end
   end
 
   def assert_never_run_agent_keeps_empty_summary
@@ -1396,6 +1433,24 @@ module ManagedAgentTest
     assert(!memory.include?("TYCHO STRUCTURED OUTPUT:"),
            "OpenCode schema guidance should remain hidden from TUI and Remote UI history")
 
+    pi = HQ::ManagedAgent.new(
+      key: "pi-output-contract",
+      name: "Pi Output Contract",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "System prompt",
+      agent: "pi"
+    )
+    pi_prompt = pi.send(:prompt_for_execution, response_style: nil)
+    assert(pi_prompt.include?("TYCHO STRUCTURED OUTPUT:") && pi_prompt.include?(JSON.generate(schema)),
+           "cold Pi prompts should receive execution-only canonical schema guidance")
+    assert(pi.send(:structured_output_correction_supported?),
+           "Pi should use native-session structured-output correction")
+    assert(!pi.send(:prompt_for_execution, response_style: nil, include_hidden_guidance: false)
+              .include?("TYCHO STRUCTURED OUTPUT:"),
+           "Pi schema guidance should stay out of visible prompt history")
+
     resumed = HQ::ManagedAgent.new(
       key: "opencode-output-contract-resumed",
       name: "OpenCode Output Contract Resumed",
@@ -2256,6 +2311,51 @@ module ManagedAgentTest
     resumed_command = resumed.send(:build_command)[:command]
     assert(argument_after(resumed_command, "--session") == "opencode-session-1",
            "expected OpenCode resume command to include --session")
+
+    pi = HQ::ManagedAgent.new(
+      key: "pi-model-agent",
+      name: "Pi Model Agent",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "System prompt",
+      agent: "pi",
+      model: "openai-codex/gpt-5.4",
+      reasoning_effort: "xhigh"
+    )
+    pi_command = pi.send(:build_command)[:command]
+    assert(File.basename(pi_command[0]) == "pi" && pi_command[1..2] == ["--mode", "json"],
+           "expected Pi command to use documented JSON mode")
+    assert(argument_after(pi_command, "--model") == "openai-codex/gpt-5.4",
+           "expected Pi command to include --model")
+    assert(argument_after(pi_command, "--thinking") == "xhigh",
+           "expected Pi command to include --thinking")
+    assert(!pi_command.include?("--tools"),
+           "expected danger-full-access Pi runs to keep the native tool set")
+
+    restricted_pi = HQ::ManagedAgent.new(
+      key: "pi-restricted-agent",
+      name: "Pi Restricted Agent",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "System prompt",
+      agent: "pi",
+      sandbox_mode: "read-only"
+    )
+    restricted_command = restricted_pi.send(:build_command)[:command]
+    assert(argument_after(restricted_command, "--tools") == "read,grep,find,ls",
+           "expected restricted Pi modes not to silently retain write and bash tools")
+
+    resumed_pi = HQ::ManagedAgent.from_hash(pi.to_hash.merge(
+      "session_id" => "00000000-1111-4222-8333-444444444444",
+      "session_bootstrapped" => true,
+      "runs" => [{ "finished_at" => Time.now.iso8601, "status" => "succeeded" }]
+    ))
+    resumed_pi_command = resumed_pi.send(:build_command)[:command]
+    assert(argument_after(resumed_pi_command, "--session") == "00000000-1111-4222-8333-444444444444",
+           "expected Pi resume command to include the native session ID")
+    assert(resumed_pi.send(:native_resume?), "expected persisted Pi sessions to resume natively")
 
     old_harnesses = HQ.custom_harnesses
     HQ.custom_harnesses = [

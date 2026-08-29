@@ -19,6 +19,8 @@ module HQ
     CLAUDE_REASONING_EFFORTS = %w[low medium high xhigh max].freeze
     COMMAND_TIMEOUT = 2
     OPENCODE_COMMAND_TIMEOUT = 6
+    PI_COMMAND_TIMEOUT = 6
+    PI_REASONING_EFFORTS = %w[off minimal low medium high xhigh].freeze
 
     module_function
 
@@ -40,6 +42,8 @@ module HQ
         claude_catalog(resolution)
       when "opencode"
         opencode_catalog(resolution)
+      when "pi"
+        pi_catalog(resolution)
       else
         empty_catalog
       end
@@ -140,6 +144,34 @@ module HQ
       }
     end
 
+    def pi_catalog(resolution)
+      base = {
+        reasoning_effort_suggestions: PI_REASONING_EFFORTS,
+        auth_ready: false,
+        auth_providers: [],
+        capabilities: [
+          "JSON event streaming",
+          "native session resume",
+          "model and thinking selection",
+          "Agent Skills discovery"
+        ],
+        safety_gaps: [
+          "Pi has tool allowlists but no sandbox equivalent to Tycho workspace-write or read-only modes",
+          "Pi has no native JSON Schema output flag; Tycho validates and corrects the final response"
+        ]
+      }
+      return base.merge(model_suggestions: [], catalog_source: "pi defaults") unless resolution&.available?
+
+      rows = pi_model_rows(resolution.command)
+      base.merge(
+        model_suggestions: rows,
+        catalog_source: rows.empty? ? "pi --list-models unavailable or unauthenticated" : "pi --list-models",
+        auth_ready: !rows.empty?,
+        auth_providers: rows.filter_map { |item| item[:provider] }.uniq,
+        version: pi_version(resolution.command)
+      )
+    end
+
     def claude_help_efforts(command)
       out, err, success = capture_command_output([command, "--help"])
       return [] unless success
@@ -189,6 +221,28 @@ module HQ
 
         text.split(/\s+/).first&.downcase
       end.uniq
+    end
+
+    def pi_model_rows(command)
+      out = capture_stdout([command, "--list-models"], timeout: PI_COMMAND_TIMEOUT)
+      return [] if out.to_s.empty?
+
+      out.lines.filter_map do |line|
+        text = strip_terminal_control(line).strip
+        next if text.empty? || text.match?(/\Aprovider\s+model\b/i) || text.match?(/\A[-─\s]+\z/)
+        next if text.match?(/\A(?:no models?|authentication|authenticate|error)\b/i)
+
+        provider, model = text.split(/\s+/, 3)
+        next if provider.to_s.empty? || model.to_s.empty?
+
+        value = "#{provider}/#{model}"
+        { value: value, label: value, provider: provider }
+      end.uniq { |item| item[:value] }
+    end
+
+    def pi_version(command)
+      output = capture_stdout([command, "--version"], timeout: COMMAND_TIMEOUT).strip
+      output.empty? ? nil : output.lines.first.strip
     end
 
     def capture_stdout(command, timeout: COMMAND_TIMEOUT)
