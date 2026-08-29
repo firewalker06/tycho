@@ -4,6 +4,38 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.10.2 - 2026-08-30
+
+### Highlights
+
+- Persist validated Second Brain memory handoffs on successful runs and expose
+  them through the local or remote `tycho memory handoffs` command and Remote
+  Sessions API.
+- Add Pi as a first-class harness across managed execution, native session
+  resume, structured result correction, setup, usage metrics, skills, TUI, and
+  Remote UI.
+- Add ordered rich summary sections for prose, links, and attachments while
+  preserving the existing concise run summary.
+- Let operators dismiss and restore inquiries without rewriting conversation
+  history, with guarded actions in both Remote UI and TUI workflows.
+- Show a branded, retryable loading shell while the Remote UI or installed PWA
+  starts, including clear offline and timeout states.
+
+### Fixes
+
+- Finalize managed runs correctly when their exit-status file arrives before
+  the wrapper process exits, preserving successful status and memory handoffs.
+- Distinguish a running agent without a completed summary from an agent that has
+  never run.
+- Suppress push notifications for prompt-queue continuation runs while keeping
+  their in-app unread state.
+
+### Other changes
+
+- Test CI on Ruby 4.0 while retaining Ruby 3.2+ as the documented runtime
+  requirement.
+- Refine the Remote UI startup animation and reduced-motion behavior.
+
 ## 0.10.1 - 2026-08-27
 
 ### Highlights

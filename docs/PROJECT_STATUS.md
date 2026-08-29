@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-08-29
+2026-08-30
 
 ## Strategic Direction
 
@@ -95,28 +95,17 @@ Key references:
 
 ## Current Focus
 
-**v0.10.1 release**: remote CLI control, server-owned credentials, structured
-output correction, auditable usage metrics, project workspace browsing, Tycho
-skill installation, pull-request context, and durable agent delegation are
-complete. Ownership-aware takeover/report routing now includes edge-local
-generations, run stamps, stale-report suppression, parent-reclaim inquiry
-cancellation, explicit trusted parent declarations, and ancestor-operation rejection.
-Remote UI now keeps compact agent activity live independently from
-page polling, preserves focused work, and adds direct navigation across run
-summaries, attachments, and linked agents from both the composer and quick
-agent switcher. Running agents now accept ordinary Remote UI prompts into a
-synchronized, editable server-side queue. The composer switches immediately
-into queue mode without blocking on submission, shows locally persisted
-optimistic entries until the server accepts their stable client IDs, and keeps
-Stop in the shared top action row across conversation and attachment layouts.
-Terminal runs claim pending entries as one ordered follow-up prompt, while
-inquiries and retryable start failures retain the queue without silently
-advancing the conversation. The release also keeps live agent conversations in
-a durable incremental journal, makes delegation takeover and parent reclaim
-explicit, surfaces linked-agent navigation, improves Remote UI lifecycle and
-reliability visibility, and ranks agent search results with matched-text
-highlights. Schedule-management work remains on `wip/tui-schedule-management`
-for a later release.
+**v0.10.2 release**: successful managed runs can now persist validated Second
+Brain memory handoffs and expose them through local or remote CLI and API
+feeds. Pi is a first-class managed harness with native session resume,
+structured result correction, setup discovery, usage metrics, skills, and UI
+support. Structured results can also render ordered prose, links, and
+attachments beneath the concise run summary. Operators can dismiss and restore
+inquiries without rewriting conversation history, while the Remote UI adds a
+branded, retryable startup shell for browser and installed-PWA launches. The
+release also corrects run finalization races, running-agent empty summaries,
+and queued-run push notification behavior. Schedule-management work remains on
+`wip/tui-schedule-management` for a later release.
 
 ## Roadmap
 
