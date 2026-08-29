@@ -16,6 +16,7 @@ module HQ
 
       payload, compatibility_errors = canonicalize_compatibility_fields(payload)
       errors = compatibility_errors + validate_value(payload, @schema, "$")
+      errors.concat(validate_summary_sections(payload))
       Result.new(valid?: errors.empty?, payload:, errors:, raw_text:)
     end
 
@@ -40,6 +41,7 @@ module HQ
       errors = []
       decode_compatibility_field(result, "inquiry_json", "inquiry", errors)
       decode_compatibility_field(result, "attachments_json", "attachments", errors)
+      decode_compatibility_field(result, "summary_sections_json", "summary_sections", errors)
       [result, errors]
     end
 
@@ -68,6 +70,9 @@ module HQ
       errors = []
       if schema["minLength"].is_a?(Integer) && value.is_a?(String) && value.length < schema["minLength"]
         errors << error("too_short", path, "String is shorter than the minimum length", min_length: schema["minLength"])
+      end
+      if schema["minItems"].is_a?(Integer) && value.is_a?(Array) && value.length < schema["minItems"]
+        errors << error("too_few_items", path, "Array has fewer than the minimum items", min_items: schema["minItems"])
       end
       if schema["enum"].is_a?(Array) && !schema["enum"].include?(value)
         errors << error("invalid_enum", path, "Value is not an allowed enum member", allowed: schema["enum"])
@@ -103,6 +108,34 @@ module HQ
       value.each_with_index.flat_map do |item, index|
         validate_value(item, schema["items"], "#{path}[#{index}]")
       end
+    end
+
+    def validate_summary_sections(payload)
+      return [] unless payload.is_a?(Hash) && payload["summary_sections"].is_a?(Array)
+
+      payload["summary_sections"].each_with_index.flat_map do |block, index|
+        next [] unless block.is_a?(Hash)
+
+        path = "$.summary_sections[#{index}]"
+        case block["type"]
+        when "text"
+          nonempty_summary_field_errors(block, "text", path)
+        when "link"
+          nonempty_summary_field_errors(block, "text", path) + valid_summary_url_errors(block, path)
+        when "attachment"
+          block["attachment"].is_a?(Hash) ? [] : [error("wrong_type", "#{path}.attachment", "Attachment block requires an attachment object", expected: ["object"])]
+        else
+          []
+        end
+      end
+    end
+
+    def nonempty_summary_field_errors(block, field, path)
+      block[field].to_s.strip.empty? ? [error("too_short", "#{path}.#{field}", "Text must not be empty", min_length: 1)] : []
+    end
+
+    def valid_summary_url_errors(block, path)
+      block["url"].to_s.match?(%r{\Ahttps?://}i) ? [] : [error("invalid_url", "#{path}.url", "Link block requires an HTTP(S) URL")]
     end
 
     def type_matches?(value, type)

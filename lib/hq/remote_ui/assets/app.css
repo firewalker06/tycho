@@ -4644,6 +4644,27 @@ select {
   margin: 0;
 }
 
+.summary-sections {
+  display: grid;
+  gap: 10px;
+  max-width: 72ch;
+}
+
+.summary-section-text,
+.summary-section-link {
+  margin: 0;
+  white-space: normal;
+}
+
+.summary-section-link a {
+  color: var(--accent);
+}
+
+.summary-section-attachment .summary-attachment-item,
+.summary-section-attachment .summary-attachment-row {
+  max-width: 72ch;
+}
+
 .summary-message-open {
   justify-self: start;
 }

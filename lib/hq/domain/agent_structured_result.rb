@@ -185,8 +185,12 @@ module HQ
         if result.key?("attachments_json") && !result.key?("attachments")
           result["attachments"] = structured_json_field(result["attachments_json"], Array)
         end
+        if result.key?("summary_sections_json") && !result.key?("summary_sections")
+          result["summary_sections"] = structured_json_field(result["summary_sections_json"], Array)
+        end
         result.delete("inquiry_json")
         result.delete("attachments_json")
+        result.delete("summary_sections_json")
         result
       end
 

@@ -71,7 +71,7 @@ module HQ
   end
 
   # Keep existing user-owned schemas valid as the structured result contract
-  # grows. This changes only the owned memory_handoff property and root field.
+  # grows. This changes only owned properties and root fields.
   def self.migrate_agent_result_schema!(path)
     source = File.join(BUNDLED_CONFIG_DIR, "schemas", "agent_result.json")
     current = JSON.parse(File.read(path))
@@ -79,14 +79,19 @@ module HQ
     properties = current["properties"]
     return path unless properties.is_a?(Hash)
 
-    handoff = bundled.dig("properties", "memory_handoff")
-    return path unless handoff.is_a?(Hash)
+    owned_properties = %w[memory_handoff summary_sections]
+    changed = false
+    owned_properties.each do |key|
+      value = bundled.dig("properties", key)
+      next unless value.is_a?(Hash)
 
-    changed = properties["memory_handoff"] != handoff
-    properties["memory_handoff"] = handoff
+      changed ||= properties[key] != value
+      properties[key] = value
+    end
     required = Array(current["required"])
-    unless required.include?("memory_handoff")
-      current["required"] = required + ["memory_handoff"]
+    missing_required = owned_properties.reject { |key| required.include?(key) }
+    if missing_required.any?
+      current["required"] = required + missing_required
       changed = true
     end
     File.write(path, "#{JSON.pretty_generate(current)}\n") if changed

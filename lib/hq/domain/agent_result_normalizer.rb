@@ -21,6 +21,8 @@ module HQ
       inquiry = normalize_inquiry(parsed["inquiry"])
       status = normalize_status(status, summary:, inquiry:)
       result = { "status" => status, "summary" => summary }
+      summary_sections = normalize_summary_sections(parsed["summary_sections"])
+      result["summary_sections"] = summary_sections if summary_sections
       result["inquiry"] = inquiry if inquiry
       attachments = normalize_attachments(parsed["attachments"])
       result["attachments"] = attachments if attachments
@@ -55,6 +57,29 @@ module HQ
 
     def normalize_attachment(value)
       AttachmentNormalizer.normalize(value, workspace: @workspace).first
+    end
+
+    def normalize_summary_sections(value)
+      return nil unless value.is_a?(Array)
+
+      sections = value.filter_map do |section|
+        next unless section.is_a?(Hash)
+
+        type = section["type"].to_s.strip
+        case type
+        when "text"
+          text = section["text"].to_s.strip
+          { "type" => type, "text" => text } unless text.empty?
+        when "link"
+          text = section["text"].to_s.strip
+          link = AttachmentNormalizer.normalize({ "type" => "link", "title" => text, "url" => section["url"] }, workspace: @workspace).first
+          { "type" => type, "text" => text, "url" => link["url"] } if link && !text.empty?
+        when "attachment"
+          attachment = normalize_attachments([section["attachment"]])&.first
+          { "type" => type, "attachment" => attachment } if attachment
+        end
+      end
+      sections.empty? ? nil : sections
     end
 
     def dedupe_attachments(attachments)
