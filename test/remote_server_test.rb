@@ -3954,6 +3954,16 @@ module RemoteServerTest
     assert(legacy_response[:content_type].include?("text/html"), "expected /ui compatibility route to return HTML")
     assert(response[:body].include?('name="theme-color" content="#282a36"'),
            "expected root shell to expose a PWA theme color")
+    assert(response[:body].include?('id="tycho-boot-shell"') &&
+           response[:body].include?('data-state="loading"') &&
+           response[:body].include?('role="status" aria-live="polite" aria-atomic="true"'),
+           "expected root shell to provide an accessible server-rendered loading surface")
+    assert(response[:body].include?('id="tycho-boot-retry"') &&
+           response[:body].include?('class="tycho-boot-mark"'),
+           "expected root shell to expose branded loading and recovery controls before application JavaScript")
+    assert(response[:body].include?('@media (prefers-reduced-motion: reduce)') &&
+           response[:body].include?('animation: none;'),
+           "expected root shell to provide a static reduced-motion loading state")
     assert(response[:body].include?('content="width=device-width, initial-scale=1, viewport-fit=cover"'),
            "expected root shell viewport to expose iOS safe-area insets")
     assert(response[:body].match?(%r{href="/manifest\.webmanifest\?v=[0-9a-f]{12}"}),

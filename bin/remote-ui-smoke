@@ -471,6 +471,52 @@ def write_smoke_script(path)
       });
       page.on("pageerror", (error) => errors.push(error.message));
 
+      async function assertInitialLoadingShell() {
+        const desktopPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+        const mobilePage = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });
+        const pwaContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true });
+        const pwaPage = await pwaContext.newPage();
+        try {
+          await Promise.all([desktopPage, mobilePage, pwaPage].map((candidate) => candidate.route("**/ui.js?*", async (route) => {
+            await new Promise((resolve) => setTimeout(resolve, 350));
+            await route.continue();
+          })));
+          await Promise.all([desktopPage, mobilePage, pwaPage].map((candidate) => candidate.emulateMedia({ reducedMotion: candidate === mobilePage ? "reduce" : "no-preference" })));
+          await Promise.all([desktopPage.goto(`${baseUrl}/`, { waitUntil: "commit" }), mobilePage.goto(`${baseUrl}/`, { waitUntil: "commit" }), pwaPage.goto(`${baseUrl}/`, { waitUntil: "commit" })]);
+          await Promise.all([desktopPage, mobilePage, pwaPage].map((candidate) => candidate.waitForSelector("#tycho-boot-shell[data-state='loading']", { state: "visible", timeout: 10_000 })));
+          const initialStates = await Promise.all([desktopPage, mobilePage, pwaPage].map(async (candidate) => candidate.evaluate(() => {
+            const shell = document.getElementById("tycho-boot-shell");
+            const app = document.getElementById("app");
+            return {
+              state: shell?.dataset.state,
+              visible: Boolean(shell && !shell.hidden && getComputedStyle(shell).display !== "none"),
+              busy: app?.getAttribute("aria-busy"),
+              animation: getComputedStyle(shell?.querySelector(".tycho-boot-mark")).animationName,
+            };
+          })));
+          if (!initialStates.every((state) => state.state === "loading" && state.visible && state.busy === "true")) {
+            throw new Error(`Initial loading shell was not visible before application JavaScript: ${JSON.stringify(initialStates)}`);
+          }
+          if (initialStates[1].animation !== "none") throw new Error("Reduced-motion loading shell still animates");
+          if (captureDir) {
+            await desktopPage.screenshot({ path: path.join(captureDir, "pwa-loading-shell-desktop.png"), fullPage: false });
+            await mobilePage.screenshot({ path: path.join(captureDir, "pwa-loading-shell-mobile-reduced-motion.png"), fullPage: false });
+            await pwaPage.screenshot({ path: path.join(captureDir, "pwa-loading-shell-pwa.png"), fullPage: false });
+          }
+          await Promise.all([desktopPage, mobilePage, pwaPage].map((candidate) => candidate.waitForSelector("#tycho-boot-shell[hidden]", { state: "attached", timeout: 10_000 })));
+          const manifest = await pwaPage.evaluate(async () => (await fetch("/manifest.webmanifest")).json());
+          if (manifest.display !== "standalone" || manifest.background_color !== "#282a36") {
+            throw new Error(`Installed-PWA fallback contract changed: ${JSON.stringify(manifest)}`);
+          }
+        } finally {
+          await desktopPage.close();
+          await mobilePage.close();
+          await pwaContext.close();
+        }
+      }
+
+      await assertInitialLoadingShell();
+
       async function captureVisibleComposer(filename) {
         if (!captureDir) return;
         const composer = page.locator("#composer:not([hidden])");
