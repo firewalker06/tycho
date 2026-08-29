@@ -83,6 +83,8 @@ module PromptQueueTest
       persisted = store.load.find { |candidate| candidate.key == agent.key }
       assert(persisted.run_count == 2, "expected a multi-client claim race to start exactly one follow-up run")
       assert(persisted.queued_prompts.empty?, "expected an accepted claim to be removed")
+      assert(persisted.last_run_from_prompt_queue?,
+             "expected a queue-dispatched run to retain its queue provenance")
       queued_message = HQ::AgentMemory.new(persisted).events.find do |event|
         event.dig("metadata", "prompt_queue_claim_id")
       end

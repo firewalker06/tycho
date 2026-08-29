@@ -19,23 +19,23 @@
       .tycho-boot-shell { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; min-height: 100vh; min-height: 100dvh; padding: max(24px, env(safe-area-inset-top, 0px)) 24px max(24px, env(safe-area-inset-bottom, 0px)); background: #282a36; text-align: center; transition: opacity 160ms ease, visibility 160ms ease; }
       .tycho-boot-shell[hidden] { display: none; }
       .tycho-boot-shell.is-leaving { opacity: 0; visibility: hidden; pointer-events: none; }
-      .tycho-boot-card { display: grid; justify-items: center; gap: 14px; width: min(100%, 320px); }
-      .tycho-boot-mark { width: 72px; height: 72px; color: #ff8a00; filter: drop-shadow(0 0 15px rgba(255, 138, 0, .3)); animation: tycho-boot-orbit 1.5s ease-in-out infinite; }
+      .tycho-boot-card { position: relative; display: grid; place-items: center; }
+      .tycho-boot-particles { position: absolute; z-index: 0; inset: -160px; overflow: visible; pointer-events: none; -webkit-mask-image: radial-gradient(circle, transparent 0 34px, #000 36px); mask-image: radial-gradient(circle, transparent 0 34px, #000 36px); }
+      .tycho-boot-particle { position: absolute; top: 50%; left: 50%; width: var(--tycho-particle-size); height: var(--tycho-particle-size); border-radius: 50%; background: #fff; box-shadow: 0 0 5px rgba(255, 255, 255, .55); opacity: 0; animation: tycho-boot-particle var(--tycho-particle-duration) ease-out forwards; }
+      .tycho-boot-mark { position: relative; z-index: 1; width: 72px; height: 72px; color: #ff8a00; filter: drop-shadow(0 0 15px rgba(255, 138, 0, .3)); animation: tycho-boot-orbit 2s ease-in-out infinite; }
       .tycho-boot-mark path { fill: none; stroke: currentColor; stroke-width: 5; stroke-linecap: butt; }
       .tycho-boot-mark .tycho-boot-light { stroke: #f3f1ea; }
       .tycho-boot-mark .tycho-boot-muted { stroke: #9c9c9c; }
       .tycho-boot-mark rect { fill: #f3f1ea; }
-      .tycho-boot-title { margin: 0; font-size: 22px; line-height: 1.15; letter-spacing: -.02em; }
-      .tycho-boot-message { margin: 0; color: #b8b8c8; font-size: 15px; line-height: 1.45; }
-      .tycho-boot-action { display: none; min-height: 42px; border: 1px solid #ff8a00; border-radius: 8px; background: #ff8a00; color: #282a36; padding: 0 14px; font: inherit; font-weight: 700; cursor: pointer; }
-      .tycho-boot-shell[data-state="offline"] .tycho-boot-action, .tycho-boot-shell[data-state="failed"] .tycho-boot-action { display: inline-flex; align-items: center; justify-content: center; }
-      @keyframes tycho-boot-orbit { 0%, 100% { opacity: .62; transform: scale(.94) rotate(0deg); } 50% { opacity: 1; transform: scale(1.04) rotate(10deg); } }
-      @media (prefers-reduced-motion: reduce) { .tycho-boot-shell { transition: none; } .tycho-boot-mark { animation: none; } }
+      @keyframes tycho-boot-orbit { 0%, 25% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+      @keyframes tycho-boot-particle { from { opacity: .95; transform: translate(-50%, -50%) scale(.7); } 55% { opacity: .95; } to { opacity: 0; transform: translate(calc(-50% + var(--tycho-particle-x)), calc(-50% + var(--tycho-particle-y))) scale(.2); } }
+      @media (prefers-reduced-motion: reduce) { .tycho-boot-shell { transition: none; } .tycho-boot-mark { animation: none; } .tycho-boot-particles { display: none; } }
     </style>
   </head>
   <body>
     <section id="tycho-boot-shell" class="tycho-boot-shell" data-state="loading" role="status" aria-live="polite" aria-atomic="true" aria-label="Tycho is loading">
       <div class="tycho-boot-card">
+        <div id="tycho-boot-particles" class="tycho-boot-particles" aria-hidden="true"></div>
         <svg class="tycho-boot-mark" aria-hidden="true" viewBox="0 0 64 64">
           <path d="M7 27a25 25 0 0 1 20-20"></path>
           <path class="tycho-boot-light" d="M37 7a25 25 0 0 1 20 20"></path>
@@ -43,9 +43,6 @@
           <path class="tycho-boot-muted" d="M27 57A25 25 0 0 1 7 37"></path>
           <rect x="30" y="24" width="4" height="4"></rect><rect x="30" y="30" width="4" height="4"></rect><rect x="30" y="38" width="4" height="4"></rect>
         </svg>
-        <h1 class="tycho-boot-title">Tycho</h1>
-        <p id="tycho-boot-message" class="tycho-boot-message">Connecting to Remote UI&hellip;</p>
-        <button id="tycho-boot-retry" class="tycho-boot-action" type="button">Try again</button>
       </div>
     </section>
     <div id="pull-refresh" class="pull-refresh" aria-hidden="true">
