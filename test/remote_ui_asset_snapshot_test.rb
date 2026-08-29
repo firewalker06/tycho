@@ -11,6 +11,7 @@ module RemoteUIAssetSnapshotTest
   ROOT = File.expand_path("..", __dir__)
 
   def run!
+    assert_initial_loading_shell_contract
     assert_loaded_daemon_keeps_one_asset_build
     assert_handoff_retry_key_is_cleared_after_success
     assert_delegation_ui_uses_typed_safe_references
@@ -18,6 +19,44 @@ module RemoteUIAssetSnapshotTest
     assert_archived_agents_are_reference_only_and_read_only
     assert_agent_status_icons_use_lucide_without_badges
     puts "remote_ui_asset_snapshot_test: ok"
+  end
+
+  def assert_initial_loading_shell_contract
+    template = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "templates", "index.html.erb"))
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+
+    required_template = [
+      'id="tycho-boot-shell"',
+      'data-state="loading"',
+      'role="status"',
+      'aria-live="polite"',
+      'id="tycho-boot-retry"',
+      'class="tycho-boot-mark"',
+      '@media (prefers-reduced-motion: reduce)',
+      'id="app" class="app-shell" aria-busy="true"',
+      'href="/manifest.webmanifest?v=<%= HQ::RemoteUI.asset_version %>"'
+    ]
+    missing_template = required_template.reject { |fragment| template.include?(fragment) }
+    raise "missing initial loading shell contract: #{missing_template.join(", ")}" unless missing_template.empty?
+
+    required_javascript = [
+      "const BOOT_TIMEOUT_MS = 15_000;",
+      "function bootNetworkFailure(error)",
+      "error?.bootFailureKind === \"offline\"",
+      "error instanceof TypeError",
+      "function scheduleBootTimeout()",
+      "bootError(\"The server is taking longer than expected.\", \"timeout\")",
+      "function dismissBootShell()",
+      "function failBootShell(error)",
+      "if (error.status === 401) dismissBootShell();",
+      "else failBootShell(error);",
+      "els.bootRetry?.addEventListener(\"click\"",
+      "scheduleBootTimeout();",
+      "window.addEventListener(\"offline\"",
+      "window.addEventListener(\"online\""
+    ]
+    missing_javascript = required_javascript.reject { |fragment| javascript.include?(fragment) }
+    raise "missing loading shell lifecycle contract: #{missing_javascript.join(", ")}" unless missing_javascript.empty?
   end
 
   def assert_agent_status_icons_use_lucide_without_badges
