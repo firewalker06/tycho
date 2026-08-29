@@ -28,6 +28,7 @@ module RemoteServerTest
     assert_remote_memory_handoffs
     assert_remote_metrics_query_and_backfill_routes
     assert_remote_inquiry_payload_has_stable_id_and_guarded_answer
+    assert_remote_inquiry_dismiss_restore_and_retirement_lifecycle
     assert_remote_agent_payload_includes_attachments
     assert_remote_agent_pull_request_diff_payload
     assert_agent_pull_request_listing_avoids_eager_metadata_requests
@@ -870,6 +871,121 @@ module RemoteServerTest
       response = HQ::AgentMemory.new(agent).events.reverse.find { |event| event["type"] == "inquiry_response" }
       assert(response.dig("metadata", "inquiry_id") == inquiry_id,
              "expected inquiry response memory to retain the answered inquiry id")
+    end
+  end
+
+  def assert_remote_inquiry_dismiss_restore_and_retirement_lifecycle
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      client_a = HQ::RemoteService.new(registry: registry)
+      client_b = HQ::RemoteService.new(registry: registry)
+      created = client_a.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Inquiry Agent",
+        "prompt" => "Ask before advancing.", "agent" => "codex"
+      )
+      agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+      inquiry = {
+        "message" => "Choose the next step",
+        "fields" => [{ "key" => "next_step", "label" => "Next step", "input_type" => "text", "required" => true }]
+      }
+      run = HQ::ManagedAgent::AgentRun.new(
+        started_at: Time.utc(2026, 8, 29, 1), finished_at: Time.utc(2026, 8, 29, 1, 1),
+        status: "input_required", log_path: agent.raw_log_path
+      )
+      agent.runs << run
+      agent.structured_result = { "status" => "input_required", "summary" => "Needs input", "inquiry" => inquiry }
+      inquiry_id = agent.send(:inquiry_identity, inquiry, run: run)
+      memory = HQ::AgentMemory.new(agent)
+      memory.append_assistant_message!("I need one decision before continuing.")
+      memory.append_inquiry_request!(inquiry, created_at: run.finished_at, inquiry_id: inquiry_id)
+      HQ::AgentStore.new(registry.projects).save([agent])
+
+      active = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+      active.enqueue_prompt!(prompt: "Queued while inquiry is active")
+      assert(!active.prompt_queue_dispatchable?, "expected an active inquiry to block queued prompt dispatch")
+      history_before = client_a.conversation(created[:key])
+
+      race_results = Queue.new
+      [client_a, client_b].map do |client|
+        Thread.new do
+          begin
+            client.dismiss_inquiry(created[:key], inquiry_id)
+            race_results << :dismissed
+          rescue HQ::RemoteServer::Error => e
+            race_results << [e.status, e.message]
+          end
+        end
+      end.each(&:join)
+      outcomes = 2.times.map { race_results.pop }
+      assert(outcomes.count(:dismissed) == 1 && outcomes.count { |outcome| outcome.is_a?(Array) && outcome.first == 409 } == 1,
+             "expected concurrent dismissals to accept exactly one current-state transition: #{outcomes.inspect}")
+
+      reloaded = client_b.agent(created[:key])
+      assert(reloaded[:latest_inquiry].nil?, "expected dismissal to hide the active inquiry")
+      assert(reloaded.dig(:suspended_inquiry, "id") == inquiry_id,
+             "expected another client to reload the same restorable inquiry")
+      suspended = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+      suspended.enqueue_prompt!(prompt: "Queued while inquiry is suspended")
+      assert(!suspended.prompt_queue_dispatchable?, "expected a suspended inquiry to block queued prompt dispatch")
+      assert(client_b.conversation(created[:key]) == history_before,
+             "expected dismissal to preserve conversation history exactly")
+
+      restored_route = HQ::RemoteServer.new.send(
+        :route, client_b, "POST", "/agents/#{created[:key]}/inquiries/#{inquiry_id}/restore", {}, nil
+      )
+      assert(restored_route.dig(:body, :agent, :latest_inquiry, "id") == inquiry_id,
+             "expected the restore API route to reactivate the same inquiry")
+      assert(restored_route.dig(:body, :agent, :suspended_inquiry).nil?,
+             "expected restore to clear the restorable payload")
+
+      dismissed_route = HQ::RemoteServer.new.send(
+        :route, client_a, "POST", "/agents/#{created[:key]}/inquiries/#{inquiry_id}/dismiss", {}, nil
+      )
+      assert(dismissed_route.dig(:body, :agent, :suspended_inquiry, "id") == inquiry_id,
+             "expected the dismiss API route to persist restorable state")
+
+      [nil, "another-inquiry"].each do |retire_id|
+        begin
+          attrs = { "prompt" => "Advance without answering", "start" => false }
+          attrs["retire_inquiry_id"] = retire_id if retire_id
+          client_b.submit_prompt(created[:key], attrs)
+          raise "expected an unintended suspended inquiry retirement to fail"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 409, "expected stale ordinary prompt context to return conflict")
+        end
+      end
+
+      retired = client_b.submit_prompt(
+        created[:key],
+        "prompt" => "Advance with the ordinary prompt",
+        "retire_inquiry_id" => inquiry_id,
+        "start" => false
+      )
+      assert(retired[:agent][:latest_inquiry].nil? && retired[:agent][:suspended_inquiry].nil?,
+             "expected the intended ordinary prompt to retire the suspended inquiry")
+      assert(retired[:conversation].first(history_before.length) == history_before,
+             "expected retirement to preserve existing conversation history")
+      assert(retired[:conversation].last[:content] == "Advance with the ordinary prompt",
+             "expected retirement to append the ordinary prompt normally")
+
+      after_reload = HQ::RemoteService.new(registry: registry).agent(created[:key])
+      assert(after_reload[:latest_inquiry].nil? && after_reload[:suspended_inquiry].nil?,
+             "expected retired inquiry state to remain retired after reload")
+      events = HQ::AgentMemory.new(
+        HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+      ).events
+      retired_event = events.reverse.find { |event| event["type"] == "inquiry_retired" }
+      assert(retired_event.dig("metadata", "inquiry_id") == inquiry_id,
+             "expected retirement to record only the intended suspended inquiry id")
+
+      begin
+        client_a.restore_inquiry(created[:key], inquiry_id)
+        raise "expected retired inquiry restore to fail"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409, "expected retired inquiry restore to be rejected")
+      end
     end
   end
 
@@ -4823,6 +4939,22 @@ module RemoteServerTest
            "expected Remote UI to serialize inquiry answers")
     assert(js[:body].include?('/inquiries/${encodeURIComponent(inquiryId)}/answer'),
            "expected Remote UI inquiry answers to use the guarded answer endpoint")
+    assert(js[:body].include?("function renderInquiryLifecycleMenu") &&
+           js[:body].include?('data-inquiry-lifecycle-action="${action}"') &&
+           js[:body].include?('aria-label="Inquiry actions"') &&
+           js[:body].include?('aria-busy="true"'),
+           "expected inquiry and composer context menus to expose accessible pending lifecycle actions")
+    assert(js[:body].include?('action === "dismiss" ? "Dismiss inquiry" : "Restore inquiry"') &&
+           js[:body].include?('action === "dismiss" ? "Dismissing inquiry" : "Restoring inquiry"'),
+           "expected dismiss and restore actions to expose stable accessible names and pending labels")
+    assert(js[:body].include?("function runInquiryLifecycleAction") &&
+           js[:body].include?('showGrowl(`Could not ${label} inquiry: ${error.message}`, "need")'),
+           "expected inquiry lifecycle actions to announce failures")
+    assert(js[:body].include?('retire_inquiry_id: retireInquiryId') &&
+           js[:body].include?('findAgent(key)?.suspended_inquiry?.id'),
+           "expected ordinary prompts to retire only the suspended inquiry rendered by that client")
+    assert(css[:body].include?(".composer-action-menu") && css[:body].include?(".composer-action-popover"),
+           "expected inquiry lifecycle context menus to be positioned in both composers")
     assert(js[:body].include?("normalizeInquiryInputType"),
            "expected Remote UI to normalize inquiry field input types")
     assert(js[:body].include?("function setHeaderMore"), "expected Remote UI to expose reusable header More menus")

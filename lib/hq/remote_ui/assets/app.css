@@ -6833,6 +6833,32 @@ body:has(.inquiry-form-full-screen) {
   gap: 8px;
 }
 
+.composer-action-menu {
+  position: relative;
+}
+
+.composer-action-menu > summary {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.composer-action-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.composer-action-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 12;
+  width: min(250px, calc(100vw - 32px));
+  padding: 6px;
+}
+
 .send-actions {
   display: inline-flex;
   align-items: center;

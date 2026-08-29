@@ -428,6 +428,12 @@ module HQ
         if method == "POST" && tail.length == 3 && tail.first == "inquiries" && tail[2] == "answer"
           return ok(service.answer_inquiry(key, tail[1], body, actor:))
         end
+        if method == "POST" && tail.length == 3 && tail.first == "inquiries" && tail[2] == "dismiss"
+          return ok(service.dismiss_inquiry(key, tail[1], actor:))
+        end
+        if method == "POST" && tail.length == 3 && tail.first == "inquiries" && tail[2] == "restore"
+          return ok(service.restore_inquiry(key, tail[1], actor:))
+        end
         if tail.length == 2 && tail.first == "prompt-queue"
           return ok(service.edit_queued_prompt(key, tail[1], body)) if %w[PATCH PUT].include?(method)
           return ok(service.delete_queued_prompt(key, tail[1])) if method == "DELETE"
@@ -2896,19 +2902,27 @@ module HQ
         end
       end
 
-      @agent_store.accept_prompt_from!(target, actor:)
-      target.cancel_pending_inquiry! if target.latest_inquiry
-      target.add_user_message!(
-        text,
-        attachments:,
-        metadata: target.message_author_metadata(actor)
-      )
-      save_agent(target)
+      if actor.parent?
+        @agent_store.accept_prompt_from!(target, actor:)
+        target.cancel_pending_inquiry! if target.inquiry_blocking_prompt_queue?
+        target.add_user_message!(text, attachments:, metadata: target.message_author_metadata(actor))
+        save_agent(target)
+      else
+        target = @agent_store.accept_ordinary_prompt!(
+          target.key,
+          text:,
+          attachments:,
+          actor:,
+          retire_inquiry_id: attrs["retire_inquiry_id"]
+        )
+      end
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"]) && !target.running?
       @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target), conversation: conversation(target.key) }
     rescue DelegationStore::Error => e
       raise Error.new(e.message, status: actor&.parent? ? 403 : 409)
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
     end
 
     def edit_queued_prompt(key, entry_id, attrs)
@@ -2943,27 +2957,44 @@ module HQ
       attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
       raise Error.new("Parent-declared requests cannot answer user inquiries", status: 403) if actor.parent?
 
-      target = find_agent!(key)
-      inquiry = target.latest_inquiry
-      raise Error.new("No pending inquiry", status: 409) unless inquiry
-
-      expected_id = target.latest_inquiry_id.to_s
-      supplied_id = inquiry_id.to_s
-      if expected_id.empty? || supplied_id != expected_id
-        raise Error.new("Inquiry has changed; refresh and try again", status: 409)
-      end
-
       answer = required_text(attrs, "answer", fallback: "prompt")
       feedback = attrs["feedback"].to_s.strip
       answer, feedback_embedded = inquiry_answer_with_feedback(answer, feedback, supplied: attrs.key?("feedback"))
+      target = find_agent!(key)
       attachments = import_prompt_attachments(target, attrs)
-      @agent_store.accept_delegation_prompt!(target, owner: "user")
-      target.add_user_message!(answer, inquiry_id: expected_id, attachments:)
-      target.add_user_message!(feedback, metadata: { "inquiry_feedback" => true }) unless feedback_embedded || feedback.empty?
-      save_agent(target)
+      target = @agent_store.answer_inquiry!(
+        key,
+        inquiry_id:,
+        answer:,
+        attachments:,
+        feedback:,
+        feedback_embedded:
+      )
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"]) && !target.running?
       @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target), conversation: conversation(target.key) }
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
+    end
+
+    def dismiss_inquiry(key, inquiry_id, actor: DelegationActor.user_actor)
+      raise Error.new("Parent-declared requests cannot dismiss user inquiries", status: 403) if actor.parent?
+
+      target = @agent_store.suspend_inquiry!(key, inquiry_id)
+      @agent_activity_snapshot.upsert!(target)
+      { agent: agent_payload(target), conversation: conversation(target.key) }
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
+    end
+
+    def restore_inquiry(key, inquiry_id, actor: DelegationActor.user_actor)
+      raise Error.new("Parent-declared requests cannot restore user inquiries", status: 403) if actor.parent?
+
+      target = @agent_store.restore_inquiry!(key, inquiry_id)
+      @agent_activity_snapshot.upsert!(target)
+      { agent: agent_payload(target), conversation: conversation(target.key) }
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
     end
 
     def update_agent_delegation(key, attrs)
@@ -4251,6 +4282,7 @@ module HQ
         summary: agent.last_summary,
         cost_snapshot: agent.cost_snapshot,
         latest_inquiry: inquiry_payload(agent),
+        suspended_inquiry: suspended_inquiry_payload(agent),
         prompt_queue: prompt_queue_payload(agent),
         attachments: attachment_payloads(agent),
         skills: agent.skills,
@@ -4683,8 +4715,19 @@ module HQ
       inquiry = agent.latest_inquiry
       return nil unless inquiry.is_a?(Hash)
 
+      inquiry_payload_for(agent, inquiry, agent.latest_inquiry_id)
+    end
+
+    def suspended_inquiry_payload(agent)
+      inquiry = agent.suspended_inquiry
+      return nil unless inquiry.is_a?(Hash)
+
+      inquiry_payload_for(agent, inquiry, agent.suspended_inquiry_id)
+    end
+
+    def inquiry_payload_for(agent, inquiry, inquiry_id)
       payload = deep_dup_hash(inquiry)
-      id = agent.latest_inquiry_id.to_s
+      id = inquiry_id.to_s
       payload["id"] = id unless id.empty?
       payload["session_id"] = agent.session_id.to_s unless agent.session_id.to_s.empty?
       payload["run_count"] = agent.run_count
@@ -4697,7 +4740,7 @@ module HQ
       {
         "entries" => agent.queued_prompts.map { |entry| prompt_queue_entry_payload(agent, entry) },
         "dispatch_error" => agent.prompt_queue_dispatch_error,
-        "blocked_by_inquiry" => !agent.latest_inquiry.nil?
+        "blocked_by_inquiry" => agent.inquiry_blocking_prompt_queue?
       }
     end
 
