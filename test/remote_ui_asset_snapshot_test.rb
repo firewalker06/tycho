@@ -41,11 +41,17 @@ module RemoteUIAssetSnapshotTest
 
     required_javascript = [
       "const BOOT_TIMEOUT_MS = 15_000;",
+      "function bootNetworkFailure(error)",
+      "error?.bootFailureKind === \"offline\"",
+      "error instanceof TypeError",
+      "function scheduleBootTimeout()",
+      "bootError(\"The server is taking longer than expected.\", \"timeout\")",
       "function dismissBootShell()",
       "function failBootShell(error)",
       "if (error.status === 401) dismissBootShell();",
       "else failBootShell(error);",
       "els.bootRetry?.addEventListener(\"click\"",
+      "scheduleBootTimeout();",
       "window.addEventListener(\"offline\"",
       "window.addEventListener(\"online\""
     ]
