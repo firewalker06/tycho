@@ -1266,6 +1266,8 @@ module ManagedAgentTest
 
   def assert_summary_sections_normalize_and_persist_with_run
     Dir.mktmpdir("hq-managed-agent-summary-sections-test") do |dir|
+      inline_file = File.join(dir, "inline-notes.md")
+      File.write(inline_file, "Inline attachment fixture.\n")
       agent = HQ::ManagedAgent.new(
         key: "summary-sections-agent", name: "Summary sections", project_key: "demo", template_key: "custom",
         workspace: dir, prompt: "Prompt", log_path: File.join(dir, "summary.raw.log"),
@@ -1273,16 +1275,19 @@ module ManagedAgentTest
           "status" => "success", "summary" => "Legacy summary stays exactly as written.  ",
           "summary_sections" => [
             { "type" => "text", "text" => " Added section. " },
+            { "type" => "attachment", "attachment" => { "type" => "link", "title" => "PR", "url" => "https://example.test/pr" } },
+            { "type" => "attachment", "attachment" => { "type" => "file", "title" => "Notes", "path" => inline_file } },
             { "type" => "link", "text" => " ", "url" => "https://example.test/discarded" }
-          ],
-          "attachments" => [{ "type" => "link", "title" => "PR", "url" => "https://example.test/pr" }]
+          ]
         }
       )
       normalized = agent.send(:normalize_structured_result, agent.structured_result)
       assert(normalized["summary"] == "Legacy summary stays exactly as written.",
              "expected legacy summary normalization to remain unchanged")
-      assert(normalized["summary_sections"] == [{ "type" => "text", "text" => "Added section." }],
+      assert(normalized["summary_sections"].map { |block| block["type"] } == %w[text attachment attachment],
              "expected invalid summary blocks to be removed")
+      assert(normalized["attachments"].map { |attachment| attachment["type"] }.sort == %w[file link],
+             "expected inline-only file and link attachments to join the same-run registry")
 
       agent.structured_result = normalized
       agent.instance_variable_set(:@summary, normalized["summary"])
@@ -1297,6 +1302,8 @@ module ManagedAgentTest
       restored = HQ::AgentMemory.new(reloaded).events.find { |item| item["type"] == "run_summary" }
       assert(restored.dig("metadata", "summary_sections") == normalized["summary_sections"],
              "expected sections to survive agent reload")
+      assert(restored.dig("metadata", "attachments") == normalized["attachments"],
+             "expected inline-only file and link attachments to survive reload")
     end
   end
 

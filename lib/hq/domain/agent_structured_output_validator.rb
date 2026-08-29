@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "uri"
 
 module HQ
   class AgentStructuredOutputValidator
@@ -123,7 +124,7 @@ module HQ
         when "link"
           nonempty_summary_field_errors(block, "text", path) + valid_summary_url_errors(block, path)
         when "attachment"
-          block["attachment"].is_a?(Hash) ? [] : [error("wrong_type", "#{path}.attachment", "Attachment block requires an attachment object", expected: ["object"])]
+          attachment_target_errors(block["attachment"], path)
         else
           []
         end
@@ -135,7 +136,28 @@ module HQ
     end
 
     def valid_summary_url_errors(block, path)
-      block["url"].to_s.match?(%r{\Ahttps?://}i) ? [] : [error("invalid_url", "#{path}.url", "Link block requires an HTTP(S) URL")]
+      valid_http_url?(block["url"]) ? [] : [error("invalid_url", "#{path}.url", "Link block requires an HTTP(S) URL")]
+    end
+
+    def attachment_target_errors(attachment, path)
+      return [error("wrong_type", "#{path}.attachment", "Attachment block requires an attachment object", expected: ["object"])] unless attachment.is_a?(Hash)
+
+      case attachment["type"]
+      when "file"
+        value = attachment["path"].to_s.strip
+        value.empty? || value.match?(%r{\Ahttps?://}i) ? [error("invalid_target", "#{path}.attachment.path", "File attachment requires a usable path")] : []
+      when "link"
+        valid_http_url?(attachment["url"]) ? [] : [error("invalid_target", "#{path}.attachment.url", "Link attachment requires a usable HTTP(S) URL")]
+      else
+        []
+      end
+    end
+
+    def valid_http_url?(value)
+      uri = URI.parse(value.to_s.strip)
+      %w[http https].include?(uri.scheme) && !uri.host.to_s.empty?
+    rescue URI::InvalidURIError
+      false
     end
 
     def type_matches?(value, type)
