@@ -32,7 +32,7 @@ Writes take an exclusive file lock and use a mode-`0600`, fsynced atomic rename 
 
 Codex `turn.completed.usage` is cumulative inside a native session. Tycho stores the raw cumulative counters, sorts runs by stable start/identity, and derives each run from the preceding snapshot. A missing baseline, incomplete snapshot, decreasing counter, or trimmed manifest history makes that run's token delta and price unknown; Tycho does not clamp or substitute zero.
 
-Claude-compatible `result` events are per-run. Tycho stores `total_cost_usd`, usage counters, and every exact `modelUsage` entry independently of the configured model. A session may therefore retain a configured alias and multiple observed models. OpenCode step costs are summed per run.
+Claude-compatible `result` events are per-run. Tycho stores `total_cost_usd`, usage counters, and every exact `modelUsage` entry independently of the configured model. A session may therefore retain a configured alias and multiple observed models. OpenCode step costs and Pi assistant-message costs are summed per run. Pi values remain unknown when an event omits them; Tycho never derives Pi cost from a separate price table.
 
 All stored monetary values use `semantics: estimate_not_invoice`. Harness-reported costs remain harness estimates. Codex uses the versioned OpenAI list-price table in `OpenAIModelPricing`. Missing models, prices, token counters, session IDs, or telemetry remain `null` with a reason. `known_estimated_cost_usd` sums priced runs, while median and maximum session cost include sessions only when every run has a known cost. Missing non-cost metadata does not hide an otherwise fully priced session.
 

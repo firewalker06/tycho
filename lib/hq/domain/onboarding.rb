@@ -29,6 +29,13 @@ module HQ
         verify_command: "opencode --version",
         setup: "Run `opencode`, then use `/connect` to choose and configure a provider. Authenticate on the server or a trusted device without sharing API keys with Tycho.",
         documentation_url: "https://dev.opencode.ai/docs/"
+      },
+      "pi" => {
+        name: "Pi Coding Agent",
+        install_command: "npm install -g --ignore-scripts @mariozechner/pi-coding-agent@0.73.1",
+        verify_command: "pi --version",
+        setup: "Run `pi`, use `/login` to authenticate a supported provider or configure its documented API-key environment variable, then verify choices with `pi --list-models`. Keep credentials out of Tycho.",
+        documentation_url: "https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent"
       }
     }.freeze
 

@@ -2153,6 +2153,7 @@ module RenderingTest
     assert(plain_output.include?("Harness: codex"), "expected selected harness summary in form")
     assert(plain_output.include?("codex"), "expected codex harness choice")
     assert(plain_output.include?("claude"), "expected claude harness choice")
+    assert(plain_output.include?("pi"), "expected Pi harness choice")
     assert(plain_output.include?("claude-wrapper"), "expected custom Claude harness choice")
     assert(plain_output.include?("Model:"), "expected model field in form")
     assert(plain_output.include?("Effort:"), "expected reasoning effort field in form")

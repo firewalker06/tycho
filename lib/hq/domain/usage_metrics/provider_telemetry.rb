@@ -118,10 +118,55 @@ module HQ
         end
       end
 
+      class Pi < Base
+        def initialize
+          super(adapter: "pi", event_type: "message_end")
+        end
+
+        def usage_metadata(event)
+          message = event["message"]
+          return nil unless event["type"] == event_type && message.is_a?(Hash) &&
+                            message["role"] == "assistant" && message["usage"].is_a?(Hash)
+
+          raw = message["usage"]
+          {
+            "event_type" => event_type,
+            "total_cost_usd" => raw.dig("cost", "total"),
+            "usage" => {
+              "input_tokens" => raw["input"],
+              "output_tokens" => raw["output"],
+              "cache_read_input_tokens" => raw["cacheRead"],
+              "cache_creation_input_tokens" => raw["cacheWrite"]
+            }.compact,
+            "model" => message["model"],
+            "provider" => message["provider"]
+          }.compact
+        end
+
+        def session_id(event)
+          value = event["id"] if event["type"] == "session"
+          value.to_s unless value.to_s.empty?
+        end
+
+        def infer_status(events)
+          messages = events.filter_map { |event| event["message"] if event["type"] == event_type }
+          return "failed" if messages.any? { |message| message["stopReason"] == "error" }
+          return "succeeded" if events.any? { |event| event["type"] == "agent_end" }
+
+          "unknown"
+        end
+
+        def reported_cost(entries)
+          values = entries.filter_map { |entry| yield(entry) }
+          values.sum unless values.empty?
+        end
+      end
+
       PROVIDERS = {
         "codex" => Codex,
         "claude" => Claude,
-        "opencode" => OpenCode
+        "opencode" => OpenCode,
+        "pi" => Pi
       }.freeze
 
       def self.for(harness)

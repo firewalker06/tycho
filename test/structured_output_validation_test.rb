@@ -62,7 +62,7 @@ module StructuredOutputValidationTest
   end
 
   def assert_successful_correction_for_supported_harnesses
-    %w[codex claude].each do |adapter|
+    %w[codex claude pi].each do |adapter|
       with_runner(adapter, "corrected", correction_limit: 2) do |result|
         assert(result[:exit_code].zero?, "expected #{adapter} correction to succeed: #{result[:output]}")
         assert(result[:invocations].length == 2, "expected #{adapter} to make one correction")
@@ -178,6 +178,19 @@ module StructuredOutputValidationTest
         puts JSON.generate(
           "type" => "item.completed",
           "item" => { "type" => "agent_message", "text" => raw }
+        )
+      elsif adapter == "pi"
+        puts JSON.generate(
+          "type" => "session", "version" => 3, "id" => "pi-session",
+          "timestamp" => "2026-08-21T00:00:00.000Z", "cwd" => fixture_root
+        )
+        puts JSON.generate(
+          "type" => "message_end",
+          "message" => {
+            "role" => "assistant",
+            "content" => [{ "type" => "text", "text" => raw }],
+            "usage" => {}, "stopReason" => "stop", "timestamp" => 1_787_270_400_000
+          }
         )
       elsif fixture_name == "malformed.json"
         puts JSON.generate("type" => "result", "session_id" => "claude-session", "result" => raw)

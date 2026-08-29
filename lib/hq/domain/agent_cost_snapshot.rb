@@ -65,6 +65,11 @@ module HQ
         costs = entries.filter_map { |entry| numeric_cost(metadata(entry)["total_cost_usd"]) }
         cost = costs.empty? ? nil : costs.sum
         cost_result(cost, "opencode_step_finish", cost.nil? ? "OpenCode did not report step costs" : nil)
+      when "pi"
+        entries = usage_entries.select { |candidate| event_type(candidate) == "message_end" }
+        costs = entries.filter_map { |entry| numeric_cost(metadata(entry)["total_cost_usd"]) }
+        cost = costs.empty? ? nil : costs.sum
+        cost_result(cost, "pi_message_end", cost.nil? ? "Pi did not report message costs" : nil)
       when "codex"
         entry = usage_entries.reverse.find { |candidate| event_type(candidate) == "turn.completed" }
         return cost_result(nil, "codex_turn_completed", "Codex did not report token usage") unless entry
@@ -93,7 +98,7 @@ module HQ
 
     def basis_for(adapter, run_cost, previous)
       return previous["basis"] if run_cost.nil? && previous&.key?("basis")
-      return "harness_estimate" if !run_cost.nil? && %w[claude opencode].include?(adapter)
+      return "harness_estimate" if !run_cost.nil? && %w[claude opencode pi].include?(adapter)
       return "api_list_price_estimate" if !run_cost.nil? && adapter == "codex"
 
       "unavailable"

@@ -70,8 +70,8 @@ harness stdout/stderr ──▶ AgentStreamRecorder ──▶ raw.log (unchanged
                          sequenced memory.jsonl
 ```
 
-Codex `agent_message`, Claude complete assistant content blocks, and OpenCode
-text parts persist as soon as their complete line arrives. Tool and usage
+Codex `agent_message`, Claude complete assistant content blocks, OpenCode text
+parts, and Pi complete `message_end` assistant content blocks persist as soon as their complete line arrives. Tool and usage
 entries follow the same path. Claude token deltas are not enabled.
 
 After exit, `capture_run_memory!` replays the process-output segment through
@@ -104,7 +104,7 @@ array of `AgentMessage` objects (used by tests), and seeds
 This is a convenience for tests; production code (`AgentStore`) seeds
 memory directly.
 
-## What gets sent to Claude/Codex on the next run
+## What gets sent to the harness on the next run
 
 Decided by `prompt_for_execution`:
 
@@ -112,7 +112,7 @@ Decided by `prompt_for_execution`:
 def prompt_for_execution
   return composed_prompt unless native_resume?
 
-  # native_resume: known session_id + (claude: bootstrapped / codex: any prior run)
+  # native_resume: known session_id + (claude: bootstrapped / other built-ins: any prior run)
   threshold = last_run&.finished_at || @finished_at || @started_at
   latest = memory_store.latest_user_message_after(threshold)
   latest.to_s.strip.empty? ? "Continue from the current HQ managed-agent state." : latest.to_s
@@ -136,13 +136,14 @@ Regime B takes over from run 2 onward.
 
 The command builders append that blob as the harness prompt argument: after
 `--` for Codex, as the final positional argument for Claude-compatible
-harnesses, and as the `opencode run` message argument for OpenCode.
+harnesses, as the `opencode run` message argument for OpenCode, and as the Pi
+JSON-mode prompt argument.
 
 ### Regime B — native resume active
 
-For Claude with a `session_id` that has been bootstrapped (or Codex
-with at least one prior run + a known `thread_id`), HQ runs
-`claude --resume <id>` / `codex exec resume <id>` and **sends only the
+For Claude with a `session_id` that has been bootstrapped (or Codex,
+OpenCode, or Pi with at least one prior run and a native session ID), HQ uses
+the harness's resume argument (`--resume` or `--session`) and **sends only the
 latest user message** that arrived after `last_run.finished_at`.
 History, system prompt, and tool context are recovered server-side
 from the harness's own session state. This avoids paying the prompt
@@ -178,7 +179,7 @@ events into the prior snapshot, saves the latest value in
 `managed_agents.json`, and copies that as-of value into the run's
 `run_summary` memory metadata. Claude-compatible harnesses contribute their
 reported per-run estimate, OpenCode contributes the sum of `step_finish`
-costs, and Codex prices cumulative token deltas with the embedded official
+costs, Pi contributes the sum of reported assistant-message costs, and Codex prices cumulative token deltas with the embedded official
 OpenAI standard API rate card. Each `AgentRun` persists the harness and model
 used for that run so an explicit raw-log rebuild cannot price older usage with
 the agent's current model. Codex snapshots persist the selected model,

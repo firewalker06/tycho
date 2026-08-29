@@ -1,0 +1,6 @@
+{"type":"session","version":3,"id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","timestamp":"2026-08-21T00:00:00.000Z","cwd":"/workspace/fixture"}
+{"type":"tool_execution_start","toolCallId":"call_fixture_bash","toolName":"bash","args":{"command":"touch denied.txt"}}
+{"type":"tool_execution_end","toolCallId":"call_fixture_bash","toolName":"bash","result":{"content":[{"type":"text","text":"Permission denied by fixture policy"}]},"isError":true}
+{"type":"message_end","message":{"role":"assistant","content":[],"api":"responses","provider":"openai-codex","model":"gpt-5.4","usage":{},"stopReason":"error","errorMessage":"Fixture provider error","timestamp":1787270400000}}
+{"type":"auto_retry_end","success":false,"attempt":3,"finalError":"Fixture retries exhausted"}
+{malformed fixture line

@@ -11,6 +11,7 @@ module ParserTest
 
   CLAUDE_FIXTURE_DIR = File.expand_path("fixtures/parser/claude", __dir__)
   OPENCODE_FIXTURE_DIR = File.expand_path("fixtures/parser/opencode", __dir__)
+  PI_FIXTURE_DIR = File.expand_path("fixtures/parser/pi", __dir__)
 
   def run!
     assert_bash_tool
@@ -26,6 +27,8 @@ module ParserTest
     assert_opencode_structured_stream
     assert_opencode_permission_denied_stream
     assert_opencode_resume_stream
+    assert_pi_structured_stream
+    assert_pi_error_stream
     assert_chat_blocks_use_sequence_for_equal_timestamps
     assert_codex_turn_completed_usage_metadata
     assert_claude_result_usage_metadata
@@ -150,6 +153,37 @@ module ParserTest
            "expected two resumed OpenCode messages, got #{conversation.map(&:content).inspect}")
     assert(session_ids == ["ses_fixture_resume"],
            "expected one resumed session id, got #{session_ids.inspect}")
+  end
+
+  def assert_pi_structured_stream
+    lines = File.readlines(File.join(PI_FIXTURE_DIR, "structured.jsonl"))
+    conversation, system = HQ::Parser.parse_stream(lines, agent_type: "pi")
+    structured = HQ::AgentStructuredResult.from_log_lines(lines)
+    call = system.find { |entry| entry.type == :tool_call }
+    result = system.find { |entry| entry.type == :tool_result }
+    usage = system.find { |entry| entry.type == :usage }
+
+    assert(conversation.map(&:content) == ["PI_FIXTURE_OK"],
+           "expected Pi structured summary display, got #{conversation.map(&:content).inspect}")
+    assert_call(call, "read", '{"path":"fixture.txt"}')
+    assert_result(result, "read", "fixture value")
+    assert(usage.metadata["usage"]["cache_read_input_tokens"] == 40,
+           "expected Pi cache telemetry to normalize")
+    assert(usage.metadata["total_cost_usd"] == 0.0033,
+           "expected Pi reported cost to survive parsing")
+    assert(structured["summary"] == "PI_FIXTURE_OK", "expected Pi structured result extraction")
+    assert(structured.dig("attachments", 0, "path") == "/tmp/pi-fixture.txt",
+           "expected Pi structured attachment extraction")
+  end
+
+  def assert_pi_error_stream
+    lines = File.readlines(File.join(PI_FIXTURE_DIR, "errors.jsonl"))
+    _conversation, system = HQ::Parser.parse_stream(lines, agent_type: "pi")
+    errors = system.select { |entry| entry.type == :error }.map(&:content)
+
+    assert(errors.any? { |text| text.include?("Permission denied") }, "expected denied Pi tool error")
+    assert(errors.include?("Fixture provider error"), "expected Pi provider error")
+    assert(errors.include?("Fixture retries exhausted"), "expected Pi retry exhaustion")
   end
 
   def assert_chat_blocks_use_sequence_for_equal_timestamps

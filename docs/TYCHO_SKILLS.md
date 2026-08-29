@@ -11,6 +11,7 @@ Tycho uses each harness's current personal skill directory. `TYCHO_SKILLS_HOME` 
 | Codex | `~/.agents/skills` | [OpenAI Codex skills](https://developers.openai.com/codex/skills) |
 | Claude Code | `~/.claude/skills` | [Claude Code skills](https://code.claude.com/docs/en/skills) |
 | OpenCode | `~/.config/opencode/skills` | [OpenCode agent skills](https://opencode.ai/docs/skills) |
+| Pi | `~/.pi/agent/skills` | [Pi agent skills](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/skills.md) |
 
 Each skill lives in `<root>/tycho/SKILL.md`. Tycho places a `.tycho-owned.json` marker beside it. The marker records the Tycho source, installed version, and checksums used to prove that a later update is safe.
 
@@ -27,7 +28,7 @@ Install and update require a confirmation in the Remote UI and `{"confirmed":tru
 ## Verify an installation
 
 1. Open **Settings → Skills** and confirm the harness reads **Installed** with the expected source version.
-2. Open that harness's skill picker and invoke `tycho`: use `$tycho` in Codex or OpenCode and `/tycho` in Claude Code.
+2. Open that harness's skill picker and invoke `tycho`: use `$tycho` in Codex or OpenCode, `/tycho` in Claude Code, or `/skill:tycho` in Pi.
 3. If a new top-level skill directory is not detected, restart the harness. Claude Code usually detects changes live; Codex documents restart as a fallback.
 
 The read-only API is `GET /skills`. A confirmed mutation uses `POST /skills/{harness}/install` or `POST /skills/{harness}/update`.

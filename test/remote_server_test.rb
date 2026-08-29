@@ -431,7 +431,7 @@ module RemoteServerTest
 
       fetched = server.send(:route, service, "GET", "/skills", {}, nil)
       harnesses = fetched.dig(:body, :skill_installation, :harnesses)
-      assert(harnesses.map { |item| item[:harness] } == %w[codex claude opencode],
+      assert(harnesses.map { |item| item[:harness] } == %w[codex claude opencode pi],
              "expected Remote skills status for every supported harness")
       assert(harnesses.all? { |item| item[:status] == "missing" }, "expected isolated homes to start missing")
 
@@ -2419,6 +2419,20 @@ module RemoteServerTest
       cleared = service.update_agent(updated[:key], "model" => "", "reasoning_effort" => "")
       assert(cleared[:model].nil?, "expected blank model update to clear model")
       assert(cleared[:reasoning_effort].nil?, "expected blank effort update to clear effort")
+
+      pi = service.create_agent(
+        "project_key" => "web",
+        "template_key" => "custom",
+        "name" => "Pi Agent",
+        "prompt" => "Use Pi.",
+        "agent" => "pi",
+        "model" => "openai-codex/gpt-5.4",
+        "reasoning_effort" => "high"
+      )
+      assert(pi[:agent] == "pi", "expected Remote API payload to preserve Pi harness selection")
+      assert(pi[:model] == "openai-codex/gpt-5.4", "expected Remote API payload to preserve Pi model")
+      assert(pi[:reasoning_effort] == "high", "expected Remote API payload to preserve Pi thinking level")
+      assert(pi[:skill_trigger] == "/skill:", "expected Remote API payload to expose Pi skill invocation")
     end
   end
 
@@ -2875,7 +2889,7 @@ module RemoteServerTest
       assert(setup.dig(:counts, :archived_projects) == 1, "expected archived project count")
       assert(setup[:refresh_intervals] == { active_ms: 5_000, idle_ms: 10_000, hidden_ms: 30_000 },
              "expected refresh intervals to use the 5s, 10s, and 30s policy")
-      assert(setup[:harnesses].map { |item| item[:name] }.sort == %w[claude claude-wrapper codex opencode],
+      assert(setup[:harnesses].map { |item| item[:name] }.sort == %w[claude claude-wrapper codex opencode pi],
              "expected harness readiness entries")
       claude = setup[:harnesses].find { |item| item[:name] == "claude" }
       claude_models = Array(claude[:model_suggestions]).map { |item| item[:value] }
@@ -2958,7 +2972,7 @@ module RemoteServerTest
       home = File.join(dir, "home")
       empty_path = File.join(dir, "empty-bin")
       workspace = File.join(dir, "workspace")
-      %w[claude codex opencode].each do |command|
+      %w[claude codex opencode pi].each do |command|
         write_test_executable(File.join(home, ".local", "bin", command))
       end
       FileUtils.mkdir_p(empty_path)
@@ -2970,12 +2984,14 @@ module RemoteServerTest
         "PATH" => empty_path,
         "TYCHO_CLAUDE_BIN" => nil,
         "TYCHO_CODEX_BIN" => nil,
-        "TYCHO_OPENCODE_BIN" => nil
+        "TYCHO_OPENCODE_BIN" => nil,
+        "TYCHO_PI_BIN" => nil
       ) do
         setup = HQ::RemoteService.new(registry: registry).setup
         codex = setup[:harnesses].find { |item| item[:name] == "codex" }
         claude = setup[:harnesses].find { |item| item[:name] == "claude" }
         opencode = setup[:harnesses].find { |item| item[:name] == "opencode" }
+        pi = setup[:harnesses].find { |item| item[:name] == "pi" }
         assert(codex[:ready] && codex[:path].end_with?("/.local/bin/codex"),
                "expected Remote setup to find fallback Codex")
         assert(codex.key?(:model_suggestions), "expected Codex readiness to expose model suggestions")
@@ -2988,6 +3004,12 @@ module RemoteServerTest
                "expected Remote setup to find fallback OpenCode")
         assert(opencode[:reasoning_effort_suggestions].include?("high"),
                "expected OpenCode readiness to expose variant suggestions")
+        assert(pi[:ready] && pi[:path].end_with?("/.local/bin/pi"),
+               "expected Remote setup to find fallback Pi")
+        assert(pi[:reasoning_effort_suggestions].include?("xhigh"),
+               "expected Pi readiness to expose thinking suggestions")
+        assert(pi[:safety_gaps].any? { |gap| gap.include?("no sandbox equivalent") },
+               "expected Pi safety gaps in setup payload")
       end
     end
   end
@@ -3094,7 +3116,7 @@ module RemoteServerTest
       setup = HQ::RemoteService.new(registry: registry).setup
       guides = setup.dig(:onboarding, :agent_cli_guides)
 
-      assert(guides.map { |guide| guide[:key] } == %w[codex claude opencode],
+      assert(guides.map { |guide| guide[:key] } == %w[codex claude opencode pi],
              "expected onboarding CLI guides for each built-in harness")
       guides.each do |guide|
         assert(guide[:install_command].to_s.length.positive?, "expected #{guide[:key]} install command")
@@ -4041,6 +4063,16 @@ module RemoteServerTest
              "expected OpenCode discovery to include workspace .opencode/skills")
       assert(opencode_payload[:skills].any? { |skill| skill["name"] == "teach" },
              "expected OpenCode discovery to include ~/.agents/skills")
+
+      pi_skill_dir = File.join(home, ".pi", "agent", "skills", "operate")
+      FileUtils.mkdir_p(pi_skill_dir)
+      File.write(File.join(pi_skill_dir, "SKILL.md"), "# Operate\n")
+      pi_payload = service.skills("web", "pi")
+      assert(pi_payload[:trigger] == "/skill:", "expected Pi skill command prefix")
+      assert(pi_payload[:skills].any? { |skill| skill["name"] == "operate" },
+             "expected Pi discovery to include ~/.pi/agent/skills")
+      assert(pi_payload[:skills].any? { |skill| skill["name"] == "teach" },
+             "expected Pi discovery to include ~/.agents/skills")
     ensure
       ENV["HOME"] = old_home
     end

@@ -48,7 +48,7 @@ are available, and Tycho has been tested on Windows 11 through WSL.
 ## Features
 
 - Project registry from `~/.tycho/config/hq.yml`.
-- Managed Codex, Claude, OpenCode, and custom Claude-compatible agents with
+- Managed Codex, Claude, OpenCode, Pi, and custom Claude-compatible agents with
   persistent chat memory.
 - Scheduled managed-agent runs from cron-style local config.
 - In-app log views, agent detail views, project detail views, and omnisearch.
@@ -219,7 +219,9 @@ Use the `TYCHO_` prefix for runtime overrides.
 | `TYCHO_SCHEDULER_DAEMON_PATH` | Override scheduler daemon heartbeat path. |
 | `TYCHO_CODEX_BIN` | Override Codex executable lookup. |
 | `TYCHO_CLAUDE_BIN` | Override Claude executable lookup. |
-| `TYCHO_STRUCTURED_OUTPUT_CORRECTION_LIMIT` | Set schema-correction attempts for Codex and Claude-compatible managed agents. Defaults to `2`; Tycho clamps values to `0..5`. |
+| `TYCHO_OPENCODE_BIN` | Override OpenCode executable lookup. |
+| `TYCHO_PI_BIN` | Override Pi Coding Agent executable lookup. |
+| `TYCHO_STRUCTURED_OUTPUT_CORRECTION_LIMIT` | Set schema-correction attempts for Codex, Claude-compatible, and Pi managed agents. Defaults to `2`; Tycho clamps values to `0..5`. |
 | `TYCHO_TAILSCALE_BIN` | Override Tailscale executable lookup. |
 | `TYCHO_GH_BIN` | Override the compatibility GitHub CLI lookup. |
 | `TYCHO_GITHUB_APP_CLIENT_ID` | Public Client ID for the Tycho GitHub App device flow. |
@@ -573,7 +575,7 @@ in Settings verifies it, writes it to the host's private
 
 ## Custom Claude Harnesses
 
-Tycho has built-in `codex`, `claude`, and `opencode` harnesses. To run Claude
+Tycho has built-in `codex`, `claude`, `opencode`, and `pi` harnesses. To run Claude
 through a wrapper, define a custom harness in `~/.tycho/config/hq.yml` and use
 its key as a project or template agent:
 
@@ -600,7 +602,7 @@ structured result schemas, and native session resume.
 Tycho validates each final managed-agent response against
 `~/.tycho/config/schemas/agent_result.json` before accepting it as successful.
 When JSON is malformed or violates the schema, Tycho sends concise JSON feedback
-to the same native Codex or Claude-compatible session and asks for one complete
+to the same native Codex, Claude-compatible, or Pi session and asks for one complete
 corrected payload. The feedback reports only error codes, schema paths, expected
 types, and allowed enum values; it does not copy response values.
 
@@ -618,8 +620,27 @@ next response. The compact row shows whether Tycho is retrying or has exhausted
 the limit. Expanding it shows schema paths and safe error details, but never
 copies rejected field values into the conversation.
 
-Use `TYCHO_CODEX_BIN`, `TYCHO_CLAUDE_BIN`, or another documented environment
+Use `TYCHO_CODEX_BIN`, `TYCHO_CLAUDE_BIN`, `TYCHO_OPENCODE_BIN`, `TYCHO_PI_BIN`, or another documented environment
 override when a harness executable is not on `PATH`.
+
+## Pi Coding Agent
+
+Tycho supports the `pi` executable from `@mariozechner/pi-coding-agent` 0.73.1,
+the latest release under Mario Zechner's package name when this integration was
+implemented. It relies on the documented `--mode json`, `--session`, `--model`,
+`--thinking`, `--tools`, and `--list-models` contracts. Install it with
+`npm install -g --ignore-scripts @mariozechner/pi-coding-agent@0.73.1`, then run
+`pi` and use `/login`, or configure a provider API key as documented by Pi.
+`pi --list-models` must show at least one model before Tycho reports authentication
+ready.
+
+Pi has no native JSON Schema output flag, so Tycho adds the canonical result
+schema to cold execution context, validates the final assistant JSON, and uses
+the native Pi session for bounded correction attempts. Pi also has no sandbox
+equivalent to Tycho's restricted modes. `danger-full-access` keeps Pi's native
+tool set; other Tycho modes conservatively allow only `read,grep,find,ls` and
+report the capability gap in Settings. Usage and cost come only from Pi's
+assistant-message telemetry; missing counters or prices remain unknown.
 
 ## Tests
 

@@ -78,6 +78,10 @@ module HQ
           end
         end
 
+        if parsed["type"] == "message_end" && parsed.dig("message", "role") == "assistant"
+          return stringify_text(parsed.dig("message", "content"))
+        end
+
         nil
       end
 
@@ -140,7 +144,7 @@ module HQ
         role = parsed["role"].to_s
         role = message["role"].to_s if role.empty?
         type = parsed["type"].to_s
-        return "" unless role == "assistant" || type.match?(/assistant|message|result/i) ||
+        return "" unless role == "assistant" || message["role"] == "assistant" || type.match?(/assistant|message|result/i) ||
                          (type == "text" && part["type"].to_s == "text") ||
                          item["type"].to_s.match?(/agent_message|assistant|message/i)
 
