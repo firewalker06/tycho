@@ -4,5 +4,5 @@
 {"type":"tool_execution_start","toolCallId":"call_fixture_read","toolName":"read","args":{"path":"fixture.txt"}}
 {"type":"tool_execution_end","toolCallId":"call_fixture_read","toolName":"read","result":{"content":[{"type":"text","text":"fixture value"}],"details":{}},"isError":false}
 {"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"{\"status\":\"success\",\"summary\":\"PI_FIXTURE_OK\",\"inquiry\":null,\"attachments\":[{\"type\":\"file\",\"title\":\"Fixture\",\"path\":\"/tmp/pi-fixture.txt\"}]}"}],"api":"responses","provider":"openai-codex","model":"gpt-5.4","usage":{"input":100,"output":25,"cacheRead":40,"cacheWrite":5,"totalTokens":170,"cost":{"input":0.001,"output":0.002,"cacheRead":0.0001,"cacheWrite":0.0002,"total":0.0033}},"stopReason":"stop","timestamp":1787270400000}}
-{"type":"turn_end","message":{"role":"assistant","content":[]},"toolResults":[]}
-{"type":"agent_end","messages":[]}
+{"type":"turn_end","message":{"role":"assistant","content":[],"api":"responses","provider":"openai-codex","model":"gpt-5.4","stopReason":"stop"},"toolResults":[]}
+{"type":"agent_end","messages":[{"role":"assistant","content":[],"provider":"openai-codex","model":"gpt-5.4","stopReason":"stop"}]}

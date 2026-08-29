@@ -95,6 +95,16 @@ module HQ
           timestamp:,
           metadata: { "tool_name" => entry.tool_name.to_s, "details" => details }
         )
+      when :error, :status
+        envelope(
+          type: "stream_status",
+          content: entry.content,
+          semantic_key: "#{entry.type}-#{index}",
+          source_sequence:,
+          source:,
+          timestamp:,
+          metadata: normalized_metadata(entry.metadata, source_sequence).merge("type" => entry.type.to_s)
+        )
       end
     end
 

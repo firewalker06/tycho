@@ -71,8 +71,11 @@ harness stdout/stderr ──▶ AgentStreamRecorder ──▶ raw.log (unchanged
 ```
 
 Codex `agent_message`, Claude complete assistant content blocks, OpenCode text
-parts, and Pi complete `message_end` assistant content blocks persist as soon as their complete line arrives. Tool and usage
-entries follow the same path. Claude token deltas are not enabled.
+parts, and Pi complete `message_end` assistant content blocks persist as soon as
+their complete line arrives. Tool and usage entries follow the same path. Pi
+session headers, terminal turn/agent statuses, and sanitized malformed-stream
+errors persist as `stream_status` records; lifecycle statuses stay in the system
+log instead of adding conversation blocks. Claude token deltas are not enabled.
 
 After exit, `capture_run_memory!` replays the process-output segment through
 the same projector. Deterministic IDs derived from `run_id`, harness, source

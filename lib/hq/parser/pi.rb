@@ -11,10 +11,41 @@ module HQ
       private
 
       def parse_event(event, conversation, system)
+        parse_lifecycle(event, system)
         parse_assistant_message(event, conversation)
         parse_tool_event(event, system)
         parse_usage(event, system)
         parse_error(event, system)
+      end
+
+      def parse_lifecycle(event, system)
+        type = event["type"].to_s
+        return unless %w[session turn_end agent_end].include?(type)
+
+        message = event["message"].is_a?(Hash) ? event["message"] : {}
+        if message.empty? && type == "agent_end"
+          message = Array(event["messages"]).reverse.find do |candidate|
+            candidate.is_a?(Hash) && candidate["role"] == "assistant"
+          end || {}
+        end
+        stop_reason = message["stopReason"].to_s
+        status = lifecycle_status(type, stop_reason)
+        metadata = event_metadata(event).merge(
+          "status" => status,
+          "session_version" => event["version"],
+          "cwd" => event["cwd"],
+          "stop_reason" => stop_reason.empty? ? nil : stop_reason,
+          "model" => message["model"],
+          "provider" => message["provider"],
+          "tool_result_count" => Array(event["toolResults"]).length,
+          "message_count" => Array(event["messages"]).length
+        ).compact
+        system << SystemEntry.new(
+          type: :status,
+          content: lifecycle_content(type, status),
+          timestamp: Time.now,
+          metadata: metadata
+        )
       end
 
       def parse_assistant_message(event, conversation)
@@ -129,6 +160,36 @@ module HQ
           timestamp: Time.now,
           metadata: event_metadata(event)
         )
+      end
+
+      def parse_malformed_line(line, _error, system)
+        system << SystemEntry.new(
+          type: :error,
+          content: "Pi emitted a malformed JSON stream record; Tycho ignored it.",
+          timestamp: Time.now,
+          metadata: {
+            "event_type" => "tycho.pi.malformed_json",
+            "status" => "malformed",
+            "record_bytes" => line.to_s.bytesize
+          }
+        )
+      end
+
+      def lifecycle_status(type, stop_reason)
+        return "initialized" if type == "session"
+        return "failed" if stop_reason == "error"
+        return "interrupted" if stop_reason == "aborted"
+
+        "completed"
+      end
+
+      def lifecycle_content(type, status)
+        subject = {
+          "session" => "Pi session",
+          "turn_end" => "Pi turn",
+          "agent_end" => "Pi agent"
+        }.fetch(type)
+        "#{subject} #{status}"
       end
 
       def content_text(value)

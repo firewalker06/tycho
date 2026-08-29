@@ -151,7 +151,7 @@ module HQ
                      values.each { |key, value| total[key] = total.fetch(key, 0) + value }
                    end
                  end
-        observed = entries.flat_map { |entry| observed_models(entry) }.uniq.sort
+        observed = entries.flat_map { |entry| pi_observed_models(entry) }.uniq.sort
         cost = provider.reported_cost(entries) { |entry| numeric(metadata(entry)["total_cost_usd"]) }
         reasons = []
         reasons << "Pi did not report usage telemetry" if entries.empty?
@@ -207,6 +207,16 @@ module HQ
       def observed_models(entry)
         model = present(metadata(entry)["model"])
         model ? [model] : []
+      end
+
+      def pi_observed_models(entry)
+        details = metadata(entry)
+        model = present(details["model"])
+        return [] unless model
+        return [model] if model.include?("/")
+
+        provider = present(details["provider"])
+        [provider ? "#{provider}/#{model}" : model]
       end
 
       def provenance

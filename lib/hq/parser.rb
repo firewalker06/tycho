@@ -119,7 +119,11 @@ module HQ
     def compose_chat(conversation_entries, system_entries)
       events = []
       conversation_entries.each_with_index { |e, index| events << [:conversation, e, index] }
-      system_entries.each_with_index { |e, index| events << [:system, e, conversation_entries.length + index] }
+      system_entries.each_with_index do |entry, index|
+        next if entry.type == :status
+
+        events << [:system, entry, conversation_entries.length + index]
+      end
       events.sort_by! { |_, e, index| event_sort_key(e, index) }
 
       lines = []
@@ -147,7 +151,11 @@ module HQ
     def compose_chat_blocks(conversation_entries, system_entries)
       events = []
       conversation_entries.each_with_index { |e, index| events << [:conversation, e, index] }
-      system_entries.each_with_index { |e, index| events << [:system, e, conversation_entries.length + index] }
+      system_entries.each_with_index do |entry, index|
+        next if entry.type == :status
+
+        events << [:system, entry, conversation_entries.length + index]
+      end
       events.sort_by! { |_, e, index| event_sort_key(e, index) }
 
       blocks = []
@@ -489,9 +497,9 @@ module HQ
           stripped = line.strip
           next unless stripped.start_with?("{")
 
-          event = JSON.parse(stripped)
           conversation_start = conversation.length
           system_start = system.length
+          event = JSON.parse(stripped)
           if parse_tycho_event(event, system)
             tag_stream_sequence(system, system_start, stream_sequence)
             next
@@ -499,7 +507,9 @@ module HQ
           parse_event(event, conversation, system)
           tag_stream_sequence(conversation, conversation_start, stream_sequence)
           tag_stream_sequence(system, system_start, stream_sequence)
-        rescue JSON::ParserError
+        rescue JSON::ParserError => error
+          parse_malformed_line(stripped, error, system)
+          tag_stream_sequence(system, system_start, stream_sequence)
           next
         end
 
@@ -512,6 +522,10 @@ module HQ
           metadata["_stream_sequence"] = stream_sequence
           entry.metadata = metadata
         end
+      end
+
+      def parse_malformed_line(_line, _error, _system)
+        nil
       end
 
       def parse_tycho_event(event, system)

@@ -6241,6 +6241,16 @@ def write_smoke_script(path)
         if (loopDefaults.interval !== "10" || loopDefaults.endTime !== "23:59" || loopDefaults.templateName !== "Wait for PR review") {
           throw new Error(`Session loop settings defaults are incomplete: ${JSON.stringify(loopDefaults)}`);
         }
+        const piHarness = page.locator("[data-harness-name='pi']");
+        if (await piHarness.count() !== 1) throw new Error("Settings did not render one Pi harness entry");
+        if (!(await piHarness.evaluate((details) => details.open))) await piHarness.locator(":scope > summary").click();
+        const piHarnessText = await piHarness.innerText();
+        if (!piHarnessText.includes("Pi") || !piHarnessText.includes("native session resume") ||
+            !piHarnessText.includes("Safety gaps") || !piHarnessText.includes("no sandbox equivalent") ||
+            !piHarnessText.includes("xhigh")) {
+          throw new Error(`Pi harness settings are incomplete: ${JSON.stringify(piHarnessText)}`);
+        }
+        if (captureDir) await piHarness.screenshot({ path: path.join(captureDir, "pi-harness-settings.png") });
         const firstHarness = page.locator(".harness-details").first();
         if (await firstHarness.count()) {
           if (!(await firstHarness.evaluate((details) => details.open))) await firstHarness.locator(":scope > summary").click();
