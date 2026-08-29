@@ -11,6 +11,33 @@
       "type": "string",
       "description": "Concise operator-facing Markdown summary of this run. State the outcome, important changes or findings, blockers, and concrete next steps. Keep it focused enough for the Remote UI Summary page: usually 1-3 short paragraphs or bullets. After summarized, do a secondary check to not miss important details."
     },
+    "summary_sections": {
+      "type": ["array", "null"],
+      "description": "Optional ordered rich summary blocks displayed below summary as a readable blog post. Use text blocks for prose, link blocks for inline links, and attachment blocks for durable artifacts. Keep the array in reading order.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": { "type": "string", "enum": ["text", "link", "attachment"] },
+          "text": { "type": ["string", "null"] },
+          "url": { "type": ["string", "null"] },
+          "attachment": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "properties": {
+              "type": { "type": "string", "enum": ["file", "link"] },
+              "title": { "type": "string" },
+              "path": { "type": ["string", "null"] },
+              "url": { "type": ["string", "null"] },
+              "description": { "type": ["string", "null"] },
+              "mime_type": { "type": ["string", "null"] }
+            },
+            "required": ["type", "title", "path", "url", "description", "mime_type"]
+          }
+        },
+        "required": ["type", "text", "url", "attachment"]
+      }
+    },
     "inquiry": {
       "type": ["object", "null"],
       "additionalProperties": false,
@@ -98,5 +125,5 @@
       "required": ["outcome", "decisions", "continuing_context", "references", "lessons", "promotion_candidates"]
     }
   },
-  "required": ["status", "summary", "inquiry", "attachments", "memory_handoff"]
+  "required": ["status", "summary", "summary_sections", "inquiry", "attachments", "memory_handoff"]
 }

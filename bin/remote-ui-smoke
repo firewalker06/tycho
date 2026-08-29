@@ -66,6 +66,7 @@ def write_fixture(dir)
     payload = {
       "status" => "success",
       "summary" => "Completed the focused review and returned concise findings.",
+      "summary_sections" => [{ "type" => "text", "text" => "Rendered semantic run summary details.", "url" => nil, "attachment" => nil }],
       "inquiry" => nil,
       "attachments" => nil
     }
@@ -1900,6 +1901,47 @@ def write_smoke_script(path)
           });
         }
         if (process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY === "1") {
+          await page.setViewportSize({ width: 1440, height: 900 });
+          const richSummaryContract = await page.evaluate((key) => {
+            const agent = findAgent(key);
+            const attachment = {
+              type: "link",
+              kind: "link",
+              title: "Release notes",
+              url: "https://example.test/release-notes",
+            };
+            agent.attachments = [...(agent.attachments || []), attachment];
+            state.conversations[key] = {
+              blocks: [{
+                kind: "run_summary",
+                content: "Legacy summary stays first.",
+                created_at: "2026-08-29T00:00:00Z",
+                metadata: {
+                  summary_id: "rich-summary-smoke",
+                  run_number: 1,
+                  status: "success",
+                  attachments: [attachment],
+                  summary_sections: [
+                    { type: "text", text: "A readable opening paragraph.", url: null, attachment: null },
+                    { type: "link", text: "Read the release notes", url: "https://example.test/release-notes", attachment: null },
+                    { type: "text", text: "A closing paragraph.", url: null, attachment: null },
+                    { type: "attachment", text: null, url: null, attachment },
+                  ],
+                },
+              }],
+            };
+            history.replaceState(null, "", routeHash({ type: "agentSummary", key, summaryId: "rich-summary-smoke" }));
+            state.renderedRouteKey = null;
+            state.renderedViewHtml = "";
+            render();
+            return Array.from(document.querySelectorAll("[data-agent-summary-page] .summary-sections > *")).map((element) => element.innerText.trim());
+          }, agentKey);
+          const expectedRichSummary = ["A readable opening paragraph.", "Read the release notes", "A closing paragraph.", "Release notes"];
+          if (richSummaryContract.length !== expectedRichSummary.length ||
+              !richSummaryContract.every((block, index) => block.includes(expectedRichSummary[index]))) {
+            throw new Error(`Rich summary blocks did not render in reading order: ${JSON.stringify(richSummaryContract)}`);
+          }
+          if (captureDir) await page.screenshot({ path: path.join(captureDir, "rich-summary-blogpost.png"), fullPage: false });
           console.log("remote-ui-smoke: HTML, Mermaid, polling, schedule menu, sticky Agents toolbar, and Now hierarchy ok");
           return;
         }
@@ -5677,6 +5719,12 @@ def write_smoke_script(path)
                 summary_id: "summary-newer",
                 run_number: 2,
                 status: "partial",
+                summary_sections: [
+                  { type: "text", text: "Rendered semantic run summary details.", url: null, attachment: null },
+                  { type: "link", text: "Open implementation", url: "https://example.test/implementation", attachment: null },
+                  { type: "text", text: "Kept legacy text first.", url: null, attachment: null },
+                  { type: "attachment", text: null, url: null, attachment },
+                ],
                 attachments: [attachment],
                 cost_snapshot: { amount_usd: 1.25, coverage: "partial" },
               },
@@ -5702,6 +5750,7 @@ def write_smoke_script(path)
           full: document.querySelector("[data-agent-workspace]")?.classList.contains("agent-workspace-full-view"),
           summary: Boolean(document.querySelector("[data-agent-summary-page]")),
           cost: document.querySelector("[data-agent-summary-page]")?.innerText,
+          richSummary: Array.from(document.querySelectorAll("[data-agent-summary-page] .summary-sections > *")).map((section) => section.innerText),
           recent: Boolean(document.querySelector("[data-go-recent]")),
           previousDisabled: document.querySelector("[aria-label='Previous summary']")?.disabled,
           nextDisabled: document.querySelector("[aria-label='Next summary']")?.disabled,
@@ -5718,7 +5767,10 @@ def write_smoke_script(path)
             summaryFullView.previousDisabled || !summaryFullView.nextDisabled || summaryFullView.downloadButtons !== 1 ||
             summaryFullView.focusedTopGap < 8 ||
             !summaryFullView.attachmentDetailHref?.includes("attachment/summary-download-fixture") ||
-            summaryFullView.deduplicated !== "First paragraph.\\n\\nSecond paragraph." || !summaryFullView.cost.includes("$1.25+")) {
+            summaryFullView.deduplicated !== "First paragraph.\\n\\nSecond paragraph." || !summaryFullView.cost.includes("$1.25+") ||
+            !summaryFullView.richSummary.some((section) => section.includes("Rendered semantic run summary details.")) ||
+            !summaryFullView.richSummary.some((section) => section.includes("Open implementation")) ||
+            !summaryFullView.richSummary.some((section) => section.includes("summary-notes.md"))) {
           throw new Error(`Summary did not retain the shared full-view layout: ${JSON.stringify(summaryFullView)}`);
         }
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "summary-navigation-download.png") });

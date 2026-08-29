@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "uri"
 
 module HQ
   class AgentStructuredOutputValidator
@@ -16,6 +17,7 @@ module HQ
 
       payload, compatibility_errors = canonicalize_compatibility_fields(payload)
       errors = compatibility_errors + validate_value(payload, @schema, "$")
+      errors.concat(validate_summary_sections(payload))
       Result.new(valid?: errors.empty?, payload:, errors:, raw_text:)
     end
 
@@ -40,6 +42,7 @@ module HQ
       errors = []
       decode_compatibility_field(result, "inquiry_json", "inquiry", errors)
       decode_compatibility_field(result, "attachments_json", "attachments", errors)
+      decode_compatibility_field(result, "summary_sections_json", "summary_sections", errors)
       [result, errors]
     end
 
@@ -68,6 +71,9 @@ module HQ
       errors = []
       if schema["minLength"].is_a?(Integer) && value.is_a?(String) && value.length < schema["minLength"]
         errors << error("too_short", path, "String is shorter than the minimum length", min_length: schema["minLength"])
+      end
+      if schema["minItems"].is_a?(Integer) && value.is_a?(Array) && value.length < schema["minItems"]
+        errors << error("too_few_items", path, "Array has fewer than the minimum items", min_items: schema["minItems"])
       end
       if schema["enum"].is_a?(Array) && !schema["enum"].include?(value)
         errors << error("invalid_enum", path, "Value is not an allowed enum member", allowed: schema["enum"])
@@ -103,6 +109,55 @@ module HQ
       value.each_with_index.flat_map do |item, index|
         validate_value(item, schema["items"], "#{path}[#{index}]")
       end
+    end
+
+    def validate_summary_sections(payload)
+      return [] unless payload.is_a?(Hash) && payload["summary_sections"].is_a?(Array)
+
+      payload["summary_sections"].each_with_index.flat_map do |block, index|
+        next [] unless block.is_a?(Hash)
+
+        path = "$.summary_sections[#{index}]"
+        case block["type"]
+        when "text"
+          nonempty_summary_field_errors(block, "text", path)
+        when "link"
+          nonempty_summary_field_errors(block, "text", path) + valid_summary_url_errors(block, path)
+        when "attachment"
+          attachment_target_errors(block["attachment"], path)
+        else
+          []
+        end
+      end
+    end
+
+    def nonempty_summary_field_errors(block, field, path)
+      block[field].to_s.strip.empty? ? [error("too_short", "#{path}.#{field}", "Text must not be empty", min_length: 1)] : []
+    end
+
+    def valid_summary_url_errors(block, path)
+      valid_http_url?(block["url"]) ? [] : [error("invalid_url", "#{path}.url", "Link block requires an HTTP(S) URL")]
+    end
+
+    def attachment_target_errors(attachment, path)
+      return [error("wrong_type", "#{path}.attachment", "Attachment block requires an attachment object", expected: ["object"])] unless attachment.is_a?(Hash)
+
+      case attachment["type"]
+      when "file"
+        value = attachment["path"].to_s.strip
+        value.empty? || value.match?(%r{\Ahttps?://}i) ? [error("invalid_target", "#{path}.attachment.path", "File attachment requires a usable path")] : []
+      when "link"
+        valid_http_url?(attachment["url"]) ? [] : [error("invalid_target", "#{path}.attachment.url", "Link attachment requires a usable HTTP(S) URL")]
+      else
+        []
+      end
+    end
+
+    def valid_http_url?(value)
+      uri = URI.parse(value.to_s.strip)
+      %w[http https].include?(uri.scheme) && !uri.host.to_s.empty?
+    rescue URI::InvalidURIError
+      false
     end
 
     def type_matches?(value, type)

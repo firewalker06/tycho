@@ -50,7 +50,7 @@ module MemoryHandoffTest
   def assert_schema_rejects_incomplete_handoff
     schema = JSON.parse(File.read(SCHEMA_PATH))
     payload = {
-      "status" => "success", "summary" => "Done", "inquiry" => nil, "attachments" => nil,
+      "status" => "success", "summary" => "Done", "summary_sections" => nil, "inquiry" => nil, "attachments" => nil,
       "memory_handoff" => { "outcome" => "", "decisions" => [] }
     }
     result = HQ::AgentStructuredOutputValidator.new(schema:).validate(payload)
@@ -72,7 +72,7 @@ module MemoryHandoffTest
       assert(handoff.dig("properties", field, "type") == %w[array null], "expected nullable #{field}")
     end
     valid = {
-      "status" => "success", "summary" => "Done", "inquiry" => nil, "attachments" => nil,
+      "status" => "success", "summary" => "Done", "summary_sections" => nil, "inquiry" => nil, "attachments" => nil,
       "memory_handoff" => nil
     }
     assert(HQ::AgentStructuredOutputValidator.new(schema:).validate(valid).valid?,
@@ -87,6 +87,9 @@ module MemoryHandoffTest
       migrated = JSON.parse(File.read(path))
       assert(migrated.dig("properties", "status", "type") == "string", "expected existing schema fields to survive")
       assert(migrated.fetch("required").include?("memory_handoff"), "expected required root handoff migration")
+      assert(migrated.fetch("required").include?("summary_sections"), "expected required root summary sections migration")
+      assert(migrated.dig("properties", "summary_sections", "type") == %w[array null],
+             "expected summary sections schema migration")
       assert(migrated.dig("properties", "memory_handoff", "required") ==
              %w[outcome decisions continuing_context references lessons promotion_candidates],
              "expected strict handoff schema migration")

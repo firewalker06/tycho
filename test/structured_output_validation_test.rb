@@ -18,6 +18,7 @@ module StructuredOutputValidationTest
     assert_first_pass_success
     assert_malformed_json_feedback
     assert_multiple_schema_violations
+    assert_malformed_summary_sections_are_diagnosable
     assert_successful_correction_for_supported_harnesses
     assert_retry_exhaustion_preserves_invalid_response
     puts "structured_output_validation_test: ok"
@@ -59,6 +60,29 @@ module StructuredOutputValidationTest
            "expected missing attachments path")
     assert(result.errors.any? { |error| error["path"] == "$.inquiry.fields[0].input_type" },
            "expected nested enum path")
+  end
+
+  def assert_malformed_summary_sections_are_diagnosable
+    result = validator.validate(
+      "status" => "success", "summary" => "Done", "summary_sections" => [
+        { "type" => "text", "text" => "", "url" => nil, "attachment" => nil },
+        { "type" => "link", "text" => "Broken", "url" => "https://", "attachment" => nil },
+        { "type" => "attachment", "text" => nil, "url" => nil,
+          "attachment" => { "type" => "file", "title" => "Bad file", "path" => " ", "url" => nil, "description" => nil, "mime_type" => nil } },
+        { "type" => "attachment", "text" => nil, "url" => nil,
+          "attachment" => { "type" => "link", "title" => "Bad link", "path" => nil, "url" => "https://", "description" => nil, "mime_type" => nil } }
+      ],
+      "inquiry" => nil, "attachments" => nil, "memory_handoff" => nil
+    )
+    paths = result.errors.map { |error| error["path"] }
+    assert(paths.include?("$.summary_sections[0].text"),
+           "expected field-level summary block correction diagnostics, got #{result.errors.inspect}")
+    assert(result.errors.any? { |error| error["code"] == "too_short" },
+           "expected empty summary text to be diagnosable")
+    assert(paths.include?("$.summary_sections[1].url") &&
+           paths.include?("$.summary_sections[2].attachment.path") &&
+           paths.include?("$.summary_sections[3].attachment.url"),
+           "expected unusable rich targets to report exact correction paths")
   end
 
   def assert_successful_correction_for_supported_harnesses

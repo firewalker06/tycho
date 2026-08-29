@@ -27,6 +27,7 @@ module ManagedAgentTest
     assert_opencode_fallback_summary_uses_text_event_not_prompt
     assert_structured_output_summary_beats_later_agent_message
     assert_claude_scalar_json_structured_output_normalizes
+    assert_summary_sections_normalize_and_persist_with_run
     assert_opencode_assistant_json_structured_output_normalizes
     assert_completed_run_persists_cost_snapshot
     assert_large_completed_run_persists_cost_snapshot
@@ -1174,6 +1175,11 @@ module ManagedAgentTest
           "description" => "StructuredOutput compatibility issue."
         }
       ]
+      summary_sections = [
+        { "type" => "text", "text" => "Kept the legacy summary." },
+        { "type" => "link", "text" => "Implementation", "url" => "https://github.com/firewalker06/tycho/pull/143" },
+        { "type" => "attachment", "attachment" => attachments.first }
+      ]
       File.open(log_path, "w") do |f|
         f.puts "=== [#{started_at.strftime("%Y-%m-%d %H:%M:%S")}] start ==="
         f.puts "workspace=#{dir}"
@@ -1190,7 +1196,8 @@ module ManagedAgentTest
                   "status" => "input_required",
                   "summary" => "Need release approval.",
                   "inquiry_json" => JSON.generate(inquiry),
-                  "attachments_json" => JSON.generate(attachments)
+                  "attachments_json" => JSON.generate(attachments),
+                  "summary_sections_json" => JSON.generate(summary_sections)
                 }
               }
             ]
@@ -1230,8 +1237,14 @@ module ManagedAgentTest
              "expected scalar inquiry fields to normalize")
       assert(structured["attachments"].first["url"] == "https://github.com/firewalker06/tycho/issues/9",
              "expected scalar attachments JSON to normalize")
+      assert(structured["summary_sections"].map { |block| block["type"] } == %w[text link attachment],
+             "expected scalar rich summary blocks to preserve their order")
+      assert(structured.dig("summary_sections", 1, "url") == "https://github.com/firewalker06/tycho/pull/143" &&
+             structured.dig("summary_sections", 2, "attachment", "url") == "https://github.com/firewalker06/tycho/issues/9",
+             "expected scalar link and attachment blocks to normalize")
       assert(!structured.key?("inquiry_json"), "expected scalar inquiry field to be removed")
       assert(!structured.key?("attachments_json"), "expected scalar attachments field to be removed")
+      assert(!structured.key?("summary_sections_json"), "expected scalar summary sections field to be removed")
 
       grilling = HQ::AgentResultNormalizer.new(workspace: dir).normalize_structured_result(
         "status" => "input_required",
@@ -1248,6 +1261,49 @@ module ManagedAgentTest
       assert(grilling_inquiry.dig("fields", 0, "input_type") == "select" &&
              grilling_inquiry.dig("fields", 0, "options") == ["LLM-only", "LLM plus detector", "Detector-only"],
              "expected question-shaped Claude inquiries to become selectable fields")
+    end
+  end
+
+  def assert_summary_sections_normalize_and_persist_with_run
+    Dir.mktmpdir("hq-managed-agent-summary-sections-test") do |dir|
+      inline_file = File.join(dir, "inline-notes.md")
+      File.write(inline_file, "Inline attachment fixture.\n")
+      agent = HQ::ManagedAgent.new(
+        key: "summary-sections-agent", name: "Summary sections", project_key: "demo", template_key: "custom",
+        workspace: dir, prompt: "Prompt", log_path: File.join(dir, "summary.raw.log"),
+        structured_result: {
+          "status" => "success", "summary" => "Legacy summary stays exactly as written.  ",
+          "summary_sections" => [
+            { "type" => "text", "text" => " Added section. " },
+            { "type" => "attachment", "attachment" => { "type" => "link", "title" => "PR", "url" => "https://example.test/pr" } },
+            { "type" => "attachment", "attachment" => { "type" => "file", "title" => "Notes", "path" => inline_file } },
+            { "type" => "link", "text" => " ", "url" => "https://example.test/discarded" }
+          ]
+        }
+      )
+      normalized = agent.send(:normalize_structured_result, agent.structured_result)
+      assert(normalized["summary"] == "Legacy summary stays exactly as written.",
+             "expected legacy summary normalization to remain unchanged")
+      assert(normalized["summary_sections"].map { |block| block["type"] } == %w[text attachment attachment],
+             "expected invalid summary blocks to be removed")
+      assert(normalized["attachments"].map { |attachment| attachment["type"] }.sort == %w[file link],
+             "expected inline-only file and link attachments to join the same-run registry")
+
+      agent.structured_result = normalized
+      agent.instance_variable_set(:@summary, normalized["summary"])
+      run = HQ::ManagedAgent::AgentRun.new(run_id: "summary-sections-run", status: "success")
+      agent.send(:capture_run_memory!, run)
+      event = HQ::AgentMemory.new(agent).events.find { |item| item["type"] == "run_summary" }
+      assert(event.dig("metadata", "summary_sections") == normalized["summary_sections"],
+             "expected sections to persist beside their run summary")
+      assert(event.dig("metadata", "attachments") == normalized["attachments"],
+             "expected same-run attachments to remain beside sections")
+      reloaded = HQ::ManagedAgent.from_hash(agent.to_hash)
+      restored = HQ::AgentMemory.new(reloaded).events.find { |item| item["type"] == "run_summary" }
+      assert(restored.dig("metadata", "summary_sections") == normalized["summary_sections"],
+             "expected sections to survive agent reload")
+      assert(restored.dig("metadata", "attachments") == normalized["attachments"],
+             "expected inline-only file and link attachments to survive reload")
     end
   end
 
@@ -1359,6 +1415,12 @@ module ManagedAgentTest
     assert(status_description.include?("observational or recurring check") &&
            status_description.include?("quiet outcome"),
            "canonical status schema should define no-action semantics and consequences")
+    sections = schema.dig("properties", "summary_sections")
+    assert(schema.fetch("required").include?("summary_sections") && sections.fetch("type") == %w[array null],
+           "agent result schema should require nullable structured summary sections")
+    assert(sections.dig("items", "required") == %w[type text url attachment] &&
+           sections.dig("items", "properties", "type", "enum") == %w[text link attachment],
+           "agent result schema should require ordered rich summary blocks")
 
     old_schema_path = replace_constant(HQ, :AGENT_RESULT_SCHEMA, schema_path)
     agent = HQ::ManagedAgent.new(
@@ -1781,7 +1843,7 @@ module ManagedAgentTest
           echo "managed child stdin was not the null device"
           exit 42
         fi
-        printf '%s\n' '{"type":"assistant","session_id":"validation-session","message":{"role":"assistant","content":[{"type":"tool_use","name":"StructuredOutput","input":{"status":"success","summary":"Validated through runner.","inquiry_json":"null","attachments_json":"null","memory_handoff":null}}]}}'
+        printf '%s\n' '{"type":"assistant","session_id":"validation-session","message":{"role":"assistant","content":[{"type":"tool_use","name":"StructuredOutput","input":{"status":"success","summary":"Validated through runner.","summary_sections_json":"null","inquiry_json":"null","attachments_json":"null","memory_handoff":null}}]}}'
         exit 0
       SH
       File.chmod(0o755, harness)
@@ -1856,6 +1918,7 @@ module ManagedAgentTest
             "input" => {
               "status" => "success",
               "summary" => "Incremental final.",
+              "summary_sections_json" => "null",
               "inquiry_json" => "null",
               "attachments_json" => "null",
               "memory_handoff" => nil
@@ -1936,6 +1999,7 @@ module ManagedAgentTest
               "input" => {
                 "status" => result_status,
                 "summary" => "Detached run completed.",
+                "summary_sections_json" => "null",
                 "inquiry_json" => "null",
                 "attachments_json" => "null",
                 "memory_handoff" => nil

@@ -1938,6 +1938,7 @@ module RemoteServerTest
             File.write(ARGV[output_index + 1], JSON.generate(
               "status" => "success",
               "summary" => "Prompt accepted.",
+              "summary_sections" => nil,
               "inquiry" => nil,
               "attachments" => nil,
               "memory_handoff" => nil
@@ -2068,6 +2069,13 @@ module RemoteServerTest
               "title" => "summary-notes.md",
               "path" => File.join(workspace, "summary-notes.md")
             }
+          ],
+          "summary_sections" => [
+            { "type" => "text", "text" => "Preserved the legacy summary." },
+            { "type" => "link", "text" => "Read the implementation", "url" => "https://example.test/implementation" },
+            { "type" => "attachment", "attachment" => {
+              "type" => "file", "title" => "summary-notes.md", "path" => File.join(workspace, "summary-notes.md")
+            } }
           ]
         }
       )
@@ -2094,6 +2102,13 @@ module RemoteServerTest
              "expected run summary conversation blocks to expose a stable summary id")
       assert(summary&.dig(:metadata, "attachments")&.first&.dig("title") == "summary-notes.md",
              "expected run summary conversation blocks to keep attachment metadata")
+      assert(summary&.dig(:metadata, "summary_sections") == [
+        { "type" => "text", "text" => "Preserved the legacy summary." },
+        { "type" => "link", "text" => "Read the implementation", "url" => "https://example.test/implementation" },
+        { "type" => "attachment", "attachment" => {
+          "type" => "file", "title" => "summary-notes.md", "path" => File.join(workspace, "summary-notes.md")
+        } }
+      ], "expected run summary conversation blocks to keep ordered rich blocks beside attachments")
       assert(invalid_assistant_index && retry_index && corrected_assistant_index && summary_index &&
              invalid_assistant_index < retry_index && retry_index < corrected_assistant_index &&
              corrected_assistant_index < summary_index,
@@ -2106,6 +2121,10 @@ module RemoteServerTest
              "expected system event blocks to expose safe field-level validation details")
       assert(memory_summary&.dig("content")&.include?("A detailed run summary"),
              "expected run summaries to remain persisted for the Summary page")
+      service.archive_agent(created[:key])
+      archived_summary = service.conversation(created[:key]).find { |block| block[:kind] == "run_summary" }
+      assert(archived_summary&.dig(:metadata, "summary_sections") == summary[:metadata]["summary_sections"],
+             "expected archived run history to restore structured sections")
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
@@ -6083,6 +6102,12 @@ module RemoteServerTest
            "expected sandboxed HTML previews to include a restrictive content policy")
     assert(js[:body].include?("function renderRunSummaryMessageContent"),
            "expected run summaries to render as compact Conversation blocks")
+    assert(js[:body].include?("function renderSummarySections") &&
+           js[:body].include?('class="summary-sections" aria-label="Structured summary details"') &&
+           js[:body].include?("block?.metadata?.summary_sections"),
+           "expected every run-summary surface to render ordered rich summary blocks")
+    assert(css[:body].include?(".summary-section-text") && css[:body].include?(".summary-section-attachment"),
+           "expected rich summary text and attachments to have focused styling")
     assert(js[:body].include?('data-open-agent-summary="${escapeAttr(agentKey)}"'),
            "expected compact run summaries to link to the full Summary page")
     assert(js[:body].include?('block.role === "assistant"'),
