@@ -488,6 +488,18 @@ module HQ
       @prompt_queue_dispatch_error = nil
     end
 
+    def mark_last_run_prompt_queue_claim!(claim_id)
+      return false unless last_run
+
+      last_run.metadata = {} unless last_run.metadata.is_a?(Hash)
+      last_run.metadata["prompt_queue_claim_id"] = claim_id.to_s
+      true
+    end
+
+    def last_run_from_prompt_queue?
+      !last_run&.metadata&.fetch("prompt_queue_claim_id", nil).to_s.empty?
+    end
+
     def fail_prompt_queue_dispatch!(message, failed_at: Time.now)
       @prompt_queue_dispatch_error = {
         "message" => message.to_s.strip,

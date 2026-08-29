@@ -498,6 +498,8 @@ module HQ
         return true
       end
 
+      agent.mark_last_run_prompt_queue_claim!(claim["id"]) if agent.run_count > baseline
+
       if accepted && agent.run_count > baseline
         agent.complete_prompt_queue_claim!
       else

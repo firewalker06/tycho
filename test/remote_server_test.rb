@@ -4014,6 +4014,36 @@ module RemoteServerTest
       no_action_result = service.send(:dispatch_agent_push_events, [forged_no_action_event], agents: HQ::AgentStore.new([]).load)
       assert(no_action_result[:events].zero?, "expected no-action events to be ignored by push dispatch")
       assert(notifier.payloads.length == 2, "expected forged no-action event not to send a push payload")
+      queued_at = Time.now
+      queued_agent = HQ::ManagedAgent.new(
+        key: "web-agent-4",
+        name: "Queue agent",
+        project_key: "web",
+        template_key: "default",
+        workspace: workspace,
+        prompt: "Queued follow-up",
+        started_at: queued_at,
+        finished_at: queued_at,
+        last_exit_code: 0,
+        summary: "Run finished",
+        unread: true,
+        runs: [HQ::ManagedAgent::AgentRun.new(
+          started_at: queued_at,
+          finished_at: queued_at,
+          exit_code: 0,
+          status: "succeeded",
+          metadata: { "prompt_queue_claim_id" => "claim-1" }
+        )]
+      )
+      queued_event = HQ::AgentStore::PollEvent.new(
+        agent_key: queued_agent.key,
+        from_status: "running",
+        to_status: "succeeded",
+        run_count: 1
+      )
+      queued_result = service.send(:dispatch_agent_push_events, [queued_event], agents: [queued_agent])
+      assert(queued_result[:events].zero?, "expected queue-dispatched runs to skip push notifications")
+      assert(notifier.payloads.length == 2, "expected queued completion not to send a push payload")
       read_payload = service.mark_agent_read("web-agent-2")
       assert(!read_payload[:unread], "expected explicit reading mutation to clear unread state")
       read_agent = service.agents.find { |agent| agent[:key] == "web-agent-2" }
@@ -4125,9 +4155,16 @@ module RemoteServerTest
            response[:body].include?('data-state="loading"') &&
            response[:body].include?('role="status" aria-live="polite" aria-atomic="true"'),
            "expected root shell to provide an accessible server-rendered loading surface")
-    assert(response[:body].include?('id="tycho-boot-retry"') &&
-           response[:body].include?('class="tycho-boot-mark"'),
-           "expected root shell to expose branded loading and recovery controls before application JavaScript")
+    assert(response[:body].include?('class="tycho-boot-mark"') &&
+           response[:body].include?('id="tycho-boot-particles"') &&
+           response[:body].include?('@keyframes tycho-boot-particle') &&
+           response[:body].include?('inset: -160px') &&
+           response[:body].include?('rotate(360deg)') &&
+           response[:body].include?('animation: tycho-boot-orbit 2s ease-in-out infinite') &&
+           response[:body].include?('0%, 25% { transform: rotate(0deg); }') &&
+           !response[:body].include?('id="tycho-boot-message"') &&
+           !response[:body].include?('id="tycho-boot-retry"'),
+           "expected root shell to expose a text-free branded loading animation before application JavaScript")
     assert(response[:body].include?('@media (prefers-reduced-motion: reduce)') &&
            response[:body].include?('animation: none;'),
            "expected root shell to provide a static reduced-motion loading state")

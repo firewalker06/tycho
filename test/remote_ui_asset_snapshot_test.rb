@@ -30,17 +30,38 @@ module RemoteUIAssetSnapshotTest
       'data-state="loading"',
       'role="status"',
       'aria-live="polite"',
-      'id="tycho-boot-retry"',
       'class="tycho-boot-mark"',
+      'id="tycho-boot-particles"',
+      '.tycho-boot-particle',
+      '@keyframes tycho-boot-particle',
+      'rotate(360deg)',
+      'animation: tycho-boot-orbit 2s ease-in-out infinite',
+      '0%, 25% { transform: rotate(0deg); }',
       '@media (prefers-reduced-motion: reduce)',
       'id="app" class="app-shell" aria-busy="true"',
       'href="/manifest.webmanifest?v=<%= HQ::RemoteUI.asset_version %>"'
     ]
     missing_template = required_template.reject { |fragment| template.include?(fragment) }
     raise "missing initial loading shell contract: #{missing_template.join(", ")}" unless missing_template.empty?
+    forbidden_template = [
+      'class="tycho-boot-title"',
+      'id="tycho-boot-message"',
+      'id="tycho-boot-retry"'
+    ]
+    present_template = forbidden_template.select { |fragment| template.include?(fragment) }
+    raise "text remains in initial loading shell: #{present_template.join(", ")}" unless present_template.empty?
 
     required_javascript = [
       "const BOOT_TIMEOUT_MS = 15_000;",
+      "const count = 3 + Math.floor(Math.random() * 3);",
+      "randomBootParticleValue(104, 184)",
+      "randomBootParticleValue(4.5, 10.5)",
+      "randomBootParticleValue(100, 200)",
+      "function emitBootParticles()",
+      "function stopBootParticles()",
+      "particle.addEventListener(\"animationend\"",
+      "stopBootParticles();",
+      "emitBootParticles();",
       "function bootNetworkFailure(error)",
       "error?.bootFailureKind === \"offline\"",
       "error instanceof TypeError",
@@ -50,7 +71,6 @@ module RemoteUIAssetSnapshotTest
       "function failBootShell(error)",
       "if (error.status === 401) dismissBootShell();",
       "else failBootShell(error);",
-      "els.bootRetry?.addEventListener(\"click\"",
       "scheduleBootTimeout();",
       "window.addEventListener(\"offline\"",
       "window.addEventListener(\"online\""
