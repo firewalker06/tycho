@@ -63,6 +63,7 @@ module HQ
       when "claude", "codex", "opencode", "pi"
         [
           File.join(Dir.home, ".local", "bin", name.to_s),
+          File.join(Dir.home, ".local", "share", "mise", "shims", name.to_s),
           "/opt/homebrew/bin/#{name}",
           "/usr/local/bin/#{name}"
         ]

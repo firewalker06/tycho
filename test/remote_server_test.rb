@@ -57,6 +57,7 @@ module RemoteServerTest
     assert_remote_harness_catalogs_are_configurable
     assert_remote_setup_refreshes_harness_catalogs
     assert_remote_setup_uses_shared_executable_resolution
+    assert_remote_setup_finds_mise_shims_outside_inherited_path
     assert_remote_setup_handles_utf8_harness_output_under_ascii_external
     assert_remote_welcome_onboarding_creates_project
     assert_remote_welcome_onboarding_exposes_agent_cli_guides
@@ -3029,6 +3030,29 @@ module RemoteServerTest
                "expected Pi readiness to expose thinking suggestions")
         assert(pi[:safety_gaps].any? { |gap| gap.include?("no sandbox equivalent") },
                "expected Pi safety gaps in setup payload")
+      end
+    end
+  end
+
+  def assert_remote_setup_finds_mise_shims_outside_inherited_path
+    with_remote_temp_store do |dir|
+      home = File.join(dir, "home")
+      empty_path = File.join(dir, "empty-bin")
+      workspace = File.join(dir, "workspace")
+      mise_pi = File.join(home, ".local", "share", "mise", "shims", "pi")
+      write_test_executable(mise_pi)
+      FileUtils.mkdir_p(empty_path)
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+
+      with_env_values(
+        "HOME" => home,
+        "PATH" => empty_path,
+        "TYCHO_PI_BIN" => nil
+      ) do
+        pi = HQ::RemoteService.new(registry: registry).setup[:harnesses].find { |item| item[:name] == "pi" }
+        assert(pi[:ready] && pi[:path] == mise_pi,
+               "expected Remote setup to find mise-managed Pi when the inherited PATH predates installation")
       end
     end
   end
