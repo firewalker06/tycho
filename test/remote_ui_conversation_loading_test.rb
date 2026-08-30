@@ -41,6 +41,7 @@ module RemoteUIConversationLoadingTest
         ["normal agent", agentComposerState({}), "composer"],
         ["pending inquiry detail", agentComposerState({ awaiting_input: true }), "inquiry-loading"],
         ["loaded inquiry", agentComposerState({ awaiting_input: true, latest_inquiry: { id: "inquiry-1" } }), "inquiry"],
+        ["inconsistent inquiry detail", agentComposerState({ awaiting_input: true, latest_inquiry: null }), "composer"],
       ];
       const failedComposerCheck = composerChecks.find(([, actual, expected]) => actual !== expected);
       if (failedComposerCheck) {

@@ -4253,6 +4253,8 @@ module HQ
 
     def agent_payload(agent, reference_context: nil, relationship_context: nil)
       delegation = delegation_payload(agent, reference_context:, relationship_context:)
+      status = agent.status
+      inquiry = inquiry_payload(agent)
       {
         key: agent.key,
         name: agent.display_name,
@@ -4268,11 +4270,11 @@ module HQ
         reasoning_effort: agent.reasoning_effort,
         response_style: agent.response_style,
         response_style_source: agent.last_run&.response_style_source || agent.effective_response_style_source,
-        status: agent.status,
+        status: status,
         running: agent.running?,
         unread: agent.unread?,
-        awaiting_input: agent.status == "awaiting-input",
-        blocked: agent.status == "blocked",
+        awaiting_input: status == "awaiting-input" && !inquiry.nil?,
+        blocked: status == "blocked",
         run_count: agent.run_count,
         created_at: agent.created_at&.iso8601,
         started_at: agent.started_at&.iso8601,
@@ -4283,7 +4285,7 @@ module HQ
         last_result: agent.last_result_label,
         summary: agent.last_summary,
         cost_snapshot: agent.cost_snapshot,
-        latest_inquiry: inquiry_payload(agent),
+        latest_inquiry: inquiry,
         suspended_inquiry: suspended_inquiry_payload(agent),
         prompt_queue: prompt_queue_payload(agent),
         attachments: attachment_payloads(agent),

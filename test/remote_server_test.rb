@@ -869,6 +869,8 @@ module RemoteServerTest
       end
       assert(feedback_reply.nil?, "expected embedded inquiry feedback not to create a duplicate conversation message")
       assert(result[:agent][:latest_inquiry].nil?, "expected accepted inquiry answer to clear the pending inquiry")
+      assert(!result[:agent][:awaiting_input],
+             "expected an agent without a current inquiry not to advertise actionable awaiting input")
       response = HQ::AgentMemory.new(agent).events.reverse.find { |event| event["type"] == "inquiry_response" }
       assert(response.dig("metadata", "inquiry_id") == inquiry_id,
              "expected inquiry response memory to retain the answered inquiry id")
