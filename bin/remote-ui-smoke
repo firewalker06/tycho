@@ -1922,7 +1922,7 @@ def write_smoke_script(path)
                   status: "success",
                   attachments: [attachment],
                   summary_sections: [
-                    { type: "text", text: "A readable opening paragraph.", url: null, attachment: null },
+                    { type: "text", text: "**A readable opening paragraph.**\\n\\n| Lane | State |\\n|---|---|\\n| web-alpha | Open |\\n\\n`summary_sections`", url: null, attachment: null },
                     { type: "link", text: "Read the release notes", url: "https://example.test/release-notes", attachment: null },
                     { type: "text", text: "A closing paragraph.", url: null, attachment: null },
                     { type: "attachment", text: null, url: null, attachment },
@@ -1937,11 +1937,17 @@ def write_smoke_script(path)
             return {
               sections: Array.from(document.querySelectorAll("[data-agent-summary-page] .summary-sections > *")).map((element) => element.innerText.trim()),
               pageText: document.querySelector("[data-agent-summary-page]")?.innerText || "",
+              markdown: {
+                strong: Boolean(document.querySelector("[data-agent-summary-page] .summary-section-text strong")),
+                table: Boolean(document.querySelector("[data-agent-summary-page] .summary-section-text table")),
+                code: Boolean(document.querySelector("[data-agent-summary-page] .summary-section-text code")),
+              },
             };
           }, agentKey);
           const expectedRichSummary = ["A readable opening paragraph.", "Read the release notes", "A closing paragraph.", "Release notes"];
           if (richSummaryContract.sections.length !== expectedRichSummary.length ||
               !richSummaryContract.sections.every((block, index) => block.includes(expectedRichSummary[index])) ||
+              !richSummaryContract.markdown.strong || !richSummaryContract.markdown.table || !richSummaryContract.markdown.code ||
               richSummaryContract.pageText.includes("Compact summary must not repeat on the full page.")) {
             throw new Error(`Rich summary blocks did not render in reading order: ${JSON.stringify(richSummaryContract)}`);
           }

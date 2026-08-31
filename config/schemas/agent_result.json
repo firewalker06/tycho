@@ -13,7 +13,7 @@
     },
     "summary_sections": {
       "type": ["array", "null"],
-      "description": "Optional ordered rich blocks used instead of summary on the full Summary page. When provided, make them a standalone expanded account of the run; summary remains the concise preview shown in compact surfaces. Use text blocks for prose, link blocks for inline links, and attachment blocks for durable artifacts. Keep the array in reading order.",
+      "description": "Optional ordered rich blocks used instead of summary on the full Summary page. When provided, make them a standalone expanded account of the run; summary remains the concise preview shown in compact surfaces. Use text blocks for Markdown prose, link blocks for inline links, and attachment blocks for durable artifacts. Keep the array in reading order.",
       "items": {
         "type": "object",
         "additionalProperties": false,
