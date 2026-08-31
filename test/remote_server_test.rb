@@ -4438,8 +4438,8 @@ module RemoteServerTest
            css[:body].include?("cursor: pointer"),
            "expected enabled button-like controls to show a pointer cursor")
     assert(css[:body].include?(".agent-summary-viewer"), "expected Agent summary to render as a focused page")
-    assert(css[:body].include?("max-width: 72ch"),
-           "expected Agent summary text to keep a readable measure")
+    assert(!css[:body].match?(/(?:agent-summary-markdown-viewer|agent-summary-fallback|summary-sections|summary-section-attachment)[^}]*max-width:\s*72ch/m),
+           "expected full Summary content to use the natural HTML width")
     assert(css[:body].include?(".inquiry-form"), "expected Remote UI to style structured inquiry forms")
     assert(css[:body].include?(".inquiry-banner"), "expected Remote UI inquiry forms to show a decision banner")
     assert(css[:body].include?(".inquiry-mark"), "expected Remote UI inquiry forms to style the inquiry icon")

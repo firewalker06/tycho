@@ -1937,6 +1937,15 @@ def write_smoke_script(path)
             return {
               sections: Array.from(document.querySelectorAll("[data-agent-summary-page] .summary-sections > *")).map((element) => element.innerText.trim()),
               pageText: document.querySelector("[data-agent-summary-page]")?.innerText || "",
+              layout: (() => {
+                const body = document.querySelector("[data-agent-summary-page] .agent-attachment-body");
+                const sections = document.querySelector("[data-agent-summary-page] .summary-sections");
+                return {
+                  bodyWidth: body?.getBoundingClientRect().width || 0,
+                  sectionsWidth: sections?.getBoundingClientRect().width || 0,
+                  sectionsMaxWidth: sections ? getComputedStyle(sections).maxWidth : "",
+                };
+              })(),
               markdown: {
                 strong: Boolean(document.querySelector("[data-agent-summary-page] .summary-section-text strong")),
                 table: Boolean(document.querySelector("[data-agent-summary-page] .summary-section-text table")),
@@ -1948,6 +1957,8 @@ def write_smoke_script(path)
           if (richSummaryContract.sections.length !== expectedRichSummary.length ||
               !richSummaryContract.sections.every((block, index) => block.includes(expectedRichSummary[index])) ||
               !richSummaryContract.markdown.strong || !richSummaryContract.markdown.table || !richSummaryContract.markdown.code ||
+              richSummaryContract.layout.sectionsMaxWidth !== "none" ||
+              richSummaryContract.layout.sectionsWidth < richSummaryContract.layout.bodyWidth - 1 ||
               richSummaryContract.pageText.includes("Compact summary must not repeat on the full page.")) {
             throw new Error(`Rich summary blocks did not render in reading order: ${JSON.stringify(richSummaryContract)}`);
           }

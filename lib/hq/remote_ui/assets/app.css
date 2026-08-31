@@ -4647,7 +4647,6 @@ select {
 .summary-sections {
   display: grid;
   gap: 10px;
-  max-width: 72ch;
 }
 
 .summary-section-text,
@@ -4662,7 +4661,7 @@ select {
 
 .summary-section-attachment .summary-attachment-item,
 .summary-section-attachment .summary-attachment-row {
-  max-width: 72ch;
+  width: 100%;
 }
 
 .summary-message-open {
@@ -5368,7 +5367,7 @@ select {
 
 .agent-summary-markdown-viewer,
 .agent-summary-fallback {
-  max-width: 72ch;
+  width: 100%;
 }
 
 .attachment-image-viewer {
