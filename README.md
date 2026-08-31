@@ -1,3 +1,5 @@
+
+
 # Tycho
 
 Tycho - Factorio for Agents.
@@ -231,6 +233,7 @@ Use the `TYCHO_` prefix for runtime overrides.
 | `TYCHO_GITHUB_WRITE_ENABLED` | Allow separately confirmed review posting when the App has write permission. |
 | `TYCHO_REMOTE_TOKEN` | Require bearer auth for non-local Remote UI/API access. |
 | `TYCHO_LOG_LEVEL` | Set Tycho's log level, such as `DEBUG` or `INFO`. |
+| `TYCHO_LIPGLOSS_BACKEND` | Force the Lipgloss backend; `compat`, `pure`, and `ruby` select the pure-Ruby loader, while `native` and `go` force the native gem. |
 
 Web Push can also use `TYCHO_WEB_PUSH_VAPID_PUBLIC_KEY`,
 `TYCHO_WEB_PUSH_VAPID_PRIVATE_KEY`, and `TYCHO_WEB_PUSH_VAPID_SUBJECT`.
