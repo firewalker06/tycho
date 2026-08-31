@@ -120,8 +120,18 @@ module HQ
       TYCHO_GITHUB_TOKEN
       TYCHO_REMOTE_TOKEN
     ].freeze
+    SUMMARY_SECTIONS_EXAMPLE = '{"type":"text","text":"## Findings\\n- First\\n- Second","url":null,"attachment":null}'
+    SUMMARY_SECTIONS_GUIDANCE = "Always provide a non-empty `summary` as the concise preview. " \
+                                "Set `summary_sections` to `null` for simple runs. For substantive runs such as " \
+                                "investigations, reviews, builds, or plans with multiple findings, decisions, or " \
+                                "verification results, provide ordered rich blocks as a standalone expanded " \
+                                "account. Put headings, bullets, numbered lists, tables, and prose in Markdown " \
+                                "`text` blocks; use `link` and `attachment` blocks for their respective targets. " \
+                                "Set every unused block field to `null`. Example Markdown list block: " \
+                                "`#{SUMMARY_SECTIONS_EXAMPLE}`"
     FINAL_OUTPUT_CHECKLIST = "For `summary`, write a concise operator-facing Markdown summary of the outcome, " \
                              "key changes or findings, blockers, and next steps in 1-3 short paragraphs or bullets. " \
+                             "#{SUMMARY_SECTIONS_GUIDANCE} " \
                              "#{NO_ACTION_STATUS_GUIDANCE} " \
                              "Before final structured output, check whether this run created or referenced a PR, " \
                              "plan, review, report, markdown file, image, or other durable artifact. " \

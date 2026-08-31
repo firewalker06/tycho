@@ -90,6 +90,9 @@ module MemoryHandoffTest
       assert(migrated.fetch("required").include?("summary_sections"), "expected required root summary sections migration")
       assert(migrated.dig("properties", "summary_sections", "type") == %w[array null],
              "expected summary sections schema migration")
+      assert(migrated.dig("properties", "summary_sections", "description").to_s
+                     .include?("Set summary_sections to null for simple runs"),
+             "expected schema migration to install the summary sections production guidance")
       assert(migrated.dig("properties", "memory_handoff", "required") ==
              %w[outcome decisions continuing_context references lessons promotion_candidates],
              "expected strict handoff schema migration")
