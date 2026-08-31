@@ -516,7 +516,7 @@ def write_smoke_script(path)
         }
       }
 
-      await assertInitialLoadingShell();
+      if (process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY !== "1") await assertInitialLoadingShell();
 
       async function assertLoadingShellFailureRecovery() {
         const failurePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -552,7 +552,7 @@ def write_smoke_script(path)
         }
       }
 
-      await assertLoadingShellFailureRecovery();
+      if (process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY !== "1") await assertLoadingShellFailureRecovery();
 
       async function captureVisibleComposer(filename) {
         if (!captureDir) return;
@@ -1914,7 +1914,7 @@ def write_smoke_script(path)
             state.conversations[key] = {
               blocks: [{
                 kind: "run_summary",
-                content: "Legacy summary stays first.",
+                content: "Compact summary must not repeat on the full page.",
                 created_at: "2026-08-29T00:00:00Z",
                 metadata: {
                   summary_id: "rich-summary-smoke",
@@ -1934,12 +1934,36 @@ def write_smoke_script(path)
             state.renderedRouteKey = null;
             state.renderedViewHtml = "";
             render();
-            return Array.from(document.querySelectorAll("[data-agent-summary-page] .summary-sections > *")).map((element) => element.innerText.trim());
+            return {
+              sections: Array.from(document.querySelectorAll("[data-agent-summary-page] .summary-sections > *")).map((element) => element.innerText.trim()),
+              pageText: document.querySelector("[data-agent-summary-page]")?.innerText || "",
+            };
           }, agentKey);
           const expectedRichSummary = ["A readable opening paragraph.", "Read the release notes", "A closing paragraph.", "Release notes"];
-          if (richSummaryContract.length !== expectedRichSummary.length ||
-              !richSummaryContract.every((block, index) => block.includes(expectedRichSummary[index]))) {
+          if (richSummaryContract.sections.length !== expectedRichSummary.length ||
+              !richSummaryContract.sections.every((block, index) => block.includes(expectedRichSummary[index])) ||
+              richSummaryContract.pageText.includes("Compact summary must not repeat on the full page.")) {
             throw new Error(`Rich summary blocks did not render in reading order: ${JSON.stringify(richSummaryContract)}`);
+          }
+          const compactSummaryContract = await page.evaluate((key) => {
+            const agent = findAgent(key);
+            const fixture = document.createElement("div");
+            fixture.innerHTML = renderRunSummaryMessageContent("Compact summary stays concise.", agent, {
+              metadata: {
+                summary_sections: [{ type: "text", text: "Expanded detail belongs on the full page." }],
+              },
+            });
+            const result = {
+              text: fixture.innerText,
+              sectionCount: fixture.querySelectorAll(".summary-sections").length,
+            };
+            fixture.remove();
+            return result;
+          }, agentKey);
+          if (!compactSummaryContract.text.includes("Compact summary stays concise.") ||
+              compactSummaryContract.text.includes("Expanded detail belongs on the full page.") ||
+              compactSummaryContract.sectionCount !== 0) {
+            throw new Error(`Compact summary repeated rich details: ${JSON.stringify(compactSummaryContract)}`);
           }
           if (captureDir) await page.screenshot({ path: path.join(captureDir, "rich-summary-blogpost.png"), fullPage: false });
           console.log("remote-ui-smoke: HTML, Mermaid, polling, schedule menu, sticky Agents toolbar, and Now hierarchy ok");
@@ -5750,6 +5774,7 @@ def write_smoke_script(path)
           full: document.querySelector("[data-agent-workspace]")?.classList.contains("agent-workspace-full-view"),
           summary: Boolean(document.querySelector("[data-agent-summary-page]")),
           cost: document.querySelector("[data-agent-summary-page]")?.innerText,
+          compactSummaryVisible: document.querySelector("[data-agent-summary-page]")?.innerText.includes("Newer summary content."),
           richSummary: Array.from(document.querySelectorAll("[data-agent-summary-page] .summary-sections > *")).map((section) => section.innerText),
           recent: Boolean(document.querySelector("[data-go-recent]")),
           previousDisabled: document.querySelector("[aria-label='Previous summary']")?.disabled,
@@ -5768,6 +5793,7 @@ def write_smoke_script(path)
             summaryFullView.focusedTopGap < 8 ||
             !summaryFullView.attachmentDetailHref?.includes("attachment/summary-download-fixture") ||
             summaryFullView.deduplicated !== "First paragraph.\\n\\nSecond paragraph." || !summaryFullView.cost.includes("$1.25+") ||
+            summaryFullView.compactSummaryVisible ||
             !summaryFullView.richSummary.some((section) => section.includes("Rendered semantic run summary details.")) ||
             !summaryFullView.richSummary.some((section) => section.includes("Open implementation")) ||
             !summaryFullView.richSummary.some((section) => section.includes("summary-notes.md"))) {

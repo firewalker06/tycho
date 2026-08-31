@@ -6167,8 +6167,10 @@ module RemoteServerTest
            "expected run summaries to render as compact Conversation blocks")
     assert(js[:body].include?("function renderSummarySections") &&
            js[:body].include?('class="summary-sections" aria-label="Structured summary details"') &&
-           js[:body].include?("block?.metadata?.summary_sections"),
-           "expected every run-summary surface to render ordered rich summary blocks")
+           js[:body].include?("if (normalizedSummarySections(sections).length) return renderSummarySections(sections, agent);"),
+           "expected full Summary pages to prefer ordered rich blocks over the compact summary")
+    assert(!js[:body].include?("${renderSummarySections(block?.metadata?.summary_sections, agent)}"),
+           "expected compact Conversation summaries not to repeat rich summary sections")
     assert(css[:body].include?(".summary-section-text") && css[:body].include?(".summary-section-attachment"),
            "expected rich summary text and attachments to have focused styling")
     assert(js[:body].include?('data-open-agent-summary="${escapeAttr(agentKey)}"'),
