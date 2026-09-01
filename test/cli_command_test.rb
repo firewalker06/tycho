@@ -23,7 +23,6 @@ module CLICommandTest
     assert_project_commands_manage_full_lifecycle
     assert_remote_server_commands_manage_full_agent_lifecycle
     assert_remote_client_reports_timeout_and_unsupported_operation
-    assert_github_commands_cover_device_login_status_and_logout
     assert_debug_claude_is_listed_in_usage
     assert_metrics_commands_are_listed_in_usage
     assert_debug_claude_run_agent_uses_claude_defaults
@@ -304,71 +303,6 @@ module CLICommandTest
       error_server.close
     end
     end
-  def assert_github_commands_cover_device_login_status_and_logout
-    auth = Class.new do
-      attr_reader :logged_out
-
-      def initialize
-        @polls = 0
-        @logged_out = false
-      end
-
-      def start_device_flow
-        {
-          id: "login-id",
-          user_code: "ABCD-EFGH",
-          verification_uri: "https://github.com/login/device",
-          interval: 1
-        }
-      end
-
-      def poll_device_flow(id)
-        raise "unexpected login id" unless id == "login-id"
-
-        @polls += 1
-        return { status: "pending", retry_after: 1 } if @polls == 1
-
-        { status: "authenticated", account: "octocat" }
-      end
-
-      def capability
-        {
-          enabled: true,
-          source: "github_app",
-          app: { configured: true, authenticated: true, account: "octocat" },
-          gh: { available: true, authenticated: true }
-        }
-      end
-
-      def logout
-        @logged_out = true
-      end
-    end.new
-    out = StringIO.new
-    err = StringIO.new
-    sleeps = []
-
-    code = HQ::CLICommand.github_login(out:, err:, auth:, sleeper: ->(seconds) { sleeps << seconds })
-    assert(code == 0 && out.string.include?("Code: ABCD-EFGH") && out.string.include?("@octocat"),
-           "expected CLI GitHub device login guidance and completion")
-    assert(sleeps == [1, 1], "expected CLI login polling to honor GitHub's interval")
-
-    out = StringIO.new
-    assert(HQ::CLICommand.github_status(out:, err:, auth:) == 0 &&
-           out.string.include?("GitHub provider: github_app"),
-           "expected CLI GitHub status to identify the active provider")
-
-    out = StringIO.new
-    assert(HQ::CLICommand.github_logout(out:, err:, auth:) == 0 && auth.logged_out,
-           "expected CLI GitHub logout to remove the local App session")
-
-    usage = StringIO.new
-    HQ::CLICommand.usage(nil, err: usage)
-    assert(usage.string.include?("tycho github login") &&
-           usage.string.include?("tycho github status") &&
-           usage.string.include?("tycho github logout"),
-           "expected usage to list GitHub authentication commands")
-  end
 
   def assert_project_commands_manage_full_lifecycle
     Dir.mktmpdir("hq-cli-project-test") do |dir|

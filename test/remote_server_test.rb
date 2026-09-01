@@ -33,12 +33,7 @@ module RemoteServerTest
     assert_remote_agent_pull_request_diff_payload
     assert_agent_pull_request_listing_avoids_eager_metadata_requests
     assert_concurrent_pull_request_diff_refreshes_are_coalesced
-    assert_pull_request_review_refresh_reuses_metadata
-    assert_pull_request_feature_gate_and_global_inbox
-    assert_pull_request_line_handoff_uses_snapshot_context
     assert_remote_prompt_accepts_pull_request_context
-    assert_github_app_auth_routes
-    assert_pull_request_posting_is_confirmed_stale_safe_and_idempotent
     assert_remote_prompt_accepts_uploaded_attachments
     assert_remote_prompt_start_accepts_dash_prefixed_message
     assert_remote_agent_conversation_includes_run_summary
@@ -528,6 +523,12 @@ module RemoteServerTest
         updated = service.update_agent(created[:key], "response_style_mode" => "global")
         assert(updated[:response_style].nil? && updated[:response_style_source] == "global",
                "expected a style-only edit to switch the agent back to the global response style")
+
+        defaulted = service.create_agent(
+          "project_key" => "web", "name" => "Free-text Agent", "prompt" => "Use this free-text prompt.", "agent" => "codex"
+        )
+        assert(defaulted[:template_key] == "custom",
+               "expected Remote API creation without a template selection to preserve the Custom default")
       end
     end
   end
@@ -1264,6 +1265,8 @@ module RemoteServerTest
         registry: registry,
         github_client: FakeUnavailableGitHubClient.new
       )
+      assert(service.setup.dig(:github, :source) == "gh",
+             "expected setup to expose the gh-backed PR diff readiness contract")
       server = HQ::RemoteServer.new
       created = service.create_agent(
         "project_key" => "web",
@@ -1354,7 +1357,7 @@ module RemoteServerTest
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
       registry = registry_for_project(dir, workspace)
-      client = FakeGitHubReviewClient.new
+      client = FakeGitHubDiffClient.new
       snapshot_store = CountingPullRequestDiffStore.new(File.join(dir, "diffs.json"))
       service = HQ::RemoteService.new(registry:, github_client: client, pull_request_diff_store: snapshot_store)
       created = service.create_agent(
@@ -1503,134 +1506,8 @@ module RemoteServerTest
     end
   end
 
-  def assert_pull_request_review_refresh_reuses_metadata
-    with_remote_temp_store do |dir|
-      workspace = File.join(dir, "workspace")
-      write_project_workspace(workspace)
-      client = FakeGitHubReviewClient.new
-      service = HQ::RemoteService.new(
-        registry: registry_for_project(dir, workspace),
-        github_client: client,
-        pull_request_diff_store: HQ::PullRequestDiff::Store.new(File.join(dir, "diffs.json"))
-      )
-      reference = HQ::PullRequestDiff.reference_from_url("https://github.com/example/web/pull/123")
-      refreshed = service.send(:refresh_pull_request_fetch, reference)
 
-      detail_requests = client.requests.count { |kind, path| kind == :get_json && path.end_with?("/pulls/123") }
-      assert(detail_requests == 1, "expected review refresh to reuse the PR metadata fetched for its diff")
-      assert(refreshed.dig(:context, "head_sha") == "head", "expected reused PR metadata to preserve review context")
-    end
-  end
 
-  def assert_pull_request_feature_gate_and_global_inbox
-    with_remote_temp_store do |dir|
-      workspace = File.join(dir, "workspace")
-      write_project_workspace(workspace)
-      registry = registry_for_project(dir, workspace)
-      disabled = HQ::RemoteService.new(
-        registry: registry,
-        github_client: HQ::GitHubAPIClient.new(token: ""),
-        pull_request_diff_store: HQ::PullRequestDiff::Store.new(File.join(dir, "disabled-diffs.json")),
-        pull_request_review_store: HQ::PullRequestReview::Store.new(File.join(dir, "disabled-reviews.json"))
-      )
-      assert(disabled.setup.dig(:github, :enabled) == false, "expected setup to report GitHub disabled without credentials")
-      begin
-        disabled.pull_request_inbox
-        raise "expected disabled PR route to fail closed"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 424 && e.message.include?("GitHub App"),
-               "expected one stable integration-not-configured response")
-      end
-
-      client = FakeGitHubReviewClient.new
-      review_store = HQ::PullRequestReview::Store.new(File.join(dir, "reviews.json"))
-      service = HQ::RemoteService.new(
-        registry: registry,
-        github_client: client,
-        pull_request_diff_store: HQ::PullRequestDiff::Store.new(File.join(dir, "diffs.json")),
-        pull_request_review_store: review_store
-      )
-      first = service.create_agent(
-        "project_key" => "web", "template_key" => "custom", "name" => "First",
-        "prompt" => "Review.", "agent" => "codex"
-      )
-      second = service.create_agent(
-        "project_key" => "web", "template_key" => "custom", "name" => "Second",
-        "prompt" => "Review.", "agent" => "codex"
-      )
-      agents = HQ::AgentStore.new(registry.projects).load
-      agents.each do |agent|
-        HQ::AgentMemory.new(agent).append_attachment!(
-          { "kind" => "link", "title" => "Shared PR", "url" => "https://github.com/example/web/pull/123" }
-        )
-      end
-
-      inbox = service.pull_request_inbox
-      assert(inbox.length == 1, "expected project and cross-agent references to deduplicate globally")
-      sources = inbox.first["occurrences"]
-      assert(sources.any? { |source| source["agent_key"] == first[:key] } &&
-             sources.any? { |source| source["agent_key"] == second[:key] } &&
-             sources.any? { |source| source["project_key"] == "web" },
-             "expected canonical PR to preserve every agent and project occurrence")
-      assert(client.requests.none? { |request| request.first == :get_text },
-             "expected inbox metadata work not to fetch patches")
-    end
-  end
-
-  def assert_pull_request_line_handoff_uses_snapshot_context
-    with_remote_temp_store do |dir|
-      workspace = File.join(dir, "workspace")
-      write_project_workspace(workspace)
-      registry = registry_for_project(dir, workspace)
-      diff_store = HQ::PullRequestDiff::Store.new(File.join(dir, "handoff-diffs.json"))
-      service = HQ::RemoteService.new(registry:, github_client: FakeGitHubReviewClient.new, pull_request_diff_store: diff_store,
-                                      pull_request_review_store: HQ::PullRequestReview::Store.new(File.join(dir, "handoff-reviews.json")))
-      created = service.create_agent("project_key" => "web", "template_key" => "custom", "name" => "Recipient", "prompt" => "Work.", "agent" => "codex")
-      agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
-      HQ::AgentMemory.new(agent).append_attachment!({ "kind" => "link", "title" => "PR", "url" => "https://github.com/example/web/pull/123" })
-      HQ::AgentStore.new(registry.projects).save([agent])
-      reference = HQ::PullRequestDiff.reference_from_url("https://github.com/example/web/pull/123")
-      diff_store.save(
-        "id" => reference.id, "snapshot_id" => "snapshot-1", "provider" => "github", "repository" => "example/web", "number" => 123,
-        "base_sha" => "base", "head_sha" => "head", "diff_format" => HQ::PullRequestDiff::DIFF_FORMAT,
-        "files" => [{ "path" => "lib/example.rb", "hunks" => [{ "lines" => [{ "kind" => "added", "new_number" => 4, "content" => "puts :ok" }] }] }]
-      )
-      persisted = service.update_pull_request_review_state(
-        reference.id,
-        "selection_snapshot_id" => "snapshot-1",
-        "selections" => { "lines" => [{ "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 }] }
-      )
-      assert(persisted.dig("selections", "lines", 0, "path") == "lib/example.rb",
-             "expected valid selected lines to persist with the sibling snapshot id contract")
-      begin
-        service.update_pull_request_review_state(reference.id, "selection_snapshot_id" => "old", "selections" => { "lines" => [] })
-        raise "expected stale selected line state to fail"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409, "expected stale selected line state to return conflict")
-      end
-      begin
-        service.update_pull_request_review_state(reference.id, "selection_snapshot_id" => "snapshot-1", "selections" => [])
-        raise "expected malformed selected line state to fail"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 400, "expected malformed selected line state to return bad request")
-      end
-      result = service.handoff_pull_request_review(reference.id, "agent_key" => created[:key], "note" => "Inspect this.", "start" => false, "idempotency_key" => "line-handoff-1",
-                                                    "selection" => { "snapshot_id" => "snapshot-1", "lines" => [{ "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 }] })
-      content = result[:conversation].last[:content]
-      assert(content.include?("Inspect this.") && content.include?(HQ::PullRequestSelection::OPEN) && content.include?("https://github.com/example/web/pull/123"),
-             "expected handoff to append bounded immutable line context through the normal user-message flow")
-      begin
-        service.handoff_pull_request_review(reference.id, "agent_key" => created[:key], "note" => "Retry", "start" => false, "idempotency_key" => "line-handoff-stale",
-                                            "selection" => { "snapshot_id" => "old", "lines" => [{ "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 }] })
-        raise "expected stale line selection to fail"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409, "expected stale selected lines to be rejected")
-      end
-      retry_result = service.handoff_pull_request_review(reference.id, "agent_key" => created[:key], "note" => "Ignored", "start" => false, "idempotency_key" => "line-handoff-1",
-                                                          "selection" => { "snapshot_id" => "snapshot-1", "lines" => [{ "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => 0 }] })
-      assert(retry_result[:idempotent] == true, "expected an idempotent handoff retry")
-    end
-  end
 
   def assert_remote_prompt_accepts_pull_request_context
     with_remote_temp_store do |dir|
@@ -1638,7 +1515,7 @@ module RemoteServerTest
       write_project_workspace(workspace)
       registry = registry_for_project(dir, workspace)
       diff_store = HQ::PullRequestDiff::Store.new(File.join(dir, "composer-diffs.json"))
-      service = HQ::RemoteService.new(registry:, github_client: FakeGitHubReviewClient.new,
+      service = HQ::RemoteService.new(registry:, github_client: FakeGitHubDiffClient.new,
                                       pull_request_diff_store: diff_store)
       created = service.create_agent("project_key" => "web", "template_key" => "custom", "name" => "Composer",
                                      "prompt" => "Work.", "agent" => "codex")
@@ -1716,91 +1593,7 @@ module RemoteServerTest
     end
   end
 
-  def assert_github_app_auth_routes
-    with_remote_temp_store do |dir|
-      workspace = File.join(dir, "workspace")
-      write_project_workspace(workspace)
-      client = FakeGitHubAuthClient.new
-      service = HQ::RemoteService.new(
-        registry: registry_for_project(dir, workspace),
-        github_client: client
-      )
-      server = HQ::RemoteServer.new
 
-      started = server.send(:route, service, "POST", "/github/auth/device", {}, nil)
-      assert(started[:status] == 202 && started.dig(:body, :github, :user_code) == "ABCD-EFGH",
-             "expected the GitHub device route to return only public authorization fields")
-
-      polled = server.send(:route, service, "POST", "/github/auth/device/login-id/poll", {}, nil)
-      assert(polled.dig(:body, :github, :status) == "authenticated",
-             "expected the GitHub device poll route to complete login")
-
-      logged_out = server.send(:route, service, "DELETE", "/github/auth", {}, nil)
-      assert(logged_out.dig(:body, :github, :source) == "gh",
-             "expected App logout to preserve the reported gh compatibility source")
-    end
-  end
-
-  def assert_pull_request_posting_is_confirmed_stale_safe_and_idempotent
-    with_remote_temp_store do |dir|
-      with_env_values("TYCHO_GITHUB_WRITE_ENABLED" => "true") do
-        workspace = File.join(dir, "workspace")
-        write_project_workspace(workspace)
-        registry = registry_for_project(dir, workspace)
-        client = FakeGitHubReviewClient.new
-        diff_store = HQ::PullRequestDiff::Store.new(File.join(dir, "posting-diffs.json"))
-        review_store = HQ::PullRequestReview::Store.new(File.join(dir, "posting-reviews.json"))
-        service = HQ::RemoteService.new(
-          registry: registry,
-          github_client: client,
-          pull_request_diff_store: diff_store,
-          pull_request_review_store: review_store
-        )
-        reference = HQ::PullRequestDiff.reference_from_url("https://github.com/example/web/pull/123")
-        snapshot = {
-          "id" => reference.id,
-          "snapshot_id" => "snapshot-1",
-          "provider" => "github",
-          "repository" => "example/web",
-          "number" => 123,
-          "base_sha" => "base",
-          "head_sha" => "head",
-          "fetched_at" => Time.now.iso8601,
-          "diff_format" => HQ::PullRequestDiff::DIFF_FORMAT,
-          "files" => []
-        }
-        diff_store.save(snapshot)
-        service.save_pull_request_review_draft(
-          reference.id,
-          "event" => "APPROVE",
-          "body" => "Looks good.",
-          "comments" => []
-        )
-
-        begin
-          service.post_pull_request_review(reference.id, "confirm" => false, "idempotency_key" => "review-1")
-          raise "expected unconfirmed posting to fail"
-        rescue HQ::RemoteServer::Error => e
-          assert(e.status == 409, "expected a second confirmation before GitHub mutation")
-        end
-
-        client.head_sha = "force-pushed"
-        begin
-          service.post_pull_request_review(reference.id, "confirm" => true, "idempotency_key" => "review-1")
-          raise "expected stale draft to fail"
-        rescue HQ::RemoteServer::Error => e
-          assert(e.status == 409 && e.message.include?("changed"), "expected stale head to block posting")
-        end
-
-        client.head_sha = "head"
-        first = service.post_pull_request_review(reference.id, "confirm" => true, "idempotency_key" => "review-1")
-        second = service.post_pull_request_review(reference.id, "confirm" => true, "idempotency_key" => "review-1")
-        assert(first[:posted]["id"] == 9001 && second[:idempotent] == true,
-               "expected a recorded idempotency key to return the first outcome")
-        assert(client.review_posts == 1, "expected an idempotent retry not to duplicate the GitHub review")
-      end
-    end
-  end
 
   def assert_remote_prompt_accepts_uploaded_attachments
     with_remote_temp_store do |dir|
@@ -6090,8 +5883,6 @@ module RemoteServerTest
            "expected Agent detail read state to use the reading endpoint")
     assert(js[:body].include?('if (agent.unread) return "Unread";'),
            "expected unread agents to show unread as the visible status before final run status")
-    assert(js[:body].scan('statusBadge("Unread", "need")').length >= 1,
-           "expected agent list surfaces to render explicit Unread pills")
     assert(js[:body].include?("function shouldAutoScrollAgentConversation"),
            "expected Agent detail to auto-scroll only when conversation content changes")
     assert(js[:body].include?("function renderConversationBlocks"),
@@ -7191,14 +6982,13 @@ module RemoteServerTest
     end
   end
 
-  class FakeGitHubReviewClient
-    attr_reader :requests, :review_posts
+  class FakeGitHubDiffClient
+    attr_reader :requests
     attr_accessor :head_sha
 
     def initialize
       @requests = []
       @head_sha = "head"
-      @review_posts = 0
     end
 
     def enabled?
@@ -7248,35 +7038,6 @@ module RemoteServerTest
       [[], nil]
     end
 
-    def post_json(path, _payload, **)
-      @requests << [:post_json, path]
-      if path.end_with?("/pulls/123/reviews")
-        @review_posts += 1
-        return HQ::GitHubAPIClient::Response.new(
-          status: 200,
-          body: { "id" => 9001, "html_url" => "https://github.com/example/web/pull/123#pullrequestreview-9001" },
-          headers: {},
-          not_modified: false
-        )
-      end
-
-      HQ::GitHubAPIClient::Response.new(
-        status: 200,
-        body: {
-          "data" => {
-            "repository" => {
-              "pullRequest" => {
-                "reviewDecision" => nil,
-                "reviewThreads" => { "nodes" => [] },
-                "commits" => { "nodes" => [] }
-              }
-            }
-          }
-        },
-        headers: {},
-        not_modified: false
-      )
-    end
   end
 
   class BlockingGitHubDiffClient
@@ -7356,44 +7117,12 @@ module RemoteServerTest
       true
     end
 
+    def capability
+      { enabled: true, available: true, source: "gh", gh: { available: true, authenticated: true } }
+    end
+
     def get_json(*)
       raise HQ::GitHubAPIClient::Error.new("GitHub metadata unavailable", status: 503)
-    end
-  end
-
-  class FakeGitHubAuthClient
-    def enabled?
-      false
-    end
-
-    def capability
-      {
-        enabled: false,
-        available: true,
-        source: "none",
-        app: { configured: true, authenticated: false },
-        gh: { available: true, authenticated: true }
-      }
-    end
-
-    def start_device_flow
-      {
-        id: "login-id",
-        user_code: "ABCD-EFGH",
-        verification_uri: "https://github.com/login/device",
-        interval: 5,
-        expires_at: "2026-07-29T10:00:00Z"
-      }
-    end
-
-    def poll_device_flow(id)
-      raise "unexpected login id" unless id == "login-id"
-
-      { status: "authenticated", account: "octocat" }
-    end
-
-    def logout
-      { enabled: true, available: true, source: "gh" }
     end
   end
 

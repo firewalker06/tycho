@@ -113,7 +113,6 @@ module HQ
   PUSH_SUBSCRIPTIONS_FILE = File.join(LOGS_DIR, "push_subscriptions.json")
   PUSH_NOTIFICATIONS_FILE = File.join(LOGS_DIR, "push_notifications.json")
   WEB_PUSH_VAPID_FILE = File.join(LOGS_DIR, "web_push_vapid.json")
-  GITHUB_AUTH_FILE = env_present("GITHUB_AUTH_PATH", File.join(USER_CONFIG_DIR, "github_auth.json"))
   PROJECT_LOGS_DIR = File.join(LOGS_DIR, "projects")
   PROJECT_ARCHIVE_DIR = File.join(PROJECT_LOGS_DIR, "archived")
   AGENT_LOGS_DIR = File.join(LOGS_DIR, "agents")

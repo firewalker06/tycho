@@ -5,7 +5,7 @@ require "net/http"
 require "timeout"
 require "uri"
 
-require_relative "github_auth"
+require_relative "github_cli_auth"
 
 module HQ
   class GitHubAPIClient
@@ -13,7 +13,6 @@ module HQ
     DEFAULT_BASE_URL = "https://api.github.com"
     DEFAULT_OPEN_TIMEOUT = 5
     DEFAULT_READ_TIMEOUT = 15
-    DEFAULT_WRITE_TIMEOUT = 5
     DEFAULT_MAX_BYTES = 8 * 1024 * 1024
     USER_AGENT = "Tycho/#{defined?(HQ::VERSION) ? HQ::VERSION : "development"}"
     DEFAULT_CREDENTIAL = Object.new.freeze
@@ -29,7 +28,7 @@ module HQ
     end
 
     class DisabledError < Error
-      def initialize(message = "Connect the Tycho GitHub App or run `gh auth login`.")
+      def initialize(message = "Run `gh auth login` to enable pull request diffs.")
         super(message, status: 424)
       end
     end
@@ -38,18 +37,16 @@ module HQ
 
     attr_reader :base_url
 
-    def initialize(token: DEFAULT_CREDENTIAL, credential: GitHubAuth.default,
+    def initialize(token: DEFAULT_CREDENTIAL, credential: GitHubCLIAuth.default,
                    base_url: HQ.env("GITHUB_API_URL"),
                    open_timeout: DEFAULT_OPEN_TIMEOUT, read_timeout: DEFAULT_READ_TIMEOUT,
-                   write_timeout: DEFAULT_WRITE_TIMEOUT, max_bytes: DEFAULT_MAX_BYTES,
-                   transport: nil)
+                   max_bytes: DEFAULT_MAX_BYTES, transport: nil)
       @token = token.equal?(DEFAULT_CREDENTIAL) ? nil : token.to_s.strip
       @explicit_token = !token.equal?(DEFAULT_CREDENTIAL)
       @credential = credential
       @base_url = normalize_base_url(base_url)
       @open_timeout = open_timeout
       @read_timeout = read_timeout
-      @write_timeout = write_timeout
       @max_bytes = max_bytes
       @transport = transport
     end
@@ -64,26 +61,9 @@ module HQ
       @credential.capability(api_url: @base_url)
     end
 
-    def start_device_flow
-      @credential.start_device_flow
-    rescue GitHubAuth::Error => e
-      raise Error.new(e.message, status: e.status)
-    end
-
-    def poll_device_flow(id)
-      @credential.poll_device_flow(id)
-    rescue GitHubAuth::Error => e
-      raise Error.new(e.message, status: e.status)
-    end
-
-    def logout
-      @credential.logout
-    rescue GitHubAuth::Error => e
-      raise Error.new(e.message, status: e.status)
-    end
 
     def get_json(path, params: nil, etag: nil, max_bytes: @max_bytes)
-      response = request(:get, path, params:, accept: "application/vnd.github+json", etag:, max_bytes:)
+      response = request(path, params:, accept: "application/vnd.github+json", etag:, max_bytes:)
       return response if response.not_modified
 
       response.body = JSON.parse(response.body)
@@ -93,15 +73,7 @@ module HQ
     end
 
     def get_text(path, accept:, etag: nil, max_bytes: @max_bytes)
-      request(:get, path, accept:, etag:, max_bytes:)
-    end
-
-    def post_json(path, payload, idempotency_key: nil, max_bytes: @max_bytes)
-      response = request(:post, path, accept: "application/vnd.github+json", payload:, idempotency_key:, max_bytes:)
-      response.body = JSON.parse(response.body)
-      response
-    rescue JSON::ParserError
-      raise Error.new("GitHub returned invalid JSON.", status: 502)
+      request(path, accept:, etag:, max_bytes:)
     end
 
     def paginate(path, params: nil, per_page: 100, max_pages: 10)
@@ -124,8 +96,7 @@ module HQ
 
     private
 
-    def request(method, path, params: nil, accept:, payload: nil, etag: nil, idempotency_key: nil,
-                max_bytes: @max_bytes)
+    def request(path, params: nil, accept:, etag: nil, max_bytes: @max_bytes)
       raise DisabledError unless enabled?
 
       uri = build_uri(path, params)
@@ -137,28 +108,21 @@ module HQ
         "User-Agent" => USER_AGENT
       }
       headers["If-None-Match"] = etag unless etag.to_s.empty?
-      headers["X-GitHub-Idempotency-Key"] = idempotency_key unless idempotency_key.to_s.empty?
-      headers["Content-Type"] = "application/json" if payload
-      raw = @transport ? @transport.call(method, uri, headers, payload) : http_request(method, uri, headers, payload)
+      raw = @transport ? @transport.call(uri, headers) : http_request(uri, headers)
       normalize_response(raw, max_bytes:)
     rescue DisabledError, Error
       raise
-    rescue GitHubAuth::Error => e
-      raise Error.new(e.message, status: e.status)
     rescue Timeout::Error, Net::OpenTimeout, Net::ReadTimeout
       raise Error.new("GitHub API request timed out.", status: 504)
     rescue SocketError, SystemCallError, IOError => e
       raise Error.new("GitHub API request failed: #{sanitize(e.message)}", status: 502)
     end
 
-    def http_request(method, uri, headers, payload)
-      request_class = method == :post ? Net::HTTP::Post : Net::HTTP::Get
-      request = request_class.new(uri)
+    def http_request(uri, headers)
+      request = Net::HTTP::Get.new(uri)
       headers.each { |key, value| request[key] = value }
-      request.body = JSON.generate(payload) if payload
       Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https",
-                     open_timeout: @open_timeout, read_timeout: @read_timeout,
-                     write_timeout: @write_timeout) do |http|
+                     open_timeout: @open_timeout, read_timeout: @read_timeout) do |http|
         http.request(request)
       end
     end
@@ -233,10 +197,6 @@ module HQ
       return @token if @explicit_token
 
       @credential.access_token
-    rescue GitHubAuth::Error => e
-      raise DisabledError, e.message if e.status == 424
-
-      raise Error.new(e.message, status: e.status)
     end
 
     def utf8(value)

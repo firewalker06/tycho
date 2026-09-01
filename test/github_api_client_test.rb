@@ -52,8 +52,8 @@ module GitHubAPIClientTest
 
   def assert_direct_headers_and_rate_metadata
     captured = nil
-    transport = lambda do |method, uri, headers, payload|
-      captured = [method, uri, headers, payload]
+    transport = lambda do |uri, headers|
+      captured = [uri, headers]
       FakeResponse.new("200", '{"login":"octocat"}', {
                          "etag" => "etag-1",
                          "x-ratelimit-limit" => "5000",
@@ -62,9 +62,9 @@ module GitHubAPIClientTest
     end
     response = HQ::GitHubAPIClient.new(token: "secret", transport:).get_json("/user", etag: "old")
 
-    assert(captured[0] == :get && captured[1].path == "/user", "expected a direct REST request")
-    assert(captured[2]["Authorization"] == "Bearer secret", "expected bearer authentication")
-    assert(captured[2]["If-None-Match"] == "old", "expected conditional request support")
+    assert(captured[0].path == "/user", "expected a direct REST request")
+    assert(captured[1]["Authorization"] == "Bearer secret", "expected bearer authentication")
+    assert(captured[1]["If-None-Match"] == "old", "expected conditional request support")
     assert(response.rate_limit[:remaining] == 4_999 && response.etag == "etag-1", "expected rate and ETag metadata")
   end
 
@@ -91,7 +91,7 @@ module GitHubAPIClientTest
 
   def assert_pagination_is_bounded
     pages = []
-    transport = lambda do |_method, uri, _headers, _payload|
+    transport = lambda do |uri, _headers|
       page = URI.decode_www_form(uri.query.to_s).to_h.fetch("page").to_i
       pages << page
       body = page < 3 ? Array.new(2) { |index| { "id" => page * 10 + index } } : [{ "id" => 30 }]

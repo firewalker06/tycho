@@ -13,7 +13,6 @@ module RemoteUIAssetSnapshotTest
   def run!
     assert_initial_loading_shell_contract
     assert_loaded_daemon_keeps_one_asset_build
-    assert_handoff_retry_key_is_cleared_after_success
     assert_delegation_ui_uses_typed_safe_references
     assert_delegation_callbacks_are_chronological_events
     assert_archived_agents_are_reference_only_and_read_only
@@ -202,13 +201,6 @@ module RemoteUIAssetSnapshotTest
     raise "missing typed delegation UI safety contracts: #{missing.join(", ")}" unless missing.empty?
 
     raise "agent lookalike text must not be linkified" if javascript.include?("linkifyAgent")
-  end
-
-  def assert_handoff_retry_key_is_cleared_after_success
-    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
-    response_index = javascript.index("const response = await apiPost(`/pull-requests/${encodeURIComponent(id)}/handoff`")
-    clear_index = javascript.index("delete form.dataset.handoffIdempotencyKey", response_index)
-    raise "expected a successful handoff to clear its retry key" unless response_index && clear_index && clear_index > response_index
   end
 
   def assert_loaded_daemon_keeps_one_asset_build

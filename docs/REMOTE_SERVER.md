@@ -161,7 +161,7 @@ An idle, unscheduled conversation can become a temporary loop from **More → Lo
 
 Attachment detail views group utility actions under an ellipsis menu. File attachments expose separate **Copy content** (when supported), **Copy absolute path**, **Download file**, and **Refresh cache** actions alongside delete; link attachments expose **Copy link**. Refresh cache always re-reads file content and image previews from the source path. The page header places a view menu beside the page context menu; it selects exactly one layout—**Balanced**, **Widen detail**, or **Full view**—and its trigger icon reflects the active layout.
 
-Agent create, edit, and clone forms select **Response style** independently beside **Prompt Template**. **Global** uses the active Settings policy even when the prompt template is named Custom, **Prompt template** uses a configured template override, and **Disabled** omits response-style guidance.
+New-agent forms start with a free-text Custom prompt. Existing-agent edit and clone forms retain their saved prompt-template selection for compatibility. **Response style** remains independent: **Global** uses the active Settings policy, **Prompt template** uses a configured template override, and **Disabled** omits response-style guidance.
 
 ## Multiserver Broker
 
@@ -400,9 +400,6 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `GET` | `/agents/{key}/pull-requests/{id}/diff` | Read one saved pull request diff snapshot. |
 | `POST` | `/agents/{key}/pull-requests/{id}/refresh` | Fetch current PR metadata and patch content, then save a fresh diff snapshot. |
 | `POST` | `/agents/{key}/pull-requests/refresh` | Refresh every detected pull request diff for one agent. |
-| `POST` | `/github/auth/device` | Start Tycho GitHub App device authorization and return the public user code. |
-| `POST` | `/github/auth/device/{id}/poll` | Poll one server-side device authorization without exposing its device code. |
-| `DELETE` | `/github/auth` | Delete the local Tycho GitHub App session; authenticated `gh` compatibility remains available. |
 | `PUT` | `/agents/{key}/reading` | Mark one agent as read after the user opens its conversation. |
 | `POST` | `/agents/{key}/messages` | Append a user prompt to one agent. |
 | `POST` | `/agents/{key}/prompt` | Alias for appending a user prompt. |

@@ -35,7 +35,6 @@ require_relative "domain/harness_catalog"
 require_relative "domain/push_notification_store"
 require_relative "domain/push_subscription_store"
 require_relative "domain/pull_request_diff"
-require_relative "domain/pull_request_review"
 require_relative "domain/pull_request_selection"
 require_relative "domain/response_style_policy"
 require_relative "domain/remote_credential_store"
@@ -370,22 +369,6 @@ module HQ
         return ok(response_style: service.delete_response_style)
       end
       return ok(setup: service.setup) if method == "GET" && parts == ["setup"]
-      return accepted({ github: service.start_github_login }) if method == "POST" && parts == ["github", "auth", "device"]
-      if method == "POST" && parts.length == 5 && parts[0, 3] == ["github", "auth", "device"] && parts[4] == "poll"
-        return ok(github: service.poll_github_login(parts[3]))
-      end
-      return ok(github: service.logout_github) if method == "DELETE" && parts == ["github", "auth"]
-      return ok(pull_requests: service.pull_request_inbox(request&.query_params || {})) if method == "GET" && parts == ["pull-requests"]
-      if parts.length >= 2 && parts.first == "pull-requests"
-        id = parts[1]
-        tail = parts.drop(2)
-        return ok(pull_request: service.pull_request_review(id)) if method == "GET" && tail.empty?
-        return ok(diff: service.refresh_pull_request_review(id)) if method == "POST" && tail == ["refresh"]
-        return ok(review: service.update_pull_request_review_state(id, body)) if %w[PATCH PUT].include?(method) && tail == ["state"]
-        return ok(review: service.save_pull_request_review_draft(id, body)) if %w[PATCH PUT].include?(method) && tail == ["draft"]
-        return ok(service.handoff_pull_request_review(id, body)) if method == "POST" && tail == ["handoff"]
-        return created(service.post_pull_request_review(id, body)) if method == "POST" && tail == ["reviews"]
-      end
       return ok(service.search_index) if method == "GET" && parts == ["search"]
       return ok(service.memory_handoffs) if method == "GET" && parts == ["memory-handoffs"]
       return accepted(update_and_restart!(service), headers: RESTART_CACHE_RESET_HEADERS) if method == "POST" && parts == ["update"]
@@ -1607,7 +1590,6 @@ module HQ
                    skill_installer: nil,
                    github_client: GitHubAPIClient.new,
                    pull_request_diff_store: PullRequestDiff::Store.new,
-                   pull_request_review_store: PullRequestReview::Store.new,
                    agent_activity_snapshot: AgentActivitySnapshot.new)
       @registry = registry
       @projects = registry.projects.map { |config| Project.new(config) }
@@ -1626,7 +1608,6 @@ module HQ
       @skill_installer = skill_installer || SkillInstaller.new(home: skills_home)
       @github_client = github_client
       @pull_request_diff_store = pull_request_diff_store
-      @pull_request_review_store = pull_request_review_store
       @agent_activity_snapshot = agent_activity_snapshot
       @pull_request_fetch_lock = Mutex.new
       @pull_request_fetches = {}
@@ -2020,234 +2001,6 @@ module HQ
       { refreshed: refreshed, failed: failed }
     end
 
-    def pull_request_inbox(params = {})
-      ensure_github_enabled!
-      query = params["query"].to_s.downcase
-      state_filter = params["state"].to_s
-      unread_filter = truthy?(params["unread"])
-      project_filter = params["project"].to_s
-      repository_filter = params["repository"].to_s.downcase
-      action_filter = truthy?(params["action_needed"])
-      stale_filter = truthy?(params["stale"])
-      draft_filter = params.key?("draft") ? truthy?(params["draft"]) : nil
-      checks_filter = params["checks"].to_s
-      review_filter = params["review"].to_s
-      items = pull_request_references.first(MAX_PULL_REQUEST_INBOX_ITEMS).map do |reference|
-        snapshot = @pull_request_diff_store.fetch(reference.id)
-        review_state = @pull_request_review_store.state(reference.id)
-        begin
-          metadata = github_provider.metadata(reference)
-          summary = PullRequestReview::GitHubContext.new(client: @github_client).summary(reference)
-          PullRequestDiff.reference_payload(reference, snapshot:, metadata:).merge(
-            "state" => metadata["state"],
-            "draft" => metadata["draft"],
-            "author" => metadata["author"],
-            "base_ref" => metadata["base_ref"],
-            "head_ref" => metadata["head_ref"],
-            "mergeable" => metadata["mergeable"],
-            "mergeable_state" => metadata["mergeable_state"],
-            "remote_updated_at" => metadata["remote_updated_at"],
-            "checks" => summary["checks"],
-            "checks_state" => summary["checks_state"],
-            "review_decision" => summary["review_decision"],
-            "unresolved_thread_count" => summary["unresolved_thread_count"],
-            "context_error" => summary["context_error"],
-            "occurrences" => @pull_request_review_store.occurrences(reference.id),
-            "review_state" => review_state,
-            "unread" => unread_pull_request?(metadata, review_state),
-            "changed_since_review" => PullRequestReview.changed_since_review?(snapshot || {}, review_state)
-          )
-        rescue PullRequestDiff::Error => e
-          PullRequestDiff.reference_payload(reference, snapshot:, error: e.message).merge(
-            "occurrences" => @pull_request_review_store.occurrences(reference.id),
-            "review_state" => review_state,
-            "offline" => !snapshot.nil?
-          )
-        end
-      end
-      items.select! { |item| [item["title"], item["repository"], item["description"]].join(" ").downcase.include?(query) } unless query.empty?
-      items.select! { |item| item.dig("snapshot", "state").to_s == state_filter || item["state"].to_s == state_filter } unless state_filter.empty?
-      items.select! { |item| item["unread"] } if unread_filter
-      items.select! { |item| Array(item["occurrences"]).any? { |source| source["project_key"] == project_filter } } unless project_filter.empty?
-      items.select! { |item| item["repository"].to_s.downcase == repository_filter } unless repository_filter.empty?
-      items.select! { |item| action_needed_pull_request?(item) } if action_filter
-      items.select! { |item| item.dig("snapshot", "code_fresh") == false } if stale_filter
-      items.select! { |item| item["draft"] == draft_filter } unless draft_filter.nil?
-      items.select! { |item| item["checks_state"].to_s == checks_filter } unless checks_filter.empty?
-      items.select! { |item| item["review_decision"].to_s == review_filter } unless review_filter.empty?
-      priority_rank = { "high" => 0, "medium" => 1, "low" => 2 }
-      items.sort_by do |item|
-        [
-          priority_rank.fetch(item.dig("review_state", "priority").to_s, 3),
-          action_needed_pull_request?(item) ? 0 : 1,
-          item["unread"] ? 0 : 1,
-          item["remote_updated_at"].to_s
-        ]
-      end
-    end
-
-    def pull_request_review(id)
-      ensure_github_enabled!
-      reference = pull_request_reference_by_id!(id)
-      snapshot = @pull_request_diff_store.fetch(reference.id)
-      @pull_request_review_store.reconcile_snapshot(reference.id, snapshot) if snapshot
-      context = PullRequestReview::GitHubContext.new(client: @github_client).fetch(reference)
-      review_state = @pull_request_review_store.state(reference.id)
-      {
-        reference: reference.to_h,
-        occurrences: @pull_request_review_store.occurrences(reference.id),
-        context: context,
-        snapshot: snapshot,
-        review_state: review_state,
-        changed_since_review: PullRequestReview.changed_since_review?(snapshot || {}, review_state),
-        changed_files_since_review: changed_files_since_review(snapshot, review_state)
-      }
-    rescue PullRequestDiff::Error => e
-      snapshot = @pull_request_diff_store.fetch(id)
-      return {
-        reference: pull_request_reference_by_id!(id).to_h,
-        snapshot: snapshot,
-        review_state: @pull_request_review_store.state(id),
-        offline: true,
-        error: e.message
-      } if snapshot
-
-      raise Error.new(e.message, status: e.status)
-    end
-
-    def refresh_pull_request_review(id)
-      ensure_github_enabled!
-      reference = pull_request_reference_by_id!(id)
-      refresh_pull_request_fetch(reference)
-    rescue PullRequestDiff::Error => e
-      raise Error.new(e.message, status: e.status)
-    end
-
-    def update_pull_request_review_state(id, attrs)
-      ensure_github_enabled!
-      reference = pull_request_reference_by_id!(id)
-      allowed = %w[read_at reviewed_head_sha reviewed_base_sha viewed_files selections priority outcome]
-      values = attrs.select { |key, _value| allowed.include?(key.to_s) }
-      snapshot = @pull_request_diff_store.fetch(reference.id)
-      if attrs.key?("selections")
-        raise Error.new("Fetch the pull request diff before selecting lines.", status: 409) unless snapshot
-        selections = attrs.fetch("selections")
-        raise Error.new("Selected pull request context must be an object.", status: 400) unless selections.is_a?(Hash)
-        supplied_snapshot_id = attrs["selection_snapshot_id"].to_s
-        unless supplied_snapshot_id == snapshot["snapshot_id"].to_s
-          raise Error.new("The pull request changed. Refresh and select lines again.", status: 409)
-        end
-        begin
-          PullRequestSelection.normalize(snapshot, selections.merge("snapshot_id" => supplied_snapshot_id)) if selections.key?("lines")
-        rescue PullRequestSelection::Error => e
-          raise Error.new(e.message, status: 409)
-        end
-        values["selection_snapshot_id"] = snapshot["snapshot_id"]
-      end
-      values["selection_snapshot_id"] = snapshot["snapshot_id"] if snapshot && attrs.key?("viewed_files")
-      values["read_at"] = Time.now.iso8601 if truthy?(attrs["read"]) && !values.key?("read_at")
-      @pull_request_review_store.update_state(reference.id, values)
-    end
-
-    def save_pull_request_review_draft(id, attrs)
-      ensure_github_enabled!
-      reference = pull_request_reference_by_id!(id)
-      snapshot = @pull_request_diff_store.fetch(reference.id)
-      raise Error.new("Fetch the pull request diff before drafting a review", status: 409) unless snapshot
-
-      draft = {
-        "body" => attrs["body"].to_s,
-        "event" => attrs["event"].to_s.upcase,
-        "comments" => Array(attrs["comments"]),
-        "base_sha" => snapshot["base_sha"],
-        "head_sha" => snapshot["head_sha"],
-        "snapshot_id" => snapshot["snapshot_id"],
-        "saved_at" => Time.now.iso8601
-      }
-      @pull_request_review_store.save_draft(reference.id, draft)
-    end
-
-    def handoff_pull_request_review(id, attrs)
-      ensure_github_enabled!
-      reference = pull_request_reference_by_id!(id)
-      snapshot = @pull_request_diff_store.fetch(reference.id)
-      raise Error.new("Fetch the pull request diff before sending a handoff", status: 409) unless snapshot
-
-      agent_key = attrs["agent_key"].to_s
-      find_agent!(agent_key)
-      idempotency_key = attrs["idempotency_key"].to_s
-      raise Error.new("An idempotency key is required.", status: 400) if idempotency_key.empty?
-      state = @pull_request_review_store.state(reference.id)
-      previous = Array(state["handoffs"]).find { |handoff| handoff["idempotency_key"] == idempotency_key }
-      return { handoff: previous, review: state, idempotent: true } if previous
-      selection = attrs["selection"] || {}
-      line_context = if Array(selection["lines"]).any?
-                       begin
-                         PullRequestSelection.render(snapshot, selection)
-                       rescue PullRequestSelection::Error => e
-                         raise Error.new(e.message, status: 409)
-                       end
-                     end
-      prompt = [PullRequestReview.handoff_prompt(reference, snapshot, selection, attrs["note"]), line_context].compact.join("\n")
-      result = submit_prompt(agent_key, "prompt" => prompt, "start" => truthy?(attrs.fetch("start", true)))
-      state = @pull_request_review_store.record_handoff(
-        reference.id,
-        "agent_key" => agent_key,
-        "snapshot_id" => snapshot["snapshot_id"],
-        "idempotency_key" => idempotency_key,
-        "selection" => selection,
-        "note" => attrs["note"].to_s
-      )
-      result.merge(review: state)
-    end
-
-    def post_pull_request_review(id, attrs)
-      ensure_github_enabled!
-      raise Error.new("GitHub review posting is disabled; set TYCHO_GITHUB_WRITE_ENABLED=true.", status: 403) unless github_write_enabled?
-      raise Error.new("Confirm the GitHub review before posting.", status: 409) unless attrs["confirm"] == true
-
-      reference = pull_request_reference_by_id!(id)
-      state = @pull_request_review_store.state(reference.id)
-      draft = state["draft"].is_a?(Hash) ? state["draft"] : {}
-      snapshot = @pull_request_diff_store.fetch(reference.id)
-      raise Error.new("The review draft has no diff snapshot.", status: 409) unless snapshot
-      metadata = github_provider.metadata(reference)
-      unless draft["head_sha"].to_s == metadata["head_sha"].to_s &&
-             draft["base_sha"].to_s == metadata["base_sha"].to_s
-        raise Error.new("The pull request changed after this draft was saved. Refresh and review it again.", status: 409)
-      end
-
-      idempotency_key = attrs["idempotency_key"].to_s
-      raise Error.new("An idempotency key is required.", status: 400) if idempotency_key.empty?
-      previous = Array(state["outcomes"]).find { |outcome| outcome["idempotency_key"] == idempotency_key }
-      return { posted: previous, review: state, idempotent: true } if previous
-
-      posted = PullRequestReview::GitHubContext.new(client: @github_client).post_review(
-        reference,
-        draft,
-        idempotency_key:
-      )
-      review = @pull_request_review_store.record_outcome(
-        reference.id,
-        "kind" => "posted",
-        "github_review_id" => posted["id"],
-        "url" => posted["html_url"],
-        "event" => draft["event"],
-        "head_sha" => draft["head_sha"],
-        "idempotency_key" => idempotency_key
-      )
-      review = @pull_request_review_store.update_state(
-        reference.id,
-        "reviewed_head_sha" => snapshot["head_sha"],
-        "reviewed_base_sha" => snapshot["base_sha"],
-        "reviewed_snapshot_id" => snapshot["snapshot_id"],
-        "outcome" => "posted"
-      )
-      { posted: posted, review: review }
-    rescue PullRequestDiff::Error => e
-      raise Error.new(e.message, status: e.status)
-    end
-
     def schedules
       scheduler.list
     rescue ScheduleRegistry::Error => e
@@ -2605,7 +2358,7 @@ module HQ
           restartable: @restartable,
           update: @tycho_updater.status
         },
-        github: @github_client.capability.merge(write_enabled: github_write_enabled?),
+        github: @github_client.capability,
         build: {
           version: HQ::VERSION,
           asset_version: HQ::RemoteUI.asset_version
@@ -2661,24 +2414,6 @@ module HQ
     rescue SkillInstaller::InstallError => e
       status = { "permission" => 403, "network" => 502 }.fetch(e.category, 409)
       raise Error.new(e.message, status: status, details: e.to_h)
-    end
-
-    def start_github_login
-      @github_client.start_device_flow
-    rescue GitHubAPIClient::Error => e
-      raise Error.new(e.message, status: e.status)
-    end
-
-    def poll_github_login(id)
-      @github_client.poll_device_flow(id)
-    rescue GitHubAPIClient::Error => e
-      raise Error.new(e.message, status: e.status)
-    end
-
-    def logout_github
-      @github_client.logout
-    rescue GitHubAPIClient::Error => e
-      raise Error.new(e.message, status: e.status)
     end
 
     def refresh_harnesses
@@ -3588,89 +3323,6 @@ module HQ
         raise(Error.new("Pull request not found: #{id}", status: 404))
     end
 
-    def pull_request_reference_by_id!(id)
-      pull_request_references.find { |reference| reference.id == id.to_s } ||
-        raise(Error.new("Pull request not found: #{id}", status: 404))
-    end
-
-    def pull_request_references
-      references = {}
-      load_agents.each do |agent|
-        PullRequestDiff.references_for_agent(agent).each do |reference|
-          @pull_request_review_store.sync_occurrence(
-            reference,
-            "source" => "agent_attachment",
-            "agent_key" => agent.key,
-            "project_key" => agent.project_key,
-            "schedule_key" => agent.schedule_key
-          )
-          references[reference.id] ||= reference
-        end
-      end
-      visible_projects.each do |project|
-        refresh_project!(project)
-        reference = PullRequestDiff.reference_from_url(
-          project.pr_url,
-          title: project.name,
-          description: "Configured pull request for #{project.name}"
-        )
-        if reference
-          @pull_request_review_store.sync_occurrence(
-            reference,
-            "source" => "project",
-            "project_key" => project.key
-          )
-          references[reference.id] ||= reference
-        end
-        current_project_pull_requests(project).each do |branch_reference|
-          @pull_request_review_store.sync_occurrence(
-            branch_reference,
-            "source" => "current_branch",
-            "project_key" => project.key
-          )
-          references[branch_reference.id] ||= branch_reference
-        end
-      end
-      references.values
-    end
-
-    def current_project_pull_requests(project)
-      repository = project_github_repository(project)
-      branch = project.branch.to_s
-      return [] if repository.to_s.empty? || branch.empty?
-
-      owner = repository.split("/", 2).first
-      response = @github_client.get_json(
-        "/repos/#{repository}/pulls",
-        params: { state: "open", head: "#{owner}:#{branch}", per_page: 20 }
-      )
-      Array(response.body).filter_map do |item|
-        PullRequestDiff.reference_from_url(
-          item["html_url"],
-          title: item["title"],
-          description: "Open pull request for #{project.key}:#{branch}"
-        )
-      end
-    rescue GitHubAPIClient::Error => e
-      HQ.logger.warn("PRReview") { "Current-branch PR discovery failed for #{project.key}: #{e.message}" }
-      []
-    end
-
-    def project_github_repository(project)
-      configured = project.github_repo_url.to_s[%r{github\.com/([^/]+/[^/]+)\z}, 1]
-      return configured unless configured.to_s.empty?
-
-      stdout, _stderr, status = Open3.capture3(
-        { "GIT_CONFIG_NOSYSTEM" => "1" },
-        "git", "-C", project.path, "config", "--get", "remote.origin.url"
-      )
-      return nil unless status.success?
-
-      stdout.to_s.strip[%r{github\.com[/:]([^/\s]+/[^/\s]+?)(?:\.git)?\z}, 1]
-    rescue SystemCallError
-      nil
-    end
-
     def github_provider
       PullRequestDiff::GitHubProvider.new(client: @github_client)
     end
@@ -3710,19 +3362,10 @@ module HQ
       refreshed
     end
 
-    def refresh_pull_request_fetch(reference)
-      refreshed = refresh_pull_request_snapshot_fetch(reference)
-      context = coalesce_pull_request_fetch(reference, "context") do
-        PullRequestReview::GitHubContext.new(client: @github_client).fetch(reference, pull: refreshed.fetch(:pull))
-      end
-      { snapshot: refreshed.fetch(:snapshot), context: }
-    end
-
     def save_pull_request_snapshot(reference, metadata)
       snapshot = @pull_request_diff_store.save(
         PullRequestDiff.snapshot_for(reference, provider: github_provider, metadata:)
       )
-      @pull_request_review_store.reconcile_snapshot(reference.id, snapshot)
       snapshot
     end
 
@@ -3773,47 +3416,8 @@ module HQ
     def ensure_github_enabled!
       return if @github_client.enabled?
 
-      raise Error.new("GitHub pull request review is disabled; connect the Tycho GitHub App or run `gh auth login`.",
+      raise Error.new("Pull request diffs require an authenticated `gh` CLI session.",
                       status: 424)
-    end
-
-    def github_write_enabled?
-      @github_client.enabled? && truthy?(ENV["TYCHO_GITHUB_WRITE_ENABLED"])
-    end
-
-    def unread_pull_request?(metadata, review_state)
-      read_at = Time.parse(review_state["read_at"].to_s)
-      updated_at = Time.parse(metadata["remote_updated_at"].to_s)
-      updated_at > read_at
-    rescue ArgumentError, TypeError
-      true
-    end
-
-    def action_needed_pull_request?(item)
-      item["review_decision"] == "changes_requested" ||
-        item["checks_state"].to_s.match?(/failure|error/) ||
-        item["unresolved_thread_count"].to_i.positive? ||
-        item["unread"] == true
-    end
-
-    def changed_files_since_review(snapshot, review_state)
-      return [] unless snapshot
-
-      previous_id = review_state["reviewed_snapshot_id"].to_s
-      return [] if previous_id.empty? || previous_id == snapshot["snapshot_id"].to_s
-
-      previous = @pull_request_diff_store.fetch_snapshot(previous_id)
-      return Array(snapshot["files"]).map { |file| file["path"] || file[:path] }.compact unless previous
-
-      previous_files = Array(previous["files"]).to_h do |file|
-        path = file["path"] || file[:path]
-        [path, Digest::SHA256.hexdigest(JSON.generate(file))]
-      end
-      Array(snapshot["files"]).filter_map do |file|
-        path = file["path"] || file[:path]
-        digest = Digest::SHA256.hexdigest(JSON.generate(file))
-        path if previous_files[path] != digest
-      end
     end
 
     def find_project!(key)

@@ -44,7 +44,7 @@ Key references:
 | Config split | `~/.tycho/config/hq.yml` (active) + `~/.tycho/config/hq.archived.yml` (archived) | Archive without losing history; logs move to `~/.tycho/logs/projects/archived/` |
 | Project lifecycle CLI | `tycho project KEY` plus explicit create/show/update/archive commands, with normalized human or JSON output | Project registration and maintenance should be automatable without duplicating config rules or opening the TUI |
 | Multi-file lifecycle writes | `FileTransaction` snapshots config/state files and runs compensating log moves around project archival and session-loop creation | A failed downstream step must restore project, agent, schedule, memory, and log state instead of leaving a partially completed lifecycle operation |
-| External command capture | `CommandRunner` owns bounded process-group execution for harness discovery; GitHub integration uses direct HTTPS after resolving a GitHub App session or the compatibility credential from `gh auth token` | One process owner preserves signal exit status for tools, while GitHub API behavior remains isolated from CLI response formats |
+| External command capture | `CommandRunner` owns bounded process-group execution for harness discovery; GitHub PR diffs use the local `gh auth token` credential through direct HTTPS | One process owner preserves signal exit status for tools, while GitHub API behavior remains isolated from CLI response formats |
 | Agent transport | Codex JSON output, Claude-compatible `--output-format stream-json`, OpenCode JSON, and Pi `--mode json` pass through `AgentStreamRecorder`, which preserves `raw.log` and projects complete semantic events immediately | One recorder gives every harness the same durable streaming path without changing native wire formats |
 | Managed-agent environment boundary | Clear server-only `TYCHO_GITHUB_TOKEN` and `TYCHO_REMOTE_TOKEN` values at the harness spawn boundary; delegation uses an explicit trusted parent key instead of an injected capability | A daemon may load server credentials from `.env`, but managed harnesses must not inherit those bearer credentials |
 | Agent model controls | Optional per-agent `model` and `reasoning_effort`, inherited from project/template config and passed as harness run arguments | Model catalogs change outside Tycho; use harness discovery for suggestions where available, keep free-form fallback everywhere, and keep provider-specific thinking budgets out of first-version scope |
@@ -59,7 +59,7 @@ Key references:
 | Agent chat conversation blocks | Conversation renders selectable blocks for user messages, agent messages, system events, and collapsed tool-call groups; Enter opens the selected block in a floating scrollable detail layer | Keeps normal chat scanning compact while preserving full tool/message detail on demand |
 | Agent attachments | Structured agent results can include PR/document/image attachments, persisted in `.attachments.json` and mirrored into `memory.jsonl`, surfaced from chat with a `ctrl+a` navigable list | Durable links to artifacts survive later runs and memory rebuilds instead of living only in a single assistant message |
 | Remote artifact rendering | Render attached HTML in an origin-isolated iframe with a restrictive content policy and package explicitly referenced, allowlisted workspace web assets; render sanitized Markdown Mermaid fences with a pinned, conditional CDN loader in strict mode | Interactive lessons and shared course assets remain usable without granting generated HTML access to Tycho or browser storage, and ordinary Markdown does not pay the Mermaid download cost |
-| Pull request review | Agent-scoped PR diff inspection remains available; the cross-agent Review Inbox is paused because its eager aggregation is too slow and unresponsive | Redesign inbox discovery and loading around bounded, incremental work before restoring its route; retain GitHub App and `gh` compatibility |
+| Pull request diffs | Agent-scoped PR diff inspection remains available through an authenticated `gh` CLI | Keep PR diff fetching agent-scoped and read-only. |
 | Agent pull request catalog | Persist canonical PR references and origin title/status metadata in an agent-owned `<agent-stem>.pull_request_catalog.json` sidecar; keep ordinary agent PR listing network-free | Opening one agent reads only that agent's catalog; displayed titles and Open/Draft/Closed/Merged state come from cached GitHub metadata, refreshes remain explicit, and archiving moves the catalog with the agent |
 | Agent pull request switching | Paint the route shell before asynchronously attaching its diff, give foreground navigation a reserved request slot, cancel stale background work outside the open PR route, preload at most six saved snapshots, retain at most twelve payloads plus six visited viewers and per-PR scroll positions, and render lines in 100-line containment chunks | Persistent snapshots remain authoritative; navigation never shares a frame with diff layout, while immutable parsed-store reuse and bounded browser caches preserve each PR's form, selection, and desktop/mobile scroll state |
 | Managed-agent completion status | Let a validated structured result define Success, Partial, or Failed after a run; retain the process exit code as transport diagnostics | A usable structured result must not remain labeled Failed solely because its harness process exited nonzero, while missing or explicitly failed results still surface failure |
@@ -204,11 +204,9 @@ and queued-run push notification behavior. Schedule-management work remains on
 - [x] Route peer Agent and Project details and mutations through explicit server keys
 - [x] Add direct `--server` CLI control for remote project reads and managed-agent lifecycles
 - [x] Show peer health, token state, and Tycho version compatibility in Settings
-- [x] Prepare GitHub App device login and guarded pull request review posting
-- [x] Store immutable pull request diff snapshots separately from review state
+- [x] Store immutable agent pull request diff snapshots
 - [x] Promote Remote UI design-system contracts across forms, menus, badges,
       confirmations, detail headers, and empty states
-- [x] Pause the eager Review Inbox until bounded discovery and loading are redesigned
 
 ### v0.10 — Agent Operations and Observability ✓
 
@@ -230,23 +228,6 @@ and queued-run push notification behavior. Schedule-management work remains on
 - [ ] Formalize specs
 - [x] Stabilize source packaging and pre-release browser/TUI checks
 - [x] Publish and verify the 0.9.0 Homebrew bottles
-
-### Canonical Tycho GitHub App
-
-- [ ] Build and publish a Tycho homepage for marketing and use it as the
-      canonical GitHub App homepage URL
-- [ ] Register the public Tycho GitHub App with Device Flow enabled and the
-      documented repository permissions
-- [ ] Copy the App's public client ID and canonical slug into Tycho defaults,
-      while retaining environment overrides for forks, development, and
-      GitHub Enterprise
-
-### Pull Request Review Inbox
-
-- [ ] Redesign cross-agent discovery so opening the inbox does not synchronously
-      fetch metadata and review context for every pull request
-- [ ] Restore the Review Inbox route only after bounded loading, cancellation,
-      and responsive desktop and mobile behavior pass browser checks
 
 ### Multiserver Agents And Projects
 

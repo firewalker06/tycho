@@ -134,8 +134,8 @@ Source-checkout users can replace `tycho` with `bin/tycho` in these examples.
   ownership.
 - [Hooks](docs/HOOKS.md), [skills](docs/TYCHO_SKILLS.md), and
   [usage metrics](docs/USAGE_METRICS.md) — optional operator workflows.
-- [Pull request diffs](docs/PULL_REQUEST_DIFFS.md) — review workflow and GitHub
-  integration boundaries.
+- Pull request diffs use an authenticated local `gh` CLI and provide read-only,
+  agent-scoped snapshots.
 - [Gotchas](docs/GOTCHAS.md) — known operational pitfalls.
 - [Project status](docs/PROJECT_STATUS.md) — roadmap and architectural
   decisions.
