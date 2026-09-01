@@ -2871,7 +2871,7 @@ module RemoteServerTest
       restarted = server.send(:route, service, "POST", "/schedules/daemon/restart", { "dry_run" => true }, nil)
       assert(restarted[:status] == 202, "expected schedule daemon restart route to be accepted")
       assert(restarted.dig(:body, :restarted), "expected schedule daemon restart payload")
-      assert(daemon_supervisor.calls.include?([:restart, nil, true]), "expected restart route to use separate daemon supervisor")
+      assert(daemon_supervisor.calls.include?([:restart, nil, true, nil]), "expected restart route to use separate daemon supervisor")
 
       HQ::ScheduleStore.new.save(
         "daily" => HQ::ScheduleState.new(key: "daily", status: "paused", enabled: false, run_count: 1, skip_count: 0)
@@ -2944,7 +2944,7 @@ module RemoteServerTest
 
         def update!
           self.calls += 1
-          { updated: true, detail: "Tycho updated" }
+          { updated: true, detail: "Tycho updated", executable: "tycho" }
         end
       end.new(0)
       daemon_supervisor = FakeScheduleDaemonSupervisor.new
@@ -2964,7 +2964,7 @@ module RemoteServerTest
       assert(response[:status] == 202 && response.dig(:body, :update, :updated) && response.dig(:body, :restarting),
              "expected local update route to restart the updated local server")
       assert(updater.calls == 1, "expected local update route to call only its local updater")
-      assert(daemon_supervisor.calls.include?([:restart, nil, false]),
+      assert(daemon_supervisor.calls.include?([:restart_if_running, ["tycho", "schedule", "daemon"]]),
              "expected local update route to restart the scheduler daemon")
       assert(server.instance_variable_get(:@restart_requested),
              "expected local update route to schedule its own post-response replacement")
@@ -3247,6 +3247,26 @@ module RemoteServerTest
       raise "expected non-restartable server to reject restart"
     rescue HQ::RemoteServer::Error => e
       assert(e.status == 409, "expected non-restartable restart to return conflict")
+    end
+
+    Dir.mktmpdir("tycho-server-restart") do |dir|
+      old_executable = File.join(dir, "Cellar", "tycho", "0.10.2", "bin", "tycho")
+      FileUtils.mkdir_p(File.dirname(old_executable))
+      File.write(old_executable, "#!/bin/sh\n")
+      stable_executable = File.join(dir, "bin", "tycho")
+      FileUtils.mkdir_p(File.dirname(stable_executable))
+      File.write(stable_executable, "#!/bin/sh\n")
+      updated_server = HQ::RemoteServer.new(
+        restart_command: [old_executable, "serve", "--port", "7374"],
+        logger: Logger.new(StringIO.new),
+        output: StringIO.new
+      )
+      replacement = updated_server.send(:schedule_restart!)
+      resolved_stable_executable = File.join(File.realpath(dir), "bin", "tycho")
+      assert(replacement[:command] == resolved_stable_executable,
+             "expected Remote restart to resolve the stable Homebrew launcher after upgrade")
+      assert(updated_server.instance_variable_get(:@restart_command) == [resolved_stable_executable, "serve", "--port", "7374"],
+             "expected Remote restart command to replace the old Cellar executable")
     end
   end
 
@@ -7142,14 +7162,27 @@ module RemoteServerTest
       }
     end
 
-    def restart!(interval:, dry_run:)
-      @calls << [:restart, interval, dry_run]
+    def restart!(interval:, dry_run:, command: nil)
+      @calls << [:restart, interval, dry_run, command]
       {
         restarted: true,
         daemon: {
           status: "starting",
           interval: interval,
           dry_run: dry_run
+        }
+      }
+    end
+
+    def restart_if_running!(command:)
+      @calls << [:restart_if_running, command]
+      {
+        restarted: true,
+        detail: "Scheduler daemon restart requested",
+        daemon: {
+          status: "running",
+          pid: 1234,
+          mode: "daemon"
         }
       }
     end

@@ -30,14 +30,14 @@ module HQ
       @sleeper = sleeper || Kernel.method(:sleep)
     end
 
-    def start!(interval: Scheduler::DEFAULT_INTERVAL, dry_run: false)
+    def start!(interval: Scheduler::DEFAULT_INTERVAL, dry_run: false, command: nil)
       current = store.daemon_state
       if active?(current)
         raise Error, "Scheduler daemon is already #{current.status}"
       end
 
       normalized_interval = positive_integer(interval, Scheduler::DEFAULT_INTERVAL)
-      pid = spawn_daemon(interval: normalized_interval, dry_run: dry_run)
+      pid = spawn_daemon(interval: normalized_interval, dry_run: dry_run, command: command)
       {
         started: true,
         pid: pid,
@@ -86,13 +86,13 @@ module HQ
       raise Error, "Failed to stop scheduler daemon #{pid}: #{e.message}"
     end
 
-    def restart!(interval: Scheduler::DEFAULT_INTERVAL, dry_run: false)
+    def restart!(interval: Scheduler::DEFAULT_INTERVAL, dry_run: false, command: nil)
       stopped = stop!
       if stopped[:pid] && !stopped[:stopped]
         raise Error, "Scheduler daemon did not stop within #{DEFAULT_STOP_TIMEOUT_SECONDS} seconds"
       end
 
-      started = start!(interval:, dry_run:)
+      started = start!(interval:, dry_run:, command:)
       {
         restarted: true,
         stopped: stopped,
@@ -101,19 +101,32 @@ module HQ
       }
     end
 
+    def restart_if_running!(interval: Scheduler::DEFAULT_INTERVAL, dry_run: false, command: nil)
+      current = store.daemon_state
+      unless active?(current)
+        return {
+          restarted: false,
+          detail: "Scheduler daemon is not running",
+          daemon: current.to_hash
+        }
+      end
+
+      restart!(interval:, dry_run:, command:).merge(detail: "Scheduler daemon restart requested")
+    end
+
     private
 
     def active?(state)
       %w[running stale untracked].include?(state.status.to_s)
     end
 
-    def spawn_daemon(interval:, dry_run:)
+    def spawn_daemon(interval:, dry_run:, command:)
       FileUtils.mkdir_p(File.dirname(log_path))
       pid = nil
       File.open(log_path, "ab") do |log|
         log.sync = true
         pid = @spawner.call(
-          *daemon_command(interval:, dry_run:),
+          *daemon_command(interval:, dry_run:, command:),
           out: log,
           err: log,
           pgroup: true,
@@ -124,8 +137,8 @@ module HQ
       pid
     end
 
-    def daemon_command(interval:, dry_run:)
-      command = Array(@command).map(&:to_s).reject(&:empty?)
+    def daemon_command(interval:, dry_run:, command: nil)
+      command = Array(command || @command).map(&:to_s).reject(&:empty?)
       command = default_command if command.empty?
       command = [*command, "--interval", interval.to_s]
       command << "--dry-run" if dry_run

@@ -26,9 +26,35 @@ module HQ
       output = [stdout, stderr].map(&:to_s).join("\n").strip
       raise Error, (output.empty? ? "Homebrew could not update Tycho" : output) unless process_status.success?
 
-      { updated: true, detail: output.empty? ? "Homebrew updated Tycho." : output }
+      {
+        updated: true,
+        detail: output.empty? ? "Homebrew updated Tycho." : output,
+        executable: self.class.stable_executable_for(@executable)
+      }
     rescue Errno::ENOENT
       raise Error, "Homebrew is not available on this host"
+    end
+
+    def self.stable_command(command)
+      values = Array(command).map(&:to_s)
+      return values if values.empty?
+
+      path = File.realpath(values.first)
+      return values unless path.match?(%r{/Cellar/#{FORMULA}/})
+
+      [stable_executable_for(path), *values.drop(1)]
+    rescue Errno::ENOENT
+      values
+    end
+
+    def self.stable_executable_for(executable)
+      path = File.realpath(executable.to_s)
+      prefix = path.split("/Cellar/", 2).first
+      return path if prefix == path
+
+      File.join(prefix, "bin", FORMULA)
+    rescue Errno::ENOENT
+      executable.to_s
     end
 
     private

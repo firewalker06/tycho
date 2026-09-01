@@ -538,7 +538,7 @@ module HQ
 
     def update_and_restart!(service)
       update = service.update_tycho
-      scheduler = service.restart_schedule_daemon
+      scheduler = service.restart_running_schedule_daemon(command: [update.fetch(:executable), "schedule", "daemon"])
       schedule_restart!.merge(update: update, scheduler: scheduler)
     end
 
@@ -661,6 +661,7 @@ module HQ
     def schedule_restart!
       raise Error.new("Remote restart is unavailable for this host", status: 409) unless restartable?
 
+      @restart_command = TychoUpdater.stable_command(@restart_command)
       @restart_requested = true
       @shutdown = true
       close_listener!
@@ -2425,12 +2426,22 @@ module HQ
       raise Error.new(e.message, status: 409)
     end
 
-    def restart_schedule_daemon(attrs = {})
+    def restart_schedule_daemon(attrs = {}, command: nil)
       scheduler.validate!
       schedule_daemon_supervisor.restart!(
         interval: attrs["interval"],
-        dry_run: truthy?(attrs["dry_run"])
+        dry_run: truthy?(attrs["dry_run"]),
+        command: command
       )
+    rescue ScheduleRegistry::Error => e
+      raise Error.new(e.message, status: 400)
+    rescue ScheduleDaemonSupervisor::Error => e
+      raise Error.new(e.message, status: 409)
+    end
+
+    def restart_running_schedule_daemon(command:)
+      scheduler.validate!
+      schedule_daemon_supervisor.restart_if_running!(command: command)
     rescue ScheduleRegistry::Error => e
       raise Error.new(e.message, status: 400)
     rescue ScheduleDaemonSupervisor::Error => e

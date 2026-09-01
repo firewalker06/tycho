@@ -623,6 +623,20 @@ module SchedulerTest
       stopped = supervisor.stop!
       assert(stopped.fetch(:stopped), "expected supervisor stop to observe exited daemon")
       assert(killed == [["TERM", 12_345]], "expected supervisor to terminate the daemon pid")
+
+      alive = false
+      new_executable = File.join(dir, "bin", "tycho")
+      restarted = supervisor.start!(interval: 31, command: [new_executable, "schedule", "daemon"])
+      replacement_command = spawned.fetch(1).fetch(0)
+      assert(restarted.fetch(:pid) == 12_345, "expected supervisor to start replacement daemon")
+      assert(replacement_command.first == new_executable,
+             "expected replacement scheduler to launch the newly resolved executable")
+      assert(replacement_command.include?("31"), "expected replacement scheduler interval to be retained")
+
+      store.record_daemon_stop!
+      absent = supervisor.restart_if_running!(command: [new_executable, "schedule", "daemon"])
+      assert(!absent.fetch(:restarted), "expected absent scheduler restart to be a no-op")
+      assert(absent.fetch(:detail) == "Scheduler daemon is not running", "expected absent scheduler detail")
     end
   end
 
