@@ -54,6 +54,7 @@ module RemoteServerTest
     assert_remote_skill_installation_requires_confirmation
     assert_remote_schedule_routes
     assert_remote_setup_payload_includes_readiness
+    assert_remote_update_is_local_and_homebrew_gated
     assert_remote_harness_catalogs_are_configurable
     assert_remote_setup_refreshes_harness_catalogs
     assert_remote_setup_uses_shared_executable_resolution
@@ -2870,7 +2871,7 @@ module RemoteServerTest
       restarted = server.send(:route, service, "POST", "/schedules/daemon/restart", { "dry_run" => true }, nil)
       assert(restarted[:status] == 202, "expected schedule daemon restart route to be accepted")
       assert(restarted.dig(:body, :restarted), "expected schedule daemon restart payload")
-      assert(daemon_supervisor.calls.include?([:restart, nil, true]), "expected restart route to use separate daemon supervisor")
+      assert(daemon_supervisor.calls.include?([:restart, nil, true, nil]), "expected restart route to use separate daemon supervisor")
 
       HQ::ScheduleStore.new.save(
         "daily" => HQ::ScheduleState.new(key: "daily", status: "paused", enabled: false, run_count: 1, skip_count: 0)
@@ -2905,6 +2906,8 @@ module RemoteServerTest
       assert(setup.dig(:auth, :required), "expected auth state")
       assert(setup.dig(:auth, :status) == "token required", "expected required auth status")
       assert(setup.dig(:server, :restartable), "expected setup payload to expose Remote restart readiness")
+      assert(setup.dig(:server, :update, :available) == false,
+             "expected source Remote service to report Homebrew updates unavailable")
       assert(setup.dig(:build, :version) == HQ::VERSION, "expected setup payload to expose Tycho version")
       assert(setup.dig(:build, :asset_version).to_s.length == 12, "expected setup payload to expose Remote UI build")
       assert(setup.dig(:counts, :projects) == 1, "expected active project count")
@@ -2927,6 +2930,46 @@ module RemoteServerTest
       assert(schedule_prompt_template.include?("did not complete a requested change, answer, commit, review, or deliverable"),
              "expected schedule template to share strict no-action guidance")
       assert(setup[:safety].any? { |line| line.include?("Running agents") }, "expected safety defaults")
+    end
+  end
+
+  def assert_remote_update_is_local_and_homebrew_gated
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      updater = Struct.new(:calls) do
+        def status
+          { available: true, detail: "Homebrew update ready" }
+        end
+
+        def update!
+          self.calls += 1
+          { updated: true, detail: "Tycho updated", executable: "tycho" }
+        end
+      end.new(0)
+      daemon_supervisor = FakeScheduleDaemonSupervisor.new
+      service = HQ::RemoteService.new(
+        registry: registry_for_project(dir, workspace),
+        tycho_updater: updater,
+        schedule_daemon_supervisor: daemon_supervisor
+      )
+      server = HQ::RemoteServer.new(
+        restart_command: [RbConfig.ruby, "bin/tycho", "serve"],
+        logger: Logger.new(StringIO.new),
+        output: StringIO.new
+      )
+
+      assert(service.setup.dig(:server, :update, :available), "expected setup to expose local update readiness")
+      response = server.send(:route, service, "POST", "/update", {}, nil)
+      assert(response[:status] == 202 && response.dig(:body, :update, :updated) && response.dig(:body, :restarting),
+             "expected local update route to restart the updated local server")
+      assert(updater.calls == 1, "expected local update route to call only its local updater")
+      assert(daemon_supervisor.calls.include?([:restart_if_running, ["tycho", "schedule", "daemon"]]),
+             "expected local update route to restart the scheduler daemon")
+      assert(server.instance_variable_get(:@restart_requested),
+             "expected local update route to schedule its own post-response replacement")
+      assert(!HQ::RemoteBroker::RESOURCE_ROOTS.include?("update"),
+             "expected broker proxy boundaries to exclude server update operations")
     end
   end
 
@@ -3205,6 +3248,27 @@ module RemoteServerTest
     rescue HQ::RemoteServer::Error => e
       assert(e.status == 409, "expected non-restartable restart to return conflict")
     end
+
+    Dir.mktmpdir("tycho-server-restart") do |dir|
+      old_executable = File.join(dir, "Cellar", "tycho", "0.10.2", "bin", "tycho")
+      FileUtils.mkdir_p(File.dirname(old_executable))
+      File.write(old_executable, "#!/bin/sh\n")
+      stable_executable = File.join(dir, "bin", "tycho")
+      FileUtils.mkdir_p(File.dirname(stable_executable))
+      File.write(stable_executable, "#!/bin/sh\n")
+      File.delete(old_executable)
+      updated_server = HQ::RemoteServer.new(
+        restart_command: [old_executable, "serve", "--port", "7374"],
+        logger: Logger.new(StringIO.new),
+        output: StringIO.new
+      )
+      replacement = updated_server.send(:schedule_restart!)
+      resolved_stable_executable = stable_executable
+      assert(replacement[:command] == resolved_stable_executable,
+             "expected Remote restart to resolve the stable Homebrew launcher after upgrade")
+      assert(updated_server.instance_variable_get(:@restart_command) == [resolved_stable_executable, "serve", "--port", "7374"],
+             "expected Remote restart command to replace the old Cellar executable")
+    end
   end
 
   def assert_remote_broker_lists_configured_servers
@@ -3341,6 +3405,17 @@ module RemoteServerTest
                "expected peer projects to share the combined catalog")
         assert(local[:version] == HQ::VERSION && peer[:version] == "0.9.0-peer",
                "expected resource catalog servers to expose host and peer Tycho versions")
+        listed = HQ::RemoteServer.new(resource_catalog: catalog).send(
+          :route,
+          HQ::RemoteService.new(registry: registry, server_url: "http://127.0.0.1:7373"),
+          "GET",
+          "/servers",
+          {},
+          nil
+        )
+        listed_peer = listed.dig(:body, :servers).find { |entry| entry[:key] == "peer" }
+        assert(listed_peer[:version] == "0.9.0-peer",
+               "expected Settings server list to retain the peer version from the resource catalog")
         assert(File.exist?(snapshot_path), "expected a successful peer refresh to persist its snapshot")
         assert((File.stat(snapshot_path).mode & 0o777) == 0o600,
                "expected persisted peer snapshots to be private")
@@ -3727,6 +3802,17 @@ module RemoteServerTest
     handler = lambda do |request|
       requests << request
       case [request[:method], request[:path]]
+      when ["GET", "/resources"]
+        {
+          status: 200,
+          content_type: "application/json",
+          body: JSON.generate(
+            schema_version: 1,
+            build: { version: "0.10.1-peer" },
+            agents: [{ key: "peer-agent-1", name: "Peer Agent" }],
+            projects: []
+          )
+        }
       when ["GET", "/agents"]
         unless request.dig(:headers, "authorization") == "Bearer target-secret"
           next({
@@ -3802,6 +3888,27 @@ module RemoteServerTest
         assert(requests.all? { |request| request.dig(:headers, "authorization") == "Bearer target-secret" },
                "expected broker requests to use the provided browser-local token")
 
+        catalog = server.instance_variable_get(:@resource_catalog)
+        catalog.refresh(
+          "tycho-peer",
+          registry: service.registry,
+          server_url: service.server_url,
+          local_service: service,
+          token_override: "target-secret",
+          force: true
+        )
+        wait_for_resource_catalog(catalog) do |snapshot|
+          snapshot[:servers].find { |entry| entry[:key] == "tycho-peer" }[:status] == "online"
+        end
+
+        refreshed_add = server.send(:route, service, "POST", "/servers", {
+          "name" => "tycho-peer",
+          "url" => target_url,
+          "token" => "target-secret"
+        }, nil)
+        assert(refreshed_add.dig(:body, :server, :version) == "0.10.1-peer",
+               "expected add-or-update response to preserve the cached peer version")
+
         promoted = server.send(:route, service, "POST", "/servers/tycho-peer/credentials", {
           "token" => "target-secret"
         }, nil)
@@ -3812,6 +3919,8 @@ module RemoteServerTest
                "expected browser-promoted credentials to use private file permissions")
         assert(!promoted.dig(:body, :credential).to_s.include?("target-secret"),
                "expected credential metadata to omit token values")
+        assert(promoted.dig(:body, :servers).find { |entry| entry[:key] == "tycho-peer" }[:version] == "0.10.1-peer",
+               "expected credential response to preserve the cached peer version")
 
         updated = server.send(:route, service, "PATCH", "/servers/tycho-peer", {
           "name" => "Studio Mac",
@@ -3822,6 +3931,8 @@ module RemoteServerTest
                "expected identity update route to return the new display name")
         assert(updated.dig(:body, :server, :icon) == "computer",
                "expected identity update route to return the new icon")
+        assert(updated.dig(:body, :server, :version) == "0.10.1-peer",
+               "expected identity update response to preserve the cached peer version")
         persisted_after_update = YAML.safe_load(File.read(config_path), aliases: true)
         assert(persisted_after_update.dig("remote_servers", 0, "name") == "Studio Mac",
                "expected identity update route to persist the display name")
@@ -5336,6 +5447,12 @@ module RemoteServerTest
            "expected Hidden settings to use hidden/inherit/visible icon toggle buttons")
     assert(js[:body].include?("Restart server"), "expected Settings More menu to expose Remote restart action")
     assert(js[:body].include?("data-restart-server"), "expected Settings More menu to expose Remote restart action")
+    assert(js[:body].include?("Update Tycho") &&
+           js[:body].include?("data-update-tycho") &&
+           js[:body].include?('apiPost("/update"') &&
+           js[:body].include?("restart its running Remote server and scheduler daemon automatically") &&
+           !js[:body].include?("scheduler daemon afterward using their existing controls"),
+           "expected Settings More menu to offer Homebrew Tycho updates through the local API")
     assert(js[:body].include?("Remote restart"),
            "expected Settings readiness to include Remote restart status")
     assert(js[:body].index("Automation readiness") < js[:body].index("Remote restart"),
@@ -7048,14 +7165,27 @@ module RemoteServerTest
       }
     end
 
-    def restart!(interval:, dry_run:)
-      @calls << [:restart, interval, dry_run]
+    def restart!(interval:, dry_run:, command: nil)
+      @calls << [:restart, interval, dry_run, command]
       {
         restarted: true,
         daemon: {
           status: "starting",
           interval: interval,
           dry_run: dry_run
+        }
+      }
+    end
+
+    def restart_if_running!(command:)
+      @calls << [:restart_if_running, command]
+      {
+        restarted: true,
+        detail: "Scheduler daemon restart requested",
+        daemon: {
+          status: "running",
+          pid: 1234,
+          mode: "daemon"
         }
       }
     end

@@ -16,6 +16,7 @@ require_relative "registry"
 require_relative "remote_ui"
 require_relative "terminal_qr"
 require_relative "version"
+require_relative "domain/tycho_updater"
 require_relative "domain/project"
 require_relative "domain/project_workspace"
 require_relative "domain/attachment_normalizer"
@@ -47,6 +48,7 @@ require_relative "domain/onboarding"
 require_relative "domain/visibility"
 require_relative "domain/web_push_notifier"
 require_relative "domain/usage_metrics"
+require_relative "domain/remote_server_control"
 
 module HQ
   class RemoteServer
@@ -98,6 +100,7 @@ module HQ
     def start
       server = TCPServer.new(@host, @port)
       @server = server
+      RemoteServerControl.publish(host: @host, port: @port)
       @shutdown = false
       @restart_requested = false
       shutdown = proc do
@@ -139,6 +142,7 @@ module HQ
         poll_agent_push_notifications! unless @shutdown
       end
     ensure
+      RemoteServerControl.clear(host: @host, port: @port)
       server&.close unless server&.closed?
       @daemon_log_io&.close
       @server = nil
@@ -259,7 +263,7 @@ module HQ
       if parts.first == "servers"
         broker = RemoteBroker.new(registry: service.registry, server_url: service.server_url)
         @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
-        return ok(servers: broker.servers) if method == "GET" && parts == ["servers"]
+        return ok(servers: broker_servers(broker)) if method == "GET" && parts == ["servers"]
         return ok(activity_catalog) if method == "GET" && parts == ["servers", "activity"]
         return ok(@resource_catalog.snapshot) if method == "GET" && parts == ["servers", "resources"]
         if method == "POST" && parts == ["servers", "resources", "refresh"]
@@ -299,17 +303,17 @@ module HQ
         if method == "POST" && parts.length == 3 && parts[2] == "credentials"
           result = service.save_remote_server_credential(parts[1], body)
           @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
-          return ok(result)
+          return ok(enrich_server_response(result))
         end
         if method == "POST" && parts == ["servers"]
           result = service.add_remote_server(body)
           @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
-          return created(result)
+          return created(enrich_server_response(result))
         end
         if method == "PATCH" && parts.length == 2
           result = service.update_remote_server(parts[1], body)
           @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
-          return ok(result)
+          return ok(enrich_server_response(result))
         end
         if method == "DELETE" && parts.length == 2
           result = service.remove_remote_server(parts[1])
@@ -384,6 +388,7 @@ module HQ
       end
       return ok(service.search_index) if method == "GET" && parts == ["search"]
       return ok(service.memory_handoffs) if method == "GET" && parts == ["memory-handoffs"]
+      return accepted(update_and_restart!(service), headers: RESTART_CACHE_RESET_HEADERS) if method == "POST" && parts == ["update"]
       return accepted(schedule_restart!, headers: RESTART_CACHE_RESET_HEADERS) if method == "POST" && parts == ["server", "restart"]
       return ok(service.push_config) if method == "GET" && parts == ["push", "config"]
       return ok(service.push_status(body)) if method == "POST" && parts == ["push", "status"]
@@ -513,6 +518,33 @@ module HQ
       activity
     end
 
+    def broker_servers(broker)
+      enrich_servers(broker.servers)
+    end
+
+    def enrich_server_response(result)
+      servers = enrich_servers(result.fetch(:servers, []))
+      server = result[:server]
+      enriched_server = servers.find { |entry| entry[:key] == server[:key] } if server
+      result.merge(servers: servers, server: enriched_server || server)
+    end
+
+    def enrich_servers(servers)
+      catalog_versions = @resource_catalog.snapshot.fetch(:servers, []).to_h do |server|
+        [server[:key], server[:version]]
+      end
+      servers.map do |server|
+        version = catalog_versions[server[:key]]
+        version.to_s.empty? ? server : server.merge(version: version)
+      end
+    end
+
+    def update_and_restart!(service)
+      update = service.update_tycho
+      scheduler = service.restart_running_schedule_daemon(command: [update.fetch(:executable), "schedule", "daemon"])
+      schedule_restart!.merge(update: update, scheduler: scheduler)
+    end
+
     def route_ui(path)
       case path
       when "/", "/ui", "/ui/"
@@ -632,6 +664,7 @@ module HQ
     def schedule_restart!
       raise Error.new("Remote restart is unavailable for this host", status: 409) unless restartable?
 
+      @restart_command = TychoUpdater.stable_command(@restart_command)
       @restart_requested = true
       @shutdown = true
       close_listener!
@@ -810,6 +843,7 @@ module HQ
         persistence_changed = removed_persisted_keys.any?
         configs.each_with_index do |config, index|
           existing = @entries[config.key]
+          existing = nil if existing && existing[:url].to_s != config.url.to_s
           metadata = {
             key: config.key,
             name: config.name,
@@ -817,16 +851,13 @@ module HQ
             url: config.url,
             local: index.zero?,
             auth_configured: index.zero? ? false : credential_resolver.configured?(config),
-            version: index.zero? ? HQ::VERSION : nil
+            version: index.zero? ? HQ::VERSION : existing&.fetch(:version, nil)
           }
           persisted = @persisted_entries[config.key]
           if persisted && !valid_persisted_entry?(persisted, metadata)
             @persisted_entries.delete(config.key)
             persisted = nil
             persistence_changed = true
-          end
-          if existing && existing[:url].to_s != metadata[:url].to_s
-            existing = nil
           end
           @entries[config.key] = if existing
                                    existing.merge(metadata)
@@ -1572,6 +1603,7 @@ module HQ
                    web_push_notifier: nil,
                    schedule_daemon_supervisor: nil,
                    restartable: false,
+                   tycho_updater: nil,
                    skill_installer: nil,
                    github_client: GitHubAPIClient.new,
                    pull_request_diff_store: PullRequestDiff::Store.new,
@@ -1589,6 +1621,7 @@ module HQ
       @public_url = public_url.to_s
       @auth_required = auth_required ? true : false
       @restartable = restartable ? true : false
+      @tycho_updater = tycho_updater || TychoUpdater.new
       skills_home = HQ.env_present("TYCHO_SKILLS_HOME", Dir.home)
       @skill_installer = skill_installer || SkillInstaller.new(home: skills_home)
       @github_client = github_client
@@ -2396,12 +2429,22 @@ module HQ
       raise Error.new(e.message, status: 409)
     end
 
-    def restart_schedule_daemon(attrs = {})
+    def restart_schedule_daemon(attrs = {}, command: nil)
       scheduler.validate!
       schedule_daemon_supervisor.restart!(
         interval: attrs["interval"],
-        dry_run: truthy?(attrs["dry_run"])
+        dry_run: truthy?(attrs["dry_run"]),
+        command: command
       )
+    rescue ScheduleRegistry::Error => e
+      raise Error.new(e.message, status: 400)
+    rescue ScheduleDaemonSupervisor::Error => e
+      raise Error.new(e.message, status: 409)
+    end
+
+    def restart_running_schedule_daemon(command:)
+      scheduler.validate!
+      schedule_daemon_supervisor.restart_if_running!(command: command)
     rescue ScheduleRegistry::Error => e
       raise Error.new(e.message, status: 400)
     rescue ScheduleDaemonSupervisor::Error => e
@@ -2559,7 +2602,8 @@ module HQ
           warning: auth_warning
         },
         server: {
-          restartable: @restartable
+          restartable: @restartable,
+          update: @tycho_updater.status
         },
         github: @github_client.capability.merge(write_enabled: github_write_enabled?),
         build: {
@@ -2590,6 +2634,12 @@ module HQ
         },
         safety: safety_guidance
       }
+    end
+
+    def update_tycho
+      @tycho_updater.update!
+    rescue TychoUpdater::Error => e
+      raise Error.new(e.message, status: 409)
     end
 
     def skill_installation

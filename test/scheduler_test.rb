@@ -603,7 +603,8 @@ module SchedulerTest
         detacher: ->(pid) { detached << pid },
         killer: ->(signal, pid) { killed << [signal, pid]; alive = false },
         liveness: ->(_pid) { alive },
-        sleeper: ->(_seconds) {}
+        sleeper: ->(_seconds) {},
+        working_directory: dir
       )
 
       started = supervisor.start!(interval: 17, dry_run: true)
@@ -615,6 +616,7 @@ module SchedulerTest
       assert(command.include?("--interval") && command.include?("17") && command.include?("--dry-run"),
              "expected supervisor to pass daemon options, got #{command.inspect}")
       assert(opts[:pgroup] == true, "expected scheduler daemon to run in its own process group")
+      assert(opts[:chdir] == dir, "expected scheduler daemon to use durable working directory")
       assert(detached == [12_345], "expected supervisor to detach the daemon")
       assert(File.exist?(File.join(dir, "scheduler_daemon.log")), "expected daemon log file to be created")
 
@@ -623,6 +625,48 @@ module SchedulerTest
       stopped = supervisor.stop!
       assert(stopped.fetch(:stopped), "expected supervisor stop to observe exited daemon")
       assert(killed == [["TERM", 12_345]], "expected supervisor to terminate the daemon pid")
+
+      alive = false
+      new_executable = File.join(dir, "bin", "tycho")
+      restarted = supervisor.start!(interval: 31, command: [new_executable, "schedule", "daemon"])
+      replacement_command = spawned.fetch(1).fetch(0)
+      assert(restarted.fetch(:pid) == 12_345, "expected supervisor to start replacement daemon")
+      assert(replacement_command.first == new_executable,
+             "expected replacement scheduler to launch the newly resolved executable")
+      assert(replacement_command.include?("31"), "expected replacement scheduler interval to be retained")
+
+      preserved_store = Struct.new(:state) do
+        def daemon_state
+          state
+        end
+
+        def record_daemon_stop!(**)
+          self.state = HQ::ScheduleDaemonState.new(status: "stopped")
+        end
+      end.new(HQ::ScheduleDaemonState.new(status: "running", pid: 54_321, interval: 47, dry_run: true))
+      preserved_spawns = []
+      preserved_alive = true
+      preserving_supervisor = HQ::ScheduleDaemonSupervisor.new(
+        store: preserved_store,
+        log_path: File.join(dir, "preserved_scheduler_daemon.log"),
+        working_directory: dir,
+        spawner: ->(*args, **opts) { preserved_spawns << [args, opts]; 54_322 },
+        detacher: ->(_pid) {},
+        killer: ->(_signal, _pid) { preserved_alive = false },
+        liveness: ->(_pid) { preserved_alive },
+        sleeper: ->(_seconds) {}
+      )
+      preserved = preserving_supervisor.restart_if_running!(command: [new_executable, "schedule", "daemon"])
+      preserved_command = preserved_spawns.fetch(0).fetch(0)
+      assert(preserved[:daemon][:interval] == 47 && preserved[:daemon][:dry_run],
+             "expected scheduler restart payload to preserve live interval and dry-run mode")
+      assert(preserved_command.include?("47") && preserved_command.include?("--dry-run"),
+             "expected replacement scheduler command to preserve live interval and dry-run mode")
+
+      store.record_daemon_stop!
+      absent = supervisor.restart_if_running!(command: [new_executable, "schedule", "daemon"])
+      assert(!absent.fetch(:restarted), "expected absent scheduler restart to be a no-op")
+      assert(absent.fetch(:detail) == "Scheduler daemon is not running", "expected absent scheduler detail")
     end
   end
 

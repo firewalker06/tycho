@@ -106,6 +106,7 @@ module HQ
   SERVER_IDENTITY_FILE = File.join(USER_CONFIG_DIR, "server_identity.json")
   USAGE_METRICS_FILE = File.join(LOGS_DIR, "usage_metrics.json")
   REMOTE_RESOURCES_FILE = File.join(LOGS_DIR, "remote_resources.json")
+  REMOTE_CONTROL_FILE = File.join(LOGS_DIR, "remote_control.json")
   SCHEDULES_FILE = env_present("SCHEDULES_PATH", default_schedules_path)
   SCHEDULES_STATE_FILE = env_present("SCHEDULES_STATE_PATH", File.join(LOGS_DIR, "schedules.json"))
   SCHEDULER_DAEMON_FILE = env_present("SCHEDULER_DAEMON_PATH", File.join(LOGS_DIR, "scheduler_daemon.json"))
