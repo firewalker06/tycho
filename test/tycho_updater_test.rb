@@ -37,7 +37,10 @@ module TychoUpdaterTest
         end
       )
 
-      assert(updater.status[:available], "expected Cellar Tycho to be updateable")
+      status = updater.status
+      assert(status[:available], "expected Cellar Tycho to be updateable")
+      assert(status[:detail].include?("restart automatically"),
+             "expected updater status to describe automatic local service restart")
       result = updater.update!
       assert(result[:updated], "expected Homebrew update result")
       assert(result[:executable] == File.join(File.realpath(dir), "bin", "tycho"),
@@ -81,6 +84,7 @@ module TychoUpdaterTest
       requests = []
       control = HQ::RemoteServerControl.new(
         record_path: record_path,
+        local_addresses: -> { ["100.64.0.10"] },
         requester: ->(url, _token) { requests << url; { status: 202, body: { restarting: true } } }
       )
       old_remote_url = ENV["TYCHO_REMOTE_URL"]
@@ -93,7 +97,12 @@ module TychoUpdaterTest
       assert(control.restart![:restarted], "expected Tailscale-bound local control record restart")
       assert(requests.last == "http://100.64.0.10:7423", "expected Tailscale control host discovery")
 
-      File.write(record_path, '{"host":"peer.example.test","port":7424}')
+      HQ::RemoteServerControl.publish(host: "100.64.0.11", port: 7424, path: record_path)
+      result = control.restart!
+      assert(!result[:restarted], "expected non-local Tailscale peer record to be rejected")
+      assert(requests.length == 2, "expected Tailscale peer record to make no request")
+
+      File.write(record_path, '{"host":"peer.example.test","port":7425}')
       result = control.restart!
       assert(!result[:restarted], "expected connected peer record to be rejected")
       assert(requests.length == 2, "expected peer record to make no request")

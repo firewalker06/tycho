@@ -6156,11 +6156,19 @@ def write_smoke_script(path)
           state.setup.server.update = { available: true, detail: "Fixture updater" };
           window.__tychoUpdateRequests = 0;
           window.__tychoUpdateReloaded = false;
+          window.__tychoUpdateShouldFail = false;
+          window.__tychoUpdateScheduleCalls = 0;
           const fixtureFetch = window.fetch.bind(window);
           window.fetch = async (input, init) => {
             const url = new URL(typeof input === "string" ? input : input.url, window.location.href);
             if (url.pathname === "/update" && init?.method === "POST") {
               window.__tychoUpdateRequests += 1;
+              if (window.__tychoUpdateShouldFail) {
+                return new Response(JSON.stringify({ error: "Fixture update failure" }), {
+                  status: 500,
+                  headers: { "Content-Type": "application/json" },
+                });
+              }
               return new Response(JSON.stringify({ update: { updated: true }, restarting: true }), {
                 status: 202,
                 headers: { "Content-Type": "application/json" },
@@ -6170,6 +6178,7 @@ def write_smoke_script(path)
           };
           waitForRemoteRestart = async () => {};
           reloadRemoteUiAfterRestart = () => { window.__tychoUpdateReloaded = true; };
+          schedule = () => { window.__tychoUpdateScheduleCalls += 1; };
           render();
         });
         await page.click("#header-more-button");
@@ -6189,6 +6198,19 @@ def write_smoke_script(path)
         }));
         if (updateSmoke.requests !== 1 || !updateSmoke.reloaded || !updateSmoke.connection.includes("updated and restarted")) {
           throw new Error(`Tycho update path did not complete safely: ${JSON.stringify(updateSmoke)}`);
+        }
+        await page.evaluate(() => { window.__tychoUpdateShouldFail = true; });
+        await page.click("#header-more-button");
+        await page.click("#header-more-panel [data-update-tycho]");
+        await page.waitForSelector("#confirmation-dialog[open]", { state: "visible", timeout: 10_000 });
+        await page.click("[data-confirmation-accept]");
+        await page.waitForFunction(() => window.__tychoUpdateRequests === 2 && window.__tychoUpdateScheduleCalls === 1);
+        const failedUpdateSmoke = await page.evaluate(() => ({
+          connection: state.connection,
+          scheduleCalls: window.__tychoUpdateScheduleCalls,
+        }));
+        if (!failedUpdateSmoke.connection.includes("Update failed") || failedUpdateSmoke.scheduleCalls !== 1) {
+          throw new Error(`Tycho update failure did not restore polling: ${JSON.stringify(failedUpdateSmoke)}`);
         }
         const localServerMenu = page.locator(".local-server-list-item [data-server-action-menu]");
         await localServerMenu.locator("> summary").click();

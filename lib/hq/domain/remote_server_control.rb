@@ -5,15 +5,18 @@ require "net/http"
 require "uri"
 require "fileutils"
 require "ipaddr"
+require "socket"
 
 require_relative "constants"
 
 module HQ
   class RemoteServerControl
-    def initialize(record_path: REMOTE_CONTROL_FILE, token: ENV["TYCHO_REMOTE_TOKEN"], requester: nil)
+    def initialize(record_path: REMOTE_CONTROL_FILE, token: ENV["TYCHO_REMOTE_TOKEN"], requester: nil,
+                   local_addresses: nil)
       @record_path = record_path
       @token = token.to_s
       @requester = requester || method(:request_restart)
+      @local_addresses = local_addresses || method(:local_addresses)
     end
 
     def self.publish(host:, port:, path: REMOTE_CONTROL_FILE)
@@ -64,9 +67,15 @@ module HQ
       return true if value == "localhost" || value == "::1" || value.start_with?("127.")
 
       ip = IPAddr.new(value)
-      IPAddr.new("100.64.0.0/10").include?(ip)
+      Array(@local_addresses.call).any? { |address| IPAddr.new(address.to_s) == ip }
     rescue IPAddr::InvalidAddressError
       false
+    end
+
+    def local_addresses
+      Socket.getifaddrs.filter_map { |interface| interface.addr&.ip_address }
+    rescue SocketError
+      []
     end
 
     def request_restart(url, token)

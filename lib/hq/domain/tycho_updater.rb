@@ -13,7 +13,7 @@ module HQ
 
     def status
       if homebrew_install?
-        { available: true, detail: "Update this Homebrew installation, then restart Remote and the scheduler daemon." }
+        { available: true, detail: "Update this Homebrew installation; running local Remote and scheduler services restart automatically." }
       else
         { available: false, detail: "Updates are available only for Homebrew-installed Tycho." }
       end
