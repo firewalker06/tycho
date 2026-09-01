@@ -19,7 +19,7 @@ module HQ
     attr_reader :store, :log_path
 
     def initialize(store: ScheduleStore.new, command: nil, log_path: DAEMON_LOG_FILE,
-                   spawner: nil, detacher: nil, killer: nil, liveness: nil, sleeper: nil)
+                   spawner: nil, detacher: nil, killer: nil, liveness: nil, sleeper: nil, working_directory: nil)
       @store = store
       @command = command
       @log_path = log_path
@@ -28,6 +28,7 @@ module HQ
       @killer = killer || Process.method(:kill)
       @liveness = liveness || ProcessLiveness.method(:alive?)
       @sleeper = sleeper || Kernel.method(:sleep)
+      @working_directory = working_directory || Dir.home
     end
 
     def start!(interval: Scheduler::DEFAULT_INTERVAL, dry_run: false, command: nil)
@@ -101,7 +102,7 @@ module HQ
       }
     end
 
-    def restart_if_running!(interval: Scheduler::DEFAULT_INTERVAL, dry_run: false, command: nil)
+    def restart_if_running!(interval: nil, dry_run: nil, command: nil)
       current = store.daemon_state
       unless active?(current)
         return {
@@ -111,7 +112,11 @@ module HQ
         }
       end
 
-      restart!(interval:, dry_run:, command:).merge(detail: "Scheduler daemon restart requested")
+      restart!(
+        interval: interval || current.interval || Scheduler::DEFAULT_INTERVAL,
+        dry_run: dry_run.nil? ? current.dry_run : dry_run,
+        command:
+      ).merge(detail: "Scheduler daemon restart requested")
     end
 
     private
@@ -130,7 +135,7 @@ module HQ
           out: log,
           err: log,
           pgroup: true,
-          chdir: ROOT_DIR
+          chdir: @working_directory
         )
       end
       @detacher.call(pid)

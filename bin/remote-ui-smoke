@@ -4277,6 +4277,11 @@ def write_smoke_script(path)
           state.renderedViewHtml = "";
           render();
         }, agentKey);
+        await page.waitForFunction(() => {
+          const actions = document.querySelector("[data-agent-floating-actions]");
+          return Boolean(actions?.querySelector("[data-open-agent-summary]") &&
+            actions.querySelector('[data-agent-action="stop"]') && document.querySelector("#composer"));
+        });
         const desktopStopAction = await page.evaluate(() => {
           const actions = document.querySelector("[data-agent-floating-actions]");
           const summary = actions?.querySelector("[data-open-agent-summary]");

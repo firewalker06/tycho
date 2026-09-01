@@ -48,6 +48,7 @@ require_relative "domain/onboarding"
 require_relative "domain/visibility"
 require_relative "domain/web_push_notifier"
 require_relative "domain/usage_metrics"
+require_relative "domain/remote_server_control"
 
 module HQ
   class RemoteServer
@@ -99,6 +100,7 @@ module HQ
     def start
       server = TCPServer.new(@host, @port)
       @server = server
+      RemoteServerControl.publish(host: @host, port: @port)
       @shutdown = false
       @restart_requested = false
       shutdown = proc do
@@ -140,6 +142,7 @@ module HQ
         poll_agent_push_notifications! unless @shutdown
       end
     ensure
+      RemoteServerControl.clear(host: @host, port: @port)
       server&.close unless server&.closed?
       @daemon_log_io&.close
       @server = nil

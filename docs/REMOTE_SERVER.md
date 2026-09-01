@@ -129,6 +129,8 @@ If a `RemoteServer` is constructed without a restart command, `POST /server/rest
 
 Homebrew installs can update Tycho with `tycho update` or **Settings → More → Update Tycho**. After a successful upgrade, each path resolves the stable Homebrew executable, restarts the local scheduler through the existing supervisor, and asks the local Remote server to replace itself. The CLI reports safe no-ops when the local Remote server or scheduler daemon is absent. The web action applies only to the UI-serving host: it responds with `202 Accepted`, then the Remote server replaces itself after the response flushes. The broker intentionally keeps server lifecycle operations local and only forwards agent, project, and attachment requests to peers.
 
+The CLI discovers that local server through a host-local control record written by `tycho serve`; the record contains only its loopback or Tailscale bind host and port, never a bearer token. It does not read `TYCHO_REMOTE_URL`, so an update cannot target a connected peer.
+
 ## Web UI
 
 The remote server also serves a lightweight mobile web UI:

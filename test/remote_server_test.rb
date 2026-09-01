@@ -3256,13 +3256,14 @@ module RemoteServerTest
       stable_executable = File.join(dir, "bin", "tycho")
       FileUtils.mkdir_p(File.dirname(stable_executable))
       File.write(stable_executable, "#!/bin/sh\n")
+      File.delete(old_executable)
       updated_server = HQ::RemoteServer.new(
         restart_command: [old_executable, "serve", "--port", "7374"],
         logger: Logger.new(StringIO.new),
         output: StringIO.new
       )
       replacement = updated_server.send(:schedule_restart!)
-      resolved_stable_executable = File.join(File.realpath(dir), "bin", "tycho")
+      resolved_stable_executable = stable_executable
       assert(replacement[:command] == resolved_stable_executable,
              "expected Remote restart to resolve the stable Homebrew launcher after upgrade")
       assert(updated_server.instance_variable_get(:@restart_command) == [resolved_stable_executable, "serve", "--port", "7374"],
@@ -5448,7 +5449,9 @@ module RemoteServerTest
     assert(js[:body].include?("data-restart-server"), "expected Settings More menu to expose Remote restart action")
     assert(js[:body].include?("Update Tycho") &&
            js[:body].include?("data-update-tycho") &&
-           js[:body].include?('apiPost("/update"'),
+           js[:body].include?('apiPost("/update"') &&
+           js[:body].include?("restart its running Remote server and scheduler daemon automatically") &&
+           !js[:body].include?("scheduler daemon afterward using their existing controls"),
            "expected Settings More menu to offer Homebrew Tycho updates through the local API")
     assert(js[:body].include?("Remote restart"),
            "expected Settings readiness to include Remote restart status")

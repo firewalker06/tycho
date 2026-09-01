@@ -3,28 +3,71 @@
 require "json"
 require "net/http"
 require "uri"
+require "fileutils"
+require "ipaddr"
+
+require_relative "constants"
 
 module HQ
   class RemoteServerControl
-    DEFAULT_URL = "http://127.0.0.1:7373"
-
-    def initialize(url: ENV.fetch("TYCHO_REMOTE_URL", DEFAULT_URL), token: ENV["TYCHO_REMOTE_TOKEN"], requester: nil)
-      @url = url.to_s
+    def initialize(record_path: REMOTE_CONTROL_FILE, token: ENV["TYCHO_REMOTE_TOKEN"], requester: nil)
+      @record_path = record_path
       @token = token.to_s
       @requester = requester || method(:request_restart)
     end
 
+    def self.publish(host:, port:, path: REMOTE_CONTROL_FILE)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, "#{JSON.generate(host: host.to_s, port: port.to_i)}\n")
+      File.chmod(0o600, path)
+    end
+
+    def self.clear(host: nil, port: nil, path: REMOTE_CONTROL_FILE)
+      if host || port
+        record = JSON.parse(File.read(path))
+        return unless record["host"].to_s == host.to_s && record["port"].to_i == port.to_i
+      end
+
+      File.delete(path) if File.exist?(path)
+    rescue SystemCallError, JSON::ParserError
+      nil
+    end
+
     def restart!
-      response = @requester.call(@url, @token)
-      return unavailable("No running Remote server responded at #{@url}") unless response[:status].to_i.between?(200, 299)
-      return unavailable("Remote server at #{@url} did not accept a restart") unless response.dig(:body, :restarting) || response.dig(:body, "restarting")
+      url = local_url
+      return unavailable("No local Remote server control record is available") unless url
+
+      response = @requester.call(url, @token)
+      return unavailable("No running local Remote server responded at #{url}") unless response[:status].to_i.between?(200, 299)
+      return unavailable("Local Remote server at #{url} did not accept a restart") unless response.dig(:body, :restarting) || response.dig(:body, "restarting")
 
       { restarted: true, detail: "Remote server restart requested" }
     rescue SystemCallError, IOError, SocketError, URI::InvalidURIError, JSON::ParserError
-      unavailable("No running Remote server responded at #{@url}")
+      unavailable("No running local Remote server responded")
     end
 
     private
+
+    def local_url
+      record = JSON.parse(File.read(@record_path))
+      host = record.fetch("host").to_s
+      port = Integer(record.fetch("port"))
+      return unless local_host?(host) && port.between?(1, 65_535)
+
+      "http://#{host.include?(":") ? "[#{host}]" : host}:#{port}"
+    rescue Errno::ENOENT, JSON::ParserError, KeyError, ArgumentError, TypeError
+      nil
+    end
+
+    def local_host?(host)
+      value = host.to_s.downcase
+      return true if value == "localhost" || value == "::1" || value.start_with?("127.")
+
+      ip = IPAddr.new(value)
+      IPAddr.new("100.64.0.0/10").include?(ip)
+    rescue IPAddr::InvalidAddressError
+      false
+    end
 
     def request_restart(url, token)
       uri = URI.join(url.end_with?("/") ? url : "#{url}/", "server/restart")

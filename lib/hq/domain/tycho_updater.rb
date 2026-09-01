@@ -39,22 +39,25 @@ module HQ
       values = Array(command).map(&:to_s)
       return values if values.empty?
 
-      path = File.realpath(values.first)
-      return values unless path.match?(%r{/Cellar/#{FORMULA}/})
+      return values unless homebrew_prefix_for(values.first)
 
-      [stable_executable_for(path), *values.drop(1)]
-    rescue Errno::ENOENT
-      values
+      [stable_executable_for(values.first), *values.drop(1)]
     end
 
     def self.stable_executable_for(executable)
-      path = File.realpath(executable.to_s)
-      prefix = path.split("/Cellar/", 2).first
-      return path if prefix == path
+      path = executable.to_s
+      prefix = homebrew_prefix_for(path)
+      return File.realpath(path) unless prefix
 
       File.join(prefix, "bin", FORMULA)
     rescue Errno::ENOENT
-      executable.to_s
+      path
+    end
+
+    def self.homebrew_prefix_for(executable)
+      path = executable.to_s
+      path = File.realpath(path) if File.exist?(path)
+      path[%r{\A(.+)/Cellar/#{FORMULA}(?:/|\z)}, 1]
     end
 
     private
