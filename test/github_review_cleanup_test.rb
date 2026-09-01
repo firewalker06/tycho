@@ -4,7 +4,8 @@ module GitHubReviewCleanupTest
   module_function
 
   ROOT = File.expand_path("..", __dir__)
-  RETIRED_REFERENCES = %w[
+  RETIRED_REFERENCES = (
+    %w[
     PullRequestReview
     pull_request_review_store
     /github/auth
@@ -19,7 +20,12 @@ module GitHubReviewCleanupTest
     pullRequestReview
     settings-github
     data-start-github-login
-  ].freeze
+    post_json
+    DEFAULT_WRITE_TIMEOUT
+    X-GitHub-Idempotency-Key
+    write_timeout
+    ] + ["request(:post", "method == :post"]
+  ).freeze
 
   def run!
     paths = %w[lib bin docs README.md .env.sample].flat_map do |entry|
