@@ -4272,10 +4272,16 @@ def write_smoke_script(path)
           const agent = findAgent(key);
           agent.running = true;
           agent.status = "running";
+          agent.awaiting_input = false;
+          delete agent.latest_inquiry;
+          delete agent.suspended_inquiry;
           history.replaceState(null, "", routeHash({ type: "agent", key }));
+          clearTimeout(state.timer);
+          state.timer = null;
           state.renderedRouteKey = null;
           state.renderedViewHtml = "";
           render();
+          syncAgentFloatingActions(agent, parseRoute());
         }, agentKey);
         await page.waitForFunction(() => {
           const actions = document.querySelector("[data-agent-floating-actions]");
@@ -4309,11 +4315,12 @@ def write_smoke_script(path)
         }
 
         await page.setViewportSize({ width: 390, height: 844 });
-        await page.evaluate(() => {
+        await page.evaluate((key) => {
           state.renderedRouteKey = null;
           state.renderedViewHtml = "";
           render();
-        });
+          syncAgentFloatingActions(findAgent(key), parseRoute());
+        }, agentKey);
         const mobileStopAction = await page.evaluate(() => ({
           visible: Boolean(document.querySelector('[data-agent-floating-actions] [data-agent-action="stop"]')),
           composerStop: Boolean(document.querySelector('#composer [data-agent-action="stop"]')),
