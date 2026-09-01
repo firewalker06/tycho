@@ -21,7 +21,8 @@ require_relative "domain/delegation_actor"
 require_relative "domain/agent_archive_store"
 require_relative "domain/usage_metrics"
 require_relative "domain/server_identity"
-require_relative "tycho_updater"
+require_relative "domain/tycho_updater"
+require_relative "domain/schedule_daemon_supervisor"
 
 module HQ
   module CLICommand
@@ -722,12 +723,15 @@ module HQ
       0
     end
 
-    def update(argv, executable: nil, out: $stdout, err: $stderr, updater: nil)
+    def update(argv, executable: nil, out: $stdout, err: $stderr, updater: nil, schedule_daemon_supervisor: nil,
+               restarter: nil)
       return usage("Unexpected update arguments: #{argv.join(" ")}", err:) unless Array(argv).empty?
 
       result = (updater || TychoUpdater.new(executable: executable || $PROGRAM_NAME)).update!
+      schedule_daemon_supervisor ||= ScheduleDaemonSupervisor.new
+      schedule_daemon_supervisor.restart!
       out.puts result.fetch(:detail)
-      out.puts "Restart Tycho Remote and the scheduler daemon through their existing controls to load the update."
+      (restarter || HQ::CLI.method(:restart!)).call([], executable || File.expand_path("../../bin/tycho", __dir__))
       0
     rescue TychoUpdater::Error => e
       failure(e.message, err:)

@@ -16,7 +16,7 @@ require_relative "registry"
 require_relative "remote_ui"
 require_relative "terminal_qr"
 require_relative "version"
-require_relative "tycho_updater"
+require_relative "domain/tycho_updater"
 require_relative "domain/project"
 require_relative "domain/project_workspace"
 require_relative "domain/attachment_normalizer"
@@ -300,17 +300,17 @@ module HQ
         if method == "POST" && parts.length == 3 && parts[2] == "credentials"
           result = service.save_remote_server_credential(parts[1], body)
           @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
-          return ok(result)
+          return ok(enrich_server_response(result))
         end
         if method == "POST" && parts == ["servers"]
           result = service.add_remote_server(body)
           @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
-          return created(result)
+          return created(enrich_server_response(result))
         end
         if method == "PATCH" && parts.length == 2
           result = service.update_remote_server(parts[1], body)
           @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
-          return ok(result)
+          return ok(enrich_server_response(result))
         end
         if method == "DELETE" && parts.length == 2
           result = service.remove_remote_server(parts[1])
@@ -385,7 +385,7 @@ module HQ
       end
       return ok(service.search_index) if method == "GET" && parts == ["search"]
       return ok(service.memory_handoffs) if method == "GET" && parts == ["memory-handoffs"]
-      return ok(update: service.update_tycho) if method == "POST" && parts == ["update"]
+      return accepted(update_and_restart!(service), headers: RESTART_CACHE_RESET_HEADERS) if method == "POST" && parts == ["update"]
       return accepted(schedule_restart!, headers: RESTART_CACHE_RESET_HEADERS) if method == "POST" && parts == ["server", "restart"]
       return ok(service.push_config) if method == "GET" && parts == ["push", "config"]
       return ok(service.push_status(body)) if method == "POST" && parts == ["push", "status"]
@@ -516,13 +516,30 @@ module HQ
     end
 
     def broker_servers(broker)
+      enrich_servers(broker.servers)
+    end
+
+    def enrich_server_response(result)
+      servers = enrich_servers(result.fetch(:servers, []))
+      server = result[:server]
+      enriched_server = servers.find { |entry| entry[:key] == server[:key] } if server
+      result.merge(servers: servers, server: enriched_server || server)
+    end
+
+    def enrich_servers(servers)
       catalog_versions = @resource_catalog.snapshot.fetch(:servers, []).to_h do |server|
         [server[:key], server[:version]]
       end
-      broker.servers.map do |server|
+      servers.map do |server|
         version = catalog_versions[server[:key]]
         version.to_s.empty? ? server : server.merge(version: version)
       end
+    end
+
+    def update_and_restart!(service)
+      update = service.update_tycho
+      scheduler = service.restart_schedule_daemon
+      schedule_restart!.merge(update: update, scheduler: scheduler)
     end
 
     def route_ui(path)

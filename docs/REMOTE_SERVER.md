@@ -127,7 +127,7 @@ The restart flow is intentionally ordered so the browser gets a clean acknowledg
 
 If a `RemoteServer` is constructed without a restart command, `POST /server/restart` returns `409 Conflict`. That keeps test and embedded server instances from accidentally attempting to replace their process.
 
-Homebrew installs can update Tycho with `tycho update` or **Settings → More → Update Tycho**. The web action applies only to the UI-serving host: the broker intentionally keeps server lifecycle operations local and only forwards agent, project, and attachment requests to peers. After a successful update, use the existing **Restart server** and scheduler daemon controls to replace both running process images.
+Homebrew installs can update Tycho with `tycho update` or **Settings → More → Update Tycho**. The CLI restarts Tycho and the scheduler daemon after Homebrew succeeds. The web action applies only to the UI-serving host: it restarts the scheduler through the existing supervisor, responds with `202 Accepted`, then the Remote server replaces itself. The broker intentionally keeps server lifecycle operations local and only forwards agent, project, and attachment requests to peers.
 
 ## Web UI
 

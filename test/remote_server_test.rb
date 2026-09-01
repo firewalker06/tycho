@@ -2947,14 +2947,27 @@ module RemoteServerTest
           { updated: true, detail: "Tycho updated" }
         end
       end.new(0)
-      service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace), tycho_updater: updater)
-      server = HQ::RemoteServer.new(logger: Logger.new(StringIO.new), output: StringIO.new)
+      daemon_supervisor = FakeScheduleDaemonSupervisor.new
+      service = HQ::RemoteService.new(
+        registry: registry_for_project(dir, workspace),
+        tycho_updater: updater,
+        schedule_daemon_supervisor: daemon_supervisor
+      )
+      server = HQ::RemoteServer.new(
+        restart_command: [RbConfig.ruby, "bin/tycho", "serve"],
+        logger: Logger.new(StringIO.new),
+        output: StringIO.new
+      )
 
       assert(service.setup.dig(:server, :update, :available), "expected setup to expose local update readiness")
       response = server.send(:route, service, "POST", "/update", {}, nil)
-      assert(response[:status] == 200 && response.dig(:body, :update, :updated),
-             "expected local update route to return its update result")
+      assert(response[:status] == 202 && response.dig(:body, :update, :updated) && response.dig(:body, :restarting),
+             "expected local update route to restart the updated local server")
       assert(updater.calls == 1, "expected local update route to call only its local updater")
+      assert(daemon_supervisor.calls.include?([:restart, nil, false]),
+             "expected local update route to restart the scheduler daemon")
+      assert(server.instance_variable_get(:@restart_requested),
+             "expected local update route to schedule its own post-response replacement")
       assert(!HQ::RemoteBroker::RESOURCE_ROOTS.include?("update"),
              "expected broker proxy boundaries to exclude server update operations")
     end
@@ -3768,6 +3781,17 @@ module RemoteServerTest
     handler = lambda do |request|
       requests << request
       case [request[:method], request[:path]]
+      when ["GET", "/resources"]
+        {
+          status: 200,
+          content_type: "application/json",
+          body: JSON.generate(
+            schema_version: 1,
+            build: { version: "0.10.1-peer" },
+            agents: [{ key: "peer-agent-1", name: "Peer Agent" }],
+            projects: []
+          )
+        }
       when ["GET", "/agents"]
         unless request.dig(:headers, "authorization") == "Bearer target-secret"
           next({
@@ -3843,6 +3867,27 @@ module RemoteServerTest
         assert(requests.all? { |request| request.dig(:headers, "authorization") == "Bearer target-secret" },
                "expected broker requests to use the provided browser-local token")
 
+        catalog = server.instance_variable_get(:@resource_catalog)
+        catalog.refresh(
+          "tycho-peer",
+          registry: service.registry,
+          server_url: service.server_url,
+          local_service: service,
+          token_override: "target-secret",
+          force: true
+        )
+        wait_for_resource_catalog(catalog) do |snapshot|
+          snapshot[:servers].find { |entry| entry[:key] == "tycho-peer" }[:status] == "online"
+        end
+
+        refreshed_add = server.send(:route, service, "POST", "/servers", {
+          "name" => "tycho-peer",
+          "url" => target_url,
+          "token" => "target-secret"
+        }, nil)
+        assert(refreshed_add.dig(:body, :server, :version) == "0.10.1-peer",
+               "expected add-or-update response to preserve the cached peer version")
+
         promoted = server.send(:route, service, "POST", "/servers/tycho-peer/credentials", {
           "token" => "target-secret"
         }, nil)
@@ -3853,6 +3898,8 @@ module RemoteServerTest
                "expected browser-promoted credentials to use private file permissions")
         assert(!promoted.dig(:body, :credential).to_s.include?("target-secret"),
                "expected credential metadata to omit token values")
+        assert(promoted.dig(:body, :servers).find { |entry| entry[:key] == "tycho-peer" }[:version] == "0.10.1-peer",
+               "expected credential response to preserve the cached peer version")
 
         updated = server.send(:route, service, "PATCH", "/servers/tycho-peer", {
           "name" => "Studio Mac",
@@ -3863,6 +3910,8 @@ module RemoteServerTest
                "expected identity update route to return the new display name")
         assert(updated.dig(:body, :server, :icon) == "computer",
                "expected identity update route to return the new icon")
+        assert(updated.dig(:body, :server, :version) == "0.10.1-peer",
+               "expected identity update response to preserve the cached peer version")
         persisted_after_update = YAML.safe_load(File.read(config_path), aliases: true)
         assert(persisted_after_update.dig("remote_servers", 0, "name") == "Studio Mac",
                "expected identity update route to persist the display name")

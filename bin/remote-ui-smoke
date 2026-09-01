@@ -6134,6 +6134,44 @@ def write_smoke_script(path)
             !peerVersionTitle?.includes("differs from host")) {
           throw new Error(`Settings server list lost version metadata: ${JSON.stringify({ serverSettingsText, peerVersionLabel, peerVersionTitle })}`);
         }
+        await page.evaluate(() => {
+          state.setup.server.update = { available: true, detail: "Fixture updater" };
+          window.__tychoUpdateRequests = 0;
+          window.__tychoUpdateReloaded = false;
+          const fixtureFetch = window.fetch.bind(window);
+          window.fetch = async (input, init) => {
+            const url = new URL(typeof input === "string" ? input : input.url, window.location.href);
+            if (url.pathname === "/update" && init?.method === "POST") {
+              window.__tychoUpdateRequests += 1;
+              return new Response(JSON.stringify({ update: { updated: true }, restarting: true }), {
+                status: 202,
+                headers: { "Content-Type": "application/json" },
+              });
+            }
+            return fixtureFetch(input, init);
+          };
+          waitForRemoteRestart = async () => {};
+          reloadRemoteUiAfterRestart = () => { window.__tychoUpdateReloaded = true; };
+          render();
+        });
+        await page.click("#header-more-button");
+        await page.waitForSelector("#header-more-panel [data-update-tycho]", { state: "visible", timeout: 10_000 });
+        await page.click("#header-more-panel [data-update-tycho]");
+        await page.waitForSelector("#confirmation-dialog[open]", { state: "visible", timeout: 10_000 });
+        const updateConfirmation = await page.locator("#confirmation-dialog").innerText();
+        if (!updateConfirmation.includes("Update Tycho with Homebrew?") || !updateConfirmation.includes("scheduler daemon")) {
+          throw new Error(`Tycho update confirmation lost lifecycle guidance: ${JSON.stringify(updateConfirmation)}`);
+        }
+        await page.click("[data-confirmation-accept]");
+        await page.waitForFunction(() => window.__tychoUpdateRequests === 1 && window.__tychoUpdateReloaded === true);
+        const updateSmoke = await page.evaluate(() => ({
+          requests: window.__tychoUpdateRequests,
+          reloaded: window.__tychoUpdateReloaded,
+          connection: state.connection,
+        }));
+        if (updateSmoke.requests !== 1 || !updateSmoke.reloaded || !updateSmoke.connection.includes("updated and restarted")) {
+          throw new Error(`Tycho update path did not complete safely: ${JSON.stringify(updateSmoke)}`);
+        }
         const localServerMenu = page.locator(".local-server-list-item [data-server-action-menu]");
         await localServerMenu.locator("> summary").click();
         const localServerActions = await localServerMenu.locator("[role='menuitem']").evaluateAll((items) => (

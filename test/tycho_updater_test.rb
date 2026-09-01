@@ -5,7 +5,7 @@ require "fileutils"
 require "stringio"
 
 require_relative "../lib/hq/cli_command"
-require_relative "../lib/hq/tycho_updater"
+require_relative "../lib/hq/domain/tycho_updater"
 
 module TychoUpdaterTest
   module_function
@@ -54,9 +54,19 @@ module TychoUpdaterTest
         result
       end
     end.new({ updated: true, detail: "Updated" })
-    assert(HQ::CLICommand.update([], out: out, updater: updater) == 0, "expected update command success")
-    assert(out.string.include?("Restart Tycho Remote and the scheduler daemon"),
-           "expected update command to give restart guidance")
+    calls = []
+    supervisor = Struct.new(:calls) do
+      def restart!
+        self.calls += 1
+        { restarted: true }
+      end
+    end.new(0)
+    assert(HQ::CLICommand.update([], out: out, updater: updater, schedule_daemon_supervisor: supervisor,
+                                 restarter: ->(argv, executable) { calls << [argv, executable] }) == 0,
+           "expected update command success")
+    assert(supervisor.calls == 1, "expected update command to restart the scheduler daemon")
+    assert(calls == [[[], File.expand_path("../bin/tycho", __dir__)]],
+           "expected update command to restart the local Tycho process")
   end
 
   def instance_double(success)
