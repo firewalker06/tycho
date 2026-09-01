@@ -67,8 +67,8 @@ module RemoteUIAgentSearchTest
       const noActionUnread = { key: "no-action-unread", name: "C no action unread", last_result: "no action", unread: true, updated_at: "2026-08-01T12:00:00Z" };
       const noActionReadNewer = { key: "no-action-read-newer", name: "D no action read", last_result: "no action", updated_at: "2026-10-01T12:00:00Z" };
       const switched = [noActionReadNewer, actionableReadNewer, noActionUnread, actionableUnread].sort(helpers.compareQuickSwitchAgents);
-      if (switched.map((agent) => agent.key).join(",") !== "actionable-unread,actionable-read-newer,no-action-unread,no-action-read-newer") {
-        throw new Error(`quick switcher did not keep unread first within no-action buckets: ${JSON.stringify(switched)}`);
+      if (switched.map((agent) => agent.key).join(",") !== "actionable-read-newer,actionable-unread,no-action-read-newer,no-action-unread") {
+        throw new Error(`quick switcher did not keep actionable agents and no-action agents in recency order: ${JSON.stringify(switched)}`);
       }
       if (helpers.compareAgentsBySort(actionableUnread, noActionReadNewer, "agent_name_asc", {}) >= 0) {
         throw new Error("named agent sorting must not be changed by no-action status");
