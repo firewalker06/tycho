@@ -2586,6 +2586,7 @@ module HQ
           restartable: @restartable,
           update: @tycho_updater.status
         },
+        github: @github_client.capability,
         build: {
           version: HQ::VERSION,
           asset_version: HQ::RemoteUI.asset_version

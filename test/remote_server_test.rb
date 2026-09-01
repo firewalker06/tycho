@@ -1265,6 +1265,8 @@ module RemoteServerTest
         registry: registry,
         github_client: FakeUnavailableGitHubClient.new
       )
+      assert(service.setup.dig(:github, :source) == "gh",
+             "expected setup to expose the gh-backed PR diff readiness contract")
       server = HQ::RemoteServer.new
       created = service.create_agent(
         "project_key" => "web",
@@ -7355,6 +7357,10 @@ module RemoteServerTest
   class FakeUnavailableGitHubClient
     def enabled?
       true
+    end
+
+    def capability
+      { enabled: true, available: true, source: "gh", gh: { available: true, authenticated: true } }
     end
 
     def get_json(*)

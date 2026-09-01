@@ -62,11 +62,15 @@ module RemoteUIAgentSearchTest
         throw new Error(`agent search was not filtered and ranked by visible priority: ${JSON.stringify(ranked)}`);
       }
 
-      const noAction = { key: "no-action", name: "No action", last_result: "no action", updated_at: "2026-09-01T12:00:00Z" };
-      const actionable = { key: "actionable", name: "Actionable", last_result: "success", updated_at: "2026-08-01T12:00:00Z" };
-      if (helpers.compareAgentsBySort(noAction, actionable, "agent_updated_desc", {}) <= 0 ||
-          helpers.compareAgentsBySort(actionable, noAction, "agent_updated_desc", {}) >= 0) {
-        throw new Error("no_action_needed agents must sort below actionable agents");
+      const noActionRecent = { key: "no-action-recent", name: "A no action", last_result: "no action", updated_at: "2026-09-01T12:00:00Z" };
+      const noActionOld = { key: "no-action-old", name: "Z no action", last_result: "no action", updated_at: "2026-08-01T12:00:00Z" };
+      const actionable = { key: "actionable", name: "M actionable", last_result: "success", updated_at: "2026-07-01T12:00:00Z" };
+      const switched = [noActionOld, noActionRecent, actionable].sort(helpers.compareQuickSwitchAgents);
+      if (switched.map((agent) => agent.key).join(",") !== "actionable,no-action-recent,no-action-old") {
+        throw new Error(`quick switcher did not use no-action buckets: ${JSON.stringify(switched)}`);
+      }
+      if (helpers.compareAgentsBySort(noActionRecent, actionable, "agent_name_asc", {}) >= 0) {
+        throw new Error("named agent sorting must not be changed by no-action status");
       }
 
       const parts = helpers.highlightSearchParts("A <Personal> & personal", "personal");
