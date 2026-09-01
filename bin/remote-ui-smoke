@@ -244,7 +244,6 @@ def fake_github_response(method, path, headers, request_body)
     ])]
   end
   return ["200 OK", "application/json", "[]"] if method == "GET" &&
-                                                   (path.end_with?("/reviews") || path.end_with?("/comments"))
 
   ["404 Not Found", "application/json", JSON.generate("message" => "fixture route not found")]
 end
@@ -3227,9 +3226,9 @@ def write_smoke_script(path)
             agentKey: key,
             pullRequestId,
             snapshotId: diff.snapshot_id,
-            reviewLinePath: "lib/example.rb",
-            reviewLineHunk: "0",
-            reviewLineIndex: "0",
+            prDiffLinePath: "lib/example.rb",
+            prDiffLineHunk: "0",
+            prDiffLineIndex: "0",
           } }, false);
           await new Promise((resolve) => requestAnimationFrame(resolve));
           const selection = pullRequestDiffSelection(key, pullRequestId, diff.snapshot_id);
@@ -3244,9 +3243,9 @@ def write_smoke_script(path)
             agentKey: key,
             pullRequestId,
             snapshotId: diff.snapshot_id,
-            reviewLinePath: "lib/example.rb",
-            reviewLineHunk: "0",
-            reviewLineIndex: "100",
+            prDiffLinePath: "lib/example.rb",
+            prDiffLineHunk: "0",
+            prDiffLineIndex: "100",
           } }, true);
           const message = document.querySelector("#growl")?.innerText || "";
           diff.files[0].hunks[0].lines = originalLines;
@@ -3746,134 +3745,6 @@ def write_smoke_script(path)
           throw new Error(`Sent PR context lost metadata or consumed a later range: ${JSON.stringify(sentContext)}`);
         }
         await prContextPage.close();
-
-        const pausedReviewPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
-        await pausedReviewPage.goto(`${baseUrl}/ui#reviews`, { waitUntil: "networkidle" });
-        await pausedReviewPage.waitForSelector("#view", { state: "visible", timeout: 10_000 });
-        const pausedReviewState = await pausedReviewPage.evaluate(() => ({
-          route: parseRoute(),
-          hasNavigation: Boolean(document.querySelector("[data-tab='reviews']")),
-          inbox: state.pullRequestInbox,
-        }));
-        if (pausedReviewState.route.type !== "tab" ||
-            pausedReviewState.route.tab !== "now" ||
-            pausedReviewState.hasNavigation ||
-            pausedReviewState.inbox !== null) {
-          throw new Error(`Paused Review Inbox became reachable: ${JSON.stringify(pausedReviewState)}`);
-        }
-        await pausedReviewPage.close();
-
-        // Retain the end-to-end Review Inbox scenario for the later performance redesign.
-        if (false) {
-        const reviewPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
-        await reviewPage.goto(`${baseUrl}/ui#reviews`, { waitUntil: "networkidle" });
-        await reviewPage.waitForSelector("#reviews-nav-button:not(.hidden)", { state: "visible", timeout: 10_000 });
-        try {
-          await reviewPage.waitForSelector(".pr-review-row", { state: "visible", timeout: 10_000 });
-        } catch (error) {
-          const diagnostics = await reviewPage.evaluate(async () => ({
-            text: document.querySelector("#view")?.innerText,
-            setup: state.setup?.github,
-            inbox: state.pullRequestInbox,
-            response: await fetch(apiPath("/pull-requests")).then(async (response) => ({
-              status: response.status,
-              body: await response.text(),
-            })),
-          }));
-          throw new Error(`Review Inbox did not load: ${JSON.stringify(diagnostics)} / ${error.message}`);
-        }
-        if (await reviewPage.locator(".pr-review-row").count() !== 1) {
-          throw new Error("Review Inbox did not deduplicate project and agent occurrences");
-        }
-        await reviewPage.click(".pr-review-row");
-        await reviewPage.waitForSelector(".pr-review-workspace", { state: "visible", timeout: 10_000 });
-        const reviewBrief = await reviewPage.locator(".pr-review-workspace").innerText();
-        if (!reviewBrief.includes("Smoke pull request") ||
-            !reviewBrief.includes("1 unresolved") ||
-            !reviewBrief.includes("Checks")) {
-          throw new Error(`Review brief is incomplete: ${JSON.stringify(reviewBrief)}`);
-        }
-        await reviewPage.click("[data-refresh-review]");
-        await reviewPage.waitForSelector("[data-review-file='lib/example.rb']", { state: "visible", timeout: 10_000 });
-        await reviewPage.click("details[data-state-key='review-context-reviews'] > summary");
-        await reviewPage.check("[data-select-review-file='lib/example.rb']");
-        await reviewPage.check("[data-select-review-hunk='lib/example.rb:0']");
-        await reviewPage.check("[data-select-review-comment='comment-1']");
-        await reviewPage.fill("[data-review-file-filter]", "example");
-        await reviewPage.evaluate(async () => {
-          await refresh({ force: true, forcePullRequests: true });
-        });
-        await reviewPage.waitForSelector("[data-review-file='lib/example.rb']", { state: "visible", timeout: 10_000 });
-        const preservedReviewState = await reviewPage.evaluate(() => ({
-          fileFilter: document.querySelector("[data-review-file-filter]")?.value,
-          fileSelected: document.querySelector("[data-select-review-file]")?.checked,
-          hunkSelected: document.querySelector("[data-select-review-hunk]")?.checked,
-          commentSelected: document.querySelector("[data-select-review-comment]")?.checked,
-          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-        }));
-        if (preservedReviewState.fileFilter !== "example" ||
-            !preservedReviewState.fileSelected ||
-            !preservedReviewState.hunkSelected ||
-            !preservedReviewState.commentSelected ||
-            preservedReviewState.overflow) {
-          throw new Error(`Review polling lost selection or mobile layout: ${JSON.stringify(preservedReviewState)}`);
-        }
-        await reviewPage.locator("[data-review-file]").focus();
-        await reviewPage.keyboard.press("j");
-        const keyboardFileFocus = await reviewPage.evaluate(() => document.activeElement?.dataset?.reviewFile);
-        await reviewPage.keyboard.press("]");
-        const keyboardHunkFocus = await reviewPage.evaluate(() => document.activeElement?.dataset?.reviewHunk);
-        if (keyboardFileFocus !== "lib/example.rb" || keyboardHunkFocus !== "lib/example.rb:0") {
-          throw new Error(`Review keyboard navigation failed: ${JSON.stringify({ keyboardFileFocus, keyboardHunkFocus })}`);
-        }
-        await reviewPage.evaluate(async () => {
-          await refresh({ force: true, forcePullRequests: true });
-        });
-        const preservedHunkFocus = await reviewPage.evaluate(() => document.activeElement?.dataset?.reviewHunk);
-        if (preservedHunkFocus !== "lib/example.rb:0") {
-          throw new Error(`Review polling lost focused hunk: ${JSON.stringify(preservedHunkFocus)}`);
-        }
-        const handoffAgentKey = await reviewPage.evaluate(async () => {
-          const data = await apiPost("/agents", {
-            project_key: "web",
-            template_key: "custom",
-            name: "Review Handoff Agent",
-            prompt: "Investigate selected review context.",
-            agent: "codex",
-          });
-          state.agents.push(data.agent);
-          render();
-          return data.agent.key;
-        });
-        await reviewPage.selectOption("[data-review-handoff-form] select[name='agent_key']", handoffAgentKey);
-        await reviewPage.fill("[data-review-handoff-form] textarea[name='note']", "Investigate the selected context.");
-        await reviewPage.click("[data-review-handoff-form] button[type='submit']");
-        await reviewPage.waitForFunction(
-          () => document.querySelector("[data-review-handoff-form]")?.innerText.includes("1 handoff(s) recorded"),
-          null,
-          { timeout: 10_000 }
-        );
-        await reviewPage.fill("[data-review-draft-form] textarea[name='body']", "Looks good after the selected issue is addressed.");
-        await reviewPage.click("[data-review-draft-form] button[type='submit']");
-        await reviewPage.waitForFunction(
-          () => document.querySelector("[data-review-draft-form] textarea[name='body']")?.value.includes("Looks good"),
-          null,
-          { timeout: 10_000 }
-        );
-        if (!(await reviewPage.locator("[data-post-review]").isDisabled())) {
-          throw new Error("GitHub posting was available without the explicit write gate");
-        }
-        await reviewPage.setViewportSize({ width: 1280, height: 800 });
-        const desktopReview = await reviewPage.evaluate(() => ({
-          files: document.querySelectorAll("[data-review-file]").length,
-          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-          postDisabled: document.querySelector("[data-post-review]")?.disabled,
-        }));
-        if (desktopReview.files !== 1 || desktopReview.overflow || !desktopReview.postDisabled) {
-          throw new Error(`Desktop review layout or write gate failed: ${JSON.stringify(desktopReview)}`);
-        }
-        await reviewPage.close();
-        }
 
         const speechAgentKey = await page.evaluate(async () => {
           const data = await apiPost("/agents", {
@@ -5943,6 +5814,14 @@ def write_smoke_script(path)
         if (await page.locator("#agent-template").count() !== 0 || selectedResponseStyle !== "global") {
           throw new Error(`New agents must use the Custom free-text path: ${JSON.stringify({ selectedResponseStyle })}`);
         }
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}/clone`, { waitUntil: "networkidle" });
+        await page.waitForSelector("#agent-form[data-mode='clone']", { state: "visible", timeout: 10_000 });
+        const cloneTemplate = await page.locator("#agent-form input[name='template_key']").inputValue();
+        if (await page.locator("#agent-template").count() !== 0 || !cloneTemplate) {
+          throw new Error(`Clone must preserve but not expose its prompt template: ${JSON.stringify({ cloneTemplate })}`);
+        }
+        await page.goto(`${baseUrl}/ui#project/web/agent/new`, { waitUntil: "networkidle" });
+        await page.waitForSelector("#agent-prompt", { state: "visible", timeout: 10_000 });
         if (await page.locator("#quick-agent-fab").isVisible()) {
           throw new Error("Quick Agent header action should be hidden on focused forms");
         }
@@ -6744,8 +6623,6 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     "TYCHO_LOGS_ROOT" => fixture.fetch(:logs_dir),
     "TYCHO_CODEX_BIN" => fixture.fetch(:fake_codex_path),
     "TYCHO_GH_BIN" => fixture.fetch(:fake_gh_path),
-    "TYCHO_GITHUB_APP_CLIENT_ID" => "smoke-client-id",
-    "TYCHO_GITHUB_APP_SLUG" => "tycho-smoke",
     "TYCHO_REMOTE_TOKEN" => "",
     "TYCHO_GITHUB_API_URL" => github_api_url
   }

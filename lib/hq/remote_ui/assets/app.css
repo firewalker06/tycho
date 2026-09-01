@@ -1705,56 +1705,6 @@ select {
   color: var(--accent);
 }
 
-.pr-review-inbox,
-.pr-review-workspace {
-  max-width: 1120px;
-  margin-inline: auto;
-}
-
-.pr-review-row {
-  text-decoration: none;
-}
-
-.pr-review-file {
-  scroll-margin-top: calc(var(--app-header-height, 64px) + 12px);
-  border-radius: 10px;
-}
-
-.pr-review-file:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-}
-
-.pr-review-file > .diff-toolbar {
-  position: sticky;
-  top: var(--app-header-height, 64px);
-  z-index: 2;
-  justify-content: flex-start;
-  background: var(--panel);
-}
-
-.pr-review-file > .diff-file {
-  margin-top: 0;
-}
-
-.pr-review-workspace pre[data-review-handoff-preview] {
-  max-height: 180px;
-  overflow: auto;
-  white-space: pre-wrap;
-}
-
-.pr-line-selection { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.pr-line-selection span { color: var(--muted); }
-
-@media (max-width: 700px) {
-  .pr-review-workspace .card-title,
-  .pr-review-workspace .button-row,
-  .pr-review-file > .diff-toolbar {
-    align-items: stretch;
-    flex-direction: column;
-  }
-}
-
 .nav-mark {
   display: inline-grid;
   place-items: center;
@@ -1792,21 +1742,6 @@ select {
   padding: 12px;
 }
 
-.github-auth-card {
-  align-content: start;
-}
-
-.github-device-code {
-  width: fit-content;
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: clamp(1.35rem, 6vw, 2rem);
-  font-weight: 750;
-  letter-spacing: 0.14em;
-}
 
 .checkbox-card label {
   display: flex;
