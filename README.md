@@ -64,10 +64,11 @@ The complete annotated configuration is in
 hooks, and response style use separate files under `~/.tycho/config`.
 
 Tycho launches agent CLIs with access to the selected project. Review project
-paths, prompts, and sandbox settings before starting an agent. Do not commit
-your Tycho config, `.env`, logs, transcripts, or generated agent artifacts;
-they may contain local paths, source context, or credentials. See the
-[security policy](SECURITY.md).
+paths, prompts, and sandbox settings before starting an agent. Pi has
+[no native sandbox equivalent](docs/PI_CODING_AGENT.md#sandbox-behavior).
+Do not commit your Tycho config, `.env`, logs, transcripts, or generated agent
+artifacts; they may contain local paths, source context, or credentials. See
+the [security policy](SECURITY.md).
 
 ## Run
 
@@ -76,6 +77,13 @@ Open the TUI:
 ```bash
 tycho
 ```
+
+To run your first agent:
+
+1. Press `2` and select the project with `j`/`k`.
+2. Press `n`, enter a name and prompt, then choose **Create and Run Agent**.
+3. Continue in the open chat. Type a follow-up and press Enter; reopen the chat
+   later with `c` or Enter on the selected agent.
 
 Start the browser-based Remote UI:
 
