@@ -16,6 +16,9 @@ module GitHubReviewCleanupTest
     GithubLogin
     GithubStatus
     GithubLogout
+    pullRequestReview
+    settings-github
+    data-start-github-login
   ].freeze
 
   def run!

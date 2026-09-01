@@ -5989,14 +5989,14 @@ def write_smoke_script(path)
         await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
         await page.waitForSelector("[data-testid='response-style-action']", { state: "visible", timeout: 10_000 });
         await page.waitForSelector("#session-loop-default-interval", { state: "visible", timeout: 10_000 });
-        await page.waitForSelector("#settings-github", { state: "visible", timeout: 10_000 });
-        const githubSettings = await page.locator("#settings-github").innerText();
-        const githubInstallHref = await page.locator("#settings-github a[href*='/apps/tycho-smoke/installations/new']").getAttribute("href");
-        if (!githubSettings.includes("GitHub CLI") ||
-            !githubSettings.includes("App login ready") ||
-            !githubInstallHref ||
-            await page.locator("#settings-github [data-start-github-login]").count() !== 1) {
-          throw new Error(`GitHub settings did not expose App login with gh compatibility: ${JSON.stringify({ githubSettings, githubInstallHref })}`);
+        const retiredGitHubAppUi = await page.locator([
+          "#settings-" + "github",
+          "[data-start-" + "github-login]",
+          "[data-poll-" + "github-login]",
+          "[data-logout-" + "github]",
+        ].join(", ")).count();
+        if (retiredGitHubAppUi !== 0) {
+          throw new Error(`Retired GitHub App settings UI remains visible: ${retiredGitHubAppUi}`);
         }
         const serversSection = page.locator("[data-scroll-settings-section='settings-servers']");
         await serversSection.click();
