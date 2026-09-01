@@ -106,6 +106,22 @@ module TychoUpdaterTest
       result = control.restart!
       assert(!result[:restarted], "expected connected peer record to be rejected")
       assert(requests.length == 2, "expected peer record to make no request")
+
+      link_address = Object.new
+      link_address.define_singleton_method(:ip_address) { raise SocketError, "AF_LINK has no IP" }
+      local_address = Struct.new(:ip_address).new("100.64.0.12")
+      interface = Struct.new(:addr)
+      mixed_control = HQ::RemoteServerControl.new(
+        record_path: record_path,
+        interfaces: -> { [interface.new(link_address), interface.new(local_address)] },
+        requester: ->(url, _token) { requests << url; { status: 202, body: { restarting: true } } }
+      )
+      HQ::RemoteServerControl.publish(host: "100.64.0.12", port: 7426, path: record_path)
+      assert(mixed_control.restart![:restarted], "expected mixed production interfaces to retain local Tailscale address")
+      HQ::RemoteServerControl.publish(host: "100.64.0.13", port: 7427, path: record_path)
+      result = mixed_control.restart!
+      assert(!result[:restarted], "expected mixed production interfaces to reject Tailscale peer address")
+      assert(requests.last == "http://100.64.0.12:7426", "expected only the local mixed-interface address to be requested")
     ensure
       ENV["TYCHO_REMOTE_URL"] = old_remote_url
     end

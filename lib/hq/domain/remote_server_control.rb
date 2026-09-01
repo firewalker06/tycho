@@ -12,11 +12,12 @@ require_relative "constants"
 module HQ
   class RemoteServerControl
     def initialize(record_path: REMOTE_CONTROL_FILE, token: ENV["TYCHO_REMOTE_TOKEN"], requester: nil,
-                   local_addresses: nil)
+                   local_addresses: nil, interfaces: nil)
       @record_path = record_path
       @token = token.to_s
       @requester = requester || method(:request_restart)
       @local_addresses = local_addresses || method(:local_addresses)
+      @interfaces = interfaces || Socket.method(:getifaddrs)
     end
 
     def self.publish(host:, port:, path: REMOTE_CONTROL_FILE)
@@ -73,7 +74,12 @@ module HQ
     end
 
     def local_addresses
-      Socket.getifaddrs.filter_map { |interface| interface.addr&.ip_address }
+      Array(@interfaces.call).filter_map do |interface|
+        address = interface.addr
+        address.ip_address if address.respond_to?(:ip_address)
+      rescue SocketError
+        nil
+      end
     rescue SocketError
       []
     end

@@ -6178,7 +6178,11 @@ def write_smoke_script(path)
           };
           waitForRemoteRestart = async () => {};
           reloadRemoteUiAfterRestart = () => { window.__tychoUpdateReloaded = true; };
-          schedule = () => { window.__tychoUpdateScheduleCalls += 1; };
+          window.__tychoOriginalSchedule = schedule;
+          schedule = (...args) => {
+            window.__tychoUpdateScheduleCalls += 1;
+            return window.__tychoOriginalSchedule(...args);
+          };
           render();
         });
         await page.click("#header-more-button");
@@ -6208,10 +6212,19 @@ def write_smoke_script(path)
         const failedUpdateSmoke = await page.evaluate(() => ({
           connection: state.connection,
           scheduleCalls: window.__tychoUpdateScheduleCalls,
+          timerScheduled: state.timer !== null,
         }));
-        if (!failedUpdateSmoke.connection.includes("Update failed") || failedUpdateSmoke.scheduleCalls !== 1) {
+        if (!failedUpdateSmoke.connection.includes("Update failed") || failedUpdateSmoke.scheduleCalls !== 1 ||
+            !failedUpdateSmoke.timerScheduled) {
           throw new Error(`Tycho update failure did not restore polling: ${JSON.stringify(failedUpdateSmoke)}`);
         }
+        await page.evaluate(() => {
+          clearTimeout(state.timer);
+          state.timer = null;
+          schedule = window.__tychoOriginalSchedule;
+          delete window.__tychoOriginalSchedule;
+          schedule();
+        });
         const localServerMenu = page.locator(".local-server-list-item [data-server-action-menu]");
         await localServerMenu.locator("> summary").click();
         const localServerActions = await localServerMenu.locator("[role='menuitem']").evaluateAll((items) => (
