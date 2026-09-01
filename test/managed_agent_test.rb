@@ -35,6 +35,7 @@ module ManagedAgentTest
     assert_memory_rebuild_prices_codex_token_deltas
     assert_memory_rebuild_uses_each_runs_recorded_model
     assert_final_output_checklist_is_ephemeral_execution_context
+    assert_summary_sections_guidance_reaches_every_harness_run
     assert_response_style_applies_to_cold_and_resumed_runs
     assert_native_resume_includes_same_second_follow_up
     assert_response_style_can_be_disabled_and_run_session_is_recorded
@@ -1339,6 +1340,10 @@ module ManagedAgentTest
              "final output guidance should distinguish no-op checks from completed work")
       assert(checklist.include?("quiet outcome that suppresses operator unread and push notifications"),
              "final output guidance should disclose the quiet no-action consequence")
+      assert(checklist.include?(HQ::ManagedAgent::SUMMARY_SECTIONS_GUIDANCE),
+             "final output guidance should include the shared summary sections decision rule")
+      assert(checklist.include?(HQ::ManagedAgent::SUMMARY_SECTIONS_EXAMPLE),
+             "final output guidance should include a strict Markdown list block example")
       log_path = File.join(dir, "checklist.raw.log")
 
       agent = HQ::ManagedAgent.new(
@@ -1401,6 +1406,55 @@ module ManagedAgentTest
     end
   end
 
+  def assert_summary_sections_guidance_reaches_every_harness_run
+    %w[codex claude opencode pi].each do |harness|
+      cold = HQ::ManagedAgent.new(
+        key: "#{harness}-summary-guidance-cold",
+        name: "#{harness.capitalize} Summary Guidance Cold",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: Dir.tmpdir,
+        prompt: "Complete a substantive review.",
+        agent: harness
+      )
+      assert_summary_sections_guidance(cold.send(:build_command).fetch(:command).last, harness, "cold")
+
+      resumed = HQ::ManagedAgent.new(
+        key: "#{harness}-summary-guidance-resumed",
+        name: "#{harness.capitalize} Summary Guidance Resumed",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: Dir.tmpdir,
+        prompt: "Original prompt.",
+        agent: harness,
+        session_id: "#{harness}-summary-guidance-session",
+        session_bootstrapped: true,
+        runs: [
+          HQ::ManagedAgent::AgentRun.new(
+            started_at: Time.now - 60,
+            finished_at: Time.now - 30,
+            exit_code: 0,
+            status: "success"
+          )
+        ]
+      )
+      resumed.add_user_message!("Continue the substantive review.")
+      assert_summary_sections_guidance(resumed.send(:build_command).fetch(:command).last, harness, "resumed")
+    end
+  end
+
+  def assert_summary_sections_guidance(prompt, harness, phase)
+    assert(prompt.include?("Always provide a non-empty `summary`"),
+           "expected #{phase} #{harness} prompt to require the compact summary")
+    assert(prompt.include?("Set `summary_sections` to `null` for simple runs"),
+           "expected #{phase} #{harness} prompt to define the null case")
+    assert(prompt.include?("For substantive runs such as investigations, reviews, builds, or plans"),
+           "expected #{phase} #{harness} prompt to define when rich sections are useful")
+    assert(prompt.include?("Markdown `text` blocks") &&
+           prompt.include?(HQ::ManagedAgent::SUMMARY_SECTIONS_EXAMPLE),
+           "expected #{phase} #{harness} prompt to include Markdown list encoding guidance")
+  end
+
   def assert_agent_result_schema_describes_summary
     schema_path = File.expand_path("../config/schemas/agent_result.json", __dir__)
     schema = JSON.parse(File.read(schema_path))
@@ -1421,6 +1475,11 @@ module ManagedAgentTest
     assert(sections.dig("items", "required") == %w[type text url attachment] &&
            sections.dig("items", "properties", "type", "enum") == %w[text link attachment],
            "agent result schema should require ordered rich summary blocks")
+    sections_description = sections.fetch("description")
+    assert(sections_description.include?("Set summary_sections to null for simple runs") &&
+           sections_description.include?("For substantive runs such as investigations, reviews, builds, or plans") &&
+           sections_description.include?("Example Markdown list block"),
+           "agent result schema should explain when and how to produce rich summary blocks")
 
     old_schema_path = replace_constant(HQ, :AGENT_RESULT_SCHEMA, schema_path)
     agent = HQ::ManagedAgent.new(

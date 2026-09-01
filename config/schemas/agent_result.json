@@ -13,7 +13,7 @@
     },
     "summary_sections": {
       "type": ["array", "null"],
-      "description": "Optional ordered rich blocks used instead of summary on the full Summary page. When provided, make them a standalone expanded account of the run; summary remains the concise preview shown in compact surfaces. Use text blocks for Markdown prose, link blocks for inline links, and attachment blocks for durable artifacts. Keep the array in reading order.",
+      "description": "Always provide a non-empty summary as the concise preview. Set summary_sections to null for simple runs. For substantive runs such as investigations, reviews, builds, or plans with multiple findings, decisions, or verification results, provide ordered rich blocks as a standalone expanded account used instead of summary on the full Summary page. Put headings, bullets, numbered lists, tables, and prose in Markdown text blocks; use link and attachment blocks for their respective targets. Set every unused block field to null. Keep the array in reading order. Example Markdown list block: {\"type\":\"text\",\"text\":\"## Findings\\n- First\\n- Second\",\"url\":null,\"attachment\":null}.",
       "items": {
         "type": "object",
         "additionalProperties": false,
