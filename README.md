@@ -78,6 +78,13 @@ Open the TUI:
 tycho
 ```
 
+Restart the terminal UI with `tycho restart`.
+
+For a Homebrew installation, `tycho update` upgrades Tycho and restarts any
+running local Remote server and scheduler daemon with the stable launcher. It
+reports a no-op when either service is absent; source checkouts update through
+Git instead.
+
 To run your first agent:
 
 1. Press `2` and select the project with `j`/`k`.

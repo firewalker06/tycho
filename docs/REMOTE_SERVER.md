@@ -113,6 +113,8 @@ The server handles `INT` and `TERM` by closing the listener and unwinding cleanl
 
 The Remote UI can restart the Remote server process through `POST /server/restart`. This restarts the `tycho serve` process; it does not restart a separate TUI process.
 
+Run `tycho restart` to replace a terminal Tycho session with a fresh instance.
+
 The restart flow is intentionally ordered so the browser gets a clean acknowledgement before the process image is replaced:
 
 1. `tycho serve` captures its original command-line arguments before option parsing.
@@ -124,6 +126,8 @@ The restart flow is intentionally ordered so the browser gets a clean acknowledg
 7. The browser polls `/setup` until the replacement process is reachable again, then refreshes `/agents`, `/projects`, and `/setup`.
 
 If a `RemoteServer` is constructed without a restart command, `POST /server/restart` returns `409 Conflict`. That keeps test and embedded server instances from accidentally attempting to replace their process.
+
+Homebrew installs can update Tycho with `tycho update` or **Settings → More → Update Tycho**. The web action applies only to the UI-serving host: the broker intentionally keeps server lifecycle operations local and only forwards agent, project, and attachment requests to peers. After a successful update, use the existing **Restart server** and scheduler daemon controls to replace both running process images.
 
 ## Web UI
 
@@ -415,6 +419,7 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `DELETE` | `/push/subscriptions` | Disable one browser push subscription. |
 | `POST` | `/push/test` | Send a test notification to an enabled subscription. |
 | `POST` | `/server/restart` | Restart the `tycho serve` Remote server process when restart is available. |
+| `POST` | `/update` | Update the UI-serving Homebrew Tycho installation; unavailable for source installs and peers. |
 | `GET` | `/servers` | List the local server and configured broker targets. |
 | `GET` | `/servers/activity` | Read compact local and cached peer activity for unread counts and agent switching. |
 | `GET` | `/servers/resources` | Read the cached combined agent/project catalog and per-server health. |

@@ -21,6 +21,7 @@ require_relative "domain/delegation_actor"
 require_relative "domain/agent_archive_store"
 require_relative "domain/usage_metrics"
 require_relative "domain/server_identity"
+require_relative "tycho_updater"
 
 module HQ
   module CLICommand
@@ -670,6 +671,8 @@ module HQ
     RUNTIME_COMMANDS = [
       "  #{COMMAND_NAME} serve [daemon] [--host 127.0.0.1] [--port 7373]",
       "  #{COMMAND_NAME} schedule daemon [--once] [--dry-run] [--interval SECONDS]",
+      "  #{COMMAND_NAME} restart",
+      "  #{COMMAND_NAME} update",
       "  #{COMMAND_NAME} doctor"
     ].freeze
     USAGE = [
@@ -696,6 +699,8 @@ module HQ
       argv = Array(argv)
       return usage if argv.empty? || %w[--help -h].include?(argv.first)
       return serve(argv.drop(1), executable:) if argv.first == "serve"
+      return restart(argv.drop(1), executable:) if argv.first == "restart"
+      return update(argv.drop(1), executable:) if argv.first == "update"
       return doctor(argv.drop(1)) if argv.first == "doctor"
       return schedule_daemon(argv.drop(2)) if argv[0] == "schedule" && argv[1] == "daemon"
 
@@ -708,6 +713,24 @@ module HQ
       require_relative "serve_command"
 
       ServeCommand.run(argv, executable: executable || File.expand_path("../../bin/tycho", __dir__), command_prefix: ["serve"])
+    end
+
+    def restart(argv, executable: nil, restarter: nil)
+      return usage("Unexpected restart arguments: #{argv.join(" ")}") unless Array(argv).empty?
+
+      (restarter || HQ::CLI.method(:restart!)).call([], executable || File.expand_path("../../bin/tycho", __dir__))
+      0
+    end
+
+    def update(argv, executable: nil, out: $stdout, err: $stderr, updater: nil)
+      return usage("Unexpected update arguments: #{argv.join(" ")}", err:) unless Array(argv).empty?
+
+      result = (updater || TychoUpdater.new(executable: executable || $PROGRAM_NAME)).update!
+      out.puts result.fetch(:detail)
+      out.puts "Restart Tycho Remote and the scheduler daemon through their existing controls to load the update."
+      0
+    rescue TychoUpdater::Error => e
+      failure(e.message, err:)
     end
 
     def schedule_daemon(argv)

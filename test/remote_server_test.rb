@@ -54,6 +54,7 @@ module RemoteServerTest
     assert_remote_skill_installation_requires_confirmation
     assert_remote_schedule_routes
     assert_remote_setup_payload_includes_readiness
+    assert_remote_update_is_local_and_homebrew_gated
     assert_remote_harness_catalogs_are_configurable
     assert_remote_setup_refreshes_harness_catalogs
     assert_remote_setup_uses_shared_executable_resolution
@@ -2905,6 +2906,8 @@ module RemoteServerTest
       assert(setup.dig(:auth, :required), "expected auth state")
       assert(setup.dig(:auth, :status) == "token required", "expected required auth status")
       assert(setup.dig(:server, :restartable), "expected setup payload to expose Remote restart readiness")
+      assert(setup.dig(:server, :update, :available) == false,
+             "expected source Remote service to report Homebrew updates unavailable")
       assert(setup.dig(:build, :version) == HQ::VERSION, "expected setup payload to expose Tycho version")
       assert(setup.dig(:build, :asset_version).to_s.length == 12, "expected setup payload to expose Remote UI build")
       assert(setup.dig(:counts, :projects) == 1, "expected active project count")
@@ -2927,6 +2930,33 @@ module RemoteServerTest
       assert(schedule_prompt_template.include?("did not complete a requested change, answer, commit, review, or deliverable"),
              "expected schedule template to share strict no-action guidance")
       assert(setup[:safety].any? { |line| line.include?("Running agents") }, "expected safety defaults")
+    end
+  end
+
+  def assert_remote_update_is_local_and_homebrew_gated
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      updater = Struct.new(:calls) do
+        def status
+          { available: true, detail: "Homebrew update ready" }
+        end
+
+        def update!
+          self.calls += 1
+          { updated: true, detail: "Tycho updated" }
+        end
+      end.new(0)
+      service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace), tycho_updater: updater)
+      server = HQ::RemoteServer.new(logger: Logger.new(StringIO.new), output: StringIO.new)
+
+      assert(service.setup.dig(:server, :update, :available), "expected setup to expose local update readiness")
+      response = server.send(:route, service, "POST", "/update", {}, nil)
+      assert(response[:status] == 200 && response.dig(:body, :update, :updated),
+             "expected local update route to return its update result")
+      assert(updater.calls == 1, "expected local update route to call only its local updater")
+      assert(!HQ::RemoteBroker::RESOURCE_ROOTS.include?("update"),
+             "expected broker proxy boundaries to exclude server update operations")
     end
   end
 
@@ -3341,6 +3371,17 @@ module RemoteServerTest
                "expected peer projects to share the combined catalog")
         assert(local[:version] == HQ::VERSION && peer[:version] == "0.9.0-peer",
                "expected resource catalog servers to expose host and peer Tycho versions")
+        listed = HQ::RemoteServer.new(resource_catalog: catalog).send(
+          :route,
+          HQ::RemoteService.new(registry: registry, server_url: "http://127.0.0.1:7373"),
+          "GET",
+          "/servers",
+          {},
+          nil
+        )
+        listed_peer = listed.dig(:body, :servers).find { |entry| entry[:key] == "peer" }
+        assert(listed_peer[:version] == "0.9.0-peer",
+               "expected Settings server list to retain the peer version from the resource catalog")
         assert(File.exist?(snapshot_path), "expected a successful peer refresh to persist its snapshot")
         assert((File.stat(snapshot_path).mode & 0o777) == 0o600,
                "expected persisted peer snapshots to be private")
@@ -5336,6 +5377,10 @@ module RemoteServerTest
            "expected Hidden settings to use hidden/inherit/visible icon toggle buttons")
     assert(js[:body].include?("Restart server"), "expected Settings More menu to expose Remote restart action")
     assert(js[:body].include?("data-restart-server"), "expected Settings More menu to expose Remote restart action")
+    assert(js[:body].include?("Update Tycho") &&
+           js[:body].include?("data-update-tycho") &&
+           js[:body].include?('apiPost("/update"'),
+           "expected Settings More menu to offer Homebrew Tycho updates through the local API")
     assert(js[:body].include?("Remote restart"),
            "expected Settings readiness to include Remote restart status")
     assert(js[:body].index("Automation readiness") < js[:body].index("Remote restart"),
