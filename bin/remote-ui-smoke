@@ -5818,6 +5818,12 @@ def write_smoke_script(path)
         }
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "summary-navigation-download.png") });
         await page.click("[aria-label='Previous summary']");
+        await page.waitForFunction(() => {
+          const page = document.querySelector("[data-agent-summary-page]");
+          return parseRoute().summaryId === "summary-older" && page?.innerText.includes("Older summary content.") &&
+            document.querySelector("[aria-label='Previous summary']")?.disabled &&
+            !document.querySelector("[aria-label='Next summary']")?.disabled;
+        });
         const previousSummary = await page.evaluate(() => ({
           summaryId: parseRoute().summaryId,
           content: document.querySelector("[data-agent-summary-page]")?.innerText,
