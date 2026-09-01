@@ -4333,14 +4333,24 @@ def write_smoke_script(path)
         const stoppedAgentListIcon = await page.evaluate((key) => {
           const row = Array.from(document.querySelectorAll(".agent-row[data-open-agent]")).find((item) => item.dataset.openAgent === key);
           const icon = row?.querySelector(":scope > .agent-status-icon");
+          const scheduleIcon = row?.querySelector('[data-agent-role="scheduled"]');
+          const comparison = document.createElement("span");
+          comparison.className = "pill fail";
+          document.body.append(comparison);
+          const stoppedColor = getComputedStyle(comparison).color;
+          comparison.remove();
           return {
             found: Boolean(icon),
             checkIcon: Boolean(icon?.querySelector('path[d="M20 6 9 17l-5-5"]')),
             label: icon?.getAttribute("aria-label"),
+            scheduleFailClass: scheduleIcon?.classList.contains("fail"),
+            scheduleIconColor: scheduleIcon ? getComputedStyle(scheduleIcon).color : "",
+            stoppedColor,
           };
         }, agentKey);
-        if (!stoppedAgentListIcon.found || !stoppedAgentListIcon.checkIcon || stoppedAgentListIcon.label !== "Idle") {
-          throw new Error(`Idle agent-list icon did not retain the rebased status contract: ${JSON.stringify(stoppedAgentListIcon)}`);
+        if (!stoppedAgentListIcon.found || !stoppedAgentListIcon.checkIcon || stoppedAgentListIcon.label !== "Idle" ||
+            !stoppedAgentListIcon.scheduleFailClass || stoppedAgentListIcon.scheduleIconColor !== stoppedAgentListIcon.stoppedColor) {
+          throw new Error(`Stopped schedule agent row did not preserve agent status and render a red calendar: ${JSON.stringify(stoppedAgentListIcon)}`);
         }
         await page.evaluate((key) => {
           scheduleForAgent(findAgent(key)).status = "scheduled";

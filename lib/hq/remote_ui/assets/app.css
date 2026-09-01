@@ -446,6 +446,22 @@ h3 {
   color: var(--warning);
 }
 
+.agent-name-role-icon.need {
+  color: var(--warning);
+}
+
+.agent-name-role-icon.done {
+  color: var(--ok);
+}
+
+.agent-name-role-icon.fail {
+  color: var(--danger);
+}
+
+.agent-name-role-icon.info {
+  color: var(--info);
+}
+
 .agent-name-label {
   min-width: 0;
   overflow: hidden;
