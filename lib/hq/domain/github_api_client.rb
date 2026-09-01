@@ -5,7 +5,7 @@ require "net/http"
 require "timeout"
 require "uri"
 
-require_relative "github_auth"
+require_relative "github_cli_auth"
 
 module HQ
   class GitHubAPIClient
@@ -29,7 +29,7 @@ module HQ
     end
 
     class DisabledError < Error
-      def initialize(message = "Connect the Tycho GitHub App or run `gh auth login`.")
+      def initialize(message = "Run `gh auth login` to enable pull request diffs.")
         super(message, status: 424)
       end
     end
@@ -38,7 +38,7 @@ module HQ
 
     attr_reader :base_url
 
-    def initialize(token: DEFAULT_CREDENTIAL, credential: GitHubAuth.default,
+    def initialize(token: DEFAULT_CREDENTIAL, credential: GitHubCLIAuth.default,
                    base_url: HQ.env("GITHUB_API_URL"),
                    open_timeout: DEFAULT_OPEN_TIMEOUT, read_timeout: DEFAULT_READ_TIMEOUT,
                    write_timeout: DEFAULT_WRITE_TIMEOUT, max_bytes: DEFAULT_MAX_BYTES,
@@ -64,23 +64,6 @@ module HQ
       @credential.capability(api_url: @base_url)
     end
 
-    def start_device_flow
-      @credential.start_device_flow
-    rescue GitHubAuth::Error => e
-      raise Error.new(e.message, status: e.status)
-    end
-
-    def poll_device_flow(id)
-      @credential.poll_device_flow(id)
-    rescue GitHubAuth::Error => e
-      raise Error.new(e.message, status: e.status)
-    end
-
-    def logout
-      @credential.logout
-    rescue GitHubAuth::Error => e
-      raise Error.new(e.message, status: e.status)
-    end
 
     def get_json(path, params: nil, etag: nil, max_bytes: @max_bytes)
       response = request(:get, path, params:, accept: "application/vnd.github+json", etag:, max_bytes:)
@@ -143,8 +126,6 @@ module HQ
       normalize_response(raw, max_bytes:)
     rescue DisabledError, Error
       raise
-    rescue GitHubAuth::Error => e
-      raise Error.new(e.message, status: e.status)
     rescue Timeout::Error, Net::OpenTimeout, Net::ReadTimeout
       raise Error.new("GitHub API request timed out.", status: 504)
     rescue SocketError, SystemCallError, IOError => e
@@ -233,10 +214,6 @@ module HQ
       return @token if @explicit_token
 
       @credential.access_token
-    rescue GitHubAuth::Error => e
-      raise DisabledError, e.message if e.status == 424
-
-      raise Error.new(e.message, status: e.status)
     end
 
     def utf8(value)

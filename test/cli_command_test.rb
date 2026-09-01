@@ -23,7 +23,6 @@ module CLICommandTest
     assert_project_commands_manage_full_lifecycle
     assert_remote_server_commands_manage_full_agent_lifecycle
     assert_remote_client_reports_timeout_and_unsupported_operation
-    assert_github_commands_cover_device_login_status_and_logout
     assert_debug_claude_is_listed_in_usage
     assert_metrics_commands_are_listed_in_usage
     assert_debug_claude_run_agent_uses_claude_defaults

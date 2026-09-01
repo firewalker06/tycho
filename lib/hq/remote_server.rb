@@ -35,7 +35,6 @@ require_relative "domain/harness_catalog"
 require_relative "domain/push_notification_store"
 require_relative "domain/push_subscription_store"
 require_relative "domain/pull_request_diff"
-require_relative "domain/pull_request_review"
 require_relative "domain/pull_request_selection"
 require_relative "domain/response_style_policy"
 require_relative "domain/remote_credential_store"
@@ -370,22 +369,6 @@ module HQ
         return ok(response_style: service.delete_response_style)
       end
       return ok(setup: service.setup) if method == "GET" && parts == ["setup"]
-      return accepted({ github: service.start_github_login }) if method == "POST" && parts == ["github", "auth", "device"]
-      if method == "POST" && parts.length == 5 && parts[0, 3] == ["github", "auth", "device"] && parts[4] == "poll"
-        return ok(github: service.poll_github_login(parts[3]))
-      end
-      return ok(github: service.logout_github) if method == "DELETE" && parts == ["github", "auth"]
-      return ok(pull_requests: service.pull_request_inbox(request&.query_params || {})) if method == "GET" && parts == ["pull-requests"]
-      if parts.length >= 2 && parts.first == "pull-requests"
-        id = parts[1]
-        tail = parts.drop(2)
-        return ok(pull_request: service.pull_request_review(id)) if method == "GET" && tail.empty?
-        return ok(diff: service.refresh_pull_request_review(id)) if method == "POST" && tail == ["refresh"]
-        return ok(review: service.update_pull_request_review_state(id, body)) if %w[PATCH PUT].include?(method) && tail == ["state"]
-        return ok(review: service.save_pull_request_review_draft(id, body)) if %w[PATCH PUT].include?(method) && tail == ["draft"]
-        return ok(service.handoff_pull_request_review(id, body)) if method == "POST" && tail == ["handoff"]
-        return created(service.post_pull_request_review(id, body)) if method == "POST" && tail == ["reviews"]
-      end
       return ok(service.search_index) if method == "GET" && parts == ["search"]
       return ok(service.memory_handoffs) if method == "GET" && parts == ["memory-handoffs"]
       return accepted(update_and_restart!(service), headers: RESTART_CACHE_RESET_HEADERS) if method == "POST" && parts == ["update"]
@@ -1607,7 +1590,6 @@ module HQ
                    skill_installer: nil,
                    github_client: GitHubAPIClient.new,
                    pull_request_diff_store: PullRequestDiff::Store.new,
-                   pull_request_review_store: PullRequestReview::Store.new,
                    agent_activity_snapshot: AgentActivitySnapshot.new)
       @registry = registry
       @projects = registry.projects.map { |config| Project.new(config) }
@@ -1626,7 +1608,6 @@ module HQ
       @skill_installer = skill_installer || SkillInstaller.new(home: skills_home)
       @github_client = github_client
       @pull_request_diff_store = pull_request_diff_store
-      @pull_request_review_store = pull_request_review_store
       @agent_activity_snapshot = agent_activity_snapshot
       @pull_request_fetch_lock = Mutex.new
       @pull_request_fetches = {}
@@ -2605,7 +2586,6 @@ module HQ
           restartable: @restartable,
           update: @tycho_updater.status
         },
-        github: @github_client.capability.merge(write_enabled: github_write_enabled?),
         build: {
           version: HQ::VERSION,
           asset_version: HQ::RemoteUI.asset_version
@@ -2661,24 +2641,6 @@ module HQ
     rescue SkillInstaller::InstallError => e
       status = { "permission" => 403, "network" => 502 }.fetch(e.category, 409)
       raise Error.new(e.message, status: status, details: e.to_h)
-    end
-
-    def start_github_login
-      @github_client.start_device_flow
-    rescue GitHubAPIClient::Error => e
-      raise Error.new(e.message, status: e.status)
-    end
-
-    def poll_github_login(id)
-      @github_client.poll_device_flow(id)
-    rescue GitHubAPIClient::Error => e
-      raise Error.new(e.message, status: e.status)
-    end
-
-    def logout_github
-      @github_client.logout
-    rescue GitHubAPIClient::Error => e
-      raise Error.new(e.message, status: e.status)
     end
 
     def refresh_harnesses
@@ -3722,7 +3684,6 @@ module HQ
       snapshot = @pull_request_diff_store.save(
         PullRequestDiff.snapshot_for(reference, provider: github_provider, metadata:)
       )
-      @pull_request_review_store.reconcile_snapshot(reference.id, snapshot)
       snapshot
     end
 

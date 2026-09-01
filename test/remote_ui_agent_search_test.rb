@@ -62,6 +62,13 @@ module RemoteUIAgentSearchTest
         throw new Error(`agent search was not filtered and ranked by visible priority: ${JSON.stringify(ranked)}`);
       }
 
+      const noAction = { key: "no-action", name: "No action", last_result: "no action", updated_at: "2026-09-01T12:00:00Z" };
+      const actionable = { key: "actionable", name: "Actionable", last_result: "success", updated_at: "2026-08-01T12:00:00Z" };
+      if (helpers.compareAgentsBySort(noAction, actionable, "agent_updated_desc", {}) <= 0 ||
+          helpers.compareAgentsBySort(actionable, noAction, "agent_updated_desc", {}) >= 0) {
+        throw new Error("no_action_needed agents must sort below actionable agents");
+      }
+
       const parts = helpers.highlightSearchParts("A <Personal> & personal", "personal");
       if (parts.filter((part) => part.highlighted).length !== 2 || parts.map((part) => part.text).join("") !== "A <Personal> & personal") {
         throw new Error(`visible match ranges were not preserved safely: ${JSON.stringify(parts)}`);

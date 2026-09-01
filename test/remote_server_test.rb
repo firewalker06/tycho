@@ -33,12 +33,7 @@ module RemoteServerTest
     assert_remote_agent_pull_request_diff_payload
     assert_agent_pull_request_listing_avoids_eager_metadata_requests
     assert_concurrent_pull_request_diff_refreshes_are_coalesced
-    assert_pull_request_review_refresh_reuses_metadata
-    assert_pull_request_feature_gate_and_global_inbox
-    assert_pull_request_line_handoff_uses_snapshot_context
     assert_remote_prompt_accepts_pull_request_context
-    assert_github_app_auth_routes
-    assert_pull_request_posting_is_confirmed_stale_safe_and_idempotent
     assert_remote_prompt_accepts_uploaded_attachments
     assert_remote_prompt_start_accepts_dash_prefixed_message
     assert_remote_agent_conversation_includes_run_summary
@@ -528,6 +523,12 @@ module RemoteServerTest
         updated = service.update_agent(created[:key], "response_style_mode" => "global")
         assert(updated[:response_style].nil? && updated[:response_style_source] == "global",
                "expected a style-only edit to switch the agent back to the global response style")
+
+        defaulted = service.create_agent(
+          "project_key" => "web", "name" => "Free-text Agent", "prompt" => "Use this free-text prompt.", "agent" => "codex"
+        )
+        assert(defaulted[:template_key] == "custom",
+               "expected Remote API creation without a template selection to preserve the Custom default")
       end
     end
   end
