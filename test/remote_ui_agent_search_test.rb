@@ -70,6 +70,14 @@ module RemoteUIAgentSearchTest
       if (switched.map((agent) => agent.key).join(",") !== "actionable-read-newer,actionable-unread,no-action-read-newer,no-action-unread") {
         throw new Error(`quick switcher did not keep actionable agents and no-action agents in recency order: ${JSON.stringify(switched)}`);
       }
+      const relevancy = [noActionReadNewer, actionableReadNewer, noActionUnread, actionableUnread]
+        .sort((left, right) => helpers.compareAgentsBySort(left, right, "relevancy", {
+          defaultSort: "relevancy",
+          options: [{ value: "relevancy", scope: "agents" }],
+        }));
+      if (relevancy.map((agent) => agent.key).join(",") !== switched.map((agent) => agent.key).join(",")) {
+        throw new Error(`relevancy sorting diverged from quick switching: ${JSON.stringify(relevancy)}`);
+      }
       if (helpers.compareAgentsBySort(actionableUnread, noActionReadNewer, "agent_name_asc", {}) >= 0) {
         throw new Error("named agent sorting must not be changed by no-action status");
       }

@@ -784,8 +784,30 @@ def write_smoke_script(path)
       async function assertProjectWorkspaceBrowser() {
         const consoleErrorStart = errors.length;
         await page.goto(`${baseUrl}/ui#project/web`, { waitUntil: "networkidle" });
-        await page.waitForSelector("[data-open-project-workspace='web']", { state: "visible", timeout: 10_000 });
-        await page.click(".project-primary-actions [data-open-project-workspace='web']");
+        await page.waitForSelector("#header-more-button", { state: "visible", timeout: 10_000 });
+        if (await page.locator(".project-primary-actions").count() !== 0) {
+          throw new Error("Project detail still renders workspace and diff buttons outside its action menu");
+        }
+        await page.click("#header-more-button");
+        await page.waitForSelector("#header-more-panel [data-open-project-workspace='web']", { state: "visible", timeout: 10_000 });
+        const projectMenu = await page.evaluate(() => {
+          const menu = document.querySelector("#header-more-panel .more-menu");
+          const items = Array.from(menu?.querySelectorAll(".more-menu-item strong") || [], (item) => item.textContent.trim());
+          const separator = menu?.querySelector(".more-menu-separator");
+          const newAgent = document.querySelector("#header-more-panel [data-create-agent='web']");
+          const actions = Array.from(menu?.querySelectorAll(".more-menu-item") || []);
+          return {
+            items,
+            separated: Boolean(separator?.nextElementSibling === newAgent),
+            newAgentIsLast: actions.at(-1) === newAgent,
+          };
+        });
+        if (!projectMenu.items.includes("Browse workspace") || !projectMenu.items.includes("See diff") ||
+            !projectMenu.items.includes("Edit project") || !projectMenu.items.includes("New agent") ||
+            !projectMenu.separated || !projectMenu.newAgentIsLast) {
+          throw new Error(`Project action menu is incomplete: ${JSON.stringify(projectMenu)}`);
+        }
+        await page.click("#header-more-panel [data-open-project-workspace='web']");
         await page.waitForSelector(".workspace-entry-list", { state: "visible", timeout: 10_000 });
 
         const rootContract = await page.evaluate(() => ({
@@ -1461,6 +1483,7 @@ def write_smoke_script(path)
               server_key: "local",
             })),
           ];
+          state.agentSort = "project_asc";
           render();
         });
         await page.waitForSelector("[data-agent-mobile-toolbar-menu] > summary", { state: "visible", timeout: 10_000 });
@@ -2591,14 +2614,27 @@ def write_smoke_script(path)
           }));
           throw new Error(`Unscheduled agent missing from combined list: ${JSON.stringify(agentState)} / ${error.message}`);
         }
+        const relevancyOrder = await agentsRegressionPage.evaluate(() => ({
+          sort: state.agentSort,
+          direct: Boolean(document.querySelector(".agent-flat-list")),
+          visible: Array.from(document.querySelectorAll(".agent-flat-list [data-open-agent]"), (row) => row.dataset.openAgent),
+          expected: currentAgents().sort(compareQuickSwitchAgents).map((agent) => agent.key),
+        }));
+        if (relevancyOrder.sort !== "relevancy" || !relevancyOrder.direct ||
+            relevancyOrder.visible.join("|") !== relevancyOrder.expected.join("|")) {
+          throw new Error(`Agents default no longer matches quick-switch Relevancy: ${JSON.stringify(relevancyOrder)}`);
+        }
         await agentsRegressionPage.fill("#agent-filter", "unscheduled");
         if (await agentsRegressionPage.locator(".agent-row[data-open-agent]").count() !== 1 ||
             await agentsRegressionPage.locator(".agent-name-label .agent-search-match").innerText() !== "Unscheduled") {
           throw new Error("Agents filter did not isolate and highlight an agent-name match");
         }
         await agentsRegressionPage.fill("#agent-filter", "web");
-        if (await agentsRegressionPage.locator(".agent-group-project-title .agent-search-match").count() !== 1 ||
-            await agentsRegressionPage.locator(".agent-group-project-title .agent-search-match").innerText() !== "Web") {
+        const projectMatches = await agentsRegressionPage.evaluate(() => Array.from(
+          document.querySelectorAll(".agent-flat-list .row-title > span .agent-search-match"),
+          (node) => node.textContent
+        ));
+        if (projectMatches.length < 1 || projectMatches.some((match) => match !== "Web")) {
           throw new Error("Agents filter did not highlight a project-name match");
         }
         await agentsRegressionPage.fill("#agent-filter", "personal");
@@ -2670,6 +2706,7 @@ def write_smoke_script(path)
             { key: "empty-alpha", name: "Empty Alpha", status: "configured" },
             { key: "empty-beta", name: "Empty Beta", status: "configured" },
           ];
+          state.agentSort = "project_asc";
           render();
         });
         await agentsRegressionPage.waitForSelector(".agent-ledger", { state: "visible", timeout: 10_000 });
