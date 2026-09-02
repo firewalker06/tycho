@@ -5511,8 +5511,9 @@ module RemoteServerTest
     assert(!js[:body].include?("project-primary-actions"),
            "expected Project detail to keep Browse workspace and See diff out of the main surface")
     assert(js[:body].include?('label: "New agent"') &&
-           js[:body].include?("moreMenuSeparator(),\n    moreMenuButton({\n      label: \"New agent\""),
-           "expected Project More menu to offer New agent after a divider")
+           js[:body].include?("attrs: `data-edit-project=\"${escapeAttr(project.key)}\"`,\n    }),\n    moreMenuSeparator(),\n    moreMenuButton({\n      label: \"New agent\"") &&
+           js[:body].include?("attrs: `data-create-agent=\"${escapeAttr(project.key)}\"`,\n    }),\n  ]);"),
+           "expected Project More menu to isolate New agent after a divider as its final action")
     assert(js[:body].include?('label: "All servers"') &&
            js[:body].include?('icon: "globe"'),
            "expected the All servers action to use a globe icon")

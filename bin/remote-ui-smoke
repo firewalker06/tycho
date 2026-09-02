@@ -791,13 +791,20 @@ def write_smoke_script(path)
         await page.click("#header-more-button");
         await page.waitForSelector("#header-more-panel [data-open-project-workspace='web']", { state: "visible", timeout: 10_000 });
         const projectMenu = await page.evaluate(() => {
-          const items = Array.from(document.querySelectorAll("#header-more-panel .more-menu-item strong"), (item) => item.textContent.trim());
-          const separator = document.querySelector("#header-more-panel .more-menu-separator");
+          const menu = document.querySelector("#header-more-panel .more-menu");
+          const items = Array.from(menu?.querySelectorAll(".more-menu-item strong") || [], (item) => item.textContent.trim());
+          const separator = menu?.querySelector(".more-menu-separator");
           const newAgent = document.querySelector("#header-more-panel [data-create-agent='web']");
-          return { items, separated: Boolean(separator && newAgent && separator.compareDocumentPosition(newAgent) & Node.DOCUMENT_POSITION_FOLLOWING) };
+          const actions = Array.from(menu?.querySelectorAll(".more-menu-item") || []);
+          return {
+            items,
+            separated: Boolean(separator?.nextElementSibling === newAgent),
+            newAgentIsLast: actions.at(-1) === newAgent,
+          };
         });
         if (!projectMenu.items.includes("Browse workspace") || !projectMenu.items.includes("See diff") ||
-            !projectMenu.items.includes("New agent") || !projectMenu.separated) {
+            !projectMenu.items.includes("Edit project") || !projectMenu.items.includes("New agent") ||
+            !projectMenu.separated || !projectMenu.newAgentIsLast) {
           throw new Error(`Project action menu is incomplete: ${JSON.stringify(projectMenu)}`);
         }
         await page.click("#header-more-panel [data-open-project-workspace='web']");
