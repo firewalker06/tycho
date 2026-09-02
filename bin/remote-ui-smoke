@@ -2172,7 +2172,16 @@ Saved safely.
           throw new Error(`Now context menu exposes the wrong global actions: ${JSON.stringify(nowHeaderMenuLabels)}`);
         }
         await page.click("#header-more-panel [data-open-settings]");
-        await page.waitForSelector("#session-loop-default-interval", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector("[data-scroll-settings-section='settings-automation']", { state: "visible", timeout: 10_000 });
+        await page.click("[data-scroll-settings-section='settings-automation']");
+        await page.waitForSelector("#session-loop-settings > summary", { state: "visible", timeout: 10_000 });
+        const shortcutLoopDetails = await page.evaluate(() => ({
+          defaultsOpen: document.querySelector("#session-loop-settings")?.open,
+          templatesOpen: document.querySelector("#session-loop-templates")?.open,
+        }));
+        if (shortcutLoopDetails.defaultsOpen || shortcutLoopDetails.templatesOpen) {
+          throw new Error(`Session loop details should start collapsed: ${JSON.stringify(shortcutLoopDetails)}`);
+        }
         const settingsShortcutRoute = await page.evaluate(() => parseRoute());
         if (settingsShortcutRoute.type !== "tab" || settingsShortcutRoute.tab !== "settings") {
           throw new Error(`Context-menu Settings shortcut opened the wrong route: ${JSON.stringify(settingsShortcutRoute)}`);
@@ -6145,7 +6154,7 @@ Saved safely.
 
         await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
         await page.waitForSelector("[data-testid='response-style-action']", { state: "visible", timeout: 10_000 });
-        await page.waitForSelector("#session-loop-default-interval", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector("#settings-panel-connection", { state: "visible", timeout: 10_000 });
         const retiredGitHubAppUi = await page.locator([
           "#settings-" + "github",
           "[data-start-" + "github-login]",
@@ -6454,6 +6463,16 @@ Saved safely.
           throw new Error(`Settings lost shared section navigation behavior: ${JSON.stringify(settingsComposite)}`);
         }
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "settings-horizontal-nav.png") });
+        const loopDetails = await page.evaluate(() => ({
+          defaultsOpen: document.querySelector("#session-loop-settings")?.open,
+          templatesOpen: document.querySelector("#session-loop-templates")?.open,
+        }));
+        if (loopDetails.defaultsOpen || loopDetails.templatesOpen) {
+          throw new Error(`Session loop details should start collapsed: ${JSON.stringify(loopDetails)}`);
+        }
+        await page.click("#session-loop-settings > summary");
+        await page.click("#session-loop-templates > summary");
+        await page.waitForSelector("#session-loop-default-interval", { state: "visible", timeout: 10_000 });
         const loopDefaults = {
           interval: await page.locator("#session-loop-default-interval").inputValue(),
           endTime: await page.locator("#session-loop-default-end-time").inputValue(),
@@ -6506,11 +6525,20 @@ Saved safely.
         const loopTemplatePrompt = "Check for smoke-test review feedback and address anything actionable.";
         await page.fill("#session-loop-default-interval", "11");
         await page.fill("#session-loop-default-end-time", "22:30");
-        await page.fill("[data-session-loop-template-row] [name='template_prompt']", loopTemplatePrompt);
         await page.click("#session-loop-settings-form button[type='submit']");
         await page.waitForFunction(
-          () => document.querySelector("#growl")?.textContent === "Session loop settings saved" &&
+          () => document.querySelector("#growl")?.textContent === "Session loop defaults saved" &&
             document.querySelector("#session-loop-default-interval")?.value === "11",
+          null,
+          { timeout: 10_000 }
+        );
+        await page.click("#session-loop-templates > summary");
+        await page.waitForSelector("[data-session-loop-template-row] [name='template_prompt']", { state: "visible", timeout: 10_000 });
+        await page.fill("[data-session-loop-template-row] [name='template_prompt']", loopTemplatePrompt);
+        await page.click("#session-loop-templates-form button[type='submit']");
+        await page.waitForFunction(
+          () => document.querySelector("#growl")?.textContent === "Prompt templates saved" &&
+            document.querySelector("[data-session-loop-template-row] [name='template_prompt']")?.value === loopTemplatePrompt,
           null,
           { timeout: 10_000 }
         );
