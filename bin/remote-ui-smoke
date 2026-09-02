@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "base64"
 require "json"
 require "net/http"
 require "open3"
@@ -91,11 +92,12 @@ def write_fixture(dir)
   FileUtils.mkdir_p(File.join(workspace, "slow"))
   FileUtils.mkdir_p(File.join(workspace, "src"))
   FileUtils.mkdir_p(File.join(workspace, "node_modules", "fixture"))
-  File.write(File.join(workspace, "docs", "guide.md"), "# Workspace guide\n\nRead-only preview.\n")
+  File.write(File.join(workspace, "docs", "guide.md"), "# Workspace guide\n\nEditable Markdown preview.\n")
   File.write(File.join(workspace, "fast", "fast.txt"), "fast\n")
   File.write(File.join(workspace, "slow", "slow.txt"), "slow\n")
   File.write(File.join(workspace, "src", "app.rb"), "puts \"fixture\"\n")
   File.binwrite(File.join(workspace, "binary.dat"), "fixture\0binary")
+  File.binwrite(File.join(workspace, "diagram.png"), Base64.decode64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL7NwAAAABJRU5ErkJggg=="))
   File.binwrite(File.join(workspace, "large.txt"), "x" * ((256 * 1024) + 1))
   File.write(File.join(workspace, ".env"), "SECRET=not-visible\n")
   File.write(File.join(workspace, "node_modules", "fixture", "index.js"), "generated\n")
@@ -829,28 +831,36 @@ def write_smoke_script(path)
         await page.keyboard.press("Enter");
         await page.waitForSelector("[data-workspace-file='docs/guide.md']", { state: "visible", timeout: 10_000 });
         await page.click("[data-workspace-file='docs/guide.md']");
-        await page.waitForSelector(".workspace-text-preview", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector(".markdown-viewer", { state: "visible", timeout: 10_000 });
         const previewContract = await page.evaluate(() => ({
           route: parseRoute(),
-          content: document.querySelector(".workspace-text-preview")?.textContent,
-          focusable: document.querySelector(".workspace-text-preview")?.tabIndex,
+          content: document.querySelector(".markdown-viewer")?.textContent,
+          editVisible: Boolean(document.querySelector("[data-edit-workspace-file='docs/guide.md']")),
         }));
         if (previewContract.route.path !== "docs" || previewContract.route.file !== "docs/guide.md" ||
-            !previewContract.content?.includes("Read-only preview") || previewContract.focusable !== 0) {
-          throw new Error(`Workspace text preview contract failed: ${JSON.stringify(previewContract)}`);
+            !previewContract.content?.includes("Editable Markdown preview") || !previewContract.editVisible) {
+          throw new Error(`Workspace Markdown preview contract failed: ${JSON.stringify(previewContract)}`);
         }
+        await page.click("[data-edit-workspace-file='docs/guide.md']");
+        await page.waitForSelector("#workspace-file-editor", { state: "visible", timeout: 10_000 });
+        await page.fill("#workspace-file-content", `# Updated guide
+
+Saved safely.
+`);
+        await page.click("#workspace-file-editor button[type='submit']");
+        await page.waitForFunction(() => document.querySelector(".markdown-viewer")?.textContent.includes("Saved safely."));
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-preview-desktop.png"), fullPage: true });
 
         await page.goBack();
         await page.waitForSelector(".workspace-preview-empty", { state: "visible", timeout: 10_000 });
         await page.goForward();
-        await page.waitForSelector(".workspace-text-preview", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector(".markdown-viewer", { state: "visible", timeout: 10_000 });
 
         await page.setViewportSize({ width: 390, height: 844 });
         const mobileContract = await page.evaluate(() => ({
           overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
           columns: getComputedStyle(document.querySelector(".workspace-browser-grid")).gridTemplateColumns,
-          previewVisible: Boolean(document.querySelector(".workspace-text-preview")),
+          previewVisible: Boolean(document.querySelector(".markdown-viewer")),
         }));
         if (mobileContract.overflow || !mobileContract.previewVisible || mobileContract.columns.split(" ").length !== 1) {
           throw new Error(`Workspace mobile layout failed: ${JSON.stringify(mobileContract)}`);
@@ -858,6 +868,17 @@ def write_smoke_script(path)
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-browser-mobile.png"), fullPage: true });
 
         await page.click("[data-workspace-directory='']");
+        await page.waitForSelector("[data-workspace-file='diagram.png']", { state: "visible", timeout: 10_000 });
+        await page.click("[data-workspace-file='diagram.png']");
+        await page.waitForSelector(".workspace-image-preview .attachment-image-viewer", { state: "visible", timeout: 10_000 });
+        const imageContract = await page.evaluate(() => ({
+          imageSource: document.querySelector(".workspace-image-preview img")?.getAttribute("src"),
+          editVisible: Boolean(document.querySelector("[data-edit-workspace-file]")),
+        }));
+        if (!imageContract.imageSource?.startsWith("blob:") || imageContract.editVisible) {
+          throw new Error(`Workspace image preview contract failed: ${JSON.stringify(imageContract)}`);
+        }
+
         await page.waitForSelector("[data-workspace-file='binary.dat']", { state: "visible", timeout: 10_000 });
         await page.click("[data-workspace-file='binary.dat']");
         await page.waitForFunction(() => document.querySelector(".workspace-preview-pane")?.textContent.includes("Binary file"));

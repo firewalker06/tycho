@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "digest"
+require "tempfile"
+
 module HQ
   class ProjectWorkspace
     DEFAULT_PAGE_SIZE = 100
@@ -7,6 +10,16 @@ module HQ
     MAX_DIRECTORY_ENTRIES = 5_000
     MAX_NAME_BYTES = 1_024
     MAX_PREVIEW_BYTES = 256 * 1024
+    IMAGE_MIME_TYPES = {
+      ".avif" => "image/avif",
+      ".gif" => "image/gif",
+      ".heic" => "image/heic",
+      ".jpeg" => "image/jpeg",
+      ".jpg" => "image/jpeg",
+      ".png" => "image/png",
+      ".svg" => "image/svg+xml",
+      ".webp" => "image/webp"
+    }.freeze
     EXCLUDED_DIRECTORIES = %w[
       .bundle .cache .git .hg .svn .terraform .yardoc
       build coverage dist log logs node_modules pkg tmp vendor
@@ -80,6 +93,11 @@ module HQ
       stat = File.stat(file)
       raise too_large if stat.size > MAX_PREVIEW_BYTES
 
+      if (mime_type = image_mime_type(relative))
+        assert_image_safe!(file, mime_type)
+        return file_payload(relative, stat, format: "image", mime_type:)
+      end
+
       bytes = File.binread(file, MAX_PREVIEW_BYTES + 1)
       raise too_large if bytes.bytesize > MAX_PREVIEW_BYTES
       raise Error.new("binary", "Binary files cannot be previewed", status: 415) if binary?(bytes)
@@ -90,15 +108,68 @@ module HQ
         raise Error.new("sensitive", "Sensitive files cannot be previewed", status: 403)
       end
 
-      {
-        path: relative,
-        name: File.basename(relative),
-        size_bytes: stat.size,
-        content: content,
-        truncated: false
-      }
+      file_payload(relative, stat, format: text_format(relative), content: content, version: Digest::SHA256.hexdigest(bytes), editable: editable_text?(bytes, content))
     rescue Errno::EACCES, Errno::EPERM
       raise Error.new("permission_denied", "Workspace file is not readable", status: 403)
+    rescue Errno::ENOENT, Errno::ENOTDIR
+      raise Error.new("not_found", "Workspace file is no longer available", status: 404)
+    end
+
+    def image(path:)
+      root = canonical_root!
+      relative = normalize_relative_path(path)
+      raise invalid_path if relative.empty?
+
+      mime_type = image_mime_type(relative)
+      raise Error.new("wrong_type", "Workspace file is not an image", status: 415) unless mime_type
+
+      file = resolve!(root, relative, kind: :file)
+      stat = File.stat(file)
+      raise too_large if stat.size > MAX_PREVIEW_BYTES
+
+      bytes = File.binread(file, MAX_PREVIEW_BYTES + 1)
+      raise too_large if bytes.bytesize > MAX_PREVIEW_BYTES
+      assert_image_bytes_safe!(bytes, mime_type)
+
+      { path: relative, name: File.basename(relative), size_bytes: stat.size, mime_type:, body: bytes }
+    rescue Errno::EACCES, Errno::EPERM
+      raise Error.new("permission_denied", "Workspace file is not readable", status: 403)
+    rescue Errno::ENOENT, Errno::ENOTDIR
+      raise Error.new("not_found", "Workspace file is no longer available", status: 404)
+    end
+
+    def write(path:, content:, expected_version:)
+      root = canonical_root!
+      relative = normalize_relative_path(path)
+      raise invalid_path if relative.empty?
+
+      candidate = File.join(root, relative)
+      raise Error.new("not_editable", "Linked files cannot be edited", status: 409) if File.symlink?(candidate)
+
+      file = resolve!(root, relative, kind: :file)
+      stat = File.stat(file)
+      raise too_large if stat.size > MAX_PREVIEW_BYTES
+      raise Error.new("not_editable", "Only plain-text files can be edited", status: 415) if image_mime_type(relative)
+
+      current_bytes = File.binread(file, MAX_PREVIEW_BYTES + 1)
+      raise too_large if current_bytes.bytesize > MAX_PREVIEW_BYTES
+      raise Error.new("not_editable", "Only valid UTF-8 text files can be edited", status: 415) unless editable_text_bytes?(current_bytes)
+
+      current_content = current_bytes.dup.force_encoding(Encoding::UTF_8)
+      raise Error.new("sensitive", "Sensitive files cannot be edited", status: 403) if sensitive_content?(current_content)
+      raise Error.new("stale", "This file changed; reload it before saving", status: 409) unless secure_compare_version(expected_version, current_bytes)
+
+      replacement = content.to_s
+      raise Error.new("not_editable", "Edited content must be valid UTF-8 text", status: 400) unless replacement.valid_encoding?
+      replacement = replacement.encode(Encoding::UTF_8)
+      raise too_large if replacement.bytesize > MAX_PREVIEW_BYTES
+      raise Error.new("not_editable", "Edited content is not safe plain text", status: 415) unless editable_text_bytes?(replacement.b)
+      raise Error.new("sensitive", "Edited content appears to contain a secret", status: 403) if sensitive_content?(replacement)
+
+      atomic_replace!(file, replacement, stat.mode)
+      preview(path: relative)
+    rescue Errno::EACCES, Errno::EPERM
+      raise Error.new("permission_denied", "Workspace file is not writable", status: 403)
     rescue Errno::ENOENT, Errno::ENOTDIR
       raise Error.new("not_found", "Workspace file is no longer available", status: 404)
     end
@@ -187,6 +258,73 @@ module HQ
       return false if parts.any? { |part| sensitive_name?(part) }
 
       true
+    end
+
+    def file_payload(relative, stat, format:, content: nil, version: nil, mime_type: nil, editable: false)
+      {
+        path: relative,
+        name: File.basename(relative),
+        size_bytes: stat.size,
+        format: format,
+        mime_type: mime_type,
+        content: content,
+        version: version,
+        editable: editable,
+        truncated: false
+      }.compact
+    end
+
+    def image_mime_type(relative)
+      IMAGE_MIME_TYPES[File.extname(relative).downcase]
+    end
+
+    def text_format(relative)
+      File.extname(relative).downcase.match?(/\A\.(?:md|markdown)\z/) ? "markdown" : "text"
+    end
+
+    def editable_text?(bytes, content)
+      editable_text_bytes?(bytes) && content.valid_encoding?
+    end
+
+    def assert_image_safe!(file, mime_type)
+      return unless mime_type == "image/svg+xml"
+
+      assert_image_bytes_safe!(File.binread(file, MAX_PREVIEW_BYTES + 1), mime_type)
+    end
+
+    def assert_image_bytes_safe!(bytes, mime_type)
+      raise too_large if bytes.bytesize > MAX_PREVIEW_BYTES
+      return unless mime_type == "image/svg+xml"
+
+      text = bytes.dup.force_encoding(Encoding::UTF_8)
+      raise Error.new("binary", "Binary files cannot be previewed", status: 415) unless text.valid_encoding?
+      raise Error.new("sensitive", "Sensitive files cannot be previewed", status: 403) if sensitive_content?(text)
+    end
+
+    def editable_text_bytes?(bytes)
+      return false if binary?(bytes)
+
+      bytes.dup.force_encoding(Encoding::UTF_8).valid_encoding?
+    end
+
+    def secure_compare_version(expected, bytes)
+      supplied = expected.to_s
+      actual = Digest::SHA256.hexdigest(bytes)
+      return false unless supplied.bytesize == actual.bytesize
+
+      supplied.bytes.zip(actual.bytes).reduce(0) { |difference, pair| difference | (pair[0] ^ pair[1]) }.zero?
+    end
+
+    def atomic_replace!(file, content, mode)
+      Tempfile.create([".tycho-workspace-", ".tmp"], File.dirname(file), mode: 0o600) do |temporary|
+        temporary.binmode
+        temporary.write(content)
+        temporary.flush
+        temporary.fsync
+        File.chmod(mode & 0o7777, temporary.path)
+        File.rename(temporary.path, file)
+        File.open(File.dirname(file), "r") { |directory| directory.fsync }
+      end
     end
 
     def excluded_directory?(name)
