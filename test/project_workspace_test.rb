@@ -105,9 +105,15 @@ module ProjectWorkspaceTest
       File.binwrite(File.join(root, "invalid.txt"), "bad\xFF".b)
       File.write(File.join(root, "config.txt"), "api_key: sk-abcdefghijklmnopqrstuvwxyz\n")
       File.symlink(path, File.join(root, "notes-link.txt"))
+      FileUtils.mkdir_p(File.join(root, "actual-docs"))
+      File.write(File.join(root, "actual-docs", "linked-notes.txt"), "linked\n")
+      File.symlink(File.join(root, "actual-docs"), File.join(root, "linked-docs"))
       assert_error("not_editable") { browser.write(path: "invalid.txt", content: "safe", expected_version: "x") }
       assert_error("sensitive") { browser.write(path: "config.txt", content: "safe", expected_version: "x") }
       assert_error("not_editable") { browser.write(path: "notes-link.txt", content: "safe", expected_version: saved[:version]) }
+      linked_preview = browser.preview(path: "linked-docs/linked-notes.txt")
+      assert(linked_preview[:content] == "linked\n", "expected internal symlinked directories to remain previewable")
+      assert_error("not_editable") { browser.write(path: "linked-docs/linked-notes.txt", content: "safe\n", expected_version: linked_preview[:version]) }
       assert_error("sensitive") { browser.write(path: "notes.txt", content: "token: ghp_abcdefghijklmnopqrstuvwxyz123456\n", expected_version: saved[:version]) }
     end
   end

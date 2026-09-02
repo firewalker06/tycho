@@ -143,8 +143,7 @@ module HQ
       relative = normalize_relative_path(path)
       raise invalid_path if relative.empty?
 
-      candidate = File.join(root, relative)
-      raise Error.new("not_editable", "Linked files cannot be edited", status: 409) if File.symlink?(candidate)
+      raise Error.new("not_editable", "Linked files cannot be edited", status: 409) if traverses_symlink?(root, relative)
 
       file = resolve!(root, relative, kind: :file)
       stat = File.stat(file)
@@ -313,6 +312,14 @@ module HQ
       return false unless supplied.bytesize == actual.bytesize
 
       supplied.bytes.zip(actual.bytes).reduce(0) { |difference, pair| difference | (pair[0] ^ pair[1]) }.zero?
+    end
+
+    def traverses_symlink?(root, relative)
+      current = root
+      relative.split("/").any? do |part|
+        current = File.join(current, part)
+        File.symlink?(current)
+      end
     end
 
     def atomic_replace!(file, content, mode)
