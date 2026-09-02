@@ -13,6 +13,8 @@ module ProjectWorkspaceTest
     assert_paginates_and_bounds_directory_payloads
     assert_rejects_directories_above_the_deterministic_scan_cap
     assert_previews_unicode_and_scrubs_invalid_utf8
+    assert_classifies_markdown_and_images
+    assert_edits_only_safe_current_plain_text
     assert_rejects_binary_large_sensitive_and_generated_files
     assert_reports_permission_errors
     assert_rejects_traversal_and_absolute_paths
@@ -72,6 +74,50 @@ module ProjectWorkspaceTest
     end
   end
 
+  def assert_classifies_markdown_and_images
+    with_workspace do |root|
+      File.write(File.join(root, "guide.md"), "# Guide\n")
+      png = "\x89PNG\r\n\x1A\n".b
+      File.binwrite(File.join(root, "diagram.png"), png)
+      browser = HQ::ProjectWorkspace.new(root)
+
+      markdown = browser.preview(path: "guide.md")
+      image = browser.preview(path: "diagram.png")
+      blob = browser.image(path: "diagram.png")
+
+      assert(markdown[:format] == "markdown" && markdown[:editable], "expected Markdown to use the shared rich-preview format")
+      assert(image[:format] == "image" && image[:mime_type] == "image/png", "expected supported images to expose image preview metadata")
+      assert(blob[:body] == png && blob[:mime_type] == "image/png", "expected image bytes to remain scoped to the workspace")
+    end
+  end
+
+  def assert_edits_only_safe_current_plain_text
+    with_workspace do |root|
+      path = File.join(root, "notes.txt")
+      File.write(path, "first\n")
+      browser = HQ::ProjectWorkspace.new(root)
+      preview = browser.preview(path: "notes.txt")
+
+      saved = browser.write(path: "notes.txt", content: "second\n", expected_version: preview[:version])
+      assert(saved[:content] == "second\n" && File.read(path) == "second\n", "expected atomic plain-text write to return the refreshed preview")
+      assert_error("stale") { browser.write(path: "notes.txt", content: "third\n", expected_version: preview[:version]) }
+
+      File.binwrite(File.join(root, "invalid.txt"), "bad\xFF".b)
+      File.write(File.join(root, "config.txt"), "api_key: sk-abcdefghijklmnopqrstuvwxyz\n")
+      File.symlink(path, File.join(root, "notes-link.txt"))
+      FileUtils.mkdir_p(File.join(root, "actual-docs"))
+      File.write(File.join(root, "actual-docs", "linked-notes.txt"), "linked\n")
+      File.symlink(File.join(root, "actual-docs"), File.join(root, "linked-docs"))
+      assert_error("not_editable") { browser.write(path: "invalid.txt", content: "safe", expected_version: "x") }
+      assert_error("sensitive") { browser.write(path: "config.txt", content: "safe", expected_version: "x") }
+      assert_error("not_editable") { browser.write(path: "notes-link.txt", content: "safe", expected_version: saved[:version]) }
+      linked_preview = browser.preview(path: "linked-docs/linked-notes.txt")
+      assert(linked_preview[:content] == "linked\n", "expected internal symlinked directories to remain previewable")
+      assert_error("not_editable") { browser.write(path: "linked-docs/linked-notes.txt", content: "safe\n", expected_version: linked_preview[:version]) }
+      assert_error("sensitive") { browser.write(path: "notes.txt", content: "token: ghp_abcdefghijklmnopqrstuvwxyz123456\n", expected_version: saved[:version]) }
+    end
+  end
+
   def assert_rejects_directories_above_the_deterministic_scan_cap
     with_workspace do |root|
       old_limit = HQ::ProjectWorkspace::MAX_DIRECTORY_ENTRIES
@@ -86,6 +132,7 @@ module ProjectWorkspaceTest
   def assert_rejects_binary_large_sensitive_and_generated_files
     with_workspace do |root|
       File.binwrite(File.join(root, "image.bin"), "abc\0def")
+      File.write(File.join(root, "secret.svg"), "<svg><!-- -----BEGIN PRIVATE KEY----- --></svg>")
       File.binwrite(File.join(root, "late-binary.bin"), ("a" * 9_000) + "\0binary")
       File.binwrite(File.join(root, "large.txt"), "x" * (HQ::ProjectWorkspace::MAX_PREVIEW_BYTES + 1))
       File.write(File.join(root, "secret.pem"), "-----BEGIN PRIVATE KEY-----\nnope")
@@ -110,6 +157,7 @@ module ProjectWorkspaceTest
       browser = HQ::ProjectWorkspace.new(root)
 
       assert_error("binary") { browser.preview(path: "image.bin") }
+      assert_error("sensitive") { browser.preview(path: "secret.svg") }
       assert_error("binary") { browser.preview(path: "late-binary.bin") }
       assert_error("too_large") { browser.preview(path: "large.txt") }
       assert_error("not_found") { browser.preview(path: "secret.pem") }

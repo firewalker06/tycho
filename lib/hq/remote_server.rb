@@ -466,6 +466,12 @@ module HQ
         if method == "GET" && tail == ["workspace", "preview"]
           return ok(preview: service.project_workspace_preview(key, request&.query_params || {}))
         end
+        if method == "GET" && tail == ["workspace", "image"]
+          return service.project_workspace_image(key, request&.query_params || {})
+        end
+        if method == "PUT" && tail == ["workspace", "file"]
+          return ok(preview: service.update_project_workspace_file(key, body))
+        end
         return ok(git: service.project_git_status(key)) if method == "GET" && tail == ["git", "status"]
         if method == "GET" && tail[0, 2] == ["git", "diff"] && tail.length <= 3
           return ok(diff: service.project_git_diff(key, scope: tail[2] || request&.query_params&.fetch("scope", nil)))
@@ -2323,6 +2329,34 @@ module HQ
     def project_workspace_preview(key, params = {})
       project = find_project!(key)
       ProjectWorkspace.new(project.path).preview(path: params["path"].to_s)
+    rescue ProjectWorkspace::Error => e
+      raise Error.new(e.message, status: e.status, details: { code: e.code })
+    end
+
+    def project_workspace_image(key, params = {})
+      project = find_project!(key)
+      image = ProjectWorkspace.new(project.path).image(path: params["path"].to_s)
+      {
+        status: 200,
+        content_type: image.fetch(:mime_type),
+        headers: {
+          "Cache-Control" => "private, max-age=60",
+          "Content-Disposition" => "inline; filename=\"#{http_quoted_filename(image.fetch(:name))}\"",
+          "X-Content-Type-Options" => "nosniff"
+        },
+        body: image.fetch(:body)
+      }
+    rescue ProjectWorkspace::Error => e
+      raise Error.new(e.message, status: e.status, details: { code: e.code })
+    end
+
+    def update_project_workspace_file(key, attrs)
+      project = find_project!(key)
+      ProjectWorkspace.new(project.path).write(
+        path: attrs["path"].to_s,
+        content: attrs["content"],
+        expected_version: attrs["version"].to_s
+      )
     rescue ProjectWorkspace::Error => e
       raise Error.new(e.message, status: e.status, details: { code: e.code })
     end

@@ -3470,6 +3470,41 @@ select {
   white-space: pre;
 }
 
+.workspace-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspace-image-preview {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+}
+
+.workspace-file-editor {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  gap: 10px;
+  padding: 12px;
+}
+
+.workspace-file-editor textarea {
+  min-width: 0;
+  min-height: 260px;
+  resize: vertical;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  tab-size: 2;
+}
+
 @media (max-width: 760px) {
   .workspace-browser-grid {
     grid-template-columns: minmax(0, 1fr);

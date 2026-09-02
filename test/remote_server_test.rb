@@ -2084,6 +2084,7 @@ module RemoteServerTest
       write_project_workspace(workspace)
       FileUtils.mkdir_p(File.join(workspace, "docs"))
       File.write(File.join(workspace, "docs", "guide.md"), "# Guide\n")
+      File.binwrite(File.join(workspace, "diagram.png"), "\x89PNG\r\n\x1A\n".b)
       File.write(File.join(workspace, ".env"), "TOKEN=secret\n")
       registry = registry_for_project(dir, workspace)
       service = HQ::RemoteService.new(registry: registry)
@@ -2111,6 +2112,31 @@ module RemoteServerTest
       )
       preview = server.send(:route, service, "GET", preview_request.path, {}, preview_request)
       assert(preview[:body].dig(:preview, :content) == "# Guide\n", "expected text preview route")
+      assert(preview[:body].dig(:preview, :format) == "markdown" && preview[:body].dig(:preview, :editable),
+             "expected workspace preview route to classify editable Markdown")
+
+      image_request = HQ::RemoteServer::Request.new(
+        method: "GET",
+        path: "/projects/web/workspace/image",
+        query: "path=diagram.png",
+        headers: {},
+        body: ""
+      )
+      image = server.send(:route, service, "GET", image_request.path, {}, image_request)
+      assert(image[:content_type] == "image/png" && image[:body].start_with?("\x89PNG".b),
+             "expected workspace images to use the scoped binary endpoint")
+      assert(image.dig(:headers, "X-Content-Type-Options") == "nosniff", "expected workspace images to disable MIME sniffing")
+
+      saved = server.send(
+        :route,
+        service,
+        "PUT",
+        "/projects/web/workspace/file",
+        { "path" => "docs/guide.md", "content" => "# Updated\n", "version" => preview[:body].dig(:preview, :version) },
+        nil
+      )
+      assert(saved.dig(:body, :preview, :content) == "# Updated\n", "expected workspace writes to return a fresh preview")
+      assert(File.read(File.join(workspace, "docs", "guide.md")) == "# Updated\n", "expected workspace writes to stay project-scoped")
 
       traversal = HQ::RemoteServer::Request.new(
         method: "GET",
@@ -5541,7 +5567,7 @@ module RemoteServerTest
     assert(js[:body].include?('label: "Browse workspace"') &&
            js[:body].include?("function renderProjectWorkspace") &&
            js[:body].include?("function ensureProjectWorkspacePreview"),
-           "expected Project detail to expose the read-only workspace browser")
+           "expected Project detail to expose the workspace browser")
     assert(!js[:body].include?("project-primary-actions"),
            "expected Project detail to keep Browse workspace and See diff out of the main surface")
     assert(js[:body].include?('label: "New agent"') &&
@@ -5558,6 +5584,12 @@ module RemoteServerTest
            js[:body].include?('aria-label="Workspace path"') &&
            js[:body].include?('class="workspace-text-preview" tabindex="0"'),
            "expected workspace browsing and previews to expose keyboard and screen-reader contracts")
+    assert(js[:body].include?("function ensureProjectWorkspaceImage") &&
+           js[:body].include?("renderMarkdown(preview.content || \"\"") &&
+           js[:body].include?("data-edit-workspace-file") &&
+           js[:body].include?("workspace-file-editor") &&
+           js[:body].include?('apiPut(`/projects/${encodeURIComponent(projectKey)}/workspace/file`, { path, content, version })'),
+           "expected workspace previews to reuse Markdown and image renderers and offer guarded plain-text editing")
     assert(css[:body].include?(".workspace-browser-grid") &&
            css[:body].include?("@media (max-width: 760px)"),
            "expected workspace browsing to use responsive desktop and mobile layouts")
