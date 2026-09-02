@@ -4822,8 +4822,8 @@ module RemoteServerTest
            "expected selected Remote UI nav clicks to scroll the current tab to the top")
     assert(js[:body].include?('route.type === "tab" && route.tab === tab'),
            "expected selected Remote UI nav detection to require the current top-level tab")
-    assert(js[:body].include?('const DEFAULT_AGENT_SORT = "project_asc"'),
-           "expected agent sorting to default to project grouping ascending")
+    assert(js[:body].include?('const DEFAULT_AGENT_SORT = "relevancy"'),
+           "expected agent sorting to default to the Relevancy list")
     assert(js[:body].include?('const AGENT_SORT_STORAGE_KEY = "hq.remote.agentSort"'),
            "expected agent sort selection to use session storage")
     assert(js[:body].include?("data-agent-sort-choice"),
@@ -5475,6 +5475,12 @@ module RemoteServerTest
            "expected push setup to replace expired or VAPID-mismatched browser subscriptions")
     assert(js[:body].include?("function renderAgentForm"),
            "expected Remote UI to render create/edit agent forms")
+    assert(js[:body].include?('const DEFAULT_AGENT_SORT = "relevancy"') &&
+           js[:body].include?('{ value: "relevancy", label: "Relevancy"'),
+           "expected the Agents page to default to the direct Relevancy agent list")
+    assert(helpers_js[:body].include?('case "relevancy":') &&
+           helpers_js[:body].include?("return compareQuickSwitchAgents(a, b);"),
+           "expected Relevancy to reuse the quick switch ordering")
     assert(js[:body].include?("function renderOnboardingCliGuide") &&
            js[:body].include?("data-select-onboarding-cli") &&
            js[:body].include?("agent_cli_guides"),
@@ -5502,6 +5508,14 @@ module RemoteServerTest
            js[:body].include?("function renderProjectWorkspace") &&
            js[:body].include?("function ensureProjectWorkspacePreview"),
            "expected Project detail to expose the read-only workspace browser")
+    assert(!js[:body].include?("project-primary-actions"),
+           "expected Project detail to keep Browse workspace and See diff out of the main surface")
+    assert(js[:body].include?('label: "New agent"') &&
+           js[:body].include?("moreMenuSeparator(),\n    moreMenuButton({\n      label: \"New agent\""),
+           "expected Project More menu to offer New agent after a divider")
+    assert(js[:body].include?('label: "All servers"') &&
+           js[:body].include?('icon: "globe"'),
+           "expected the All servers action to use a globe icon")
     assert(js[:body].include?("function performProjectWorkspaceRequest") &&
            js[:body].include?("requests[key] !== requestId"),
            "expected workspace navigation responses to be race-safe")
