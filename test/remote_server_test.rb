@@ -6110,8 +6110,11 @@ module RemoteServerTest
            "expected markdown rendering to sanitize parsed HTML with DOMPurify")
     assert(js[:body].include?("https://cdn.jsdelivr.net/npm/mermaid@11.15.0/") &&
            js[:body].include?("function prepareMarkdownCodeBlocks") &&
-           js[:body].include?("function queueMermaidRendering"),
-           "expected Mermaid code fences to lazy-load and render through a pinned CDN build")
+           js[:body].include?("function previewMermaidCodeBlock") &&
+           js[:body].include?("function showMermaidCodeBlock") &&
+           js[:body].include?("data-preview-mermaid-code") &&
+           js[:body].include?("data-show-mermaid-code"),
+           "expected Mermaid code fences to toggle individual previews through a pinned lazy CDN build")
     assert(js[:body].include?('securityLevel: "strict"'),
            "expected Mermaid rendering to use strict security mode")
     assert(js[:body].include?("function renderPlainTextMarkdown"),
