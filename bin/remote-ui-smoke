@@ -957,21 +957,108 @@ def write_smoke_script(path)
 
         await page.evaluate(async () => {
           await ensureMarkdownParserLoaded();
-          replaceView(renderMarkdown([
+          const content = [
+            "```mermaid",
+            "flowchart LR",
+            "  A[First chart] --> B[Previewed alone]",
+            "```",
+            "```mermaid",
+            "flowchart LR",
+            "  C[Second chart] --> D[Still code]",
+            "```",
+          ].join("\\n");
+          window.__smokeMermaidRender = render;
+          render = () => replaceView(renderMessageContent({
+            kind: "message",
+            role: "assistant",
+            content,
+            metadata: {},
+          }, { markdownMenuScope: "smoke-conversation-mermaid" }));
+          render();
+        });
+        const conversationMermaidContract = await page.evaluate(() => ({
+          diagrams: document.querySelectorAll(".mermaid").length,
+          codeBlocks: document.querySelectorAll("code.language-mermaid").length,
+          scripts: document.querySelectorAll('script[src*="/mermaid@"]').length,
+        }));
+        if (conversationMermaidContract.diagrams !== 0 || conversationMermaidContract.codeBlocks !== 2 ||
+            conversationMermaidContract.scripts !== 0) {
+          throw new Error(`Mermaid must remain code without loading Mermaid: ${JSON.stringify(conversationMermaidContract)}`);
+        }
+        await page.click('[data-toggle-markdown-code-menu="markdown-code:smoke-conversation-mermaid:0"]');
+        const mermaidPreviewLabel = await page.locator(".markdown-code-menu-popover:not([hidden]) [data-preview-mermaid-code] strong").textContent();
+        if (mermaidPreviewLabel?.trim() !== "Preview chart") {
+          throw new Error(`Mermaid code menu did not offer Preview chart: ${JSON.stringify(mermaidPreviewLabel)}`);
+        }
+        await page.click(".markdown-code-menu-popover:not([hidden]) [data-preview-mermaid-code]");
+        await page.waitForSelector(".mermaid svg", { state: "visible", timeout: 20_000 });
+        const mermaidContract = await page.evaluate(() => ({
+          diagrams: document.querySelectorAll(".mermaid").length,
+          codeBlocks: document.querySelectorAll("pre:not([hidden]) > code.language-mermaid").length,
+          scripts: document.querySelectorAll('script[src*="/mermaid@"]').length,
+          processed: document.querySelector(".mermaid")?.dataset.processed,
+          svg: document.querySelectorAll(".mermaid svg").length,
+        }));
+        if (mermaidContract.diagrams !== 1 || mermaidContract.codeBlocks !== 1 || mermaidContract.scripts !== 1 ||
+            mermaidContract.processed !== "true" || mermaidContract.svg !== 1) {
+          throw new Error(`Mermaid preview did not render exactly one chart: ${JSON.stringify(mermaidContract)}`);
+        }
+        await page.click('[data-toggle-markdown-code-menu="markdown-code:smoke-conversation-mermaid:0"]');
+        const showCodeLabel = await page.locator(".markdown-code-menu-popover:not([hidden]) [data-show-mermaid-code] strong").textContent();
+        if (showCodeLabel?.trim() !== "Show code") {
+          throw new Error(`Mermaid preview menu did not offer Show code: ${JSON.stringify(showCodeLabel)}`);
+        }
+        await page.click(".markdown-code-menu-popover:not([hidden]) [data-show-mermaid-code]");
+        const restoredMermaidContract = await page.evaluate(() => ({
+          diagrams: document.querySelectorAll(".mermaid").length,
+          codeBlocks: document.querySelectorAll("code.language-mermaid").length,
+        }));
+        if (restoredMermaidContract.diagrams !== 0 || restoredMermaidContract.codeBlocks !== 2) {
+          throw new Error(`Show code did not restore the Mermaid source: ${JSON.stringify(restoredMermaidContract)}`);
+        }
+        await page.evaluate(() => {
+          render = window.__smokeMermaidRender;
+          state.renderedViewHtml = "";
+        });
+
+        await page.evaluate(() => {
+          replaceView(renderAgentSummaryContent([
             "```mermaid",
             "flowchart LR",
             "  A[HTML attachment] --> B[Visible lesson]",
             "```",
-          ].join("\\n")));
+          ].join("\\n"), "smoke-summary-mermaid"));
         });
-        await page.waitForSelector(".mermaid svg", { state: "visible", timeout: 20_000 });
-        const mermaidContract = await page.evaluate(() => ({
-          scripts: document.querySelectorAll('script[src*="/mermaid@"]').length,
-          processed: document.querySelector(".mermaid")?.dataset.processed,
-          svg: Boolean(document.querySelector(".mermaid svg")),
+        const summaryMermaidContract = await page.evaluate(() => ({
+          diagrams: document.querySelectorAll(".mermaid").length,
+          codeBlocks: document.querySelectorAll("code.language-mermaid").length,
         }));
-        if (mermaidContract.scripts !== 1 || mermaidContract.processed !== "true" || !mermaidContract.svg) {
-          throw new Error(`Mermaid rendering contract failed: ${JSON.stringify(mermaidContract)}`);
+        if (summaryMermaidContract.diagrams !== 0 || summaryMermaidContract.codeBlocks !== 1) {
+          throw new Error(`Summary Mermaid rendered without a preview action: ${JSON.stringify(summaryMermaidContract)}`);
+        }
+
+        await page.evaluate(() => {
+          state.attachmentDetails["smoke-mermaid-markdown"] = {
+            id: "smoke-mermaid-markdown",
+            type: "file",
+            format: "markdown",
+            title: "Mermaid Markdown attachment",
+            path: "/tmp/mermaid-smoke.md",
+            content: [
+              "```mermaid",
+              "flowchart LR",
+              "  A[Attachment] --> B[Rendered]",
+              "```",
+            ].join("\\n"),
+          };
+          replaceView(attachmentViewerHtml("smoke-mermaid-markdown"));
+        });
+        const attachmentMermaidContract = await page.evaluate(() => ({
+          diagrams: document.querySelectorAll(".attachment-viewer .mermaid").length,
+          codeBlocks: document.querySelectorAll(".attachment-viewer code.language-mermaid").length,
+        }));
+        if (attachmentMermaidContract.diagrams !== 0 || attachmentMermaidContract.codeBlocks !== 1) {
+          throw new Error(`Attachment Mermaid rendered without a preview action: ${JSON.stringify(attachmentMermaidContract)}`);
         }
 
         await page.evaluate(async () => {
@@ -996,23 +1083,25 @@ def write_smoke_script(path)
             "```",
           ].join("\\n");
           window.__smokeMarkdownRender = render;
-          render = () => replaceView(renderMarkdown(window.__smokeMarkdownCodeSource, { menuScope: "smoke-markdown-code" }));
+          render = () => replaceView(renderMarkdown(window.__smokeMarkdownCodeSource, {
+            menuScope: "smoke-markdown-code",
+          }));
           render();
         });
-        await page.waitForSelector(".mermaid svg", { state: "visible", timeout: 20_000 });
         const markdownCodeMenus = await page.locator("[data-toggle-markdown-code-menu]").count();
         if (markdownCodeMenus !== 3) {
           throw new Error(`Markdown code blocks did not get independent menus: ${markdownCodeMenus}`);
         }
         await page.click('[data-toggle-markdown-code-menu="markdown-code:smoke-markdown-code:1"]');
         const codeMenuContract = await page.evaluate(() => ({
-          openMenus: document.querySelectorAll(".markdown-code-menu-popover").length,
-          copyLabel: document.querySelector(".markdown-code-menu-popover [role='menuitem'] strong")?.textContent?.trim(),
+          openMenus: document.querySelectorAll(".markdown-code-menu-popover:not([hidden])").length,
+          copyLabel: document.querySelector(".markdown-code-menu-popover:not([hidden]) [role='menuitem'] strong")?.textContent?.trim(),
+          previewButtons: document.querySelectorAll(".markdown-code-menu-popover:not([hidden]) [data-preview-mermaid-code]").length,
         }));
-        if (codeMenuContract.openMenus !== 1 || codeMenuContract.copyLabel !== "Copy code") {
+        if (codeMenuContract.openMenus !== 1 || codeMenuContract.copyLabel !== "Copy code" || codeMenuContract.previewButtons !== 0) {
           throw new Error(`Markdown code menu did not open independently: ${JSON.stringify(codeMenuContract)}`);
         }
-        await page.click("[data-close-markdown-code-menu]");
+        await page.click(".markdown-code-menu-popover:not([hidden]) [data-close-markdown-code-menu]");
         const copiedMarkdownCode = await page.evaluate(() => window.__smokeCopiedMarkdownCode);
         if (copiedMarkdownCode !== "const same = true;\\n") {
           throw new Error(`Markdown code copy lost raw source: ${JSON.stringify(copiedMarkdownCode)}`);
@@ -1021,7 +1110,7 @@ def write_smoke_script(path)
           navigator.clipboard.writeText = async () => { throw new Error("clipboard blocked"); };
         });
         await page.click('[data-toggle-markdown-code-menu="markdown-code:smoke-markdown-code:2"]');
-        await page.click("[data-close-markdown-code-menu]");
+        await page.click(".markdown-code-menu-popover:not([hidden]) [data-close-markdown-code-menu]");
         await page.waitForSelector(".growl.fail", { state: "visible", timeout: 10_000 });
         const failedCodeCopy = await page.locator(".growl.fail").textContent();
         if (failedCodeCopy !== "Copy failed") {

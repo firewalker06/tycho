@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-08-30
+2026-09-02
 
 ## Strategic Direction
 
@@ -58,7 +58,7 @@ Key references:
 | Chat viewport rendering | Project complete harness events into `memory.jsonl` while the run is live and render by durable sequence; retain `raw.log` parsing only as legacy/recovery fallback | Assistant, delegation, callback, user, tool, and summary events share one cross-process order instead of batching assistant turns at finalization |
 | Agent chat conversation blocks | Conversation renders selectable blocks for user messages, agent messages, system events, and collapsed tool-call groups; Enter opens the selected block in a floating scrollable detail layer | Keeps normal chat scanning compact while preserving full tool/message detail on demand |
 | Agent attachments | Structured agent results can include PR/document/image attachments, persisted in `.attachments.json` and mirrored into `memory.jsonl`, surfaced from chat with a `ctrl+a` navigable list | Durable links to artifacts survive later runs and memory rebuilds instead of living only in a single assistant message |
-| Remote artifact rendering | Render attached HTML in an origin-isolated iframe with a restrictive content policy and package explicitly referenced, allowlisted workspace web assets; render sanitized Markdown Mermaid fences with a pinned, conditional CDN loader in strict mode | Interactive lessons and shared course assets remain usable without granting generated HTML access to Tycho or browser storage, and ordinary Markdown does not pay the Mermaid download cost |
+| Remote artifact rendering | Render attached HTML in an origin-isolated iframe with a restrictive content policy and package explicitly referenced, allowlisted workspace web assets; keep sanitized Mermaid fences as code on every Markdown surface and toggle each block between `Preview chart` and `Show code` through a DOM-local action menu, using a pinned, conditional CDN loader in strict mode to render only that block | Interactive lessons and shared course assets remain usable without granting generated HTML access to Tycho or browser storage, while Mermaid work happens only for the chart the operator chooses and preview state remains reversible |
 | Pull request diffs | Agent-scoped PR diff inspection remains available through an authenticated `gh` CLI | Keep PR diff fetching agent-scoped and read-only. |
 | Agent pull request catalog | Persist canonical PR references and origin title/status metadata in an agent-owned `<agent-stem>.pull_request_catalog.json` sidecar; keep ordinary agent PR listing network-free | Opening one agent reads only that agent's catalog; displayed titles and Open/Draft/Closed/Merged state come from cached GitHub metadata, refreshes remain explicit, and archiving moves the catalog with the agent |
 | Agent pull request switching | Paint the route shell before asynchronously attaching its diff, give foreground navigation a reserved request slot, cancel stale background work outside the open PR route, preload at most six saved snapshots, retain at most twelve payloads plus six visited viewers and per-PR scroll positions, and render lines in 100-line containment chunks | Persistent snapshots remain authoritative; navigation never shares a frame with diff layout, while immutable parsed-store reuse and bounded browser caches preserve each PR's form, selection, and desktop/mobile scroll state |

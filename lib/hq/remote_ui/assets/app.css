@@ -5552,7 +5552,7 @@ select {
   position: absolute;
   top: 7px;
   right: 7px;
-  z-index: 3;
+  z-index: 20;
 }
 
 .markdown-code-menu-trigger {
@@ -5584,13 +5584,17 @@ select {
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
-  z-index: 4;
+  z-index: 21;
   min-width: 150px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: color-mix(in srgb, var(--panel) 98%, transparent);
   box-shadow: var(--shadow);
   padding: 6px;
+}
+
+.markdown-code-menu-popover [hidden] {
+  display: none;
 }
 
 .markdown-viewer table {
