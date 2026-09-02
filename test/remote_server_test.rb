@@ -391,6 +391,21 @@ module RemoteServerTest
       assert(persisted.dig("session_loops", "prompt_templates", 1, "prompt") ==
              "Check release readiness.\nReport blockers only.",
              "expected session loop settings to persist each template prompt independently")
+
+      defaults_updated = server.send(:route, service, "PATCH", "/settings/session-loops/defaults", {
+                                       "interval_minutes" => 20,
+                                       "end_time" => "20:00"
+                                     }, nil)
+      assert(defaults_updated.dig(:body, :session_loops, :prompt_templates, 0, :key) == "review-watch",
+             "expected loop defaults to preserve prompt templates")
+
+      templates_updated = server.send(:route, service, "PATCH", "/settings/session-loops/prompt-templates", {
+                                        "prompt_templates" => [
+                                          { "name" => "Check deploy", "prompt" => "Check deploy readiness." }
+                                        ]
+                                      }, nil)
+      assert(templates_updated.dig(:body, :session_loops, :interval_minutes) == 20,
+             "expected prompt template updates to preserve loop defaults")
     end
   end
 
@@ -5406,11 +5421,29 @@ module RemoteServerTest
            js[:body].include?('apiPost(`/agents/${encodeURIComponent(agentKey)}/loop-schedule`, payload)'),
            "expected conversation context menus to create quick session loops")
     assert(js[:body].include?('id="session-loop-settings-form"') &&
-           js[:body].include?('apiPatch("/settings/session-loops"') &&
+           js[:body].include?('id="session-loop-templates-form"') &&
+           js[:body].include?('apiPatch("/settings/session-loops/defaults"') &&
+           js[:body].include?('apiPatch("/settings/session-loops/prompt-templates"') &&
            js[:body].include?("data-session-loop-template-row") &&
            js[:body].include?("session-loop-settings-actions") &&
+           js[:body].include?("data-edit-session-loop-template") &&
+           js[:body].include?("Save defaults") &&
+           js[:body].include?("Save templates") &&
            js[:body].include?('data-state-key="session-loop-template:${escapeAttr(stateKey)}:prompt"'),
-           "expected General Settings to configure loop defaults and prompt templates")
+           "expected General Settings to configure loop defaults and prompt templates independently")
+    assert(js[:body].include?('>Test</button>') &&
+           js[:body].include?('>Disable</button>') &&
+           !js[:body].include?(">Send test</button>") &&
+           !js[:body].include?(">Disable notifications</button>") &&
+           js[:body].include?("push-notification-card"),
+           "expected Push notification controls and status treatment to use the compact Settings card")
+    assert(js[:body].include?("function renderServersActionsMenu") &&
+           js[:body].include?("data-refresh-all-servers") &&
+           js[:body].include?("data-toggle-server-form") &&
+           js[:body].include?('iconSvg("copy")') &&
+           css[:body].include?(".server-action-menu > summary") &&
+           css[:body].include?("border: 0;"),
+           "expected server actions to move into borderless context menus with copy controls")
     assert(css[:body].include?(".session-loop-settings-actions") &&
            css[:body].include?("var(--mobile-nav-height, 70px) + 24px"),
            "expected session loop settings save actions to remain reachable on mobile")

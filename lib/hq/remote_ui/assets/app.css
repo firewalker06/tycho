@@ -1246,7 +1246,7 @@ textarea {
 
 .server-section-label {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
 }
@@ -1366,9 +1366,9 @@ textarea {
   width: var(--touch-target);
   height: var(--touch-target);
   min-height: var(--touch-target);
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 8px;
-  background: var(--panel);
+  background: transparent;
   color: var(--muted);
   cursor: pointer;
   list-style: none;
@@ -1382,7 +1382,7 @@ textarea {
 .server-action-menu[open] > summary,
 .server-action-menu > summary:hover,
 .server-action-menu > summary:focus-visible {
-  background: var(--panel-soft);
+  background: color-mix(in srgb, var(--panel-soft) 72%, transparent);
   color: var(--text);
 }
 
@@ -7699,18 +7699,53 @@ body:has(.inquiry-form-full-screen) {
   font-size: 13px;
 }
 
-.session-loop-settings-form {
-  display: grid;
-  gap: 10px;
+.copy-url-button {
+  justify-self: end;
+}
+
+.session-loop-settings,
+.session-loop-templates {
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 12px;
   background: color-mix(in srgb, var(--panel) 78%, transparent);
 }
 
-.session-loop-settings-form .form-section-heading {
-  padding-right: 0;
-  padding-left: 0;
+.session-loop-settings > summary,
+.session-loop-templates > summary {
+  display: flex;
+  min-height: var(--touch-target);
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.session-loop-settings > summary::-webkit-details-marker,
+.session-loop-templates > summary::-webkit-details-marker {
+  display: none;
+}
+
+.session-loop-settings > summary > div,
+.session-loop-templates > summary > div {
+  display: grid;
+  gap: 2px;
+}
+
+.session-loop-settings > summary span,
+.session-loop-templates > summary span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.session-loop-settings-form,
+.session-loop-templates-form {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  padding: 12px;
 }
 
 .session-loop-field {
@@ -7754,6 +7789,23 @@ body:has(.inquiry-form-full-screen) {
   gap: 12px;
 }
 
+.session-loop-template-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.session-loop-template-preview {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.session-loop-template-editor {
+  display: grid;
+  gap: 8px;
+}
+
 .session-loop-template-heading .icon-button {
   width: var(--touch-target);
   min-width: var(--touch-target);
@@ -7775,7 +7827,8 @@ body:has(.inquiry-form-full-screen) {
     grid-template-columns: 1fr;
   }
 
-  .session-loop-settings-form {
+  .session-loop-settings,
+  .session-loop-templates {
     margin-bottom: calc(var(--mobile-nav-height, 70px) + 24px + env(safe-area-inset-bottom, 0px));
   }
 
@@ -7783,6 +7836,40 @@ body:has(.inquiry-form-full-screen) {
     width: 100%;
     justify-content: center;
   }
+}
+
+.push-notification-card .detail-card-body {
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.push-notification-heading,
+.push-notification-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.push-notification-heading {
+  justify-content: space-between;
+}
+
+.push-notification-heading span,
+.push-notification-status > div > span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.push-notification-status > .status-mark {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+}
+
+.push-notification-status > div {
+  display: grid;
+  gap: 2px;
 }
 
 .visibility-legend {
