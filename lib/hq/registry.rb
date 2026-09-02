@@ -371,6 +371,22 @@ module HQ
       @session_loop_settings
     end
 
+    def update_session_loop_defaults!(attrs)
+      update_session_loop_settings!(
+        "interval_minutes" => attrs["interval_minutes"] || attrs[:interval_minutes],
+        "end_time" => attrs["end_time"] || attrs[:end_time],
+        "prompt_templates" => @session_loop_settings.fetch(:prompt_templates)
+      )
+    end
+
+    def update_session_loop_prompt_templates!(attrs)
+      update_session_loop_settings!(
+        "interval_minutes" => @session_loop_settings.fetch(:interval_minutes),
+        "end_time" => @session_loop_settings.fetch(:end_time),
+        "prompt_templates" => attrs["prompt_templates"] || attrs[:prompt_templates]
+      )
+    end
+
     def archive_project!(project_key, archived_path: nil)
       data = load_yaml(@path)
       projects = Array(data["projects"])

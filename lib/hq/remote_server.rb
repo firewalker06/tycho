@@ -361,6 +361,12 @@ module HQ
       if %w[PATCH PUT].include?(method) && parts == ["settings", "session-loops"]
         return ok(session_loops: service.update_session_loop_settings(body))
       end
+      if %w[PATCH PUT].include?(method) && parts == ["settings", "session-loops", "defaults"]
+        return ok(session_loops: service.update_session_loop_defaults(body))
+      end
+      if %w[PATCH PUT].include?(method) && parts == ["settings", "session-loops", "prompt-templates"]
+        return ok(session_loops: service.update_session_loop_prompt_templates(body))
+      end
       return ok(response_style: service.response_style) if method == "GET" && parts == ["settings", "response-style"]
       if %w[PATCH PUT].include?(method) && parts == ["settings", "response-style"]
         return ok(response_style: service.update_response_style(body))
@@ -2499,6 +2505,18 @@ module HQ
 
     def update_session_loop_settings(attrs)
       @registry.update_session_loop_settings!(attrs)
+    rescue ConfigError => e
+      raise Error.new(e.message, status: 400)
+    end
+
+    def update_session_loop_defaults(attrs)
+      @registry.update_session_loop_defaults!(attrs)
+    rescue ConfigError => e
+      raise Error.new(e.message, status: 400)
+    end
+
+    def update_session_loop_prompt_templates(attrs)
+      @registry.update_session_loop_prompt_templates!(attrs)
     rescue ConfigError => e
       raise Error.new(e.message, status: 400)
     end
