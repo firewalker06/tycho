@@ -5427,7 +5427,8 @@ module RemoteServerTest
            js[:body].include?("data-session-loop-template-row") &&
            js[:body].include?("session-loop-settings-actions") &&
            js[:body].include?("data-edit-session-loop-template") &&
-           js[:body].include?("Save defaults") &&
+           js[:body].include?("<span>Save</span>") &&
+           !js[:body].include?("Save defaults") &&
            js[:body].include?("Save templates") &&
            js[:body].include?('data-state-key="session-loop-template:${escapeAttr(stateKey)}:prompt"'),
            "expected General Settings to configure loop defaults and prompt templates independently")

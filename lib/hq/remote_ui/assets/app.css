@@ -7827,8 +7827,8 @@ body:has(.inquiry-form-full-screen) {
     grid-template-columns: 1fr;
   }
 
-  .session-loop-settings,
-  .session-loop-templates {
+  .session-loop-settings:last-child,
+  .session-loop-templates:last-child {
     margin-bottom: calc(var(--mobile-nav-height, 70px) + 24px + env(safe-area-inset-bottom, 0px));
   }
 
