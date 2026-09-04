@@ -49,6 +49,8 @@ bundle exec ruby test/registry_test.rb
 bundle exec ruby test/rendering_test.rb
 ```
 
+For a clean checkout, run `npm ci && npx playwright install chromium` before `bin/capture-personal-assistant`.
+
 Use `bin/tycho` for a local manual run. Use the Bundler form when debugging gem resolution. Every change should at minimum pass `bin/test`, and visible TUI changes should still get a manual run of the TUI.
 
 Use `docs/PROJECT_STATUS.md` as the living project status document for current focus, roadmap, and durable decisions; keep transient implementation notes out of it.

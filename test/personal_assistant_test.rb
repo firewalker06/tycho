@@ -38,6 +38,7 @@ class PersonalAssistantTest
 
       agent = agents.find { |candidate| candidate.key == key }
       agent.instance_variable_set(:@fake_running, true)
+      agent.instance_variable_set(:@runs, [HQ::ManagedAgent::AgentRun.new(run_id: "summary-#{starts}", status: "running")])
       agent.define_singleton_method(:running?) { @fake_running == true }
       agent
     end
@@ -45,6 +46,7 @@ class PersonalAssistantTest
     def finish!(key, handoff: nil)
       agent = agents.find { |candidate| candidate.key == key }
       agent.instance_variable_set(:@fake_running, false)
+      agent.last_run.status = "success" if agent.last_run
       agent.structured_result = { "status" => "success", "memory_handoff" => handoff } if handoff
       agent
     end

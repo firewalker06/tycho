@@ -23,6 +23,8 @@ Runtime artifacts are written to `~/.tycho/logs/`, including app state files suc
 - `bin/capture-site-quickstart`: regenerate the v0.10.0 website launch and watch screenshots from deterministic synthetic Remote UI fixtures at 1440x900.
 - `bin/capture-site-tui-conversation`: regenerate the v0.10.0 website TUI conversation screenshot from a deterministic synthetic fixture at 1440x900.
 - `bin/capture-personal-assistant`: regenerate Personal Assistant captures from an isolated fixture server with pinned Playwright.
+
+For a clean checkout, run `npm ci && npx playwright install chromium` before `bin/capture-personal-assistant`.
 - `bundle exec ruby -c bin/tycho`: syntax-check the main executable before opening a PR.
 - `bundle exec ruby test/registry_test.rb`: verify registry loading for split config and system prompt interpolation.
 - `bundle exec ruby test/parser_test.rb`: verify synthetic Claude parser fixture shapes.

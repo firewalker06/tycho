@@ -1893,7 +1893,11 @@ module HQ
       when "search_docs"
         query = arguments.fetch("query", "").to_s.strip
         raise ArgumentError, "Documentation search query is required" if query.empty?
-        results = Dir.glob(File.join(HQ::ROOT_DIR, "docs", "**", "*.md")).filter_map do |path|
+        root = File.realpath(File.join(HQ::ROOT_DIR, "docs"))
+        results = Dir.glob(File.join(root, "**", "*.md")).filter_map do |path|
+          path = File.realpath(path) rescue nil
+          next unless path&.start_with?("#{root}/")
+
           text = File.read(path); next unless text.downcase.include?(query.downcase)
           { "path" => path.delete_prefix("#{HQ::ROOT_DIR}/"), "match" => text.lines.find { |line| line.downcase.include?(query.downcase) }.to_s.strip }
         end.first(20)
@@ -1919,6 +1923,7 @@ module HQ
       agent = @agent_store.load.find { |candidate| candidate.key == key && candidate.personal_assistant? }
       run = agent&.last_run
       return unless run&.status == "success" && agent.structured_result.is_a?(Hash)
+      return if run.run_id.to_s == status[:summary_run_id].to_s && !status[:summary_run_id].to_s.empty?
       return if agent.messages.any? { |message| message.metadata&.fetch("personal_assistant_summary", false) && message.created_at >= run.started_at }
 
       @personal_assistant_actions.register_finalized!(agent.structured_result["action_proposals"], active_key: key, source_run_id: run.run_id)

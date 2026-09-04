@@ -100,11 +100,17 @@ module HQ
 
     def reconcile!(state)
       unless @registry.personal_assistant["enabled"] == true
+        controlled_shutdown!(state)
         state.delete("active_key"); state.delete("active_date"); state.delete("active_timezone")
         state["phase"] = "unconfigured"
         return
       end
       return unless state["active_key"]
+      unless @agent_store.load.any? { |agent| agent.key == state["active_key"] && agent.personal_assistant? }
+        state.delete("active_key"); state.delete("active_date"); state.delete("active_timezone")
+        state["phase"] = "dormant"
+        return
+      end
       timezone = state["active_timezone"] || @registry.personal_assistant["timezone"]
       return if timezone.to_s.empty? || state["active_date"] == local_date(@clock.call, timezone)
       state["phase"] = "closing" if state["phase"] == "active"
@@ -145,20 +151,23 @@ module HQ
       raise "Personal Assistant session is missing" unless agent
       return if state["summary_run_id"]
 
-      run_id = SecureRandom.uuid
+      intent_id = state["summary_intent_id"] || SecureRandom.uuid
+      state["summary_intent_id"] = intent_id
       @agent_store.mutate do |agents, _|
         target = agents.find { |candidate| candidate.key == agent.key }
         raise "Personal Assistant session is missing" unless target
-        target.add_user_message!("[TYCHO INTERNAL SUMMARY ONLY] Summarize this daily session into the normal structured result. Do not propose or execute actions. Include summary, decisions, open items, references, and outstanding child agents.", metadata: { "personal_assistant_summary" => true, "summary_run_id" => run_id })
+        unless target.messages.any? { |message| message.metadata&.fetch("personal_assistant_summary_intent", nil) == intent_id }
+          target.add_user_message!("[TYCHO INTERNAL SUMMARY ONLY] Summarize this daily session into the normal structured result. Do not propose or execute actions. Include summary, decisions, open items, references, and outstanding child agents.", metadata: { "personal_assistant_summary" => true, "personal_assistant_summary_intent" => intent_id })
+        end
       end
-      state["summary_run_id"] = run_id
       state["phase"] = "summarizing"
       # Persist the intent before asking the harness to run.  A transient launch
       # failure must not append a second summary prompt on the next scheduler tick.
       persist(state)
-      @agent_store.start_agent!(agent.key)
+      started = @agent_store.start_agent!(agent.key)
+      state["summary_run_id"] = started.last_run&.run_id
+      raise "Personal Assistant summary did not create a run" if state["summary_run_id"].to_s.empty?
     rescue StandardError
-      state["summary_run_id"] ||= run_id if defined?(run_id)
       raise
     end
 
@@ -199,7 +208,7 @@ module HQ
     end
 
     def payload(state)
-      { state: state["phase"] || (@registry.personal_assistant["enabled"] ? "ready" : "unconfigured"), configured: @registry.personal_assistant["enabled"] == true, active_key: state["active_key"], active_date: state["active_date"], generation: state["generation"].to_i, introduction: INTRODUCTION, handoff_path: state["handoff_path"], error: state["last_error"], config: @registry.personal_assistant.slice("model", "reasoning_effort", "timezone") }
+      { state: state["phase"] || (@registry.personal_assistant["enabled"] ? "ready" : "unconfigured"), configured: @registry.personal_assistant["enabled"] == true, active_key: state["active_key"], active_date: state["active_date"], generation: state["generation"].to_i, introduction: INTRODUCTION, handoff_path: state["handoff_path"], error: state["last_error"], summary_run_id: state["summary_run_id"], config: @registry.personal_assistant.slice("model", "reasoning_effort", "timezone") }
     end
 
     def bounded_handoff(value)
@@ -223,6 +232,18 @@ module HQ
     def truncate(value, bytes)
       string = value.to_s.encode(Encoding::UTF_8, invalid: :replace, undef: :replace).strip
       string.each_char.with_object(String.new) { |char, result| break result if result.bytesize + char.bytesize > bytes; result << char }
+    end
+
+    def controlled_shutdown!(state)
+      key = state["active_key"].to_s
+      return if key.empty?
+
+      agent = @agent_store.load.find { |candidate| candidate.key == key && candidate.personal_assistant? }
+      return unless agent
+      @agent_store.stop_agent!(key) if agent.running?
+      @agent_store.archive_personal_assistant!(key) unless agent.running?
+    rescue StandardError => e
+      state["last_error"] = e.message
     end
   end
 end

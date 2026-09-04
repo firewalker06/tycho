@@ -7,6 +7,8 @@ require "net/http"
 require "socket"
 require "tmpdir"
 
+require_relative "../lib/hq/domain/file_store"
+
 ROOT = File.expand_path("..", __dir__)
 OUTPUT = File.expand_path("~/.tycho/artifacts/card-170")
 PORT = TCPServer.open("127.0.0.1", 0) { |server| server.addr[1] }
@@ -63,11 +65,14 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
     request("/personal-assistant/setup", { confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "Asia/Jakarta" })
     request("/personal-assistant/open", {})
     agents_path = File.join(dir, "logs", "managed_agents.json")
-    agents = JSON.parse(File.read(agents_path))
-    agent = agents.fetch(0)
-    agent["structured_result"] = { "status" => "success", "summary" => "Fixture finalized.", "summary_sections" => nil, "inquiry" => nil, "attachments" => nil, "memory_handoff" => nil, "action_proposals" => [{ "type" => "start_agent", "description" => "Start the selected review agent.", "arguments" => { "agent_key" => "fixture-agent" } }] }
-    agent["runs"] = [{ "run_id" => "capture-finalized-run", "started_at" => Time.now.utc.iso8601, "finished_at" => Time.now.utc.iso8601, "status" => "success", "exit_code" => 0, "log_path" => "capture.log", "command" => [] }]
-    File.write(agents_path, JSON.pretty_generate(agents))
+    File.open("#{agents_path}.lock", File::RDWR | File::CREAT, 0o600) do |lock|
+      lock.flock(File::LOCK_EX)
+      agents = JSON.parse(File.read(agents_path))
+      agent = agents.fetch(0)
+      agent["structured_result"] = { "status" => "success", "summary" => "Fixture finalized.", "summary_sections" => nil, "inquiry" => nil, "attachments" => nil, "memory_handoff" => nil, "action_proposals" => [{ "type" => "start_agent", "description" => "Start the selected review agent.", "arguments" => { "agent_key" => "fixture-agent" } }] }
+      agent["runs"] = [{ "run_id" => "capture-finalized-run", "started_at" => Time.now.utc.iso8601, "finished_at" => Time.now.utc.iso8601, "status" => "success", "exit_code" => 0, "log_path" => "capture.log", "command" => [] }]
+      HQ::FileStore.write_json(agents_path, agents)
+    end
     request("/personal-assistant/actions")
     capture.call("personal-assistant-active-desktop.png", "Desktop Chrome", ".personal-assistant-conversation #composer", "Today’s conversation")
     capture.call("personal-assistant-confirmation-desktop.png", "Desktop Chrome", "[data-confirm-pa-proposal]", "Confirm exact action")
