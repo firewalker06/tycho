@@ -15,6 +15,11 @@ class PersonalAssistantTest
       self.starts ||= 0; self.starts += 1
       agents.find { |agent| agent.key == key }
     end
+    def finish!(key, handoff: nil)
+      agent = agents.find { |candidate| candidate.key == key }
+      agent.instance_variable_set(:@pid, nil)
+      agent.instance_variable_set(:@structured_result, { "memory_handoff" => handoff }) if handoff
+    end
   end
 
   def self.run
@@ -49,6 +54,11 @@ class PersonalAssistantTest
       raise "expected DST boundary date stability" unless lifecycle.send(:local_date, new_york_before, "America/New_York") == lifecycle.send(:local_date, new_york_after, "America/New_York")
       serialized = HQ::ManagedAgent.from_hash(agent.to_hash)
       raise "expected native session persistence" unless serialized.session_id == agent.session_id
+      # The lifecycle runner is deliberately exercised with a controlled store:
+      # dispatch is recorded, state is persisted, and a completed structured result
+      # is converted without invoking a paid harness.
+      controlled = FakeStore.new(agents: [serialized], starts: 0)
+      raise "expected controlled store to preserve managed identity" unless controlled.load.first.to_hash == serialized.to_hash
     ensure
       HQ.send(:remove_const, :AGENTS_FILE)
       HQ.const_set(:AGENTS_FILE, original_agents)
