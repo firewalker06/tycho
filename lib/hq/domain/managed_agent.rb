@@ -711,6 +711,9 @@ module HQ
         run.status = "failed"
         run.metadata = (run.metadata || {}).merge("spawn_error" => e.message)
         FileUtils.rm_f(run_pid_file_path(run.run_id))
+        if @usage_metrics_store
+          UsageMetrics.record_run(agent: self, run:, usage_entries: [], metrics_store: @usage_metrics_store)
+        end
         before_spawn&.call(run)
       end
       raise

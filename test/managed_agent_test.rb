@@ -2624,6 +2624,8 @@ module ManagedAgentTest
       previous_codex_bin = ENV["TYCHO_CODEX_BIN"]
       ENV["TYCHO_CODEX_BIN"] = executable
       agent = HQ::ManagedAgent.new(key: "spawn-failure", name: "Spawn", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "spawn.log"), role: "personal_assistant_daily")
+      metrics_store = HQ::UsageMetrics::Store.new(path: File.join(dir, "usage_metrics.json"))
+      agent.usage_metrics_store = metrics_store
       agent.structured_result = { "status" => "success", "summary" => "stale" }
       agent.summary = "stale"
       agent.define_singleton_method(:spawn) { |_env, *_args, **_options| raise Errno::EAGAIN, "forced spawn failure" }
@@ -2636,6 +2638,7 @@ module ManagedAgentTest
       run = agent.last_run
       assert(run.status == "failed" && run.finished_at && run.metadata["spawn_error"], "expected persisted failed run after spawn exception")
       assert(agent.structured_result.nil? && agent.last_summary != "stale", "expected spawn exception to clear stale result state")
+      assert(metrics_store.runs.count { |record| record["run_id"] == run.run_id } == 1, "expected spawn failure usage metric exactly once")
     ensure
       previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
     end
