@@ -1917,16 +1917,12 @@ module HQ
     end
 
     def ingest_personal_assistant_actions!(status)
-      key = status[:active_key].to_s
-      return if key.empty?
+      snapshot = @personal_assistant.finalized_proposals
+      return unless snapshot.is_a?(Hash)
+      return if snapshot["run_id"].to_s == status[:summary_run_id].to_s && !status[:summary_run_id].to_s.empty?
 
-      agent = @agent_store.load.find { |candidate| candidate.key == key && candidate.personal_assistant? }
-      run = agent&.last_run
-      return unless run&.status == "success" && agent.structured_result.is_a?(Hash)
-      return if run.run_id.to_s == status[:summary_run_id].to_s && !status[:summary_run_id].to_s.empty?
-      return if agent.messages.any? { |message| message.metadata&.fetch("personal_assistant_summary", false) && message.created_at >= run.started_at }
-
-      @personal_assistant_actions.register_finalized!(agent.structured_result["action_proposals"], active_key: key, source_run_id: run.run_id)
+      @personal_assistant_actions.register_finalized!(snapshot["proposals"], active_key: snapshot["active_key"], source_run_id: snapshot["run_id"])
+      @personal_assistant.mark_finalized_proposals_registered!(snapshot["run_id"])
     rescue ArgumentError => e
       HQ.logger.warn("PersonalAssistant") { "Rejected finalized action proposals: #{e.message}" }
     end

@@ -28,7 +28,17 @@ module HQ
     end
 
     def reconcile
-      synchronize { |state| reconcile!(state); advance!(state); payload(state) }
+      synchronize { |state| reconcile!(state); snapshot_finalized_proposals!(state); advance!(state); payload(state) }
+    end
+
+    def finalized_proposals
+      synchronize { |state| snapshot_finalized_proposals!(state); state["finalized_proposals"] }
+    end
+
+    def mark_finalized_proposals_registered!(run_id)
+      synchronize do |state|
+        state.delete("finalized_proposals") if state.dig("finalized_proposals", "run_id").to_s == run_id.to_s
+      end
     end
 
     def accepting_prompts?(key)
@@ -100,7 +110,9 @@ module HQ
 
     def reconcile!(state)
       unless @registry.personal_assistant["enabled"] == true
-        controlled_shutdown!(state)
+        adopt_orphan!(state)
+        return unless controlled_shutdown!(state)
+
         state.delete("active_key"); state.delete("active_date"); state.delete("active_timezone")
         state["phase"] = "unconfigured"
         return
@@ -125,6 +137,10 @@ module HQ
         return
       end
       if state["phase"] == "summarizing"
+        unless state["summary_run_id"]
+          dispatch_summary!(state, agent)
+          return
+        end
         return if agent&.running?
         handoff = summary_handoff(agent, state)
         write_handoff!(state, handoff)
@@ -176,7 +192,7 @@ module HQ
       result = {} unless result.is_a?(Hash)
       handoff = MemoryHandoff.normalize(result["memory_handoff"] || result[:memory_handoff])
       fallback = fallback_handoff(agent)
-      return fallback unless result["status"] == "success" && (!agent&.last_run || agent.last_run.status == "success")
+      return fallback unless result["status"] == "success" && agent&.last_run&.status == "success" && agent.last_run.run_id == state["summary_run_id"]
 
       handoff ? { "summary" => handoff["outcome"], "open_items" => [handoff["continuing_context"]], "decisions" => handoff["decisions"], "references" => handoff["references"], "lessons" => handoff["lessons"], "promotion_candidates" => handoff["promotion_candidates"] }.compact : fallback
     end
@@ -235,15 +251,41 @@ module HQ
     end
 
     def controlled_shutdown!(state)
+      adopt_orphan!(state)
       key = state["active_key"].to_s
       return if key.empty?
 
       agent = @agent_store.load.find { |candidate| candidate.key == key && candidate.personal_assistant? }
-      return unless agent
+      return true unless agent
       @agent_store.stop_agent!(key) if agent.running?
-      @agent_store.archive_personal_assistant!(key) unless agent.running?
+      agent = @agent_store.load.find { |candidate| candidate.key == key && candidate.personal_assistant? }
+      return false if agent&.running?
+
+      @agent_store.archive_personal_assistant!(key) if agent
+      true
     rescue StandardError => e
       state["last_error"] = e.message
+      false
+    end
+
+    def adopt_orphan!(state)
+      return if state["active_key"]
+
+      agent = @agent_store.load.find(&:personal_assistant?)
+      return unless agent
+
+      state.merge!("active_key" => agent.key, "active_date" => state["active_date"] || @clock.call.strftime("%F"), "active_timezone" => state["active_timezone"] || @registry.personal_assistant["timezone"], "phase" => "active")
+    end
+
+    def snapshot_finalized_proposals!(state)
+      return unless state["active_key"] && state["phase"] == "active"
+
+      agent = @agent_store.load.find { |candidate| candidate.key == state["active_key"] && candidate.personal_assistant? }
+      run = agent&.last_run
+      return unless run&.status == "success" && agent.structured_result.is_a?(Hash)
+      return if run.run_id.to_s.empty? || Array(agent.structured_result["action_proposals"]).empty?
+
+      state["finalized_proposals"] = { "run_id" => run.run_id, "active_key" => agent.key, "proposals" => agent.structured_result["action_proposals"] }
     end
   end
 end
