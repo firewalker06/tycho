@@ -633,6 +633,7 @@ module HQ
       mark_read!
       run_id = SecureRandom.uuid
       status_path = run_status_file_path(run_id)
+      pid_path = run_pid_file_path(run_id)
       FileUtils.rm_f(status_path)
       FileUtils.rm_f(last_message_file_path)
       FileUtils.rm_f(invalid_structured_output_file_path)
@@ -673,6 +674,7 @@ module HQ
       @pid = spawn(
         external_process_environment(launch.fetch(:env)).merge(
           "TYCHO_STATUS_PATH" => status_path,
+          "TYCHO_PID_PATH" => pid_path,
           "TYCHO_AGENT_KEY" => @key,
           "TYCHO_EXECUTABLE" => File.join(ROOT_DIR, "bin", "tycho"),
           "TYCHO_STREAM_RECORDER_PATH" => File.expand_path("agent_stream_recorder", __dir__),
@@ -777,6 +779,7 @@ module HQ
     end
 
     def running?
+      recover_spawned_pid!
       return false unless @pid
       return false if completed_status_available?
       return false unless ProcessLiveness.alive?(@pid)
@@ -1343,6 +1346,23 @@ module HQ
       derived_log_path("run-#{token}.status")
     end
 
+    def run_pid_file_path(run_id)
+      token = Digest::SHA256.hexdigest(run_id.to_s)[0, 24]
+      derived_log_path("run-#{token}.pid")
+    end
+
+    def recover_spawned_pid!
+      return if @pid || !last_run || last_run.status != "running"
+      return if completed_status_available?
+      return unless last_run.metadata&.key?("personal_assistant_summary_intent")
+
+      path = run_pid_file_path(last_run.run_id)
+      candidate = Integer(File.read(path).strip, 10)
+      @pid = candidate if ProcessLiveness.alive?(candidate) && own_process_group?(candidate)
+    rescue StandardError
+      nil
+    end
+
     def unscoped_status_file_path
       derived_log_path("status")
     end
@@ -1353,6 +1373,11 @@ module HQ
 
     def agent_runner_script
       <<~RUBY
+        begin
+          File.write(ENV.fetch("TYCHO_PID_PATH"), Process.pid.to_s)
+        rescue StandardError
+          nil
+        end
         status = begin
           recorder_path = ENV["TYCHO_STREAM_RECORDER_PATH"].to_s
           if !recorder_path.empty? && !ENV["TYCHO_MEMORY_PATH"].to_s.empty?
