@@ -63,6 +63,13 @@ module HQ
     def validate_value(value, schema, path)
       return [] unless schema.is_a?(Hash)
 
+      if schema["anyOf"].is_a?(Array)
+        alternatives = schema["anyOf"].map { |alternative| validate_value(value, alternative, path) }
+        return [] if alternatives.any?(&:empty?)
+
+        return [error("no_matching_schema", path, "Value does not match any allowed schema")]
+      end
+
       expected_types = Array(schema["type"])
       unless expected_types.empty? || expected_types.any? { |type| type_matches?(value, type) }
         return [error("wrong_type", path, "Value has the wrong type", expected: expected_types)]

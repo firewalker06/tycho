@@ -119,7 +119,17 @@
         "properties": {
           "type": { "type": "string", "enum": ["read_docs", "search_docs", "inspect_agents", "inspect_projects", "install_or_update_tycho_skill", "create_agent", "message_agent", "start_agent", "stop_agent"] },
           "description": { "type": "string" },
-          "arguments": { "type": "object" }
+          "arguments": {
+            "anyOf": [
+              { "type": "object", "additionalProperties": false, "properties": { "path": { "type": "string" } }, "required": ["path"] },
+              { "type": "object", "additionalProperties": false, "properties": { "query": { "type": "string" } }, "required": ["query"] },
+              { "type": "object", "additionalProperties": false, "properties": {}, "required": [] },
+              { "type": "object", "additionalProperties": false, "properties": { "harness": { "type": "string" }, "action": { "type": "string" } }, "required": ["harness", "action"] },
+              { "type": "object", "additionalProperties": false, "properties": { "project_key": { "type": "string" }, "name": { "type": "string" }, "prompt": { "type": "string" }, "agent": { "type": ["string", "null"] }, "model": { "type": ["string", "null"] }, "reasoning_effort": { "type": ["string", "null"] } }, "required": ["project_key", "name", "prompt", "agent", "model", "reasoning_effort"] },
+              { "type": "object", "additionalProperties": false, "properties": { "agent_key": { "type": "string" }, "prompt": { "type": "string" } }, "required": ["agent_key", "prompt"] },
+              { "type": "object", "additionalProperties": false, "properties": { "agent_key": { "type": "string" } }, "required": ["agent_key"] }
+            ]
+          }
         },
         "required": ["type", "description", "arguments"]
       }
