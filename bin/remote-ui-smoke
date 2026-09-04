@@ -1482,7 +1482,7 @@ Saved safely.
         });
         if (!daemonMenuLayout.found ||
             daemonMenuLayout.labels.join("|") !== "Restart daemon|Stop daemon" ||
-            daemonMenuLayout.scheduleLabels.join("|") !== "Run now|Edit schedule|Delete schedule" ||
+            daemonMenuLayout.scheduleLabels.join("|") !== "Run now|Refresh session|Edit schedule|Delete schedule" ||
             daemonMenuLayout.topDelta > 2 ||
             daemonMenuLayout.toolbarChildren !== 2) {
           throw new Error(`Schedule daemon menu is not aligned beside New schedule: ${JSON.stringify(daemonMenuLayout)}`);

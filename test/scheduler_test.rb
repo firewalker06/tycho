@@ -23,6 +23,11 @@ module SchedulerTest
       assert_scheduler_adopts_existing_session_and_expires_loop
       assert_archived_schedule_session_promotes_prompt_to_schedule
       assert_scheduler_stops_interactive_scheduled_agent_until_resume
+      assert_schedule_session_refresh_starts_fresh_agent
+      assert_schedule_list_uses_current_agent_run_count
+      assert_refresh_stops_running_session
+      assert_refresh_failure_keeps_replacement_recoverable
+      assert_expired_refresh_preserves_current_session
       assert_schedule_waits_for_human_input
     end
     assert_schedule_daemon_supervisor_spawns_external_daemon
@@ -338,6 +343,183 @@ module SchedulerTest
       assert(agents.map(&:key) == [first_agent.key], "expected resume to keep the persistent schedule agent")
       archived = Dir.glob(File.join(HQ::AGENT_ARCHIVE_DIR, "**", File.basename(first_agent.raw_log_path)))
       assert(archived.empty?, "expected resume not to archive the persistent schedule session")
+    end
+  end
+
+  def assert_schedule_session_refresh_starts_fresh_agent
+    with_temp_runtime do |dir|
+      registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: weekday
+            cron: "0 9 * * 1-5"
+            target:
+              type: agent
+              project_key: web
+              name: Weekday maintenance
+              message: "Run maintenance."
+      YAML
+      scheduler = build_scheduler(registry, schedule_path)
+      first = scheduler.run_now("weekday")
+      original = first.fetch(:agent)
+      scheduler.run_now("weekday")
+
+      refreshed = scheduler.refresh_session("weekday")
+      replacement = refreshed.fetch(:agent)
+      state = HQ::ScheduleStore.new.load.fetch("weekday")
+
+      assert(replacement.key != original.key, "expected refresh to create a fresh scheduled session")
+      assert(state.previous_target_key == original.key, "expected refresh to retain the archived session key")
+      assert(state.last_target_key == replacement.key, "expected refresh to target the fresh session")
+      assert(state.run_count == 1, "expected refresh to reset the current session run count")
+      assert(read_agents.map(&:key) == [replacement.key], "expected the previous scheduled session to be archived")
+      archived = Dir.glob(File.join(HQ::AGENT_ARCHIVE_DIR, "**", File.basename(original.raw_log_path)))
+      assert(!archived.empty?, "expected refresh to archive the previous session logs")
+
+      state.mark_stopped!
+      HQ::ScheduleStore.new.save("weekday" => state)
+      resumed = scheduler.resume_and_run_now("weekday")
+      assert(resumed.fetch(:agent).key == replacement.key, "expected resume and run to preserve the current session")
+      assert(HQ::ScheduleStore.new.load.fetch("weekday").run_count == 2,
+             "expected resume and run to create one additional run")
+    end
+  end
+
+  def assert_schedule_list_uses_current_agent_run_count
+    with_temp_runtime do |dir|
+      registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: weekday
+            cron: "0 9 * * 1-5"
+            target:
+              type: agent
+              project_key: web
+              name: Weekday maintenance
+              message: "Run maintenance."
+      YAML
+      scheduler = build_scheduler(registry, schedule_path)
+      first = scheduler.run_now("weekday")
+      agent_store = HQ::AgentStore.new(registry.projects.map { |config| HQ::Project.new(config) })
+      agent_store.start_agent!(first.fetch(:agent).key)
+
+      row = scheduler.list.find { |schedule| schedule[:key] == "weekday" }
+      assert(row[:run_count] == 1, "expected schedule bookkeeping to retain scheduled-only runs")
+      assert(row[:session_run_count] == 2, "expected the list to include a manual follow-up run in the current session")
+
+      adopted = HQ::ManagedAgent.new(
+        key: "adopted-session", name: "Adopted session", project_key: "web", template_key: "custom",
+        workspace: File.join(dir, "workspace"), prompt: "Continue the existing work.", agent: "codex"
+      )
+      adopted.start!
+      adopted.start!
+      adopted.associate_schedule!("weekday")
+      agent_store.save([adopted])
+      state = HQ::ScheduleStore.new.load.fetch("weekday")
+      state.last_target_key = adopted.key
+      HQ::ScheduleStore.new.save("weekday" => state)
+
+      row = scheduler.list.find { |schedule| schedule[:key] == "weekday" }
+      assert(row[:session_run_count] == 2, "expected the list to use an adopted session's actual run count")
+    end
+  end
+
+  def assert_refresh_stops_running_session
+    with_temp_runtime do |dir|
+      registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: weekday
+            cron: "0 9 * * 1-5"
+            target:
+              type: agent
+              project_key: web
+              name: Weekday maintenance
+              message: "Run maintenance."
+      YAML
+      scheduler = build_scheduler(registry, schedule_path)
+      original = scheduler.run_now("weekday").fetch(:agent)
+      pid = Process.spawn("sleep", "30", pgroup: true)
+      original.instance_variable_set(:@pid, pid)
+      original.instance_variable_set(:@finished_at, nil)
+      original.send(:monitor_agent_process, pid, original.send(:run_status_file_path, original.last_run.run_id))
+      HQ::AgentStore.new(registry.projects.map { |config| HQ::Project.new(config) }).save([original])
+
+      refreshed = scheduler.refresh_session("weekday")
+      pid = nil
+      assert(refreshed.fetch(:agent).key != original.key, "expected refresh to replace a running session")
+      assert(HQ::AgentStore.new(registry.projects.map { |config| HQ::Project.new(config) }).load.none? { |agent| agent.key == original.key },
+             "expected refresh to stop and archive the running session")
+    ensure
+      begin
+        Process.kill("TERM", pid) if pid && HQ::ProcessLiveness.alive?(pid)
+        Process.wait(pid) if pid
+      rescue Errno::ECHILD
+        nil
+      end
+    end
+  end
+
+  def assert_refresh_failure_keeps_replacement_recoverable
+    with_temp_runtime do |dir|
+      registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: weekday
+            cron: "0 9 * * 1-5"
+            target:
+              type: agent
+              project_key: web
+              name: Weekday maintenance
+              message: "Run maintenance."
+      YAML
+      scheduler = build_scheduler(registry, schedule_path)
+      original = scheduler.run_now("weekday").fetch(:agent)
+
+      with_stubbed_agent_start_error("replacement start failed") do
+        failed = scheduler.refresh_session("weekday")
+        state = HQ::ScheduleStore.new.load.fetch("weekday")
+        replacement = read_agents.fetch(0)
+        assert(failed[:status] == :failed, "expected refresh to report replacement startup failure")
+        assert(replacement.schedule_key == "weekday", "expected the replacement to remain a schedule session")
+        assert(state.last_target_key == replacement.key, "expected failed replacement to remain discoverable")
+        assert(state.stopped?, "expected failed replacement to leave the schedule stopped")
+        assert(state.previous_target_key == original.key, "expected refresh to preserve the archived session key")
+      end
+
+      recovered = scheduler.resume_and_run_now("weekday")
+      assert(recovered.fetch(:agent).key == HQ::ScheduleStore.new.load.fetch("weekday").last_target_key,
+             "expected the failed replacement to be recoverable through resume and run")
+    end
+  end
+
+  def assert_expired_refresh_preserves_current_session
+    with_temp_runtime do |dir|
+      now = Time.new(2026, 7, 16, 14, 0, 0, "+07:00")
+      registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: weekday
+            cron: "0 9 * * 1-5"
+            ends_at: "#{(now - 60).iso8601}"
+            target:
+              type: agent
+              project_key: web
+              name: Weekday maintenance
+              message: "Run maintenance."
+      YAML
+      scheduler = build_scheduler(registry, schedule_path)
+      original = HQ::ManagedAgent.new(
+        key: "expired-session", name: "Expired session", project_key: "web", template_key: "custom",
+        workspace: File.join(dir, "workspace"), prompt: "Keep this session.", agent: "codex"
+      )
+      original.associate_schedule!("weekday")
+      HQ::AgentStore.new(registry.projects.map { |config| HQ::Project.new(config) }).save([original])
+      state = HQ::ScheduleStore.new.state_for({}, "weekday")
+      state.last_target_key = original.key
+      HQ::ScheduleStore.new.save("weekday" => state)
+
+      assert_raises(HQ::ScheduleRegistry::Error, "expected expired refresh to fail before lifecycle changes") do
+        scheduler.refresh_session("weekday", now:)
+      end
+      retained = read_agents.fetch(0)
+      assert(retained.key == original.key && retained.schedule_key == "weekday",
+             "expected expired refresh to leave the current scheduled session unchanged")
     end
   end
 
@@ -755,6 +937,14 @@ module SchedulerTest
       )
       self
     end
+    yield
+  ensure
+    HQ::ManagedAgent.define_method(:start!, original)
+  end
+
+  def with_stubbed_agent_start_error(message)
+    original = HQ::ManagedAgent.instance_method(:start!)
+    HQ::ManagedAgent.define_method(:start!) { raise message }
     yield
   ensure
     HQ::ManagedAgent.define_method(:start!, original)
