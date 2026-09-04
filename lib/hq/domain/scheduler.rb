@@ -39,6 +39,7 @@ module HQ
     def list(now: Time.now)
       schedules = schedule_registry.schedules
       states = store.load
+      agents = load_agents
       changed = false
       rows = schedules.map do |schedule|
         state = store.state_for(states, schedule.key)
@@ -47,7 +48,7 @@ module HQ
                   else
                     ensure_next_due!(schedule, state, now:) || changed
                   end
-        schedule_payload(schedule, state)
+        schedule_payload(schedule, state, agent: last_agent(schedule, state, agents))
       end
       store.save(states) if changed
       rows
@@ -77,15 +78,10 @@ module HQ
     end
 
     def resume_and_run_now(key, now: Time.now, dry_run: false)
-      schedule = find_schedule!(key)
-      states = store.load
-      state = store.state_for(states, schedule.key)
+      schedule, states, state = schedule_state_for(key)
       ensure_not_expired!(schedule, state, states, now:)
       resume_state!(schedule, state, now:)
-      agents = load_agents
-      result = dispatch_schedule(schedule, state, agents, now:, dry_run:)
-      persist(agents, states, dry_run:)
-      result
+      run_schedule(schedule, states, state, now:, dry_run:)
     end
 
     def refresh_session(key, now: Time.now)
@@ -93,8 +89,7 @@ module HQ
       state = store.state_for(store.load, schedule.key)
       target = last_agent(schedule, state, load_agents)
       if target
-        raise RefreshError, "Stop the scheduled session before refreshing it" if target.running?
-
+        @agent_store.stop_agent!(target.key) if target.running?
         @agent_store.archive_agent!(target.key)
         reconcile_archived_agent!(target.key, archived_agent: target, now:)
       end
@@ -103,13 +98,15 @@ module HQ
     end
 
     def run_now(key, now: Time.now, dry_run: false)
-      schedule = find_schedule!(key)
-      states = store.load
-      state = store.state_for(states, schedule.key)
+      schedule, states, state = schedule_state_for(key)
       if expire_schedule!(schedule, state, now:)
         store.save(states)
         return { status: :skipped, schedule: schedule_payload(schedule, state) }
       end
+      run_schedule(schedule, states, state, now:, dry_run:)
+    end
+
+    def run_schedule(schedule, states, state, now:, dry_run:)
       agents = load_agents
       result = dispatch_schedule(schedule, state, agents, now:, dry_run:)
       persist(agents, states, dry_run:)
@@ -244,7 +241,7 @@ module HQ
       store.save(states)
     end
 
-    def schedule_payload(schedule, state)
+    def schedule_payload(schedule, state, agent: nil)
       {
         key: schedule.key,
         name: schedule.name,
@@ -268,6 +265,7 @@ module HQ
         last_error: state.last_error,
         last_target_key: state.last_target_key,
         run_count: state.run_count.to_i,
+        session_run_count: agent ? agent.run_count.to_i : state.run_count.to_i,
         skip_count: state.skip_count.to_i
       }
     end
@@ -277,6 +275,12 @@ module HQ
       raise ScheduleRegistry::Error, "Unknown schedule: #{key}" unless schedule
 
       schedule
+    end
+
+    def schedule_state_for(key)
+      schedule = find_schedule!(key)
+      states = store.load
+      [schedule, states, store.state_for(states, schedule.key)]
     end
 
     def project_for(schedule)
@@ -352,10 +356,14 @@ module HQ
 
       {
         status: :started,
-        schedule: schedule_payload(schedule, state),
+        schedule: schedule_payload(schedule, state, agent: agent),
         agent: agent
       }
     rescue StandardError => e
+      if agent
+        state.last_target_kind = "agent"
+        state.last_target_key = agent.key
+      end
       state.last_status = "failed"
       state.last_error = e.message
       state.mark_stopped!(now:)

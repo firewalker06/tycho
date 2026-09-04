@@ -5433,6 +5433,7 @@ module RemoteServerTest
     assert(js[:body].include?("data-schedule-action"),
            "expected Remote UI to expose schedule run/pause/resume controls")
     assert(js[:body].include?("function scheduleRunCountBadge") &&
+           js[:body].include?("schedule.session_run_count ?? schedule.run_count ?? 0") &&
            js[:body].include?("count >= 50 ? \"fail\" : (count >= 30 ? \"need\" : \"info\")") &&
            js[:body].include?("Runs in current session"),
            "expected schedule rows to show current-session run counts with threshold colors")
