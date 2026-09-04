@@ -116,6 +116,8 @@ class PersonalAssistantTest
       assert(lifecycle.reconcile[:state] == "dormant" && store.agents.empty?, "expected second full rollover to archive before another open")
       assert(archive_attempts == 2 && Dir.glob(File.join(dir, "handoffs", "*.json")).length == 2, "expected two bounded daily handoffs")
 
+      assert_prompt_queue_snapshot_and_summary_recovery(registry, dir)
+
       assert_archive_retry_without_resummary(registry, dir)
       assert_start_failure_falls_back_once(registry, dir)
       assert_disabled_preserves_no_session(registry, dir)
@@ -134,6 +136,29 @@ class PersonalAssistantTest
     assert(lifecycle.reconcile[:state] == "archiving", "expected archive error to retain handoff")
     assert(lifecycle.reconcile[:state] == "dormant", "expected archive retry")
     assert(store.starts == 1 && attempts == 2 && opened[:active_key] != "", "expected retry without another summary")
+  end
+
+  def self.assert_prompt_queue_snapshot_and_summary_recovery(registry, dir)
+    clock = Clock.new(Time.utc(2026, 3, 12, 12, 0, 0)); store = FakeStore.new(agents: [], starts: 0)
+    path = File.join(dir, "queue-recovery.json")
+    lifecycle = HQ::PersonalAssistantLifecycle.new(registry:, agent_store: store, clock:, state_path: path, archiver: ->(agent) { store.agents.delete(agent) })
+    opened = lifecycle.open!; agent = store.agents.fetch(0)
+    %w[ordinary-run-1 ordinary-run-2].each do |run_id|
+      agent.instance_variable_set(:@runs, [HQ::ManagedAgent::AgentRun.new(run_id:, status: "success", metadata: {})])
+      agent.structured_result = { "status" => "success", "action_proposals" => [{ "type" => "start_agent", "description" => "Start", "arguments" => { "agent_key" => run_id } }] }
+      assert(lifecycle.accepting_prompts?(opened[:active_key]), "expected next prompt acceptance to snapshot finalized run")
+    end
+    queued = lifecycle.finalized_proposals
+    assert(queued.map { |item| item["run_id"] }.sort == %w[ordinary-run-1 ordinary-run-2], "expected two ordinary runs to remain queued")
+    lifecycle.mark_finalized_proposals_registered!("ordinary-run-1")
+    assert(lifecycle.finalized_proposals.map { |item| item["run_id"] } == ["ordinary-run-2"], "expected independent queue acknowledgement")
+
+    intent = "crash-summary-intent"
+    agent.instance_variable_set(:@runs, [HQ::ManagedAgent::AgentRun.new(run_id: "summary-completed", status: "success", metadata: { "personal_assistant_summary_intent" => intent })])
+    agent.structured_result = { "status" => "success", "memory_handoff" => nil }
+    HQ::FileStore.write_json(path, { "version" => 1, "active_key" => agent.key, "active_date" => "2026-03-11", "active_timezone" => "UTC", "phase" => "summarizing", "summary_intent_id" => intent })
+    lifecycle.reconcile
+    assert(store.starts.zero?, "expected crash recovery to adopt completed matching summary run without relaunch")
   end
 
   def self.assert_start_failure_falls_back_once(registry, dir)

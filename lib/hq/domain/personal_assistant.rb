@@ -42,7 +42,7 @@ module HQ
     end
 
     def accepting_prompts?(key)
-      synchronize { |state| reconcile!(state); state["phase"] == "active" && state["active_key"] == key.to_s }
+      synchronize { |state| snapshot_finalized_proposals!(state); reconcile!(state); state["phase"] == "active" && state["active_key"] == key.to_s }
     end
 
     def setup!(attrs)
