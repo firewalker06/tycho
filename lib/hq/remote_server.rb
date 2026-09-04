@@ -1843,9 +1843,9 @@ module HQ
     end
 
     def personal_assistant
-      status = @personal_assistant.reconcile
+      status = @personal_assistant.status
       ingest_personal_assistant_actions!(status)
-      status
+      @personal_assistant.reconcile
     rescue ArgumentError => e
       raise Error.new(e.message, status: 409)
     end
@@ -1863,7 +1863,9 @@ module HQ
     end
 
     def personal_assistant_actions
-      ingest_personal_assistant_actions!(@personal_assistant.reconcile)
+      status = @personal_assistant.status
+      ingest_personal_assistant_actions!(status)
+      @personal_assistant.reconcile
       @personal_assistant_actions.proposals
     end
 
@@ -1884,8 +1886,9 @@ module HQ
       when "read_docs"
         path = arguments.fetch("path", "").to_s
         root = File.join(HQ::ROOT_DIR, "docs")
-        expanded = File.expand_path(path, root)
-        raise ArgumentError, "Documentation path is outside Tycho docs" unless expanded.start_with?("#{root}/") && File.file?(expanded)
+        expanded = File.realpath(File.expand_path(path, root)) rescue nil
+        docs_root = File.realpath(root)
+        raise ArgumentError, "Documentation path is outside Tycho docs" unless expanded && expanded.start_with?("#{docs_root}/") && File.file?(expanded)
         { "path" => path, "content" => File.read(expanded, 100_000) }
       when "search_docs"
         query = arguments.fetch("query", "").to_s.strip

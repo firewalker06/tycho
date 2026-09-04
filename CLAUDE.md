@@ -43,6 +43,7 @@ bundle exec bin/tycho project <key> [options]
 bundle exec bin/tycho metrics query [filters] [--json]
 bundle exec bin/tycho metrics backfill [--timezone ZONE]
 bin/test
+bin/capture-personal-assistant
 bundle exec ruby -c bin/tycho
 bundle exec ruby test/registry_test.rb
 bundle exec ruby test/rendering_test.rb

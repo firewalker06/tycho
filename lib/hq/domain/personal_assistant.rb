@@ -47,6 +47,13 @@ module HQ
       synchronize do |state|
         reconcile!(state); advance!(state)
         config = configured!
+        protected = @agent_store.load.find(&:personal_assistant?)
+        if state["active_key"] && !protected
+          state.delete("active_key"); state.delete("active_date"); state.delete("active_timezone")
+          state["phase"] = "dormant"
+        elsif !state["active_key"] && protected
+          state.merge!("active_key" => protected.key, "active_date" => local_date(protected.created_at || @clock.call, config.fetch("timezone")), "active_timezone" => config.fetch("timezone"), "phase" => "active")
+        end
         return payload(state) if state["active_key"]
         now = @clock.call
         date = local_date(now, config.fetch("timezone"))
@@ -76,7 +83,8 @@ module HQ
     def validate!(config)
       raise ArgumentError, "Codex model is required" if config["model"].empty?
       raise ArgumentError, "Codex reasoning effort is required" if config["reasoning_effort"].empty?
-      raise ArgumentError, "Timezone must be an IANA timezone" unless config["timezone"].match?(%r{\A[A-Za-z_]+(?:/[A-Za-z_+-]+)+\z}) && File.file?(File.join("/usr/share/zoneinfo", config["timezone"]))
+      zone = config["timezone"]
+      raise ArgumentError, "Timezone must be an IANA timezone" unless !zone.include?("..") && !zone.start_with?("/") && File.file?(File.join("/usr/share/zoneinfo", zone))
     end
 
     def local_date(now, timezone)
@@ -159,6 +167,8 @@ module HQ
       result = {} unless result.is_a?(Hash)
       handoff = MemoryHandoff.normalize(result["memory_handoff"] || result[:memory_handoff])
       fallback = fallback_handoff(agent)
+      return fallback unless result["status"] == "success" && (!agent&.last_run || agent.last_run.status == "success")
+
       handoff ? { "summary" => handoff["outcome"], "open_items" => [handoff["continuing_context"]], "decisions" => handoff["decisions"], "references" => handoff["references"], "lessons" => handoff["lessons"], "promotion_candidates" => handoff["promotion_candidates"] }.compact : fallback
     end
 
@@ -167,7 +177,7 @@ module HQ
 
       handoff = bounded_handoff(handoff)
       handoff["schema_version"] = 1
-      handoff["provenance"] = { "agent_key" => state["active_key"].to_s.byteslice(0, 160), "generation" => state["generation"].to_i }
+      handoff["provenance"] = { "agent_key" => truncate(state["active_key"].to_s, 160), "generation" => state["generation"].to_i }
       handoff["closed_at"] = @clock.call.utc.iso8601
       handoff["active_date"] = state["active_date"]
       path = File.join(File.dirname(@state_path), "handoffs", "#{state["active_date"]}-#{state["generation"]}.json")
@@ -194,8 +204,8 @@ module HQ
 
     def bounded_handoff(value)
       value = value.is_a?(Hash) ? value : {}
-      text = ->(key, limit) { value[key].to_s.encode(Encoding::UTF_8, invalid: :replace, undef: :replace).strip.byteslice(0, limit) }
-      list = ->(key, count, limit) { Array(value[key]).filter_map { |item| item.is_a?(String) ? item.encode(Encoding::UTF_8, invalid: :replace, undef: :replace).strip.byteslice(0, limit) : nil }.reject(&:empty?).first(count) }
+      text = ->(key, limit) { truncate(value[key].to_s, limit) }
+      list = ->(key, count, limit) { Array(value[key]).filter_map { |item| item.is_a?(String) ? truncate(item, limit) : nil }.reject(&:empty?).first(count) }
       { "summary" => text.call("summary", 2_000), "open_items" => list.call("open_items", 12, 600), "decisions" => list.call("decisions", 20, 600), "references" => list.call("references", 20, 600), "lessons" => list.call("lessons", 12, 600), "promotion_candidates" => list.call("promotion_candidates", 12, 600), "outstanding_child_agents" => list.call("outstanding_child_agents", 20, 160) }
     end
 
@@ -207,7 +217,12 @@ module HQ
       compact = bounded_handoff(handoff)
       return nil if compact.values.all? { |value| value.respond_to?(:empty?) && value.empty? }
 
-      "[TYCHO PRIOR DAILY CONTINUITY — bounded]\n#{JSON.generate(compact).byteslice(0, 4_000)}"
+      "[TYCHO PRIOR DAILY CONTINUITY — bounded]\n#{truncate(JSON.generate(compact), 4_000)}"
+    end
+
+    def truncate(value, bytes)
+      string = value.to_s.encode(Encoding::UTF_8, invalid: :replace, undef: :replace).strip
+      string.each_char.with_object(String.new) { |char, result| break result if result.bytesize + char.bytesize > bytes; result << char }
     end
   end
 end

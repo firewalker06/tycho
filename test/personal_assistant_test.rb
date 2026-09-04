@@ -45,7 +45,7 @@ class PersonalAssistantTest
     def finish!(key, handoff: nil)
       agent = agents.find { |candidate| candidate.key == key }
       agent.instance_variable_set(:@fake_running, false)
-      agent.structured_result = { "memory_handoff" => handoff } if handoff
+      agent.structured_result = { "status" => "success", "memory_handoff" => handoff } if handoff
       agent
     end
   end

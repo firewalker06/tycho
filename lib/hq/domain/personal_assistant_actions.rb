@@ -90,14 +90,20 @@ module HQ
     private
 
     def normalize(item)
-      item = item.is_a?(Hash) ? item.transform_keys(&:to_s) : {}
-      type = item["type"].to_s
+      raise ArgumentError, "Assistant proposal must be an object" unless item.is_a?(Hash)
+      item = item.transform_keys(&:to_s)
+      raise ArgumentError, "Assistant proposal has unsupported fields" unless item.keys.sort == %w[arguments description type]
+      type = item["type"]
+      raise ArgumentError, "Assistant action type must be a string" unless type.is_a?(String)
       raise ArgumentError, "Unsupported assistant action" unless TYPES.include?(type)
-      arguments = item["arguments"].is_a?(Hash) ? item["arguments"].transform_keys(&:to_s) : {}
+      raise ArgumentError, "Assistant action description must be a string" unless item["description"].is_a?(String)
+      raise ArgumentError, "Assistant action arguments must be an object" unless item["arguments"].is_a?(Hash)
+      arguments = item["arguments"].transform_keys(&:to_s)
       raise ArgumentError, "Assistant actions cannot supply server or parent identity" if arguments.keys.any? { |key| %w[server server_key parent_agent_key actor].include?(key) }
       allowed = allowed_arguments(type)
-      raise ArgumentError, "Assistant action arguments do not match #{type}" unless arguments.keys.sort == allowed.sort && arguments.values.none?(&:nil?)
-      { "type" => type, "arguments" => arguments, "description" => item["description"].to_s.byteslice(0, 500) }
+      nullable = type == "create_agent" ? %w[agent model reasoning_effort] : []
+      raise ArgumentError, "Assistant action arguments do not match #{type}" unless arguments.keys.sort == allowed.sort && arguments.all? { |key, value| nullable.include?(key) ? value.nil? || value.is_a?(String) : value.is_a?(String) }
+      { "type" => type, "arguments" => arguments, "description" => truncate(item["description"], 500) }
     end
 
     def allowed_arguments(type)
@@ -129,6 +135,10 @@ module HQ
 
     def public_proposal(proposal)
       proposal.slice("id", "type", "arguments", "description", "state", "result", "error", "executed_at", "rejected_at")
+    end
+
+    def truncate(value, bytes)
+      value.encode(Encoding::UTF_8, invalid: :replace, undef: :replace).each_char.with_object(String.new) { |char, result| break result if result.bytesize + char.bytesize > bytes; result << char }
     end
   end
 end
