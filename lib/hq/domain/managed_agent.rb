@@ -698,6 +698,19 @@ module HQ
                        session_id: @session_id.to_s,
                        pid: @pid)
       true
+    rescue SystemCallError => e
+      log_file&.close rescue nil
+      if defined?(run) && run
+        @pid = nil
+        @finished_at = Time.now
+        @last_exit_code = 127
+        run.finished_at = @finished_at
+        run.exit_code = @last_exit_code
+        run.status = "failed"
+        run.metadata = (run.metadata || {}).merge("spawn_error" => e.message)
+        before_spawn&.call(run)
+      end
+      raise
     end
 
     def stop!
