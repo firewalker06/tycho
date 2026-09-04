@@ -283,15 +283,16 @@ module HQ
       return unless state["active_key"] && %w[active closing].include?(state["phase"])
 
       agent = @agent_store.load.find { |candidate| candidate.key == state["active_key"] && candidate.personal_assistant? }
-      run = agent&.last_run
-      return unless run&.status == "success" && agent.structured_result.is_a?(Hash)
-      return if run.run_id.to_s.empty? || Array(agent.structured_result["action_proposals"]).empty?
-      return if run.run_id.to_s == state["summary_run_id"].to_s && !state["summary_run_id"].to_s.empty?
-
+      return unless agent
       snapshots = Array(state["finalized_proposals"])
-      return if snapshots.any? { |snapshot| snapshot["run_id"] == run.run_id }
+      agent.runs.each do |run|
+        proposals = run.metadata&.fetch("personal_assistant_action_proposals", nil)
+        next unless run.status == "success" && proposals.is_a?(Array) && proposals.any?
+        next if run.run_id.to_s == state["summary_run_id"].to_s && !state["summary_run_id"].to_s.empty?
+        next if snapshots.any? { |snapshot| snapshot["run_id"] == run.run_id }
 
-      snapshots << { "run_id" => run.run_id, "active_key" => agent.key, "proposals" => agent.structured_result["action_proposals"] }
+        snapshots << { "run_id" => run.run_id, "active_key" => agent.key, "proposals" => proposals }
+      end
       state["finalized_proposals"] = snapshots
     end
   end

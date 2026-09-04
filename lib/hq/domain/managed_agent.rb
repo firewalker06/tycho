@@ -603,7 +603,7 @@ module HQ
       @unread = false
     end
 
-    def start!(delegation_stamp: nil, run_metadata: nil)
+    def start!(delegation_stamp: nil, run_metadata: nil, before_spawn: nil)
       return if running?
 
       finalize_previous_run!
@@ -667,6 +667,8 @@ module HQ
         metadata: run_metadata.is_a?(Hash) ? run_metadata : {}
       )
       memory_store.append_run_started!(run_id: run.run_id, created_at: @started_at)
+      record_run!(run)
+      before_spawn&.call(run)
       @pid = spawn(
         external_process_environment(launch.fetch(:env)).merge(
           "TYCHO_STATUS_PATH" => status_path,
@@ -684,7 +686,6 @@ module HQ
       log_file.close
       monitor_agent_process(@pid, status_path)
       HQ.logger.info("Agent") { "Started #{@key} (pid=#{@pid})" }
-      record_run!(run)
       @structured_result = nil
       @summary = nil
       HQ.hooks.publish("agent.run.started",
@@ -1499,6 +1500,9 @@ module HQ
       capture_session_id!
       run.session_id = @session_id unless @session_id.to_s.empty?
       build_summary!
+      if personal_assistant? && run.status == "success" && @structured_result.is_a?(Hash) && @structured_result["action_proposals"].is_a?(Array)
+        run.metadata = (run.metadata || {}).merge("personal_assistant_action_proposals" => @structured_result["action_proposals"])
+      end
       persist_memory_handoff!(run)
       capture_run_memory!(run)
       add_assistant_message!(@summary) if @summary

@@ -82,8 +82,9 @@ class PersonalAssistantTest
 
       agent = store.agents.fetch(0)
       agent.instance_variable_set(:@session_id, "native-session-1")
-      agent.instance_variable_set(:@runs, [HQ::ManagedAgent::AgentRun.new(run_id: "user-run-before-midnight", status: "success")])
-      agent.structured_result = { "status" => "success", "action_proposals" => [{ "type" => "start_agent", "description" => "Start", "arguments" => { "agent_key" => "fixture" } }] }
+      proposals = [{ "type" => "start_agent", "description" => "Start", "arguments" => { "agent_key" => "fixture" } }]
+      agent.instance_variable_set(:@runs, [HQ::ManagedAgent::AgentRun.new(run_id: "user-run-before-midnight", status: "success", metadata: { "personal_assistant_action_proposals" => proposals })])
+      agent.structured_result = { "status" => "success", "action_proposals" => proposals }
       clock.now = Time.utc(2026, 3, 8, 17, 1, 0)
       agent.instance_variable_set(:@fake_running, true)
       agent.define_singleton_method(:running?) { @fake_running == true }
@@ -144,7 +145,7 @@ class PersonalAssistantTest
     lifecycle = HQ::PersonalAssistantLifecycle.new(registry:, agent_store: store, clock:, state_path: path, archiver: ->(agent) { store.agents.delete(agent) })
     opened = lifecycle.open!; agent = store.agents.fetch(0)
     %w[ordinary-run-1 ordinary-run-2].each do |run_id|
-      agent.instance_variable_set(:@runs, [HQ::ManagedAgent::AgentRun.new(run_id:, status: "success", metadata: {})])
+      agent.instance_variable_set(:@runs, [HQ::ManagedAgent::AgentRun.new(run_id:, status: "success", metadata: { "personal_assistant_action_proposals" => [{ "type" => "start_agent", "description" => "Start", "arguments" => { "agent_key" => run_id } }] })])
       agent.structured_result = { "status" => "success", "action_proposals" => [{ "type" => "start_agent", "description" => "Start", "arguments" => { "agent_key" => run_id } }] }
       assert(lifecycle.accepting_prompts?(opened[:active_key]), "expected next prompt acceptance to snapshot finalized run")
     end

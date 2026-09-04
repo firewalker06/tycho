@@ -280,10 +280,16 @@ module HQ
 
         unless target.running?
           stamp = @delegation_coordinator.ownership_stamp(target.key)
+          supports_before_spawn = target.method(:start!).parameters.any? { |_kind, name| name == :before_spawn }
+          persist_before_spawn = supports_before_spawn ? ->(_run) { save_unlocked(agents) } : nil
           if run_metadata
-            stamp ? target.start!(delegation_stamp: stamp, run_metadata:) : target.start!(run_metadata:)
+            if supports_before_spawn
+              stamp ? target.start!(delegation_stamp: stamp, run_metadata:, before_spawn: persist_before_spawn) : target.start!(run_metadata:, before_spawn: persist_before_spawn)
+            else
+              stamp ? target.start!(delegation_stamp: stamp, run_metadata:) : target.start!(run_metadata:)
+            end
           else
-            stamp ? target.start!(delegation_stamp: stamp) : target.start!
+            supports_before_spawn ? (stamp ? target.start!(delegation_stamp: stamp, before_spawn: persist_before_spawn) : target.start!(before_spawn: persist_before_spawn)) : (stamp ? target.start!(delegation_stamp: stamp) : target.start!)
           end
         end
         target
