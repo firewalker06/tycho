@@ -438,10 +438,10 @@ module SchedulerTest
       pid = Process.spawn("sleep", "30", pgroup: true)
       original.instance_variable_set(:@pid, pid)
       original.instance_variable_set(:@finished_at, nil)
+      original.send(:monitor_agent_process, pid, original.send(:run_status_file_path, original.last_run.run_id))
       HQ::AgentStore.new(registry.projects.map { |config| HQ::Project.new(config) }).save([original])
 
       refreshed = scheduler.refresh_session("weekday")
-      Process.wait(pid)
       pid = nil
       assert(refreshed.fetch(:agent).key != original.key, "expected refresh to replace a running session")
       assert(HQ::AgentStore.new(registry.projects.map { |config| HQ::Project.new(config) }).load.none? { |agent| agent.key == original.key },

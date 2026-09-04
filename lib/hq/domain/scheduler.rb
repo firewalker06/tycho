@@ -17,6 +17,7 @@ module HQ
     RefreshError = Class.new(StandardError)
     DEFAULT_INTERVAL = 30
     MISSED_GRACE_SECONDS = 60
+    REFRESH_STOP_TIMEOUT_SECONDS = 2.0
 
     attr_reader :registry, :schedule_registry, :store
 
@@ -89,7 +90,7 @@ module HQ
       state = store.state_for(store.load, schedule.key)
       target = last_agent(schedule, state, load_agents)
       if target
-        @agent_store.stop_agent!(target.key) if target.running?
+        stop_scheduled_session!(target) if target.running?
         @agent_store.archive_agent!(target.key)
         reconcile_archived_agent!(target.key, archived_agent: target, now:)
       end
@@ -281,6 +282,20 @@ module HQ
       schedule = find_schedule!(key)
       states = store.load
       [schedule, states, store.state_for(states, schedule.key)]
+    end
+
+    def stop_scheduled_session!(target)
+      @agent_store.stop_agent!(target.key)
+      deadline = Time.now + REFRESH_STOP_TIMEOUT_SECONDS
+      loop do
+        current = load_agents.find { |agent| agent.key == target.key }
+        return unless current&.running?
+        break if Time.now >= deadline
+
+        sleep 0.05
+      end
+
+      raise RefreshError, "Scheduled session #{target.key.inspect} did not stop within #{REFRESH_STOP_TIMEOUT_SECONDS.to_i} seconds"
     end
 
     def project_for(schedule)
