@@ -704,10 +704,13 @@ module HQ
         @pid = nil
         @finished_at = Time.now
         @last_exit_code = 127
+        @structured_result = nil
+        @summary = nil
         run.finished_at = @finished_at
         run.exit_code = @last_exit_code
         run.status = "failed"
         run.metadata = (run.metadata || {}).merge("spawn_error" => e.message)
+        FileUtils.rm_f(run_pid_file_path(run.run_id))
         before_spawn&.call(run)
       end
       raise
@@ -745,6 +748,7 @@ module HQ
       @finished_at ||= Time.now
       @last_exit_code = read_exit_code
       @last_exit_code ||= 143 if @stop_requested_at
+      FileUtils.rm_f(run_pid_file_path(last_run.run_id)) if last_run&.run_id
       finalize_latest_run!
       HQ.logger.info("Agent") { "#{@key} exited (code=#{@last_exit_code})" }
       @pid = nil
@@ -763,6 +767,8 @@ module HQ
 
       @finished_at ||= Time.now
       @last_exit_code = read_exit_code
+      FileUtils.rm_f(run_pid_file_path(last_run.run_id))
+      @pid = nil
       finalize_latest_run!
       @pid = nil
     end
