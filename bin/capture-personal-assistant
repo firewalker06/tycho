@@ -48,7 +48,7 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
   begin
     wait_for_server
     capture = ->(name, device, selector) do
-      system("npx", "--yes", "playwright", "screenshot", "--device=#{device}", "--wait-for-selector=#{selector}", "--wait-for-timeout=500", "--full-page", "http://127.0.0.1:#{PORT}/ui#personal-assistant", File.join(OUTPUT, name), exception: true)
+      system("npx", "--yes", "playwright", "screenshot", "--timeout=15000", "--device=#{device}", "--wait-for-selector=#{selector}", "--full-page", "http://127.0.0.1:#{PORT}/ui#personal-assistant", File.join(OUTPUT, name), exception: true)
     end
     capture.call("personal-assistant-setup-desktop.png", "Desktop Chrome", "#personal-assistant-setup-form")
     request("/personal-assistant/setup", { confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "Asia/Jakarta" })

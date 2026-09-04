@@ -5717,6 +5717,13 @@ select {
   transform: translateX(-50%);
 }
 
+.personal-assistant-page .agent-dock {
+  position: static;
+  transform: none;
+  max-width: none;
+  margin-top: 12px;
+}
+
 
 .agent-dock:has(.skill-flyout:not(.hidden)) {
   z-index: 7;
