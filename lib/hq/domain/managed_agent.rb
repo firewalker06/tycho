@@ -735,6 +735,9 @@ module HQ
     end
 
     def poll!
+      if !@pid && recover_completed_intent_run!
+        return
+      end
       return unless @pid
       stop_stale_direct_output_wait! if running?
       return if running?
@@ -1374,6 +1377,17 @@ module HQ
       @pid = candidate if ProcessLiveness.alive?(candidate) && own_process_group?(candidate)
     rescue StandardError
       nil
+    end
+
+    def recover_completed_intent_run!
+      return false unless !@pid && last_run&.status == "running"
+      return false unless last_run.metadata&.key?("personal_assistant_summary_intent")
+      return false unless completed_status_available?
+
+      @finished_at ||= Time.now
+      @last_exit_code = read_exit_code
+      finalize_latest_run!
+      true
     end
 
     def unscoped_status_file_path
