@@ -2753,6 +2753,9 @@ module HQ
     def submit_prompt(key, attrs = {}, actor: nil, **attribute_keywords)
       attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
       actor ||= delegation_actor_from_attrs(attrs)
+      if find_agent!(key).personal_assistant? && !@personal_assistant.accepting_prompts?(key)
+        raise Error.new("Personal Assistant is closing for daily rollover and is not accepting new prompts", status: 409)
+      end
       target = find_agent!(key)
       target = associate_delegation_from_attrs!(target, attrs, actor:)
       pull_request_context = render_prompt_pull_request_contexts(target, attrs)
