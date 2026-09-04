@@ -40,6 +40,9 @@ module HQ
 
       result = payload.dup
       errors = []
+      # Older native sessions predate optional PA proposals. Preserve their
+      # structured results while requiring Codex to emit the nullable field.
+      result["action_proposals"] = nil unless result.key?("action_proposals")
       decode_compatibility_field(result, "inquiry_json", "inquiry", errors)
       decode_compatibility_field(result, "attachments_json", "attachments", errors)
       decode_compatibility_field(result, "summary_sections_json", "summary_sections", errors)
