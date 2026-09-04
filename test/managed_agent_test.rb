@@ -59,6 +59,7 @@ module ManagedAgentTest
     assert_stop_kills_term_ignoring_harness_before_restart
     assert_stop_finalizes_when_group_exits_before_signal
     assert_agent_runner_warns_when_command_cannot_execute
+    assert_personal_assistant_intent_pid_and_status_recovery
     puts "managed_agent_test: ok"
   end
 
@@ -2585,6 +2586,22 @@ module ManagedAgentTest
   def argument_after(command, flag)
     index = command.index(flag)
     index ? command[index + 1] : nil
+  end
+
+  def assert_personal_assistant_intent_pid_and_status_recovery
+    Dir.mktmpdir("hq-pa-intent-recovery") do |dir|
+      metadata = { "personal_assistant_summary_intent" => "intent-recovery" }
+      live = HQ::ManagedAgent.new(key: "pa-live", name: "PA", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "live.log"), role: "personal_assistant_daily", runs: [HQ::ManagedAgent::AgentRun.new(run_id: "live-run", status: "running", metadata:)])
+      pid = Process.spawn("sleep", "2", pgroup: true)
+      File.write(live.send(:run_pid_file_path, "live-run"), pid.to_s)
+      assert(live.running?, "expected assert_personal_assistant_intent_pid_and_status_recovery to recover live child PID")
+      Process.kill("TERM", -pid) rescue nil
+
+      completed = HQ::ManagedAgent.new(key: "pa-completed", name: "PA", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "completed.log"), role: "personal_assistant_daily", runs: [HQ::ManagedAgent::AgentRun.new(run_id: "completed-run", status: "running", metadata:)])
+      File.write(completed.send(:run_status_file_path, "completed-run"), "0")
+      completed.poll!
+      assert(%w[success succeeded].include?(completed.last_run.status) && completed.last_run.finished_at, "expected completed pid:nil intent run to finalize")
+    end
   end
 
   def assert(condition, message)
