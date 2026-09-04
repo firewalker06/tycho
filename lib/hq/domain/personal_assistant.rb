@@ -102,6 +102,10 @@ module HQ
       if state["phase"] == "summarizing" && !state["handoff_path"]
         handoff = @summary_runner.call(agent)
         handoff = fallback_handoff(agent) unless handoff.is_a?(Hash)
+        handoff["schema_version"] = 1
+        handoff["provenance"] = { "agent_key" => state["active_key"], "generation" => state["generation"].to_i }
+        handoff["previous_day_detail"] = handoff["summary"].to_s.byteslice(0, 2_000)
+        handoff["outstanding_child_agents"] = []
         handoff["continuity"] = handoff.to_json.byteslice(0, 4_000)
         handoff["closed_at"] = @clock.call.utc.iso8601
         handoff["active_date"] = state["active_date"]
