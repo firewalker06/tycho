@@ -46,6 +46,7 @@ module RemoteServerTest
     assert_remote_hidden_settings_filter_projects_and_agents
     assert_remote_response_style_settings
     assert_remote_session_loop_settings
+    assert_remote_personal_assistant_routes
     assert_remote_skill_installation_requires_confirmation
     assert_remote_schedule_routes
     assert_remote_setup_payload_includes_readiness
@@ -406,6 +407,43 @@ module RemoteServerTest
                                       }, nil)
       assert(templates_updated.dig(:body, :session_loops, :interval_minutes) == 20,
              "expected prompt template updates to preserve loop defaults")
+    end
+  end
+
+  def assert_remote_personal_assistant_routes
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
+      server = HQ::RemoteServer.new
+
+      initial = server.send(:route, service, "GET", "/personal-assistant", {}, nil)
+      assert(initial.dig(:body, :personal_assistant, :state) == "unconfigured",
+             "expected personal assistant to remain off by default")
+      begin
+        server.send(:route, service, "POST", "/personal-assistant/setup", {
+                      "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta"
+                    }, nil)
+        raise "expected setup confirmation rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 400 && e.message.include?("explicitly confirmed"),
+               "expected setup mutation to require an exact confirmation")
+      end
+      configured = server.send(:route, service, "POST", "/personal-assistant/setup", {
+                                 "confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta"
+                               }, nil)
+      assert(configured.dig(:body, :personal_assistant, :configured), "expected confirmed setup to persist")
+      opened = server.send(:route, service, "POST", "/personal-assistant/open", {}, nil)
+      key = opened.dig(:body, :personal_assistant, :active_key)
+      assert(key && opened.dig(:body, :personal_assistant, :agent, "role") == "personal_assistant_daily",
+             "expected Remote API to open the protected daily conversation")
+      begin
+        server.send(:route, service, "POST", "/agents/#{key}/archive", {}, nil)
+        raise "expected protected archive rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("cannot be archived manually"),
+               "expected the Remote API to hide manual archive control behind a conflict")
+      end
     end
   end
 

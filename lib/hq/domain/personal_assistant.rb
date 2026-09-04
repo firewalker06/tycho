@@ -87,6 +87,7 @@ module HQ
     end
 
     def reconcile!(state)
+      return unless @registry.personal_assistant["enabled"] == true
       return unless state["active_key"]
       timezone = state["active_timezone"] || @registry.personal_assistant["timezone"]
       return if timezone.to_s.empty? || state["active_date"] == local_date(@clock.call, timezone)
@@ -126,6 +127,8 @@ module HQ
 
     def dispatch_summary!(state, agent)
       raise "Personal Assistant session is missing" unless agent
+      return if state["summary_run_id"]
+
       run_id = SecureRandom.uuid
       @agent_store.mutate do |agents, _|
         target = agents.find { |candidate| candidate.key == agent.key }
@@ -134,9 +137,12 @@ module HQ
       end
       state["summary_run_id"] = run_id
       state["phase"] = "summarizing"
+      # Persist the intent before asking the harness to run.  A transient launch
+      # failure must not append a second summary prompt on the next scheduler tick.
+      persist(state)
       @agent_store.start_agent!(agent.key)
     rescue StandardError
-      state["summary_run_id"] ||= run_id
+      state["summary_run_id"] ||= run_id if defined?(run_id)
       raise
     end
 
@@ -149,6 +155,8 @@ module HQ
     end
 
     def write_handoff!(state, handoff)
+      return if state["handoff_path"] && File.file?(state["handoff_path"])
+
       handoff["schema_version"] = 1
       handoff["provenance"] = { "agent_key" => state["active_key"], "generation" => state["generation"].to_i }
       handoff["previous_day_detail"] = handoff["summary"].to_s.byteslice(0, 2_000)
