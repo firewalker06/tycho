@@ -44,6 +44,7 @@ require_relative "domain/server_identity"
 require_relative "domain/skill_discovery"
 require_relative "domain/skill_installer"
 require_relative "domain/onboarding"
+require_relative "domain/personal_assistant"
 require_relative "domain/visibility"
 require_relative "domain/web_push_notifier"
 require_relative "domain/usage_metrics"
@@ -330,6 +331,9 @@ module HQ
         end
       end
       return ok(service.agent_activity) if method == "GET" && parts == ["activity"]
+      return ok(personal_assistant: service.personal_assistant) if method == "GET" && parts == ["personal-assistant"]
+      return ok(personal_assistant: service.setup_personal_assistant(body)) if method == "POST" && parts == ["personal-assistant", "setup"]
+      return ok(personal_assistant: service.open_personal_assistant) if method == "POST" && parts == ["personal-assistant", "open"]
       return ok(service.resource_snapshot) if method == "GET" && parts == ["resources"]
       return ok(service.metrics_query(request&.query_params || {})) if method == "GET" && parts == ["metrics"]
       return ok(service.metrics_backfill(body)) if method == "POST" && parts == ["metrics", "backfill"]
@@ -1608,6 +1612,7 @@ module HQ
       @registry = registry
       @projects = registry.projects.map { |config| Project.new(config) }
       @agent_store = AgentStore.new(@projects)
+      @personal_assistant = PersonalAssistantLifecycle.new(registry:, agent_store: @agent_store)
       @agent_archive_store = AgentArchiveStore.new
       @push_subscription_store = push_subscription_store
       @push_notification_store = push_notification_store
@@ -1822,6 +1827,24 @@ module HQ
           project_list_payload(project, agents: agents_by_project.fetch(project.key, []))
         end
       }
+    end
+
+    def personal_assistant
+      @personal_assistant.status
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 409)
+    end
+
+    def setup_personal_assistant(attrs)
+      @personal_assistant.setup!(attrs)
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 400)
+    end
+
+    def open_personal_assistant
+      @personal_assistant.open!
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 409)
     end
 
     def agent(key)
@@ -2981,6 +3004,9 @@ module HQ
 
     def archive_agent(key)
       target = find_agent!(key)
+      if target.personal_assistant?
+        raise Error.new("Personal Assistant is managed by its daily lifecycle and cannot be archived manually", status: 409)
+      end
       raise Error.new("Agent is running", status: 409) if target.running?
 
       archive_path = @agent_store.archive_agent!(target.key)
@@ -3014,6 +3040,11 @@ module HQ
 
         if target.running?
           skipped << { agent_key: key, reason: "running" }
+          next
+        end
+
+        if target.personal_assistant?
+          skipped << { agent_key: key, reason: "personal_assistant" }
           next
         end
 

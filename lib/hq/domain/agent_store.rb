@@ -390,6 +390,9 @@ module HQ
         targets = requested.map do |key|
           agents.find { |agent| agent.key == key } || raise(ArgumentError, "Unknown agent: #{key}")
         end
+        if targets.any?(&:personal_assistant?)
+          raise ArgumentError, "Personal Assistant is managed by its daily lifecycle and cannot be archived manually"
+        end
         raise ArgumentError, "Agent is running" if targets.any?(&:running?)
 
         source_paths = targets.flat_map { |target| target.log_files.select { |path| File.exist?(path) } }

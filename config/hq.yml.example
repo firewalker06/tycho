@@ -31,6 +31,13 @@ harness_catalogs: {}
 groups: {}
 projects: []
 
+# The Personal Assistant is disabled until explicitly configured from Remote UI.
+# personal_assistant:
+#   enabled: true
+#   model: gpt-5.6-sol
+#   reasoning_effort: medium
+#   timezone: Asia/Jakarta
+
 # Example custom harness:
 #
 # custom_harnesses:

@@ -102,6 +102,7 @@ module HQ
 
   LOGS_DIR = USER_LOGS_DIR
   AGENTS_FILE = File.join(LOGS_DIR, "managed_agents.json")
+  PERSONAL_ASSISTANT_DIR = File.join(LOGS_DIR, "personal_assistant")
   DELEGATIONS_FILE = File.join(LOGS_DIR, "agent_delegations.json")
   SERVER_IDENTITY_FILE = File.join(USER_CONFIG_DIR, "server_identity.json")
   USAGE_METRICS_FILE = File.join(LOGS_DIR, "usage_metrics.json")

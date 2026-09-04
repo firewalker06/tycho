@@ -151,7 +151,7 @@ module HQ
       "#{text}\n\n#{FINAL_OUTPUT_CHECKLIST}"
     end
 
-    attr_reader :key, :name, :project_key, :template_key, :workspace, :prompt, :created_at, :started_at,
+    attr_reader :key, :name, :project_key, :template_key, :workspace, :prompt, :created_at, :role, :started_at,
                 :finished_at, :pid, :last_exit_code, :log_path, :runs, :sandbox_mode, :agent, :messages, :skills,
                 :model, :reasoning_effort, :response_style, :session_id, :session_bootstrapped, :color_index, :summary,
                 :structured_result, :schedule_key, :cost_snapshot, :project_group, :delegation_parent, :archive_path,
@@ -170,10 +170,11 @@ module HQ
                    session_bootstrapped: nil, color_index: nil, summary: nil, structured_result: nil, schedule_key: nil,
                    cost_snapshot: nil, total_run_count: nil, project_group: nil, delegation_parent: nil,
                    archived: false, archive_path: nil, archived_at: nil, project_hidden_at_archive: nil,
-                   prompt_queue: nil, prompt_queue_claim: nil, prompt_queue_dispatch_error: nil)
+                   prompt_queue: nil, prompt_queue_claim: nil, prompt_queue_dispatch_error: nil, role: nil)
       @key = key
       @name = name
       @project_key = project_key
+      @role = role.to_s.strip.empty? ? nil : role.to_s
       @project_group = project_group.to_s
       @template_key = template_key
       @workspace = workspace
@@ -296,7 +297,8 @@ module HQ
         project_hidden_at_archive: hash["project_hidden_at_archive"],
         prompt_queue: hash["prompt_queue"],
         prompt_queue_claim: hash["prompt_queue_claim"],
-        prompt_queue_dispatch_error: hash["prompt_queue_dispatch_error"]
+        prompt_queue_dispatch_error: hash["prompt_queue_dispatch_error"],
+        role: hash["role"]
       )
     end
 
@@ -421,6 +423,7 @@ module HQ
       result["schedule_key"] = @schedule_key unless @schedule_key.to_s.empty?
       result["cost_snapshot"] = @cost_snapshot if @cost_snapshot.is_a?(Hash) && !@cost_snapshot.empty?
       result["project_group"] = @project_group unless @project_group.empty?
+      result["role"] = @role unless @role.to_s.empty?
       result["delegation_parent"] = @delegation_parent if @delegation_parent
       result["archived"] = true if archived?
       result["archive_path"] = @archive_path if archived? && @archive_path
@@ -540,6 +543,10 @@ module HQ
 
     def archived?
       @archived
+    end
+
+    def personal_assistant?
+      @role == "personal_assistant_daily"
     end
 
     def refresh_session_identity!
