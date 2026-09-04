@@ -67,6 +67,9 @@ module HQ
         return payload(state) if state["active_key"]
         now = @clock.call
         date = local_date(now, config.fetch("timezone"))
+        # Registered records are only replay protection. Once a new daily
+        # session begins, retain unresolved older work but drop consumed IDs.
+        state["finalized_proposals"] = Array(state["finalized_proposals"]).reject { |snapshot| snapshot["registered"] == true }
         prior = prior_continuity(state)
         prompt = [INTRODUCTION, prior].compact.join("\n\n")
         agent = ManagedAgent.new(key: "personal-assistant-#{date}-#{state["generation"].to_i + 1}", name: "Personal Assistant · #{date}", project_key: "__personal_assistant__", template_key: "personal_assistant_daily", workspace: workspace, prompt:, created_at: now, sandbox_mode: "read-only", agent: "codex", model: config.fetch("model"), reasoning_effort: config.fetch("reasoning_effort"), messages: [ManagedAgent::AgentMessage.new(role: "system", content: prompt, created_at: now)], role: ROLE)
