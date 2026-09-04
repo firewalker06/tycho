@@ -45,6 +45,7 @@ require_relative "domain/skill_discovery"
 require_relative "domain/skill_installer"
 require_relative "domain/onboarding"
 require_relative "domain/personal_assistant"
+require_relative "domain/personal_assistant_actions"
 require_relative "domain/visibility"
 require_relative "domain/web_push_notifier"
 require_relative "domain/usage_metrics"
@@ -334,6 +335,11 @@ module HQ
       return ok(personal_assistant: service.personal_assistant) if method == "GET" && parts == ["personal-assistant"]
       return ok(personal_assistant: service.setup_personal_assistant(body)) if method == "POST" && parts == ["personal-assistant", "setup"]
       return ok(personal_assistant: service.open_personal_assistant) if method == "POST" && parts == ["personal-assistant", "open"]
+      return ok(proposals: service.personal_assistant_actions) if method == "GET" && parts == ["personal-assistant", "actions"]
+      return ok(proposals: service.propose_personal_assistant_actions(body)) if method == "POST" && parts == ["personal-assistant", "actions", "proposals"]
+      if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "confirm"
+        return ok(proposal: service.confirm_personal_assistant_action(parts[2], body))
+      end
       return ok(service.resource_snapshot) if method == "GET" && parts == ["resources"]
       return ok(service.metrics_query(request&.query_params || {})) if method == "GET" && parts == ["metrics"]
       return ok(service.metrics_backfill(body)) if method == "POST" && parts == ["metrics", "backfill"]
@@ -1612,7 +1618,12 @@ module HQ
       @registry = registry
       @projects = registry.projects.map { |config| Project.new(config) }
       @agent_store = AgentStore.new(@projects)
-      @personal_assistant = PersonalAssistantLifecycle.new(registry:, agent_store: @agent_store)
+      @personal_assistant = PersonalAssistantLifecycle.new(
+        registry:, agent_store: @agent_store, state_path: File.join(HQ::PERSONAL_ASSISTANT_DIR, "state.json")
+      )
+      @personal_assistant_actions = PersonalAssistantActions.new(
+        path: File.join(HQ::PERSONAL_ASSISTANT_DIR, "proposals.json"), executor: method(:execute_personal_assistant_action)
+      )
       @agent_archive_store = AgentArchiveStore.new
       @push_subscription_store = push_subscription_store
       @push_notification_store = push_notification_store
@@ -1845,6 +1856,55 @@ module HQ
       @personal_assistant.open!
     rescue ArgumentError => e
       raise Error.new(e.message, status: 409)
+    end
+
+    def personal_assistant_actions
+      @personal_assistant_actions.proposals
+    end
+
+    def propose_personal_assistant_actions(attrs)
+      active_key = @personal_assistant.status[:active_key]
+      raise Error.new("Open the Personal Assistant before proposing actions", status: 409) if active_key.to_s.empty?
+
+      @personal_assistant_actions.register!(attrs["proposals"], active_key:)
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 400)
+    end
+
+    def confirm_personal_assistant_action(id, attrs)
+      @personal_assistant_actions.execute!(id, confirmed: attrs["confirmed"] == true)
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 409)
+    end
+
+    def execute_personal_assistant_action(type, arguments)
+      case type
+      when "read_docs"
+        path = arguments.fetch("path", "").to_s
+        root = File.join(HQ::ROOT_DIR, "docs")
+        expanded = File.expand_path(path, root)
+        raise ArgumentError, "Documentation path is outside Tycho docs" unless expanded.start_with?("#{root}/") && File.file?(expanded)
+        { "path" => path, "content" => File.read(expanded, 100_000) }
+      when "search_docs"
+        query = arguments.fetch("query", "").to_s.strip
+        raise ArgumentError, "Documentation search query is required" if query.empty?
+        results = Dir.glob(File.join(HQ::ROOT_DIR, "docs", "**", "*.md")).filter_map do |path|
+          text = File.read(path); next unless text.downcase.include?(query.downcase)
+          { "path" => path.delete_prefix("#{HQ::ROOT_DIR}/"), "match" => text.lines.find { |line| line.downcase.include?(query.downcase) }.to_s.strip }
+        end.first(20)
+        { "results" => results }
+      when "inspect_agents" then { "agents" => agents }
+      when "inspect_projects" then { "projects" => projects }
+      when "install_or_update_tycho_skill"
+        change_skills(arguments.fetch("harness"), arguments.fetch("action"), "confirmed" => true)
+      when "create_agent"
+        create_agent(arguments.merge("start" => false), actor: DelegationActor.user_actor)
+      when "message_agent"
+        submit_prompt(arguments.fetch("agent_key"), "prompt" => arguments.fetch("prompt"), actor: DelegationActor.user_actor)
+      when "start_agent" then start_agent(arguments.fetch("agent_key"), {}, actor: DelegationActor.user_actor)
+      when "stop_agent" then stop_agent(arguments.fetch("agent_key"))
+      else raise ArgumentError, "Unsupported assistant action"
+      end
     end
 
     def agent(key)

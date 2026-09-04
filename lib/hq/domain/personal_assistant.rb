@@ -87,7 +87,11 @@ module HQ
     end
 
     def reconcile!(state)
-      return unless @registry.personal_assistant["enabled"] == true
+      unless @registry.personal_assistant["enabled"] == true
+        state.delete("active_key"); state.delete("active_date"); state.delete("active_timezone")
+        state["phase"] = "unconfigured"
+        return
+      end
       return unless state["active_key"]
       timezone = state["active_timezone"] || @registry.personal_assistant["timezone"]
       return if timezone.to_s.empty? || state["active_date"] == local_date(@clock.call, timezone)

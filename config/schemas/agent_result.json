@@ -110,6 +110,20 @@
         "required": ["type", "title", "path", "url", "description", "mime_type"]
       }
     },
+    "action_proposals": {
+      "type": ["array", "null"],
+      "description": "Optional Personal Assistant action proposals. Propose only allowlisted actions with declarative arguments. Tycho supplies server and delegation identity and requires a separate exact confirmation for every mutation.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": { "type": "string", "enum": ["read_docs", "search_docs", "inspect_agents", "inspect_projects", "install_or_update_tycho_skill", "create_agent", "message_agent", "start_agent", "stop_agent"] },
+          "description": { "type": "string" },
+          "arguments": { "type": "object" }
+        },
+        "required": ["type", "description", "arguments"]
+      }
+    },
     "memory_handoff": {
       "type": ["object", "null"],
       "description": "For a successful run that should enter Second Brain, provide the concise semantic handoff. Tycho stores it with run-owned provenance; do not include run IDs, server, project, timestamps, or group here.",

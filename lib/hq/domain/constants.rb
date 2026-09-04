@@ -79,7 +79,7 @@ module HQ
     properties = current["properties"]
     return path unless properties.is_a?(Hash)
 
-    owned_properties = %w[memory_handoff summary_sections]
+    owned_properties = %w[memory_handoff summary_sections action_proposals]
     changed = false
     owned_properties.each do |key|
       value = bundled.dig("properties", key)
@@ -89,7 +89,12 @@ module HQ
       properties[key] = value
     end
     required = Array(current["required"])
-    missing_required = owned_properties.reject { |key| required.include?(key) }
+    required_properties = %w[memory_handoff summary_sections]
+    if required.delete("action_proposals")
+      current["required"] = required
+      changed = true
+    end
+    missing_required = required_properties.reject { |key| required.include?(key) }
     if missing_required.any?
       current["required"] = required + missing_required
       changed = true

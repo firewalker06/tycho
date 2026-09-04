@@ -419,7 +419,7 @@ module RemoteServerTest
 
       initial = server.send(:route, service, "GET", "/personal-assistant", {}, nil)
       assert(initial.dig(:body, :personal_assistant, :state) == "unconfigured",
-             "expected personal assistant to remain off by default")
+             "expected personal assistant to remain off by default, got #{initial.dig(:body, :personal_assistant).inspect}")
       begin
         server.send(:route, service, "POST", "/personal-assistant/setup", {
                       "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta"
@@ -505,6 +505,7 @@ module RemoteServerTest
   def assert_remote_agent_lifecycle
     Dir.mktmpdir("hq-remote-test") do |dir|
       old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_personal_assistant_dir = replace_constant(HQ, :PERSONAL_ASSISTANT_DIR, File.join(dir, "personal_assistant"))
       old_delegations_file = replace_constant(HQ, :DELEGATIONS_FILE, File.join(dir, "agent_delegations.json"))
       old_server_identity_file = replace_constant(HQ, :SERVER_IDENTITY_FILE, File.join(dir, "server_identity.json"))
       old_usage_metrics_file = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
@@ -512,6 +513,7 @@ module RemoteServerTest
       old_archive_dir = replace_constant(HQ, :AGENT_ARCHIVE_DIR, File.join(dir, "agents", "archive"))
 
       FileUtils.mkdir_p(HQ::AGENT_LOGS_DIR)
+      FileUtils.mkdir_p(HQ::PERSONAL_ASSISTANT_DIR)
       FileUtils.mkdir_p(HQ::AGENT_ARCHIVE_DIR)
       workspace = File.join(dir, "workspace")
       FileUtils.mkdir_p(workspace)
@@ -543,6 +545,7 @@ module RemoteServerTest
       assert(service.agents.empty?, "expected archived agent to be removed from active list")
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+      replace_constant(HQ, :PERSONAL_ASSISTANT_DIR, old_personal_assistant_dir) if old_personal_assistant_dir
       replace_constant(HQ, :DELEGATIONS_FILE, old_delegations_file) if old_delegations_file
       replace_constant(HQ, :SERVER_IDENTITY_FILE, old_server_identity_file) if old_server_identity_file
       replace_constant(HQ, :USAGE_METRICS_FILE, old_usage_metrics_file) if old_usage_metrics_file
