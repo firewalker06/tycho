@@ -82,10 +82,14 @@ class PersonalAssistantTest
 
       agent = store.agents.fetch(0)
       agent.instance_variable_set(:@session_id, "native-session-1")
+      agent.instance_variable_set(:@runs, [HQ::ManagedAgent::AgentRun.new(run_id: "user-run-before-midnight", status: "success")])
+      agent.structured_result = { "status" => "success", "action_proposals" => [{ "type" => "start_agent", "description" => "Start", "arguments" => { "agent_key" => "fixture" } }] }
       clock.now = Time.utc(2026, 3, 8, 17, 1, 0)
       agent.instance_variable_set(:@fake_running, true)
       agent.define_singleton_method(:running?) { @fake_running == true }
       assert(lifecycle.reconcile[:state] == "closing", "expected running work to delay midnight handoff")
+      snapshot = lifecycle.finalized_proposals
+      assert(snapshot && snapshot["run_id"] == "user-run-before-midnight", "expected scheduler rollover to snapshot finalized proposals before summary")
       assert(store.starts.zero?, "expected no summary while active work is running")
 
       store.finish!(agent.key)

@@ -24,11 +24,11 @@ module HQ
     end
 
     def status
-      synchronize { |state| reconcile!(state); payload(state) }
+      synchronize { |state| snapshot_finalized_proposals!(state); reconcile!(state); payload(state) }
     end
 
     def reconcile
-      synchronize { |state| reconcile!(state); snapshot_finalized_proposals!(state); advance!(state); payload(state) }
+      synchronize { |state| snapshot_finalized_proposals!(state); reconcile!(state); snapshot_finalized_proposals!(state); advance!(state); payload(state) }
     end
 
     def finalized_proposals
@@ -278,12 +278,13 @@ module HQ
     end
 
     def snapshot_finalized_proposals!(state)
-      return unless state["active_key"] && state["phase"] == "active"
+      return unless state["active_key"] && %w[active closing].include?(state["phase"])
 
       agent = @agent_store.load.find { |candidate| candidate.key == state["active_key"] && candidate.personal_assistant? }
       run = agent&.last_run
       return unless run&.status == "success" && agent.structured_result.is_a?(Hash)
       return if run.run_id.to_s.empty? || Array(agent.structured_result["action_proposals"]).empty?
+      return if run.run_id.to_s == state["summary_run_id"].to_s && !state["summary_run_id"].to_s.empty?
 
       state["finalized_proposals"] = { "run_id" => run.run_id, "active_key" => agent.key, "proposals" => agent.structured_result["action_proposals"] }
     end
