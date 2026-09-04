@@ -437,16 +437,13 @@ module RemoteServerTest
       key = opened.dig(:body, :personal_assistant, :active_key)
       assert(key && opened.dig(:body, :personal_assistant, :agent, "role") == "personal_assistant_daily",
              "expected Remote API to open the protected daily conversation")
-      proposal = server.send(:route, service, "POST", "/personal-assistant/actions/proposals", {
-                               "proposals" => [{ "type" => "start_agent", "description" => "Start an agent", "arguments" => { "agent_key" => "example" } }]
-                             }, nil).dig(:body, :proposals, 0)
-      rejected = server.send(:route, service, "POST", "/personal-assistant/actions/#{proposal.fetch("id")}/reject", {}, nil)
-      assert(rejected.dig(:body, :proposal, "state") == "rejected", "expected proposal rejection endpoint to be immutable")
       begin
-        server.send(:route, service, "POST", "/personal-assistant/actions/#{proposal.fetch("id")}/confirm", { "confirmed" => true }, nil)
-        raise "expected rejected proposal confirmation rejection"
+        server.send(:route, service, "POST", "/personal-assistant/actions/proposals", {
+                      "proposals" => [{ "type" => "start_agent", "description" => "Start an agent", "arguments" => { "agent_key" => "example" } }]
+                    }, nil)
+        raise "expected client proposal injection to be unavailable"
       rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409, "expected rejected proposal confirmation conflict")
+        assert(e.status == 404, "expected client proposal injection to be unavailable")
       end
       begin
         server.send(:route, service, "POST", "/agents/#{key}/archive", {}, nil)

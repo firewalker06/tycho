@@ -18,6 +18,7 @@ module HQ
       payload, compatibility_errors = canonicalize_compatibility_fields(payload)
       errors = compatibility_errors + validate_value(payload, @schema, "$")
       errors.concat(validate_summary_sections(payload))
+      errors.concat(validate_action_proposals(payload))
       Result.new(valid?: errors.empty?, payload:, errors:, raw_text:)
     end
 
@@ -137,6 +138,32 @@ module HQ
           attachment_target_errors(block["attachment"], path)
         else
           []
+        end
+      end
+    end
+
+    def validate_action_proposals(payload)
+      proposals = payload.is_a?(Hash) ? payload["action_proposals"] : nil
+      return [] unless proposals.is_a?(Array)
+
+      expected = {
+        "read_docs" => %w[path], "search_docs" => %w[query], "inspect_agents" => [], "inspect_projects" => [],
+        "install_or_update_tycho_skill" => %w[harness action], "create_agent" => %w[project_key name prompt agent model reasoning_effort],
+        "message_agent" => %w[agent_key prompt], "start_agent" => %w[agent_key], "stop_agent" => %w[agent_key]
+      }
+      proposals.each_with_index.filter_map do |proposal, index|
+        type = proposal.is_a?(Hash) ? proposal["type"] : nil
+        arguments = proposal.is_a?(Hash) ? proposal["arguments"] : nil
+        next unless expected.key?(type) && arguments.is_a?(Hash) && arguments.keys.sort == expected[type].sort
+
+        nil
+      end.then do |valid|
+        proposals.each_with_index.filter_map do |proposal, index|
+          type = proposal.is_a?(Hash) ? proposal["type"] : nil
+          arguments = proposal.is_a?(Hash) ? proposal["arguments"] : nil
+          next if expected.key?(type) && arguments.is_a?(Hash) && arguments.keys.sort == expected[type].sort
+
+          error("invalid_action_arguments", "$.action_proposals[#{index}].arguments", "Arguments must match action type #{type}")
         end
       end
     end

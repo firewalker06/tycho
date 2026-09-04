@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "digest"
+require "fileutils"
 require "json"
 require "securerandom"
 
@@ -25,52 +26,61 @@ module HQ
       state.fetch("proposals", []).map { |proposal| public_proposal(proposal) }
     end
 
-    def register!(items, active_key:)
-      Array(items).map do |item|
-        normalized = normalize(item)
-        digest = Digest::SHA256.hexdigest(JSON.generate(normalized))
-        existing = state.fetch("proposals", []).find { |proposal| proposal["digest"] == digest && proposal["active_key"] == active_key }
-        next public_proposal(existing) if existing
+    # Only a finalized run is allowed to create proposals. source_run_id makes
+    # delivery idempotent when polling, hooks, or a restarted server see it again.
+    def register_finalized!(items, active_key:, source_run_id:)
+      raise ArgumentError, "Finalized Personal Assistant run is required" if source_run_id.to_s.empty?
 
-        proposal = normalized.merge("id" => "pa-#{SecureRandom.uuid}", "digest" => digest, "active_key" => active_key,
-                                    "state" => READ_ONLY.include?(normalized["type"]) ? "ready" : "awaiting_confirmation")
-        update { |current| current.fetch("proposals") << proposal }
-        execute!(proposal["id"], confirmed: true) if READ_ONLY.include?(proposal["type"])
-        public_proposal(find!(proposal["id"]))
+      created = synchronize do |current|
+        Array(items).map do |item|
+          normalized = normalize(item)
+          digest = Digest::SHA256.hexdigest(JSON.generate(normalized))
+          existing = current.fetch("proposals").find { |proposal| proposal["digest"] == digest && proposal["active_key"] == active_key && proposal["source_run_id"] == source_run_id }
+          next existing if existing
+
+          proposal = normalized.merge("id" => "pa-#{SecureRandom.uuid}", "digest" => digest, "active_key" => active_key,
+                                      "source_run_id" => source_run_id, "state" => READ_ONLY.include?(normalized["type"]) ? "ready" : "awaiting_confirmation")
+          current.fetch("proposals") << proposal
+          proposal
+        end
       end
+      created.each { |proposal| execute!(proposal["id"], confirmed: true) if proposal["state"] == "ready" }
+      created.map { |proposal| public_proposal(find!(proposal["id"])) }
     end
 
     def execute!(id, confirmed: false)
-      proposal = find!(id)
-      raise ArgumentError, "Proposal has already been executed" if %w[executed rejected].include?(proposal["state"])
-      raise ArgumentError, "Exact Tycho confirmation is required" if MUTATIONS.include?(proposal["type"]) && confirmed != true
-
-      update do |current|
+      pending = find!(id)
+      raise ArgumentError, "Exact Tycho confirmation is required" if MUTATIONS.include?(pending["type"]) && confirmed != true
+      proposal = synchronize do |current|
         target = current.fetch("proposals").find { |item| item["id"] == id }
-        raise ArgumentError, "Proposal has already been executed" if target["state"] == "executed"
+        raise ArgumentError, "Unknown proposal" unless target
+        raise ArgumentError, "Proposal has already been claimed" unless %w[ready awaiting_confirmation].include?(target["state"])
         target["state"] = "executing"
+        target["claimed_at"] = Time.now.utc.iso8601
+        target.dup
       end
       result = @executor.call(proposal.fetch("type"), proposal.fetch("arguments"))
-      update do |current|
+      synchronize do |current|
         target = current.fetch("proposals").find { |item| item["id"] == id }
         target["state"] = "executed"; target["result"] = result; target["executed_at"] = Time.now.utc.iso8601
       end
       public_proposal(find!(id))
     rescue StandardError => e
-      update do |current|
+      synchronize do |current|
         target = current.fetch("proposals").find { |item| item["id"] == id }
-        target["state"] = "failed"; target["error"] = e.message if target && target["state"] == "executing"
+        next unless target && target["state"] == "executing"
+
+        target["state"] = "failed"
+        target["error"] = e.message
       end
       raise
     end
 
     def reject!(id)
-      proposal = find!(id)
-      raise ArgumentError, "Proposal has already been executed" if %w[executed rejected].include?(proposal["state"])
-      raise ArgumentError, "Only pending mutations can be rejected" unless proposal["state"] == "awaiting_confirmation"
-
-      update do |current|
+      synchronize do |current|
         target = current.fetch("proposals").find { |item| item["id"] == id }
+        raise ArgumentError, "Unknown proposal" unless target
+        raise ArgumentError, "Only pending mutations can be rejected" unless target["state"] == "awaiting_confirmation"
         target["state"] = "rejected"
         target["rejected_at"] = Time.now.utc.iso8601
       end
@@ -85,7 +95,9 @@ module HQ
       raise ArgumentError, "Unsupported assistant action" unless TYPES.include?(type)
       arguments = item["arguments"].is_a?(Hash) ? item["arguments"].transform_keys(&:to_s) : {}
       raise ArgumentError, "Assistant actions cannot supply server or parent identity" if arguments.keys.any? { |key| %w[server server_key parent_agent_key actor].include?(key) }
-      { "type" => type, "arguments" => arguments.slice(*allowed_arguments(type)), "description" => item["description"].to_s.byteslice(0, 500) }
+      allowed = allowed_arguments(type)
+      raise ArgumentError, "Assistant action arguments do not match #{type}" unless arguments.keys.sort == allowed.sort && arguments.values.none?(&:nil?)
+      { "type" => type, "arguments" => arguments, "description" => item["description"].to_s.byteslice(0, 500) }
     end
 
     def allowed_arguments(type)
@@ -100,8 +112,15 @@ module HQ
       FileStore.read_json(@path, fallback: { "version" => 1, "proposals" => [] })
     end
 
-    def update
-      state = state(); result = yield state; FileStore.write_json(@path, state); result
+    def synchronize
+      FileUtils.mkdir_p(File.dirname(@path))
+      File.open("#{@path}.lock", "w") do |lock|
+        lock.flock(File::LOCK_EX)
+        current = state
+        result = yield current
+        FileStore.write_json(@path, current)
+        result
+      end
     end
 
     def find!(id)

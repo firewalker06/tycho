@@ -114,24 +114,15 @@
       "type": ["array", "null"],
       "description": "Optional Personal Assistant action proposals. Propose only allowlisted actions with declarative arguments. Tycho supplies server and delegation identity and requires a separate exact confirmation for every mutation.",
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "type": { "type": "string", "enum": ["read_docs", "search_docs", "inspect_agents", "inspect_projects", "install_or_update_tycho_skill", "create_agent", "message_agent", "start_agent", "stop_agent"] },
-          "description": { "type": "string" },
-          "arguments": {
-            "anyOf": [
-              { "type": "object", "additionalProperties": false, "properties": { "path": { "type": "string" } }, "required": ["path"] },
-              { "type": "object", "additionalProperties": false, "properties": { "query": { "type": "string" } }, "required": ["query"] },
-              { "type": "object", "additionalProperties": false, "properties": {}, "required": [] },
-              { "type": "object", "additionalProperties": false, "properties": { "harness": { "type": "string" }, "action": { "type": "string" } }, "required": ["harness", "action"] },
-              { "type": "object", "additionalProperties": false, "properties": { "project_key": { "type": "string" }, "name": { "type": "string" }, "prompt": { "type": "string" }, "agent": { "type": ["string", "null"] }, "model": { "type": ["string", "null"] }, "reasoning_effort": { "type": ["string", "null"] } }, "required": ["project_key", "name", "prompt", "agent", "model", "reasoning_effort"] },
-              { "type": "object", "additionalProperties": false, "properties": { "agent_key": { "type": "string" }, "prompt": { "type": "string" } }, "required": ["agent_key", "prompt"] },
-              { "type": "object", "additionalProperties": false, "properties": { "agent_key": { "type": "string" } }, "required": ["agent_key"] }
-            ]
-          }
-        },
-        "required": ["type", "description", "arguments"]
+        "oneOf": [
+          { "type": "object", "additionalProperties": false, "properties": { "type": { "const": "read_docs" }, "description": { "type": "string" }, "arguments": { "type": "object", "additionalProperties": false, "properties": { "path": { "type": "string" } }, "required": ["path"] } }, "required": ["type", "description", "arguments"] },
+          { "type": "object", "additionalProperties": false, "properties": { "type": { "const": "search_docs" }, "description": { "type": "string" }, "arguments": { "type": "object", "additionalProperties": false, "properties": { "query": { "type": "string" } }, "required": ["query"] } }, "required": ["type", "description", "arguments"] },
+          { "type": "object", "additionalProperties": false, "properties": { "type": { "type": "string", "enum": ["inspect_agents", "inspect_projects"] }, "description": { "type": "string" }, "arguments": { "type": "object", "additionalProperties": false, "properties": {}, "required": [] } }, "required": ["type", "description", "arguments"] },
+          { "type": "object", "additionalProperties": false, "properties": { "type": { "const": "install_or_update_tycho_skill" }, "description": { "type": "string" }, "arguments": { "type": "object", "additionalProperties": false, "properties": { "harness": { "type": "string" }, "action": { "type": "string" } }, "required": ["harness", "action"] } }, "required": ["type", "description", "arguments"] },
+          { "type": "object", "additionalProperties": false, "properties": { "type": { "const": "create_agent" }, "description": { "type": "string" }, "arguments": { "type": "object", "additionalProperties": false, "properties": { "project_key": { "type": "string" }, "name": { "type": "string" }, "prompt": { "type": "string" }, "agent": { "type": ["string", "null"] }, "model": { "type": ["string", "null"] }, "reasoning_effort": { "type": ["string", "null"] } }, "required": ["project_key", "name", "prompt", "agent", "model", "reasoning_effort"] } }, "required": ["type", "description", "arguments"] },
+          { "type": "object", "additionalProperties": false, "properties": { "type": { "const": "message_agent" }, "description": { "type": "string" }, "arguments": { "type": "object", "additionalProperties": false, "properties": { "agent_key": { "type": "string" }, "prompt": { "type": "string" } }, "required": ["agent_key", "prompt"] } }, "required": ["type", "description", "arguments"] },
+          { "type": "object", "additionalProperties": false, "properties": { "type": { "type": "string", "enum": ["start_agent", "stop_agent"] }, "description": { "type": "string" }, "arguments": { "type": "object", "additionalProperties": false, "properties": { "agent_key": { "type": "string" } }, "required": ["agent_key"] } }, "required": ["type", "description", "arguments"] }
+        ]
       }
     },
     "memory_handoff": {

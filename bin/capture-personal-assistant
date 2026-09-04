@@ -4,11 +4,12 @@
 require "fileutils"
 require "json"
 require "net/http"
+require "socket"
 require "tmpdir"
 
 ROOT = File.expand_path("..", __dir__)
 OUTPUT = File.expand_path("~/.tycho/artifacts/card-170")
-PORT = 7397
+PORT = TCPServer.open("127.0.0.1", 0) { |server| server.addr[1] }
 
 def request(path, payload = nil)
   request = payload ? Net::HTTP::Post.new(path, "Content-Type" => "application/json") : Net::HTTP::Get.new(path)
@@ -43,12 +44,14 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
         path: #{ROOT}
         harnesses: []
   YAML
-  env = { "TYCHO_CONFIG_PATH" => config, "TYCHO_SYSTEM_PROMPTS_PATH" => File.join(ROOT, "config/system_prompts.yml.example"), "TYCHO_LOGS_ROOT" => File.join(dir, "logs"), "TYCHO_SCHEDULES_PATH" => schedules }
+  tycho_home = File.join(dir, "tycho-home")
+  env = { "TYCHO_HOME" => tycho_home, "TYCHO_CONFIG_PATH" => config, "TYCHO_SYSTEM_PROMPTS_PATH" => File.join(ROOT, "config/system_prompts.yml.example"), "TYCHO_LOGS_ROOT" => File.join(dir, "logs"), "TYCHO_SCHEDULES_PATH" => schedules }
   pid = Process.spawn(env, "bundle", "exec", "bin/tycho", "serve", "--host", "127.0.0.1", "--port", PORT.to_s, chdir: ROOT, out: File.join(dir, "server.log"), err: File.join(dir, "server.log"))
   begin
     wait_for_server
     capture = ->(name, device, selector, expected) do
-      playwright = Dir.glob(File.expand_path("~/.npm/_npx/*/node_modules/playwright")).max_by { |path| File.mtime(path) }
+      playwright = ENV.fetch("TYCHO_PLAYWRIGHT_PATH", File.expand_path("node_modules/playwright", ROOT))
+      raise "Install deterministic Playwright dependency at #{playwright} or set TYCHO_PLAYWRIGHT_PATH" unless File.directory?(playwright)
       script = File.join(dir, "capture.js")
       File.write(script, <<~JS)
         const { chromium, devices } = require(#{playwright.to_json});
@@ -59,7 +62,9 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
     capture.call("personal-assistant-setup-desktop.png", "Desktop Chrome", "#personal-assistant-setup-form", "Set up Personal Assistant")
     request("/personal-assistant/setup", { confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "Asia/Jakarta" })
     request("/personal-assistant/open", {})
-    request("/personal-assistant/actions/proposals", { proposals: [{ type: "start_agent", description: "Start the selected review agent.", arguments: { agent_key: "fixture-agent" } }] })
+    proposal_path = File.join(dir, "logs", "personal_assistant", "proposals.json")
+    FileUtils.mkdir_p(File.dirname(proposal_path))
+    File.write(proposal_path, JSON.pretty_generate("version" => 1, "proposals" => [{ "id" => "pa-capture", "type" => "start_agent", "description" => "Start the selected review agent.", "arguments" => { "agent_key" => "fixture-agent" }, "state" => "awaiting_confirmation" }]))
     capture.call("personal-assistant-active-desktop.png", "Desktop Chrome", ".personal-assistant-conversation #composer", "Today’s conversation")
     capture.call("personal-assistant-confirmation-desktop.png", "Desktop Chrome", "[data-confirm-pa-proposal]", "Confirm exact action")
     capture.call("personal-assistant-active-mobile.png", "iPhone 13", ".personal-assistant-conversation #composer", "Today’s conversation")

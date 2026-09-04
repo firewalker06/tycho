@@ -21,6 +21,17 @@ class PersonalAssistantTest
       yield agents, []
     end
 
+    def create_personal_assistant!(agent)
+      raise "already active" if agents.any?(&:personal_assistant?)
+
+      agents.unshift(agent)
+      agent
+    end
+
+    def archive_personal_assistant!(key)
+      agents.reject! { |agent| agent.key == key }
+    end
+
     def start_agent!(key)
       self.starts = starts.to_i + 1
       raise "start failed" if fail_start
@@ -82,16 +93,22 @@ class PersonalAssistantTest
       assert(internal.length == 1, "expected one durable internal summary message")
       assert(agent.session_id == "native-session-1", "expected the native session to remain unchanged")
 
-      store.finish!(agent.key, handoff: { "summary" => "Completed day", "decisions" => ["Use Codex"], "open_items" => ["Tomorrow"] })
+      store.finish!(agent.key, handoff: { "outcome" => "Completed day", "decisions" => ["Use Codex"], "continuing_context" => "Tomorrow", "references" => [] })
       completed = lifecycle.reconcile
       assert(completed[:state] == "dormant" && store.agents.empty?, "expected successful handoff then internal archive")
       handoff = JSON.parse(File.read(completed.fetch(:config) && Dir.glob(File.join(dir, "handoffs", "*.json")).fetch(0)))
-      assert(handoff["summary"] == "Completed day" && handoff["continuity"].bytesize <= 4_000, "expected bounded successful handoff")
+      assert(handoff["summary"] == "Completed day" && handoff["open_items"].join.bytesize <= 7_200, "expected bounded successful handoff")
       assert(archive_attempts == 1, "expected exactly one archive")
 
       # Catch-up opens the new date only after the old session has been archived.
       next_day = lifecycle.open!
       assert(next_day[:active_date] == "2026-03-09" && next_day[:active_key] != first[:active_key], "expected offline date catch-up without overlap")
+      second_agent = store.agents.fetch(0)
+      clock.now = Time.utc(2026, 3, 9, 17, 1, 0)
+      assert(lifecycle.reconcile[:state] == "summarizing", "expected second rollover without scheduler daemon")
+      store.finish!(second_agent.key, handoff: { "outcome" => "Completed second day", "decisions" => [], "continuing_context" => "", "references" => [] })
+      assert(lifecycle.reconcile[:state] == "dormant" && store.agents.empty?, "expected second full rollover to archive before another open")
+      assert(archive_attempts == 2 && Dir.glob(File.join(dir, "handoffs", "*.json")).length == 2, "expected two bounded daily handoffs")
 
       assert_archive_retry_without_resummary(registry, dir)
       assert_start_failure_falls_back_once(registry, dir)
@@ -107,7 +124,7 @@ class PersonalAssistantTest
       attempts += 1; raise "archive unavailable" if attempts == 1; store.agents.delete(agent)
     })
     opened = lifecycle.open!; agent = store.agents.fetch(0); clock.now += 7200
-    lifecycle.reconcile; store.finish!(agent.key, handoff: { "summary" => "handoff" })
+    lifecycle.reconcile; store.finish!(agent.key, handoff: { "outcome" => "handoff", "decisions" => [], "continuing_context" => "", "references" => [] })
     assert(lifecycle.reconcile[:state] == "archiving", "expected archive error to retain handoff")
     assert(lifecycle.reconcile[:state] == "dormant", "expected archive retry")
     assert(store.starts == 1 && attempts == 2 && opened[:active_key] != "", "expected retry without another summary")

@@ -10,6 +10,7 @@ require "securerandom"
 require_relative "constants"
 require_relative "file_store"
 require_relative "managed_agent"
+require_relative "memory_handoff"
 
 module HQ
   class PersonalAssistantLifecycle
@@ -49,9 +50,12 @@ module HQ
         return payload(state) if state["active_key"]
         now = @clock.call
         date = local_date(now, config.fetch("timezone"))
-        agent = ManagedAgent.new(key: "personal-assistant-#{date}-#{state["generation"].to_i + 1}", name: "Personal Assistant · #{date}", project_key: "__personal_assistant__", template_key: "personal_assistant_daily", workspace: workspace, prompt: INTRODUCTION, created_at: now, sandbox_mode: "read-only", agent: "codex", model: config.fetch("model"), reasoning_effort: config.fetch("reasoning_effort"), messages: [ManagedAgent::AgentMessage.new(role: "system", content: INTRODUCTION, created_at: now)], role: ROLE)
-        @agent_store.mutate { |agents, _| raise ArgumentError, "A Personal Assistant session is already active" if agents.any?(&:personal_assistant?); agents.unshift(agent) }
+        prior = prior_continuity(state)
+        prompt = [INTRODUCTION, prior].compact.join("\n\n")
+        agent = ManagedAgent.new(key: "personal-assistant-#{date}-#{state["generation"].to_i + 1}", name: "Personal Assistant · #{date}", project_key: "__personal_assistant__", template_key: "personal_assistant_daily", workspace: workspace, prompt:, created_at: now, sandbox_mode: "read-only", agent: "codex", model: config.fetch("model"), reasoning_effort: config.fetch("reasoning_effort"), messages: [ManagedAgent::AgentMessage.new(role: "system", content: prompt, created_at: now)], role: ROLE)
+        @agent_store.create_personal_assistant!(agent)
         state.merge!("active_key" => agent.key, "active_date" => date, "active_timezone" => config.fetch("timezone"), "generation" => state["generation"].to_i + 1, "phase" => "active")
+        state.delete("summary_run_id"); state.delete("handoff_path"); state.delete("last_error")
         persist(state)
         payload(state).merge(agent: agent.to_hash)
       end
@@ -153,19 +157,17 @@ module HQ
     def summary_handoff(agent, state)
       result = @summary_runner ? @summary_runner.call(agent) : agent&.structured_result
       result = {} unless result.is_a?(Hash)
-      handoff = result["memory_handoff"] || result[:memory_handoff] || {}
-      handoff = {} unless handoff.is_a?(Hash)
-      fallback_handoff(agent).merge(handoff).merge("action_proposals_ignored" => true, "summary_run_id" => state["summary_run_id"])
+      handoff = MemoryHandoff.normalize(result["memory_handoff"] || result[:memory_handoff])
+      fallback = fallback_handoff(agent)
+      handoff ? { "summary" => handoff["outcome"], "open_items" => [handoff["continuing_context"]], "decisions" => handoff["decisions"], "references" => handoff["references"], "lessons" => handoff["lessons"], "promotion_candidates" => handoff["promotion_candidates"] }.compact : fallback
     end
 
     def write_handoff!(state, handoff)
       return if state["handoff_path"] && File.file?(state["handoff_path"])
 
+      handoff = bounded_handoff(handoff)
       handoff["schema_version"] = 1
-      handoff["provenance"] = { "agent_key" => state["active_key"], "generation" => state["generation"].to_i }
-      handoff["previous_day_detail"] = handoff["summary"].to_s.byteslice(0, 2_000)
-      handoff["outstanding_child_agents"] ||= []
-      handoff["continuity"] = handoff.to_json.byteslice(0, 4_000)
+      handoff["provenance"] = { "agent_key" => state["active_key"].to_s.byteslice(0, 160), "generation" => state["generation"].to_i }
       handoff["closed_at"] = @clock.call.utc.iso8601
       handoff["active_date"] = state["active_date"]
       path = File.join(File.dirname(@state_path), "handoffs", "#{state["active_date"]}-#{state["generation"]}.json")
@@ -174,11 +176,7 @@ module HQ
     end
 
     def archive_internal!(agent)
-      @agent_store.mutate do |agents, _|
-        target = agents.find { |candidate| candidate.key == agent.key }
-        target.archive_logs! if target
-        agents.reject! { |candidate| candidate.key == agent.key }
-      end
+      @agent_store.archive_personal_assistant!(agent.key)
     end
 
     def synchronize
@@ -192,6 +190,24 @@ module HQ
 
     def payload(state)
       { state: state["phase"] || (@registry.personal_assistant["enabled"] ? "ready" : "unconfigured"), configured: @registry.personal_assistant["enabled"] == true, active_key: state["active_key"], active_date: state["active_date"], generation: state["generation"].to_i, introduction: INTRODUCTION, handoff_path: state["handoff_path"], error: state["last_error"], config: @registry.personal_assistant.slice("model", "reasoning_effort", "timezone") }
+    end
+
+    def bounded_handoff(value)
+      value = value.is_a?(Hash) ? value : {}
+      text = ->(key, limit) { value[key].to_s.encode(Encoding::UTF_8, invalid: :replace, undef: :replace).strip.byteslice(0, limit) }
+      list = ->(key, count, limit) { Array(value[key]).filter_map { |item| item.is_a?(String) ? item.encode(Encoding::UTF_8, invalid: :replace, undef: :replace).strip.byteslice(0, limit) : nil }.reject(&:empty?).first(count) }
+      { "summary" => text.call("summary", 2_000), "open_items" => list.call("open_items", 12, 600), "decisions" => list.call("decisions", 20, 600), "references" => list.call("references", 20, 600), "lessons" => list.call("lessons", 12, 600), "promotion_candidates" => list.call("promotion_candidates", 12, 600), "outstanding_child_agents" => list.call("outstanding_child_agents", 20, 160) }
+    end
+
+    def prior_continuity(state)
+      path = state["handoff_path"].to_s
+      return nil unless File.file?(path)
+
+      handoff = FileStore.read_json(path, fallback: {})
+      compact = bounded_handoff(handoff)
+      return nil if compact.values.all? { |value| value.respond_to?(:empty?) && value.empty? }
+
+      "[TYCHO PRIOR DAILY CONTINUITY — bounded]\n#{JSON.generate(compact).byteslice(0, 4_000)}"
     end
   end
 end

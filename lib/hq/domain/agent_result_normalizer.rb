@@ -28,6 +28,7 @@ module HQ
       result["attachments"] = attachments if attachments
       memory_handoff = MemoryHandoff.normalize(parsed["memory_handoff"])
       result["memory_handoff"] = memory_handoff if memory_handoff
+      result["action_proposals"] = parsed["action_proposals"] if parsed["action_proposals"].is_a?(Array)
       result
     end
 

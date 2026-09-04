@@ -336,7 +336,6 @@ module HQ
       return ok(personal_assistant: service.setup_personal_assistant(body)) if method == "POST" && parts == ["personal-assistant", "setup"]
       return ok(personal_assistant: service.open_personal_assistant) if method == "POST" && parts == ["personal-assistant", "open"]
       return ok(proposals: service.personal_assistant_actions) if method == "GET" && parts == ["personal-assistant", "actions"]
-      return ok(proposals: service.propose_personal_assistant_actions(body)) if method == "POST" && parts == ["personal-assistant", "actions", "proposals"]
       if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "confirm"
         return ok(proposal: service.confirm_personal_assistant_action(parts[2], body))
       end
@@ -1844,7 +1843,9 @@ module HQ
     end
 
     def personal_assistant
-      @personal_assistant.status
+      status = @personal_assistant.reconcile
+      ingest_personal_assistant_actions!(status)
+      status
     rescue ArgumentError => e
       raise Error.new(e.message, status: 409)
     end
@@ -1862,16 +1863,8 @@ module HQ
     end
 
     def personal_assistant_actions
+      ingest_personal_assistant_actions!(@personal_assistant.reconcile)
       @personal_assistant_actions.proposals
-    end
-
-    def propose_personal_assistant_actions(attrs)
-      active_key = @personal_assistant.status[:active_key]
-      raise Error.new("Open the Personal Assistant before proposing actions", status: 409) if active_key.to_s.empty?
-
-      @personal_assistant_actions.register!(attrs["proposals"], active_key:)
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: 400)
     end
 
     def confirm_personal_assistant_action(id, attrs)
@@ -1914,6 +1907,20 @@ module HQ
       when "stop_agent" then stop_agent(arguments.fetch("agent_key"))
       else raise ArgumentError, "Unsupported assistant action"
       end
+    end
+
+    def ingest_personal_assistant_actions!(status)
+      key = status[:active_key].to_s
+      return if key.empty?
+
+      agent = @agent_store.load.find { |candidate| candidate.key == key && candidate.personal_assistant? }
+      run = agent&.last_run
+      return unless run&.status == "success" && agent.structured_result.is_a?(Hash)
+      return if agent.messages.any? { |message| message.metadata&.fetch("personal_assistant_summary", false) && message.created_at >= run.started_at }
+
+      @personal_assistant_actions.register_finalized!(agent.structured_result["action_proposals"], active_key: key, source_run_id: run.run_id)
+    rescue ArgumentError => e
+      HQ.logger.warn("PersonalAssistant") { "Rejected finalized action proposals: #{e.message}" }
     end
 
     def agent(key)

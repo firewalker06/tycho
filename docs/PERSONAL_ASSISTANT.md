@@ -13,7 +13,7 @@ The first opened conversation contains Tycho's fixed introduction before a model
 5. A successful structured handoff is bounded before it is written. If summary execution fails, Tycho writes a bounded fallback from the recent user context.
 6. Tycho archives internally. If archive fails, later reconciliation retries only the archive; it never re-summarizes.
 
-The active session keeps the timezone it was opened with. A later setup change applies to the next day, preventing an accidental early rollover. Scheduler ticks reconcile the lifecycle, so missed ticks and offline periods safely catch up without creating overlapping daily sessions.
+The active session keeps the timezone it was opened with. A later setup change applies to the next day, preventing an accidental early rollover. Every Remote API read and open request also reconciles the lifecycle, so midnight rollover does not depend on the schedule daemon. Missed ticks and offline periods safely catch up without creating overlapping daily sessions; the old run always finishes before its summary, handoff, archive, and next-day creation.
 
 ## Remote API
 
@@ -25,6 +25,8 @@ Manual archive endpoints return a conflict for this role. Prompt submission is r
 
 ## Action proposals
 
-Codex may return optional `action_proposals` in its structured result. Tycho accepts only typed declarative proposals: documentation/status inspection (`read_docs`, `search_docs`, `inspect_agents`, `inspect_projects`) and controlled mutations (`install_or_update_tycho_skill`, `create_agent`, `message_agent`, `start_agent`, `stop_agent`). Proposals are persisted with a server-generated ID and digest of the normalized payload. Read-only actions run directly; every mutation needs one exact Tycho confirmation and can execute at most once.
+Codex may return optional `action_proposals` only in a finalized successful structured result from the currently active daily agent. There is no client proposal-creation API. Tycho accepts only typed declarative proposals with the exact argument object coupled to each action type. Proposals are persisted with a server-generated ID, source-run ID, and digest. Claiming is locked and durable before execution; an interrupted claim is never retried automatically. Read-only actions run directly; every mutation needs one exact Tycho confirmation and can execute at most once.
 
 The model cannot provide a server key, parent key, or actor identity. Tycho injects local-server and user/delegation provenance before calling the existing SkillInstaller or managed-agent paths. Replayed, modified, unsupported, and previously executed proposals are rejected.
+
+Handoffs retain only normalized UTF-8 text and bounded lists. The next day receives at most 4 KB of the prior handoff as a fixed system continuity block; run IDs, timestamps, and other server provenance remain outside this promptable body.
