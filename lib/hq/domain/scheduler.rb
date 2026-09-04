@@ -82,12 +82,12 @@ module HQ
       schedule, states, state = schedule_state_for(key)
       ensure_not_expired!(schedule, state, states, now:)
       resume_state!(schedule, state, now:)
-      run_schedule(schedule, states, state, now:, dry_run:)
+      dispatch_and_persist_schedule(schedule, states, state, now:, dry_run:)
     end
 
     def refresh_session(key, now: Time.now)
-      schedule = find_schedule!(key)
-      state = store.state_for(store.load, schedule.key)
+      schedule, states, state = schedule_state_for(key)
+      ensure_not_expired!(schedule, state, states, now:)
       target = last_agent(schedule, state, load_agents)
       if target
         stop_scheduled_session!(target) if target.running?
@@ -104,14 +104,7 @@ module HQ
         store.save(states)
         return { status: :skipped, schedule: schedule_payload(schedule, state) }
       end
-      run_schedule(schedule, states, state, now:, dry_run:)
-    end
-
-    def run_schedule(schedule, states, state, now:, dry_run:)
-      agents = load_agents
-      result = dispatch_schedule(schedule, state, agents, now:, dry_run:)
-      persist(agents, states, dry_run:)
-      result
+      dispatch_and_persist_schedule(schedule, states, state, now:, dry_run:)
     end
 
     def remove(key)
@@ -240,6 +233,13 @@ module HQ
 
       @agent_store.save(agents)
       store.save(states)
+    end
+
+    def dispatch_and_persist_schedule(schedule, states, state, now:, dry_run:)
+      agents = load_agents
+      result = dispatch_schedule(schedule, state, agents, now:, dry_run:)
+      persist(agents, states, dry_run:)
+      result
     end
 
     def schedule_payload(schedule, state, agent: nil)

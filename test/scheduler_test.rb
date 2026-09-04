@@ -27,6 +27,7 @@ module SchedulerTest
       assert_schedule_list_uses_current_agent_run_count
       assert_refresh_stops_running_session
       assert_refresh_failure_keeps_replacement_recoverable
+      assert_expired_refresh_preserves_current_session
       assert_schedule_waits_for_human_input
     end
     assert_schedule_daemon_supervisor_spawns_external_daemon
@@ -485,6 +486,40 @@ module SchedulerTest
       recovered = scheduler.resume_and_run_now("weekday")
       assert(recovered.fetch(:agent).key == HQ::ScheduleStore.new.load.fetch("weekday").last_target_key,
              "expected the failed replacement to be recoverable through resume and run")
+    end
+  end
+
+  def assert_expired_refresh_preserves_current_session
+    with_temp_runtime do |dir|
+      now = Time.new(2026, 7, 16, 14, 0, 0, "+07:00")
+      registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: weekday
+            cron: "0 9 * * 1-5"
+            ends_at: "#{(now - 60).iso8601}"
+            target:
+              type: agent
+              project_key: web
+              name: Weekday maintenance
+              message: "Run maintenance."
+      YAML
+      scheduler = build_scheduler(registry, schedule_path)
+      original = HQ::ManagedAgent.new(
+        key: "expired-session", name: "Expired session", project_key: "web", template_key: "custom",
+        workspace: File.join(dir, "workspace"), prompt: "Keep this session.", agent: "codex"
+      )
+      original.associate_schedule!("weekday")
+      HQ::AgentStore.new(registry.projects.map { |config| HQ::Project.new(config) }).save([original])
+      state = HQ::ScheduleStore.new.state_for({}, "weekday")
+      state.last_target_key = original.key
+      HQ::ScheduleStore.new.save("weekday" => state)
+
+      assert_raises(HQ::ScheduleRegistry::Error, "expected expired refresh to fail before lifecycle changes") do
+        scheduler.refresh_session("weekday", now:)
+      end
+      retained = read_agents.fetch(0)
+      assert(retained.key == original.key && retained.schedule_key == "weekday",
+             "expected expired refresh to leave the current scheduled session unchanged")
     end
   end
 
