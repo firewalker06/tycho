@@ -61,6 +61,7 @@ module ManagedAgentTest
     assert_agent_runner_warns_when_command_cannot_execute
     assert_personal_assistant_intent_pid_and_status_recovery
     assert_spawn_failure_clears_stale_result_and_persists_run
+    assert_store_spawn_failure_persists_failed_run
     puts "managed_agent_test: ok"
   end
 
@@ -2632,6 +2633,37 @@ module ManagedAgentTest
       assert(agent.structured_result.nil? && agent.last_summary != "stale", "expected spawn exception to clear stale result state")
     ensure
       previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
+    end
+  end
+
+  def assert_store_spawn_failure_persists_failed_run
+    Dir.mktmpdir("hq-store-spawn-failure") do |dir|
+      old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "agents.json"))
+      executable = File.join(dir, "codex")
+      File.write(executable, "#!/bin/sh\nexit 0\n")
+      FileUtils.chmod(0o755, executable)
+      previous_codex_bin = ENV["TYCHO_CODEX_BIN"]
+      ENV["TYCHO_CODEX_BIN"] = executable
+      original_spawn = HQ::ManagedAgent.instance_method(:spawn)
+      HQ::ManagedAgent.define_method(:spawn) { |_env, *_args, **_options| raise Errno::EAGAIN, "forced store spawn failure" }
+      agent = HQ::ManagedAgent.new(key: "store-spawn", name: "Store", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "store.log"), role: "personal_assistant_daily")
+      agent.structured_result = { "status" => "success", "summary" => "stale" }
+      store = HQ::AgentStore.new([])
+      store.save([agent])
+      begin
+        store.start_agent!(agent.key)
+        raise "expected forced store spawn failure"
+      rescue Errno::EAGAIN
+        true
+      end
+      reloaded = store.load.fetch(0)
+      run = reloaded.last_run
+      assert(run.status == "failed" && run.finished_at && run.metadata["spawn_error"], "expected AgentStore reload to retain failed spawn run")
+      assert(reloaded.structured_result.nil?, "expected durable spawn failure to clear stale success result")
+    ensure
+      HQ::ManagedAgent.define_method(:spawn, original_spawn) if original_spawn
+      previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
+      replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
     end
   end
 
