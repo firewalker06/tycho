@@ -2608,6 +2608,11 @@ module ManagedAgentTest
       assert(!File.exist?(completed.send(:run_status_file_path, "completed-run")) && !File.exist?(completed.send(:run_pid_file_path, "completed-run")), "expected completed status to win and clean status/PID handshake")
       assert(completed.status != "running", "expected live handshake to be unable to resurrect finalized run")
       Process.kill("TERM", -overlap_pid) rescue nil
+      orphan = HQ::ManagedAgent.new(key: "pa-orphan", name: "PA", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "orphan.log"), role: "personal_assistant_daily", runs: [HQ::ManagedAgent::AgentRun.new(run_id: "orphan-run", status: "failed", metadata: {})])
+      orphan_pid_path = orphan.send(:run_pid_file_path, "orphan-run")
+      File.write(orphan_pid_path, "999999")
+      archive = orphan.archive_logs!(File.join(dir, "archive"))
+      assert(!File.exist?(orphan_pid_path) && File.exist?(File.join(archive, File.basename(orphan_pid_path))), "expected archive to remove orphan PID handshake from active logs")
     end
   end
 

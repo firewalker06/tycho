@@ -890,6 +890,7 @@ module HQ
         invalid_structured_output_file_path,
         *status_file_paths,
         *@runs.filter_map { |run| run_status_file_path(run.run_id) unless run.run_id.to_s.empty? },
+        *@runs.filter_map { |run| run_pid_file_path(run.run_id) unless run.run_id.to_s.empty? },
         last_message_file_path,
         legacy_status_file_path,
         legacy_last_message_file_path
