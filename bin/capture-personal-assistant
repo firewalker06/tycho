@@ -47,16 +47,22 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
   pid = Process.spawn(env, "bundle", "exec", "bin/tycho", "serve", "--host", "127.0.0.1", "--port", PORT.to_s, chdir: ROOT, out: File.join(dir, "server.log"), err: File.join(dir, "server.log"))
   begin
     wait_for_server
-    capture = ->(name, device, selector) do
-      system("npx", "--yes", "playwright", "screenshot", "--timeout=15000", "--device=#{device}", "--wait-for-selector=#{selector}", "--full-page", "http://127.0.0.1:#{PORT}/ui#personal-assistant", File.join(OUTPUT, name), exception: true)
+    capture = ->(name, device, selector, expected) do
+      playwright = Dir.glob(File.expand_path("~/.npm/_npx/*/node_modules/playwright")).max_by { |path| File.mtime(path) }
+      script = File.join(dir, "capture.js")
+      File.write(script, <<~JS)
+        const { chromium, devices } = require(#{playwright.to_json});
+        (async () => { const browser = await chromium.launch({headless:true}); const page = await browser.newPage(devices[#{device.to_json}]); await page.goto('http://127.0.0.1:#{PORT}/ui#personal-assistant'); await page.locator(#{selector.to_json}).waitFor({state:'visible',timeout:15000}); await page.waitForFunction(() => !document.querySelector('.tycho-loading-state,.conversation-loading-state'), null, {timeout:15000}); await page.waitForTimeout(750); if (!(await page.locator('body').innerText()).includes(#{expected.to_json})) throw new Error('expected rendered PA text'); await page.screenshot({path:#{File.join(OUTPUT, name).to_json},fullPage:true}); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });
+      JS
+      system("node", script, exception: true)
     end
-    capture.call("personal-assistant-setup-desktop.png", "Desktop Chrome", "#personal-assistant-setup-form")
+    capture.call("personal-assistant-setup-desktop.png", "Desktop Chrome", "#personal-assistant-setup-form", "Set up Personal Assistant")
     request("/personal-assistant/setup", { confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "Asia/Jakarta" })
     request("/personal-assistant/open", {})
     request("/personal-assistant/actions/proposals", { proposals: [{ type: "start_agent", description: "Start the selected review agent.", arguments: { agent_key: "fixture-agent" } }] })
-    capture.call("personal-assistant-active-desktop.png", "Desktop Chrome", ".personal-assistant-conversation #composer")
-    capture.call("personal-assistant-confirmation-desktop.png", "Desktop Chrome", "[data-confirm-pa-proposal]")
-    capture.call("personal-assistant-active-mobile.png", "iPhone 13", ".personal-assistant-conversation #composer")
+    capture.call("personal-assistant-active-desktop.png", "Desktop Chrome", ".personal-assistant-conversation #composer", "Today’s conversation")
+    capture.call("personal-assistant-confirmation-desktop.png", "Desktop Chrome", "[data-confirm-pa-proposal]", "Confirm exact action")
+    capture.call("personal-assistant-active-mobile.png", "iPhone 13", ".personal-assistant-conversation #composer", "Today’s conversation")
   ensure
     Process.kill("TERM", pid) rescue nil
     Process.wait(pid) rescue nil
