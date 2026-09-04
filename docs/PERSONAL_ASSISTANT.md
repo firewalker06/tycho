@@ -22,3 +22,9 @@ The active session keeps the timezone it was opened with. A later setup change a
 - `POST /personal-assistant/open` lazily opens the protected daily conversation.
 
 Manual archive endpoints return a conflict for this role. Prompt submission is rejected while the daily session is closing.
+
+## Action proposals
+
+Codex may return optional `action_proposals` in its structured result. Tycho accepts only typed declarative proposals: documentation/status inspection (`read_docs`, `search_docs`, `inspect_agents`, `inspect_projects`) and controlled mutations (`install_or_update_tycho_skill`, `create_agent`, `message_agent`, `start_agent`, `stop_agent`). Proposals are persisted with a server-generated ID and digest of the normalized payload. Read-only actions run directly; every mutation needs one exact Tycho confirmation and can execute at most once.
+
+The model cannot provide a server key, parent key, or actor identity. Tycho injects local-server and user/delegation provenance before calling the existing SkillInstaller or managed-agent paths. Replayed, modified, unsupported, and previously executed proposals are rejected.
