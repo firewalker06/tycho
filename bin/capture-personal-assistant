@@ -70,7 +70,7 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
       agents = JSON.parse(File.read(agents_path))
       agent = agents.fetch(0)
       agent["structured_result"] = { "status" => "success", "summary" => "Fixture finalized.", "summary_sections" => nil, "inquiry" => nil, "attachments" => nil, "memory_handoff" => nil, "action_proposals" => [{ "type" => "start_agent", "description" => "Start the selected review agent.", "arguments" => { "agent_key" => "fixture-agent" } }] }
-      agent["runs"] = [{ "run_id" => "capture-finalized-run", "started_at" => Time.now.utc.iso8601, "finished_at" => Time.now.utc.iso8601, "status" => "success", "exit_code" => 0, "log_path" => "capture.log", "command" => [] }]
+      agent["runs"] = [{ "run_id" => "capture-finalized-run", "started_at" => Time.now.utc.iso8601, "finished_at" => Time.now.utc.iso8601, "status" => "success", "exit_code" => 0, "log_path" => "capture.log", "command" => [], "metadata" => { "personal_assistant_action_proposals" => agent.dig("structured_result", "action_proposals") } }]
       HQ::FileStore.write_json(agents_path, agents)
     end
     request("/personal-assistant/actions")
