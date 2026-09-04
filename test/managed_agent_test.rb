@@ -2612,6 +2612,11 @@ module ManagedAgentTest
 
   def assert_spawn_failure_clears_stale_result_and_persists_run
     Dir.mktmpdir("hq-spawn-failure") do |dir|
+      executable = File.join(dir, "codex")
+      File.write(executable, "#!/bin/sh\nexit 0\n")
+      FileUtils.chmod(0o755, executable)
+      previous_codex_bin = ENV["TYCHO_CODEX_BIN"]
+      ENV["TYCHO_CODEX_BIN"] = executable
       agent = HQ::ManagedAgent.new(key: "spawn-failure", name: "Spawn", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "spawn.log"), role: "personal_assistant_daily")
       agent.structured_result = { "status" => "success", "summary" => "stale" }
       agent.summary = "stale"
@@ -2625,6 +2630,8 @@ module ManagedAgentTest
       run = agent.last_run
       assert(run.status == "failed" && run.finished_at && run.metadata["spawn_error"], "expected persisted failed run after spawn exception")
       assert(agent.structured_result.nil? && agent.last_summary != "stale", "expected spawn exception to clear stale result state")
+    ensure
+      previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
     end
   end
 
