@@ -1,0 +1,64 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "net/http"
+require "tmpdir"
+
+ROOT = File.expand_path("..", __dir__)
+OUTPUT = File.expand_path("~/.tycho/artifacts/card-170")
+PORT = 7397
+
+def request(path, payload = nil)
+  request = payload ? Net::HTTP::Post.new(path, "Content-Type" => "application/json") : Net::HTTP::Get.new(path)
+  request.body = JSON.generate(payload) if payload
+  Net::HTTP.start("127.0.0.1", PORT) { |http| http.request(request) }
+end
+
+def wait_for_server
+  100.times do
+    return if request("/personal-assistant").is_a?(Net::HTTPSuccess)
+
+    sleep 0.1
+  rescue Errno::ECONNREFUSED
+    sleep 0.1
+  end
+  raise "Personal Assistant fixture server did not start"
+end
+
+Dir.mktmpdir("tycho-pa-capture") do |dir|
+  FileUtils.mkdir_p(OUTPUT)
+  config = File.join(dir, "hq.yml")
+  schedules = File.join(dir, "schedules.yml")
+  File.write(schedules, "---\nschedules: []\n")
+  File.write(config, <<~YAML)
+    ---
+    custom_harnesses: []
+    harness_catalogs: {}
+    groups: {}
+    projects:
+      - key: fixture
+        name: Personal Assistant fixture
+        path: #{ROOT}
+        harnesses: []
+  YAML
+  env = { "TYCHO_CONFIG_PATH" => config, "TYCHO_SYSTEM_PROMPTS_PATH" => File.join(ROOT, "config/system_prompts.yml.example"), "TYCHO_LOGS_ROOT" => File.join(dir, "logs"), "TYCHO_SCHEDULES_PATH" => schedules }
+  pid = Process.spawn(env, "bundle", "exec", "bin/tycho", "serve", "--host", "127.0.0.1", "--port", PORT.to_s, chdir: ROOT, out: File.join(dir, "server.log"), err: File.join(dir, "server.log"))
+  begin
+    wait_for_server
+    capture = ->(name, device, selector) do
+      system("npx", "--yes", "playwright", "screenshot", "--device=#{device}", "--wait-for-selector=#{selector}", "--wait-for-timeout=500", "--full-page", "http://127.0.0.1:#{PORT}/ui#personal-assistant", File.join(OUTPUT, name), exception: true)
+    end
+    capture.call("personal-assistant-setup-desktop.png", "Desktop Chrome", "#personal-assistant-setup-form")
+    request("/personal-assistant/setup", { confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "Asia/Jakarta" })
+    request("/personal-assistant/open", {})
+    request("/personal-assistant/actions/proposals", { proposals: [{ type: "start_agent", description: "Start the selected review agent.", arguments: { agent_key: "fixture-agent" } }] })
+    capture.call("personal-assistant-active-desktop.png", "Desktop Chrome", ".personal-assistant-conversation #composer")
+    capture.call("personal-assistant-confirmation-desktop.png", "Desktop Chrome", "[data-confirm-pa-proposal]")
+    capture.call("personal-assistant-active-mobile.png", "iPhone 13", ".personal-assistant-conversation #composer")
+  ensure
+    Process.kill("TERM", pid) rescue nil
+    Process.wait(pid) rescue nil
+  end
+end

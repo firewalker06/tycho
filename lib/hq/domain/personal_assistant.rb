@@ -191,7 +191,7 @@ module HQ
     end
 
     def payload(state)
-      { state: state["phase"] || (@registry.personal_assistant["enabled"] ? "ready" : "unconfigured"), configured: @registry.personal_assistant["enabled"] == true, active_key: state["active_key"], active_date: state["active_date"], generation: state["generation"].to_i, introduction: INTRODUCTION, config: @registry.personal_assistant.slice("model", "reasoning_effort", "timezone") }
+      { state: state["phase"] || (@registry.personal_assistant["enabled"] ? "ready" : "unconfigured"), configured: @registry.personal_assistant["enabled"] == true, active_key: state["active_key"], active_date: state["active_date"], generation: state["generation"].to_i, introduction: INTRODUCTION, handoff_path: state["handoff_path"], error: state["last_error"], config: @registry.personal_assistant.slice("model", "reasoning_effort", "timezone") }
     end
   end
 end
