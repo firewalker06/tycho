@@ -621,7 +621,8 @@ module HQ
       if (missing = missing_executable_for(command))
         return record_start_failure!(
           "Agent harness #{@agent.inspect} executable not found: #{missing}",
-          command
+          command,
+          run_metadata:
         )
       end
 
@@ -1270,7 +1271,7 @@ module HQ
       end
     end
 
-    def record_start_failure!(message, command)
+    def record_start_failure!(message, command, run_metadata: nil)
       @started_at = Time.now
       @finished_at = @started_at
       @last_exit_code = 127
@@ -1304,7 +1305,8 @@ module HQ
         command: Shellwords.join(command),
         agent: @agent,
         model: @model,
-        log_start_offset: log_start_offset
+        log_start_offset: log_start_offset,
+        metadata: run_metadata.is_a?(Hash) ? run_metadata : {}
       ))
       if @usage_metrics_store
         UsageMetrics.record_run(

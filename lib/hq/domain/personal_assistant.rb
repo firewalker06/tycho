@@ -32,12 +32,12 @@ module HQ
     end
 
     def finalized_proposals
-      synchronize { |state| snapshot_finalized_proposals!(state); Array(state["finalized_proposals"]).dup }
+      synchronize { |state| snapshot_finalized_proposals!(state); Array(state["finalized_proposals"]).reject { |snapshot| snapshot["registered"] == true } }
     end
 
     def mark_finalized_proposals_registered!(run_id)
       synchronize do |state|
-        state["finalized_proposals"] = Array(state["finalized_proposals"]).reject { |snapshot| snapshot["run_id"].to_s == run_id.to_s }
+        state["finalized_proposals"] = Array(state["finalized_proposals"]).map { |snapshot| snapshot["run_id"].to_s == run_id.to_s ? snapshot.merge("registered" => true) : snapshot }
       end
     end
 
