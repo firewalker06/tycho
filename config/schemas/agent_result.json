@@ -149,5 +149,5 @@
       "required": ["outcome", "decisions", "continuing_context", "references", "lessons", "promotion_candidates"]
     }
   },
-  "required": ["status", "summary", "summary_sections", "inquiry", "attachments", "memory_handoff"]
+  "required": ["status", "summary", "summary_sections", "inquiry", "attachments", "action_proposals", "memory_handoff"]
 }

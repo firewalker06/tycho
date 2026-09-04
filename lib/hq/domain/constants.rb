@@ -89,11 +89,7 @@ module HQ
       properties[key] = value
     end
     required = Array(current["required"])
-    required_properties = %w[memory_handoff summary_sections]
-    if required.delete("action_proposals")
-      current["required"] = required
-      changed = true
-    end
+    required_properties = %w[memory_handoff summary_sections action_proposals]
     missing_required = required_properties.reject { |key| required.include?(key) }
     if missing_required.any?
       current["required"] = required + missing_required
