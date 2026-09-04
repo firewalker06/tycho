@@ -5,6 +5,18 @@ require "tmpdir"
 require_relative "../lib/hq/remote_server"
 
 class PersonalAssistantTest
+  FakeStore = Struct.new(:agents, :starts, :fail_start, keyword_init: true) do
+    def load = agents
+    def mutate
+      yield agents, []
+    end
+    def start_agent!(key)
+      raise "start failed" if fail_start
+      self.starts ||= 0; self.starts += 1
+      agents.find { |agent| agent.key == key }
+    end
+  end
+
   def self.run
     Dir.mktmpdir do |dir|
       original_agents = HQ::AGENTS_FILE
@@ -35,6 +47,8 @@ class PersonalAssistantTest
       new_york_before = Time.utc(2026, 3, 8, 6, 59, 59)
       new_york_after = Time.utc(2026, 3, 8, 7, 0, 0)
       raise "expected DST boundary date stability" unless lifecycle.send(:local_date, new_york_before, "America/New_York") == lifecycle.send(:local_date, new_york_after, "America/New_York")
+      serialized = HQ::ManagedAgent.from_hash(agent.to_hash)
+      raise "expected native session persistence" unless serialized.session_id == agent.session_id
     ensure
       HQ.send(:remove_const, :AGENTS_FILE)
       HQ.const_set(:AGENTS_FILE, original_agents)

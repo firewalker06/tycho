@@ -51,7 +51,7 @@ module HQ
         date = local_date(now, config.fetch("timezone"))
         agent = ManagedAgent.new(key: "personal-assistant-#{date}-#{state["generation"].to_i + 1}", name: "Personal Assistant · #{date}", project_key: "__personal_assistant__", template_key: "personal_assistant_daily", workspace: workspace, prompt: INTRODUCTION, created_at: now, sandbox_mode: "read-only", agent: "codex", model: config.fetch("model"), reasoning_effort: config.fetch("reasoning_effort"), messages: [ManagedAgent::AgentMessage.new(role: "system", content: INTRODUCTION, created_at: now)], role: ROLE)
         @agent_store.mutate { |agents, _| raise ArgumentError, "A Personal Assistant session is already active" if agents.any?(&:personal_assistant?); agents.unshift(agent) }
-        state.merge!("active_key" => agent.key, "active_date" => date, "generation" => state["generation"].to_i + 1, "phase" => "active")
+        state.merge!("active_key" => agent.key, "active_date" => date, "active_timezone" => config.fetch("timezone"), "generation" => state["generation"].to_i + 1, "phase" => "active")
         persist(state)
         payload(state).merge(agent: agent.to_hash)
       end
@@ -88,8 +88,8 @@ module HQ
 
     def reconcile!(state)
       return unless state["active_key"]
-      config = @registry.personal_assistant
-      return unless config["enabled"] == true && state["active_date"] != local_date(@clock.call, config.fetch("timezone"))
+      timezone = state["active_timezone"] || @registry.personal_assistant["timezone"]
+      return if timezone.to_s.empty? || state["active_date"] == local_date(@clock.call, timezone)
       state["phase"] = "closing" if state["phase"] == "active"
     end
 
@@ -109,7 +109,7 @@ module HQ
       end
       return unless state["phase"] == "archiving"
       @archiver.call(agent) if agent
-      state.delete("active_key"); state.delete("active_date"); state["phase"] = "dormant"
+      state.delete("active_key"); state.delete("active_date"); state.delete("active_timezone"); state["phase"] = "dormant"
     rescue StandardError => e
       state["last_error"] = e.message
       if state["phase"] == "summarizing"
