@@ -60,6 +60,7 @@ module ManagedAgentTest
     assert_stop_finalizes_when_group_exits_before_signal
     assert_agent_runner_warns_when_command_cannot_execute
     assert_personal_assistant_intent_pid_and_status_recovery
+    assert_spawn_failure_clears_stale_result_and_persists_run
     puts "managed_agent_test: ok"
   end
 
@@ -2599,8 +2600,31 @@ module ManagedAgentTest
 
       completed = HQ::ManagedAgent.new(key: "pa-completed", name: "PA", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "completed.log"), role: "personal_assistant_daily", runs: [HQ::ManagedAgent::AgentRun.new(run_id: "completed-run", status: "running", metadata:)])
       File.write(completed.send(:run_status_file_path, "completed-run"), "0")
+      overlap_pid = Process.spawn("sleep", "2", pgroup: true)
+      File.write(completed.send(:run_pid_file_path, "completed-run"), overlap_pid.to_s)
       completed.poll!
-      assert(%w[success succeeded].include?(completed.last_run.status) && completed.last_run.finished_at, "expected completed pid:nil intent run to finalize")
+      assert(%w[success succeeded].include?(completed.last_run.status) && completed.last_run.finished_at, "expected completed pid:nil intent run to finalize, got #{completed.last_run.to_hash.inspect}")
+      assert(!File.exist?(completed.send(:run_status_file_path, "completed-run")) && !File.exist?(completed.send(:run_pid_file_path, "completed-run")), "expected completed status to win and clean status/PID handshake")
+      assert(completed.status != "running", "expected live handshake to be unable to resurrect finalized run")
+      Process.kill("TERM", -overlap_pid) rescue nil
+    end
+  end
+
+  def assert_spawn_failure_clears_stale_result_and_persists_run
+    Dir.mktmpdir("hq-spawn-failure") do |dir|
+      agent = HQ::ManagedAgent.new(key: "spawn-failure", name: "Spawn", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "spawn.log"), role: "personal_assistant_daily")
+      agent.structured_result = { "status" => "success", "summary" => "stale" }
+      agent.summary = "stale"
+      agent.define_singleton_method(:spawn) { |_env, *_args, **_options| raise Errno::EAGAIN, "forced spawn failure" }
+      begin
+        agent.start!
+        raise "expected forced spawn failure"
+      rescue Errno::EAGAIN
+        true
+      end
+      run = agent.last_run
+      assert(run.status == "failed" && run.finished_at && run.metadata["spawn_error"], "expected persisted failed run after spawn exception")
+      assert(agent.structured_result.nil? && agent.last_summary != "stale", "expected spawn exception to clear stale result state")
     end
   end
 

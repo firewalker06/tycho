@@ -1392,6 +1392,8 @@ module HQ
 
       @finished_at ||= Time.now
       @last_exit_code = read_exit_code
+      FileUtils.rm_f(run_pid_file_path(last_run.run_id))
+      @pid = nil
       finalize_latest_run!
       true
     end
