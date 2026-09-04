@@ -64,6 +64,19 @@ module HQ
       raise
     end
 
+    def reject!(id)
+      proposal = find!(id)
+      raise ArgumentError, "Proposal has already been executed" if %w[executed rejected].include?(proposal["state"])
+      raise ArgumentError, "Only pending mutations can be rejected" unless proposal["state"] == "awaiting_confirmation"
+
+      update do |current|
+        target = current.fetch("proposals").find { |item| item["id"] == id }
+        target["state"] = "rejected"
+        target["rejected_at"] = Time.now.utc.iso8601
+      end
+      public_proposal(find!(id))
+    end
+
     private
 
     def normalize(item)
@@ -96,7 +109,7 @@ module HQ
     end
 
     def public_proposal(proposal)
-      proposal.slice("id", "type", "arguments", "description", "state", "result", "error", "executed_at")
+      proposal.slice("id", "type", "arguments", "description", "state", "result", "error", "executed_at", "rejected_at")
     end
   end
 end

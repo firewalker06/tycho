@@ -437,6 +437,17 @@ module RemoteServerTest
       key = opened.dig(:body, :personal_assistant, :active_key)
       assert(key && opened.dig(:body, :personal_assistant, :agent, "role") == "personal_assistant_daily",
              "expected Remote API to open the protected daily conversation")
+      proposal = server.send(:route, service, "POST", "/personal-assistant/actions/proposals", {
+                               "proposals" => [{ "type" => "start_agent", "description" => "Start an agent", "arguments" => { "agent_key" => "example" } }]
+                             }, nil).dig(:body, :proposals, 0)
+      rejected = server.send(:route, service, "POST", "/personal-assistant/actions/#{proposal.fetch("id")}/reject", {}, nil)
+      assert(rejected.dig(:body, :proposal, "state") == "rejected", "expected proposal rejection endpoint to be immutable")
+      begin
+        server.send(:route, service, "POST", "/personal-assistant/actions/#{proposal.fetch("id")}/confirm", { "confirmed" => true }, nil)
+        raise "expected rejected proposal confirmation rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409, "expected rejected proposal confirmation conflict")
+      end
       begin
         server.send(:route, service, "POST", "/agents/#{key}/archive", {}, nil)
         raise "expected protected archive rejection"
@@ -6488,8 +6499,9 @@ module RemoteServerTest
            "expected Remote UI to scope in-document hash link handling to Markdown viewers")
     assert(js[:body].include?("history.replaceState(null, \"\", routeHash(route))"),
            "expected Markdown hash links to preserve the attachment route")
-    assert(js[:body].include?('const TOP_TABS = ["now", "agents", "settings"];'),
-           "expected Remote UI to keep the paused review inbox out of top-level navigation")
+    assert(js[:body].include?('const TOP_TABS = ["now", "agents", "personal-assistant", "settings"];') &&
+           response[:body].include?('data-tab="personal-assistant"'),
+           "expected Remote UI to expose Personal Assistant navigation while keeping reviews hidden")
     assert(!response[:body].include?('data-tab="reviews"'),
            "expected Remote UI to hide the paused review inbox")
     assert(!helpers_js[:body].include?('parts[0] === "reviews"'),

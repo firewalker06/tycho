@@ -340,6 +340,9 @@ module HQ
       if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "confirm"
         return ok(proposal: service.confirm_personal_assistant_action(parts[2], body))
       end
+      if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "reject"
+        return ok(proposal: service.reject_personal_assistant_action(parts[2]))
+      end
       return ok(service.resource_snapshot) if method == "GET" && parts == ["resources"]
       return ok(service.metrics_query(request&.query_params || {})) if method == "GET" && parts == ["metrics"]
       return ok(service.metrics_backfill(body)) if method == "POST" && parts == ["metrics", "backfill"]
@@ -1873,6 +1876,12 @@ module HQ
 
     def confirm_personal_assistant_action(id, attrs)
       @personal_assistant_actions.execute!(id, confirmed: attrs["confirmed"] == true)
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 409)
+    end
+
+    def reject_personal_assistant_action(id)
+      @personal_assistant_actions.reject!(id)
     rescue ArgumentError => e
       raise Error.new(e.message, status: 409)
     end
