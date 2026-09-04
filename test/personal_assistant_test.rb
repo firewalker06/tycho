@@ -26,6 +26,15 @@ class PersonalAssistantTest
       raise "expected fixed introduction" unless first.dig(:agent, "prompt").include?("Tycho Personal Assistant")
       agent = HQ::ManagedAgent.from_hash(first.fetch(:agent))
       raise "expected protected role" unless agent.personal_assistant?
+      raise "expected no empty day" unless HQ::AgentStore.new([]).load.length == 1
+      20.times do
+        raise "expected repeated open to be idempotent" unless lifecycle.open![:active_key] == first[:active_key]
+      end
+      jakarta_midnight = Time.utc(2026, 3, 8, 17, 0, 0)
+      raise "expected IANA local date" unless lifecycle.send(:local_date, jakarta_midnight, "Asia/Jakarta") == "2026-03-09"
+      new_york_before = Time.utc(2026, 3, 8, 6, 59, 59)
+      new_york_after = Time.utc(2026, 3, 8, 7, 0, 0)
+      raise "expected DST boundary date stability" unless lifecycle.send(:local_date, new_york_before, "America/New_York") == lifecycle.send(:local_date, new_york_after, "America/New_York")
     ensure
       HQ.send(:remove_const, :AGENTS_FILE)
       HQ.const_set(:AGENTS_FILE, original_agents)
