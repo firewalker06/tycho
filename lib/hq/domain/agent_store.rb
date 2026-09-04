@@ -273,14 +273,18 @@ module HQ
       end
     end
 
-    def start_agent!(key)
+    def start_agent!(key, run_metadata: nil)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
 
         unless target.running?
           stamp = @delegation_coordinator.ownership_stamp(target.key)
-          stamp ? target.start!(delegation_stamp: stamp) : target.start!
+          if run_metadata
+            stamp ? target.start!(delegation_stamp: stamp, run_metadata:) : target.start!(run_metadata:)
+          else
+            stamp ? target.start!(delegation_stamp: stamp) : target.start!
+          end
         end
         target
       end

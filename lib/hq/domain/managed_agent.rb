@@ -603,7 +603,7 @@ module HQ
       @unread = false
     end
 
-    def start!(delegation_stamp: nil)
+    def start!(delegation_stamp: nil, run_metadata: nil)
       return if running?
 
       finalize_previous_run!
@@ -663,7 +663,8 @@ module HQ
         run_id: run_id,
         run_scoped_status: true,
         delegation_owner: delegation_stamp&.fetch("owner", nil),
-        delegation_generation: delegation_stamp&.fetch("generation", nil)
+        delegation_generation: delegation_stamp&.fetch("generation", nil),
+        metadata: run_metadata.is_a?(Hash) ? run_metadata : {}
       )
       memory_store.append_run_started!(run_id: run.run_id, created_at: @started_at)
       @pid = spawn(

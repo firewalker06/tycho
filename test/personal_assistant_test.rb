@@ -32,13 +32,13 @@ class PersonalAssistantTest
       agents.reject! { |agent| agent.key == key }
     end
 
-    def start_agent!(key)
+    def start_agent!(key, run_metadata: nil)
       self.starts = starts.to_i + 1
       raise "start failed" if fail_start
 
       agent = agents.find { |candidate| candidate.key == key }
       agent.instance_variable_set(:@fake_running, true)
-      agent.instance_variable_set(:@runs, [HQ::ManagedAgent::AgentRun.new(run_id: "summary-#{starts}", status: "running")])
+      agent.instance_variable_set(:@runs, [HQ::ManagedAgent::AgentRun.new(run_id: "summary-#{starts}", status: "running", metadata: run_metadata || {})])
       agent.define_singleton_method(:running?) { @fake_running == true }
       agent
     end
@@ -89,7 +89,7 @@ class PersonalAssistantTest
       agent.define_singleton_method(:running?) { @fake_running == true }
       assert(lifecycle.reconcile[:state] == "closing", "expected running work to delay midnight handoff")
       snapshot = lifecycle.finalized_proposals
-      assert(snapshot && snapshot["run_id"] == "user-run-before-midnight", "expected scheduler rollover to snapshot finalized proposals before summary")
+      assert(snapshot.any? { |item| item["run_id"] == "user-run-before-midnight" }, "expected scheduler rollover to snapshot finalized proposals before summary")
       assert(store.starts.zero?, "expected no summary while active work is running")
 
       store.finish!(agent.key)

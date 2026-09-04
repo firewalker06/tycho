@@ -1917,12 +1917,12 @@ module HQ
     end
 
     def ingest_personal_assistant_actions!(status)
-      snapshot = @personal_assistant.finalized_proposals
-      return unless snapshot.is_a?(Hash)
-      return if snapshot["run_id"].to_s == status[:summary_run_id].to_s && !status[:summary_run_id].to_s.empty?
+      @personal_assistant.finalized_proposals.each do |snapshot|
+        next if snapshot["run_id"].to_s == status[:summary_run_id].to_s && !status[:summary_run_id].to_s.empty?
 
-      @personal_assistant_actions.register_finalized!(snapshot["proposals"], active_key: snapshot["active_key"], source_run_id: snapshot["run_id"])
-      @personal_assistant.mark_finalized_proposals_registered!(snapshot["run_id"])
+        @personal_assistant_actions.register_finalized!(snapshot["proposals"], active_key: snapshot["active_key"], source_run_id: snapshot["run_id"])
+        @personal_assistant.mark_finalized_proposals_registered!(snapshot["run_id"])
+      end
     rescue ArgumentError => e
       HQ.logger.warn("PersonalAssistant") { "Rejected finalized action proposals: #{e.message}" }
     end

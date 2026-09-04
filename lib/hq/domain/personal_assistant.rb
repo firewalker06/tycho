@@ -32,12 +32,12 @@ module HQ
     end
 
     def finalized_proposals
-      synchronize { |state| snapshot_finalized_proposals!(state); state["finalized_proposals"] }
+      synchronize { |state| snapshot_finalized_proposals!(state); Array(state["finalized_proposals"]).dup }
     end
 
     def mark_finalized_proposals_registered!(run_id)
       synchronize do |state|
-        state.delete("finalized_proposals") if state.dig("finalized_proposals", "run_id").to_s == run_id.to_s
+        state["finalized_proposals"] = Array(state["finalized_proposals"]).reject { |snapshot| snapshot["run_id"].to_s == run_id.to_s }
       end
     end
 
@@ -180,8 +180,10 @@ module HQ
       # Persist the intent before asking the harness to run.  A transient launch
       # failure must not append a second summary prompt on the next scheduler tick.
       persist(state)
-      started = @agent_store.start_agent!(agent.key)
-      state["summary_run_id"] = started.last_run&.run_id
+      existing = agent.runs.find { |run| run.metadata&.fetch("personal_assistant_summary_intent", nil) == intent_id }
+      started = existing ? agent : @agent_store.start_agent!(agent.key, run_metadata: { "personal_assistant_summary_intent" => intent_id })
+      summary_run = existing || started.last_run
+      state["summary_run_id"] = summary_run&.run_id
       raise "Personal Assistant summary did not create a run" if state["summary_run_id"].to_s.empty?
     rescue StandardError
       raise
@@ -286,7 +288,11 @@ module HQ
       return if run.run_id.to_s.empty? || Array(agent.structured_result["action_proposals"]).empty?
       return if run.run_id.to_s == state["summary_run_id"].to_s && !state["summary_run_id"].to_s.empty?
 
-      state["finalized_proposals"] = { "run_id" => run.run_id, "active_key" => agent.key, "proposals" => agent.structured_result["action_proposals"] }
+      snapshots = Array(state["finalized_proposals"])
+      return if snapshots.any? { |snapshot| snapshot["run_id"] == run.run_id }
+
+      snapshots << { "run_id" => run.run_id, "active_key" => agent.key, "proposals" => agent.structured_result["action_proposals"] }
+      state["finalized_proposals"] = snapshots
     end
   end
 end
