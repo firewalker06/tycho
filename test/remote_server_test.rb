@@ -2690,6 +2690,24 @@ module RemoteServerTest
       resumed = server.send(:route, service, "POST", "/schedules/weekday/resume", {}, nil)
       assert(!resumed.dig(:body, :schedule, :paused), "expected schedule resume route")
 
+      refreshed = with_stubbed_agent_start do
+        server.send(:route, service, "POST", "/schedules/weekday/refresh-session", {}, nil)
+      end
+      assert(refreshed.dig(:body, :agent, :key), "expected refresh-session route to start a fresh scheduled session")
+      assert(refreshed.dig(:body, :schedule, :run_count) == 1,
+             "expected refresh-session route to reset the new session run count")
+
+      refreshed_state = HQ::ScheduleStore.new.load.fetch("weekday")
+      refreshed_state.mark_stopped!
+      HQ::ScheduleStore.new.save("weekday" => refreshed_state)
+      resumed_run = with_stubbed_agent_start do
+        server.send(:route, service, "POST", "/schedules/weekday/resume-and-run", {}, nil)
+      end
+      assert(resumed_run.dig(:body, :agent, :key) == refreshed.dig(:body, :agent, :key),
+             "expected resume-and-run route to keep the current scheduled session")
+      assert(resumed_run.dig(:body, :schedule, :run_count) == 2,
+             "expected resume-and-run route to create a new run")
+
       reloaded = server.send(:route, service, "POST", "/schedules/reload", {}, nil)
       assert(reloaded.dig(:body, :ok), "expected schedule reload route")
 
@@ -5414,6 +5432,13 @@ module RemoteServerTest
            "expected Remote UI scheduler controls to call daemon endpoints")
     assert(js[:body].include?("data-schedule-action"),
            "expected Remote UI to expose schedule run/pause/resume controls")
+    assert(js[:body].include?("function scheduleRunCountBadge") &&
+           js[:body].include?("count >= 50 ? \"fail\" : (count >= 30 ? \"need\" : \"info\")") &&
+           js[:body].include?("Runs in current session"),
+           "expected schedule rows to show current-session run counts with threshold colors")
+    assert(js[:body].include?('label: "Refresh session"') &&
+           js[:body].include?('data-schedule-action="refresh-session"'),
+           "expected schedule actions to refresh the current session")
     assert(js[:body].include?('label: "Run now"') &&
            js[:body].include?('attrs: `data-schedule-action="run" data-schedule-key="${escapeAttr(schedule.key)}"`') &&
            !js[:body].include?("schedule-run-button"),
@@ -5426,6 +5451,9 @@ module RemoteServerTest
            js[:body].include?('label: "Run now"') &&
            js[:body].include?('const toggleAction = blocked ? "resume" : "pause"'),
            "expected scheduled agent headers to expose run and pause/resume controls")
+    assert(js[:body].include?('label: scheduleStatusLabel(schedule) === "stopped" ? "Resume and run now" : "Run now"') &&
+           js[:body].include?('data-schedule-action="${scheduleStatusLabel(schedule) === "stopped" ? "resume-and-run" : "run"}"'),
+           "expected stopped schedule menus to resume and create a run in one action")
     assert(js[:body].include?('label: "Remove schedule"') &&
            js[:body].include?("data-remove-agent-schedule") &&
            js[:body].include?("Schedule removed; conversation kept") &&

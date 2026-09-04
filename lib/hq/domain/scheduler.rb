@@ -14,6 +14,7 @@ require_relative "web_push_notifier"
 module HQ
   class Scheduler
     LoopStartError = Class.new(StandardError)
+    RefreshError = Class.new(StandardError)
     DEFAULT_INTERVAL = 30
     MISSED_GRACE_SECONDS = 60
 
@@ -69,20 +70,36 @@ module HQ
       schedule = find_schedule!(key)
       states = store.load
       state = store.state_for(states, schedule.key)
-      if schedule.expired?(now)
-        expire_schedule!(schedule, state, now:)
-        store.save(states)
-        raise ScheduleRegistry::Error, "Schedule #{schedule.key.inspect} ended at #{schedule.ends_at.iso8601}"
-      end
-      was_stopped = state.stopped?
-      was_paused = state.paused?
-      state.mark_scheduled!
-      state.next_due_at = schedule.next_due_after(now)
-      state.resumed_at = now if was_stopped || was_paused
-      reason = was_stopped ? "stopped" : (was_paused ? "paused" : "manual")
-      publish("schedule.resumed", schedule, state, reason: reason)
+      ensure_not_expired!(schedule, state, states, now:)
+      resume_state!(schedule, state, now:)
       store.save(states)
       { status: :resumed, schedule: schedule_payload(schedule, state) }
+    end
+
+    def resume_and_run_now(key, now: Time.now, dry_run: false)
+      schedule = find_schedule!(key)
+      states = store.load
+      state = store.state_for(states, schedule.key)
+      ensure_not_expired!(schedule, state, states, now:)
+      resume_state!(schedule, state, now:)
+      agents = load_agents
+      result = dispatch_schedule(schedule, state, agents, now:, dry_run:)
+      persist(agents, states, dry_run:)
+      result
+    end
+
+    def refresh_session(key, now: Time.now)
+      schedule = find_schedule!(key)
+      state = store.state_for(store.load, schedule.key)
+      target = last_agent(schedule, state, load_agents)
+      if target
+        raise RefreshError, "Stop the scheduled session before refreshing it" if target.running?
+
+        @agent_store.archive_agent!(target.key)
+        reconcile_archived_agent!(target.key, archived_agent: target, now:)
+      end
+
+      resume_and_run_now(schedule.key, now:)
     end
 
     def run_now(key, now: Time.now, dry_run: false)
@@ -397,6 +414,7 @@ module HQ
       state.last_target_key = nil
       state.last_target_kind = nil
       state.last_finished_at ||= now
+      state.run_count = 0
       state.mark_scheduled! if state.stopped? || state.paused?
       publish("schedule.agent_archived", schedule, state,
               agent_key: agent_key,
@@ -419,6 +437,24 @@ module HQ
       return nil if key.empty?
 
       agents.find { |agent| agent.key == key }
+    end
+
+    def resume_state!(schedule, state, now:)
+      was_stopped = state.stopped?
+      was_paused = state.paused?
+      state.mark_scheduled!
+      state.next_due_at = schedule.next_due_after(now)
+      state.resumed_at = now if was_stopped || was_paused
+      reason = was_stopped ? "stopped" : (was_paused ? "paused" : "manual")
+      publish("schedule.resumed", schedule, state, reason: reason)
+    end
+
+    def ensure_not_expired!(schedule, state, states, now:)
+      return unless schedule.expired?(now)
+
+      expire_schedule!(schedule, state, now:)
+      store.save(states)
+      raise ScheduleRegistry::Error, "Schedule #{schedule.key.inspect} ended at #{schedule.ends_at.iso8601}"
     end
 
     def interactive_scheduled_session?(schedule, state, agent)

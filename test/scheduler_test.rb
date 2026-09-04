@@ -23,6 +23,7 @@ module SchedulerTest
       assert_scheduler_adopts_existing_session_and_expires_loop
       assert_archived_schedule_session_promotes_prompt_to_schedule
       assert_scheduler_stops_interactive_scheduled_agent_until_resume
+      assert_schedule_session_refresh_starts_fresh_agent
       assert_schedule_waits_for_human_input
     end
     assert_schedule_daemon_supervisor_spawns_external_daemon
@@ -338,6 +339,44 @@ module SchedulerTest
       assert(agents.map(&:key) == [first_agent.key], "expected resume to keep the persistent schedule agent")
       archived = Dir.glob(File.join(HQ::AGENT_ARCHIVE_DIR, "**", File.basename(first_agent.raw_log_path)))
       assert(archived.empty?, "expected resume not to archive the persistent schedule session")
+    end
+  end
+
+  def assert_schedule_session_refresh_starts_fresh_agent
+    with_temp_runtime do |dir|
+      registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: weekday
+            cron: "0 9 * * 1-5"
+            target:
+              type: agent
+              project_key: web
+              name: Weekday maintenance
+              message: "Run maintenance."
+      YAML
+      scheduler = build_scheduler(registry, schedule_path)
+      first = scheduler.run_now("weekday")
+      original = first.fetch(:agent)
+      scheduler.run_now("weekday")
+
+      refreshed = scheduler.refresh_session("weekday")
+      replacement = refreshed.fetch(:agent)
+      state = HQ::ScheduleStore.new.load.fetch("weekday")
+
+      assert(replacement.key != original.key, "expected refresh to create a fresh scheduled session")
+      assert(state.previous_target_key == original.key, "expected refresh to retain the archived session key")
+      assert(state.last_target_key == replacement.key, "expected refresh to target the fresh session")
+      assert(state.run_count == 1, "expected refresh to reset the current session run count")
+      assert(read_agents.map(&:key) == [replacement.key], "expected the previous scheduled session to be archived")
+      archived = Dir.glob(File.join(HQ::AGENT_ARCHIVE_DIR, "**", File.basename(original.raw_log_path)))
+      assert(!archived.empty?, "expected refresh to archive the previous session logs")
+
+      state.mark_stopped!
+      HQ::ScheduleStore.new.save("weekday" => state)
+      resumed = scheduler.resume_and_run_now("weekday")
+      assert(resumed.fetch(:agent).key == replacement.key, "expected resume and run to preserve the current session")
+      assert(HQ::ScheduleStore.new.load.fetch("weekday").run_count == 2,
+             "expected resume and run to create one additional run")
     end
   end
 

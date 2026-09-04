@@ -451,8 +451,10 @@ module HQ
         return ok(service.update_schedule_message_file(key, body)) if method == "PUT" && tail == ["message_file"]
         return ok(service.delete_schedule(key)) if method == "DELETE" && tail.empty?
         return ok(service.run_schedule(key)) if method == "POST" && tail == ["run"]
+        return ok(service.refresh_schedule_session(key)) if method == "POST" && tail == ["refresh-session"]
         return ok(schedule: service.pause_schedule(key)) if method == "POST" && tail == ["pause"]
         return ok(service.resume_schedule(key)) if method == "POST" && tail == ["resume"]
+        return ok(service.resume_and_run_schedule(key)) if method == "POST" && tail == ["resume-and-run"]
       end
 
       if parts.length >= 2 && parts.first == "projects"
@@ -2133,7 +2135,12 @@ module HQ
     end
 
     def run_schedule(key)
-      result = scheduler.run_now(key)
+      schedule_result(scheduler.run_now(key))
+    rescue ScheduleRegistry::Error => e
+      raise Error.new(e.message, status: 404)
+    end
+
+    def schedule_result(result)
       if result.fetch(:status) == :failed
         raise Error.new(result.fetch(:error), status: 409)
       end
@@ -2145,6 +2152,12 @@ module HQ
         schedule: result.fetch(:schedule),
         agent: result[:agent] ? agent_payload(result[:agent]) : nil
       }.compact
+    end
+
+    def refresh_schedule_session(key)
+      schedule_result(scheduler.refresh_session(key))
+    rescue Scheduler::RefreshError => e
+      raise Error.new(e.message, status: 409)
     rescue ScheduleRegistry::Error => e
       raise Error.new(e.message, status: 404)
     end
@@ -2165,6 +2178,12 @@ module HQ
         schedule: result.fetch(:schedule),
         agent: result[:agent] ? agent_payload(result[:agent]) : nil
       }.compact
+    rescue ScheduleRegistry::Error => e
+      raise Error.new(e.message, status: 404)
+    end
+
+    def resume_and_run_schedule(key)
+      schedule_result(scheduler.resume_and_run_now(key))
     rescue ScheduleRegistry::Error => e
       raise Error.new(e.message, status: 404)
     end
