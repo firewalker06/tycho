@@ -6753,6 +6753,10 @@ module RemoteServerTest
     fred_avatar = server.send(:route_ui, "/fred-avatar.png")
     assert(fred_avatar[:content_type].include?("image/png"), "expected FRED avatar route to return PNG")
     assert(fred_avatar[:body].byteslice(0, 8) == "\x89PNG\r\n\x1A\n".b, "expected FRED avatar to be a PNG")
+    assert(fred_avatar[:body].byteslice(16, 8).unpack("N2") == [128, 128],
+           "expected FRED avatar PNG to be 128x128")
+    assert(fred_avatar[:body].bytesize < 20_000,
+           "expected FRED avatar PNG to remain materially smaller than the legacy asset")
 
     horizontal_logo = server.send(:route_ui, "/remote-logo-horizontal.png")
     assert(horizontal_logo[:content_type].include?("image/png"), "expected Remote UI horizontal logo route to return PNG")
