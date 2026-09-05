@@ -17,6 +17,7 @@ module RemoteUIAssetSnapshotTest
     assert_delegation_callbacks_are_chronological_events
     assert_archived_agents_are_reference_only_and_read_only
     assert_personal_assistant_is_chat_first
+    assert_personal_assistant_first_run_uses_starters
     assert_agent_status_icons_use_lucide_without_badges
     puts "remote_ui_asset_snapshot_test: ok"
   end
@@ -32,7 +33,6 @@ module RemoteUIAssetSnapshotTest
       'Technical details',
       'data-confirm-pa-proposal=',
       'data-reject-pa-proposal=',
-      'personal-assistant-start-form',
       'What would you like to move forward?',
       'pendingPersonalAssistantProposalIds: new Set()',
       'state.pendingPersonalAssistantProposalIds.has(id)',
@@ -55,6 +55,27 @@ module RemoteUIAssetSnapshotTest
     ]
     missing_css = required_css.reject { |fragment| css.include?(fragment) }
     raise "missing chat-first layout contract: #{missing_css.join(", ")}" unless missing_css.empty?
+  end
+
+  def assert_personal_assistant_first_run_uses_starters
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
+    required_javascript = [
+      "function personalAssistantHasRealConversation(blocks)",
+      'block?.kind === "message" && ["user", "assistant"].includes(block.role)',
+      "const starter = agent && item.state === \"active\" && !personalAssistantHasRealConversation(blocks);",
+      "${starter ? renderPersonalAssistantWelcome() : renderAgentConversationView(agent, blocks, { floatingActions: false, loading: conversationLoading(agent.key), personalAssistant: true })}",
+      'querySelector("#composer #prompt-input")'
+    ]
+    missing = required_javascript.reject { |fragment| javascript.include?(fragment) }
+    raise "missing Personal Assistant first-run starter contract: #{missing.join(", ")}" unless missing.empty?
+
+    required_css = [
+      ".pa-tycho-nav .brand-logo { width: 32px; height: 32px;",
+      ".fred-avatar { display: inline-block; flex: 0 0 auto; width: 32px; height: 32px;"
+    ]
+    missing = required_css.reject { |fragment| css.include?(fragment) }
+    raise "missing Personal Assistant header identity scale: #{missing.join(", ")}" unless missing.empty?
   end
 
   def assert_initial_loading_shell_contract

@@ -5737,10 +5737,10 @@ body:has(.personal-assistant-page) .app-header { display: none; }
 .pa-tycho-nav { display: grid; place-items: center; flex: 0 0 auto; width: var(--touch-target); min-width: var(--touch-target); height: var(--touch-target); padding: 0; border: 0; border-radius: var(--ds-radius-sm); background: transparent; cursor: pointer; }
 .pa-tycho-nav:hover { background: var(--panel-soft); }
 .pa-tycho-nav:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.pa-tycho-nav .brand-logo { width: 28px; height: 28px; object-fit: contain; }
+.pa-tycho-nav .brand-logo { width: 32px; height: 32px; object-fit: contain; }
 .pa-header > strong { display: inline-flex; align-items: center; gap: 8px; }
 .pa-header .pa-settings { margin-left: auto; }
-.fred-avatar { display: inline-block; flex: 0 0 auto; width: 28px; height: 28px; border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--border)); border-radius: 50%; object-fit: cover; object-position: center; background: var(--panel-soft); }
+.fred-avatar { display: inline-block; flex: 0 0 auto; width: 32px; height: 32px; border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--border)); border-radius: 50%; object-fit: cover; object-position: center; background: var(--panel-soft); }
 .message-role .fred-avatar { width: 22px; height: 22px; }
 .pa-status-dot { width: 9px; height: 9px; border-radius: 999px; background: var(--success); }
 .pa-settings { position: relative; color: var(--muted); font-size: 13px; }
