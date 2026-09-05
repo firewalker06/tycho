@@ -1,13 +1,11 @@
 # Changelog
 
+All notable changes to Tycho will be documented in this file.
+
 ## Unreleased
 
 - Make FRED setup explicit and chat-first, protect its daily lifecycle from
   ordinary agent mutations, and add deterministic setup/ready UI captures.
-
-All notable changes to Tycho will be documented in this file.
-
-## Unreleased
 
 ## 0.10.2 - 2026-08-30
 

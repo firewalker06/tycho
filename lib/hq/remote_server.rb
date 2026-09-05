@@ -2037,7 +2037,7 @@ module HQ
     end
 
     def rebuild_agent_memory(key)
-      agent = find_agent!(key)
+      agent = reject_personal_assistant_control!(find_agent!(key))
       written = AgentChatLog.new(agent).rebuild_memory_from_raw_log!
       raise Error.new("Unable to rebuild memory from raw log", status: 422) unless written
       save_agent(agent)
@@ -2061,8 +2061,8 @@ module HQ
     end
 
     def refresh_agent_pull_request_metadata(key)
+      agent = reject_personal_assistant_control!(find_agent!(key))
       ensure_github_enabled!
-      agent = find_agent!(key)
       references = PullRequestDiff.references_for_agent(agent)
       catalog_store = pull_request_catalog(agent)
       catalog_store.discover(references)
@@ -2103,8 +2103,8 @@ module HQ
     end
 
     def refresh_agent_pull_request_diff(key, id)
+      agent = reject_personal_assistant_control!(find_agent!(key))
       ensure_github_enabled!
-      agent = find_agent!(key)
       reference = pull_request_reference!(agent, id)
       refresh_pull_request_snapshot(reference)
     rescue PullRequestDiff::Error => e
@@ -2112,8 +2112,8 @@ module HQ
     end
 
     def refresh_agent_pull_requests(key)
+      agent = reject_personal_assistant_control!(find_agent!(key))
       ensure_github_enabled!
-      agent = find_agent!(key)
       refreshed = []
       failed = []
       PullRequestDiff.references_for_agent(agent).each do |reference|
@@ -2409,6 +2409,7 @@ module HQ
         break
       end
       raise Error.new("Attachment not found", status: 404) unless target_agent && target_attachment
+      reject_personal_assistant_control!(target_agent)
 
       deleted = target_agent.delete_attachment!(target_attachment)
       cleanup_uploaded_attachment_file(target_agent, target_attachment) if deleted
@@ -2834,7 +2835,7 @@ module HQ
     end
 
     def mark_agent_read(key)
-      target = find_agent!(key)
+      target = reject_personal_assistant_control!(find_agent!(key))
       if target.unread?
         target.mark_read!
         save_agent(target)

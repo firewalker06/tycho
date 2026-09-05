@@ -461,6 +461,28 @@ module RemoteServerTest
                  "expected #{path} to reject ordinary control of FRED")
         end
       end
+      [["POST", "/agents/#{key}/memory/rebuild", {}], ["PUT", "/agents/#{key}/reading", {}], ["POST", "/agents/#{key}/pull-requests/refresh", {}]].each do |method, path, body|
+        begin
+          server.send(:route, service, method, path, body, nil)
+          raise "expected protected generic write rejection for #{path}"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 409 && e.message.include?("dedicated lifecycle"),
+                 "expected #{path} to reject ordinary writes to FRED")
+        end
+      end
+      protected_agent = service.send(:find_agent!, key)
+      protected_attachment_path = File.join(protected_agent.workspace, "protected.txt")
+      File.write(protected_attachment_path, "Protected FRED attachment\n")
+      protected_agent.add_user_message!("Keep this attachment.", attachments: [{ "type" => "file", "title" => "Protected attachment", "path" => protected_attachment_path }])
+      service.send(:save_agent, protected_agent)
+      protected_attachment_id = service.agent(key)[:attachments].first.fetch("id")
+      begin
+        server.send(:route, service, "DELETE", "/attachments/#{protected_attachment_id}", {}, nil)
+        raise "expected protected attachment deletion rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("dedicated lifecycle") && File.exist?(protected_attachment_path),
+               "expected attachment deletion to preserve FRED-owned file and metadata")
+      end
       begin
         server.send(:route, service, "POST", "/agents/archive", { "keys" => [key] }, nil)
         raise "expected protected bulk archive rejection"
@@ -6431,6 +6453,11 @@ module RemoteServerTest
            js[:body].include?("I confirm these settings for FRED.") &&
            js[:body].include?("Opening FRED does not send a model prompt."),
            "expected chat-first FRED setup to show explicit model, effort, timezone, confirmation, and ready states")
+    assert(js[:body].include?('class="pa-setup ui-surface"') &&
+           js[:body].include?('class="ui-field__label" for="pa-model"') &&
+           js[:body].include?('class="ui-input" id="pa-timezone"') &&
+           js[:body].include?('aria-describedby="pa-setup-guidance"'),
+           "expected FRED setup to use shared surface and field contracts with connected guidance")
     assert(!js[:body].include?("confirmed: true, model: \"gpt-5.6-sol\""),
            "expected first-use FRED flow not to silently submit fixed settings")
     assert(js[:body].include?("personalAssistant ? \"/personal-assistant/messages\""),
