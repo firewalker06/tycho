@@ -35,7 +35,10 @@ module RemoteUIAssetSnapshotTest
       'personal-assistant-start-form',
       'What would you like to move forward?',
       'pendingPersonalAssistantProposalIds: new Set()',
-      'state.pendingPersonalAssistantProposalIds.has(id)'
+      'state.pendingPersonalAssistantProposalIds.has(id)',
+      'class="pa-tycho-nav"',
+      'aria-label="Go to Tycho agents"',
+      'src="/remote-logo.png?v=${escapeAttr(document.documentElement.dataset.assetVersion || "")}"'
     ]
     missing = required_javascript.reject { |fragment| javascript.include?(fragment) }
     raise "missing chat-first Personal Assistant contract: #{missing.join(", ")}" unless missing.empty?

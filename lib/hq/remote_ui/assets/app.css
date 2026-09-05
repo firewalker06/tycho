@@ -5733,8 +5733,13 @@ select {
 .content:has(.personal-assistant-page) { height: 100dvh; min-height: 0; padding: 0; overflow: hidden; }
 body:has(.personal-assistant-page) .app-header { display: none; }
 .personal-assistant-page { display: grid; grid-template-rows: 56px minmax(0, 1fr) auto; width: min(100%, 820px); height: calc(100dvh - 76px); min-height: 0; margin: 0 auto; background: var(--bg); }
-.pa-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--border); }
+.pa-header { display: flex; align-items: center; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--border); }
+.pa-tycho-nav { display: grid; place-items: center; flex: 0 0 auto; width: var(--touch-target); min-width: var(--touch-target); height: var(--touch-target); padding: 0; border: 0; border-radius: var(--ds-radius-sm); background: transparent; cursor: pointer; }
+.pa-tycho-nav:hover { background: var(--panel-soft); }
+.pa-tycho-nav:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.pa-tycho-nav .brand-logo { width: 28px; height: 28px; object-fit: contain; }
 .pa-header > strong { display: inline-flex; align-items: center; gap: 8px; }
+.pa-header .pa-settings { margin-left: auto; }
 .fred-avatar { display: inline-block; flex: 0 0 auto; width: 28px; height: 28px; border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--border)); border-radius: 50%; object-fit: cover; object-position: center; background: var(--panel-soft); }
 .message-role .fred-avatar { width: 22px; height: 22px; }
 .pa-status-dot { width: 9px; height: 9px; border-radius: 999px; background: var(--success); }

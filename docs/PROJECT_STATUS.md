@@ -101,6 +101,10 @@ reasoning effort, IANA timezone, and explicit confirmation before opening a
 daily conversation. Ordinary agent lifecycle endpoints cannot control its
 protected daily role; the dedicated Personal Assistant API owns opening and
 messaging. Zone identifiers must resolve to TZif data, not zoneinfo metadata.
+Protected FRED daily sessions are absent from generic agent catalogs; the
+dedicated Personal Assistant payload supplies its conversation detail. Action
+proposals and receipts are scoped to the active daily session so stale records
+cannot appear in a new FRED conversation.
 
 **v0.10.2 release**: successful managed runs can now persist validated Second
 Brain memory handoffs and expose them through local or remote CLI and API

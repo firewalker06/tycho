@@ -1849,7 +1849,9 @@ module HQ
     def personal_assistant
       status = @personal_assistant.status
       ingest_personal_assistant_actions!(status)
-      @personal_assistant.reconcile
+      status = @personal_assistant.reconcile
+      agent = load_all_agents.find { |candidate| candidate.key == status[:active_key] && candidate.personal_assistant? }
+      agent ? status.merge(agent: agent_payload(agent)) : status
     rescue ArgumentError => e
       raise Error.new(e.message, status: 409)
     end
@@ -1876,8 +1878,8 @@ module HQ
     def personal_assistant_actions
       status = @personal_assistant.status
       ingest_personal_assistant_actions!(status)
-      @personal_assistant.reconcile
-      @personal_assistant_actions.proposals
+      status = @personal_assistant.reconcile
+      @personal_assistant_actions.proposals.select { |proposal| proposal["active_key"] == status[:active_key] }
     end
 
     def confirm_personal_assistant_action(id, attrs)
@@ -3208,7 +3210,7 @@ module HQ
     end
 
     def visible_agents(agents)
-      HQ::Visibility.visible_agents(agents, @projects)
+      HQ::Visibility.visible_agents(agents, @projects).reject(&:personal_assistant?)
     end
 
     def hidden_setting_value(attrs)
@@ -3508,7 +3510,7 @@ module HQ
     end
 
     def find_agent!(key)
-      active = load_agents.find { |agent| agent.key == key.to_s }
+      active = load_all_agents.find { |agent| agent.key == key.to_s }
       return active if active
 
       if visible_archived_agent(key)
@@ -3519,7 +3521,7 @@ module HQ
     end
 
     def find_agent_reference!(key)
-      load_agents.find { |agent| agent.key == key.to_s } ||
+      load_all_agents.find { |agent| agent.key == key.to_s } ||
         visible_archived_agent(key) ||
         raise(Error.new("Unknown agent: #{key}", status: 404))
     end
