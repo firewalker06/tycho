@@ -4254,8 +4254,15 @@ module RemoteServerTest
            response[:body].include?('aria-labelledby="confirmation-title"') &&
            response[:body].include?('aria-describedby="confirmation-description"'),
            "expected the root shell to expose the shared labeled confirmation dialog")
-    assert(response[:body].include?('data-tab="settings"'), "expected root shell to expose Settings navigation")
-    assert(response[:body].include?("<span>Settings</span>"), "expected root shell to label setup navigation as Settings")
+    primary_nav = response[:body][%r{<nav id="bottom-nav".*?</nav>}m]
+    assert(primary_nav.scan(/data-tab="/).length == 3 &&
+           primary_nav.include?('data-tab="now"') &&
+           primary_nav.include?('data-tab="personal-assistant"') &&
+           primary_nav.include?('data-tab="agents"') &&
+           !primary_nav.include?('data-tab="settings"'),
+           "expected primary navigation to contain only Now, FRED, and Agents")
+    assert(response[:body].include?('id="desktop-settings"') && response[:body].include?('aria-label="Settings"'),
+           "expected Settings to remain a separately accessible desktop control")
     assert(!response[:body].include?('data-tab="search"'), "expected root shell to remove Search navigation")
     assert(!response[:body].include?('data-tab="projects"'), "expected root shell to remove Projects navigation")
     assert(response[:body].include?("<svg class=\"ui-icon\""), "expected root shell controls to use SVG icons")
@@ -4652,6 +4659,11 @@ module RemoteServerTest
            "expected Settings push section to support header menu scrolling")
     assert(css[:body].include?("grid-template-columns: repeat(3, minmax(0, 1fr));"),
            "expected bottom navigation to use the simplified three-tab layout")
+    assert(css[:body].include?(".desktop-settings {") &&
+           css[:body].include?("position: fixed;") &&
+           css[:body].include?("bottom: 12px;") &&
+           css[:body].include?("border: 0;"),
+           "expected Settings to be a separate unboxed desktop control pinned at the sidebar bottom")
     assert(css[:body].include?(".bulk-action-bar"),
            "expected Agents tab to style bulk archive controls")
     assert(css[:body].include?(".quick-agent-fab"),
@@ -6513,9 +6525,11 @@ module RemoteServerTest
            "expected Remote UI to scope in-document hash link handling to Markdown viewers")
     assert(js[:body].include?("history.replaceState(null, \"\", routeHash(route))"),
            "expected Markdown hash links to preserve the attachment route")
-    assert(js[:body].include?('const TOP_TABS = ["now", "agents", "personal-assistant", "settings"];') &&
+    assert(js[:body].include?('const TOP_TABS = ["now", "personal-assistant", "agents", "settings"];') &&
+           js[:body].include?('setMainHeaderMore("personal-assistant")') &&
+           js[:body].include?('label: "Settings"') &&
            response[:body].include?('data-tab="personal-assistant"'),
-           "expected Remote UI to expose Personal Assistant navigation while keeping reviews hidden")
+           "expected every primary view to retain top-right Settings access")
     assert(!response[:body].include?('data-tab="reviews"'),
            "expected Remote UI to hide the paused review inbox")
     assert(!helpers_js[:body].include?('parts[0] === "reviews"'),

@@ -1721,6 +1721,10 @@ select {
   color: var(--accent);
 }
 
+.desktop-settings {
+  display: none;
+}
+
 .nav-mark {
   display: inline-grid;
   place-items: center;
@@ -5728,19 +5732,19 @@ select {
 
 .content:has(.personal-assistant-page) { height: 100dvh; min-height: 0; padding: 0; overflow: hidden; }
 body:has(.personal-assistant-page) .app-header { display: none; }
-.personal-assistant-page { display: grid; grid-template-rows: 56px minmax(0, 1fr) auto; width: min(100%, 820px); height: 100dvh; min-height: 0; margin: 0 auto; background: var(--bg); }
+.personal-assistant-page { display: grid; grid-template-rows: 56px minmax(0, 1fr) auto; width: min(100%, 820px); height: calc(100dvh - 76px); min-height: 0; margin: 0 auto; background: var(--bg); }
 .pa-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--border); }
 .pa-header > strong { display: inline-flex; align-items: center; gap: 8px; }
 .fred-avatar { display: inline-block; flex: 0 0 auto; width: 28px; height: 28px; border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--border)); border-radius: 50%; object-fit: cover; object-position: center; background: var(--panel-soft); }
 .message-role .fred-avatar { width: 22px; height: 22px; }
 .pa-status-dot { width: 9px; height: 9px; border-radius: 999px; background: var(--success); }
 .pa-settings { position: relative; color: var(--muted); font-size: 13px; }
-.pa-settings summary { cursor: pointer; list-style: none; }
+.pa-settings summary { display: grid; place-items: center; width: var(--touch-target); min-width: var(--touch-target); height: var(--touch-target); cursor: pointer; list-style: none; color: var(--text); }
 .pa-settings summary::-webkit-details-marker { display: none; }
-.pa-settings summary::after { content: "⋯"; margin-left: 6px; color: var(--text); font-size: 20px; }
-.pa-settings > div, .pa-settings > p { margin: 8px 0 0; }
-.pa-settings > div { display: grid; gap: 4px; }
-.pa-settings[open] { position: absolute; top: 12px; right: 16px; z-index: 10; width: min(290px, calc(100vw - 32px)); border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--panel); box-shadow: var(--shadow); }
+.pa-settings summary .ui-icon { width: 20px; height: 20px; }
+.pa-settings-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 12; width: min(290px, calc(100vw - 32px)); padding: 6px; }
+.pa-settings-details { display: grid; gap: 4px; margin: 4px 10px 6px; color: var(--muted); }
+.pa-settings-details p { margin: 4px 0 0; }
 .pa-conversation-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 20px max(18px, calc((100% - 760px) / 2)) 28px; }
 .pa-conversation-scroll .message-list { display: grid; gap: 12px; }
 .pa-welcome { display: grid; gap: 12px; max-width: 640px; margin: 0 auto; border: 1px solid var(--border); border-radius: 12px; padding: 16px; background: var(--panel); }
@@ -8050,6 +8054,7 @@ body:has(.inquiry-form-full-screen) {
 }
 
 @media (min-width: 1100px) {
+  .personal-assistant-page { height: 100dvh; }
   .app-shell:has(> .bottom-nav:not(.hidden)) {
     grid-template-columns: 144px minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
@@ -8141,6 +8146,33 @@ body:has(.inquiry-form-full-screen) {
     min-height: var(--touch-target);
     padding: 8px 10px;
     font-size: 13px;
+  }
+
+  .desktop-settings {
+    position: fixed;
+    bottom: 12px;
+    left: max(12px, calc(50% - 612px));
+    z-index: 4;
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    align-items: center;
+    justify-items: start;
+    width: 144px;
+    min-height: var(--touch-target);
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .desktop-settings.active {
+    color: var(--accent);
+  }
+
+  .desktop-settings:hover {
+    color: var(--text);
   }
 
   .quick-agent-fab {

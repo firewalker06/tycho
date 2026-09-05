@@ -51,18 +51,20 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
   pid = Process.spawn(env, "bundle", "exec", "bin/tycho", "serve", "--host", "127.0.0.1", "--port", PORT.to_s, chdir: ROOT, out: File.join(dir, "server.log"), err: File.join(dir, "server.log"))
   begin
     wait_for_server
-    capture = ->(name, device, selector, expected) do
+    capture = ->(name, device, selector, expected, open_menu: false) do
       playwright = ENV.fetch("TYCHO_PLAYWRIGHT_PATH", File.expand_path("node_modules/playwright", ROOT))
       raise "Install deterministic Playwright dependency at #{playwright} or set TYCHO_PLAYWRIGHT_PATH" unless File.directory?(playwright)
       script = File.join(dir, "capture.js")
       File.write(script, <<~JS)
         const { chromium, devices } = require(#{playwright.to_json});
-        (async () => { const browser = await chromium.launch({headless:true}); const page = await browser.newPage(devices[#{device.to_json}]); if (#{device.to_json} === 'Desktop Chrome') await page.setViewportSize({ width: 1280, height: 900 }); await page.goto('http://127.0.0.1:#{PORT}/ui#personal-assistant'); await page.locator(#{selector.to_json}).waitFor({state:'visible',timeout:15000}); await page.waitForFunction(() => { const boot = document.querySelector('#tycho-boot-shell'); return !boot || getComputedStyle(boot).display === 'none' || getComputedStyle(boot).visibility === 'hidden'; }, null, {timeout:15000}); await page.waitForFunction(() => document.body.innerText.includes(#{expected.to_json}), null, {timeout:15000}); await page.screenshot({path:#{File.join(OUTPUT, name).to_json},fullPage:false}); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });
+        (async () => { const browser = await chromium.launch({headless:true}); const page = await browser.newPage(devices[#{device.to_json}]); if (#{device.to_json} === 'Desktop Chrome') await page.setViewportSize({ width: 1280, height: 900 }); await page.goto('http://127.0.0.1:#{PORT}/ui#personal-assistant'); await page.locator(#{selector.to_json}).waitFor({state:'visible',timeout:15000}); await page.waitForFunction(() => { const boot = document.querySelector('#tycho-boot-shell'); return !boot || getComputedStyle(boot).display === 'none' || getComputedStyle(boot).visibility === 'hidden'; }, null, {timeout:15000}); await page.waitForFunction(() => document.body.innerText.includes(#{expected.to_json}), null, {timeout:15000}); if (#{open_menu}) { await page.locator('#personal-assistant-settings-menu > summary').click(); await page.locator('[data-open-settings]').waitFor({state:'visible',timeout:15000}); } await page.screenshot({path:#{File.join(OUTPUT, name).to_json},fullPage:false}); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });
       JS
       system("node", script, exception: true)
     end
     capture.call("personal-assistant-first-run-desktop.png", "Desktop Chrome", ".personal-assistant-page", "What would you like to move forward?")
     capture.call("personal-assistant-first-run-mobile.png", "iPhone 13", ".personal-assistant-page", "What would you like to move forward?")
+    capture.call("personal-assistant-settings-menu-desktop.png", "Desktop Chrome", ".personal-assistant-page", "What would you like to move forward?", open_menu: true)
+    capture.call("personal-assistant-settings-menu-mobile.png", "iPhone 13", ".personal-assistant-page", "What would you like to move forward?", open_menu: true)
     request("/personal-assistant/setup", { confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "Asia/Jakarta" })
     request("/personal-assistant/open", {})
     agents_path = File.join(dir, "logs", "managed_agents.json")
