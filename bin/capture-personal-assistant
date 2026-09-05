@@ -10,7 +10,7 @@ require "tmpdir"
 require_relative "../lib/hq/domain/file_store"
 
 ROOT = File.expand_path("..", __dir__)
-OUTPUT = File.expand_path("~/.tycho/artifacts/card-170")
+OUTPUT = File.expand_path(ENV.fetch("TYCHO_PERSONAL_ASSISTANT_CAPTURE_OUTPUT", "~/.tycho/artifacts/card-170/chat-first-implementation"))
 PORT = TCPServer.open("127.0.0.1", 0) { |server| server.addr[1] }
 
 def request(path, payload = nil)
@@ -57,11 +57,12 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
       script = File.join(dir, "capture.js")
       File.write(script, <<~JS)
         const { chromium, devices } = require(#{playwright.to_json});
-        (async () => { const browser = await chromium.launch({headless:true}); const page = await browser.newPage(devices[#{device.to_json}]); await page.goto('http://127.0.0.1:#{PORT}/ui#personal-assistant'); await page.locator(#{selector.to_json}).waitFor({state:'visible',timeout:15000}); await page.waitForFunction(() => { const boot = document.querySelector('#tycho-boot-shell'); return !boot || getComputedStyle(boot).display === 'none' || getComputedStyle(boot).visibility === 'hidden'; }, null, {timeout:15000}); await page.waitForFunction(() => !document.querySelector('.tycho-loading-state,.conversation-loading-state'), null, {timeout:15000}); await page.waitForTimeout(750); if (!(await page.locator('body').innerText()).includes(#{expected.to_json})) throw new Error('expected rendered PA text'); await page.screenshot({path:#{File.join(OUTPUT, name).to_json},fullPage:true}); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });
+        (async () => { const browser = await chromium.launch({headless:true}); const page = await browser.newPage(devices[#{device.to_json}]); if (#{device.to_json} === 'Desktop Chrome') await page.setViewportSize({ width: 1280, height: 900 }); await page.goto('http://127.0.0.1:#{PORT}/ui#personal-assistant'); await page.locator(#{selector.to_json}).waitFor({state:'visible',timeout:15000}); await page.waitForFunction(() => { const boot = document.querySelector('#tycho-boot-shell'); return !boot || getComputedStyle(boot).display === 'none' || getComputedStyle(boot).visibility === 'hidden'; }, null, {timeout:15000}); await page.waitForFunction(() => document.body.innerText.includes(#{expected.to_json}), null, {timeout:15000}); await page.screenshot({path:#{File.join(OUTPUT, name).to_json},fullPage:false}); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });
       JS
       system("node", script, exception: true)
     end
-    capture.call("personal-assistant-setup-desktop.png", "Desktop Chrome", "#personal-assistant-setup-form", "Set up Personal Assistant")
+    capture.call("personal-assistant-first-run-desktop.png", "Desktop Chrome", ".personal-assistant-page", "What would you like to move forward?")
+    capture.call("personal-assistant-first-run-mobile.png", "iPhone 13", ".personal-assistant-page", "What would you like to move forward?")
     request("/personal-assistant/setup", { confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "Asia/Jakarta" })
     request("/personal-assistant/open", {})
     agents_path = File.join(dir, "logs", "managed_agents.json")
@@ -72,11 +73,12 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
       agent["structured_result"] = { "status" => "success", "summary" => "Fixture finalized.", "summary_sections" => nil, "inquiry" => nil, "attachments" => nil, "memory_handoff" => nil, "action_proposals" => [{ "type" => "start_agent", "description" => "Start the selected review agent.", "arguments" => { "agent_key" => "fixture-agent" } }] }
       agent["runs"] = [{ "run_id" => "capture-finalized-run", "started_at" => Time.now.utc.iso8601, "finished_at" => Time.now.utc.iso8601, "status" => "success", "exit_code" => 0, "log_path" => "capture.log", "command" => [], "metadata" => { "personal_assistant_action_proposals" => agent.dig("structured_result", "action_proposals") } }]
       HQ::FileStore.write_json(agents_path, agents)
+      memory_path = agent.fetch("log_path").sub(/\.raw\.log\z/, ".memory.jsonl")
+      File.write(memory_path, JSON.generate({ "type" => "assistant_message", "content" => "I found fixture-agent. I can prepare the exact action for your approval.", "created_at" => Time.now.utc.iso8601, "metadata" => { "run_id" => "capture-finalized-run" } }) + "\n")
     end
     request("/personal-assistant/actions")
-    capture.call("personal-assistant-active-desktop.png", "Desktop Chrome", ".personal-assistant-conversation #composer", "Today’s conversation")
-    capture.call("personal-assistant-confirmation-desktop.png", "Desktop Chrome", "[data-confirm-pa-proposal]", "Confirm exact action")
-    capture.call("personal-assistant-active-mobile.png", "iPhone 13", ".personal-assistant-conversation #composer", "Today’s conversation")
+    capture.call("personal-assistant-active-pending-desktop.png", "Desktop Chrome", "[data-confirm-pa-proposal]", "Confirm start agent")
+    capture.call("personal-assistant-active-pending-mobile.png", "iPhone 13", "[data-confirm-pa-proposal]", "Confirm start agent")
   ensure
     Process.kill("TERM", pid) rescue nil
     Process.wait(pid) rescue nil

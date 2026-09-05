@@ -11,6 +11,7 @@ class PersonalAssistantActionsTest
       read = actions.register_finalized!([{ "type" => "inspect_agents", "description" => "Inspect", "arguments" => {} }], active_key: "daily-1", source_run_id: "run-1").first
       assert(read["state"] == "executed" && calls.length == 1, "expected read-only action to execute directly")
       mutation = actions.register_finalized!([{ "type" => "message_agent", "description" => "Send", "arguments" => { "agent_key" => "a", "prompt" => "hello" } }], active_key: "daily-1", source_run_id: "run-2").first
+      assert(mutation["source_run_id"] == "run-2" && mutation["active_key"] == "daily-1", "expected UI-safe immutable proposal provenance")
       assert_raises { actions.execute!(mutation["id"]) }
       done = actions.execute!(mutation["id"], confirmed: true)
       assert(done["state"] == "executed" && calls.length == 2, "expected confirmed mutation once")

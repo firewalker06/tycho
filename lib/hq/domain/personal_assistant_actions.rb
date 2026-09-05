@@ -134,7 +134,7 @@ module HQ
     end
 
     def public_proposal(proposal)
-      proposal.slice("id", "type", "arguments", "description", "state", "result", "error", "executed_at", "rejected_at")
+      proposal.slice("id", "type", "arguments", "description", "active_key", "source_run_id", "state", "result", "error", "executed_at", "rejected_at")
     end
 
     def truncate(value, bytes)
