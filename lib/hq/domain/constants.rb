@@ -79,7 +79,7 @@ module HQ
     properties = current["properties"]
     return path unless properties.is_a?(Hash)
 
-    owned_properties = %w[memory_handoff summary_sections]
+    owned_properties = %w[memory_handoff summary_sections action_proposals]
     changed = false
     owned_properties.each do |key|
       value = bundled.dig("properties", key)
@@ -89,7 +89,8 @@ module HQ
       properties[key] = value
     end
     required = Array(current["required"])
-    missing_required = owned_properties.reject { |key| required.include?(key) }
+    required_properties = %w[memory_handoff summary_sections action_proposals]
+    missing_required = required_properties.reject { |key| required.include?(key) }
     if missing_required.any?
       current["required"] = required + missing_required
       changed = true
@@ -102,6 +103,7 @@ module HQ
 
   LOGS_DIR = USER_LOGS_DIR
   AGENTS_FILE = File.join(LOGS_DIR, "managed_agents.json")
+  PERSONAL_ASSISTANT_DIR = File.join(LOGS_DIR, "personal_assistant")
   DELEGATIONS_FILE = File.join(LOGS_DIR, "agent_delegations.json")
   SERVER_IDENTITY_FILE = File.join(USER_CONFIG_DIR, "server_identity.json")
   USAGE_METRICS_FILE = File.join(LOGS_DIR, "usage_metrics.json")

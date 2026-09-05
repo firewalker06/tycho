@@ -124,6 +124,35 @@ module HQ
       create_from_template(project, project.agent_templates.first.key)
     end
 
+    # Protected daily sessions use the same exclusive, durable store lifecycle
+    # as normal agents. This prevents a state file from pointing at an agent
+    # that was never committed, or an archived PA leaving its record behind.
+    def create_personal_assistant!(agent)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        raise ArgumentError, "A Personal Assistant session is already active" if agents.any?(&:personal_assistant?)
+
+        agents.unshift(agent)
+        agent
+      end
+    end
+
+    def archive_personal_assistant!(key)
+      with_exclusive_lock do
+        agents, = load_with_poll_events_unlocked(process_delegations: false)
+        target = find_agent_in!(agents, key)
+        raise ArgumentError, "Not a Personal Assistant session" unless target.personal_assistant?
+        raise ArgumentError, "Personal Assistant is still running" if target.running?
+
+        transaction = FileTransaction.new([AGENTS_FILE, *target.log_files.select { |path| File.exist?(path) }])
+        destination = target.archive_logs!
+        transaction.on_rollback { remove_failed_archive(destination) }
+        save_unlocked(agents.reject { |agent| agent.key == target.key })
+      rescue StandardError
+        transaction&.rollback
+        raise
+      end
+    end
+
     def create_from_template(project, template_key)
       existing = load
       suffix = next_suffix(project.key, existing)
@@ -244,17 +273,27 @@ module HQ
       end
     end
 
-    def start_agent!(key)
+    def start_agent!(key, run_metadata: nil)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
 
         unless target.running?
-          stamp = @delegation_coordinator.ownership_stamp(target.key)
-          stamp ? target.start!(delegation_stamp: stamp) : target.start!
+          start_target!(target, agents, run_metadata:)
         end
         target
       end
+    end
+
+    def start_target!(target, agents, run_metadata:)
+      options = {}
+      stamp = @delegation_coordinator.ownership_stamp(target.key)
+      options[:delegation_stamp] = stamp if stamp
+      options[:run_metadata] = run_metadata if run_metadata
+      if target.method(:start!).parameters.any? { |_kind, name| name == :before_spawn }
+        options[:before_spawn] = ->(_run) { save_unlocked(agents) }
+      end
+      target.start!(**options)
     end
 
     def accept_delegation_prompt!(child, owner:, parent_key: nil, now: Time.now)
@@ -389,6 +428,9 @@ module HQ
         requested = Array(keys).map(&:to_s).uniq
         targets = requested.map do |key|
           agents.find { |agent| agent.key == key } || raise(ArgumentError, "Unknown agent: #{key}")
+        end
+        if targets.any?(&:personal_assistant?)
+          raise ArgumentError, "Personal Assistant is managed by its daily lifecycle and cannot be archived manually"
         end
         raise ArgumentError, "Agent is running" if targets.any?(&:running?)
 

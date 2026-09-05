@@ -18,6 +18,7 @@ module HQ
       payload, compatibility_errors = canonicalize_compatibility_fields(payload)
       errors = compatibility_errors + validate_value(payload, @schema, "$")
       errors.concat(validate_summary_sections(payload))
+      errors.concat(validate_action_proposals(payload))
       Result.new(valid?: errors.empty?, payload:, errors:, raw_text:)
     end
 
@@ -40,6 +41,9 @@ module HQ
 
       result = payload.dup
       errors = []
+      # Older native sessions predate optional PA proposals. Preserve their
+      # structured results while requiring Codex to emit the nullable field.
+      result["action_proposals"] = nil unless result.key?("action_proposals")
       decode_compatibility_field(result, "inquiry_json", "inquiry", errors)
       decode_compatibility_field(result, "attachments_json", "attachments", errors)
       decode_compatibility_field(result, "summary_sections_json", "summary_sections", errors)
@@ -62,6 +66,13 @@ module HQ
 
     def validate_value(value, schema, path)
       return [] unless schema.is_a?(Hash)
+
+      if schema["anyOf"].is_a?(Array)
+        alternatives = schema["anyOf"].map { |alternative| validate_value(value, alternative, path) }
+        return [] if alternatives.any?(&:empty?)
+
+        return [error("no_matching_schema", path, "Value does not match any allowed schema")]
+      end
 
       expected_types = Array(schema["type"])
       unless expected_types.empty? || expected_types.any? { |type| type_matches?(value, type) }
@@ -128,6 +139,24 @@ module HQ
         else
           []
         end
+      end
+    end
+
+    def validate_action_proposals(payload)
+      proposals = payload.is_a?(Hash) ? payload["action_proposals"] : nil
+      return [] unless proposals.is_a?(Array)
+
+      expected = {
+        "read_docs" => %w[path], "search_docs" => %w[query], "inspect_agents" => [], "inspect_projects" => [],
+        "install_or_update_tycho_skill" => %w[harness action], "create_agent" => %w[project_key name prompt agent model reasoning_effort],
+        "message_agent" => %w[agent_key prompt], "start_agent" => %w[agent_key], "stop_agent" => %w[agent_key]
+      }
+      proposals.each_with_index.filter_map do |proposal, index|
+        type = proposal.is_a?(Hash) ? proposal["type"] : nil
+        arguments = proposal.is_a?(Hash) ? proposal["arguments"] : nil
+        next if expected.key?(type) && arguments.is_a?(Hash) && arguments.keys.sort == expected[type].sort
+
+        error("invalid_action_arguments", "$.action_proposals[#{index}].arguments", "Arguments must match action type #{type}")
       end
     end
 

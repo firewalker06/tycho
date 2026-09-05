@@ -46,6 +46,7 @@ module RemoteServerTest
     assert_remote_hidden_settings_filter_projects_and_agents
     assert_remote_response_style_settings
     assert_remote_session_loop_settings
+    assert_remote_personal_assistant_routes
     assert_remote_skill_installation_requires_confirmation
     assert_remote_schedule_routes
     assert_remote_setup_payload_includes_readiness
@@ -409,6 +410,89 @@ module RemoteServerTest
     end
   end
 
+  def assert_remote_personal_assistant_routes
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
+      server = HQ::RemoteServer.new
+
+      initial = server.send(:route, service, "GET", "/personal-assistant", {}, nil)
+      assert(initial.dig(:body, :personal_assistant, :state) == "unconfigured",
+             "expected personal assistant to remain off by default, got #{initial.dig(:body, :personal_assistant).inspect}")
+      begin
+        server.send(:route, service, "POST", "/personal-assistant/setup", {
+                      "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta"
+                    }, nil)
+        raise "expected setup confirmation rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 400 && e.message.include?("explicitly confirmed"),
+               "expected setup mutation to require an exact confirmation")
+      end
+      configured = server.send(:route, service, "POST", "/personal-assistant/setup", {
+                                 "confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta"
+                               }, nil)
+      assert(configured.dig(:body, :personal_assistant, :configured), "expected confirmed setup to persist")
+      opened = server.send(:route, service, "POST", "/personal-assistant/open", {}, nil)
+      key = opened.dig(:body, :personal_assistant, :active_key)
+      assert(key && opened.dig(:body, :personal_assistant, :agent, "role") == "personal_assistant_daily",
+             "expected Remote API to open the protected daily conversation")
+      begin
+        server.send(:route, service, "POST", "/personal-assistant/actions/proposals", {
+                      "proposals" => [{ "type" => "start_agent", "description" => "Start an agent", "arguments" => { "agent_key" => "example" } }]
+                    }, nil)
+        raise "expected client proposal injection to be unavailable"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 404, "expected client proposal injection to be unavailable")
+      end
+      begin
+        server.send(:route, service, "POST", "/agents/#{key}/archive", {}, nil)
+        raise "expected protected archive rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("dedicated lifecycle"),
+               "expected the Remote API to hide manual archive control behind a conflict")
+      end
+      [["/agents/#{key}/start", {}], ["/agents/#{key}/stop", {}], ["/agents/#{key}/messages", { "prompt" => "Hello", "start" => true }]].each do |path, body|
+        begin
+          server.send(:route, service, "POST", path, body, nil)
+          raise "expected protected lifecycle rejection for #{path}"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 409 && e.message.include?("dedicated lifecycle"),
+                 "expected #{path} to reject ordinary control of FRED")
+        end
+      end
+      [["POST", "/agents/#{key}/memory/rebuild", {}], ["PUT", "/agents/#{key}/reading", {}], ["POST", "/agents/#{key}/pull-requests/refresh", {}]].each do |method, path, body|
+        begin
+          server.send(:route, service, method, path, body, nil)
+          raise "expected protected generic write rejection for #{path}"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 409 && e.message.include?("dedicated lifecycle"),
+                 "expected #{path} to reject ordinary writes to FRED")
+        end
+      end
+      protected_agent = service.send(:find_agent!, key)
+      protected_attachment_path = File.join(protected_agent.workspace, "protected.txt")
+      File.write(protected_attachment_path, "Protected FRED attachment\n")
+      protected_agent.add_user_message!("Keep this attachment.", attachments: [{ "type" => "file", "title" => "Protected attachment", "path" => protected_attachment_path }])
+      service.send(:save_agent, protected_agent)
+      protected_attachment_id = service.agent(key)[:attachments].first.fetch("id")
+      begin
+        server.send(:route, service, "DELETE", "/attachments/#{protected_attachment_id}", {}, nil)
+        raise "expected protected attachment deletion rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("dedicated lifecycle") && File.exist?(protected_attachment_path),
+               "expected attachment deletion to preserve FRED-owned file and metadata")
+      end
+      begin
+        server.send(:route, service, "POST", "/agents/archive", { "keys" => [key] }, nil)
+        raise "expected protected bulk archive rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("dedicated lifecycle"),
+               "expected bulk archive to reject ordinary control of FRED")
+      end
+    end
+  end
+
   def assert_remote_skill_installation_requires_confirmation
     with_remote_temp_store do |dir|
       home = File.join(dir, "home")
@@ -467,6 +551,7 @@ module RemoteServerTest
   def assert_remote_agent_lifecycle
     Dir.mktmpdir("hq-remote-test") do |dir|
       old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_personal_assistant_dir = replace_constant(HQ, :PERSONAL_ASSISTANT_DIR, File.join(dir, "personal_assistant"))
       old_delegations_file = replace_constant(HQ, :DELEGATIONS_FILE, File.join(dir, "agent_delegations.json"))
       old_server_identity_file = replace_constant(HQ, :SERVER_IDENTITY_FILE, File.join(dir, "server_identity.json"))
       old_usage_metrics_file = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
@@ -474,6 +559,7 @@ module RemoteServerTest
       old_archive_dir = replace_constant(HQ, :AGENT_ARCHIVE_DIR, File.join(dir, "agents", "archive"))
 
       FileUtils.mkdir_p(HQ::AGENT_LOGS_DIR)
+      FileUtils.mkdir_p(HQ::PERSONAL_ASSISTANT_DIR)
       FileUtils.mkdir_p(HQ::AGENT_ARCHIVE_DIR)
       workspace = File.join(dir, "workspace")
       FileUtils.mkdir_p(workspace)
@@ -505,6 +591,7 @@ module RemoteServerTest
       assert(service.agents.empty?, "expected archived agent to be removed from active list")
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+      replace_constant(HQ, :PERSONAL_ASSISTANT_DIR, old_personal_assistant_dir) if old_personal_assistant_dir
       replace_constant(HQ, :DELEGATIONS_FILE, old_delegations_file) if old_delegations_file
       replace_constant(HQ, :SERVER_IDENTITY_FILE, old_server_identity_file) if old_server_identity_file
       replace_constant(HQ, :USAGE_METRICS_FILE, old_usage_metrics_file) if old_usage_metrics_file
@@ -4129,6 +4216,11 @@ module RemoteServerTest
     response = server.send(:route_ui, "/")
     assert(response[:content_type].include?("text/html"), "expected / to return HTML")
     assert(response[:body].include?("Tycho - Factorio for Agents"), "expected / body to include app shell title")
+    assert(response[:body].include?("<span>FRED</span>"), "expected app navigation to use the FRED product name")
+    assert(response[:body].include?("fred-sidebar-avatar") &&
+           response[:body].include?("/fred-avatar.png?v=#{HQ::RemoteUI.asset_version}") &&
+           response[:body].include?("fred-sidebar-avatar\" src=\"/fred-avatar.png?v=#{HQ::RemoteUI.asset_version}\" alt=\"\""),
+           "expected FRED sidebar navigation to use the cache-busted decorative avatar asset")
     legacy_request = HQ::RemoteServer.const_get(:Request).new(
       method: "GET",
       path: "/ui",
@@ -4200,8 +4292,15 @@ module RemoteServerTest
            response[:body].include?('aria-labelledby="confirmation-title"') &&
            response[:body].include?('aria-describedby="confirmation-description"'),
            "expected the root shell to expose the shared labeled confirmation dialog")
-    assert(response[:body].include?('data-tab="settings"'), "expected root shell to expose Settings navigation")
-    assert(response[:body].include?("<span>Settings</span>"), "expected root shell to label setup navigation as Settings")
+    primary_nav = response[:body][%r{<nav id="bottom-nav".*?</nav>}m]
+    assert(primary_nav.scan(/data-tab="/).length == 3 &&
+           primary_nav.include?('data-tab="now"') &&
+           primary_nav.include?('data-tab="personal-assistant"') &&
+           primary_nav.include?('data-tab="agents"') &&
+           !primary_nav.include?('data-tab="settings"'),
+           "expected primary navigation to contain only Now, FRED, and Agents")
+    assert(response[:body].include?('id="desktop-settings"') && response[:body].include?('aria-label="Settings"'),
+           "expected Settings to remain a separately accessible desktop control")
     assert(!response[:body].include?('data-tab="search"'), "expected root shell to remove Search navigation")
     assert(!response[:body].include?('data-tab="projects"'), "expected root shell to remove Projects navigation")
     assert(response[:body].include?("<svg class=\"ui-icon\""), "expected root shell controls to use SVG icons")
@@ -4598,6 +4697,11 @@ module RemoteServerTest
            "expected Settings push section to support header menu scrolling")
     assert(css[:body].include?("grid-template-columns: repeat(3, minmax(0, 1fr));"),
            "expected bottom navigation to use the simplified three-tab layout")
+    assert(css[:body].include?(".desktop-settings {") &&
+           css[:body].include?("position: fixed;") &&
+           css[:body].include?("bottom: 12px;") &&
+           css[:body].include?("border: 0;"),
+           "expected Settings to be a separate unboxed desktop control pinned at the sidebar bottom")
     assert(css[:body].include?(".bulk-action-bar"),
            "expected Agents tab to style bulk archive controls")
     assert(css[:body].include?(".quick-agent-fab"),
@@ -4611,6 +4715,8 @@ module RemoteServerTest
            "expected the mobile Quick Agent form to fill and scroll within the viewport")
     assert(css[:body].include?("--touch-target: 44px") && css[:body].include?("--control-height: 44px"),
            "expected audited Remote UI controls to share accessible sizing tokens")
+    assert(css[:body].include?(".pa-suggestions button { flex: 0 0 auto; min-height: var(--touch-target);"),
+           "expected FRED suggestion chips to meet the shared 44px touch target")
     assert(css[:body].include?(".top-actions .search-box"),
            "expected Agents tab search to flex inside the action row")
     assert(css[:body].include?(".top-actions {\n  flex-wrap: nowrap;"),
@@ -6339,6 +6445,34 @@ module RemoteServerTest
            "expected user chat labels to render the square-user-round icon")
     assert(js[:body].include?("iconSvg(\"botMessageSquare\")"),
            "expected assistant chat labels to render the bot-message-square icon")
+    assert(js[:body].include?("function personalAssistantMessageIdentity"),
+           "expected Personal Assistant messages to have a product-specific sender identity")
+    assert(js[:body].include?("Friendly Robot for Execution Dispatcher"),
+           "expected Personal Assistant UI to expand FRED where appropriate")
+    assert(js[:body].include?("Choose how FRED should work") &&
+           js[:body].include?("I confirm these settings for FRED.") &&
+           js[:body].include?("Opening FRED does not send a model prompt."),
+           "expected chat-first FRED setup to show explicit model, effort, timezone, confirmation, and ready states")
+    assert(js[:body].include?('class="pa-setup ui-surface"') &&
+           js[:body].include?('class="ui-field__label" for="pa-model"') &&
+           js[:body].include?('class="ui-input" id="pa-timezone"') &&
+           js[:body].include?('aria-describedby="pa-setup-guidance"'),
+           "expected FRED setup to use shared surface and field contracts with connected guidance")
+    assert(!js[:body].include?("confirmed: true, model: \"gpt-5.6-sol\""),
+           "expected first-use FRED flow not to silently submit fixed settings")
+    assert(js[:body].include?("personalAssistant ? \"/personal-assistant/messages\""),
+           "expected FRED messages to use the dedicated Personal Assistant API")
+    settings_markup = js[:body][js[:body].index('id="personal-assistant-settings-menu"'), 1_800]
+    assert(settings_markup.scan('role="menu"').length == 1 && settings_markup.include?('class="pa-settings-details"'),
+           "expected FRED settings overflow to keep one menu role and explanatory metadata outside it")
+    assert(js[:body].include?('alt="FRED"') && js[:body].include?("/fred-avatar.png"),
+           "expected FRED identity to use the served circular avatar asset")
+    assert(js[:body].include?("iconSvg(\"thumbsUp\")") && js[:body].include?("iconSvg(\"thumbsDown\")"),
+           "expected Personal Assistant approval controls to use Lucide thumbs icons")
+    assert(js[:body].include?('aria-label="Accept proposed action"') && js[:body].include?('"Accepting'),
+           "expected Personal Assistant approval copy to say Accept")
+    assert(!js[:body].include?("Confirm ${escapeHtml(copy.label.toLowerCase())}"),
+           "expected Personal Assistant approval copy to avoid Confirm action")
     assert(js[:body].include?("checkCheck") &&
            js[:body].include?('return iconSvg("checkCheck")'),
            "expected usage completion labels to render the Lucide check-check icon")
@@ -6447,8 +6581,11 @@ module RemoteServerTest
            "expected Remote UI to scope in-document hash link handling to Markdown viewers")
     assert(js[:body].include?("history.replaceState(null, \"\", routeHash(route))"),
            "expected Markdown hash links to preserve the attachment route")
-    assert(js[:body].include?('const TOP_TABS = ["now", "agents", "settings"];'),
-           "expected Remote UI to keep the paused review inbox out of top-level navigation")
+    assert(js[:body].include?('const TOP_TABS = ["now", "personal-assistant", "agents", "settings"];') &&
+           js[:body].include?('setMainHeaderMore("personal-assistant")') &&
+           js[:body].include?('label: "Settings"') &&
+           response[:body].include?('data-tab="personal-assistant"'),
+           "expected every primary view to retain top-right Settings access")
     assert(!response[:body].include?('data-tab="reviews"'),
            "expected Remote UI to hide the paused review inbox")
     assert(!helpers_js[:body].include?('parts[0] === "reviews"'),
@@ -6570,6 +6707,17 @@ module RemoteServerTest
     logo = server.send(:route_ui, "/remote-logo.png")
     assert(logo[:content_type].include?("image/png"), "expected Remote UI logo route to return PNG")
     assert(logo[:body].bytesize.positive?, "expected Remote UI logo route to return image bytes")
+
+    fred_avatar_request = HQ::RemoteServer.const_get(:Request).new(
+      method: "GET",
+      path: "/fred-avatar.png",
+      headers: {},
+      body: ""
+    )
+    assert(server.send(:ui_request?, fred_avatar_request), "expected FRED avatar to be recognized as a UI route")
+    fred_avatar = server.send(:route_ui, "/fred-avatar.png")
+    assert(fred_avatar[:content_type].include?("image/png"), "expected FRED avatar route to return PNG")
+    assert(fred_avatar[:body].byteslice(0, 8) == "\x89PNG\r\n\x1A\n".b, "expected FRED avatar to be a PNG")
 
     horizontal_logo = server.send(:route_ui, "/remote-logo-horizontal.png")
     assert(horizontal_logo[:content_type].include?("image/png"), "expected Remote UI horizontal logo route to return PNG")

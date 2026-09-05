@@ -59,6 +59,9 @@ module ManagedAgentTest
     assert_stop_kills_term_ignoring_harness_before_restart
     assert_stop_finalizes_when_group_exits_before_signal
     assert_agent_runner_warns_when_command_cannot_execute
+    assert_personal_assistant_intent_pid_and_status_recovery
+    assert_spawn_failure_clears_stale_result_and_persists_run
+    assert_store_spawn_failure_persists_failed_run
     puts "managed_agent_test: ok"
   end
 
@@ -2585,6 +2588,91 @@ module ManagedAgentTest
   def argument_after(command, flag)
     index = command.index(flag)
     index ? command[index + 1] : nil
+  end
+
+  def assert_personal_assistant_intent_pid_and_status_recovery
+    Dir.mktmpdir("hq-pa-intent-recovery") do |dir|
+      metadata = { "personal_assistant_summary_intent" => "intent-recovery" }
+      live = HQ::ManagedAgent.new(key: "pa-live", name: "PA", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "live.log"), role: "personal_assistant_daily", runs: [HQ::ManagedAgent::AgentRun.new(run_id: "live-run", status: "running", metadata:)])
+      pid = Process.spawn("sleep", "2", pgroup: true)
+      File.write(live.send(:run_pid_file_path, "live-run"), pid.to_s)
+      assert(live.running?, "expected assert_personal_assistant_intent_pid_and_status_recovery to recover live child PID")
+      Process.kill("TERM", -pid) rescue nil
+
+      completed = HQ::ManagedAgent.new(key: "pa-completed", name: "PA", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "completed.log"), role: "personal_assistant_daily", runs: [HQ::ManagedAgent::AgentRun.new(run_id: "completed-run", status: "running", metadata:)])
+      File.write(completed.send(:run_status_file_path, "completed-run"), "0")
+      overlap_pid = Process.spawn("sleep", "2", pgroup: true)
+      File.write(completed.send(:run_pid_file_path, "completed-run"), overlap_pid.to_s)
+      completed.poll!
+      assert(%w[success succeeded].include?(completed.last_run.status) && completed.last_run.finished_at, "expected completed pid:nil intent run to finalize, got #{completed.last_run.to_hash.inspect}")
+      assert(!File.exist?(completed.send(:run_status_file_path, "completed-run")) && !File.exist?(completed.send(:run_pid_file_path, "completed-run")), "expected completed status to win and clean status/PID handshake")
+      assert(completed.status != "running", "expected live handshake to be unable to resurrect finalized run")
+      Process.kill("TERM", -overlap_pid) rescue nil
+      orphan = HQ::ManagedAgent.new(key: "pa-orphan", name: "PA", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "orphan.log"), role: "personal_assistant_daily", runs: [HQ::ManagedAgent::AgentRun.new(run_id: "orphan-run", status: "failed", metadata: {})])
+      orphan_pid_path = orphan.send(:run_pid_file_path, "orphan-run")
+      File.write(orphan_pid_path, "999999")
+      archive = orphan.archive_logs!(File.join(dir, "archive"))
+      assert(!File.exist?(orphan_pid_path) && File.exist?(File.join(archive, File.basename(orphan_pid_path))), "expected archive to remove orphan PID handshake from active logs")
+    end
+  end
+
+  def assert_spawn_failure_clears_stale_result_and_persists_run
+    Dir.mktmpdir("hq-spawn-failure") do |dir|
+      executable = File.join(dir, "codex")
+      File.write(executable, "#!/bin/sh\nexit 0\n")
+      FileUtils.chmod(0o755, executable)
+      previous_codex_bin = ENV["TYCHO_CODEX_BIN"]
+      ENV["TYCHO_CODEX_BIN"] = executable
+      agent = HQ::ManagedAgent.new(key: "spawn-failure", name: "Spawn", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "spawn.log"), role: "personal_assistant_daily")
+      metrics_store = HQ::UsageMetrics::Store.new(path: File.join(dir, "usage_metrics.json"))
+      agent.usage_metrics_store = metrics_store
+      agent.structured_result = { "status" => "success", "summary" => "stale" }
+      agent.summary = "stale"
+      agent.define_singleton_method(:spawn) { |_env, *_args, **_options| raise Errno::EAGAIN, "forced spawn failure" }
+      begin
+        agent.start!
+        raise "expected forced spawn failure"
+      rescue Errno::EAGAIN
+        true
+      end
+      run = agent.last_run
+      assert(run.status == "failed" && run.finished_at && run.metadata["spawn_error"], "expected persisted failed run after spawn exception")
+      assert(agent.structured_result.nil? && agent.last_summary != "stale", "expected spawn exception to clear stale result state")
+      assert(metrics_store.runs.count { |record| record["run_id"] == run.run_id } == 1, "expected spawn failure usage metric exactly once")
+    ensure
+      previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
+    end
+  end
+
+  def assert_store_spawn_failure_persists_failed_run
+    Dir.mktmpdir("hq-store-spawn-failure") do |dir|
+      old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "agents.json"))
+      executable = File.join(dir, "codex")
+      File.write(executable, "#!/bin/sh\nexit 0\n")
+      FileUtils.chmod(0o755, executable)
+      previous_codex_bin = ENV["TYCHO_CODEX_BIN"]
+      ENV["TYCHO_CODEX_BIN"] = executable
+      original_spawn = HQ::ManagedAgent.instance_method(:spawn)
+      HQ::ManagedAgent.define_method(:spawn) { |_env, *_args, **_options| raise Errno::EAGAIN, "forced store spawn failure" }
+      agent = HQ::ManagedAgent.new(key: "store-spawn", name: "Store", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "store.log"), role: "personal_assistant_daily")
+      agent.structured_result = { "status" => "success", "summary" => "stale" }
+      store = HQ::AgentStore.new([])
+      store.save([agent])
+      begin
+        store.start_agent!(agent.key)
+        raise "expected forced store spawn failure"
+      rescue Errno::EAGAIN
+        true
+      end
+      reloaded = store.load.fetch(0)
+      run = reloaded.last_run
+      assert(run.status == "failed" && run.finished_at && run.metadata["spawn_error"], "expected AgentStore reload to retain failed spawn run")
+      assert(reloaded.structured_result.nil?, "expected durable spawn failure to clear stale success result")
+    ensure
+      HQ::ManagedAgent.define_method(:spawn, original_spawn) if original_spawn
+      previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
+      replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+    end
   end
 
   def assert(condition, message)

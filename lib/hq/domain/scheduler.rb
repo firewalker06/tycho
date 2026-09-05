@@ -10,6 +10,7 @@ require_relative "push_notification_store"
 require_relative "schedule_registry"
 require_relative "schedule_store"
 require_relative "web_push_notifier"
+require_relative "personal_assistant"
 
 module HQ
   class Scheduler
@@ -26,6 +27,7 @@ module HQ
       @registry = registry
       @projects = registry.projects.map { |config| Project.new(config) }
       @agent_store = AgentStore.new(@projects)
+      @personal_assistant = PersonalAssistantLifecycle.new(registry:, agent_store: @agent_store)
       @schedule_registry = schedule_registry || ScheduleRegistry.new(projects: @projects)
       @store = store
       @push_notification_store = push_notification_store
@@ -198,6 +200,7 @@ module HQ
     end
 
     def tick(now: Time.now, dry_run: false)
+      @personal_assistant.reconcile unless dry_run
       schedules = schedule_registry.schedules
       states = store.load
       agents = load_agents

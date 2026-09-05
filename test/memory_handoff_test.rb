@@ -50,7 +50,7 @@ module MemoryHandoffTest
   def assert_schema_rejects_incomplete_handoff
     schema = JSON.parse(File.read(SCHEMA_PATH))
     payload = {
-      "status" => "success", "summary" => "Done", "summary_sections" => nil, "inquiry" => nil, "attachments" => nil,
+      "status" => "success", "summary" => "Done", "summary_sections" => nil, "inquiry" => nil, "attachments" => nil, "action_proposals" => nil,
       "memory_handoff" => { "outcome" => "", "decisions" => [] }
     }
     result = HQ::AgentStructuredOutputValidator.new(schema:).validate(payload)
@@ -72,7 +72,7 @@ module MemoryHandoffTest
       assert(handoff.dig("properties", field, "type") == %w[array null], "expected nullable #{field}")
     end
     valid = {
-      "status" => "success", "summary" => "Done", "summary_sections" => nil, "inquiry" => nil, "attachments" => nil,
+      "status" => "success", "summary" => "Done", "summary_sections" => nil, "inquiry" => nil, "attachments" => nil, "action_proposals" => nil,
       "memory_handoff" => nil
     }
     assert(HQ::AgentStructuredOutputValidator.new(schema:).validate(valid).valid?,

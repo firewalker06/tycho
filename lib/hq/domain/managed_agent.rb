@@ -151,7 +151,7 @@ module HQ
       "#{text}\n\n#{FINAL_OUTPUT_CHECKLIST}"
     end
 
-    attr_reader :key, :name, :project_key, :template_key, :workspace, :prompt, :created_at, :started_at,
+    attr_reader :key, :name, :project_key, :template_key, :workspace, :prompt, :created_at, :role, :started_at,
                 :finished_at, :pid, :last_exit_code, :log_path, :runs, :sandbox_mode, :agent, :messages, :skills,
                 :model, :reasoning_effort, :response_style, :session_id, :session_bootstrapped, :color_index, :summary,
                 :structured_result, :schedule_key, :cost_snapshot, :project_group, :delegation_parent, :archive_path,
@@ -170,10 +170,11 @@ module HQ
                    session_bootstrapped: nil, color_index: nil, summary: nil, structured_result: nil, schedule_key: nil,
                    cost_snapshot: nil, total_run_count: nil, project_group: nil, delegation_parent: nil,
                    archived: false, archive_path: nil, archived_at: nil, project_hidden_at_archive: nil,
-                   prompt_queue: nil, prompt_queue_claim: nil, prompt_queue_dispatch_error: nil)
+                   prompt_queue: nil, prompt_queue_claim: nil, prompt_queue_dispatch_error: nil, role: nil)
       @key = key
       @name = name
       @project_key = project_key
+      @role = role.to_s.strip.empty? ? nil : role.to_s
       @project_group = project_group.to_s
       @template_key = template_key
       @workspace = workspace
@@ -296,7 +297,8 @@ module HQ
         project_hidden_at_archive: hash["project_hidden_at_archive"],
         prompt_queue: hash["prompt_queue"],
         prompt_queue_claim: hash["prompt_queue_claim"],
-        prompt_queue_dispatch_error: hash["prompt_queue_dispatch_error"]
+        prompt_queue_dispatch_error: hash["prompt_queue_dispatch_error"],
+        role: hash["role"]
       )
     end
 
@@ -421,6 +423,7 @@ module HQ
       result["schedule_key"] = @schedule_key unless @schedule_key.to_s.empty?
       result["cost_snapshot"] = @cost_snapshot if @cost_snapshot.is_a?(Hash) && !@cost_snapshot.empty?
       result["project_group"] = @project_group unless @project_group.empty?
+      result["role"] = @role unless @role.to_s.empty?
       result["delegation_parent"] = @delegation_parent if @delegation_parent
       result["archived"] = true if archived?
       result["archive_path"] = @archive_path if archived? && @archive_path
@@ -542,6 +545,10 @@ module HQ
       @archived
     end
 
+    def personal_assistant?
+      @role == "personal_assistant_daily"
+    end
+
     def refresh_session_identity!
       capture_session_id!
       @session_id
@@ -596,7 +603,7 @@ module HQ
       @unread = false
     end
 
-    def start!(delegation_stamp: nil)
+    def start!(delegation_stamp: nil, run_metadata: nil, before_spawn: nil)
       return if running?
 
       finalize_previous_run!
@@ -614,7 +621,8 @@ module HQ
       if (missing = missing_executable_for(command))
         return record_start_failure!(
           "Agent harness #{@agent.inspect} executable not found: #{missing}",
-          command
+          command,
+          run_metadata:
         )
       end
 
@@ -625,6 +633,7 @@ module HQ
       mark_read!
       run_id = SecureRandom.uuid
       status_path = run_status_file_path(run_id)
+      pid_path = run_pid_file_path(run_id)
       FileUtils.rm_f(status_path)
       FileUtils.rm_f(last_message_file_path)
       FileUtils.rm_f(invalid_structured_output_file_path)
@@ -656,12 +665,16 @@ module HQ
         run_id: run_id,
         run_scoped_status: true,
         delegation_owner: delegation_stamp&.fetch("owner", nil),
-        delegation_generation: delegation_stamp&.fetch("generation", nil)
+        delegation_generation: delegation_stamp&.fetch("generation", nil),
+        metadata: run_metadata.is_a?(Hash) ? run_metadata : {}
       )
       memory_store.append_run_started!(run_id: run.run_id, created_at: @started_at)
+      record_run!(run)
+      before_spawn&.call(run)
       @pid = spawn(
         external_process_environment(launch.fetch(:env)).merge(
           "TYCHO_STATUS_PATH" => status_path,
+          "TYCHO_PID_PATH" => pid_path,
           "TYCHO_AGENT_KEY" => @key,
           "TYCHO_EXECUTABLE" => File.join(ROOT_DIR, "bin", "tycho"),
           "TYCHO_STREAM_RECORDER_PATH" => File.expand_path("agent_stream_recorder", __dir__),
@@ -676,7 +689,6 @@ module HQ
       log_file.close
       monitor_agent_process(@pid, status_path)
       HQ.logger.info("Agent") { "Started #{@key} (pid=#{@pid})" }
-      record_run!(run)
       @structured_result = nil
       @summary = nil
       HQ.hooks.publish("agent.run.started",
@@ -686,6 +698,29 @@ module HQ
                        session_id: @session_id.to_s,
                        pid: @pid)
       true
+    rescue SystemCallError => e
+      log_file&.close rescue nil
+      if defined?(run) && run
+        @pid = nil
+        @finished_at = Time.now
+        @last_exit_code = 127
+        @structured_result = nil
+        @summary = nil
+        run.finished_at = @finished_at
+        run.exit_code = @last_exit_code
+        run.status = "failed"
+        run.metadata = (run.metadata || {}).merge("spawn_error" => e.message)
+        FileUtils.rm_f(run_pid_file_path(run.run_id))
+        before_spawn&.call(run)
+        begin
+          if @usage_metrics_store
+            UsageMetrics.record_run(agent: self, run:, usage_entries: [], metrics_store: @usage_metrics_store)
+          end
+        rescue StandardError => metrics_error
+          HQ.logger.warn("Agent") { "Failed to record spawn failure metrics for #{@key}: #{metrics_error.message}" }
+        end
+      end
+      raise
     end
 
     def stop!
@@ -710,6 +745,9 @@ module HQ
     end
 
     def poll!
+      if !@pid && recover_completed_intent_run!
+        return
+      end
       return unless @pid
       stop_stale_direct_output_wait! if running?
       return if running?
@@ -717,6 +755,7 @@ module HQ
       @finished_at ||= Time.now
       @last_exit_code = read_exit_code
       @last_exit_code ||= 143 if @stop_requested_at
+      FileUtils.rm_f(run_pid_file_path(last_run.run_id)) if last_run&.run_id
       finalize_latest_run!
       HQ.logger.info("Agent") { "#{@key} exited (code=#{@last_exit_code})" }
       @pid = nil
@@ -735,6 +774,8 @@ module HQ
 
       @finished_at ||= Time.now
       @last_exit_code = read_exit_code
+      FileUtils.rm_f(run_pid_file_path(last_run.run_id))
+      @pid = nil
       finalize_latest_run!
       @pid = nil
     end
@@ -767,6 +808,7 @@ module HQ
     end
 
     def running?
+      recover_spawned_pid!
       return false unless @pid
       return false if completed_status_available?
       return false unless ProcessLiveness.alive?(@pid)
@@ -855,6 +897,7 @@ module HQ
         invalid_structured_output_file_path,
         *status_file_paths,
         *@runs.filter_map { |run| run_status_file_path(run.run_id) unless run.run_id.to_s.empty? },
+        *@runs.filter_map { |run| run_pid_file_path(run.run_id) unless run.run_id.to_s.empty? },
         last_message_file_path,
         legacy_status_file_path,
         legacy_last_message_file_path
@@ -1261,7 +1304,7 @@ module HQ
       end
     end
 
-    def record_start_failure!(message, command)
+    def record_start_failure!(message, command, run_metadata: nil)
       @started_at = Time.now
       @finished_at = @started_at
       @last_exit_code = 127
@@ -1295,7 +1338,8 @@ module HQ
         command: Shellwords.join(command),
         agent: @agent,
         model: @model,
-        log_start_offset: log_start_offset
+        log_start_offset: log_start_offset,
+        metadata: run_metadata.is_a?(Hash) ? run_metadata : {}
       ))
       if @usage_metrics_store
         UsageMetrics.record_run(
@@ -1332,6 +1376,36 @@ module HQ
       derived_log_path("run-#{token}.status")
     end
 
+    def run_pid_file_path(run_id)
+      token = Digest::SHA256.hexdigest(run_id.to_s)[0, 24]
+      derived_log_path("run-#{token}.pid")
+    end
+
+    def recover_spawned_pid!
+      return if @pid || !last_run || last_run.status != "running"
+      return if completed_status_available?
+      return unless last_run.metadata&.key?("personal_assistant_summary_intent")
+
+      path = run_pid_file_path(last_run.run_id)
+      candidate = Integer(File.read(path).strip, 10)
+      @pid = candidate if ProcessLiveness.alive?(candidate) && own_process_group?(candidate)
+    rescue StandardError
+      nil
+    end
+
+    def recover_completed_intent_run!
+      return false unless !@pid && last_run&.status == "running"
+      return false unless last_run.metadata&.key?("personal_assistant_summary_intent")
+      return false unless completed_status_available?
+
+      @finished_at ||= Time.now
+      @last_exit_code = read_exit_code
+      FileUtils.rm_f(run_pid_file_path(last_run.run_id))
+      @pid = nil
+      finalize_latest_run!
+      true
+    end
+
     def unscoped_status_file_path
       derived_log_path("status")
     end
@@ -1342,6 +1416,11 @@ module HQ
 
     def agent_runner_script
       <<~RUBY
+        begin
+          File.write(ENV.fetch("TYCHO_PID_PATH"), Process.pid.to_s)
+        rescue StandardError
+          nil
+        end
         status = begin
           recorder_path = ENV["TYCHO_STREAM_RECORDER_PATH"].to_s
           if !recorder_path.empty? && !ENV["TYCHO_MEMORY_PATH"].to_s.empty?
@@ -1491,6 +1570,9 @@ module HQ
       capture_session_id!
       run.session_id = @session_id unless @session_id.to_s.empty?
       build_summary!
+      if personal_assistant? && run.status == "success" && @structured_result.is_a?(Hash) && @structured_result["action_proposals"].is_a?(Array)
+        run.metadata = (run.metadata || {}).merge("personal_assistant_action_proposals" => @structured_result["action_proposals"])
+      end
       persist_memory_handoff!(run)
       capture_run_memory!(run)
       add_assistant_message!(@summary) if @summary

@@ -44,6 +44,8 @@ require_relative "domain/server_identity"
 require_relative "domain/skill_discovery"
 require_relative "domain/skill_installer"
 require_relative "domain/onboarding"
+require_relative "domain/personal_assistant"
+require_relative "domain/personal_assistant_actions"
 require_relative "domain/visibility"
 require_relative "domain/web_push_notifier"
 require_relative "domain/usage_metrics"
@@ -330,6 +332,17 @@ module HQ
         end
       end
       return ok(service.agent_activity) if method == "GET" && parts == ["activity"]
+      return ok(personal_assistant: service.personal_assistant) if method == "GET" && parts == ["personal-assistant"]
+      return ok(personal_assistant: service.setup_personal_assistant(body)) if method == "POST" && parts == ["personal-assistant", "setup"]
+      return ok(personal_assistant: service.open_personal_assistant) if method == "POST" && parts == ["personal-assistant", "open"]
+      return ok(service.submit_personal_assistant_prompt(body, actor:)) if method == "POST" && parts == ["personal-assistant", "messages"]
+      return ok(proposals: service.personal_assistant_actions) if method == "GET" && parts == ["personal-assistant", "actions"]
+      if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "confirm"
+        return ok(proposal: service.confirm_personal_assistant_action(parts[2], body))
+      end
+      if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "reject"
+        return ok(proposal: service.reject_personal_assistant_action(parts[2]))
+      end
       return ok(service.resource_snapshot) if method == "GET" && parts == ["resources"]
       return ok(service.metrics_query(request&.query_params || {})) if method == "GET" && parts == ["metrics"]
       return ok(service.metrics_backfill(body)) if method == "POST" && parts == ["metrics", "backfill"]
@@ -577,6 +590,8 @@ module HQ
         ui_asset("image/png", RemoteUI.png_asset("pwa-icon-512"))
       when "/pwa-icon-maskable-512.png"
         ui_asset("image/png", RemoteUI.png_asset("pwa-icon-maskable-512"))
+      when "/fred-avatar.png"
+        ui_asset("image/png", RemoteUI.png_asset("fred-avatar"))
       when "/favicon.svg"
         ui_asset("image/svg+xml; charset=utf-8", RemoteUI.favicon_svg)
       else
@@ -611,6 +626,7 @@ module HQ
         "/pwa-icon-192.png",
         "/pwa-icon-512.png",
         "/pwa-icon-maskable-512.png",
+        "/fred-avatar.png",
         "/favicon.png",
         "/favicon.svg",
         "/favicon.ico"
@@ -1608,6 +1624,12 @@ module HQ
       @registry = registry
       @projects = registry.projects.map { |config| Project.new(config) }
       @agent_store = AgentStore.new(@projects)
+      @personal_assistant = PersonalAssistantLifecycle.new(
+        registry:, agent_store: @agent_store, state_path: File.join(HQ::PERSONAL_ASSISTANT_DIR, "state.json")
+      )
+      @personal_assistant_actions = PersonalAssistantActions.new(
+        path: File.join(HQ::PERSONAL_ASSISTANT_DIR, "proposals.json"), executor: method(:execute_personal_assistant_action)
+      )
       @agent_archive_store = AgentArchiveStore.new
       @push_subscription_store = push_subscription_store
       @push_notification_store = push_notification_store
@@ -1824,6 +1846,98 @@ module HQ
       }
     end
 
+    def personal_assistant
+      status = @personal_assistant.status
+      ingest_personal_assistant_actions!(status)
+      @personal_assistant.reconcile
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 409)
+    end
+
+    def setup_personal_assistant(attrs)
+      @personal_assistant.setup!(attrs)
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 400)
+    end
+
+    def open_personal_assistant
+      @personal_assistant.open!
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 409)
+    end
+
+    def submit_personal_assistant_prompt(attrs, actor: DelegationActor.user_actor)
+      key = @personal_assistant.status[:active_key]
+      raise Error.new("Open FRED before sending a message", status: 409) if key.to_s.empty?
+
+      submit_prompt(key, attrs, actor:, personal_assistant_lifecycle: true)
+    end
+
+    def personal_assistant_actions
+      status = @personal_assistant.status
+      ingest_personal_assistant_actions!(status)
+      @personal_assistant.reconcile
+      @personal_assistant_actions.proposals
+    end
+
+    def confirm_personal_assistant_action(id, attrs)
+      @personal_assistant_actions.execute!(id, confirmed: attrs["confirmed"] == true)
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 409)
+    end
+
+    def reject_personal_assistant_action(id)
+      @personal_assistant_actions.reject!(id)
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 409)
+    end
+
+    def execute_personal_assistant_action(type, arguments)
+      case type
+      when "read_docs"
+        path = arguments.fetch("path", "").to_s
+        root = File.join(HQ::ROOT_DIR, "docs")
+        expanded = File.realpath(File.expand_path(path, root)) rescue nil
+        docs_root = File.realpath(root)
+        raise ArgumentError, "Documentation path is outside Tycho docs" unless expanded && expanded.start_with?("#{docs_root}/") && File.file?(expanded)
+        { "path" => path, "content" => File.read(expanded, 100_000) }
+      when "search_docs"
+        query = arguments.fetch("query", "").to_s.strip
+        raise ArgumentError, "Documentation search query is required" if query.empty?
+        root = File.realpath(File.join(HQ::ROOT_DIR, "docs"))
+        results = Dir.glob(File.join(root, "**", "*.md")).filter_map do |path|
+          path = File.realpath(path) rescue nil
+          next unless path&.start_with?("#{root}/")
+
+          text = File.read(path); next unless text.downcase.include?(query.downcase)
+          { "path" => path.delete_prefix("#{HQ::ROOT_DIR}/"), "match" => text.lines.find { |line| line.downcase.include?(query.downcase) }.to_s.strip }
+        end.first(20)
+        { "results" => results }
+      when "inspect_agents" then { "agents" => agents }
+      when "inspect_projects" then { "projects" => projects }
+      when "install_or_update_tycho_skill"
+        change_skills(arguments.fetch("harness"), arguments.fetch("action"), "confirmed" => true)
+      when "create_agent"
+        create_agent(arguments.merge("start" => false), actor: DelegationActor.user_actor)
+      when "message_agent"
+        submit_prompt(arguments.fetch("agent_key"), "prompt" => arguments.fetch("prompt"), actor: DelegationActor.user_actor)
+      when "start_agent" then start_agent(arguments.fetch("agent_key"), {}, actor: DelegationActor.user_actor)
+      when "stop_agent" then stop_agent(arguments.fetch("agent_key"))
+      else raise ArgumentError, "Unsupported assistant action"
+      end
+    end
+
+    def ingest_personal_assistant_actions!(status)
+      @personal_assistant.finalized_proposals.each do |snapshot|
+        next if snapshot["run_id"].to_s == status[:summary_run_id].to_s && !status[:summary_run_id].to_s.empty?
+
+        @personal_assistant_actions.register_finalized!(snapshot["proposals"], active_key: snapshot["active_key"], source_run_id: snapshot["run_id"])
+        @personal_assistant.mark_finalized_proposals_registered!(snapshot["run_id"])
+      end
+    rescue ArgumentError => e
+      HQ.logger.warn("PersonalAssistant") { "Rejected finalized action proposals: #{e.message}" }
+    end
+
     def agent(key)
       agent_payload(find_agent_reference!(key))
     end
@@ -1923,7 +2037,7 @@ module HQ
     end
 
     def rebuild_agent_memory(key)
-      agent = find_agent!(key)
+      agent = reject_personal_assistant_control!(find_agent!(key))
       written = AgentChatLog.new(agent).rebuild_memory_from_raw_log!
       raise Error.new("Unable to rebuild memory from raw log", status: 422) unless written
       save_agent(agent)
@@ -1947,8 +2061,8 @@ module HQ
     end
 
     def refresh_agent_pull_request_metadata(key)
+      agent = reject_personal_assistant_control!(find_agent!(key))
       ensure_github_enabled!
-      agent = find_agent!(key)
       references = PullRequestDiff.references_for_agent(agent)
       catalog_store = pull_request_catalog(agent)
       catalog_store.discover(references)
@@ -1989,8 +2103,8 @@ module HQ
     end
 
     def refresh_agent_pull_request_diff(key, id)
+      agent = reject_personal_assistant_control!(find_agent!(key))
       ensure_github_enabled!
-      agent = find_agent!(key)
       reference = pull_request_reference!(agent, id)
       refresh_pull_request_snapshot(reference)
     rescue PullRequestDiff::Error => e
@@ -1998,8 +2112,8 @@ module HQ
     end
 
     def refresh_agent_pull_requests(key)
+      agent = reject_personal_assistant_control!(find_agent!(key))
       ensure_github_enabled!
-      agent = find_agent!(key)
       refreshed = []
       failed = []
       PullRequestDiff.references_for_agent(agent).each do |reference|
@@ -2072,6 +2186,7 @@ module HQ
       agents = load_all_agents
       agent = agents.find { |candidate| candidate.key == key.to_s }
       raise Error.new("Unknown agent: #{key}", status: 404) unless agent
+      reject_personal_assistant_control!(agent)
 
       interval = Integer(attrs["interval_minutes"].to_s, 10)
       ends_at = Time.iso8601(required_text(attrs, "ends_at", fallback: "ends_at"))
@@ -2294,6 +2409,7 @@ module HQ
         break
       end
       raise Error.new("Attachment not found", status: 404) unless target_agent && target_attachment
+      reject_personal_assistant_control!(target_agent)
 
       deleted = target_agent.delete_attachment!(target_attachment)
       cleanup_uploaded_attachment_file(target_agent, target_attachment) if deleted
@@ -2719,7 +2835,7 @@ module HQ
     end
 
     def mark_agent_read(key)
-      target = find_agent!(key)
+      target = reject_personal_assistant_control!(find_agent!(key))
       if target.unread?
         target.mark_read!
         save_agent(target)
@@ -2727,10 +2843,14 @@ module HQ
       agent_payload(target)
     end
 
-    def submit_prompt(key, attrs = {}, actor: nil, **attribute_keywords)
+    def submit_prompt(key, attrs = {}, actor: nil, personal_assistant_lifecycle: false, **attribute_keywords)
       attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
       actor ||= delegation_actor_from_attrs(attrs)
       target = find_agent!(key)
+      reject_personal_assistant_control!(target) if target.personal_assistant? && !personal_assistant_lifecycle
+      if target.personal_assistant? && !@personal_assistant.accepting_prompts?(key)
+        raise Error.new("Personal Assistant is closing for daily rollover and is not accepting new prompts", status: 409)
+      end
       target = associate_delegation_from_attrs!(target, attrs, actor:)
       pull_request_context = render_prompt_pull_request_contexts(target, attrs)
       attachments = import_prompt_attachments(target, attrs)
@@ -2782,6 +2902,7 @@ module HQ
     end
 
     def edit_queued_prompt(key, entry_id, attrs)
+      reject_personal_assistant_control!(find_agent!(key))
       prompt = required_text(attrs, "prompt", fallback: "content")
       target, entry = @agent_store.edit_queued_prompt!(key, entry_id, prompt:)
       @agent_activity_snapshot.upsert!(target)
@@ -2792,6 +2913,7 @@ module HQ
     end
 
     def delete_queued_prompt(key, entry_id)
+      reject_personal_assistant_control!(find_agent!(key))
       target, entry = @agent_store.delete_queued_prompt!(key, entry_id)
       Array(entry["attachments"]).each { |attachment| cleanup_uploaded_attachment_file(target, attachment) }
       @agent_activity_snapshot.upsert!(target)
@@ -2802,6 +2924,7 @@ module HQ
     end
 
     def retry_prompt_queue(key)
+      reject_personal_assistant_control!(find_agent!(key))
       target = @agent_store.retry_prompt_queue!(key)
       @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target), conversation: conversation(target.key) }
@@ -2816,7 +2939,7 @@ module HQ
       answer = required_text(attrs, "answer", fallback: "prompt")
       feedback = attrs["feedback"].to_s.strip
       answer, feedback_embedded = inquiry_answer_with_feedback(answer, feedback, supplied: attrs.key?("feedback"))
-      target = find_agent!(key)
+      target = reject_personal_assistant_control!(find_agent!(key))
       attachments = import_prompt_attachments(target, attrs)
       target = @agent_store.answer_inquiry!(
         key,
@@ -2835,6 +2958,7 @@ module HQ
 
     def dismiss_inquiry(key, inquiry_id, actor: DelegationActor.user_actor)
       raise Error.new("Parent-declared requests cannot dismiss user inquiries", status: 403) if actor.parent?
+      reject_personal_assistant_control!(find_agent!(key))
 
       target = @agent_store.suspend_inquiry!(key, inquiry_id)
       @agent_activity_snapshot.upsert!(target)
@@ -2845,6 +2969,7 @@ module HQ
 
     def restore_inquiry(key, inquiry_id, actor: DelegationActor.user_actor)
       raise Error.new("Parent-declared requests cannot restore user inquiries", status: 403) if actor.parent?
+      reject_personal_assistant_control!(find_agent!(key))
 
       target = @agent_store.restore_inquiry!(key, inquiry_id)
       @agent_activity_snapshot.upsert!(target)
@@ -2854,6 +2979,7 @@ module HQ
     end
 
     def update_agent_delegation(key, attrs)
+      reject_personal_assistant_control!(find_agent!(key))
       connected = attrs["connected"]
       unless [true, false].include?(connected)
         raise Error.new("connected must be true or false", status: 422)
@@ -2887,7 +3013,7 @@ module HQ
     def start_agent(key, attrs = {}, actor: nil, **attribute_keywords)
       attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
       actor ||= delegation_actor_from_attrs(attrs)
-      target = find_agent!(key)
+      target = reject_personal_assistant_control!(find_agent!(key))
       target = associate_delegation_from_attrs!(target, attrs, actor:)
       @agent_store.accept_prompt_from!(target, actor:) if target.delegation_parent
       save_agent(target)
@@ -2897,7 +3023,7 @@ module HQ
     end
 
     def stop_agent(key)
-      target = find_agent!(key)
+      target = reject_personal_assistant_control!(find_agent!(key))
       target = @agent_store.stop_agent!(target.key)
       @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target) }
@@ -2925,7 +3051,7 @@ module HQ
     end
 
     def update_agent(key, attrs)
-      target = find_agent!(key)
+      target = reject_personal_assistant_control!(find_agent!(key))
       raise Error.new("Agent is running", status: 409) if target.running?
 
       project = find_project!(target.project_key)
@@ -2942,7 +3068,7 @@ module HQ
     end
 
     def clone_agent(key, attrs)
-      source = find_agent!(key)
+      source = reject_personal_assistant_control!(find_agent!(key))
       current = load_all_agents
       source = current.find { |agent| agent.key == key.to_s } || source
       archive_source = truthy?(attrs["archive_source"])
@@ -2981,6 +3107,7 @@ module HQ
 
     def archive_agent(key)
       target = find_agent!(key)
+      reject_personal_assistant_control!(target)
       raise Error.new("Agent is running", status: 409) if target.running?
 
       archive_path = @agent_store.archive_agent!(target.key)
@@ -3001,6 +3128,8 @@ module HQ
 
       current = load_all_agents
       agents_by_key = current.to_h { |agent| [agent.key, agent] }
+      personal_assistant = keys.map { |key| agents_by_key[key] }.compact.find(&:personal_assistant?)
+      reject_personal_assistant_control!(personal_assistant) if personal_assistant
       archived = []
       skipped = []
       failed = []
@@ -3014,6 +3143,11 @@ module HQ
 
         if target.running?
           skipped << { agent_key: key, reason: "running" }
+          next
+        end
+
+        if target.personal_assistant?
+          skipped << { agent_key: key, reason: "personal_assistant" }
           next
         end
 
@@ -3034,6 +3168,14 @@ module HQ
         failed: failed,
         archive_count: archived.length
       }
+    end
+
+    def reject_personal_assistant_control!(target)
+      if target.personal_assistant?
+        raise Error.new("Personal Assistant is managed by its dedicated lifecycle and cannot be controlled through agent endpoints", status: 409)
+      end
+
+      target
     end
 
     def reconcile_archived_schedule_agent(agent)

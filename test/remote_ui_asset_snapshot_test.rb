@@ -16,8 +16,42 @@ module RemoteUIAssetSnapshotTest
     assert_delegation_ui_uses_typed_safe_references
     assert_delegation_callbacks_are_chronological_events
     assert_archived_agents_are_reference_only_and_read_only
+    assert_personal_assistant_is_chat_first
     assert_agent_status_icons_use_lucide_without_badges
     puts "remote_ui_asset_snapshot_test: ok"
+  end
+
+  def assert_personal_assistant_is_chat_first
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
+    required_javascript = [
+      'function renderPersonalAssistantProposal(proposal)',
+      'data-proposal-id=',
+      'data-proposal-run=',
+      'Action ready',
+      'Technical details',
+      'data-confirm-pa-proposal=',
+      'data-reject-pa-proposal=',
+      'personal-assistant-start-form',
+      'What would you like to move forward?',
+      'pendingPersonalAssistantProposalIds: new Set()',
+      'state.pendingPersonalAssistantProposalIds.has(id)'
+    ]
+    missing = required_javascript.reject { |fragment| javascript.include?(fragment) }
+    raise "missing chat-first Personal Assistant contract: #{missing.join(", ")}" unless missing.empty?
+
+    forbidden = ['aria-label="Action proposals"', '<h2>Action proposals</h2>', 'JSON.stringify({ type: proposal.type']
+    present = forbidden.select { |fragment| javascript.include?(fragment) }
+    raise "Personal Assistant still exposes permanent proposal clutter: #{present.join(", ")}" unless present.empty?
+
+    required_css = [
+      '.personal-assistant-page { display: grid; grid-template-rows: 56px minmax(0, 1fr) auto;',
+      '.pa-conversation-scroll { min-height: 0; overflow-y: auto;',
+      '.pa-composer-row',
+      'env(safe-area-inset-bottom, 0px)'
+    ]
+    missing_css = required_css.reject { |fragment| css.include?(fragment) }
+    raise "missing chat-first layout contract: #{missing_css.join(", ")}" unless missing_css.empty?
   end
 
   def assert_initial_loading_shell_contract
