@@ -47,17 +47,17 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
         harnesses: []
   YAML
   tycho_home = File.join(dir, "tycho-home")
-  env = { "TYCHO_HOME" => tycho_home, "TYCHO_CONFIG_PATH" => config, "TYCHO_SYSTEM_PROMPTS_PATH" => File.join(ROOT, "config/system_prompts.yml.example"), "TYCHO_LOGS_ROOT" => File.join(dir, "logs"), "TYCHO_SCHEDULES_PATH" => schedules }
+  env = { "TYCHO_HOME" => tycho_home, "TYCHO_CONFIG_PATH" => config, "TYCHO_SYSTEM_PROMPTS_PATH" => File.join(ROOT, "config/system_prompts.yml.example"), "TYCHO_LOGS_ROOT" => File.join(dir, "logs"), "TYCHO_SCHEDULES_PATH" => schedules, "TYCHO_REMOTE_TOKEN" => "" }
   pid = Process.spawn(env, "bundle", "exec", "bin/tycho", "serve", "--host", "127.0.0.1", "--port", PORT.to_s, chdir: ROOT, out: File.join(dir, "server.log"), err: File.join(dir, "server.log"))
   begin
     wait_for_server
-    capture = ->(name, device, selector, expected, open_menu: false) do
+    capture = ->(name, device, selector, expected, route: "personal-assistant", open_menu: false) do
       playwright = ENV.fetch("TYCHO_PLAYWRIGHT_PATH", File.expand_path("node_modules/playwright", ROOT))
       raise "Install deterministic Playwright dependency at #{playwright} or set TYCHO_PLAYWRIGHT_PATH" unless File.directory?(playwright)
       script = File.join(dir, "capture.js")
       File.write(script, <<~JS)
         const { chromium, devices } = require(#{playwright.to_json});
-        (async () => { const browser = await chromium.launch({headless:true}); const page = await browser.newPage(devices[#{device.to_json}]); if (#{device.to_json} === 'Desktop Chrome') await page.setViewportSize({ width: 1280, height: 900 }); await page.goto('http://127.0.0.1:#{PORT}/ui#personal-assistant'); await page.locator(#{selector.to_json}).waitFor({state:'visible',timeout:15000}); await page.waitForFunction(() => { const boot = document.querySelector('#tycho-boot-shell'); return !boot || getComputedStyle(boot).display === 'none' || getComputedStyle(boot).visibility === 'hidden'; }, null, {timeout:15000}); await page.waitForFunction(() => document.body.innerText.includes(#{expected.to_json}), null, {timeout:15000}); if (#{open_menu}) { await page.locator('#personal-assistant-settings-menu > summary').click(); await page.locator('[data-open-settings]').waitFor({state:'visible',timeout:15000}); } await page.screenshot({path:#{File.join(OUTPUT, name).to_json},fullPage:false}); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });
+        (async () => { const browser = await chromium.launch({headless:true}); const page = await browser.newPage(devices[#{device.to_json}]); if (#{device.to_json} === 'Desktop Chrome') await page.setViewportSize({ width: 1280, height: 900 }); await page.goto('http://127.0.0.1:#{PORT}/ui##{route}'); await page.locator(#{selector.to_json}).waitFor({state:'visible',timeout:15000}); await page.waitForFunction(() => { const boot = document.querySelector('#tycho-boot-shell'); return !boot || getComputedStyle(boot).display === 'none' || getComputedStyle(boot).visibility === 'hidden'; }, null, {timeout:15000}); await page.waitForFunction(() => document.body.innerText.includes(#{expected.to_json}), null, {timeout:15000}); if (#{open_menu}) { await page.locator('#personal-assistant-settings-menu > summary').click(); await page.locator('[data-open-settings]').waitFor({state:'visible',timeout:15000}); } await page.screenshot({path:#{File.join(OUTPUT, name).to_json},fullPage:false}); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });
       JS
       system("node", script, exception: true)
     end
@@ -69,20 +69,9 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
     capture.call("personal-assistant-ready-desktop.png", "Desktop Chrome", ".pa-ready", "Opening FRED does not send a model prompt.")
     capture.call("personal-assistant-ready-mobile.png", "iPhone 13", ".pa-ready", "Opening FRED does not send a model prompt.")
     request("/personal-assistant/open", {})
-    agents_path = File.join(dir, "logs", "managed_agents.json")
-    File.open("#{agents_path}.lock", File::RDWR | File::CREAT, 0o600) do |lock|
-      lock.flock(File::LOCK_EX)
-      agents = JSON.parse(File.read(agents_path))
-      agent = agents.fetch(0)
-      agent["structured_result"] = { "status" => "success", "summary" => "Fixture finalized.", "summary_sections" => nil, "inquiry" => nil, "attachments" => nil, "memory_handoff" => nil, "action_proposals" => [{ "type" => "start_agent", "description" => "Start the selected review agent.", "arguments" => { "agent_key" => "fixture-agent" } }] }
-      agent["runs"] = [{ "run_id" => "capture-finalized-run", "started_at" => Time.now.utc.iso8601, "finished_at" => Time.now.utc.iso8601, "status" => "success", "exit_code" => 0, "log_path" => "capture.log", "command" => [], "metadata" => { "personal_assistant_action_proposals" => agent.dig("structured_result", "action_proposals") } }]
-      HQ::FileStore.write_json(agents_path, agents)
-      memory_path = agent.fetch("log_path").sub(/\.raw\.log\z/, ".memory.jsonl")
-      File.write(memory_path, JSON.generate({ "type" => "assistant_message", "content" => "I found fixture-agent. I can prepare the exact action for your approval.", "created_at" => Time.now.utc.iso8601, "metadata" => { "run_id" => "capture-finalized-run" } }) + "\n")
-    end
-    request("/personal-assistant/actions")
-    capture.call("personal-assistant-active-pending-desktop.png", "Desktop Chrome", "[data-confirm-pa-proposal]", "Accept")
-    capture.call("personal-assistant-active-pending-mobile.png", "iPhone 13", "[data-confirm-pa-proposal]", "Accept")
+    capture.call("fred-clean-desktop.png", "Desktop Chrome", ".personal-assistant-page", "FRED")
+    capture.call("fred-clean-mobile.png", "iPhone 13", ".personal-assistant-page", "FRED")
+    capture.call("agents-without-fred-desktop.png", "Desktop Chrome", ".ui-searchable-collection", "Agents", route: "agents")
   ensure
     Process.kill("TERM", pid) rescue nil
     Process.wait(pid) rescue nil

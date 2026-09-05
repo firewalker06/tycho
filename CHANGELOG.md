@@ -6,6 +6,10 @@ All notable changes to Tycho will be documented in this file.
 
 - Make FRED setup explicit and chat-first, protect its daily lifecycle from
   ordinary agent mutations, and add deterministic setup/ready UI captures.
+- Keep the Tycho mark visible as an accessible Agents navigation control in
+  FRED while retaining FRED identity and the three-item primary navigation.
+- Exclude protected FRED daily sessions from generic agent catalogs and scope
+  Personal Assistant action receipts to the active daily session.
 
 ## 0.10.2 - 2026-08-30
 

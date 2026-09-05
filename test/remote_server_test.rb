@@ -437,6 +437,25 @@ module RemoteServerTest
       key = opened.dig(:body, :personal_assistant, :active_key)
       assert(key && opened.dig(:body, :personal_assistant, :agent, "role") == "personal_assistant_daily",
              "expected Remote API to open the protected daily conversation")
+      assert(!service.agents.any? { |agent| agent[:key] == key },
+             "expected generic agent list to omit the protected FRED daily session")
+      assert(!service.resource_snapshot[:agents].any? { |agent| agent[:key] == key },
+             "expected generic resource catalog to omit the protected FRED daily session")
+      assert(!service.execute_personal_assistant_action("inspect_agents", {}).fetch("agents").any? { |agent| agent[:key] == key },
+             "expected FRED inspect_agents to retain generic-agent semantics without listing itself")
+      personal_status = server.send(:route, service, "GET", "/personal-assistant", {}, nil)
+      assert(personal_status.dig(:body, :personal_assistant, :agent, :key) == key,
+             "expected dedicated FRED status API to retain the protected conversation detail")
+      proposals_path = File.join(HQ::PERSONAL_ASSISTANT_DIR, "proposals.json")
+      HQ::FileStore.write_json(proposals_path, {
+                                 "proposals" => [
+                                   { "id" => "historical-fixture", "type" => "start_agent", "description" => "Old fixture", "arguments" => { "agent_key" => "fixture" }, "active_key" => "personal-assistant-2026-09-04-5", "source_run_id" => "old-run", "state" => "rejected" },
+                                   { "id" => "current-proposal", "type" => "start_agent", "description" => "Current action", "arguments" => { "agent_key" => "fixture" }, "active_key" => key, "source_run_id" => "current-run", "state" => "awaiting_confirmation" }
+                                 ]
+                               })
+      actions = server.send(:route, service, "GET", "/personal-assistant/actions", {}, nil)
+      assert(actions.dig(:body, :proposals).map { |proposal| proposal["id"] } == ["current-proposal"],
+             "expected FRED actions API to scope receipts and proposals to the active daily session")
       begin
         server.send(:route, service, "POST", "/personal-assistant/actions/proposals", {
                       "proposals" => [{ "type" => "start_agent", "description" => "Start an agent", "arguments" => { "agent_key" => "example" } }]
@@ -6918,6 +6937,7 @@ module RemoteServerTest
   def with_remote_temp_store
     Dir.mktmpdir("hq-remote-test") do |dir|
       old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_personal_assistant_dir = replace_constant(HQ, :PERSONAL_ASSISTANT_DIR, File.join(dir, "personal_assistant"))
       old_delegations_file = replace_constant(HQ, :DELEGATIONS_FILE, File.join(dir, "agent_delegations.json"))
       old_server_identity_file = replace_constant(HQ, :SERVER_IDENTITY_FILE, File.join(dir, "server_identity.json"))
       old_usage_metrics_file = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
@@ -6937,6 +6957,7 @@ module RemoteServerTest
       ENV["TYCHO_DISABLE_SCHEDULE_PROCESS_DETECTION"] = "1"
 
       FileUtils.mkdir_p(HQ::AGENT_LOGS_DIR)
+      FileUtils.mkdir_p(HQ::PERSONAL_ASSISTANT_DIR)
       FileUtils.mkdir_p(HQ::AGENT_ARCHIVE_DIR)
       FileUtils.mkdir_p(HQ::PROJECT_LOGS_DIR)
       FileUtils.mkdir_p(HQ::PROJECT_ARCHIVE_DIR)
@@ -6945,6 +6966,7 @@ module RemoteServerTest
       yield dir
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+      replace_constant(HQ, :PERSONAL_ASSISTANT_DIR, old_personal_assistant_dir) if old_personal_assistant_dir
       replace_constant(HQ, :DELEGATIONS_FILE, old_delegations_file) if old_delegations_file
       replace_constant(HQ, :SERVER_IDENTITY_FILE, old_server_identity_file) if old_server_identity_file
       replace_constant(HQ, :USAGE_METRICS_FILE, old_usage_metrics_file) if old_usage_metrics_file
