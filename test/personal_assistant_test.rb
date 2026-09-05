@@ -127,6 +127,7 @@ class PersonalAssistantTest
       assert_start_failure_falls_back_once(registry, dir)
       assert_disabled_preserves_no_session(registry, dir)
       assert_dst_and_threaded_reconcile(registry, dir)
+      assert_orphan_adoption_persists(registry, dir, clock)
     end
     puts "personal_assistant_test: OK"
   end
@@ -176,6 +177,26 @@ class PersonalAssistantTest
     assert(store.starts == 1 && store.agents.empty? && agent.session_id == "", "expected at-most-once failed summary dispatch")
     handoff = JSON.parse(File.read(Dir.glob(File.join(dir, "handoffs", "*.json")).max))
     assert(handoff["summary"].include?("Fallback"), "expected fallback handoff")
+  end
+
+  def self.assert_orphan_adoption_persists(registry, dir, clock)
+    orphan = HQ::ManagedAgent.new(
+      key: "personal-assistant-orphan", name: "Personal Assistant · orphan",
+      project_key: "__personal_assistant__", template_key: "personal_assistant_daily",
+      workspace: dir, prompt: "", created_at: clock.call, sandbox_mode: "read-only",
+      agent: "codex", model: "gpt-5.6-sol", reasoning_effort: "medium",
+      role: HQ::PersonalAssistantLifecycle::ROLE
+    )
+    state_path = File.join(dir, "orphan-adoption.json")
+    lifecycle = HQ::PersonalAssistantLifecycle.new(
+      registry:, agent_store: FakeStore.new(agents: [orphan], starts: 0), clock:, state_path:
+    )
+
+    opened = lifecycle.open!
+    persisted = HQ::FileStore.read_json(state_path, fallback: {})
+    assert(opened[:active_key] == orphan.key, "expected open to adopt the protected orphan")
+    assert(persisted["active_key"] == orphan.key && persisted["phase"] == "active",
+           "expected orphan adoption to persist active lifecycle state to disk")
   end
 
   def self.assert_disabled_preserves_no_session(registry, dir)

@@ -64,20 +64,22 @@ module HQ
         elsif !state["active_key"] && protected
           state.merge!("active_key" => protected.key, "active_date" => local_date(protected.created_at || @clock.call, config.fetch("timezone")), "active_timezone" => config.fetch("timezone"), "phase" => "active")
         end
-        return payload(state) if state["active_key"]
-        now = @clock.call
-        date = local_date(now, config.fetch("timezone"))
-        # Registered records are only replay protection. Once a new daily
-        # session begins, retain unresolved older work but drop consumed IDs.
-        state["finalized_proposals"] = Array(state["finalized_proposals"]).reject { |snapshot| snapshot["registered"] == true }
-        prior = prior_continuity(state)
-        prompt = [INTRODUCTION, prior].compact.join("\n\n")
-        agent = ManagedAgent.new(key: "personal-assistant-#{date}-#{state["generation"].to_i + 1}", name: "Personal Assistant · #{date}", project_key: "__personal_assistant__", template_key: "personal_assistant_daily", workspace: workspace, prompt:, created_at: now, sandbox_mode: "read-only", agent: "codex", model: config.fetch("model"), reasoning_effort: config.fetch("reasoning_effort"), messages: [ManagedAgent::AgentMessage.new(role: "system", content: prompt, created_at: now)], role: ROLE)
-        @agent_store.create_personal_assistant!(agent)
-        state.merge!("active_key" => agent.key, "active_date" => date, "active_timezone" => config.fetch("timezone"), "generation" => state["generation"].to_i + 1, "phase" => "active")
-        state.delete("summary_run_id"); state.delete("handoff_path"); state.delete("last_error")
-        persist(state)
-        payload(state).merge(agent: agent.to_hash)
+        if state["active_key"]
+          payload(state)
+        else
+          now = @clock.call
+          date = local_date(now, config.fetch("timezone"))
+          # Registered records are only replay protection. Once a new daily
+          # session begins, retain unresolved older work but drop consumed IDs.
+          state["finalized_proposals"] = Array(state["finalized_proposals"]).reject { |snapshot| snapshot["registered"] == true }
+          prior = prior_continuity(state)
+          prompt = [INTRODUCTION, prior].compact.join("\n\n")
+          agent = ManagedAgent.new(key: "personal-assistant-#{date}-#{state["generation"].to_i + 1}", name: "Personal Assistant · #{date}", project_key: "__personal_assistant__", template_key: "personal_assistant_daily", workspace: workspace, prompt:, created_at: now, sandbox_mode: "read-only", agent: "codex", model: config.fetch("model"), reasoning_effort: config.fetch("reasoning_effort"), messages: [ManagedAgent::AgentMessage.new(role: "system", content: prompt, created_at: now)], role: ROLE)
+          @agent_store.create_personal_assistant!(agent)
+          state.merge!("active_key" => agent.key, "active_date" => date, "active_timezone" => config.fetch("timezone"), "generation" => state["generation"].to_i + 1, "phase" => "active")
+          state.delete("summary_run_id"); state.delete("handoff_path"); state.delete("last_error")
+          payload(state).merge(agent: agent.to_hash)
+        end
       end
     end
 
