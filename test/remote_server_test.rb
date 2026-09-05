@@ -449,8 +449,17 @@ module RemoteServerTest
         server.send(:route, service, "POST", "/agents/#{key}/archive", {}, nil)
         raise "expected protected archive rejection"
       rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409 && e.message.include?("cannot be archived manually"),
+        assert(e.status == 409 && e.message.include?("dedicated lifecycle"),
                "expected the Remote API to hide manual archive control behind a conflict")
+      end
+      [["/agents/#{key}/start", {}], ["/agents/#{key}/stop", {}], ["/agents/#{key}/messages", { "prompt" => "Hello", "start" => true }]].each do |path, body|
+        begin
+          server.send(:route, service, "POST", path, body, nil)
+          raise "expected protected lifecycle rejection for #{path}"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 409 && e.message.include?("dedicated lifecycle"),
+                 "expected #{path} to reject ordinary control of FRED")
+        end
       end
     end
   end
@@ -4677,6 +4686,8 @@ module RemoteServerTest
            "expected the mobile Quick Agent form to fill and scroll within the viewport")
     assert(css[:body].include?("--touch-target: 44px") && css[:body].include?("--control-height: 44px"),
            "expected audited Remote UI controls to share accessible sizing tokens")
+    assert(css[:body].include?(".pa-suggestions button { flex: 0 0 auto; min-height: var(--touch-target);"),
+           "expected FRED suggestion chips to meet the shared 44px touch target")
     assert(css[:body].include?(".top-actions .search-box"),
            "expected Agents tab search to flex inside the action row")
     assert(css[:body].include?(".top-actions {\n  flex-wrap: nowrap;"),
@@ -6409,6 +6420,17 @@ module RemoteServerTest
            "expected Personal Assistant messages to have a product-specific sender identity")
     assert(js[:body].include?("Friendly Robot for Execution Dispatcher"),
            "expected Personal Assistant UI to expand FRED where appropriate")
+    assert(js[:body].include?("Choose how FRED should work") &&
+           js[:body].include?("I confirm these settings for FRED.") &&
+           js[:body].include?("Opening FRED does not send a model prompt."),
+           "expected chat-first FRED setup to show explicit model, effort, timezone, confirmation, and ready states")
+    assert(!js[:body].include?("confirmed: true, model: \"gpt-5.6-sol\""),
+           "expected first-use FRED flow not to silently submit fixed settings")
+    assert(js[:body].include?("personalAssistant ? \"/personal-assistant/messages\""),
+           "expected FRED messages to use the dedicated Personal Assistant API")
+    settings_markup = js[:body][js[:body].index('id="personal-assistant-settings-menu"'), 1_800]
+    assert(settings_markup.scan('role="menu"').length == 1 && settings_markup.include?('class="pa-settings-details"'),
+           "expected FRED settings overflow to keep one menu role and explanatory metadata outside it")
     assert(js[:body].include?('alt="FRED"') && js[:body].include?("/fred-avatar.png"),
            "expected FRED identity to use the served circular avatar asset")
     assert(js[:body].include?("iconSvg(\"thumbsUp\")") && js[:body].include?("iconSvg(\"thumbsDown\")"),

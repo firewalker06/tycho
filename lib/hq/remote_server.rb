@@ -335,6 +335,7 @@ module HQ
       return ok(personal_assistant: service.personal_assistant) if method == "GET" && parts == ["personal-assistant"]
       return ok(personal_assistant: service.setup_personal_assistant(body)) if method == "POST" && parts == ["personal-assistant", "setup"]
       return ok(personal_assistant: service.open_personal_assistant) if method == "POST" && parts == ["personal-assistant", "open"]
+      return ok(service.submit_personal_assistant_prompt(body, actor:)) if method == "POST" && parts == ["personal-assistant", "messages"]
       return ok(proposals: service.personal_assistant_actions) if method == "GET" && parts == ["personal-assistant", "actions"]
       if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "confirm"
         return ok(proposal: service.confirm_personal_assistant_action(parts[2], body))
@@ -1865,6 +1866,13 @@ module HQ
       raise Error.new(e.message, status: 409)
     end
 
+    def submit_personal_assistant_prompt(attrs, actor: DelegationActor.user_actor)
+      key = @personal_assistant.status[:active_key]
+      raise Error.new("Open FRED before sending a message", status: 409) if key.to_s.empty?
+
+      submit_prompt(key, attrs, actor:, personal_assistant_lifecycle: true)
+    end
+
     def personal_assistant_actions
       status = @personal_assistant.status
       ingest_personal_assistant_actions!(status)
@@ -2178,6 +2186,7 @@ module HQ
       agents = load_all_agents
       agent = agents.find { |candidate| candidate.key == key.to_s }
       raise Error.new("Unknown agent: #{key}", status: 404) unless agent
+      reject_personal_assistant_control!(agent)
 
       interval = Integer(attrs["interval_minutes"].to_s, 10)
       ends_at = Time.iso8601(required_text(attrs, "ends_at", fallback: "ends_at"))
@@ -2833,13 +2842,14 @@ module HQ
       agent_payload(target)
     end
 
-    def submit_prompt(key, attrs = {}, actor: nil, **attribute_keywords)
+    def submit_prompt(key, attrs = {}, actor: nil, personal_assistant_lifecycle: false, **attribute_keywords)
       attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
       actor ||= delegation_actor_from_attrs(attrs)
-      if find_agent!(key).personal_assistant? && !@personal_assistant.accepting_prompts?(key)
+      target = find_agent!(key)
+      reject_personal_assistant_control!(target) if target.personal_assistant? && !personal_assistant_lifecycle
+      if target.personal_assistant? && !@personal_assistant.accepting_prompts?(key)
         raise Error.new("Personal Assistant is closing for daily rollover and is not accepting new prompts", status: 409)
       end
-      target = find_agent!(key)
       target = associate_delegation_from_attrs!(target, attrs, actor:)
       pull_request_context = render_prompt_pull_request_contexts(target, attrs)
       attachments = import_prompt_attachments(target, attrs)
@@ -2891,6 +2901,7 @@ module HQ
     end
 
     def edit_queued_prompt(key, entry_id, attrs)
+      reject_personal_assistant_control!(find_agent!(key))
       prompt = required_text(attrs, "prompt", fallback: "content")
       target, entry = @agent_store.edit_queued_prompt!(key, entry_id, prompt:)
       @agent_activity_snapshot.upsert!(target)
@@ -2901,6 +2912,7 @@ module HQ
     end
 
     def delete_queued_prompt(key, entry_id)
+      reject_personal_assistant_control!(find_agent!(key))
       target, entry = @agent_store.delete_queued_prompt!(key, entry_id)
       Array(entry["attachments"]).each { |attachment| cleanup_uploaded_attachment_file(target, attachment) }
       @agent_activity_snapshot.upsert!(target)
@@ -2911,6 +2923,7 @@ module HQ
     end
 
     def retry_prompt_queue(key)
+      reject_personal_assistant_control!(find_agent!(key))
       target = @agent_store.retry_prompt_queue!(key)
       @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target), conversation: conversation(target.key) }
@@ -2925,7 +2938,7 @@ module HQ
       answer = required_text(attrs, "answer", fallback: "prompt")
       feedback = attrs["feedback"].to_s.strip
       answer, feedback_embedded = inquiry_answer_with_feedback(answer, feedback, supplied: attrs.key?("feedback"))
-      target = find_agent!(key)
+      target = reject_personal_assistant_control!(find_agent!(key))
       attachments = import_prompt_attachments(target, attrs)
       target = @agent_store.answer_inquiry!(
         key,
@@ -2944,6 +2957,7 @@ module HQ
 
     def dismiss_inquiry(key, inquiry_id, actor: DelegationActor.user_actor)
       raise Error.new("Parent-declared requests cannot dismiss user inquiries", status: 403) if actor.parent?
+      reject_personal_assistant_control!(find_agent!(key))
 
       target = @agent_store.suspend_inquiry!(key, inquiry_id)
       @agent_activity_snapshot.upsert!(target)
@@ -2954,6 +2968,7 @@ module HQ
 
     def restore_inquiry(key, inquiry_id, actor: DelegationActor.user_actor)
       raise Error.new("Parent-declared requests cannot restore user inquiries", status: 403) if actor.parent?
+      reject_personal_assistant_control!(find_agent!(key))
 
       target = @agent_store.restore_inquiry!(key, inquiry_id)
       @agent_activity_snapshot.upsert!(target)
@@ -2963,6 +2978,7 @@ module HQ
     end
 
     def update_agent_delegation(key, attrs)
+      reject_personal_assistant_control!(find_agent!(key))
       connected = attrs["connected"]
       unless [true, false].include?(connected)
         raise Error.new("connected must be true or false", status: 422)
@@ -2996,7 +3012,7 @@ module HQ
     def start_agent(key, attrs = {}, actor: nil, **attribute_keywords)
       attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
       actor ||= delegation_actor_from_attrs(attrs)
-      target = find_agent!(key)
+      target = reject_personal_assistant_control!(find_agent!(key))
       target = associate_delegation_from_attrs!(target, attrs, actor:)
       @agent_store.accept_prompt_from!(target, actor:) if target.delegation_parent
       save_agent(target)
@@ -3006,7 +3022,7 @@ module HQ
     end
 
     def stop_agent(key)
-      target = find_agent!(key)
+      target = reject_personal_assistant_control!(find_agent!(key))
       target = @agent_store.stop_agent!(target.key)
       @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target) }
@@ -3034,7 +3050,7 @@ module HQ
     end
 
     def update_agent(key, attrs)
-      target = find_agent!(key)
+      target = reject_personal_assistant_control!(find_agent!(key))
       raise Error.new("Agent is running", status: 409) if target.running?
 
       project = find_project!(target.project_key)
@@ -3051,7 +3067,7 @@ module HQ
     end
 
     def clone_agent(key, attrs)
-      source = find_agent!(key)
+      source = reject_personal_assistant_control!(find_agent!(key))
       current = load_all_agents
       source = current.find { |agent| agent.key == key.to_s } || source
       archive_source = truthy?(attrs["archive_source"])
@@ -3090,9 +3106,7 @@ module HQ
 
     def archive_agent(key)
       target = find_agent!(key)
-      if target.personal_assistant?
-        raise Error.new("Personal Assistant is managed by its daily lifecycle and cannot be archived manually", status: 409)
-      end
+      reject_personal_assistant_control!(target)
       raise Error.new("Agent is running", status: 409) if target.running?
 
       archive_path = @agent_store.archive_agent!(target.key)
@@ -3151,6 +3165,14 @@ module HQ
         failed: failed,
         archive_count: archived.length
       }
+    end
+
+    def reject_personal_assistant_control!(target)
+      if target.personal_assistant?
+        raise Error.new("Personal Assistant is managed by its dedicated lifecycle and cannot be controlled through agent endpoints", status: 409)
+      end
+
+      target
     end
 
     def reconcile_archived_schedule_agent(agent)

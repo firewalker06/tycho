@@ -154,17 +154,9 @@ module HQ
       proposals.each_with_index.filter_map do |proposal, index|
         type = proposal.is_a?(Hash) ? proposal["type"] : nil
         arguments = proposal.is_a?(Hash) ? proposal["arguments"] : nil
-        next unless expected.key?(type) && arguments.is_a?(Hash) && arguments.keys.sort == expected[type].sort
+        next if expected.key?(type) && arguments.is_a?(Hash) && arguments.keys.sort == expected[type].sort
 
-        nil
-      end.then do |valid|
-        proposals.each_with_index.filter_map do |proposal, index|
-          type = proposal.is_a?(Hash) ? proposal["type"] : nil
-          arguments = proposal.is_a?(Hash) ? proposal["arguments"] : nil
-          next if expected.key?(type) && arguments.is_a?(Hash) && arguments.keys.sort == expected[type].sort
-
-          error("invalid_action_arguments", "$.action_proposals[#{index}].arguments", "Arguments must match action type #{type}")
-        end
+        error("invalid_action_arguments", "$.action_proposals[#{index}].arguments", "Arguments must match action type #{type}")
       end
     end
 

@@ -67,6 +67,10 @@ class PersonalAssistantTest
       )
 
       assert_raises { lifecycle.setup!("model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta") }
+      %w[zone.tab tzdata.zi ../UTC Missing/Zone].each do |timezone|
+        assert_raises { lifecycle.setup!("confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => timezone) }
+      end
+      lifecycle.setup!("confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "UTC")
       lifecycle.setup!("confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta")
       first = lifecycle.open!
       assert(first[:state] == "active" && first[:active_key], "expected configured daily session")

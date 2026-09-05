@@ -10,7 +10,7 @@ require "tmpdir"
 require_relative "../lib/hq/domain/file_store"
 
 ROOT = File.expand_path("..", __dir__)
-OUTPUT = File.expand_path(ENV.fetch("TYCHO_PERSONAL_ASSISTANT_CAPTURE_OUTPUT", "~/.tycho/artifacts/card-170/chat-first-implementation"))
+OUTPUT = File.expand_path(ENV.fetch("TYCHO_PERSONAL_ASSISTANT_CAPTURE_OUTPUT", "~/.tycho/artifacts/card-170/merge-gate-fixes/final"))
 PORT = TCPServer.open("127.0.0.1", 0) { |server| server.addr[1] }
 
 def request(path, payload = nil)
@@ -61,11 +61,13 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
       JS
       system("node", script, exception: true)
     end
-    capture.call("personal-assistant-first-run-desktop.png", "Desktop Chrome", ".personal-assistant-page", "What would you like to move forward?")
-    capture.call("personal-assistant-first-run-mobile.png", "iPhone 13", ".personal-assistant-page", "What would you like to move forward?")
-    capture.call("personal-assistant-settings-menu-desktop.png", "Desktop Chrome", ".personal-assistant-page", "What would you like to move forward?", open_menu: true)
-    capture.call("personal-assistant-settings-menu-mobile.png", "iPhone 13", ".personal-assistant-page", "What would you like to move forward?", open_menu: true)
+    capture.call("personal-assistant-setup-desktop.png", "Desktop Chrome", ".pa-setup", "Choose how FRED should work")
+    capture.call("personal-assistant-setup-mobile.png", "iPhone 13", ".pa-setup", "Choose how FRED should work")
+    capture.call("personal-assistant-settings-menu-desktop.png", "Desktop Chrome", ".personal-assistant-page", "Choose how FRED should work", open_menu: true)
+    capture.call("personal-assistant-settings-menu-mobile.png", "iPhone 13", ".personal-assistant-page", "Choose how FRED should work", open_menu: true)
     request("/personal-assistant/setup", { confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "Asia/Jakarta" })
+    capture.call("personal-assistant-ready-desktop.png", "Desktop Chrome", ".pa-ready", "Opening FRED does not send a model prompt.")
+    capture.call("personal-assistant-ready-mobile.png", "iPhone 13", ".pa-ready", "Opening FRED does not send a model prompt.")
     request("/personal-assistant/open", {})
     agents_path = File.join(dir, "logs", "managed_agents.json")
     File.open("#{agents_path}.lock", File::RDWR | File::CREAT, 0o600) do |lock|

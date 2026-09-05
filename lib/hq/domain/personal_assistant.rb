@@ -97,7 +97,19 @@ module HQ
       raise ArgumentError, "Codex model is required" if config["model"].empty?
       raise ArgumentError, "Codex reasoning effort is required" if config["reasoning_effort"].empty?
       zone = config["timezone"]
-      raise ArgumentError, "Timezone must be an IANA timezone" unless !zone.include?("..") && !zone.start_with?("/") && File.file?(File.join("/usr/share/zoneinfo", zone))
+      raise ArgumentError, "Timezone must be an IANA timezone" unless iana_timezone?(zone)
+    end
+
+    def iana_timezone?(zone)
+      return false if zone.include?("..") || zone.start_with?("/")
+
+      root = File.realpath("/usr/share/zoneinfo")
+      path = File.realpath(File.expand_path(zone, root))
+      return false unless path.start_with?("#{root}/") && File.file?(path)
+
+      File.binread(path, 4) == "TZif"
+    rescue Errno::ENOENT, Errno::ENOTDIR
+      false
     end
 
     def local_date(now, timezone)

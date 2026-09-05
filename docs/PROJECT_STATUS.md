@@ -96,6 +96,12 @@ Key references:
 
 ## Current Focus
 
+**Personal Assistant merge gate**: FRED setup now requires visible Codex model,
+reasoning effort, IANA timezone, and explicit confirmation before opening a
+daily conversation. Ordinary agent lifecycle endpoints cannot control its
+protected daily role; the dedicated Personal Assistant API owns opening and
+messaging. Zone identifiers must resolve to TZif data, not zoneinfo metadata.
+
 **v0.10.2 release**: successful managed runs can now persist validated Second
 Brain memory handoffs and expose them through local or remote CLI and API
 feeds. Pi is a first-class managed harness with native session resume,

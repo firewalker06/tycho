@@ -279,21 +279,21 @@ module HQ
         raise ArgumentError, "Unknown agent: #{key}" unless target
 
         unless target.running?
-          stamp = @delegation_coordinator.ownership_stamp(target.key)
-          supports_before_spawn = target.method(:start!).parameters.any? { |_kind, name| name == :before_spawn }
-          persist_before_spawn = supports_before_spawn ? ->(_run) { save_unlocked(agents) } : nil
-          if run_metadata
-            if supports_before_spawn
-              stamp ? target.start!(delegation_stamp: stamp, run_metadata:, before_spawn: persist_before_spawn) : target.start!(run_metadata:, before_spawn: persist_before_spawn)
-            else
-              stamp ? target.start!(delegation_stamp: stamp, run_metadata:) : target.start!(run_metadata:)
-            end
-          else
-            supports_before_spawn ? (stamp ? target.start!(delegation_stamp: stamp, before_spawn: persist_before_spawn) : target.start!(before_spawn: persist_before_spawn)) : (stamp ? target.start!(delegation_stamp: stamp) : target.start!)
-          end
+          start_target!(target, agents, run_metadata:)
         end
         target
       end
+    end
+
+    def start_target!(target, agents, run_metadata:)
+      options = {}
+      stamp = @delegation_coordinator.ownership_stamp(target.key)
+      options[:delegation_stamp] = stamp if stamp
+      options[:run_metadata] = run_metadata if run_metadata
+      if target.method(:start!).parameters.any? { |_kind, name| name == :before_spawn }
+        options[:before_spawn] = ->(_run) { save_unlocked(agents) }
+      end
+      target.start!(**options)
     end
 
     def accept_delegation_prompt!(child, owner:, parent_key: nil, now: Time.now)
