@@ -19,6 +19,7 @@ module HQ
     PWA_ICON_192_PATH = File.join(ROOT, "assets", "pwa-icon-192.png")
     PWA_ICON_512_PATH = File.join(ROOT, "assets", "pwa-icon-512.png")
     PWA_ICON_MASKABLE_512_PATH = File.join(ROOT, "assets", "pwa-icon-maskable-512.png")
+    FRED_AVATAR_PATH = File.join(ROOT, "assets", "fred-avatar.png")
     SERVICE_WORKER_PATH = File.join(ROOT, "assets", "service-worker.js")
     PNG_ASSETS = {
       "remote-logo" => LOGO_PATH,
@@ -26,7 +27,8 @@ module HQ
       "apple-touch-icon" => APPLE_TOUCH_ICON_PATH,
       "pwa-icon-192" => PWA_ICON_192_PATH,
       "pwa-icon-512" => PWA_ICON_512_PATH,
-      "pwa-icon-maskable-512" => PWA_ICON_MASKABLE_512_PATH
+      "pwa-icon-maskable-512" => PWA_ICON_MASKABLE_512_PATH,
+      "fred-avatar" => FRED_AVATAR_PATH
     }.freeze
     ASSET_VERSION_PATHS = [
       TEMPLATE_PATH,

@@ -5722,6 +5722,8 @@ body:has(.personal-assistant-page) .app-header { display: none; }
 .personal-assistant-page { display: grid; grid-template-rows: 56px minmax(0, 1fr) auto; width: min(100%, 820px); height: 100dvh; min-height: 0; margin: 0 auto; background: var(--bg); }
 .pa-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--border); }
 .pa-header > strong { display: inline-flex; align-items: center; gap: 8px; }
+.fred-avatar { display: inline-block; flex: 0 0 auto; width: 28px; height: 28px; border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--border)); border-radius: 50%; object-fit: cover; object-position: center; background: var(--panel-soft); }
+.message-role .fred-avatar { width: 22px; height: 22px; }
 .pa-status-dot { width: 9px; height: 9px; border-radius: 999px; background: var(--success); }
 .pa-settings { position: relative; color: var(--muted); font-size: 13px; }
 .pa-settings summary { cursor: pointer; list-style: none; }
@@ -5744,6 +5746,7 @@ body:has(.personal-assistant-page) .app-header { display: none; }
 .pa-inline-action dl div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; }
 .pa-inline-action dt { color: var(--muted); font-size: 13px; }.pa-inline-action dd { margin: 0; font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
 .pa-action-controls { display: flex; gap: 8px; }.pa-action-controls button { flex: 1; }
+.pa-action-controls .ui-icon { width: 16px; height: 16px; }
 .pa-action-receipt { margin: 0; font-size: 14px; font-weight: 700; }.pa-technical-details { color: var(--muted); font-size: 13px; }.pa-technical-details summary { cursor: pointer; }.pa-technical-details pre { overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .pa-composer-row { border-top: 1px solid var(--border); padding: 8px max(18px, calc((100% - 760px) / 2)) calc(8px + env(safe-area-inset-bottom, 0px)); background: color-mix(in srgb, var(--bg) 96%, transparent); }
 .personal-assistant-page .agent-dock { position: static; transform: none; max-width: none; margin: 0; padding: 0; border: 0; box-shadow: none; background: transparent; }

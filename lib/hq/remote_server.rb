@@ -589,6 +589,8 @@ module HQ
         ui_asset("image/png", RemoteUI.png_asset("pwa-icon-512"))
       when "/pwa-icon-maskable-512.png"
         ui_asset("image/png", RemoteUI.png_asset("pwa-icon-maskable-512"))
+      when "/fred-avatar.png"
+        ui_asset("image/png", RemoteUI.png_asset("fred-avatar"))
       when "/favicon.svg"
         ui_asset("image/svg+xml; charset=utf-8", RemoteUI.favicon_svg)
       else
@@ -623,6 +625,7 @@ module HQ
         "/pwa-icon-192.png",
         "/pwa-icon-512.png",
         "/pwa-icon-maskable-512.png",
+        "/fred-avatar.png",
         "/favicon.png",
         "/favicon.svg",
         "/favicon.ico"

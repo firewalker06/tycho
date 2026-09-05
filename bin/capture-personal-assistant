@@ -77,8 +77,8 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
       File.write(memory_path, JSON.generate({ "type" => "assistant_message", "content" => "I found fixture-agent. I can prepare the exact action for your approval.", "created_at" => Time.now.utc.iso8601, "metadata" => { "run_id" => "capture-finalized-run" } }) + "\n")
     end
     request("/personal-assistant/actions")
-    capture.call("personal-assistant-active-pending-desktop.png", "Desktop Chrome", "[data-confirm-pa-proposal]", "Confirm start agent")
-    capture.call("personal-assistant-active-pending-mobile.png", "iPhone 13", "[data-confirm-pa-proposal]", "Confirm start agent")
+    capture.call("personal-assistant-active-pending-desktop.png", "Desktop Chrome", "[data-confirm-pa-proposal]", "Accept")
+    capture.call("personal-assistant-active-pending-mobile.png", "iPhone 13", "[data-confirm-pa-proposal]", "Accept")
   ensure
     Process.kill("TERM", pid) rescue nil
     Process.wait(pid) rescue nil

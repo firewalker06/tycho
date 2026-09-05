@@ -4178,6 +4178,7 @@ module RemoteServerTest
     response = server.send(:route_ui, "/")
     assert(response[:content_type].include?("text/html"), "expected / to return HTML")
     assert(response[:body].include?("Tycho - Factorio for Agents"), "expected / body to include app shell title")
+    assert(response[:body].include?("<span>FRED</span>"), "expected app navigation to use the FRED product name")
     legacy_request = HQ::RemoteServer.const_get(:Request).new(
       method: "GET",
       path: "/ui",
@@ -6388,6 +6389,18 @@ module RemoteServerTest
            "expected user chat labels to render the square-user-round icon")
     assert(js[:body].include?("iconSvg(\"botMessageSquare\")"),
            "expected assistant chat labels to render the bot-message-square icon")
+    assert(js[:body].include?("function personalAssistantMessageIdentity"),
+           "expected Personal Assistant messages to have a product-specific sender identity")
+    assert(js[:body].include?("Friendly Robot for Execution Dispatcher"),
+           "expected Personal Assistant UI to expand FRED where appropriate")
+    assert(js[:body].include?('alt="FRED"') && js[:body].include?("/fred-avatar.png"),
+           "expected FRED identity to use the served circular avatar asset")
+    assert(js[:body].include?("iconSvg(\"thumbsUp\")") && js[:body].include?("iconSvg(\"thumbsDown\")"),
+           "expected Personal Assistant approval controls to use Lucide thumbs icons")
+    assert(js[:body].include?('aria-label="Accept proposed action"') && js[:body].include?('"Accepting'),
+           "expected Personal Assistant approval copy to say Accept")
+    assert(!js[:body].include?("Confirm ${escapeHtml(copy.label.toLowerCase())}"),
+           "expected Personal Assistant approval copy to avoid Confirm action")
     assert(js[:body].include?("checkCheck") &&
            js[:body].include?('return iconSvg("checkCheck")'),
            "expected usage completion labels to render the Lucide check-check icon")
@@ -6620,6 +6633,17 @@ module RemoteServerTest
     logo = server.send(:route_ui, "/remote-logo.png")
     assert(logo[:content_type].include?("image/png"), "expected Remote UI logo route to return PNG")
     assert(logo[:body].bytesize.positive?, "expected Remote UI logo route to return image bytes")
+
+    fred_avatar_request = HQ::RemoteServer.const_get(:Request).new(
+      method: "GET",
+      path: "/fred-avatar.png",
+      headers: {},
+      body: ""
+    )
+    assert(server.send(:ui_request?, fred_avatar_request), "expected FRED avatar to be recognized as a UI route")
+    fred_avatar = server.send(:route_ui, "/fred-avatar.png")
+    assert(fred_avatar[:content_type].include?("image/png"), "expected FRED avatar route to return PNG")
+    assert(fred_avatar[:body].byteslice(0, 8) == "\x89PNG\r\n\x1A\n".b, "expected FRED avatar to be a PNG")
 
     horizontal_logo = server.send(:route_ui, "/remote-logo-horizontal.png")
     assert(horizontal_logo[:content_type].include?("image/png"), "expected Remote UI horizontal logo route to return PNG")
