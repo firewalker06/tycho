@@ -3127,6 +3127,8 @@ module HQ
 
       current = load_all_agents
       agents_by_key = current.to_h { |agent| [agent.key, agent] }
+      personal_assistant = keys.map { |key| agents_by_key[key] }.compact.find(&:personal_assistant?)
+      reject_personal_assistant_control!(personal_assistant) if personal_assistant
       archived = []
       skipped = []
       failed = []

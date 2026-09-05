@@ -461,6 +461,13 @@ module RemoteServerTest
                  "expected #{path} to reject ordinary control of FRED")
         end
       end
+      begin
+        server.send(:route, service, "POST", "/agents/archive", { "keys" => [key] }, nil)
+        raise "expected protected bulk archive rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("dedicated lifecycle"),
+               "expected bulk archive to reject ordinary control of FRED")
+      end
     end
   end
 
