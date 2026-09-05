@@ -4179,6 +4179,10 @@ module RemoteServerTest
     assert(response[:content_type].include?("text/html"), "expected / to return HTML")
     assert(response[:body].include?("Tycho - Factorio for Agents"), "expected / body to include app shell title")
     assert(response[:body].include?("<span>FRED</span>"), "expected app navigation to use the FRED product name")
+    assert(response[:body].include?("fred-sidebar-avatar") &&
+           response[:body].include?("/fred-avatar.png?v=#{HQ::RemoteUI.asset_version}") &&
+           response[:body].include?("fred-sidebar-avatar\" src=\"/fred-avatar.png?v=#{HQ::RemoteUI.asset_version}\" alt=\"\""),
+           "expected FRED sidebar navigation to use the cache-busted decorative avatar asset")
     legacy_request = HQ::RemoteServer.const_get(:Request).new(
       method: "GET",
       path: "/ui",

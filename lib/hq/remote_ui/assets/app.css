@@ -1733,6 +1733,15 @@ select {
   height: 16px;
 }
 
+.fred-sidebar-avatar {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: center;
+}
+
 .summary-card,
 .detail-card,
 .field-card,
