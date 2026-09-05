@@ -6466,6 +6466,22 @@ module RemoteServerTest
            "expected assistant chat labels to render the bot-message-square icon")
     assert(js[:body].include?("function personalAssistantMessageIdentity"),
            "expected Personal Assistant messages to have a product-specific sender identity")
+    assert(css[:body].include?(".personal-assistant-page { display: grid; grid-template-rows: 56px minmax(0, 1fr) auto; width: 100%;") &&
+           !css[:body].include?(".personal-assistant-page { display: grid; grid-template-rows: 56px minmax(0, 1fr) auto; width: min(100%, 820px);"),
+           "expected FRED to use the full conversation width without the old 820px outer shell clamp")
+    assert(js[:body].include?('class="pa-tycho-nav header-mark"') &&
+           js[:body].include?('data-agent-switcher') &&
+           js[:body].include?('aria-controls="unread-agents-panel"'),
+           "expected the FRED Tycho logo to expose the shared agent switcher ARIA contract")
+    assert(js[:body].include?("function agentSwitcherMark") &&
+           js[:body].include?("function toggleUnreadPanel") &&
+           js[:body].include?("function openUnreadPanelFromKeyboard") &&
+           js[:body].include?("function handleUnreadPanelKeydown") &&
+           js[:body].include?("data-agent-switcher"),
+           "expected FRED logo clicks and Cmd/Ctrl+K to reuse the shared switcher state and keyboard behavior")
+    assert(css[:body].include?("body:has(.personal-assistant-page) .app-header > #unread-agents-panel") &&
+           css[:body].include?("position: fixed;"),
+           "expected the shared agent switcher panel to remain visible and positioned from the FRED header")
     assert(js[:body].include?("Friendly Robot for Execution Dispatcher"),
            "expected Personal Assistant UI to expand FRED where appropriate")
     assert(js[:body].include?("Choose how FRED should work") &&
