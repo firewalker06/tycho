@@ -21,9 +21,30 @@ module AgentCostSnapshotTest
     assert_opencode_sums_step_costs
     assert_missing_history_is_marked_partial
     assert_codex_estimates_cost_from_cumulative_token_deltas
+    assert_codex_prices_gpt_6_astra_cache_writes
     assert_unknown_codex_model_stays_unpriced
     assert_missing_cost_is_not_treated_as_zero
     puts "agent_cost_snapshot_test: ok"
+  end
+
+  def assert_codex_prices_gpt_6_astra_cache_writes
+    current_run = run("astra-session", 1)
+    agent = agent("codex", [current_run], nil, model: "gpt-6-astra")
+    snapshot = advance(agent, current_run, [usage("turn.completed", "usage" => {
+      "input_tokens" => 1_000,
+      "cached_input_tokens" => 100,
+      "cache_creation_input_tokens" => 200,
+      "output_tokens" => 100
+    })])
+
+    assert((snapshot["run_amount_usd"] - 0.0146).abs < 0.000_000_001,
+           "expected Astra cache writes to use the published rate")
+    assert(snapshot.dig("pricing", "cache_write_usd_per_million") == 12.5,
+           "expected the applied Astra cache-write rate to persist")
+    assert(snapshot.dig("token_snapshot", "cache_creation_input_tokens") == 200,
+           "expected cache-write counters to persist in Codex snapshots")
+    assert(snapshot.dig("run_tokens", "cache_creation_input_tokens") == 200,
+           "expected cache-write counters to reach the estimator")
   end
 
   def assert_claude_cost_accumulates_per_session

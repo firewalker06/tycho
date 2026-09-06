@@ -120,13 +120,21 @@ module HQ
         return unless usage.is_a?(Hash)
 
         input_tokens = usage["input_tokens"]
-        cached_tokens = usage["cached_input_tokens"]
+        input_details = usage["input_tokens_details"]
+        input_details = {} unless input_details.is_a?(Hash)
+        cached_tokens = usage["cached_input_tokens"] || input_details["cached_tokens"]
+        cache_write_tokens = usage["cache_creation_input_tokens"] || usage["cache_write_tokens"] ||
+                             input_details["cache_write_tokens"]
         output_tokens = usage["output_tokens"]
         reasoning_tokens = usage["reasoning_output_tokens"]
+        normalized_usage = usage.dup
+        normalized_usage["cached_input_tokens"] = cached_tokens unless cached_tokens.nil?
+        normalized_usage["cache_creation_input_tokens"] = cache_write_tokens unless cache_write_tokens.nil?
 
         parts = []
         parts << "#{input_tokens} input" if input_tokens
         parts << "#{cached_tokens} cached" if cached_tokens
+        parts << "#{cache_write_tokens} cache write" if cache_write_tokens
         parts << "#{output_tokens} output" if output_tokens
         parts << "#{reasoning_tokens} reasoning output" if reasoning_tokens
 
@@ -137,10 +145,11 @@ module HQ
           tool_name: nil,
           metadata: {
             "event_type" => "turn.completed",
-            "usage" => usage,
+            "usage" => normalized_usage,
             "output_tokens" => output_tokens,
             "input_tokens" => input_tokens,
             "cached_input_tokens" => cached_tokens,
+            "cache_creation_input_tokens" => cache_write_tokens,
             "reasoning_output_tokens" => reasoning_tokens
           }
         )

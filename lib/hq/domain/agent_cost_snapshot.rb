@@ -112,7 +112,9 @@ module HQ
       values = metadata(entry)["usage"]
       return [nil, nil] unless values.is_a?(Hash)
 
-      snapshot = %w[input_tokens cached_input_tokens output_tokens reasoning_output_tokens].each_with_object({}) do |key, result|
+      snapshot = %w[
+        input_tokens cached_input_tokens cache_creation_input_tokens output_tokens reasoning_output_tokens
+      ].each_with_object({}) do |key, result|
         result[key] = values[key] if values[key].is_a?(Numeric)
       end
       return [nil, nil] if snapshot.empty?

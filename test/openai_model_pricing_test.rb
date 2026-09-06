@@ -7,10 +7,40 @@ module OpenAIModelPricingTest
 
   def run!
     assert_prices_uncached_cached_and_output_tokens
+    assert_prices_gpt_6_astra_cache_writes
     assert_ignores_reasoning_token_breakdown
     assert_resolves_aliases_and_snapshots
     assert_rejects_unknown_models_and_invalid_usage
     puts "openai_model_pricing_test: ok"
+  end
+
+  def assert_prices_gpt_6_astra_cache_writes
+    estimate = HQ::OpenAIModelPricing.estimate(
+      model: "gpt-6-astra",
+      tokens: {
+        "input_tokens" => 1_000,
+        "cached_input_tokens" => 100,
+        "cache_creation_input_tokens" => 200,
+        "output_tokens" => 100
+      }
+    )
+
+    assert((estimate["amount_usd"] - 0.0146).abs < 0.000_000_001,
+           "expected Astra cache writes to replace the standard uncached-input rate")
+    assert(estimate.dig("pricing", "input_usd_per_million") == 10.0,
+           "expected the official Astra input price")
+    assert(estimate.dig("pricing", "cached_input_usd_per_million") == 1.0,
+           "expected the official Astra cached-input price")
+    assert(estimate.dig("pricing", "cache_write_usd_per_million") == 12.5,
+           "expected the official Astra cache-write price")
+    assert(estimate.dig("pricing", "output_usd_per_million") == 50.0,
+           "expected the official Astra output price")
+    assert(estimate.dig("pricing", "source") == "https://developers.openai.com/api/docs/models/gpt-6-astra",
+           "expected Astra's model-specific pricing provenance")
+    assert(estimate.dig("pricing", "as_of") == "2026-09-07",
+           "expected Astra's pricing date")
+    assert(HQ::OpenAIModelPricing.price_model_for("gpt-6-astra-2026-09-07") == "gpt-6-astra",
+           "expected dated Astra snapshots to use Astra pricing")
   end
 
   def assert_prices_uncached_cached_and_output_tokens

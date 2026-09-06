@@ -33,6 +33,7 @@ module ParserTest
     assert_custom_profiles_reuse_declared_native_parsers
     assert_chat_blocks_use_sequence_for_equal_timestamps
     assert_codex_turn_completed_usage_metadata
+    assert_codex_turn_completed_normalizes_prompt_cache_details
     assert_claude_result_usage_metadata
     assert_opencode_step_finish_usage_metadata
     puts "parser_test: ok"
@@ -295,6 +296,21 @@ module ParserTest
            "expected Codex summary block to retain turn.completed metadata, got #{summary.metadata.inspect}")
     assert(summary.metadata["usage"]["reasoning_output_tokens"] == 12_370,
            "expected Codex summary metadata to expose reasoning tokens, got #{summary.metadata.inspect}")
+  end
+
+  def assert_codex_turn_completed_normalizes_prompt_cache_details
+    lines = [
+      '{"type":"turn.completed","usage":{"input_tokens":1000,"input_tokens_details":{"cached_tokens":100,"cache_write_tokens":200},"output_tokens":100}}'
+    ]
+    _conversation, system = HQ::Parser.parse_stream(lines, agent_type: "codex")
+    usage = system.find { |entry| entry.type == :usage }
+
+    assert(usage.content.include?("200 cache write"),
+           "expected Codex usage content to include prompt-cache writes, got #{usage.content.inspect}")
+    assert(usage.metadata.dig("usage", "cached_input_tokens") == 100,
+           "expected Codex cached tokens to normalize from input details, got #{usage.metadata.inspect}")
+    assert(usage.metadata.dig("usage", "cache_creation_input_tokens") == 200,
+           "expected Codex cache writes to normalize from input details, got #{usage.metadata.inspect}")
   end
 
   def assert_claude_result_usage_metadata
