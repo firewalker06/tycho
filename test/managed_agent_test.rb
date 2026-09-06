@@ -38,6 +38,7 @@ module ManagedAgentTest
     assert_summary_sections_guidance_reaches_every_harness_run
     assert_response_style_applies_to_cold_and_resumed_runs
     assert_native_resume_includes_same_second_follow_up
+    assert_native_resume_includes_action_receipt_once
     assert_response_style_can_be_disabled_and_run_session_is_recorded
     assert_agent_result_schema_describes_summary
     assert_harness_structured_output_contracts
@@ -509,6 +510,41 @@ module ManagedAgentTest
              "expected native resume prompt to include follow-up created at the prior finish timestamp")
       assert(!prompt.include?("Continue from the current HQ managed-agent state."),
              "expected same-second follow-up to replace generic resume prompt")
+    end
+  ensure
+    replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
+  end
+
+  def assert_native_resume_includes_action_receipt_once
+    old_logs_dir = nil
+    Dir.mktmpdir("hq-managed-agent-action-receipt-test") do |dir|
+      logs_dir = File.join(dir, "agents")
+      FileUtils.mkdir_p(logs_dir)
+      old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, logs_dir)
+      finished_at = Time.parse("2026-07-18T13:09:48+07:00") + 0.75
+      receipt = "Tycho completed inspect_agents."
+      agent = HQ::ManagedAgent.new(
+        key: "action-receipt-resume", name: "Action receipt resume", project_key: "demo",
+        template_key: "custom", workspace: dir, prompt: "Cold prompt", agent: "opencode",
+        session_id: "ses_action_receipt", runs: [HQ::ManagedAgent::AgentRun.new(
+          started_at: finished_at - 5, finished_at:, exit_code: 0, status: "success", command: "opencode run"
+        )]
+      )
+      agent.send(:memory_store).append_personal_assistant_action_result!(receipt, created_at: finished_at + 0.1,
+                                                                                     metadata: { "personal_assistant_action_proposal_id" => "pa-1" })
+      during_run_receipt = "Tycho completed inspect_projects."
+      agent.send(:memory_store).append_personal_assistant_action_result!(during_run_receipt, created_at: finished_at - 0.1,
+                                                                                                metadata: { "personal_assistant_action_proposal_id" => "pa-2" })
+      agent.send(:memory_store).append_user_message!("What should I do next?", created_at: finished_at + 0.2)
+      prompt = agent.send(:prompt_for_execution)
+      assert(prompt.include?(receipt) && prompt.include?(during_run_receipt) && prompt.include?("What should I do next?"),
+             "expected the next native resume to include server receipts delivered after and during the prior run")
+
+      later = HQ::ManagedAgent::AgentRun.new(started_at: finished_at + 1, finished_at: finished_at + 2,
+                                               exit_code: 0, status: "success", command: "opencode run")
+      agent.instance_variable_set(:@runs, [later])
+      assert(!agent.send(:prompt_for_execution).include?(receipt) && !agent.send(:prompt_for_execution).include?(during_run_receipt),
+             "expected action receipts to leave native resume context after one run")
     end
   ensure
     replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
@@ -2376,6 +2412,7 @@ module ManagedAgentTest
       workspace: Dir.tmpdir,
       prompt: "System prompt",
       agent: "codex",
+      sandbox_mode: "read-only",
       model: "gpt-5.1-codex-max",
       reasoning_effort: "xhigh"
     )
@@ -2384,6 +2421,8 @@ module ManagedAgentTest
            "expected Codex command to include --model")
     assert(argument_after(codex_command, "-c") == "model_reasoning_effort=\"xhigh\"",
            "expected Codex command to include model_reasoning_effort config")
+    assert(argument_after(codex_command, "--sandbox") == "read-only" && !codex_command.include?("--full-auto"),
+           "expected Codex command to use the current sandbox flag without removed --full-auto")
 
     claude = HQ::ManagedAgent.new(
       key: "claude-model-agent",

@@ -47,6 +47,8 @@ module RemoteServerTest
     assert_remote_response_style_settings
     assert_remote_session_loop_settings
     assert_remote_personal_assistant_routes
+    assert_remote_personal_assistant_action_execution
+    assert_remote_archived_personal_assistant_history
     assert_remote_skill_installation_requires_confirmation
     assert_remote_schedule_routes
     assert_remote_setup_payload_includes_readiness
@@ -508,6 +510,7 @@ module RemoteServerTest
       protected_agent.add_user_message!("Keep this attachment.", attachments: [{ "type" => "file", "title" => "Protected attachment", "path" => protected_attachment_path }])
       service.send(:save_agent, protected_agent)
       protected_attachment_id = service.agent(key)[:attachments].first.fetch("id")
+      protected_log_paths = protected_agent.log_files.select { |path| File.exist?(path) }
       begin
         server.send(:route, service, "DELETE", "/attachments/#{protected_attachment_id}", {}, nil)
         raise "expected protected attachment deletion rejection"
@@ -533,11 +536,161 @@ module RemoteServerTest
       assert(reset.dig(:body, :personal_assistant, :state) == "unconfigured" && !reset.dig(:body, :personal_assistant, :configured),
              "expected confirmed reset to return FRED onboarding state")
       assert(service.send(:load_all_agents).none?(&:personal_assistant?) && service.registry.personal_assistant.empty?,
-             "expected reset to archive the protected session and clear FRED configuration")
+             "expected reset to delete the protected session and clear FRED configuration")
+      assert(protected_log_paths.none? { |path| File.exist?(path) } &&
+             Dir.glob(File.join(HQ::AGENT_ARCHIVE_DIR, "**", "*#{key}*"), File::FNM_DOTMATCH).empty?,
+             "expected reset to delete FRED session logs instead of moving them into the archive")
       assert(!File.read(service.registry.path).include?("personal_assistant"),
              "expected reset to remove FRED model, reasoning effort, and timezone from configuration")
       assert(HQ::FileStore.read_json(proposals_path, fallback: {}).fetch("proposals", []).empty?,
              "expected reset to clear pending and historical FRED action state")
+    end
+  end
+
+  def assert_remote_personal_assistant_action_execution
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
+      server = HQ::RemoteServer.new
+      server.send(:route, service, "POST", "/personal-assistant/setup", {
+                    "confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta"
+                  }, nil)
+      opened = server.send(:route, service, "POST", "/personal-assistant/open", {}, nil)
+      active_key = opened.dig(:body, :personal_assistant, :active_key)
+      actions = service.instance_variable_get(:@personal_assistant_actions)
+      register = lambda do |item, run_id|
+        actions.register_finalized!([item], active_key:, source_run_id: run_id).first
+      end
+      confirm = lambda do |proposal|
+        server.send(:route, service, "POST", "/personal-assistant/actions/#{proposal.fetch("id")}/confirm", { "confirmed" => true }, nil).dig(:body, :proposal)
+      end
+
+      created_project = register.call(
+        { "type" => "create_project", "description" => "Create FRED project", "arguments" => {
+          "key" => "fred-demo", "name" => "FRED Demo", "path" => workspace, "group" => "FRED", "agent" => "codex", "model" => nil, "reasoning_effort" => nil
+        } }, "fred-create-project"
+      )
+      project_result = confirm.call(created_project)
+      assert(project_result.dig("result", "project", "key") == "fred-demo" && project_result.dig("tracked", "project_key") == "fred-demo",
+             "expected confirmed FRED project creation to return and track its local identity")
+      updated_project = register.call(
+        { "type" => "update_project", "description" => "Rename FRED project", "arguments" => {
+          "project_key" => "fred-demo", "name" => "FRED Demo Updated", "group" => nil, "agent" => nil, "model" => nil, "reasoning_effort" => nil
+        } }, "fred-update-project"
+      )
+      updated_result = confirm.call(updated_project)
+      assert(updated_result.dig("result", "project", "name") == "FRED Demo Updated" && updated_result.dig("result", "project", "group") == "FRED",
+             "expected null project update values to preserve existing configuration")
+
+      created_schedule = register.call(
+        { "type" => "create_schedule", "description" => "Schedule daily review", "arguments" => {
+          "key" => "fred-daily", "name" => "FRED daily", "cron" => "0 9 * * *", "timezone" => "local", "project_key" => "fred-demo", "agent_name" => "FRED reviewer", "message" => "Review the project.", "system_message" => nil
+        } }, "fred-create-schedule"
+      )
+      schedule_result = confirm.call(created_schedule)
+      assert(schedule_result.dig("result", "schedule", "key") == "fred-daily" && schedule_result.dig("tracked", "schedule_key") == "fred-daily",
+             "expected confirmed FRED schedule creation to return and track its local identity")
+      paused = confirm.call(register.call(
+                              { "type" => "pause_schedule", "description" => "Pause", "arguments" => { "schedule_key" => "fred-daily" } }, "fred-pause-schedule"
+                            ))
+      assert(paused.dig("result", "schedule", "paused"), "expected confirmed FRED pause to return paused schedule state")
+      resumed = confirm.call(register.call(
+                               { "type" => "resume_schedule", "description" => "Resume", "arguments" => { "schedule_key" => "fred-daily" } }, "fred-resume-schedule"
+                             ))
+      assert(!resumed.dig("result", "schedule", "paused"), "expected confirmed FRED resume to return active schedule state")
+
+      inspected_agent = service.create_agent("project_key" => "web", "name" => "Inspectable", "prompt" => "Inspect me", "agent" => "codex")
+      run_receipt = register.call(
+        { "type" => "inspect_agent_run", "description" => "Inspect run", "arguments" => { "agent_key" => inspected_agent[:key] } }, "fred-inspect-run"
+      )
+      log_receipt = register.call(
+        { "type" => "inspect_agent_log", "description" => "Inspect log", "arguments" => { "agent_key" => inspected_agent[:key] } }, "fred-inspect-log"
+      )
+      assert(run_receipt.dig("result", "agent", "key") == inspected_agent[:key] && log_receipt.dig("result", "agent_key") == inspected_agent[:key],
+             "expected FRED agent run and log inspections to return useful scoped data")
+
+      conversation = service.conversation(active_key)
+      assert(conversation.any? { |entry| entry[:content].include?("Tycho completed create_project.") },
+             "expected completed FRED actions to persist a readable conversation receipt")
+      created_receipt = conversation.find { |entry| entry.dig(:metadata, "personal_assistant_action_proposal_id") == created_project["id"] }
+      assert(created_receipt && created_receipt.dig(:metadata, "personal_assistant_action_source_run_id") == "fred-create-project",
+             "expected FRED receipt metadata to survive the conversation endpoint")
+      fred_agent = service.send(:find_agent!, active_key)
+      HQ::AgentMemory.new(fred_agent).send(:append_event!, {
+        "type" => "assistant_message", "content" => "Prepared the project action.", "run_id" => "fred-create-project", "created_at" => Time.now.iso8601
+      })
+      source_turn = service.conversation(active_key).find { |entry| entry[:content] == "Prepared the project action." }
+      assert(source_turn.dig(:metadata, "run_id") == "fred-create-project",
+             "expected a FRED source turn run ID to survive the conversation endpoint")
+      duplicate_project = register.call(
+        { "type" => "create_project", "description" => "Check an existing project", "arguments" => created_project.fetch("arguments").merge("name" => "FRED Demo Updated") },
+        "fred-verify-existing-project"
+      )
+      begin
+        confirm.call(duplicate_project)
+        raise "expected duplicate project creation to fail"
+      rescue HQ::RemoteServer::Error
+        nil
+      end
+      verified = server.send(:route, service, "POST", "/personal-assistant/actions/#{duplicate_project.fetch("id")}/verify", {}, nil).dig(:body, :proposal)
+      assert(verified["state"] == "executed", "expected verification to observe the existing matching project without creating it again")
+      service.record_personal_assistant_action_outcome!(verified)
+      receipts = service.conversation(active_key).select do |entry|
+        entry.dig(:metadata, "personal_assistant_action_proposal_id") == duplicate_project["id"]
+      end
+      assert(receipts.length == 2 && receipts.last[:content].include?("Tycho completed create_project."),
+             "expected verified success to correct the earlier failed receipt exactly once")
+      stale = register.call(
+        { "type" => "start_agent", "description" => "Start later", "arguments" => { "agent_key" => inspected_agent[:key] } }, "fred-stale-action"
+      )
+      receipt_count = service.conversation(active_key).length
+      service.record_personal_assistant_action_outcome!(stale)
+      assert(service.conversation(active_key).length == receipt_count,
+             "expected an unclaimed proposal to produce no fabricated failure receipt")
+      restarted = server.send(:route, service, "POST", "/personal-assistant/restart", { "confirmed" => true }, nil)
+      assert(restarted.dig(:body, :personal_assistant, :active_key) != active_key, "expected restart to create a new FRED generation")
+      begin
+        confirm.call(stale)
+        raise "expected stale action confirmation to be rejected"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("earlier FRED conversation"), "expected old FRED proposal IDs to be inert after restart")
+      end
+    end
+  end
+
+  def assert_remote_archived_personal_assistant_history
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
+      server = HQ::RemoteServer.new
+      server.send(:route, service, "POST", "/personal-assistant/setup", {
+                    "confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta"
+                  }, nil)
+      opened = server.send(:route, service, "POST", "/personal-assistant/open", {}, nil)
+      archived_key = opened.dig(:body, :personal_assistant, :active_key)
+      service.submit_personal_assistant_prompt({ "prompt" => "Keep this archived conversation readable." })
+      restarted = server.send(:route, service, "POST", "/personal-assistant/restart", { "confirmed" => true }, nil)
+      assert(restarted.dig(:body, :personal_assistant, :active_key) != archived_key, "expected restart to archive the previous FRED session")
+
+      archived = server.send(:route, service, "GET", "/agents/#{archived_key}", {}, nil)
+      archived_agent = archived.dig(:body, :agent)
+      assert(archived_agent[:archived] && archived_agent[:key] == archived_key,
+             "expected an archived FRED session to be readable by its history key")
+      conversation = server.send(:route, service, "GET", "/agents/#{archived_key}/conversation", {}, nil)
+      assert(conversation.dig(:body, :conversation).any? { |entry| entry[:content].include?("Keep this archived conversation readable.") },
+             "expected archived FRED history to retain its conversation")
+      assert(!service.agents.any? { |agent| agent[:key] == archived_key } &&
+             !service.resource_snapshot[:agents].any? { |agent| agent[:key] == archived_key } &&
+             !service.archived_agents[:agents].any? { |agent| agent[:key] == archived_key },
+             "expected archived FRED history to remain hidden from generic agent catalogs")
+      begin
+        server.send(:route, service, "POST", "/agents/#{archived_key}/start", {}, nil)
+        raise "expected archived FRED mutation to remain unavailable"
+      rescue HQ::RemoteServer::Error => e
+        assert([404, 409].include?(e.status), "expected archived FRED history to be read-only")
+      end
     end
   end
 
@@ -1885,6 +2038,11 @@ module RemoteServerTest
         #!#{RbConfig.ruby}
         require "json"
         File.write(#{argv_path.dump}, JSON.generate(ARGV))
+        if ARGV.include?("--full-auto")
+          warn "error: unexpected argument '--full-auto' found"
+          warn "For more information, try '--help'."
+          exit 2
+        end
         if ARGV.include?("--")
           output_index = ARGV.index("-o")
           if output_index
@@ -6531,13 +6689,29 @@ module RemoteServerTest
            "expected the shared agent switcher panel to remain visible and positioned from the FRED header")
     assert(js[:body].include?("Friendly Robot for Execution Dispatcher"),
            "expected Personal Assistant UI to expand FRED where appropriate")
-    assert(js[:body].include?("Choose how FRED should work") &&
+    fred_settings = js[:body].split("function renderPersonalAssistantSettings", 2).last.split("function personalAssistantActionCopy", 2).first
+    assert(!fred_settings.include?("item.introduction") &&
+           fred_settings.include?('${item.configured ? `<div class="kv-grid">') &&
+           fred_settings.include?('data-initiate-personal-assistant>Set up FRED</button>') &&
+           !fred_settings.include?("Setup is available through the Personal Assistant API"),
+           "expected unconfigured FRED settings to hide prompt and configuration copy behind a setup action")
+    initiate_handler = js[:body][js[:body].index("function handleViewClick"), 1_500]
+    assert(initiate_handler.include?('data-initiate-personal-assistant') &&
+           initiate_handler.include?('navigate({ type: "tab", tab: "personal-assistant" })'),
+           "expected FRED setup to open the Personal Assistant setup screen")
+    assert(js[:body].include?("Set up FRED") &&
+           js[:body].include?("Review these defaults. FRED sends nothing until your first message.") &&
            js[:body].include?("I confirm these settings for FRED.") &&
-           js[:body].include?("Opening FRED does not send a model prompt."),
-           "expected chat-first FRED setup to show explicit model, effort, timezone, confirmation, and ready states")
+           !js[:body].include?("Open today’s conversation when you’re ready.".b),
+           "expected FRED setup to show concise configuration without a ready screen")
+    setup_handler = js[:body].split('if (["personal-assistant-setup-form", "personal-assistant-settings-form"]', 2).last.split('if (event.target.id === "server-connection-form")', 2).first
+    assert(setup_handler.include?('apiPost("/personal-assistant/setup"') &&
+           setup_handler.include?('apiPost("/personal-assistant/open"') &&
+           setup_handler.index('apiPost("/personal-assistant/setup"') < setup_handler.index('apiPost("/personal-assistant/open"'),
+           "expected confirmed FRED setup to open the empty daily conversation immediately")
     assert(js[:body].include?('class="pa-setup ui-surface"') &&
-           js[:body].include?('class="ui-field__label" for="pa-model"') &&
-           js[:body].include?('class="ui-input" id="pa-timezone"') &&
+           js[:body].include?('name="model" required') &&
+           js[:body].include?('name="timezone" required') &&
            js[:body].include?('aria-describedby="pa-setup-guidance"'),
            "expected FRED setup to use shared surface and field contracts with connected guidance")
     assert(!js[:body].include?("confirmed: true, model: \"gpt-5.6-sol\""),
@@ -6548,17 +6722,18 @@ module RemoteServerTest
     assert(settings_markup.scan('role="menu"').length == 1 && !settings_markup.include?('class="pa-settings-details"') &&
            !settings_markup.include?('Open app settings') && !settings_markup.include?('daily conversation and its continuity'),
            "expected FRED settings overflow to contain only the compact Settings action")
-    assert(js[:body].include?('data-reset-personal-assistant') && js[:body].include?('Reset FRED?') &&
+    reset_handler = js[:body].split('if (event.target.closest("[data-reset-personal-assistant]"))', 2).last.split('const confirmPa', 2).first
+    assert(js[:body].include?('data-reset-personal-assistant') && reset_handler.include?('Reset FRED?') &&
+           reset_handler.include?("permanently deletes any active FRED session") &&
            js[:body].include?('/personal-assistant/reset'),
-           "expected Settings to offer confirmed FRED reset through the dedicated API")
+           "expected the main Settings view to offer confirmed destructive FRED reset through the dedicated API")
     assert(js[:body].include?('alt="FRED"') && js[:body].include?("/fred-avatar.png"),
            "expected FRED identity to use the served circular avatar asset")
     assert(js[:body].include?("iconSvg(\"thumbsUp\")") && js[:body].include?("iconSvg(\"thumbsDown\")"),
            "expected Personal Assistant approval controls to use Lucide thumbs icons")
-    assert(js[:body].include?('aria-label="Accept proposed action"') && js[:body].include?('"Accepting'),
-           "expected Personal Assistant approval copy to say Accept")
-    assert(!js[:body].include?("Confirm ${escapeHtml(copy.label.toLowerCase())}"),
-           "expected Personal Assistant approval copy to avoid Confirm action")
+    assert(js[:body].include?('data-confirm-pa-proposal=') && js[:body].include?('data-reject-pa-proposal=') &&
+           js[:body].include?('aria-label="${escapeAttr(confirmLabel)}"'),
+           "expected Personal Assistant approvals to expose action-specific labels and rejection")
     assert(js[:body].include?("checkCheck") &&
            js[:body].include?('return iconSvg("checkCheck")'),
            "expected usage completion labels to render the Lucide check-check icon")

@@ -160,6 +160,13 @@ module HQ
             timestamp:,
             metadata: message_metadata_for(event, sequence:)
           )
+        when "personal_assistant_action_result"
+          conversation << Parser::ConversationEntry.new(
+            role: "assistant",
+            content: event["content"].to_s,
+            timestamp:,
+            metadata: message_metadata_for(event, sequence:)
+          )
         when "tool_summary"
           entry = Parser::SystemEntry.new(
             type: :tool_call,
@@ -322,6 +329,7 @@ module HQ
 
     def run_summary_metadata_for(event, sequence: nil, run_number: nil)
       metadata = event["metadata"].is_a?(Hash) ? event["metadata"].dup : {}
+      metadata["run_id"] ||= event["run_id"].to_s unless event["run_id"].to_s.empty?
       status = event["status"].to_s.strip
       metadata["status"] = status unless status.empty?
       metadata["run_number"] ||= run_number unless run_number.nil?
@@ -330,8 +338,9 @@ module HQ
     end
 
     def message_metadata_for(event, sequence: nil)
-      metadata = event["metadata"]
-      return sequence_metadata(sequence) unless metadata.is_a?(Hash) && !metadata.empty?
+      metadata = event["metadata"].is_a?(Hash) ? event["metadata"].dup : {}
+      metadata["run_id"] ||= event["run_id"].to_s unless event["run_id"].to_s.empty?
+      return sequence_metadata(sequence) if metadata.empty?
 
       merge_sequence_metadata(metadata, sequence)
     end

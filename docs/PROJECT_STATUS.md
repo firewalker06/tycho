@@ -97,15 +97,17 @@ Key references:
 
 ## Current Focus
 
-**Personal Assistant merge gate**: FRED setup now requires visible Codex model,
-reasoning effort, IANA timezone, and explicit confirmation before opening a
-daily conversation. Ordinary agent lifecycle endpoints cannot control its
-protected daily role; the dedicated Personal Assistant API owns opening and
-messaging. Zone identifiers must resolve to TZif data, not zoneinfo metadata.
-Protected FRED daily sessions are absent from generic agent catalogs; the
-dedicated Personal Assistant payload supplies its conversation detail. Action
-proposals and receipts are scoped to the active daily session so stale records
-cannot appear in a new FRED conversation.
+**FRED experience**: Keep the Personal Assistant compact and task-focused.
+Setup keeps visible model, effort, timezone, and explicit confirmation, with
+catalog suggestions and FRED access before the first project. Settings edits
+and a non-destructive restart are separate from destructive reset. Readable
+action previews and useful receipts connect requests to projects, agents,
+schedules, and run results; returned results become bounded context for the
+next message without starting an automatic action loop. The pure action
+catalog, model schema, and server validation stay aligned through contract tests.
+Daily continuity and tracked work remain inspectable across conversations.
+Preserve the protected daily role, server-local identity, exact confirmation
+for each mutation, and no blind retry after an uncertain execution outcome.
 
 **v0.10.2 release**: successful managed runs can now persist validated Second
 Brain memory handoffs and expose them through local or remote CLI and API

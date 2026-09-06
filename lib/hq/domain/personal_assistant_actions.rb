@@ -7,23 +7,32 @@ require "securerandom"
 
 require_relative "constants"
 require_relative "file_store"
+require_relative "personal_assistant_action_catalog"
 
 module HQ
   # Stores model-proposed assistant actions as an immutable, server-owned review
   # record. The model can describe intent, but it cannot provide identity,
   # confirmation, or an executable command.
   class PersonalAssistantActions
-    READ_ONLY = %w[read_docs search_docs inspect_agents inspect_projects].freeze
-    MUTATIONS = %w[install_or_update_tycho_skill create_agent message_agent start_agent stop_agent].freeze
-    TYPES = (READ_ONLY + MUTATIONS).freeze
+    READ_ONLY = PersonalAssistantActionCatalog::READ_ONLY
+    MUTATIONS = PersonalAssistantActionCatalog::MUTATIONS
+    TYPES = PersonalAssistantActionCatalog::TYPES
+    ACTION_ARGUMENTS = PersonalAssistantActionCatalog::ARGUMENTS
+    NULLABLE_ARGUMENTS = PersonalAssistantActionCatalog::NULLABLE_ARGUMENTS
 
-    def initialize(path: File.join(PERSONAL_ASSISTANT_DIR, "proposals.json"), executor:)
+    def initialize(path: File.join(PERSONAL_ASSISTANT_DIR, "proposals.json"), executor:, verifier: nil, guard: nil)
       @path = path
       @executor = executor
+      @verifier = verifier
+      @guard = guard
     end
 
     def proposals
       state.fetch("proposals", []).map { |proposal| public_proposal(proposal) }
+    end
+
+    def proposal(id)
+      public_proposal(find!(id))
     end
 
     # Only a finalized run is allowed to create proposals. source_run_id makes
@@ -49,29 +58,107 @@ module HQ
     end
 
     def execute!(id, confirmed: false)
-      pending = find!(id)
-      raise ArgumentError, "Exact Tycho confirmation is required" if MUTATIONS.include?(pending["type"]) && confirmed != true
-      proposal = synchronize do |current|
-        target = current.fetch("proposals").find { |item| item["id"] == id }
-        raise ArgumentError, "Unknown proposal" unless target
-        raise ArgumentError, "Proposal has already been claimed" unless %w[ready awaiting_confirmation].include?(target["state"])
-        target["state"] = "executing"
-        target["claimed_at"] = Time.now.utc.iso8601
-        target.dup
+      claimed = false
+      with_execution_lock(id) do
+        pending = find!(id)
+        raise ArgumentError, "Exact Tycho confirmation is required" if MUTATIONS.include?(pending["type"]) && confirmed != true
+        proposal = synchronize do |current|
+          target = current.fetch("proposals").find { |item| item["id"] == id }
+          raise ArgumentError, "Unknown proposal" unless target
+          raise ArgumentError, "Proposal has already been claimed" unless %w[ready awaiting_confirmation].include?(target["state"])
+          @guard&.call(target.dup) if MUTATIONS.include?(target["type"])
+          target["state"] = "executing"
+          target["claimed_at"] = Time.now.utc.iso8601
+          claimed = true
+          target.dup
+        end
+        result = @executor.call(proposal.fetch("type"), proposal.fetch("arguments"))
+        synchronize do |current|
+          target = current.fetch("proposals").find { |item| item["id"] == id }
+          target["state"] = "executed"; target["result"] = result; target["executed_at"] = Time.now.utc.iso8601
+        end
+        public_proposal(find!(id))
       end
-      result = @executor.call(proposal.fetch("type"), proposal.fetch("arguments"))
+    rescue StandardError => e
+      if claimed
+        synchronize do |current|
+          target = current.fetch("proposals").find { |item| item["id"] == id }
+          next unless target && target["state"] == "executing"
+
+          target["state"] = "failed"
+          target["error"] = e.message
+          target["recovery"] = { "state" => "verification_available", "action" => "verify" }
+        end
+      end
+      raise
+    end
+
+    def track!(id, tracked)
       synchronize do |current|
-        target = current.fetch("proposals").find { |item| item["id"] == id }
-        target["state"] = "executed"; target["result"] = result; target["executed_at"] = Time.now.utc.iso8601
+        target = current.fetch("proposals").find { |item| item["id"] == id.to_s }
+        raise ArgumentError, "Unknown proposal" unless target
+
+        target["tracked"] = tracked if tracked.is_a?(Hash) && !tracked.empty?
       end
       public_proposal(find!(id))
-    rescue StandardError => e
-      synchronize do |current|
-        target = current.fetch("proposals").find { |item| item["id"] == id }
-        next unless target && target["state"] == "executing"
+    end
 
-        target["state"] = "failed"
-        target["error"] = e.message
+    # Verification never re-executes a mutation. It only reconciles observed
+    # state and makes a replacement proposal possible when no effect occurred.
+    def verify!(id)
+      raise ArgumentError, "Action verification is unavailable" unless @verifier
+
+      claimed = false
+      with_execution_lock(id, nonblocking: true) do
+        proposal = synchronize do |current|
+          target = current.fetch("proposals").find { |item| item["id"] == id.to_s }
+          raise ArgumentError, "Unknown proposal" unless target
+          raise ArgumentError, "Only failed or interrupted actions can be verified" unless %w[failed executing].include?(target["state"])
+          @guard&.call(target.dup) if MUTATIONS.include?(target["type"])
+
+          target["state"] = "verifying"
+          target["verification_started_at"] = Time.now.utc.iso8601
+          claimed = true
+          target.dup
+        end
+        verification = @verifier.call(proposal.fetch("type"), proposal.fetch("arguments"), proposal)
+        synchronize do |current|
+          target = current.fetch("proposals").find { |item| item["id"] == id.to_s }
+          target["verification"] = verification
+          target["verified_at"] = Time.now.utc.iso8601
+          if verification.is_a?(Hash) && verification["completed"] == true
+            target["state"] = "executed"
+            target["result"] = verification["result"]
+            target.delete("error")
+            target.delete("recovery")
+          elsif verification.is_a?(Hash) && verification["no_effect"] == true
+            target["state"] = "failed"
+            target["recovery"] = {
+              "state" => "replacement_available",
+              "action" => "replace",
+              "reason" => verification.is_a?(Hash) ? verification["reason"].to_s : "Tycho could not verify the outcome"
+            }
+          else
+            target["state"] = "failed"
+            target["recovery"] = {
+              "state" => "outcome_unknown",
+              "action" => "verify",
+              "reason" => verification.is_a?(Hash) ? verification["reason"].to_s : "Tycho could not verify the outcome"
+            }
+          end
+        end
+        public_proposal(find!(id))
+      end
+    rescue StandardError => e
+      if claimed
+        synchronize do |current|
+          target = current.fetch("proposals", []).find { |item| item["id"] == id.to_s }
+          next unless target && target["state"] == "verifying"
+
+          target["state"] = "failed"
+          target["error"] = e.message
+          target["recovery"] = { "state" => "verification_available", "action" => "verify" }
+        end
       end
       raise
     end
@@ -91,12 +178,18 @@ module HQ
     # an executing proposal a preflight failure, rather than discovering it
     # after the protected session has been stopped or archived.
     def reset!
-      synchronize do |current|
-        raise ArgumentError, "A Personal Assistant action is still executing" if current.fetch("proposals", []).any? { |proposal| proposal["state"] == "executing" }
-
+      with_no_executing_actions! do |current|
         result = yield
         current["proposals"] = []
         result
+      end
+    end
+
+    def with_no_executing_actions!
+      synchronize do |current|
+        raise ArgumentError, "A Personal Assistant action is still executing" if current.fetch("proposals", []).any? { |proposal| %w[executing verifying].include?(proposal["state"]) }
+
+        yield current
       end
     end
 
@@ -114,17 +207,13 @@ module HQ
       arguments = item["arguments"].transform_keys(&:to_s)
       raise ArgumentError, "Assistant actions cannot supply server or parent identity" if arguments.keys.any? { |key| %w[server server_key parent_agent_key actor].include?(key) }
       allowed = allowed_arguments(type)
-      nullable = type == "create_agent" ? %w[agent model reasoning_effort] : []
+      nullable = NULLABLE_ARGUMENTS.fetch(type, [])
       raise ArgumentError, "Assistant action arguments do not match #{type}" unless arguments.keys.sort == allowed.sort && arguments.all? { |key, value| nullable.include?(key) ? value.nil? || value.is_a?(String) : value.is_a?(String) }
       { "type" => type, "arguments" => arguments, "description" => truncate(item["description"], 500) }
     end
 
     def allowed_arguments(type)
-      {
-        "read_docs" => %w[path], "search_docs" => %w[query], "inspect_agents" => [], "inspect_projects" => [],
-        "install_or_update_tycho_skill" => %w[harness action], "create_agent" => %w[project_key name prompt agent model reasoning_effort],
-        "message_agent" => %w[agent_key prompt], "start_agent" => %w[agent_key], "stop_agent" => %w[agent_key]
-      }.fetch(type)
+      ACTION_ARGUMENTS.fetch(type)
     end
 
     def state
@@ -142,13 +231,28 @@ module HQ
       end
     end
 
+    def with_execution_lock(id, nonblocking: false)
+      FileUtils.mkdir_p(File.dirname(@path))
+      path = "#{@path}.#{Digest::SHA256.hexdigest(id.to_s)}.execution.lock"
+      File.open(path, "w") do |lock|
+        mode = File::LOCK_EX
+        mode |= File::LOCK_NB if nonblocking
+        raise ArgumentError, "Action is still executing" unless lock.flock(mode)
+
+        yield
+      end
+    rescue Errno::EWOULDBLOCK
+      raise ArgumentError, "Action is still executing"
+    end
+
     def find!(id)
       state.fetch("proposals", []).find { |proposal| proposal["id"] == id.to_s } || raise(ArgumentError, "Unknown proposal")
     end
 
     def public_proposal(proposal)
-      proposal.slice("id", "type", "arguments", "description", "active_key", "source_run_id", "state", "result", "error", "executed_at", "rejected_at")
+      proposal.slice("id", "type", "arguments", "description", "active_key", "source_run_id", "state", "result", "error", "recovery", "verification", "tracked", "executed_at", "rejected_at", "verified_at")
     end
+
 
     def truncate(value, bytes)
       value.encode(Encoding::UTF_8, invalid: :replace, undef: :replace).each_char.with_object(String.new) { |char, result| break result if result.bytesize + char.bytesize > bytes; result << char }

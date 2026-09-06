@@ -44,10 +44,10 @@ module HQ
       end
 
       events.each do |event|
-        next unless %w[user_message assistant_message].include?(event["type"])
+        next unless %w[user_message assistant_message personal_assistant_action_result].include?(event["type"])
 
         messages << {
-          role: event["type"] == "assistant_message" ? "assistant" : "user",
+          role: event["type"] == "user_message" ? "user" : "assistant",
           content: event["content"].to_s,
           created_at: parse_time(event["created_at"]),
           metadata: message_metadata_for(event)
@@ -90,6 +90,13 @@ module HQ
             metadata: message_metadata_for(event)
           }
         when "assistant_message"
+          messages << {
+            role: "assistant",
+            content: event["content"].to_s,
+            created_at: parse_time(event["created_at"]),
+            metadata: message_metadata_for(event)
+          }
+        when "personal_assistant_action_result"
           messages << {
             role: "assistant",
             content: event["content"].to_s,
@@ -218,6 +225,47 @@ module HQ
       nil
     rescue StandardError
       nil
+    end
+
+    def personal_assistant_action_results_after(time)
+      threshold = time.is_a?(Time) ? time : nil
+      read_events.filter_map do |event|
+        next unless event["type"] == "personal_assistant_action_result"
+
+        created_at = parse_time(event["created_at"])
+        next if threshold && created_at && created_at <= threshold
+
+        text = event["content"].to_s.strip
+        text unless text.empty?
+      end
+    rescue StandardError
+      []
+    end
+
+    def personal_assistant_action_result_recorded?(proposal_id, content: nil)
+      id = proposal_id.to_s
+      return false if id.empty?
+
+      read_events.any? do |event|
+        event["type"] == "personal_assistant_action_result" &&
+          event.dig("metadata", "personal_assistant_action_proposal_id") == id &&
+          (content.nil? || event["content"] == content)
+      end
+    rescue StandardError
+      false
+    end
+
+    def append_personal_assistant_action_result!(content, created_at: Time.now, metadata: nil)
+      text = content.to_s.strip
+      return if text.empty?
+
+      event = {
+        "type" => "personal_assistant_action_result",
+        "content" => text,
+        "created_at" => created_at.iso8601(6)
+      }
+      event["metadata"] = metadata if metadata.is_a?(Hash) && !metadata.empty?
+      append_event!(event)
     end
 
     def append_system_prompt!(content, created_at: Time.now, prompt_role: nil)

@@ -29,11 +29,11 @@ module RemoteUIAssetSnapshotTest
       'function renderPersonalAssistantProposal(proposal)',
       'data-proposal-id=',
       'data-proposal-run=',
-      'Action ready',
+      'Approval needed',
       'Technical details',
       'data-confirm-pa-proposal=',
       'data-reject-pa-proposal=',
-      'What would you like to move forward?',
+      'function renderPersonalAssistantWelcome(',
       'pendingPersonalAssistantProposalIds: new Set()',
       'state.pendingPersonalAssistantProposalIds.has(id)',
       'class="pa-tycho-nav header-mark"',
@@ -67,7 +67,7 @@ module RemoteUIAssetSnapshotTest
       "function personalAssistantHasRealConversation(blocks)",
       'block?.kind === "message" && ["user", "assistant"].includes(block.role)',
       "const starter = agent && item.state === \"active\" && !personalAssistantHasRealConversation(blocks);",
-      "${starter ? renderPersonalAssistantWelcome() : renderAgentConversationView(agent, blocks, { floatingActions: false, loading: conversationLoading(agent.key), personalAssistant: true })}",
+      "${starter ? renderPersonalAssistantWelcome(",
       'querySelector("#composer #prompt-input")'
     ]
     missing = required_javascript.reject { |fragment| javascript.include?(fragment) }

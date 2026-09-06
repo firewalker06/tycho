@@ -1,32 +1,44 @@
-# Personal Assistant
+# FRED Personal Assistant
 
-The Personal Assistant is an opt-in, Codex-only daily conversation owned by Tycho. It is configured from Remote UI with a Codex model, reasoning effort, and an IANA timezone. It never inherits a project harness, starts disabled, and is neither a project agent nor a schedule.
+FRED helps you set up Tycho projects, prepare and follow agents, inspect results, and manage schedules. It is an opt-in, Codex-only conversation on the current Tycho server. Project agents still use their own harness settings.
 
-The first opened conversation contains Tycho's fixed introduction before a model run can start. Its `personal_assistant_daily` role prevents both individual and bulk archive operations. The lifecycle state lives in `~/.tycho/logs/personal_assistant/state.json`; bounded, versioned handoffs live in its `handoffs/` directory.
+## Getting started
 
-## Daily lifecycle
+Open FRED, review the model, reasoning effort, and timezone, then confirm setup. Opening the conversation does not run a model. Start with a suggested task or write your own request. FRED is available before you have a project.
 
-1. A confirmed setup saves the model, reasoning effort, and IANA timezone, then enables the feature.
-2. Opening is lazy and idempotent: one protected session exists for the active local date.
-3. At the active session's local midnight, Tycho marks it `closing` and stops accepting new prompts. Existing work is allowed to finish.
-4. Tycho dispatches exactly one internal summary-only turn using the same native Codex session. It records the summary intent before launching the harness, so launch failures cannot append duplicate summary messages.
-5. A successful structured handoff is bounded before it is written. If summary execution fails, Tycho writes a bounded fallback from the recent user context.
-6. Tycho archives internally. If archive fails, later reconciliation retries only the archive; it never re-summarizes.
+The setup form uses the server's Codex catalog when available. Executable readiness is not a guarantee that authentication or a particular model will work. Setup keeps a manual model fallback when discovery is unavailable.
 
-The active session keeps the timezone it was opened with. A later setup change applies to the next day, preventing an accidental early rollover. Every Remote API read and open request also reconciles the lifecycle, so midnight rollover does not depend on the schedule daemon. Missed ticks and offline periods safely catch up without creating overlapping daily sessions; the old run always finishes before its summary, handoff, archive, and next-day creation.
+Settings can be changed without deleting your conversation. Saved changes apply to the next daily conversation or a confirmed restart. Restart archives the idle conversation and keeps settings and continuity. Reset is separate: it deletes the active session and its logs, clears settings and active continuity, and removes pending actions. It does not erase previously archived conversations or historical handoff files.
 
-## Remote API
+## Actions
 
-- `GET /personal-assistant` returns readiness, lifecycle state, active key/date, fixed introduction, and saved configuration.
-- `POST /personal-assistant/setup` requires `confirmed: true` with `model`, `reasoning_effort`, and `timezone`.
-- `POST /personal-assistant/open` lazily opens the protected daily conversation.
+| FRED can inspect directly | FRED asks you to confirm |
+| --- | --- |
+| Tycho documentation and search results | Install or update the Tycho skill |
+| Projects and agents | Create or update a project |
+| An agent's latest run and bounded logs | Create, message, start, or stop an agent |
+| Schedules and daemon status | Create, pause, or resume a schedule |
 
-Manual archive endpoints return a conflict for this role. Prompt submission is rejected while the daily session is closing.
+Each mutation needs its own exact approval. Creating an agent prepares it without starting it. Review its instruction and settings, then approve starting it separately. Null values in a project update leave existing settings unchanged.
 
-## Action proposals
+Results appear with the action and provide links to the affected resource. Tycho records bounded action receipts in the conversation so a later message can refer to what actually happened. A receipt does not itself trigger a new model run or approve another action.
 
-Codex may return optional `action_proposals` only in a finalized successful structured result from the currently active daily agent. There is no client proposal-creation API. Tycho accepts only typed declarative proposals with the exact argument object coupled to each action type. Proposals are persisted with a server-generated ID, source-run ID, and digest. Claiming is locked and durable before execution; an interrupted claim is never retried automatically. Read-only actions run directly; every mutation needs one exact Tycho confirmation and can execute at most once.
+Failed actions can be checked against current state. An uncertain outcome must not be retried blindly: verify it first, then prepare a new proposal if needed. Already claimed proposals cannot execute again.
 
-The model cannot provide a server key, parent key, or actor identity. Tycho injects local-server and user/delegation provenance before calling the existing SkillInstaller or managed-agent paths. Replayed, modified, unsupported, and previously executed proposals are rejected.
+## Daily continuity
 
-Handoffs retain only normalized UTF-8 text and bounded lists. The next day receives at most 4 KB of the prior handoff as a fixed system continuity block; run IDs, timestamps, and other server provenance remain outside this promptable body.
+FRED keeps one active conversation for the local date in its configured timezone. At midnight it waits for running work, summarizes the conversation, and archives it. The next conversation receives a bounded handoff; it does not replay every prior day.
+
+Continuity and recent history are available from FRED. Tracked work retains stable resource references across days. The active conversation keeps the timezone and model settings it was opened with, so editing settings does not unexpectedly roll it over.
+
+If summarization fails, Tycho preserves recent context in a fallback handoff and reports the recovery state. Archive retries do not repeat the summary. Drafts remain available while rollover is in progress.
+
+## Implementation contract
+
+The protected `personal_assistant_daily` role cannot be controlled through ordinary agent lifecycle endpoints. Dedicated Personal Assistant APIs own setup, opening, messaging, restart, and reset. State lives in `~/.tycho/logs/personal_assistant/state.json`; versioned handoffs live in its `handoffs/` directory.
+
+The pure `PersonalAssistantActionCatalog` defines action names, required argument keys, and nullable fields. The model schema and execution validator must match this catalog. Action proposals come only from successful finalized runs; clients cannot create arbitrary proposals. Server-generated IDs, run provenance, locked claims, and immutable arguments prevent repeated confirmation from repeating a mutation.
+
+The model cannot supply server, parent, or actor identity. Execution reuses Tycho's existing service paths and server-local ownership rules. Returned document/log content is data, not authorization for new actions. User-owned result schemas receive the bundled `action_proposals` update through the existing schema migration.
+
+Daily handoffs contain normalized UTF-8 text and bounded lists. The next prompt receives less than 4 KB of serialized continuity, without cutting JSON in the middle of a string. Historical archives remain separate from the current conversation.

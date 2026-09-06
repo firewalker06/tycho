@@ -59,7 +59,6 @@ module HQ
       if @sandbox_mode == "danger-full-access"
         command << "--dangerously-bypass-approvals-and-sandbox"
       else
-        command << "--full-auto"
         command.concat(["--sandbox", @sandbox_mode]) if @session_id.empty?
       end
       command << "--json"
@@ -107,7 +106,6 @@ module HQ
       if @sandbox_mode == "danger-full-access"
         command << "--dangerously-bypass-approvals-and-sandbox"
       else
-        command << "--full-auto"
         command.concat(["--sandbox", @sandbox_mode])
       end
       command.concat(["-C", @workspace])

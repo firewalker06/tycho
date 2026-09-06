@@ -11,6 +11,7 @@ require_relative "../lib/hq/domain/file_store"
 
 ROOT = File.expand_path("..", __dir__)
 OUTPUT = File.expand_path(ENV.fetch("TYCHO_PERSONAL_ASSISTANT_CAPTURE_OUTPUT", "~/.tycho/artifacts/card-170/fred-reset-settings"))
+ACTION_RESULT_OUTPUT = File.expand_path(ENV.fetch("TYCHO_PERSONAL_ASSISTANT_ACTION_RESULT_OUTPUT", "~/.tycho/artifacts/fred-implementation/action-result-desktop.png"))
 PORT = TCPServer.open("127.0.0.1", 0) { |server| server.addr[1] }
 
 def request(path, payload = nil)
@@ -32,8 +33,10 @@ end
 
 Dir.mktmpdir("tycho-pa-capture") do |dir|
   FileUtils.mkdir_p(OUTPUT)
+  FileUtils.mkdir_p(File.dirname(ACTION_RESULT_OUTPUT))
   config = File.join(dir, "hq.yml")
   schedules = File.join(dir, "schedules.yml")
+  fake_codex = File.join(dir, "fake-codex")
   File.write(schedules, "---\nschedules: []\n")
   File.write(config, <<~YAML)
     ---
@@ -46,36 +49,156 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
         path: #{ROOT}
         harnesses: []
   YAML
+  File.write(fake_codex, <<~'RUBY')
+    #!/usr/bin/env ruby
+    require "json"
+    abort "obsolete --full-auto flag" if ARGV.include?("--full-auto")
+    proposal = if ARGV.join(" ").include?("Create a fixture agent")
+      [{ "type" => "create_agent", "description" => "Create the fixture review agent.", "arguments" => { "project_key" => "fixture", "name" => "FRED fixture agent", "prompt" => "Inspect the fixture project.", "agent" => "codex", "model" => "gpt-5.6-sol", "reasoning_effort" => "medium" } }]
+    else
+      nil
+    end
+    payload = {
+      "status" => "success", "summary" => "FRED test reply.", "summary_sections" => nil,
+      "inquiry" => nil, "attachments" => nil, "action_proposals" => proposal, "memory_handoff" => nil
+    }
+    output_index = ARGV.index("-o")
+    File.write(ARGV[output_index + 1], JSON.generate(payload)) if output_index
+    puts JSON.generate("type" => "thread.started", "thread_id" => "fred-capture-#{Process.pid}")
+    puts JSON.generate("type" => "item.completed", "item" => { "type" => "agent_message", "text" => JSON.generate(payload) })
+  RUBY
+  File.chmod(0o755, fake_codex)
   tycho_home = File.join(dir, "tycho-home")
-  env = { "TYCHO_HOME" => tycho_home, "TYCHO_CONFIG_PATH" => config, "TYCHO_SYSTEM_PROMPTS_PATH" => File.join(ROOT, "config/system_prompts.yml.example"), "TYCHO_LOGS_ROOT" => File.join(dir, "logs"), "TYCHO_SCHEDULES_PATH" => schedules, "TYCHO_REMOTE_TOKEN" => "" }
+  env = { "TYCHO_HOME" => tycho_home, "TYCHO_CONFIG_PATH" => config, "TYCHO_SYSTEM_PROMPTS_PATH" => File.join(ROOT, "config/system_prompts.yml.example"), "TYCHO_LOGS_ROOT" => File.join(dir, "logs"), "TYCHO_SCHEDULES_PATH" => schedules, "TYCHO_REMOTE_TOKEN" => "", "TYCHO_CODEX_BIN" => fake_codex }
   pid = Process.spawn(env, "bundle", "exec", "bin/tycho", "serve", "--host", "127.0.0.1", "--port", PORT.to_s, chdir: ROOT, out: File.join(dir, "server.log"), err: File.join(dir, "server.log"))
   begin
     wait_for_server
-    capture = ->(name, device, selector, expected, route: "personal-assistant", open_menu: false, open_switcher: false, keyboard_switcher: false) do
+    capture = ->(name, device, selector, expected, route: "personal-assistant", open_menu: false, open_switcher: false, keyboard_switcher: false, reset_fred: false) do
       playwright = ENV.fetch("TYCHO_PLAYWRIGHT_PATH", File.expand_path("node_modules/playwright", ROOT))
       raise "Install deterministic Playwright dependency at #{playwright} or set TYCHO_PLAYWRIGHT_PATH" unless File.directory?(playwright)
       script = File.join(dir, "capture.js")
       File.write(script, <<~JS)
         const { chromium, devices } = require(#{playwright.to_json});
-        (async () => { const browser = await chromium.launch({headless:true}); const page = await browser.newPage(devices[#{device.to_json}]); if (#{device.to_json} === 'Desktop Chrome') await page.setViewportSize({ width: 1280, height: 900 }); await page.goto('http://127.0.0.1:#{PORT}/ui##{route}'); const target = page.locator(#{selector.to_json}); await target.waitFor({state:'visible',timeout:15000}); await page.waitForFunction(() => { const boot = document.querySelector('#tycho-boot-shell'); return !boot || getComputedStyle(boot).display === 'none' || getComputedStyle(boot).visibility === 'hidden'; }, null, {timeout:15000}); await page.waitForFunction(() => document.body.innerText.includes(#{expected.to_json}), null, {timeout:15000}); if (#{open_menu}) { await page.locator('#personal-assistant-settings-menu > summary').click(); await page.locator('[data-open-settings]').waitFor({state:'visible',timeout:15000}); } if (#{open_switcher}) { await page.locator('[data-agent-switcher]').click(); await page.locator('#unread-agents-panel:not(.hidden)').waitFor({state:'visible',timeout:15000}); } if (#{keyboard_switcher}) { await page.keyboard.press('Meta+k'); await page.locator('#unread-agents-panel:not(.hidden)').waitFor({state:'visible',timeout:15000}); } await target.scrollIntoViewIfNeeded(); await page.screenshot({path:#{File.join(OUTPUT, name).to_json},fullPage:false}); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });
+        (async () => { const browser = await chromium.launch({headless:true}); const page = await browser.newPage(devices[#{device.to_json}]); if (#{device.to_json} === 'Desktop Chrome') await page.setViewportSize({ width: 1280, height: 900 }); await page.goto('http://127.0.0.1:#{PORT}/ui##{route}'); const target = page.locator(#{selector.to_json}); await target.waitFor({state:'visible',timeout:15000}); await page.waitForFunction(() => { const boot = document.querySelector('#tycho-boot-shell'); return !boot || getComputedStyle(boot).display === 'none' || getComputedStyle(boot).visibility === 'hidden'; }, null, {timeout:15000}); await page.waitForFunction(() => document.body.innerText.includes(#{expected.to_json}), null, {timeout:15000}); if (#{open_menu}) { await page.locator('#personal-assistant-settings-menu > summary').click(); await page.locator('[data-open-settings]').waitFor({state:'visible',timeout:15000}); } if (#{open_switcher}) { await page.locator('[data-agent-switcher]').click(); await page.locator('#unread-agents-panel:not(.hidden)').waitFor({state:'visible',timeout:15000}); } if (#{keyboard_switcher}) { await page.keyboard.press('Meta+k'); await page.locator('#unread-agents-panel:not(.hidden)').waitFor({state:'visible',timeout:15000}); } if (#{reset_fred}) { await page.locator('[data-reset-personal-assistant]').click(); await page.locator('#confirmation-dialog[open]').waitFor({state:'visible',timeout:15000}); await page.locator('[data-confirmation-accept]').click(); await page.waitForFunction(() => document.body.innerText.includes('Set up FRED'), null, {timeout:15000}); } else { await target.scrollIntoViewIfNeeded(); } await page.screenshot({path:#{File.join(OUTPUT, name).to_json},fullPage:false}); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });
       JS
       system("node", script, exception: true)
     end
-    capture.call("personal-assistant-setup-desktop.png", "Desktop Chrome", ".pa-setup", "Choose how FRED should work")
-    capture.call("personal-assistant-setup-mobile.png", "iPhone 13", ".pa-setup", "Choose how FRED should work")
-    capture.call("personal-assistant-settings-menu-desktop.png", "Desktop Chrome", ".personal-assistant-page", "Choose how FRED should work", open_menu: true)
-    capture.call("personal-assistant-settings-menu-mobile.png", "iPhone 13", ".personal-assistant-page", "Choose how FRED should work", open_menu: true)
-    request("/personal-assistant/setup", { confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "Asia/Jakarta" })
-    capture.call("fred-compact-settings-menu-desktop.png", "Desktop Chrome", ".personal-assistant-page", "Opening FRED does not send a model prompt.", open_menu: true)
-    capture.call("fred-compact-settings-menu-mobile.png", "iPhone 13", ".personal-assistant-page", "Opening FRED does not send a model prompt.", open_menu: true)
+    verify_initiate = lambda do
+      playwright = ENV.fetch("TYCHO_PLAYWRIGHT_PATH", File.expand_path("node_modules/playwright", ROOT))
+      script = File.join(dir, "verify-initiate.js")
+      File.write(script, <<~JS)
+        const { chromium } = require(#{playwright.to_json});
+        (async () => {
+          const browser = await chromium.launch({ headless: true });
+          const page = await browser.newPage();
+          await page.setViewportSize({ width: 1280, height: 1000 });
+          await page.goto('http://127.0.0.1:#{PORT}/ui#settings');
+          await page.locator('[data-initiate-personal-assistant]').click();
+          await page.locator('.pa-setup').waitFor({ state: 'visible', timeout: 15000 });
+          await page.locator('#personal-assistant-setup-form input[name="confirmed"]').check();
+          await page.locator('#personal-assistant-setup-form button[type="submit"]').click();
+          await page.locator('#composer #prompt-input').fill('Create a fixture agent');
+          await page.locator('#composer button[type="submit"]').click();
+          await page.locator('[data-confirm-pa-proposal]').waitFor({ state: 'visible', timeout: 15000 });
+          if (!(await page.locator('.pa-inline-action').innerText()).includes('Inspect the fixture project.')) throw new Error('Proposal instruction was not rendered');
+          await page.locator('[data-confirm-pa-proposal]').click();
+          await page.waitForFunction(() => document.body.innerText.includes('Agent created'), null, { timeout: 15000 });
+          const assistantStatus = await (await page.request.get('http://127.0.0.1:#{PORT}/personal-assistant')).json();
+          const assistantConversation = await (await page.request.get(`http://127.0.0.1:#{PORT}/agents/${encodeURIComponent(assistantStatus.personal_assistant.active_key)}/conversation`)).json();
+          const actionReceipt = assistantConversation.conversation.find((block) => String(block.content || '').startsWith('Tycho completed create_agent.'));
+          if (!actionReceipt?.metadata?.personal_assistant_action_proposal_id) throw new Error(`Action receipt metadata missing: ${JSON.stringify(actionReceipt || {})}`);
+          const resultLink = page.locator('.pa-action-result a[href^="#agent/"]');
+          if (await resultLink.count() !== 1) throw new Error('Created-agent receipt link missing');
+          if (!(await page.locator('.pa-action-result').innerText()).includes('Prepare start')) throw new Error('Created-agent next action missing');
+          if ((await page.locator('.pa-conversation-scroll').innerText()).includes('Tycho completed create_agent.')) throw new Error('Raw action receipt duplicated the typed result');
+          if (await page.locator('.pa-action-feed').count()) throw new Error('Action receipt was not attached to its source reply');
+          if (await page.locator('.message-list .pa-inline-action').count() !== 1) throw new Error('Action receipt was not rendered with its source reply');
+          await page.waitForTimeout(2500);
+          await page.locator('.message-list .pa-inline-action').evaluate((card) => card.scrollIntoView({ block: 'start' }));
+          await page.screenshot({ path: #{ACTION_RESULT_OUTPUT.to_json}, fullPage: false });
+          await resultLink.click();
+          await page.waitForFunction(() => document.body.innerText.includes('FRED fixture agent'), null, { timeout: 15000 });
+          await page.goto('http://127.0.0.1:#{PORT}/ui#settings');
+          await page.locator('[data-edit-personal-assistant-settings]').click();
+          if (await page.locator('#personal-assistant-settings-form [name="model"]').inputValue() !== 'gpt-5.6-sol') throw new Error('Settings did not retain model');
+          if (await page.locator('#personal-assistant-settings-form [name="timezone"]').inputValue() !== 'Asia/Jakarta') throw new Error('Settings did not retain timezone');
+          const beforeSettings = await (await page.request.get('http://127.0.0.1:#{PORT}/personal-assistant')).json();
+          await page.locator('#personal-assistant-settings-form [name="reasoning_effort"]').fill('high');
+          await page.locator('#personal-assistant-settings-form input[name="confirmed"]').check();
+          await page.locator('#personal-assistant-settings-form button[type="submit"]').click();
+          await page.waitForFunction(() => !document.querySelector('#personal-assistant-settings-form'), null, { timeout: 15000 });
+          const afterSettings = await (await page.request.get('http://127.0.0.1:#{PORT}/personal-assistant')).json();
+          if (afterSettings.personal_assistant.active_key !== beforeSettings.personal_assistant.active_key) throw new Error('Editing settings replaced the active conversation');
+          if (afterSettings.personal_assistant.config.reasoning_effort !== 'high') throw new Error('Settings change was not saved');
+          await page.goto('http://127.0.0.1:#{PORT}/ui#personal-assistant');
+          await page.locator('#composer #prompt-input').fill('Draft survives restart');
+          await new Promise((resolve) => setTimeout(resolve, 600));
+          await page.goto('http://127.0.0.1:#{PORT}/ui#settings');
+          await page.locator('[data-restart-personal-assistant]').click();
+          await page.locator('#confirmation-dialog[open] [data-confirmation-accept]').click();
+          await page.goto('http://127.0.0.1:#{PORT}/ui#personal-assistant');
+          await page.waitForFunction(() => document.querySelector('#composer #prompt-input')?.value === 'Draft survives restart', null, { timeout: 15000 });
+          await page.reload();
+          await page.waitForFunction(() => document.querySelector('#composer #prompt-input')?.value === 'Draft survives restart', null, { timeout: 15000 });
+          await page.locator('.pa-continuity > summary').click();
+          await page.locator('.pa-continuity-body').waitFor({ state: 'visible', timeout: 15000 });
+          if (!(await page.locator('.pa-continuity-body').innerText()).includes('Tracked agents')) throw new Error('Tracked agent context missing');
+          await page.locator('[data-open-pa-history]').click();
+          await page.locator('.pa-history-entry').waitFor({ state: 'visible', timeout: 15000 });
+          await browser.close();
+        })().catch(error => { console.error(error); process.exit(1); });
+      JS
+      system("node", script, exception: true)
+    end
+    verify_zero_project_entry = lambda do
+      zero_port = TCPServer.open("127.0.0.1", 0) { |server| server.addr[1] }
+      zero_config = File.join(dir, "zero-projects.yml")
+      File.write(zero_config, "---\ncustom_harnesses: []\nharness_catalogs: {}\ngroups: {}\nprojects: []\n")
+      zero_env = env.merge("TYCHO_CONFIG_PATH" => zero_config, "TYCHO_LOGS_ROOT" => File.join(dir, "zero-logs"))
+      zero_pid = Process.spawn(zero_env, "bundle", "exec", "bin/tycho", "serve", "--host", "127.0.0.1", "--port", zero_port.to_s, chdir: ROOT, out: File.join(dir, "zero-server.log"), err: File.join(dir, "zero-server.log"))
+      begin
+        100.times do
+          response = Net::HTTP.start("127.0.0.1", zero_port) { |http| http.get("/personal-assistant") }
+          break if response.is_a?(Net::HTTPSuccess)
+
+          sleep 0.1
+        rescue Errno::ECONNREFUSED
+          sleep 0.1
+        end
+        playwright = ENV.fetch("TYCHO_PLAYWRIGHT_PATH", File.expand_path("node_modules/playwright", ROOT))
+        script = File.join(dir, "verify-zero-projects.js")
+        File.write(script, <<~JS)
+          const { chromium } = require(#{playwright.to_json});
+          (async () => { const browser = await chromium.launch({headless:true}); const page = await browser.newPage(); await page.goto('http://127.0.0.1:#{zero_port}/ui#personal-assistant'); await page.locator('.pa-setup').waitFor({state:'visible',timeout:15000}); if (await page.locator('.onboarding-page').count()) throw new Error('Project onboarding replaced FRED'); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });
+        JS
+        system("node", script, exception: true)
+      ensure
+        Process.kill("TERM", zero_pid) rescue nil
+        Process.wait(zero_pid) rescue nil
+      end
+    end
+    if ENV["TYCHO_PERSONAL_ASSISTANT_ZERO_PROJECT_ONLY"] == "1"
+      verify_zero_project_entry.call
+      exit
+    end
+    unless ENV["TYCHO_PERSONAL_ASSISTANT_VERIFY_ONLY"] == "1"
+      capture.call("personal-assistant-setup-desktop.png", "Desktop Chrome", ".pa-setup", "Set up FRED")
+      capture.call("personal-assistant-setup-mobile.png", "iPhone 13", ".pa-setup", "Set up FRED")
+      capture.call("personal-assistant-settings-menu-desktop.png", "Desktop Chrome", ".personal-assistant-page", "Set up FRED", open_menu: true)
+      capture.call("personal-assistant-settings-menu-mobile.png", "iPhone 13", ".personal-assistant-page", "Set up FRED", open_menu: true)
+      capture.call("fred-unconfigured-settings-desktop.png", "Desktop Chrome", "#settings-personal-assistant", "Set up FRED", route: "settings")
+      capture.call("fred-unconfigured-settings-mobile.png", "iPhone 13", "#settings-personal-assistant", "Set up FRED", route: "settings")
+    end
+    verify_initiate.call
+    exit if ENV["TYCHO_PERSONAL_ASSISTANT_VERIFY_ONLY"] == "1"
+    verify_zero_project_entry.call
+    capture.call("fred-compact-settings-menu-desktop.png", "Desktop Chrome", ".personal-assistant-page", "FRED fixture agent", open_menu: true)
+    capture.call("fred-compact-settings-menu-mobile.png", "iPhone 13", ".personal-assistant-page", "FRED fixture agent", open_menu: true)
     capture.call("fred-reset-settings-desktop.png", "Desktop Chrome", "#settings-personal-assistant", "Reset FRED", route: "settings")
     capture.call("fred-reset-settings-mobile.png", "iPhone 13", "#settings-personal-assistant", "Reset FRED", route: "settings")
-    request("/personal-assistant/reset", { confirmed: true })
-    capture.call("fred-onboarding-after-reset-desktop.png", "Desktop Chrome", ".pa-setup", "Choose how FRED should work")
-    capture.call("fred-onboarding-after-reset-mobile.png", "iPhone 13", ".pa-setup", "Choose how FRED should work")
+    capture.call("fred-onboarding-after-reset-desktop.png", "Desktop Chrome", "#settings-personal-assistant", "Reset FRED", route: "settings", reset_fred: true)
+    capture.call("fred-onboarding-after-reset-mobile.png", "iPhone 13", ".pa-setup", "Set up FRED")
     request("/personal-assistant/setup", { confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "Asia/Jakarta" })
-    capture.call("personal-assistant-ready-desktop.png", "Desktop Chrome", ".pa-ready", "Opening FRED does not send a model prompt.")
-    capture.call("personal-assistant-ready-mobile.png", "iPhone 13", ".pa-ready", "Opening FRED does not send a model prompt.")
     request("/personal-assistant/open", {})
     request("/agents", { project_key: "fixture", template_key: "custom", name: "Switcher capture agent", prompt: "Show this agent in the quick switcher.", agent: "codex" })
     capture.call("fred-clean-desktop.png", "Desktop Chrome", ".personal-assistant-page", "FRED")

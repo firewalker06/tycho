@@ -19,6 +19,7 @@ module StructuredOutputValidationTest
     assert_malformed_json_feedback
     assert_multiple_schema_violations
     assert_malformed_summary_sections_are_diagnosable
+    assert_personal_assistant_action_contract
     assert_successful_correction_for_supported_harnesses
     assert_retry_exhaustion_preserves_invalid_response
     puts "structured_output_validation_test: ok"
@@ -83,6 +84,44 @@ module StructuredOutputValidationTest
            paths.include?("$.summary_sections[2].attachment.path") &&
            paths.include?("$.summary_sections[3].attachment.url"),
            "expected unusable rich targets to report exact correction paths")
+  end
+
+  def assert_personal_assistant_action_contract
+    schema = JSON.parse(File.read(SCHEMA_PATH))
+    alternatives = schema.dig("properties", "action_proposals", "items", "anyOf")
+    catalog = HQ::PersonalAssistantActionCatalog
+    schema_types = alternatives.flat_map { |entry| entry.dig("properties", "type", "enum") }
+    assert(schema_types.sort == catalog::ARGUMENTS.keys.sort,
+           "expected model action schema to cover exactly the server action catalog")
+
+    alternatives.each do |entry|
+      argument_schema = entry.dig("properties", "arguments")
+      entry.dig("properties", "type", "enum").each do |type|
+        keys = catalog::ARGUMENTS.fetch(type)
+        assert(argument_schema.fetch("required").sort == keys.sort,
+               "expected all #{type} arguments to be explicit in the model schema")
+        nullable = argument_schema.fetch("properties").filter_map do |key, definition|
+          key if Array(definition["type"]).include?("null")
+        end
+        assert(nullable.sort == Array(catalog::NULLABLE_ARGUMENTS[type]).sort,
+               "expected #{type} nullability to match server execution")
+        arguments = keys.to_h { |key| [key, nullable.include?(key) ? nil : "example"] }
+        proposal = { "type" => type, "description" => "Review this action", "arguments" => arguments }
+        payload = JSON.parse(File.read(fixture("valid.json"))).merge("action_proposals" => [proposal])
+        assert(validator.validate(payload).valid?, "expected #{type} proposal to pass the model contract")
+
+        %w[server parent_agent_key actor command].each do |forbidden|
+          injected = payload.merge("action_proposals" => [proposal.merge("arguments" => arguments.merge(forbidden => "untrusted"))])
+          assert(!validator.validate(injected).valid?, "expected #{type} to reject injected #{forbidden}")
+        end
+        next if keys.empty?
+
+        missing = payload.merge("action_proposals" => [proposal.merge("arguments" => arguments.reject { |key, _| key == keys.first })])
+        assert(!validator.validate(missing).valid?, "expected #{type} to reject omitted arguments")
+        wrong_type = payload.merge("action_proposals" => [proposal.merge("arguments" => arguments.merge(keys.first => true))])
+        assert(!validator.validate(wrong_type).valid?, "expected #{type} to reject a non-string argument")
+      end
+    end
   end
 
   def assert_successful_correction_for_supported_harnesses

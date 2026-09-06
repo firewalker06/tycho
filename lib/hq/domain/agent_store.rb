@@ -153,6 +153,21 @@ module HQ
       end
     end
 
+    def delete_personal_assistant!(key)
+      with_exclusive_lock do
+        agents, = load_with_poll_events_unlocked(process_delegations: false)
+        target = find_agent_in!(agents, key)
+        raise ArgumentError, "Not a Personal Assistant session" unless target.personal_assistant?
+        raise ArgumentError, "Personal Assistant is still running" if target.running?
+
+        paths = target.log_files.select { |path| File.exist?(path) }
+        FileTransaction.run([AGENTS_FILE, *paths]) do
+          paths.each { |path| FileUtils.rm_f(path) }
+          save_unlocked(agents.reject { |agent| agent.key == target.key })
+        end
+      end
+    end
+
     def create_from_template(project, template_key)
       existing = load
       suffix = next_suffix(project.key, existing)

@@ -2,6 +2,7 @@
 
 require "json"
 require "uri"
+require_relative "personal_assistant_action_catalog"
 
 module HQ
   class AgentStructuredOutputValidator
@@ -146,11 +147,7 @@ module HQ
       proposals = payload.is_a?(Hash) ? payload["action_proposals"] : nil
       return [] unless proposals.is_a?(Array)
 
-      expected = {
-        "read_docs" => %w[path], "search_docs" => %w[query], "inspect_agents" => [], "inspect_projects" => [],
-        "install_or_update_tycho_skill" => %w[harness action], "create_agent" => %w[project_key name prompt agent model reasoning_effort],
-        "message_agent" => %w[agent_key prompt], "start_agent" => %w[agent_key], "stop_agent" => %w[agent_key]
-      }
+      expected = PersonalAssistantActionCatalog::ARGUMENTS
       proposals.each_with_index.filter_map do |proposal, index|
         type = proposal.is_a?(Hash) ? proposal["type"] : nil
         arguments = proposal.is_a?(Hash) ? proposal["arguments"] : nil

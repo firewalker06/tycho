@@ -333,8 +333,13 @@ module HQ
       end
       return ok(service.agent_activity) if method == "GET" && parts == ["activity"]
       return ok(personal_assistant: service.personal_assistant) if method == "GET" && parts == ["personal-assistant"]
+      return ok(history: service.personal_assistant_history) if method == "GET" && parts == ["personal-assistant", "history"]
+      if method == "GET" && parts.length == 3 && parts[0, 2] == ["personal-assistant", "history"]
+        return ok(history: service.personal_assistant_history(parts[2]))
+      end
       return ok(personal_assistant: service.setup_personal_assistant(body)) if method == "POST" && parts == ["personal-assistant", "setup"]
       return ok(personal_assistant: service.open_personal_assistant) if method == "POST" && parts == ["personal-assistant", "open"]
+      return ok(personal_assistant: service.restart_personal_assistant(body)) if method == "POST" && parts == ["personal-assistant", "restart"]
       return ok(personal_assistant: service.reset_personal_assistant(body)) if method == "POST" && parts == ["personal-assistant", "reset"]
       return ok(service.submit_personal_assistant_prompt(body, actor:)) if method == "POST" && parts == ["personal-assistant", "messages"]
       return ok(proposals: service.personal_assistant_actions) if method == "GET" && parts == ["personal-assistant", "actions"]
@@ -343,6 +348,9 @@ module HQ
       end
       if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "reject"
         return ok(proposal: service.reject_personal_assistant_action(parts[2]))
+      end
+      if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "verify"
+        return ok(proposal: service.verify_personal_assistant_action(parts[2]))
       end
       return ok(service.resource_snapshot) if method == "GET" && parts == ["resources"]
       return ok(service.metrics_query(request&.query_params || {})) if method == "GET" && parts == ["metrics"]
@@ -1629,7 +1637,9 @@ module HQ
         registry:, agent_store: @agent_store, state_path: File.join(HQ::PERSONAL_ASSISTANT_DIR, "state.json")
       )
       @personal_assistant_actions = PersonalAssistantActions.new(
-        path: File.join(HQ::PERSONAL_ASSISTANT_DIR, "proposals.json"), executor: method(:execute_personal_assistant_action)
+        path: File.join(HQ::PERSONAL_ASSISTANT_DIR, "proposals.json"),
+        executor: method(:execute_personal_assistant_action), verifier: method(:verify_personal_assistant_action_execution),
+        guard: method(:ensure_personal_assistant_action_active!)
       )
       @agent_archive_store = AgentArchiveStore.new
       @push_subscription_store = push_subscription_store
@@ -1852,7 +1862,8 @@ module HQ
       ingest_personal_assistant_actions!(status)
       status = @personal_assistant.reconcile
       agent = load_all_agents.find { |candidate| candidate.key == status[:active_key] && candidate.personal_assistant? }
-      agent ? status.merge(agent: agent_payload(agent)) : status
+      payload = status.merge(capabilities: personal_assistant_capabilities)
+      agent ? payload.merge(agent: agent_payload(agent)) : payload
     rescue ArgumentError => e
       raise Error.new(e.message, status: 409)
     end
@@ -1867,6 +1878,23 @@ module HQ
       @personal_assistant.open!
     rescue ArgumentError => e
       raise Error.new(e.message, status: 409)
+    end
+
+    def restart_personal_assistant(attrs)
+      @personal_assistant_actions.with_no_executing_actions! { @personal_assistant.restart!(attrs) }
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 409)
+    end
+
+    def personal_assistant_history(id = nil)
+      return @personal_assistant.status[:history] if id.nil?
+
+      entry = @personal_assistant.continuity_history_entry(id)
+      raise Error.new("Unknown Personal Assistant history entry", status: 404) unless entry
+
+      entry
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 404)
     end
 
     def reset_personal_assistant(attrs)
@@ -1892,27 +1920,72 @@ module HQ
       @personal_assistant_actions.proposals.select { |proposal| proposal["active_key"] == status[:active_key] }
     end
 
+    def personal_assistant_capabilities
+      {
+        types: PersonalAssistantActionCatalog::TYPES,
+        read_only: PersonalAssistantActionCatalog::READ_ONLY,
+        mutations: PersonalAssistantActionCatalog::MUTATIONS
+      }
+    end
+
     def confirm_personal_assistant_action(id, attrs)
-      @personal_assistant_actions.execute!(id, confirmed: attrs["confirmed"] == true)
+      attempted = false
+      ensure_current_personal_assistant_action!(id)
+      attempted = true
+      proposal = @personal_assistant_actions.execute!(id, confirmed: attrs["confirmed"] == true)
+      record_personal_assistant_action_outcome!(proposal)
     rescue ArgumentError => e
       raise Error.new(e.message, status: 409)
+    rescue Error
+      record_personal_assistant_action_outcome!(@personal_assistant_actions.proposal(id)) if attempted
+      raise
     end
 
     def reject_personal_assistant_action(id)
+      ensure_current_personal_assistant_action!(id)
       @personal_assistant_actions.reject!(id)
     rescue ArgumentError => e
       raise Error.new(e.message, status: 409)
     end
 
+    def verify_personal_assistant_action(id)
+      attempted = false
+      ensure_current_personal_assistant_action!(id)
+      attempted = true
+      proposal = @personal_assistant_actions.verify!(id)
+      record_personal_assistant_action_outcome!(proposal)
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 409)
+    rescue Error
+      record_personal_assistant_action_outcome!(@personal_assistant_actions.proposal(id)) if attempted
+      raise
+    end
+
+    def ensure_current_personal_assistant_action!(id)
+      proposal = @personal_assistant_actions.proposal(id)
+      ensure_personal_assistant_action_active!(proposal)
+      proposal
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 404)
+    end
+
+    def ensure_personal_assistant_action_active!(proposal)
+      status = @personal_assistant.status
+      return if status[:state] == "active" && proposal["active_key"] == status[:active_key]
+
+      raise Error.new("This action belongs to an earlier FRED conversation", status: 409)
+    end
+
     def execute_personal_assistant_action(type, arguments)
       case type
       when "read_docs"
-        path = arguments.fetch("path", "").to_s
+        path = arguments.fetch("path", "").to_s.delete_prefix("docs/")
         root = File.join(HQ::ROOT_DIR, "docs")
         expanded = File.realpath(File.expand_path(path, root)) rescue nil
         docs_root = File.realpath(root)
         raise ArgumentError, "Documentation path is outside Tycho docs" unless expanded && expanded.start_with?("#{docs_root}/") && File.file?(expanded)
-        { "path" => path, "content" => File.read(expanded, 100_000) }
+        content = truncate_personal_assistant_text(File.read(expanded, 100_000), 16_000)
+        { "path" => "docs/#{path}", "content" => content, "truncated" => File.size(expanded) > content.bytesize }
       when "search_docs"
         query = arguments.fetch("query", "").to_s.strip
         raise ArgumentError, "Documentation search query is required" if query.empty?
@@ -1927,14 +2000,30 @@ module HQ
         { "results" => results }
       when "inspect_agents" then { "agents" => agents }
       when "inspect_projects" then { "projects" => projects }
+      when "inspect_schedules" then { "schedules" => schedules }
+      when "inspect_agent_run"
+        target = find_agent!(arguments.fetch("agent_key"))
+        { "agent" => agent_payload(target), "run" => agent_run_debug_payload(target) }
+      when "inspect_agent_log"
+        agent_log(arguments.fetch("agent_key"), "type" => "raw", "tail" => "100")
       when "install_or_update_tycho_skill"
         change_skills(arguments.fetch("harness"), arguments.fetch("action"), "confirmed" => true)
       when "create_agent"
-        create_agent(arguments.merge("start" => false), actor: DelegationActor.user_actor)
+        { "agent" => create_agent(arguments.merge("start" => false), actor: DelegationActor.user_actor) }
       when "message_agent"
         submit_prompt(arguments.fetch("agent_key"), "prompt" => arguments.fetch("prompt"), actor: DelegationActor.user_actor)
       when "start_agent" then start_agent(arguments.fetch("agent_key"), {}, actor: DelegationActor.user_actor)
       when "stop_agent" then stop_agent(arguments.fetch("agent_key"))
+      when "create_project"
+        create_personal_assistant_project(arguments)
+      when "update_project"
+        update_personal_assistant_project(arguments)
+      when "create_schedule"
+        { "schedule" => create_schedule(arguments.compact) }
+      when "pause_schedule"
+        { "schedule" => pause_schedule(arguments.fetch("schedule_key")) }
+      when "resume_schedule"
+        resume_schedule(arguments.fetch("schedule_key"))
       else raise ArgumentError, "Unsupported assistant action"
       end
     end
@@ -1943,11 +2032,206 @@ module HQ
       @personal_assistant.finalized_proposals.each do |snapshot|
         next if snapshot["run_id"].to_s == status[:summary_run_id].to_s && !status[:summary_run_id].to_s.empty?
 
-        @personal_assistant_actions.register_finalized!(snapshot["proposals"], active_key: snapshot["active_key"], source_run_id: snapshot["run_id"])
+        proposals = @personal_assistant_actions.register_finalized!(snapshot["proposals"], active_key: snapshot["active_key"], source_run_id: snapshot["run_id"])
+        proposals.each { |proposal| record_personal_assistant_action_outcome!(proposal) if %w[executed failed].include?(proposal["state"]) }
         @personal_assistant.mark_finalized_proposals_registered!(snapshot["run_id"])
       end
     rescue ArgumentError => e
       HQ.logger.warn("PersonalAssistant") { "Rejected finalized action proposals: #{e.message}" }
+    end
+
+    def create_personal_assistant_project(arguments)
+      attrs = arguments.compact.transform_keys(&:to_sym)
+      attrs[:agent] = HQ.harness_keys.first if attrs[:agent].to_s.empty?
+      @registry.add_project!(attrs)
+      reload_projects_from_registry!
+      { "project" => project(arguments.fetch("key")) }
+    rescue ConfigError => e
+      raise Error.new(e.message, status: 400)
+    end
+
+    def update_personal_assistant_project(arguments)
+      key = arguments.fetch("project_key")
+      attrs = arguments.reject { |field, value| field == "project_key" || value.nil? }
+      { "project" => update_project(key, attrs) }
+    end
+
+    # This is reconciliation, never a retry. A completed value means the
+    # requested observable state exists now; unknown results stay failed and
+    # require a fresh model proposal plus another exact confirmation.
+    def verify_personal_assistant_action_execution(type, arguments, proposal)
+      case type
+      when "create_agent"
+        matches = load_all_agents.select do |agent|
+          agent.project_key == arguments["project_key"] && agent.name == arguments["name"] && agent.prompt == arguments["prompt"]
+        end
+        return verification_completed("agent" => agent_payload(matches.first)) if matches.one?
+        matches.empty? ? verification_no_effect("No matching agent exists.") : verification_unknown("Several matching agents exist; the original outcome is unknown.")
+      when "create_project"
+        target = @projects.find { |project| project.key == arguments["key"] }
+        return verification_no_effect("No project with that key exists.") unless target
+
+        matches = target.name == arguments["name"] && target.path == arguments["path"] &&
+                  (arguments["group"].nil? || target.group == arguments["group"]) &&
+                  (arguments["agent"].nil? || target.config.agent.to_s == arguments["agent"]) &&
+                  (arguments["model"].nil? || target.config.model.to_s == arguments["model"]) &&
+                  (arguments["reasoning_effort"].nil? || target.config.reasoning_effort.to_s == arguments["reasoning_effort"])
+        matches ? verification_completed("project" => project(target.key)) : verification_unknown("A project with that key exists but does not match the requested project.")
+      when "update_project"
+        target = @projects.find { |project| project.key == arguments["project_key"] }
+        return verification_unknown("The project no longer exists.") unless target
+
+        values = arguments.reject { |field, value| field == "project_key" || value.nil? }
+        matches = values.all? do |field, value|
+          case field
+          when "name" then target.name == value
+          when "group" then target.group == value
+          else target.config.public_send(field).to_s == value.to_s
+          end
+        end
+        matches ? verification_completed("project" => project(target.key)) : verification_unknown("The project does not have the requested settings.")
+      when "create_schedule"
+        target = schedules.find { |schedule| schedule[:key].to_s == arguments["key"] }
+        return verification_no_effect("No schedule with that key exists.") unless target
+
+        matches = %w[name cron timezone project_key agent_name message].all? { |field| target[field.to_sym].to_s == arguments[field].to_s } &&
+                  (arguments["system_message"].nil? || target[:system_message].to_s == arguments["system_message"])
+        matches ? verification_completed("schedule" => target) : verification_unknown("A schedule with that key exists but does not match the requested schedule.")
+      when "pause_schedule"
+        target = schedule(arguments["schedule_key"])
+        target[:paused] ? verification_completed("schedule" => target) : verification_unknown("The schedule is not paused.")
+      when "resume_schedule"
+        target = schedule(arguments["schedule_key"])
+        !target[:paused] ? verification_completed("schedule" => target) : verification_unknown("The schedule is still paused.")
+      when "start_agent"
+        target = find_agent!(arguments["agent_key"])
+        target.running? ? verification_completed("agent" => agent_payload(target)) : verification_unknown("The agent is not running.")
+      when "stop_agent"
+        target = find_agent!(arguments["agent_key"])
+        !target.running? ? verification_completed("agent" => agent_payload(target)) : verification_unknown("The agent is still running.")
+      else
+        verification_unknown("Tycho cannot safely verify this action without repeating it.")
+      end
+    rescue Error, ArgumentError => e
+      verification_unknown(e.message)
+    end
+
+    def verification_completed(result)
+      { "completed" => true, "result" => result }
+    end
+
+    def verification_unknown(reason)
+      { "completed" => false, "reason" => reason }
+    end
+
+    def verification_no_effect(reason)
+      { "completed" => false, "no_effect" => true, "reason" => reason }
+    end
+
+    def record_personal_assistant_action_outcome!(proposal)
+      return proposal unless proposal.is_a?(Hash) && %w[executed failed].include?(proposal["state"])
+
+      proposal = attach_personal_assistant_tracking!(proposal)
+      @personal_assistant.record_action_result!(proposal) if @personal_assistant.respond_to?(:record_action_result!)
+      append_personal_assistant_action_feedback!(proposal)
+      proposal
+    rescue StandardError => e
+      HQ.logger.warn("PersonalAssistant") { "Could not record action outcome: #{e.message}" }
+      proposal
+    end
+
+    def attach_personal_assistant_tracking!(proposal)
+      return proposal unless proposal.is_a?(Hash) && proposal["state"] == "executed" && proposal["tracked"].nil?
+
+      result = proposal["result"] || {}
+      tracked = case proposal["type"]
+                when "create_agent"
+                  personal_assistant_reference("agent", result["agent"], proposal)
+                when "create_project", "update_project"
+                  personal_assistant_reference("project", result["project"], proposal)
+                when "create_schedule", "pause_schedule", "resume_schedule"
+                  personal_assistant_reference("schedule", result["schedule"], proposal)
+                end
+      tracked ? @personal_assistant_actions.track!(proposal.fetch("id"), tracked) : proposal
+    end
+
+    def personal_assistant_reference(kind, value, proposal)
+      return nil unless value.is_a?(Hash)
+
+      key = value["key"] || value[:key]
+      return nil if key.to_s.empty?
+
+      reference = {
+        "kind" => kind,
+        "key" => key.to_s,
+        "created_by" => "fred",
+        "proposal_id" => proposal.fetch("id")
+      }
+      reference["name"] = (value["name"] || value[:name]).to_s if (value["name"] || value[:name]).to_s != ""
+      reference["project_key"] = (value["project_key"] || value[:project_key]).to_s if (value["project_key"] || value[:project_key]).to_s != ""
+      reference["status"] = (value["status"] || value[:status]).to_s if (value["status"] || value[:status]).to_s != ""
+      reference["agent_key"] = key.to_s if kind == "agent"
+      reference["project_key"] = key.to_s if kind == "project"
+      reference["schedule_key"] = key.to_s if kind == "schedule"
+      reference
+    end
+
+    def append_personal_assistant_action_feedback!(proposal)
+      key = proposal["active_key"].to_s
+      return if key.empty?
+      content = personal_assistant_action_feedback(proposal)
+
+      @agent_store.mutate do |agents, _|
+        target = agents.find { |agent| agent.key == key && agent.personal_assistant? }
+        next unless target
+        next if AgentMemory.new(target).personal_assistant_action_result_recorded?(proposal["id"], content:)
+
+        target.add_personal_assistant_action_result!(content, metadata: {
+                                                     "personal_assistant_action_proposal_id" => proposal["id"],
+                                                     "personal_assistant_action_source_run_id" => proposal["source_run_id"],
+                                                     "personal_assistant_action_state" => proposal["state"]
+                                                   })
+      end
+    end
+
+    def personal_assistant_action_feedback(proposal)
+      heading = proposal["state"] == "executed" ? "Tycho completed #{proposal["type"]}." : "Tycho could not complete #{proposal["type"]}: #{proposal["error"]}."
+      detail = personal_assistant_action_result_summary(proposal["type"], proposal["result"])
+      recovery = case proposal.dig("recovery", "state")
+                 when "replacement_available" then "Tycho verified no effect. Prepare a new proposal for confirmation if the user still wants this action."
+                 when "outcome_unknown" then "The outcome is unknown. Investigate before proposing another mutation."
+                 else "You can verify the outcome before proposing a replacement." if proposal.dig("recovery", "action") == "verify"
+                 end
+      [heading, detail, recovery].compact.reject(&:empty?).join("\n\n")
+    end
+
+    def personal_assistant_action_result_summary(type, result)
+      return "" unless result.is_a?(Hash)
+
+      case type
+      when "read_docs"
+        ["Source: #{result["path"]}", truncate_personal_assistant_text(result["content"], 3_000)].join("\n\n")
+      when "search_docs"
+        truncate_personal_assistant_text(Array(result["results"]).map { |item| "- #{item["path"]}: #{item["match"]}" }.join("\n"), 3_500)
+      when "inspect_agents"
+        Array(result["agents"]).first(30).map { |item| "- #{item[:name] || item["name"]} (#{item[:key] || item["key"]}): #{item[:status] || item["status"]}" }.join("\n")
+      when "inspect_projects"
+        Array(result["projects"]).first(30).map { |item| "- #{item[:name] || item["name"]} (#{item[:key] || item["key"]})" }.join("\n")
+      when "inspect_schedules"
+        Array(result["schedules"]).first(30).map { |item| "- #{item[:name] || item["name"]} (#{item[:key] || item["key"]}): #{item[:status] || item["status"] || "configured"}" }.join("\n")
+      when "inspect_agent_log"
+        truncate_personal_assistant_text(Array(result["tail"] || result[:tail]).last(40).join("\n"), 3_500)
+      else
+        truncate_personal_assistant_text(JSON.generate(result), 3_500)
+      end
+    end
+
+    def truncate_personal_assistant_text(value, bytes)
+      value.to_s.encode(Encoding::UTF_8, invalid: :replace, undef: :replace).each_char.with_object(String.new) do |character, output|
+        break output if output.bytesize + character.bytesize > bytes
+
+        output << character
+      end
     end
 
     def agent(key)
@@ -3532,8 +3816,15 @@ module HQ
 
     def find_agent_reference!(key)
       load_all_agents.find { |agent| agent.key == key.to_s } ||
-        visible_archived_agent(key) ||
+        readable_archived_agent(key) ||
         raise(Error.new("Unknown agent: #{key}", status: 404))
+    end
+
+    def readable_archived_agent(key)
+      agent = @agent_archive_store.find(key)&.agent
+      return nil unless agent && (agent.personal_assistant? || archived_agent_visible?(agent))
+
+      agent
     end
 
     def visible_archived_agent(key)

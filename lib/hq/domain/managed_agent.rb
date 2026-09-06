@@ -1071,6 +1071,19 @@ module HQ
                        content: text)
     end
 
+    # Server-owned action receipts are part of the assistant's durable context,
+    # but are never represented as a fabricated user request or a new run.
+    def add_personal_assistant_action_result!(content, metadata: nil)
+      text = content.to_s.strip
+      return if text.empty?
+
+      created_at = Time.now
+      @messages << AgentMessage.new(role: "assistant", content: text, created_at:, metadata: metadata)
+      trim_messages!
+      memory_store.append_personal_assistant_action_result!(text, created_at:, metadata:)
+      HQ.hooks.publish("personal_assistant.action_result_added", agent_key: @key, content: text)
+    end
+
     def conversation_messages
       memory_store.conversation_messages.map do |message|
         AgentMessage.new(
@@ -2071,16 +2084,20 @@ module HQ
                            "prompt_queue_claim_id" => @prompt_queue_claim["id"]
                          )
                        end
+      threshold = last_run&.finished_at || @finished_at || @started_at
+      threshold = Time.at(threshold.to_i) if threshold
+      receipt_cutoff = last_run&.started_at || @started_at
+      receipt_cutoff = Time.at(receipt_cutoff.to_i) if receipt_cutoff
+      feedback = native_resume? ? memory_store.personal_assistant_action_results_after(receipt_cutoff) : []
       base_prompt = if !claimed_prompt.to_s.strip.empty?
                       claimed_prompt
                     elsif !native_resume?
                       composed_prompt
                     else
-                      threshold = last_run&.finished_at || @finished_at || @started_at
-                      threshold = Time.at(threshold.to_i) if threshold
                       latest = memory_store.latest_user_message_after(threshold, inclusive: true)
                       latest.to_s.strip.empty? ? "Continue from the current HQ managed-agent state." : latest.to_s
                     end
+      base_prompt = ["[TYCHO ACTION RESULTS — server verified]", feedback.join("\n\n"), base_prompt].join("\n\n") if feedback.any?
       with_execution_guidance(base_prompt, response_style:, include_hidden_guidance:)
     end
 
@@ -2329,7 +2346,7 @@ module HQ
         summary: @summary,
         status: effective_status,
         created_at: run.finished_at || @finished_at || Time.now,
-        metadata: run_summary_metadata,
+        metadata: run_summary_metadata.merge("run_id" => durable_run_id(run)),
         event_id: "#{durable_run_id(run)}:run-summary"
       )
       HQ.hooks.publish("agent.memory.captured",

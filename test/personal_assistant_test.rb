@@ -34,6 +34,12 @@ class PersonalAssistantTest
       agents.reject! { |agent| agent.key == key }
     end
 
+    def delete_personal_assistant!(key)
+      raise "delete failed" if fail_archive
+
+      agents.reject! { |agent| agent.key == key }
+    end
+
     def stop_agent!(key)
       self.stops = stops.to_i + 1
       agent = agents.find { |candidate| candidate.key == key }
@@ -137,7 +143,9 @@ class PersonalAssistantTest
       assert_disabled_preserves_no_session(registry, dir)
       assert_dst_and_threaded_reconcile(registry, dir)
       assert_orphan_adoption_persists(registry, dir, clock)
-      assert_reset_archives_idle_and_running_sessions(registry, dir)
+      assert_reset_deletes_idle_and_running_sessions(registry, dir)
+      assert_restart_preserves_settings_history_and_task_references(registry, dir)
+      assert_continuity_is_valid_json_and_rollover_handles_month_end(registry, dir)
     end
     puts "personal_assistant_test: OK"
   end
@@ -209,7 +217,7 @@ class PersonalAssistantTest
            "expected orphan adoption to persist active lifecycle state to disk")
   end
 
-  def self.assert_reset_archives_idle_and_running_sessions(registry, dir)
+  def self.assert_reset_deletes_idle_and_running_sessions(registry, dir)
     clock = Clock.new(Time.utc(2026, 3, 13, 12, 0, 0)); store = FakeStore.new(agents: [], starts: 0, stops: 0)
     path = File.join(dir, "reset.json")
     lifecycle = HQ::PersonalAssistantLifecycle.new(registry:, agent_store: store, clock:, state_path: path)
@@ -223,7 +231,7 @@ class PersonalAssistantTest
     actions.register_finalized!([{ "type" => "start_agent", "description" => "Start", "arguments" => { "agent_key" => "fixture" } }], active_key: store.agents.fetch(0).key, source_run_id: "idle-reset")
     reset = actions.reset! { lifecycle.reset! }
     assert(reset[:state] == "unconfigured" && !reset[:configured] && store.agents.empty?,
-           "expected reset to archive an idle protected session before disabling FRED")
+           "expected reset to delete an idle protected session before disabling FRED")
     assert(actions.proposals.empty?, "expected successful reset to clear proposals after lifecycle reset")
     assert(!File.read(registry.path).include?("personal_assistant"),
            "expected reset to remove persisted FRED model, reasoning effort, and timezone")
@@ -237,7 +245,7 @@ class PersonalAssistantTest
     running.define_singleton_method(:running?) { @fake_running == true }
     reset = actions.reset! { lifecycle.reset! }
     assert(reset[:state] == "unconfigured" && store.stops == 1 && store.agents.empty?,
-           "expected reset to stop then archive a running protected session")
+           "expected reset to stop then delete a running protected session")
 
     lifecycle.setup!("confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "UTC")
     lifecycle.open!
@@ -266,6 +274,60 @@ class PersonalAssistantTest
     assert(lifecycle.status[:state] == "unconfigured" && !lifecycle.status[:configured], "expected disabled feature to stay dormant")
     assert_raises { lifecycle.open! }
     registry.update_personal_assistant!(registry.personal_assistant.merge("enabled" => true))
+  end
+
+  def self.assert_restart_preserves_settings_history_and_task_references(registry, dir)
+    clock = Clock.new(Time.utc(2026, 3, 14, 10, 0, 0)); store = FakeStore.new(agents: [], starts: 0)
+    lifecycle = HQ::PersonalAssistantLifecycle.new(registry:, agent_store: store, clock:, state_path: File.join(dir, "restart.json"))
+    lifecycle.setup!("confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "UTC")
+    first = lifecycle.open!
+    store.agents.first.add_user_message!("Keep this original request")
+    10.times { |index| store.agents.first.add_user_message!("Later request #{index}") }
+    lifecycle.record_action_result!(
+      "id" => "create-review", "type" => "create_agent", "state" => "completed",
+      "tracked" => { "kind" => "agent", "key" => "review-1", "agent_key" => "review-1", "name" => "Review Tycho", "status" => "prepared", "project_key" => "tycho" }
+    )
+    lifecycle.setup!("confirmed" => true, "model" => "gpt-5.6-terra", "reasoning_effort" => "high", "timezone" => "Asia/Jakarta")
+    active = lifecycle.status
+    assert(active.dig(:active_settings, :model) == "gpt-5.6-sol" && active[:config]["model"] == "gpt-5.6-terra",
+           "expected edited settings to remain pending while the active thread keeps its launch model")
+    assert(active[:task_references].length == 1 && active[:task_references].first["key"] == "review-1",
+           "expected a stable, bounded action reference")
+    lifecycle.record_action_result!(
+      "id" => "create-review", "type" => "create_agent", "state" => "completed",
+      "tracked" => { "kind" => "agent", "key" => "review-1", "agent_key" => "review-1", "name" => "Review Tycho", "status" => "prepared" }
+    )
+    assert(lifecycle.status[:task_references].length == 1, "expected action receipt recording to be idempotent")
+
+    restarted = lifecycle.restart!("confirmed" => true)
+    assert(restarted[:active_key] != first[:active_key] && restarted[:config]["model"] == "gpt-5.6-terra",
+           "expected restart to preserve settings and begin a new generation")
+    assert(restarted[:history].first["reason"] == "restart" && restarted[:history].first["agent_key"] == first[:active_key],
+           "expected restart to archive a history entry linked to the prior conversation")
+    assert(store.agents.first.prompt.include?("review-1") && store.agents.first.prompt.include?("Keep this original request"),
+           "expected task references and the original user request to carry into the restarted conversation")
+    lifecycle.record_action_result!(
+      "id" => "late-review", "type" => "create_agent", "state" => "executed",
+      "tracked" => { "kind" => "agent", "key" => "late-review-2", "agent_key" => "late-review-2", "name" => "Late review", "status" => "prepared" }
+    )
+    state = HQ::FileStore.read_json(File.join(dir, "restart.json"), fallback: {})
+    assert(lifecycle.send(:prior_continuity, state).include?("late-review-2"),
+           "expected action completion recorded after rollover to carry into the next FRED conversation")
+  end
+
+  def self.assert_continuity_is_valid_json_and_rollover_handles_month_end(registry, dir)
+    clock = Clock.new(Time.utc(2026, 12, 31, 23, 0, 0)); store = FakeStore.new(agents: [], starts: 0)
+    lifecycle = HQ::PersonalAssistantLifecycle.new(registry:, agent_store: store, clock:, state_path: File.join(dir, "continuity.json"))
+    handoff = {
+      "summary" => "x" * 2_000, "open_items" => Array.new(12) { "y" * 600 },
+      "decisions" => Array.new(20) { "z" * 600 }, "references" => [], "lessons" => [], "promotion_candidates" => [],
+      "outstanding_child_agents" => ["review-1"]
+    }
+    compact = lifecycle.send(:fit_handoff_json, handoff, 3_800)
+    assert(JSON.generate(compact).bytesize <= 3_800 && JSON.parse(JSON.generate(compact))["outstanding_child_agents"] == ["review-1"],
+           "expected carryforward to remain valid JSON and retain task references within its byte budget")
+    assert(lifecycle.send(:next_rollover_at, clock.now, "UTC") == "2027-01-01T00:00:00Z",
+           "expected next rollover calculation to cross month and year boundaries")
   end
 
   def self.assert_dst_and_threaded_reconcile(registry, dir)
