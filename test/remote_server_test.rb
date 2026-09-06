@@ -4939,8 +4939,8 @@ module RemoteServerTest
            "expected the mobile Quick Agent form to fill and scroll within the viewport")
     assert(css[:body].include?("--touch-target: 44px") && css[:body].include?("--control-height: 44px"),
            "expected audited Remote UI controls to share accessible sizing tokens")
-    assert(css[:body].include?(".pa-suggestions button { flex: 0 0 auto; min-height: var(--touch-target);"),
-           "expected FRED suggestion chips to meet the shared 44px touch target")
+    assert(css[:body].include?(".pa-suggestion { display: grid; width: 100%; min-height: var(--touch-target);"),
+           "expected FRED first-run list actions to meet the shared 44px touch target")
     assert(css[:body].include?(".top-actions .search-box"),
            "expected Agents tab search to flex inside the action row")
     assert(css[:body].include?(".top-actions {\n  flex-wrap: nowrap;"),
@@ -6700,10 +6700,11 @@ module RemoteServerTest
            initiate_handler.include?('navigate({ type: "tab", tab: "personal-assistant" })'),
            "expected FRED setup to open the Personal Assistant setup screen")
     assert(js[:body].include?("Set up FRED") &&
-           js[:body].include?("Review these defaults. FRED sends nothing until your first message.") &&
+           js[:body].include?("FRED—Friendly Robot for Execution Dispatcher—helps you prepare and oversee work in Tycho.".b) &&
            js[:body].include?("I confirm these settings for FRED.") &&
+           !js[:body].include?("Codex found; account access is checked when it runs.") &&
            !js[:body].include?("Open today’s conversation when you’re ready.".b),
-           "expected FRED setup to show concise configuration without a ready screen")
+           "expected FRED setup to explain its purpose without readiness noise or a ready screen")
     setup_handler = js[:body].split('if (["personal-assistant-setup-form", "personal-assistant-settings-form"]', 2).last.split('if (event.target.id === "server-connection-form")', 2).first
     assert(setup_handler.include?('apiPost("/personal-assistant/setup"') &&
            setup_handler.include?('apiPost("/personal-assistant/open"') &&
@@ -6718,6 +6719,18 @@ module RemoteServerTest
            "expected first-use FRED flow not to silently submit fixed settings")
     assert(js[:body].include?("personalAssistant ? \"/personal-assistant/messages\""),
            "expected FRED messages to use the dedicated Personal Assistant API")
+    fred_welcome = js[:body].split("function renderPersonalAssistantWelcome", 2).last.split("function personalAssistantHasRealConversation", 2).first
+    assert(fred_welcome.include?('class="pa-suggestions" aria-label="Ways to start with FRED"') &&
+           fred_welcome.include?('<ul class="pa-suggestions"') &&
+           fred_welcome.include?('list="pa-project-options"') &&
+           fred_welcome.include?('data-pa-project-picker') &&
+           fred_welcome.include?('class="pa-capabilities"') &&
+           !fred_welcome.include?('<select data-pa-project-picker>'),
+           "expected first-use FRED actions and capabilities to use accessible lists and project autocomplete")
+    fred_conversation_filter = js[:body][/function personalAssistantVisibleConversationBlocks\(blocks\).*?^}/m]
+    assert(fred_conversation_filter&.include?('block?.kind === "message" && ["user", "assistant"].includes(block.role)') &&
+           js[:body].include?("? personalAssistantVisibleConversationBlocks(allConversationBlocks)"),
+           "expected FRED chat to hide internal activity and run-summary blocks without removing them from logs")
     settings_markup = js[:body][js[:body].index('id="personal-assistant-settings-menu"'), 1_800]
     assert(settings_markup.scan('role="menu"').length == 1 && !settings_markup.include?('class="pa-settings-details"') &&
            !settings_markup.include?('Open app settings') && !settings_markup.include?('daily conversation and its continuity'),

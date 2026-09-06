@@ -79,7 +79,7 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
       script = File.join(dir, "capture.js")
       File.write(script, <<~JS)
         const { chromium, devices } = require(#{playwright.to_json});
-        (async () => { const browser = await chromium.launch({headless:true}); const page = await browser.newPage(devices[#{device.to_json}]); if (#{device.to_json} === 'Desktop Chrome') await page.setViewportSize({ width: 1280, height: 900 }); await page.goto('http://127.0.0.1:#{PORT}/ui##{route}'); const target = page.locator(#{selector.to_json}); await target.waitFor({state:'visible',timeout:15000}); await page.waitForFunction(() => { const boot = document.querySelector('#tycho-boot-shell'); return !boot || getComputedStyle(boot).display === 'none' || getComputedStyle(boot).visibility === 'hidden'; }, null, {timeout:15000}); await page.waitForFunction(() => document.body.innerText.includes(#{expected.to_json}), null, {timeout:15000}); if (#{open_menu}) { await page.locator('#personal-assistant-settings-menu > summary').click(); await page.locator('[data-open-settings]').waitFor({state:'visible',timeout:15000}); } if (#{open_switcher}) { await page.locator('[data-agent-switcher]').click(); await page.locator('#unread-agents-panel:not(.hidden)').waitFor({state:'visible',timeout:15000}); } if (#{keyboard_switcher}) { await page.keyboard.press('Meta+k'); await page.locator('#unread-agents-panel:not(.hidden)').waitFor({state:'visible',timeout:15000}); } if (#{reset_fred}) { await page.locator('[data-reset-personal-assistant]').click(); await page.locator('#confirmation-dialog[open]').waitFor({state:'visible',timeout:15000}); await page.locator('[data-confirmation-accept]').click(); await page.waitForFunction(() => document.body.innerText.includes('Set up FRED'), null, {timeout:15000}); } else { await target.scrollIntoViewIfNeeded(); } await page.screenshot({path:#{File.join(OUTPUT, name).to_json},fullPage:false}); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });
+        (async () => { const browser = await chromium.launch({headless:true}); const page = await browser.newPage(devices[#{device.to_json}]); if (#{device.to_json} === 'Desktop Chrome') await page.setViewportSize({ width: 1280, height: 900 }); await page.goto('http://127.0.0.1:#{PORT}/ui##{route}'); const target = page.locator(#{selector.to_json}); await target.waitFor({state:'visible',timeout:15000}); await page.waitForFunction(() => { const boot = document.querySelector('#tycho-boot-shell'); return !boot || getComputedStyle(boot).display === 'none' || getComputedStyle(boot).visibility === 'hidden'; }, null, {timeout:15000}); await page.waitForFunction(() => document.body.innerText.includes(#{expected.to_json}), null, {timeout:15000}); if (#{open_menu}) { await page.locator('#personal-assistant-settings-menu > summary').click(); await page.locator('[data-open-settings]').waitFor({state:'visible',timeout:15000}); } if (#{open_switcher}) { await page.locator('[data-agent-switcher]').click(); await page.locator('#unread-agents-panel:not(.hidden)').waitFor({state:'visible',timeout:15000}); } if (#{keyboard_switcher}) { await page.keyboard.press('Meta+k'); await page.locator('#unread-agents-panel:not(.hidden)').waitFor({state:'visible',timeout:15000}); } if (#{reset_fred}) { await page.locator('.pa-danger-zone > summary').click(); await page.locator('[data-reset-personal-assistant]').click(); await page.locator('#confirmation-dialog[open]').waitFor({state:'visible',timeout:15000}); await page.locator('[data-confirmation-accept]').click(); await page.waitForFunction(() => document.body.innerText.includes('Set up FRED'), null, {timeout:15000}); } else { await target.scrollIntoViewIfNeeded(); } await page.screenshot({path:#{File.join(OUTPUT, name).to_json},fullPage:false}); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });
       JS
       system("node", script, exception: true)
     end
@@ -95,8 +95,20 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
           await page.goto('http://127.0.0.1:#{PORT}/ui#settings');
           await page.locator('[data-initiate-personal-assistant]').click();
           await page.locator('.pa-setup').waitFor({ state: 'visible', timeout: 15000 });
+          const setupCopy = await page.locator('.pa-setup').innerText();
+          if (!setupCopy.includes('Friendly Robot for Execution Dispatcher')) throw new Error('FRED setup did not explain its name and purpose');
+          if (setupCopy.includes('Codex found')) throw new Error('FRED setup retained noisy healthy-Codex copy');
           await page.locator('#personal-assistant-setup-form input[name="confirmed"]').check();
           await page.locator('#personal-assistant-setup-form button[type="submit"]').click();
+          await page.locator('.pa-welcome').waitFor({ state: 'visible', timeout: 15000 });
+          if (await page.locator('.pa-suggestions > li').count() !== 3) throw new Error('FRED starters did not render as a three-item list');
+          if (await page.locator('select[data-pa-project-picker]').count()) throw new Error('FRED project starter still uses a select menu');
+          const projectPicker = page.locator('[data-pa-project-picker]');
+          if (await projectPicker.getAttribute('list') !== 'pa-project-options') throw new Error('FRED project starter is missing autocomplete suggestions');
+          if (await page.locator('.pa-capabilities ul > li').count() !== 5) throw new Error('FRED capabilities did not render as a concise list');
+          await projectPicker.fill('Personal Assistant fixture (fixture)');
+          await page.locator('#pa-project-starter-form button[type="submit"]').click();
+          await page.waitForFunction(() => document.querySelector('#composer #prompt-input')?.value.includes('Personal Assistant fixture (fixture)'), null, { timeout: 15000 });
           await page.locator('#composer #prompt-input').fill('Create a fixture agent');
           await page.locator('#composer button[type="submit"]').click();
           await page.locator('[data-confirm-pa-proposal]').waitFor({ state: 'visible', timeout: 15000 });
@@ -113,6 +125,7 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
           if ((await page.locator('.pa-conversation-scroll').innerText()).includes('Tycho completed create_agent.')) throw new Error('Raw action receipt duplicated the typed result');
           if (await page.locator('.pa-action-feed').count()) throw new Error('Action receipt was not attached to its source reply');
           if (await page.locator('.message-list .pa-inline-action').count() !== 1) throw new Error('Action receipt was not rendered with its source reply');
+          if (await page.locator('.personal-assistant-page .message-group, .personal-assistant-page [data-run-summary-id]').count()) throw new Error('FRED chat exposed internal activity or run-summary blocks');
           await page.waitForTimeout(2500);
           await page.locator('.message-list .pa-inline-action').evaluate((card) => card.scrollIntoView({ block: 'start' }));
           await page.screenshot({ path: #{ACTION_RESULT_OUTPUT.to_json}, fullPage: false });
@@ -192,8 +205,8 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
     verify_initiate.call
     exit if ENV["TYCHO_PERSONAL_ASSISTANT_VERIFY_ONLY"] == "1"
     verify_zero_project_entry.call
-    capture.call("fred-compact-settings-menu-desktop.png", "Desktop Chrome", ".personal-assistant-page", "FRED fixture agent", open_menu: true)
-    capture.call("fred-compact-settings-menu-mobile.png", "iPhone 13", ".personal-assistant-page", "FRED fixture agent", open_menu: true)
+    capture.call("fred-compact-settings-menu-desktop.png", "Desktop Chrome", ".personal-assistant-page", "What would you like to do?", open_menu: true)
+    capture.call("fred-compact-settings-menu-mobile.png", "iPhone 13", ".personal-assistant-page", "What would you like to do?", open_menu: true)
     capture.call("fred-reset-settings-desktop.png", "Desktop Chrome", "#settings-personal-assistant", "Reset FRED", route: "settings")
     capture.call("fred-reset-settings-mobile.png", "iPhone 13", "#settings-personal-assistant", "Reset FRED", route: "settings")
     capture.call("fred-onboarding-after-reset-desktop.png", "Desktop Chrome", "#settings-personal-assistant", "Reset FRED", route: "settings", reset_fred: true)

@@ -18,6 +18,7 @@ module RemoteUIAssetSnapshotTest
     assert_archived_agents_are_reference_only_and_read_only
     assert_personal_assistant_is_chat_first
     assert_personal_assistant_first_run_uses_starters
+    assert_personal_assistant_hides_internal_chat_events
     assert_agent_status_icons_use_lucide_without_badges
     puts "remote_ui_asset_snapshot_test: ok"
   end
@@ -68,7 +69,11 @@ module RemoteUIAssetSnapshotTest
       'block?.kind === "message" && ["user", "assistant"].includes(block.role)',
       "const starter = agent && item.state === \"active\" && !personalAssistantHasRealConversation(blocks);",
       "${starter ? renderPersonalAssistantWelcome(",
-      'querySelector("#composer #prompt-input")'
+      'querySelector("#composer #prompt-input")',
+      "function personalAssistantProjectForPicker",
+      'list="pa-project-options"',
+      'data-pa-project-picker',
+      'class="pa-capabilities"'
     ]
     missing = required_javascript.reject { |fragment| javascript.include?(fragment) }
     raise "missing Personal Assistant first-run starter contract: #{missing.join(", ")}" unless missing.empty?
@@ -79,6 +84,21 @@ module RemoteUIAssetSnapshotTest
     ]
     missing = required_css.reject { |fragment| css.include?(fragment) }
     raise "missing Personal Assistant header identity scale: #{missing.join(", ")}" unless missing.empty?
+
+    raise "Personal Assistant project starter must not use a select menu" if javascript.include?("<select data-pa-project-picker>")
+  end
+
+  def assert_personal_assistant_hides_internal_chat_events
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    filter = javascript[/function personalAssistantVisibleConversationBlocks\(blocks\).*?^}/m]
+
+    raise "missing Personal Assistant conversation visibility filter" unless filter
+    unless filter.include?('block?.kind === "message" && ["user", "assistant"].includes(block.role)')
+      raise "Personal Assistant must render only user and FRED message blocks"
+    end
+    unless javascript.include?("? personalAssistantVisibleConversationBlocks(allConversationBlocks)")
+      raise "Personal Assistant visibility filter is not applied to its conversation renderer"
+    end
   end
 
   def assert_initial_loading_shell_contract
