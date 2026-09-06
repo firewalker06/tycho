@@ -225,6 +225,8 @@ class PersonalAssistantTest
     assert(reset[:state] == "unconfigured" && !reset[:configured] && store.agents.empty?,
            "expected reset to archive an idle protected session before disabling FRED")
     assert(actions.proposals.empty?, "expected successful reset to clear proposals after lifecycle reset")
+    assert(!File.read(registry.path).include?("personal_assistant"),
+           "expected reset to remove persisted FRED model, reasoning effort, and timezone")
     cleared = HQ::FileStore.read_json(path, fallback: {})
     assert(cleared.keys == ["version"], "expected reset to clear lifecycle, continuity, and proposal state")
 

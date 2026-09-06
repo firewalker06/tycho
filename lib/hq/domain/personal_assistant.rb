@@ -100,7 +100,7 @@ module HQ
         end
 
         yield if block_given?
-        @registry.update_personal_assistant!({})
+        @registry.clear_personal_assistant!
         state.clear
         payload(state)
       end

@@ -380,6 +380,14 @@ module HQ
       @personal_assistant
     end
 
+    def clear_personal_assistant!
+      data = load_yaml(@path)
+      data.delete("personal_assistant")
+      write_yaml(@path, data)
+      load!
+      @personal_assistant
+    end
+
     def update_session_loop_defaults!(attrs)
       update_session_loop_settings!(
         "interval_minutes" => attrs["interval_minutes"] || attrs[:interval_minutes],

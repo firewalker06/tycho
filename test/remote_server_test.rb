@@ -534,6 +534,8 @@ module RemoteServerTest
              "expected confirmed reset to return FRED onboarding state")
       assert(service.send(:load_all_agents).none?(&:personal_assistant?) && service.registry.personal_assistant.empty?,
              "expected reset to archive the protected session and clear FRED configuration")
+      assert(!File.read(service.registry.path).include?("personal_assistant"),
+             "expected reset to remove FRED model, reasoning effort, and timezone from configuration")
       assert(HQ::FileStore.read_json(proposals_path, fallback: {}).fetch("proposals", []).empty?,
              "expected reset to clear pending and historical FRED action state")
     end
