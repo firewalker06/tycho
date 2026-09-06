@@ -213,14 +213,18 @@ class PersonalAssistantTest
     clock = Clock.new(Time.utc(2026, 3, 13, 12, 0, 0)); store = FakeStore.new(agents: [], starts: 0, stops: 0)
     path = File.join(dir, "reset.json")
     lifecycle = HQ::PersonalAssistantLifecycle.new(registry:, agent_store: store, clock:, state_path: path)
+    actions_path = File.join(dir, "reset-proposals.json")
+    actions = HQ::PersonalAssistantActions.new(path: actions_path, executor: ->(*) { { "ok" => true } })
     lifecycle.open!
     state = HQ::FileStore.read_json(path, fallback: {})
     state.merge!("handoff_path" => File.join(dir, "old-handoff.json"), "finalized_proposals" => [{ "run_id" => "pending" }], "summary_run_id" => "summary")
     HQ::FileStore.write_json(path, state)
 
-    reset = lifecycle.reset!
+    actions.register_finalized!([{ "type" => "start_agent", "description" => "Start", "arguments" => { "agent_key" => "fixture" } }], active_key: store.agents.fetch(0).key, source_run_id: "idle-reset")
+    reset = actions.reset! { lifecycle.reset! }
     assert(reset[:state] == "unconfigured" && !reset[:configured] && store.agents.empty?,
            "expected reset to archive an idle protected session before disabling FRED")
+    assert(actions.proposals.empty?, "expected successful reset to clear proposals after lifecycle reset")
     cleared = HQ::FileStore.read_json(path, fallback: {})
     assert(cleared.keys == ["version"], "expected reset to clear lifecycle, continuity, and proposal state")
 
@@ -229,16 +233,27 @@ class PersonalAssistantTest
     running = store.agents.fetch(0)
     running.instance_variable_set(:@fake_running, true)
     running.define_singleton_method(:running?) { @fake_running == true }
-    reset = lifecycle.reset!
+    reset = actions.reset! { lifecycle.reset! }
     assert(reset[:state] == "unconfigured" && store.stops == 1 && store.agents.empty?,
            "expected reset to stop then archive a running protected session")
 
     lifecycle.setup!("confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "UTC")
     lifecycle.open!
+    protected_key = store.agents.fetch(0).key
+    executing = actions.register_finalized!([{ "type" => "start_agent", "description" => "Start", "arguments" => { "agent_key" => "fixture" } }], active_key: protected_key, source_run_id: "executing-reset").first
+    proposal_state = HQ::FileStore.read_json(actions_path, fallback: {})
+    proposal_state.fetch("proposals").find { |proposal| proposal["id"] == executing["id"] }["state"] = "executing"
+    HQ::FileStore.write_json(actions_path, proposal_state)
+    assert_raises(ArgumentError) { actions.reset! { lifecycle.reset! } }
+    assert(registry.personal_assistant["enabled"] == true && store.agents.any? { |agent| agent.key == protected_key } && actions.proposals.first["state"] == "executing",
+           "expected executing-action preflight to leave FRED and proposals untouched")
+
+    proposal_state.fetch("proposals").find { |proposal| proposal["id"] == executing["id"] }["state"] = "awaiting_confirmation"
+    HQ::FileStore.write_json(actions_path, proposal_state)
     store.fail_archive = true
-    assert_raises { lifecycle.reset! }
-    assert(registry.personal_assistant["enabled"] == true && store.agents.any?(&:personal_assistant?),
-           "expected archive failure to preserve configured state for a safe retry")
+    assert_raises(RuntimeError) { actions.reset! { lifecycle.reset! } }
+    assert(registry.personal_assistant["enabled"] == true && store.agents.any?(&:personal_assistant?) && actions.proposals.any?,
+           "expected archive failure to preserve configured state and proposals for a safe retry")
   ensure
     store.fail_archive = false if store
   end
@@ -270,11 +285,12 @@ class PersonalAssistantTest
     raise message unless condition
   end
 
-  def self.assert_raises
+  def self.assert_raises(error_class = StandardError)
     yield
-    raise "expected failure"
-  rescue StandardError
-    true
+  rescue error_class
+    return true
+  else
+    raise "expected #{error_class}"
   end
 end
 

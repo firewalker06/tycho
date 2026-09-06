@@ -456,6 +456,19 @@ module RemoteServerTest
       actions = server.send(:route, service, "GET", "/personal-assistant/actions", {}, nil)
       assert(actions.dig(:body, :proposals).map { |proposal| proposal["id"] } == ["current-proposal"],
              "expected FRED actions API to scope receipts and proposals to the active daily session")
+      executing_state = HQ::FileStore.read_json(proposals_path, fallback: {})
+      executing_state.fetch("proposals").find { |proposal| proposal["id"] == "current-proposal" }["state"] = "executing"
+      HQ::FileStore.write_json(proposals_path, executing_state)
+      begin
+        server.send(:route, service, "POST", "/personal-assistant/reset", { "confirmed" => true }, nil)
+        raise "expected executing proposal to block reset before lifecycle mutation"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("still executing") &&
+               service.send(:load_all_agents).any? { |agent| agent.key == key } && service.registry.personal_assistant["enabled"] == true,
+               "expected executing proposal reset preflight to leave FRED configured and active")
+      end
+      executing_state.fetch("proposals").find { |proposal| proposal["id"] == "current-proposal" }["state"] = "awaiting_confirmation"
+      HQ::FileStore.write_json(proposals_path, executing_state)
       begin
         server.send(:route, service, "POST", "/personal-assistant/actions/proposals", {
                       "proposals" => [{ "type" => "start_agent", "description" => "Start an agent", "arguments" => { "agent_key" => "example" } }]

@@ -87,11 +87,16 @@ module HQ
       public_proposal(find!(id))
     end
 
-    def clear!
+    # Holds the proposal lock across the companion lifecycle reset. This makes
+    # an executing proposal a preflight failure, rather than discovering it
+    # after the protected session has been stopped or archived.
+    def reset!
       synchronize do |current|
         raise ArgumentError, "A Personal Assistant action is still executing" if current.fetch("proposals", []).any? { |proposal| proposal["state"] == "executing" }
 
+        result = yield
         current["proposals"] = []
+        result
       end
     end
 

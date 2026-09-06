@@ -1872,7 +1872,7 @@ module HQ
     def reset_personal_assistant(attrs)
       raise Error.new("Reset FRED requires exact confirmation", status: 400) unless attrs["confirmed"] == true
 
-      @personal_assistant.reset! { @personal_assistant_actions.clear! }
+      @personal_assistant_actions.reset! { @personal_assistant.reset! }
       @personal_assistant.status
     rescue ArgumentError => e
       raise Error.new(e.message, status: 409)
