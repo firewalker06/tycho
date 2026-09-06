@@ -335,6 +335,7 @@ module HQ
       return ok(personal_assistant: service.personal_assistant) if method == "GET" && parts == ["personal-assistant"]
       return ok(personal_assistant: service.setup_personal_assistant(body)) if method == "POST" && parts == ["personal-assistant", "setup"]
       return ok(personal_assistant: service.open_personal_assistant) if method == "POST" && parts == ["personal-assistant", "open"]
+      return ok(personal_assistant: service.reset_personal_assistant(body)) if method == "POST" && parts == ["personal-assistant", "reset"]
       return ok(service.submit_personal_assistant_prompt(body, actor:)) if method == "POST" && parts == ["personal-assistant", "messages"]
       return ok(proposals: service.personal_assistant_actions) if method == "GET" && parts == ["personal-assistant", "actions"]
       if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "confirm"
@@ -1864,6 +1865,15 @@ module HQ
 
     def open_personal_assistant
       @personal_assistant.open!
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 409)
+    end
+
+    def reset_personal_assistant(attrs)
+      raise Error.new("Reset FRED requires exact confirmation", status: 400) unless attrs["confirmed"] == true
+
+      @personal_assistant.reset! { @personal_assistant_actions.clear! }
+      @personal_assistant.status
     rescue ArgumentError => e
       raise Error.new(e.message, status: 409)
     end

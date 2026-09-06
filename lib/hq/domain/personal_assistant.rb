@@ -83,6 +83,29 @@ module HQ
       end
     end
 
+    # Reset is deliberately separate from the normal daily rollover. It first
+    # makes every protected session safe to remove, then clears configuration
+    # and lifecycle state. A failed stop/archive leaves configuration and state
+    # intact so the operator can retry without creating an orphaned session.
+    def reset!
+      synchronize do |state|
+        protected_sessions = @agent_store.load.select(&:personal_assistant?)
+        protected_sessions.each { |agent| @agent_store.stop_agent!(agent.key) if agent.running? }
+
+        protected_sessions.each do |agent|
+          current = @agent_store.load.find { |candidate| candidate.key == agent.key && candidate.personal_assistant? }
+          raise ArgumentError, "Personal Assistant is still running" if current&.running?
+
+          @agent_store.archive_personal_assistant!(agent.key) if current
+        end
+
+        yield if block_given?
+        @registry.update_personal_assistant!({})
+        state.clear
+        payload(state)
+      end
+    end
+
     private
 
     def configured!

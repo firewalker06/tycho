@@ -10,7 +10,7 @@ require "tmpdir"
 require_relative "../lib/hq/domain/file_store"
 
 ROOT = File.expand_path("..", __dir__)
-OUTPUT = File.expand_path(ENV.fetch("TYCHO_PERSONAL_ASSISTANT_CAPTURE_OUTPUT", "~/.tycho/artifacts/card-170/merge-gate-fixes/final"))
+OUTPUT = File.expand_path(ENV.fetch("TYCHO_PERSONAL_ASSISTANT_CAPTURE_OUTPUT", "~/.tycho/artifacts/card-170/fred-reset-settings"))
 PORT = TCPServer.open("127.0.0.1", 0) { |server| server.addr[1] }
 
 def request(path, payload = nil)
@@ -57,7 +57,7 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
       script = File.join(dir, "capture.js")
       File.write(script, <<~JS)
         const { chromium, devices } = require(#{playwright.to_json});
-        (async () => { const browser = await chromium.launch({headless:true}); const page = await browser.newPage(devices[#{device.to_json}]); if (#{device.to_json} === 'Desktop Chrome') await page.setViewportSize({ width: 1280, height: 900 }); await page.goto('http://127.0.0.1:#{PORT}/ui##{route}'); await page.locator(#{selector.to_json}).waitFor({state:'visible',timeout:15000}); await page.waitForFunction(() => { const boot = document.querySelector('#tycho-boot-shell'); return !boot || getComputedStyle(boot).display === 'none' || getComputedStyle(boot).visibility === 'hidden'; }, null, {timeout:15000}); await page.waitForFunction(() => document.body.innerText.includes(#{expected.to_json}), null, {timeout:15000}); if (#{open_menu}) { await page.locator('#personal-assistant-settings-menu > summary').click(); await page.locator('[data-open-settings]').waitFor({state:'visible',timeout:15000}); } if (#{open_switcher}) { await page.locator('[data-agent-switcher]').click(); await page.locator('#unread-agents-panel:not(.hidden)').waitFor({state:'visible',timeout:15000}); } if (#{keyboard_switcher}) { await page.keyboard.press('Meta+k'); await page.locator('#unread-agents-panel:not(.hidden)').waitFor({state:'visible',timeout:15000}); } await page.screenshot({path:#{File.join(OUTPUT, name).to_json},fullPage:false}); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });
+        (async () => { const browser = await chromium.launch({headless:true}); const page = await browser.newPage(devices[#{device.to_json}]); if (#{device.to_json} === 'Desktop Chrome') await page.setViewportSize({ width: 1280, height: 900 }); await page.goto('http://127.0.0.1:#{PORT}/ui##{route}'); const target = page.locator(#{selector.to_json}); await target.waitFor({state:'visible',timeout:15000}); await page.waitForFunction(() => { const boot = document.querySelector('#tycho-boot-shell'); return !boot || getComputedStyle(boot).display === 'none' || getComputedStyle(boot).visibility === 'hidden'; }, null, {timeout:15000}); await page.waitForFunction(() => document.body.innerText.includes(#{expected.to_json}), null, {timeout:15000}); if (#{open_menu}) { await page.locator('#personal-assistant-settings-menu > summary').click(); await page.locator('[data-open-settings]').waitFor({state:'visible',timeout:15000}); } if (#{open_switcher}) { await page.locator('[data-agent-switcher]').click(); await page.locator('#unread-agents-panel:not(.hidden)').waitFor({state:'visible',timeout:15000}); } if (#{keyboard_switcher}) { await page.keyboard.press('Meta+k'); await page.locator('#unread-agents-panel:not(.hidden)').waitFor({state:'visible',timeout:15000}); } await target.scrollIntoViewIfNeeded(); await page.screenshot({path:#{File.join(OUTPUT, name).to_json},fullPage:false}); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });
       JS
       system("node", script, exception: true)
     end
@@ -65,6 +65,14 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
     capture.call("personal-assistant-setup-mobile.png", "iPhone 13", ".pa-setup", "Choose how FRED should work")
     capture.call("personal-assistant-settings-menu-desktop.png", "Desktop Chrome", ".personal-assistant-page", "Choose how FRED should work", open_menu: true)
     capture.call("personal-assistant-settings-menu-mobile.png", "iPhone 13", ".personal-assistant-page", "Choose how FRED should work", open_menu: true)
+    request("/personal-assistant/setup", { confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "Asia/Jakarta" })
+    capture.call("fred-compact-settings-menu-desktop.png", "Desktop Chrome", ".personal-assistant-page", "Opening FRED does not send a model prompt.", open_menu: true)
+    capture.call("fred-compact-settings-menu-mobile.png", "iPhone 13", ".personal-assistant-page", "Opening FRED does not send a model prompt.", open_menu: true)
+    capture.call("fred-reset-settings-desktop.png", "Desktop Chrome", "#settings-personal-assistant", "Reset FRED", route: "settings")
+    capture.call("fred-reset-settings-mobile.png", "iPhone 13", "#settings-personal-assistant", "Reset FRED", route: "settings")
+    request("/personal-assistant/reset", { confirmed: true })
+    capture.call("fred-onboarding-after-reset-desktop.png", "Desktop Chrome", ".pa-setup", "Choose how FRED should work")
+    capture.call("fred-onboarding-after-reset-mobile.png", "iPhone 13", ".pa-setup", "Choose how FRED should work")
     request("/personal-assistant/setup", { confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "Asia/Jakarta" })
     capture.call("personal-assistant-ready-desktop.png", "Desktop Chrome", ".pa-ready", "Opening FRED does not send a model prompt.")
     capture.call("personal-assistant-ready-mobile.png", "iPhone 13", ".pa-ready", "Opening FRED does not send a model prompt.")

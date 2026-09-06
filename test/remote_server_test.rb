@@ -509,6 +509,20 @@ module RemoteServerTest
         assert(e.status == 409 && e.message.include?("dedicated lifecycle"),
                "expected bulk archive to reject ordinary control of FRED")
       end
+      begin
+        server.send(:route, service, "POST", "/personal-assistant/reset", {}, nil)
+        raise "expected reset confirmation rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 400 && e.message.include?("exact confirmation"),
+               "expected FRED reset to require exact confirmation")
+      end
+      reset = server.send(:route, service, "POST", "/personal-assistant/reset", { "confirmed" => true }, nil)
+      assert(reset.dig(:body, :personal_assistant, :state) == "unconfigured" && !reset.dig(:body, :personal_assistant, :configured),
+             "expected confirmed reset to return FRED onboarding state")
+      assert(service.send(:load_all_agents).none?(&:personal_assistant?) && service.registry.personal_assistant.empty?,
+             "expected reset to archive the protected session and clear FRED configuration")
+      assert(HQ::FileStore.read_json(proposals_path, fallback: {}).fetch("proposals", []).empty?,
+             "expected reset to clear pending and historical FRED action state")
     end
   end
 
@@ -6498,8 +6512,12 @@ module RemoteServerTest
     assert(js[:body].include?("personalAssistant ? \"/personal-assistant/messages\""),
            "expected FRED messages to use the dedicated Personal Assistant API")
     settings_markup = js[:body][js[:body].index('id="personal-assistant-settings-menu"'), 1_800]
-    assert(settings_markup.scan('role="menu"').length == 1 && settings_markup.include?('class="pa-settings-details"'),
-           "expected FRED settings overflow to keep one menu role and explanatory metadata outside it")
+    assert(settings_markup.scan('role="menu"').length == 1 && !settings_markup.include?('class="pa-settings-details"') &&
+           !settings_markup.include?('Open app settings') && !settings_markup.include?('daily conversation and its continuity'),
+           "expected FRED settings overflow to contain only the compact Settings action")
+    assert(js[:body].include?('data-reset-personal-assistant') && js[:body].include?('Reset FRED?') &&
+           js[:body].include?('/personal-assistant/reset'),
+           "expected Settings to offer confirmed FRED reset through the dedicated API")
     assert(js[:body].include?('alt="FRED"') && js[:body].include?("/fred-avatar.png"),
            "expected FRED identity to use the served circular avatar asset")
     assert(js[:body].include?("iconSvg(\"thumbsUp\")") && js[:body].include?("iconSvg(\"thumbsDown\")"),

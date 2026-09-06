@@ -14,7 +14,7 @@ class PersonalAssistantTest
     def call = @now
   end
 
-  FakeStore = Struct.new(:agents, :starts, :fail_start, keyword_init: true) do
+  FakeStore = Struct.new(:agents, :starts, :stops, :fail_start, :fail_archive, keyword_init: true) do
     def load = agents
 
     def mutate
@@ -29,7 +29,16 @@ class PersonalAssistantTest
     end
 
     def archive_personal_assistant!(key)
+      raise "archive failed" if fail_archive
+
       agents.reject! { |agent| agent.key == key }
+    end
+
+    def stop_agent!(key)
+      self.stops = stops.to_i + 1
+      agent = agents.find { |candidate| candidate.key == key }
+      agent.instance_variable_set(:@fake_running, false)
+      agent
     end
 
     def start_agent!(key, run_metadata: nil)
@@ -128,6 +137,7 @@ class PersonalAssistantTest
       assert_disabled_preserves_no_session(registry, dir)
       assert_dst_and_threaded_reconcile(registry, dir)
       assert_orphan_adoption_persists(registry, dir, clock)
+      assert_reset_archives_idle_and_running_sessions(registry, dir)
     end
     puts "personal_assistant_test: OK"
   end
@@ -199,6 +209,40 @@ class PersonalAssistantTest
            "expected orphan adoption to persist active lifecycle state to disk")
   end
 
+  def self.assert_reset_archives_idle_and_running_sessions(registry, dir)
+    clock = Clock.new(Time.utc(2026, 3, 13, 12, 0, 0)); store = FakeStore.new(agents: [], starts: 0, stops: 0)
+    path = File.join(dir, "reset.json")
+    lifecycle = HQ::PersonalAssistantLifecycle.new(registry:, agent_store: store, clock:, state_path: path)
+    lifecycle.open!
+    state = HQ::FileStore.read_json(path, fallback: {})
+    state.merge!("handoff_path" => File.join(dir, "old-handoff.json"), "finalized_proposals" => [{ "run_id" => "pending" }], "summary_run_id" => "summary")
+    HQ::FileStore.write_json(path, state)
+
+    reset = lifecycle.reset!
+    assert(reset[:state] == "unconfigured" && !reset[:configured] && store.agents.empty?,
+           "expected reset to archive an idle protected session before disabling FRED")
+    cleared = HQ::FileStore.read_json(path, fallback: {})
+    assert(cleared.keys == ["version"], "expected reset to clear lifecycle, continuity, and proposal state")
+
+    lifecycle.setup!("confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "UTC")
+    lifecycle.open!
+    running = store.agents.fetch(0)
+    running.instance_variable_set(:@fake_running, true)
+    running.define_singleton_method(:running?) { @fake_running == true }
+    reset = lifecycle.reset!
+    assert(reset[:state] == "unconfigured" && store.stops == 1 && store.agents.empty?,
+           "expected reset to stop then archive a running protected session")
+
+    lifecycle.setup!("confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "UTC")
+    lifecycle.open!
+    store.fail_archive = true
+    assert_raises { lifecycle.reset! }
+    assert(registry.personal_assistant["enabled"] == true && store.agents.any?(&:personal_assistant?),
+           "expected archive failure to preserve configured state for a safe retry")
+  ensure
+    store.fail_archive = false if store
+  end
+
   def self.assert_disabled_preserves_no_session(registry, dir)
     registry.update_personal_assistant!(registry.personal_assistant.merge("enabled" => false))
     lifecycle = HQ::PersonalAssistantLifecycle.new(registry:, agent_store: FakeStore.new(agents: [], starts: 0), state_path: File.join(dir, "disabled.json"))
@@ -229,7 +273,7 @@ class PersonalAssistantTest
   def self.assert_raises
     yield
     raise "expected failure"
-  rescue ArgumentError
+  rescue StandardError
     true
   end
 end

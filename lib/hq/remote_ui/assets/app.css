@@ -5749,9 +5749,7 @@ body:has(.personal-assistant-page) .app-header > #unread-agents-panel { position
 .pa-settings summary { display: grid; place-items: center; width: var(--touch-target); min-width: var(--touch-target); height: var(--touch-target); cursor: pointer; list-style: none; color: var(--text); }
 .pa-settings summary::-webkit-details-marker { display: none; }
 .pa-settings summary .ui-icon { width: 20px; height: 20px; }
-.pa-settings-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 12; width: min(290px, calc(100vw - 32px)); padding: 6px; }
-.pa-settings-details { display: grid; gap: 4px; margin: 4px 10px 6px; color: var(--muted); }
-.pa-settings-details p { margin: 4px 0 0; }
+.pa-settings-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 12; width: min(190px, calc(100vw - 32px)); padding: 6px; }
 .pa-conversation-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 20px max(18px, calc((100% - 760px) / 2)) 28px; }
 .pa-conversation-scroll .message-list { display: grid; gap: 12px; }
 .pa-welcome { display: grid; gap: 12px; max-width: 640px; margin: 0 auto; border: 1px solid var(--border); border-radius: 12px; padding: 16px; background: var(--panel); }

@@ -87,6 +87,14 @@ module HQ
       public_proposal(find!(id))
     end
 
+    def clear!
+      synchronize do |current|
+        raise ArgumentError, "A Personal Assistant action is still executing" if current.fetch("proposals", []).any? { |proposal| proposal["state"] == "executing" }
+
+        current["proposals"] = []
+      end
+    end
+
     private
 
     def normalize(item)
