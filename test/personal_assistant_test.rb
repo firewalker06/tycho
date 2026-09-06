@@ -90,7 +90,11 @@ class PersonalAssistantTest
       first = lifecycle.open!
       assert(first[:state] == "active" && first[:active_key], "expected configured daily session")
       assert(first.dig(:agent, "prompt").include?("Tycho Personal Assistant"), "expected fixed introduction before any model run")
-      assert(HQ::ManagedAgent.from_hash(first.fetch(:agent)).personal_assistant?, "expected protected daily role")
+      fred_agent = HQ::ManagedAgent.from_hash(first.fetch(:agent))
+      assert(fred_agent.personal_assistant?, "expected protected daily role")
+      assert(fred_agent.sandbox_mode == "danger-full-access", "expected FRED to inherit the normal Codex sandbox mode")
+      assert(fred_agent.send(:build_command).fetch(:command).include?("--dangerously-bypass-approvals-and-sandbox"),
+             "expected FRED to use the normal Codex launch arguments")
       assert(lifecycle.open![:active_key] == first[:active_key], "expected lazy open to avoid overlap")
 
       # Keep the configured timezone on the active session. A setup change cannot
@@ -201,7 +205,7 @@ class PersonalAssistantTest
     orphan = HQ::ManagedAgent.new(
       key: "personal-assistant-orphan", name: "Personal Assistant · orphan",
       project_key: "__personal_assistant__", template_key: "personal_assistant_daily",
-      workspace: dir, prompt: "", created_at: clock.call, sandbox_mode: "read-only",
+      workspace: dir, prompt: "", created_at: clock.call,
       agent: "codex", model: "gpt-5.6-sol", reasoning_effort: "medium",
       role: HQ::PersonalAssistantLifecycle::ROLE
     )
