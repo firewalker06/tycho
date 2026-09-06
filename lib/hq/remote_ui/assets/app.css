@@ -8131,6 +8131,12 @@ body:has(.inquiry-form-full-screen) {
   }
 
   .app-shell:has(> .bottom-nav:not(.hidden))
+    .personal-assistant-page
+    .pa-conversation-scroll {
+    padding-top: 8px;
+  }
+
+  .app-shell:has(> .bottom-nav:not(.hidden))
     .agent-workspace.has-detail
     .agent-detail-pane {
     margin-top: 8px;

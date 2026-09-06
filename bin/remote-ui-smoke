@@ -553,6 +553,7 @@ def write_smoke_script(path)
             const composer = document.querySelector(selectors.composer);
             const composerForm = document.querySelector(selectors.composerForm);
             const settings = document.querySelector(selectors.settings);
+            const desktopSettings = document.getElementById("desktop-settings");
             const shellRect = shell.getBoundingClientRect();
             const headerRect = header.getBoundingClientRect();
             const contentRect = content.getBoundingClientRect();
@@ -561,15 +562,53 @@ def write_smoke_script(path)
             const composerRect = composer.getBoundingClientRect();
             const composerFormRect = composerForm.getBoundingClientRect();
             const settingsRect = settings.getBoundingClientRect();
+            const desktopSettingsRect = desktopSettings.getBoundingClientRect();
+            const navItems = Array.from(nav.querySelectorAll("button")).map((item) => {
+              const rect = item.getBoundingClientRect();
+              const style = getComputedStyle(item);
+              return {
+                label: item.textContent.trim(),
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.bottom,
+                left: rect.left,
+                width: rect.width,
+                height: rect.height,
+                visible: style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0,
+              };
+            }).filter((item) => item.visible);
+            const firstConversationChild = conversation.querySelector(selectors.firstConversationChild) || Array.from(conversation.children).find((child) => {
+              const rect = child.getBoundingClientRect();
+              const style = getComputedStyle(child);
+              return style.display !== "none" && style.visibility !== "hidden" && rect.height > 0 && rect.bottom >= conversationRect.top;
+            });
+            const firstConversationChildRect = firstConversationChild?.getBoundingClientRect();
             return {
               shell: { height: shellRect.height, top: parseFloat(getComputedStyle(shell).borderTopWidth), left: parseFloat(getComputedStyle(shell).borderLeftWidth), right: parseFloat(getComputedStyle(shell).borderRightWidth) },
               header: { top: headerRect.top, height: headerRect.height, left: headerRect.left, right: headerRect.right, bottomBorder: parseFloat(getComputedStyle(header).borderBottomWidth) },
               content: { top: contentRect.top, left: contentRect.left, right: contentRect.right, bottom: contentRect.bottom },
               conversation: { top: conversationRect.top, left: conversationRect.left, right: conversationRect.right, bottom: conversationRect.bottom },
-              nav: { top: navRect.top, left: navRect.left, right: navRect.right, bottom: navRect.bottom, items: Array.from(nav.querySelectorAll("button")).map((item) => { const rect = item.getBoundingClientRect(); return [rect.left, rect.top, rect.width, rect.height]; }) },
+              nav: {
+                top: navRect.top,
+                left: navRect.left,
+                right: navRect.right,
+                bottom: navRect.bottom,
+                paddingTop: parseFloat(getComputedStyle(nav).paddingTop),
+                topInset: navItems[0] ? navItems[0].top - navRect.top : null,
+                firstVisibleLabel: navItems[0]?.label || null,
+                items: navItems,
+                gaps: navItems.slice(1).map((item, index) => item.top - navItems[index].bottom),
+              },
               composer: { left: composerRect.left, right: composerRect.right, bottom: composerRect.bottom },
               composerForm: { left: composerFormRect.left, right: composerFormRect.right, bottom: composerFormRect.bottom },
               settings: { left: settingsRect.left, top: settingsRect.top, right: settingsRect.right, bottom: settingsRect.bottom },
+              desktopSettings: { left: desktopSettingsRect.left, top: desktopSettingsRect.top, right: desktopSettingsRect.right, bottom: desktopSettingsRect.bottom, visible: getComputedStyle(desktopSettings).display !== "none" },
+              firstConversationChild: firstConversationChildRect ? {
+                label: firstConversationChild.className || firstConversationChild.tagName,
+                top: firstConversationChildRect.top,
+                gapFromConversation: firstConversationChildRect.top - conversationRect.top,
+                gapFromHeader: firstConversationChildRect.top - headerRect.bottom,
+              } : null,
               viewport: { width: innerWidth, height: innerHeight },
               overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
             };
@@ -583,14 +622,27 @@ def write_smoke_script(path)
             ["left", "right"].forEach((key) => equalMetric(ordinary.content[key], fred.content[key], `content ${key}`));
             ["top", "left", "right"].forEach((key) => equalMetric(ordinary.conversation[key], fred.conversation[key], `conversation ${key}`));
             ["top", "left", "right", "bottom"].forEach((key) => equalMetric(ordinary.nav[key], fred.nav[key], `navigation ${key}`));
-            ordinary.nav.items.forEach((item, index) => item.forEach((value, metric) => equalMetric(value, fred.nav.items[index][metric], `navigation item ${index}:${metric}`)));
+            [ordinary, fred].forEach((metrics, index) => {
+              const label = index === 0 ? "ordinary" : "FRED";
+              if (metrics.nav.firstVisibleLabel !== "Now" || metrics.nav.items.map((item) => item.label).join(",") !== "Now,FRED,Agents") {
+                throw new Error(`${label} desktop sidebar lost its primary navigation order: ${JSON.stringify(metrics.nav)}`);
+              }
+            });
+            ["paddingTop", "topInset"].forEach((key) => equalMetric(ordinary.nav[key], fred.nav[key], `sidebar ${key}`));
+            ordinary.nav.items.forEach((item, index) => ["top", "right", "bottom", "left", "width", "height"].forEach((key) => equalMetric(item[key], fred.nav.items[index][key], `sidebar item ${index}:${key}`)));
+            ordinary.nav.gaps.forEach((gap, index) => equalMetric(gap, fred.nav.gaps[index], `sidebar item gap ${index}`));
             ["left", "right", "bottom"].forEach((key) => equalMetric(ordinary.composer[key], fred.composer[key], `composer ${key}`));
             ["left", "right", "bottom"].forEach((key) => equalMetric(ordinary.composerForm[key], fred.composerForm[key], `composer form ${key}`));
             ["left", "top", "right", "bottom"].forEach((key) => equalMetric(ordinary.settings[key], fred.settings[key], `settings ${key}`));
+            if (!fred.desktopSettings.visible || Math.abs(fred.desktopSettings.left - fred.nav.left) > 1 || Math.abs(fred.desktopSettings.right - fred.nav.right) > 1 || Math.abs(fred.desktopSettings.bottom - (viewport.height - 12)) > 1) {
+              throw new Error(`FRED desktop Settings lost its pinned sidebar position: ${JSON.stringify(fred.desktopSettings)}`);
+            }
+            if (!ordinary.firstConversationChild || !fred.firstConversationChild) throw new Error(`Conversation content is missing: ${JSON.stringify({ ordinary, fred })}`);
+            ["top", "gapFromConversation", "gapFromHeader"].forEach((key) => equalMetric(ordinary.firstConversationChild[key], fred.firstConversationChild[key], `first conversation child ${key}`));
             if (ordinary.overflow || fred.overflow || ordinary.shell.height < viewport.height - 1 || fred.shell.height < viewport.height - 1) throw new Error(`FRED shared shell overflowed or lost viewport height: ${JSON.stringify({ ordinary, fred, viewport })}`);
           };
-          const desktopOrdinary = await shellMetrics(ordinaryPage, { header: ".app-header", conversation: ".agent-conversation-pane", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
-          const desktopFred = await shellMetrics(fredPage, { header: ".pa-header", conversation: ".pa-conversation-scroll", composer: ".pa-composer-row", composerForm: ".pa-composer-row #composer", settings: ".pa-settings summary" });
+          const desktopOrdinary = await shellMetrics(ordinaryPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .message-list", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
+          const desktopFred = await shellMetrics(fredPage, { header: ".pa-header", conversation: ".pa-conversation-scroll", firstConversationChild: ".pa-welcome", composer: ".pa-composer-row", composerForm: ".pa-composer-row #composer", settings: ".pa-settings summary" });
           assertSharedShell(desktopOrdinary, desktopFred, desktopFred.viewport);
           if (captureDir) {
             await ordinaryPage.screenshot({ path: path.join(captureDir, "ordinary-conversation-desktop.png"), fullPage: false });
@@ -608,8 +660,8 @@ def write_smoke_script(path)
               const header = document.querySelector(".pa-header");
               return innerWidth === 390 && nav && header && nav.getBoundingClientRect().width > 0 && header.getBoundingClientRect().width === innerWidth;
             }, null, { timeout: 10_000 });
-            const mobileOrdinary = await shellMetrics(mobileOrdinaryPage, { header: ".app-header", conversation: ".agent-conversation-pane", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
-            const mobileFred = await shellMetrics(mobileFredPage, { header: ".pa-header", conversation: ".pa-conversation-scroll", composer: ".pa-composer-row", composerForm: ".pa-composer-row #composer", settings: ".pa-settings summary" });
+            const mobileOrdinary = await shellMetrics(mobileOrdinaryPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .message-list", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
+            const mobileFred = await shellMetrics(mobileFredPage, { header: ".pa-header", conversation: ".pa-conversation-scroll", firstConversationChild: ".pa-welcome", composer: ".pa-composer-row", composerForm: ".pa-composer-row #composer", settings: ".pa-settings summary" });
             ["height", "bottomBorder"].forEach((key) => equalMetric(mobileOrdinary.header[key], mobileFred.header[key], `mobile header ${key}`));
             if (mobileOrdinary.overflow || mobileFred.overflow ||
                 Math.abs(mobileFred.nav.left) > 1 || Math.abs(mobileFred.nav.right - mobileFred.viewport.width) > 1 ||
