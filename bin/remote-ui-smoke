@@ -641,9 +641,63 @@ def write_smoke_script(path)
             ["top", "gapFromConversation", "gapFromHeader"].forEach((key) => equalMetric(ordinary.firstConversationChild[key], fred.firstConversationChild[key], `first conversation child ${key}`));
             if (ordinary.overflow || fred.overflow || ordinary.shell.height < viewport.height - 1 || fred.shell.height < viewport.height - 1) throw new Error(`FRED shared shell overflowed or lost viewport height: ${JSON.stringify({ ordinary, fred, viewport })}`);
           };
+          const openFredSwitcher = async (candidate) => {
+            const trigger = candidate.locator(".personal-assistant-page [data-agent-switcher]");
+            if (await trigger.count() !== 1) throw new Error("FRED did not expose exactly one agent switcher trigger");
+            await trigger.click();
+            await candidate.waitForSelector("#unread-agents-panel:not(.hidden)", { state: "visible", timeout: 10_000 });
+            return candidate.evaluate(() => {
+              const panel = document.querySelector("#unread-agents-panel");
+              const list = panel?.querySelector(".unread-panel-list");
+              const header = panel?.querySelector(".unread-panel-header");
+              const panelBox = panel?.getBoundingClientRect();
+              const listBox = list?.getBoundingClientRect();
+              const headerTop = header?.getBoundingClientRect().top;
+              if (list) list.scrollTop = list.scrollHeight;
+              return {
+                panel: {
+                  top: panelBox?.top,
+                  right: panelBox?.right,
+                  bottom: panelBox?.bottom,
+                  left: panelBox?.left,
+                  width: panelBox?.width,
+                  height: panelBox?.height,
+                  clientHeight: panel?.clientHeight,
+                  scrollHeight: panel?.scrollHeight,
+                  overflowY: panel ? getComputedStyle(panel).overflowY : null,
+                },
+                list: {
+                  height: listBox?.height,
+                  clientHeight: list?.clientHeight,
+                  scrollHeight: list?.scrollHeight,
+                  scrollTop: list?.scrollTop,
+                  overflowY: list ? getComputedStyle(list).overflowY : null,
+                },
+                headerScrollDelta: header ? Math.abs(header.getBoundingClientRect().top - headerTop) : null,
+                viewport: { width: innerWidth, height: innerHeight },
+              };
+            });
+          };
+          const assertBoundedFredSwitcher = (metrics, label) => {
+            const maximumWidth = Math.min(420, metrics.viewport.width - 24);
+            const maximumHeight = Math.min(460, metrics.viewport.height - 76);
+            const { panel, list, viewport } = metrics;
+            if (panel.left < 11 || panel.right > viewport.width - 11 || panel.top < 0 || panel.bottom > viewport.height - 11 ||
+                panel.width > maximumWidth + 1 || panel.height > maximumHeight + 1 || panel.overflowY !== "hidden" ||
+                panel.scrollHeight > panel.clientHeight + 1 || list.overflowY !== "auto" || list.scrollHeight <= list.clientHeight ||
+                list.scrollTop <= 0 || metrics.headerScrollDelta > 1) {
+              throw new Error(`FRED ${label} switcher is not a bounded, independently scrolling popover: ${JSON.stringify(metrics)}`);
+            }
+          };
+          const closeFredSwitcher = async (candidate) => {
+            await candidate.keyboard.press("Escape");
+            await candidate.waitForSelector("#unread-agents-panel", { state: "hidden", timeout: 10_000 });
+          };
           const desktopOrdinary = await shellMetrics(ordinaryPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .message-list", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
           const desktopFred = await shellMetrics(fredPage, { header: ".pa-header", conversation: ".pa-conversation-scroll", firstConversationChild: ".pa-welcome", composer: ".pa-composer-row", composerForm: ".pa-composer-row #composer", settings: ".pa-settings summary" });
           assertSharedShell(desktopOrdinary, desktopFred, desktopFred.viewport);
+          assertBoundedFredSwitcher(await openFredSwitcher(fredPage), "desktop");
+          await closeFredSwitcher(fredPage);
           if (captureDir) {
             await ordinaryPage.screenshot({ path: path.join(captureDir, "ordinary-conversation-desktop.png"), fullPage: false });
             await fredPage.screenshot({ path: path.join(captureDir, "fred-conversation-desktop.png"), fullPage: false });
@@ -674,6 +728,8 @@ def write_smoke_script(path)
                 mobileFred.composer.bottom > mobileFred.nav.top || mobileFred.nav.top - mobileFred.composer.bottom > 8) {
               throw new Error(`FRED mobile shell overflowed or lost its intentional composer-to-nav gap: ${JSON.stringify({ mobileOrdinary, mobileFred })}`);
             }
+            assertBoundedFredSwitcher(await openFredSwitcher(mobileFredPage), "mobile");
+            await closeFredSwitcher(mobileFredPage);
             if (captureDir) {
               await mobileOrdinaryPage.screenshot({ path: path.join(captureDir, "ordinary-conversation-mobile.png"), fullPage: false });
               await mobileFredPage.screenshot({ path: path.join(captureDir, "fred-conversation-mobile.png"), fullPage: false });
@@ -7021,6 +7077,13 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       prompt: "Review mobile navigation and report concise findings.",
       parent_agent_key: orchestrator_agent_key
     )
+    fred_switcher_agent_keys = 8.times.map do |index|
+      create_agent(
+        base_url,
+        name: "FRED switcher fixture #{index + 1}",
+        prompt: "Exercise FRED's long agent switcher list."
+      )
+    end
     send_agent_message(
       base_url,
       delegated_agent_key,
@@ -7033,7 +7096,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     associate_agent_pull_request(fixture.fetch(:logs_dir), unscheduled_agent_key)
     wait_for_resource_agents(
       base_url,
-      [agent_key, unscheduled_agent_key, orchestrator_agent_key, delegated_agent_key, security_agent_key, mobile_agent_key]
+      [agent_key, unscheduled_agent_key, orchestrator_agent_key, delegated_agent_key, security_agent_key, mobile_agent_key, *fred_switcher_agent_keys]
     )
     open_personal_assistant(base_url)
     archive_agent(base_url, archived_agent_key)

@@ -6685,8 +6685,15 @@ module RemoteServerTest
            js[:body].include?("data-agent-switcher"),
            "expected FRED logo clicks and Cmd/Ctrl+K to reuse the shared switcher state and keyboard behavior")
     assert(css[:body].include?("body:has(.personal-assistant-page) .app-header > #unread-agents-panel") &&
-           css[:body].include?("position: fixed;"),
-           "expected the shared agent switcher panel to remain visible and positioned from the FRED header")
+           css[:body].include?("position: fixed;") &&
+           css[:body].include?("width: min(420px, calc(100vw - 24px));") &&
+           css[:body].include?("grid-template-rows: auto auto minmax(0, 1fr);") &&
+           css[:body].include?(".app-header > #unread-agents-panel .unread-panel-list") &&
+           css[:body].include?("overflow-y: auto;"),
+           "expected FRED to keep the shared agent switcher compact with an independently scrolling result list")
+    assert(js[:body].include?("const maximumWidth = Math.min(420, window.innerWidth - 24);") &&
+           js[:body].include?('els.unreadPanel.style.right = "auto";'),
+           "expected FRED to clamp the switcher beside its trigger instead of stretching it across the viewport")
     assert(js[:body].include?("Friendly Robot for Execution Dispatcher"),
            "expected Personal Assistant UI to expand FRED where appropriate")
     fred_settings = js[:body].split("function renderPersonalAssistantSettings", 2).last.split("function personalAssistantActionCopy", 2).first
