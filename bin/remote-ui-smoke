@@ -301,6 +301,23 @@ def archive_agent(base_url, agent_key)
   raise "Failed to archive smoke agent: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
 end
 
+def open_personal_assistant(base_url)
+  uri = URI("#{base_url}/personal-assistant/setup")
+  request = Net::HTTP::Post.new(uri)
+  request["Content-Type"] = "application/json"
+  request.body = JSON.generate(confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "Asia/Jakarta")
+  response = Net::HTTP.start(uri.hostname, uri.port) { |http| http.request(request) }
+  raise "Failed to configure FRED smoke fixture: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
+
+  uri = URI("#{base_url}/personal-assistant/open")
+  request = Net::HTTP::Post.new(uri)
+  request["Content-Type"] = "application/json"
+  request.body = "{}"
+  response = Net::HTTP.start(uri.hostname, uri.port) { |http| http.request(request) }
+  raise "Failed to open FRED smoke fixture: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
+
+end
+
 def start_agent(base_url, agent_key, parent_agent_key: nil)
   uri = URI("#{base_url}/agents/#{agent_key}/start")
   request = Net::HTTP::Post.new(uri)
@@ -518,6 +535,108 @@ def write_smoke_script(path)
       }
 
       if (process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY !== "1") await assertInitialLoadingShell();
+
+      async function assertPersonalAssistantConversationShell() {
+        const ordinaryPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+        const fredPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+        try {
+          await ordinaryPage.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
+          await ordinaryPage.waitForSelector(".agent-workspace.conversation-only", { state: "visible", timeout: 10_000 });
+          await fredPage.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "networkidle" });
+          await fredPage.waitForSelector(".personal-assistant-page", { state: "visible", timeout: 10_000 });
+          const shellMetrics = async (page, selectors) => page.evaluate((selectors) => {
+            const shell = document.querySelector(".app-shell");
+            const header = document.querySelector(selectors.header);
+            const content = document.querySelector(".content");
+            const conversation = document.querySelector(selectors.conversation);
+            const nav = document.querySelector(".bottom-nav");
+            const composer = document.querySelector(selectors.composer);
+            const composerForm = document.querySelector(selectors.composerForm);
+            const settings = document.querySelector(selectors.settings);
+            const shellRect = shell.getBoundingClientRect();
+            const headerRect = header.getBoundingClientRect();
+            const contentRect = content.getBoundingClientRect();
+            const conversationRect = conversation.getBoundingClientRect();
+            const navRect = nav.getBoundingClientRect();
+            const composerRect = composer.getBoundingClientRect();
+            const composerFormRect = composerForm.getBoundingClientRect();
+            const settingsRect = settings.getBoundingClientRect();
+            return {
+              shell: { height: shellRect.height, top: parseFloat(getComputedStyle(shell).borderTopWidth), left: parseFloat(getComputedStyle(shell).borderLeftWidth), right: parseFloat(getComputedStyle(shell).borderRightWidth) },
+              header: { top: headerRect.top, height: headerRect.height, left: headerRect.left, right: headerRect.right, bottomBorder: parseFloat(getComputedStyle(header).borderBottomWidth) },
+              content: { top: contentRect.top, left: contentRect.left, right: contentRect.right, bottom: contentRect.bottom },
+              conversation: { top: conversationRect.top, left: conversationRect.left, right: conversationRect.right, bottom: conversationRect.bottom },
+              nav: { top: navRect.top, left: navRect.left, right: navRect.right, bottom: navRect.bottom, items: Array.from(nav.querySelectorAll("button")).map((item) => { const rect = item.getBoundingClientRect(); return [rect.left, rect.top, rect.width, rect.height]; }) },
+              composer: { left: composerRect.left, right: composerRect.right, bottom: composerRect.bottom },
+              composerForm: { left: composerFormRect.left, right: composerFormRect.right, bottom: composerFormRect.bottom },
+              settings: { left: settingsRect.left, top: settingsRect.top, right: settingsRect.right, bottom: settingsRect.bottom },
+              viewport: { width: innerWidth, height: innerHeight },
+              overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+            };
+          }, selectors);
+          const equalMetric = (ordinary, fred, label, tolerance = 1) => {
+            if (Math.abs(ordinary - fred) > tolerance) throw new Error(`FRED ${label} drifted from ordinary conversation: ${JSON.stringify({ ordinary, fred })}`);
+          };
+          const assertSharedShell = (ordinary, fred, viewport) => {
+            ["height", "top", "left", "right"].forEach((key) => equalMetric(ordinary.shell[key], fred.shell[key], `shell ${key}`));
+            ["top", "height", "left", "right", "bottomBorder"].forEach((key) => equalMetric(ordinary.header[key], fred.header[key], `header ${key}`));
+            ["left", "right"].forEach((key) => equalMetric(ordinary.content[key], fred.content[key], `content ${key}`));
+            ["top", "left", "right"].forEach((key) => equalMetric(ordinary.conversation[key], fred.conversation[key], `conversation ${key}`));
+            ["top", "left", "right", "bottom"].forEach((key) => equalMetric(ordinary.nav[key], fred.nav[key], `navigation ${key}`));
+            ordinary.nav.items.forEach((item, index) => item.forEach((value, metric) => equalMetric(value, fred.nav.items[index][metric], `navigation item ${index}:${metric}`)));
+            ["left", "right", "bottom"].forEach((key) => equalMetric(ordinary.composer[key], fred.composer[key], `composer ${key}`));
+            ["left", "right", "bottom"].forEach((key) => equalMetric(ordinary.composerForm[key], fred.composerForm[key], `composer form ${key}`));
+            ["left", "top", "right", "bottom"].forEach((key) => equalMetric(ordinary.settings[key], fred.settings[key], `settings ${key}`));
+            if (ordinary.overflow || fred.overflow || ordinary.shell.height < viewport.height - 1 || fred.shell.height < viewport.height - 1) throw new Error(`FRED shared shell overflowed or lost viewport height: ${JSON.stringify({ ordinary, fred, viewport })}`);
+          };
+          const desktopOrdinary = await shellMetrics(ordinaryPage, { header: ".app-header", conversation: ".agent-conversation-pane", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
+          const desktopFred = await shellMetrics(fredPage, { header: ".pa-header", conversation: ".pa-conversation-scroll", composer: ".pa-composer-row", composerForm: ".pa-composer-row #composer", settings: ".pa-settings summary" });
+          assertSharedShell(desktopOrdinary, desktopFred, desktopFred.viewport);
+          if (captureDir) {
+            await ordinaryPage.screenshot({ path: path.join(captureDir, "ordinary-conversation-desktop.png"), fullPage: false });
+            await fredPage.screenshot({ path: path.join(captureDir, "fred-conversation-desktop.png"), fullPage: false });
+          }
+          const mobileOrdinaryPage = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });
+          const mobileFredPage = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });
+          try {
+            await mobileOrdinaryPage.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
+            await mobileOrdinaryPage.waitForSelector(".agent-workspace.conversation-only", { state: "visible", timeout: 10_000 });
+            await mobileFredPage.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "networkidle" });
+            await mobileFredPage.waitForSelector(".personal-assistant-page", { state: "visible", timeout: 10_000 });
+            await mobileFredPage.waitForFunction(() => {
+              const nav = document.querySelector(".bottom-nav");
+              const header = document.querySelector(".pa-header");
+              return innerWidth === 390 && nav && header && nav.getBoundingClientRect().width > 0 && header.getBoundingClientRect().width === innerWidth;
+            }, null, { timeout: 10_000 });
+            const mobileOrdinary = await shellMetrics(mobileOrdinaryPage, { header: ".app-header", conversation: ".agent-conversation-pane", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
+            const mobileFred = await shellMetrics(mobileFredPage, { header: ".pa-header", conversation: ".pa-conversation-scroll", composer: ".pa-composer-row", composerForm: ".pa-composer-row #composer", settings: ".pa-settings summary" });
+            ["height", "bottomBorder"].forEach((key) => equalMetric(mobileOrdinary.header[key], mobileFred.header[key], `mobile header ${key}`));
+            if (mobileOrdinary.overflow || mobileFred.overflow ||
+                Math.abs(mobileFred.nav.left) > 1 || Math.abs(mobileFred.nav.right - mobileFred.viewport.width) > 1 ||
+                Math.abs(mobileFred.nav.bottom - mobileFred.viewport.height) > 1 || mobileFred.nav.items.length !== 3 ||
+                mobileFred.nav.items.some((item) => item[0] < -1 || item[1] < -1 || item[0] + item[2] > mobileFred.viewport.width + 1 || item[1] + item[3] > mobileFred.viewport.height + 1) ||
+                Math.abs(mobileFred.header.left) > 1 || Math.abs(mobileFred.header.right - mobileFred.viewport.width) > 1 ||
+                Math.abs(mobileFred.composerForm.left - 16) > 1 || Math.abs(mobileFred.composerForm.right - (mobileFred.viewport.width - 16)) > 1 ||
+                mobileFred.settings.left < 0 || mobileFred.settings.right > mobileFred.viewport.width ||
+                mobileFred.settings.top < 0 || mobileFred.settings.bottom > mobileFred.header.height + 1 ||
+                mobileFred.composer.bottom > mobileFred.nav.top || mobileFred.nav.top - mobileFred.composer.bottom > 8) {
+              throw new Error(`FRED mobile shell overflowed or lost its intentional composer-to-nav gap: ${JSON.stringify({ mobileOrdinary, mobileFred })}`);
+            }
+            if (captureDir) {
+              await mobileOrdinaryPage.screenshot({ path: path.join(captureDir, "ordinary-conversation-mobile.png"), fullPage: false });
+              await mobileFredPage.screenshot({ path: path.join(captureDir, "fred-conversation-mobile.png"), fullPage: false });
+            }
+          } finally {
+            await mobileOrdinaryPage.close();
+            await mobileFredPage.close();
+          }
+        } finally {
+          await ordinaryPage.close();
+          await fredPage.close();
+        }
+      }
+
+      await assertPersonalAssistantConversationShell();
 
       async function assertLoadingShellFailureRecovery() {
         const failurePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -6864,6 +6983,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       base_url,
       [agent_key, unscheduled_agent_key, orchestrator_agent_key, delegated_agent_key, security_agent_key, mobile_agent_key]
     )
+    open_personal_assistant(base_url)
     archive_agent(base_url, archived_agent_key)
     start_agent(base_url, delegated_agent_key, parent_agent_key: orchestrator_agent_key)
     wait_for_delegation_callback(base_url, orchestrator_agent_key)

@@ -6466,8 +6466,8 @@ module RemoteServerTest
            "expected assistant chat labels to render the bot-message-square icon")
     assert(js[:body].include?("function personalAssistantMessageIdentity"),
            "expected Personal Assistant messages to have a product-specific sender identity")
-    assert(css[:body].include?(".personal-assistant-page { display: grid; grid-template-rows: 56px minmax(0, 1fr) auto; width: 100%;") &&
-           !css[:body].include?(".personal-assistant-page { display: grid; grid-template-rows: 56px minmax(0, 1fr) auto; width: min(100%, 820px);"),
+    assert(css[:body].include?(".personal-assistant-page { display: grid; grid-template-rows: 68px minmax(0, 1fr) auto; width: 100%;") &&
+           !css[:body].include?(".personal-assistant-page { display: grid; grid-template-rows: 68px minmax(0, 1fr) auto; width: min(100%, 820px);"),
            "expected FRED to use the full conversation width without the old 820px outer shell clamp")
     assert(js[:body].include?('class="pa-tycho-nav header-mark"') &&
            js[:body].include?('data-agent-switcher') &&

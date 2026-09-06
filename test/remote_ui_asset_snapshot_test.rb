@@ -51,7 +51,7 @@ module RemoteUIAssetSnapshotTest
     raise "Personal Assistant still exposes permanent proposal clutter: #{present.join(", ")}" unless present.empty?
 
     required_css = [
-      '.personal-assistant-page { display: grid; grid-template-rows: 56px minmax(0, 1fr) auto;',
+      '.personal-assistant-page { display: grid; grid-template-rows: 68px minmax(0, 1fr) auto;',
       '.pa-conversation-scroll { min-height: 0; overflow-y: auto;',
       '.pa-composer-row',
       'env(safe-area-inset-bottom, 0px)'

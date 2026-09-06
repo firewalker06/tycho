@@ -5734,7 +5734,7 @@ select {
 body:has(.personal-assistant-page) .app-header { display: contents; }
 body:has(.personal-assistant-page) .app-header > :not(#unread-agents-panel) { display: none; }
 body:has(.personal-assistant-page) .app-header > #unread-agents-panel { position: fixed; top: 64px; right: 12px; left: 12px; z-index: 12; }
-.personal-assistant-page { display: grid; grid-template-rows: 56px minmax(0, 1fr) auto; width: 100%; height: calc(100dvh - 76px); min-height: 0; margin: 0; background: var(--bg); }
+.personal-assistant-page { display: grid; grid-template-rows: 68px minmax(0, 1fr) auto; width: 100%; height: calc(100dvh - 76px); min-height: 0; margin: 0; background: var(--bg); }
 .pa-header { display: flex; align-items: center; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--border); }
 .pa-tycho-nav { display: grid; place-items: center; flex: 0 0 auto; width: var(--touch-target); min-width: var(--touch-target); height: var(--touch-target); padding: 0; border: 0; border-radius: var(--ds-radius-sm); background: transparent; cursor: pointer; }
 .pa-tycho-nav:hover { background: var(--panel-soft); }
@@ -5769,10 +5769,10 @@ body:has(.personal-assistant-page) .app-header > #unread-agents-panel { position
 .pa-action-controls { display: flex; gap: 8px; }.pa-action-controls button { flex: 1; }
 .pa-action-controls .ui-icon { width: 16px; height: 16px; }
 .pa-action-receipt { margin: 0; font-size: 14px; font-weight: 700; }.pa-technical-details { color: var(--muted); font-size: 13px; }.pa-technical-details summary { cursor: pointer; }.pa-technical-details pre { overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
-.pa-composer-row { border-top: 1px solid var(--border); padding: 8px max(18px, calc((100% - 760px) / 2)) calc(8px + env(safe-area-inset-bottom, 0px)); background: color-mix(in srgb, var(--bg) 96%, transparent); }
+.pa-composer-row { border-top: 1px solid var(--border); padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px)); background: color-mix(in srgb, var(--bg) 96%, transparent); }
 .personal-assistant-page .agent-dock { position: static; transform: none; max-width: none; margin: 0; padding: 0; border: 0; box-shadow: none; background: transparent; }
 .pa-start-composer { display: flex; gap: 8px; align-items: end; border: 1px solid var(--border); border-radius: 14px; padding: 7px; background: var(--panel); }.pa-start-composer textarea { flex: 1; min-width: 0; border: 0; resize: none; background: transparent; color: var(--text); }.pa-start-composer textarea:focus { outline: none; }
-@media (max-width: 760px) { .content:has(.personal-assistant-page) { height: 100dvh; }.pa-header { padding-inline: 16px; }.pa-conversation-scroll { padding: 16px 16px 24px; }.pa-composer-row { padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px)); }.pa-inline-action dl div { grid-template-columns: 64px minmax(0, 1fr); } }
+@media (max-width: 760px) { .content:has(.personal-assistant-page) { height: 100dvh; }.personal-assistant-page { grid-template-rows: 72px minmax(0, 1fr) auto; }.pa-header { padding-inline: 16px; }.pa-conversation-scroll { padding: 16px 16px 24px; }.pa-composer-row { padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px)); }.pa-inline-action dl div { grid-template-columns: 64px minmax(0, 1fr); } }
 
 
 .agent-dock:has(.skill-flyout:not(.hidden)) {
@@ -8062,7 +8062,28 @@ body:has(.inquiry-form-full-screen) {
 }
 
 @media (min-width: 1100px) {
-  .personal-assistant-page { height: 100dvh; }
+  .app-shell:has(.personal-assistant-page) {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .app-shell:has(.personal-assistant-page) .content {
+    grid-row: 1 / span 2;
+    height: calc(100dvh - 1px);
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .personal-assistant-page { height: calc(100dvh - 1px); }
+
+  .app-shell:has(.personal-assistant-page) .pa-header {
+    width: calc(100% + 12px);
+    border-left: 1px solid var(--border);
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
   .app-shell:has(> .bottom-nav:not(.hidden)) {
     grid-template-columns: 144px minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
