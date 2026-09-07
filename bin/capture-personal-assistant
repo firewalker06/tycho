@@ -93,6 +93,14 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
           const page = await browser.newPage();
           await page.setViewportSize({ width: 1280, height: 1000 });
           await page.goto('http://127.0.0.1:#{PORT}/ui#settings');
+          await page.locator('[data-scroll-settings-section="settings-personal-assistant"]').click();
+          await page.waitForFunction(() => {
+            const panel = document.querySelector('#settings-panel-personal-assistant');
+            const section = document.querySelector('#settings-personal-assistant');
+            if (!panel || !section) return false;
+            const rect = panel.getBoundingClientRect();
+            return rect.top >= 0 && rect.top < window.innerHeight && section.getBoundingClientRect().bottom > 0;
+          }, null, { timeout: 15000 });
           await page.locator('[data-initiate-personal-assistant]').click();
           await page.locator('.pa-setup').waitFor({ state: 'visible', timeout: 15000 });
           const setupCopy = await page.locator('.pa-setup').innerText();

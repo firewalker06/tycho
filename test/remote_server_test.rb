@@ -5600,6 +5600,9 @@ module RemoteServerTest
            css[:body].include?("flex-wrap: nowrap") &&
            css[:body].include?("overflow-x: auto"),
            "expected Settings to keep a sticky in-page section navigator with active-section feedback")
+    assert(js[:body].include?('"settings-personal-assistant": "personal-assistant"') &&
+           js[:body].include?('["personal-assistant", "FRED", "settings-personal-assistant"]'),
+           "expected the FRED Settings navigator to resolve its section panel")
     assert(response[:body].include?("ui-detail-header__back") &&
            response[:body].include?("ui-detail-header__identity") &&
            response[:body].include?("ui-detail-header__title") &&
