@@ -48,7 +48,7 @@ module HQ
           option :path, desc: "Project directory (defaults to the current directory)" if create
           option :name, desc: create ? "Display name (defaults to the directory name)" : "Display name"
           option :group, desc: create ? "Project group" : "Project group (pass empty string to clear)"
-          option :harness, desc: "Default agent harness"
+          option :harness, desc: "Default agent harness (built-in or configured custom profile)"
           option :agent, desc: "Alias for --harness"
           option :model, desc: create ? "Default model override" : "Default model override (pass empty string to clear)"
           option :reasoning_effort,
@@ -167,7 +167,7 @@ module HQ
         argument :project_key, required: true, desc: "Project key"
         argument :prompt, required: true, desc: "Initial prompt for the agent"
         option :model, desc: "Model override (e.g. claude-opus-4-8)"
-        option :harness, desc: "Agent harness override (e.g. claude, codex, opencode)"
+        option :harness, desc: "Agent harness override (codex, claude, opencode, pi, or a configured custom profile)"
         option :name, desc: "Agent name override"
         option :template, desc: "Template key to use (defaults to project's first template)"
         option :run, type: :boolean, default: false, desc: "Start the agent immediately after creating"

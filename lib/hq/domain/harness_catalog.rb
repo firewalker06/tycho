@@ -5,6 +5,7 @@ require_relative "../harness_registry"
 require_relative "../utf8_text"
 require_relative "command_runner"
 require_relative "executable_resolver"
+require_relative "harness_execution"
 
 module HQ
   module HarnessCatalog
@@ -26,33 +27,56 @@ module HQ
 
     def for_builtin(name, resolution)
       cache_key = ["builtin", name.to_s, resolution&.command.to_s, resolution&.path.to_s]
-      catalog_cache[cache_key] ||= build_builtin_catalog(name, resolution)
+      catalog_cache[cache_key] ||= build_builtin_catalog(
+        name,
+        resolution,
+        command_prefix: resolution ? [resolution.command] : [],
+        environment: HarnessExecution.environment
+      )
     end
 
-    def for_custom(config)
-      cache_key = ["custom", config.key.to_s, config.adapter.to_s, config.execution_command.to_s]
-      catalog_cache[cache_key] ||= build_custom_catalog(config)
+    def for_custom(config, execution: nil, resolution: nil)
+      execution ||= config.resolved_execution
+      command_prefix = execution.fetch(:command)
+      resolution ||= custom_resolution(command_prefix)
+      environment = HarnessExecution.environment(execution.fetch(:env))
+      cache_key = [
+        "custom", config.key.to_s, config.adapter.to_s, command_prefix, execution.fetch(:env),
+        resolution&.command.to_s, resolution&.path.to_s
+      ]
+      catalog_cache[cache_key] ||= build_custom_catalog(
+        config,
+        resolution,
+        command_prefix:,
+        environment:
+      )
     end
 
-    def build_builtin_catalog(name, resolution)
+    def build_builtin_catalog(name, resolution, command_prefix:, environment: {})
       case name.to_s
       when "codex"
-        codex_catalog(resolution)
+        codex_catalog(resolution, command_prefix:, environment:)
       when "claude"
-        claude_catalog(resolution)
+        claude_catalog(resolution, command_prefix:, environment:)
       when "opencode"
-        opencode_catalog(resolution)
+        opencode_catalog(resolution, command_prefix:, environment:)
       when "pi"
-        pi_catalog(resolution)
+        pi_catalog(resolution, command_prefix:, environment:)
       else
         empty_catalog
       end
     end
 
-    def build_custom_catalog(config)
+    def build_custom_catalog(config, resolution, command_prefix:, environment: {})
       case config.adapter.to_s
+      when "codex"
+        codex_catalog(resolution, command_prefix:, environment:)
       when "claude"
         claude_compatible_catalog(source: "claude-compatible defaults")
+      when "opencode"
+        opencode_catalog(resolution, command_prefix:, environment:)
+      when "pi"
+        pi_catalog(resolution, command_prefix:, environment:)
       else
         empty_catalog
       end
@@ -66,7 +90,7 @@ module HQ
       catalog_cache.clear
     end
 
-    def codex_catalog(resolution)
+    def codex_catalog(resolution, command_prefix: nil, environment: {})
       unless resolution&.available?
         return {
           model_suggestions: [],
@@ -75,8 +99,9 @@ module HQ
         }
       end
 
-      data = capture_json([resolution.command, "debug", "models"]) ||
-             capture_json([resolution.command, "debug", "models", "--bundled"])
+      command_prefix ||= [resolution.command]
+      data = capture_json(command_prefix + %w[debug models], environment:) ||
+             capture_json(command_prefix + %w[debug models --bundled], environment:)
       return empty_catalog.merge(catalog_source: "codex debug models unavailable") unless data
 
       model_rows = if data.is_a?(Hash)
@@ -108,8 +133,9 @@ module HQ
       }
     end
 
-    def claude_catalog(resolution)
-      efforts = resolution&.available? ? claude_help_efforts(resolution.command) : []
+    def claude_catalog(resolution, command_prefix: nil, environment: {})
+      command_prefix ||= resolution ? [resolution.command] : []
+      efforts = resolution&.available? ? claude_help_efforts(command_prefix, environment:) : []
       claude_compatible_catalog(
         reasoning_efforts: efforts.empty? ? CLAUDE_REASONING_EFFORTS : efforts,
         source: efforts.empty? ? "claude defaults" : "claude --help"
@@ -124,7 +150,7 @@ module HQ
       }
     end
 
-    def opencode_catalog(resolution)
+    def opencode_catalog(resolution, command_prefix: nil, environment: {})
       unless resolution&.available?
         return {
           model_suggestions: [],
@@ -134,17 +160,18 @@ module HQ
         }
       end
 
-      model_rows = opencode_model_rows(resolution.command)
+      command_prefix ||= [resolution.command]
+      model_rows = opencode_model_rows(command_prefix, environment:)
       source = model_rows.empty? ? "opencode models unavailable" : "opencode models"
       {
         model_suggestions: model_rows,
         reasoning_effort_suggestions: REASONING_EFFORT_ORDER,
         catalog_source: source,
-        auth_providers: opencode_auth_providers(resolution.command)
+        auth_providers: opencode_auth_providers(command_prefix, environment:)
       }
     end
 
-    def pi_catalog(resolution)
+    def pi_catalog(resolution, command_prefix: nil, environment: {})
       base = {
         reasoning_effort_suggestions: PI_REASONING_EFFORTS,
         auth_ready: false,
@@ -162,18 +189,19 @@ module HQ
       }
       return base.merge(model_suggestions: [], catalog_source: "pi defaults") unless resolution&.available?
 
-      rows = pi_model_rows(resolution.command)
+      command_prefix ||= [resolution.command]
+      rows = pi_model_rows(command_prefix, environment:)
       base.merge(
         model_suggestions: rows,
         catalog_source: rows.empty? ? "pi --list-models unavailable or unauthenticated" : "pi --list-models",
         auth_ready: !rows.empty?,
         auth_providers: rows.filter_map { |item| item[:provider] }.uniq,
-        version: pi_version(resolution.command)
+        version: pi_version(command_prefix, environment:)
       )
     end
 
-    def claude_help_efforts(command)
-      out, err, success = capture_command_output([command, "--help"])
+    def claude_help_efforts(command_prefix, environment: {})
+      out, err, success = capture_command_output(Array(command_prefix) + ["--help"], environment:)
       return [] unless success
 
       text = "#{out}\n#{err}"
@@ -185,8 +213,8 @@ module HQ
       []
     end
 
-    def capture_json(command)
-      out, _err, success = capture_command_output(command)
+    def capture_json(command, environment: {})
+      out, _err, success = capture_command_output(command, environment:)
       return nil unless success
 
       JSON.parse(Utf8Text.normalize(out, replacement: "?"))
@@ -194,8 +222,8 @@ module HQ
       nil
     end
 
-    def opencode_model_rows(command)
-      out = capture_stdout([command, "models"], timeout: OPENCODE_COMMAND_TIMEOUT)
+    def opencode_model_rows(command_prefix, environment: {})
+      out = capture_stdout(Array(command_prefix) + ["models"], timeout: OPENCODE_COMMAND_TIMEOUT, environment:)
       return [] if out.to_s.empty?
 
       out.lines.filter_map do |line|
@@ -210,8 +238,8 @@ module HQ
       end.uniq { |item| item[:value] }
     end
 
-    def opencode_auth_providers(command)
-      out = capture_stdout([command, "auth", "list"], timeout: OPENCODE_COMMAND_TIMEOUT)
+    def opencode_auth_providers(command_prefix, environment: {})
+      out = capture_stdout(Array(command_prefix) + %w[auth list], timeout: OPENCODE_COMMAND_TIMEOUT, environment:)
       return [] if out.to_s.empty?
 
       out.lines.filter_map do |line|
@@ -223,8 +251,8 @@ module HQ
       end.uniq
     end
 
-    def pi_model_rows(command)
-      out = capture_stdout([command, "--list-models"], timeout: PI_COMMAND_TIMEOUT)
+    def pi_model_rows(command_prefix, environment: {})
+      out = capture_stdout(Array(command_prefix) + ["--list-models"], timeout: PI_COMMAND_TIMEOUT, environment:)
       return [] if out.to_s.empty?
 
       out.lines.filter_map do |line|
@@ -240,21 +268,26 @@ module HQ
       end.uniq { |item| item[:value] }
     end
 
-    def pi_version(command)
-      output = capture_stdout([command, "--version"], timeout: COMMAND_TIMEOUT).strip
+    def pi_version(command_prefix, environment: {})
+      output = capture_stdout(Array(command_prefix) + ["--version"], timeout: COMMAND_TIMEOUT, environment:).strip
       output.empty? ? nil : output.lines.first.strip
     end
 
-    def capture_stdout(command, timeout: COMMAND_TIMEOUT)
-      out, _err, success = capture_command_output(command, timeout:)
+    def capture_stdout(command, timeout: COMMAND_TIMEOUT, environment: {})
+      out, _err, success = capture_command_output(command, timeout:, environment:)
       success ? Utf8Text.normalize(out, replacement: "?") : ""
     rescue StandardError
       ""
     end
 
-    def capture_command_output(command, timeout: COMMAND_TIMEOUT)
-      result = CommandRunner.capture(command, timeout:)
+    def capture_command_output(command, timeout: COMMAND_TIMEOUT, environment: {})
+      result = CommandRunner.capture(command, timeout:, environment:)
       [result.stdout, result.stderr, result.success?]
+    end
+
+    def custom_resolution(command_prefix)
+      command = Array(command_prefix).first.to_s
+      command.empty? ? nil : ExecutableResolver.resolve(command)
     end
 
     def strip_terminal_control(text)

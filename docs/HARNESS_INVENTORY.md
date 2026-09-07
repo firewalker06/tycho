@@ -4,6 +4,13 @@ Date: 2026-07-22
 
 Scope: inventory Tycho's current Codex and Claude managed-agent harness behavior, then compare what additional CLI adapters can reuse, adapt, or must leave unsupported until verified. Cursor notes capture the earlier adapter study; OpenCode notes capture the next planned integration target.
 
+> **Implementation update (2026-09-07):** The comparison tables below are
+> historical. Tycho now accepts custom executable profiles for the closed
+> `codex`, `claude`, `opencode`, and `pi` adapter families. A profile keeps its
+> declared adapter's command, parser, session, structured-result, metrics,
+> readiness, and skills contract; see [Custom harness
+> profiles](./CUSTOM_HARNESSES.md) for the current configuration.
+
 ## Executive Summary
 
 Tycho's managed-agent system is not just a command launcher. A harness participates in configuration, executable discovery, command construction, detached process management, native session resume, stream parsing, structured result extraction, memory capture, skill discovery, TUI and Remote UI forms, schedules, hooks, setup readiness, and interactive terminal open flows.

@@ -575,9 +575,13 @@ module RemoteServerTest
 
       fetched = server.send(:route, service, "GET", "/skills", {}, nil)
       harnesses = fetched.dig(:body, :skill_installation, :harnesses)
-      assert(harnesses.map { |item| item[:harness] } == %w[codex claude opencode pi],
-             "expected Remote skills status for every supported harness")
+      assert(harnesses.map { |item| item[:harness] } == %w[
+        codex claude opencode pi claude-wrapper codex-wrapper opencode-wrapper pi-wrapper
+      ], "expected Remote skills status for built-ins and configured profiles")
       assert(harnesses.all? { |item| item[:status] == "missing" }, "expected isolated homes to start missing")
+      codex_profile = harnesses.find { |item| item[:harness] == "codex-wrapper" }
+      assert(codex_profile[:adapter] == "codex" && codex_profile[:target_path] == File.join(home, ".agents", "skills"),
+             "expected custom skill profile to use its declared adapter root")
 
       begin
         server.send(:route, service, "POST", "/skills/codex/install", {}, nil)
@@ -586,11 +590,13 @@ module RemoteServerTest
         assert(e.status == 400 && e.message.include?("Confirm"), "expected explicit mutation intent")
       end
 
-      installed = server.send(:route, service, "POST", "/skills/codex/install", { "confirmed" => true }, nil)
+      installed = server.send(:route, service, "POST", "/skills/codex-wrapper/install", { "confirmed" => true }, nil)
       result = installed.dig(:body, :result)
       assert(result[:changed_skills] == ["tycho"], "expected Remote skill action to report exact changes")
+      assert(result.dig(:harness, :harness) == "codex-wrapper" && result.dig(:harness, :adapter) == "codex",
+             "expected Remote skill action to preserve custom profile identity")
       assert(result.dig(:harness, :target_path) == File.join(home, ".agents", "skills"),
-             "expected Remote Codex install to use the isolated official path")
+             "expected Remote custom Codex install to use the isolated official path")
       assert(service.setup.dig(:skill_installation, :harnesses, 0, :status) == "installed",
              "expected setup to expose current skill status")
     end
@@ -2901,8 +2907,20 @@ module RemoteServerTest
       assert(setup.dig(:counts, :archived_projects) == 1, "expected archived project count")
       assert(setup[:refresh_intervals] == { active_ms: 5_000, idle_ms: 10_000, hidden_ms: 30_000 },
              "expected refresh intervals to use the 5s, 10s, and 30s policy")
-      assert(setup[:harnesses].map { |item| item[:name] }.sort == %w[claude claude-wrapper codex opencode pi],
+      assert(setup[:harnesses].map { |item| item[:name] }.sort == %w[
+        claude claude-wrapper codex codex-wrapper opencode opencode-wrapper pi pi-wrapper
+      ],
              "expected harness readiness entries")
+      custom_profiles = setup[:harnesses].select { |item| item[:name].end_with?("-wrapper") }
+      assert(custom_profiles.to_h { |item| [item[:name], item[:adapter]] } == {
+        "claude-wrapper" => "claude",
+        "codex-wrapper" => "codex",
+        "opencode-wrapper" => "opencode",
+        "pi-wrapper" => "pi"
+      }, "expected Remote readiness to retain every custom profile adapter")
+      codex_profile = custom_profiles.find { |item| item[:name] == "codex-wrapper" }
+      assert(codex_profile[:commands] == ["env", "CUSTOM_GATEWAY=[configured]", "codex-wrapper"],
+             "expected Remote readiness to redact custom profile environment values")
       claude = setup[:harnesses].find { |item| item[:name] == "claude" }
       claude_models = Array(claude[:model_suggestions]).map { |item| item[:value] }
       assert(claude_models == %w[claude-fable-5 claude-opus-5 claude-opus-4-8 claude-sonnet-5 claude-haiku-4-5],
@@ -6973,9 +6991,21 @@ module RemoteServerTest
     prompts_path = File.join(dir, "system_prompts.yml")
     File.write(config_path, <<~YAML)
       custom_harnesses:
+        - key: codex-wrapper
+          adapter: codex
+          execution_command:
+            - env
+            - CUSTOM_GATEWAY=work
+            - codex-wrapper
         - key: claude-wrapper
           adapter: claude
           execution_command: claude-wrapper
+        - key: opencode-wrapper
+          adapter: opencode
+          execution_command: opencode-wrapper
+        - key: pi-wrapper
+          adapter: pi
+          execution_command: pi-wrapper
       projects:
         - key: web
           name: Web
@@ -7047,9 +7077,21 @@ module RemoteServerTest
     prompts_path = File.join(dir, "system_prompts.yml")
     File.write(config_path, <<~YAML)
       custom_harnesses:
+        - key: codex-wrapper
+          adapter: codex
+          execution_command:
+            - env
+            - CUSTOM_GATEWAY=work
+            - codex-wrapper
         - key: claude-wrapper
           adapter: claude
           execution_command: claude-wrapper
+        - key: opencode-wrapper
+          adapter: opencode
+          execution_command: opencode-wrapper
+        - key: pi-wrapper
+          adapter: pi
+          execution_command: pi-wrapper
       projects:
         - key: web
           name: Web

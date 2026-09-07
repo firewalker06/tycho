@@ -146,7 +146,8 @@ The selected agent detail panel shows:
 - Create an agent from a selected project.
 - Edit an idle agent.
 - Choose prompt template.
-- Choose harness: `codex`, `claude`, or a custom Claude-compatible harness.
+- Choose a built-in harness or a configured custom profile. Every profile is
+  labelled with its native adapter: Codex, Claude, OpenCode, or Pi.
 - Edit name and prompt.
 - Edit workspace on existing agents.
 - Create only, or create and immediately run.

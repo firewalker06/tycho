@@ -5,6 +5,7 @@ require "fileutils"
 require "json"
 require "securerandom"
 require "tmpdir"
+require_relative "../harness_registry"
 
 module HQ
   class SkillInstaller
@@ -49,19 +50,20 @@ module HQ
       @manifest_path = File.expand_path(manifest_path)
     end
 
-    def statuses
-      SUPPORTED_HARNESSES.keys.map { |harness| status(harness) }
+    def statuses(harnesses: HQ.harness_keys)
+      Array(harnesses).map { |harness| status(harness) }
     end
 
     def status(harness)
-      harness = normalize_harness(harness)
+      harness, adapter = resolve_harness(harness)
       source = source_manifest
-      skills = source.fetch("skills").map { |skill| skill_status(harness, skill) }
+      skills = source.fetch("skills").map { |skill| skill_status(adapter, skill) }
       state = aggregate_state(skills)
       {
         harness: harness,
+        adapter: adapter,
         status: state,
-        target_path: target_root(harness),
+        target_path: target_root(adapter),
         source: source.fetch("source"),
         version: source.fetch("version"),
         verification: source.fetch("verification"),
@@ -73,7 +75,7 @@ module HQ
     end
 
     def apply(harness:, action:)
-      harness = normalize_harness(harness)
+      harness, adapter = resolve_harness(harness)
       action = action.to_s
       unless %w[install update].include?(action)
         raise InstallError.new("Action must be install or update", category: "compatibility")
@@ -101,9 +103,9 @@ module HQ
         next if skill_state == "installed"
 
         if skill_state == "missing"
-          install_skill(harness, skill)
+          install_skill(adapter, skill)
         else
-          update_skill(harness, skill)
+          update_skill(adapter, skill)
         end
         changed << skill.fetch("name")
       rescue StandardError => e
@@ -323,10 +325,25 @@ module HQ
     end
 
     def error_status(harness, error)
+      _profile, adapter = resolve_harness(harness)
       {
         harness: harness.to_s,
+        adapter: adapter,
         status: "error",
-        target_path: supported_harness?(harness) ? target_root(harness) : nil,
+        target_path: target_root(adapter),
+        source: nil,
+        version: nil,
+        verification: nil,
+        skills: [],
+        actions: { install: false, update: false, blocked: true },
+        error: error.to_h
+      }
+    rescue InstallError
+      {
+        harness: harness.to_s,
+        adapter: nil,
+        status: "error",
+        target_path: nil,
         source: nil,
         version: nil,
         verification: nil,
@@ -373,7 +390,7 @@ module HQ
     end
 
     def target_root(harness)
-      File.join(@home, SUPPORTED_HARNESSES.fetch(normalize_harness(harness)))
+      File.join(@home, SUPPORTED_HARNESSES.fetch(adapter_for(harness)))
     end
 
     def skill_directory(harness, name)
@@ -393,16 +410,17 @@ module HQ
       end
     end
 
-    def normalize_harness(harness)
+    def resolve_harness(harness)
       value = harness.to_s.downcase
-      return value if SUPPORTED_HARNESSES.key?(value)
+      adapter = HQ.harness_adapter(value)
+      return [value, adapter] if HQ.supported_harness?(value) && SUPPORTED_HARNESSES.key?(adapter)
 
-      raise InstallError.new("Unsupported skill harness #{harness.inspect}; choose codex, claude, opencode, or pi",
+      raise InstallError.new("Unsupported skill harness #{harness.inspect}; choose codex, claude, opencode, pi, or a configured custom profile",
                              category: "compatibility")
     end
 
-    def supported_harness?(harness)
-      SUPPORTED_HARNESSES.key?(harness.to_s.downcase)
+    def adapter_for(harness)
+      resolve_harness(harness).last
     end
 
     def checksum(path)

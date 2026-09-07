@@ -4,6 +4,7 @@ require "shellwords"
 
 module HQ
   BUILTIN_HARNESSES = %w[codex claude opencode pi].freeze
+  CUSTOM_HARNESS_ADAPTERS = BUILTIN_HARNESSES
   HarnessCatalogConfig = Struct.new(:key, :models, :reasoning_efforts, keyword_init: true)
 
   HarnessConfig = Struct.new(:key, :adapter, :execution_command, keyword_init: true) do
@@ -13,6 +14,20 @@ module HQ
         execution_command.map(&:to_s).reject(&:empty?)
       else
         Shellwords.split(execution_command.to_s)
+      end
+    end
+
+    def display_command_parts
+      parts = command_parts
+      return parts unless parts.first == "env"
+
+      assignment_count = parts.drop(1).take_while { |part| part.include?("=") }.length
+      parts.each_with_index.map do |part, index|
+        if index.positive? && index <= assignment_count
+          "#{part.split("=", 2).first}=[configured]"
+        else
+          part
+        end
       end
     end
 
@@ -26,8 +41,9 @@ module HQ
     end
 
     def resolved_execution(path: ENV.fetch("PATH", ""))
-      parts = resolved_command_parts(path:)
-      env, command = split_env_prefix(parts)
+      env, command = split_env_prefix(command_parts)
+      command_path = env.fetch("PATH", path)
+      command[0] = resolve_executable(command[0], path: command_path) || command[0] unless command.empty?
       { command: command, env: env }
     end
 
@@ -79,6 +95,10 @@ module HQ
 
   def custom_harness(key)
     custom_harnesses[key.to_s]
+  end
+
+  def supported_custom_harness_adapter?(adapter)
+    CUSTOM_HARNESS_ADAPTERS.include?(adapter.to_s)
   end
 
   def harness_adapter(key)

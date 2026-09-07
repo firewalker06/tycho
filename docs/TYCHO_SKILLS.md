@@ -15,6 +15,11 @@ Tycho uses each harness's current personal skill directory. `TYCHO_SKILLS_HOME` 
 
 Each skill lives in `<root>/tycho/SKILL.md`. Tycho places a `.tycho-owned.json` marker beside it. The marker records the Tycho source, installed version, and checksums used to prove that a later update is safe.
 
+A custom harness profile uses its declared adapter’s row and root. For example,
+a profile with `adapter: opencode` installs to `~/.config/opencode/skills`.
+Remote Settings shows the profile and adapter together; profiles for the same
+adapter intentionally share the same installed skill.
+
 ## Status and actions
 
 - **Missing**: no `tycho` directory exists. **Install** is available.

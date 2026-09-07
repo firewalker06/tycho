@@ -8,7 +8,7 @@
 #   name    (required) display name in the TUI
 #   group   (optional) group header projects are bucketed under
 #   path    (required) absolute path to the project checkout on this machine
-#   agent   (optional) managed-agent backend: "codex", "claude", or a custom_harnesses key
+#   agent   (optional) managed-agent backend: "codex", "claude", "opencode", "pi", or a custom_harnesses key
 #   model   (optional) default model string for new managed agents
 #   reasoning_effort (optional) default effort string for new managed agents
 #   response_style (optional) custom response guidance, or false to disable the global policy
@@ -17,10 +17,13 @@
 # Groups can define shared metadata by display name. Missing hidden settings are
 # visible by default; project-level hidden values override group-level values.
 
-# Custom harnesses let Tycho run a Claude-compatible wrapper without hardcoding
-# provider-specific behavior. The execution command must accept Claude CLI flags
-# because Tycho appends --print, --output-format stream-json, --json-schema, and
-# session flags around the prompt.
+# Custom harness profiles let Tycho run a wrapper for one built-in adapter
+# family: codex, claude, opencode, or pi. `adapter` selects that family's fixed
+# command flags, JSON event parser, session resume, structured-output behavior,
+# permissions, catalogs, metrics, and skills. Tycho does not accept custom flag
+# or parser templates, so the wrapper must implement the selected native CLI and
+# JSON event contract. `execution_command` can be a string or argv list; use an
+# `env KEY=value ...` prefix when the wrapper needs local environment settings.
 #
 # Harness catalogs are optional UI suggestions for model and effort pickers.
 # They are additive to Tycho's discovered/default catalogs and are not
@@ -38,9 +41,17 @@ projects: []
 #   reasoning_effort: medium
 #   timezone: Asia/Jakarta
 
-# Example custom harness:
+# Example custom harness profile:
 #
 # custom_harnesses:
+# - key: company-codex
+#   adapter: codex
+#   execution_command:
+#     - env
+#     - COMPANY_PROFILE=work
+#     - /Users/you/bin/codex-wrapper
+#     - --gateway
+#     - company
 # - key: claude-wrapper
 #   adapter: claude
 #   execution_command: "/Users/you/bin/claude-wrapper"

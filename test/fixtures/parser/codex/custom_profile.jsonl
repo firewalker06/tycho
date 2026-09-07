@@ -1,0 +1,3 @@
+{"type":"thread.started","thread_id":"custom-codex-session"}
+{"type":"item.completed","item":{"type":"agent_message","text":"{\"status\":\"success\",\"summary\":\"Custom Codex profile fixture.\",\"summary_sections\":null,\"inquiry\":null,\"attachments\":null,\"memory_handoff\":null}"}}
+{"type":"turn.completed","usage":{"input_tokens":12,"cached_input_tokens":4,"output_tokens":3},"model":"gpt-5.6-sol"}

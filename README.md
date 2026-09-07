@@ -7,9 +7,9 @@ recurring work. Use it in the terminal or through its optional Remote UI.
 
 ![Tycho terminal dashboard and remote agent control interface](docs/assets/tycho-hero.jpg)
 
-Tycho currently supports Codex, Claude, OpenCode, Pi, and custom
-Claude-compatible harnesses. It keeps each agent's conversation, status, and
-artifacts under your local `~/.tycho` directory.
+Tycho currently supports Codex, Claude, OpenCode, Pi, and custom profiles for
+any of those native harness families. It keeps each agent's conversation,
+status, and artifacts under your local `~/.tycho` directory.
 
 Tycho is early, single-operator software. Homebrew installs target macOS;
 source installs also work in Linux-style environments and Windows 11 through
@@ -62,6 +62,8 @@ tycho project my-workspace --path ~/Code/my-workspace --harness codex
 The complete annotated configuration is in
 [`config/hq.yml.example`](config/hq.yml.example). Schedules, prompt templates,
 hooks, and response style use separate files under `~/.tycho/config`.
+For compatible local wrappers and gateways, see [custom harness
+profiles](docs/CUSTOM_HARNESSES.md).
 
 Tycho launches agent CLIs with access to the selected project. Review project
 paths, prompts, and sandbox settings before starting an agent. Pi has
@@ -125,6 +127,8 @@ Source-checkout users can replace `tycho` with `bin/tycho` in these examples.
 
 - [Setup requirements](docs/SETUP_REQUIREMENTS.md) — dependencies, setup
   profiles, paths, and environment overrides.
+- [Custom harness profiles](docs/CUSTOM_HARNESSES.md) — compatible Codex,
+  Claude, OpenCode, and Pi wrapper configuration.
 - [Remote Sessions](docs/REMOTE_SERVER.md) — Remote UI, API, authentication,
   Tailscale, and multiserver operation.
 - [Scheduled Runs](docs/SCHEDULED_RUNS.md) — recurring agent configuration and

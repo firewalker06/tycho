@@ -13,6 +13,7 @@ module SkillInstallerTest
     assert_bundled_source_manifest_is_valid
     assert_bundled_skill_documents_delegation_capabilities
     assert_supported_harness_paths_and_idempotent_install
+    assert_custom_profiles_use_declared_skill_roots
     assert_outdated_skill_updates_without_removing_extra_files
     assert_unowned_and_locally_modified_skills_are_preserved
     assert_symlinked_managed_paths_are_rejected
@@ -65,6 +66,36 @@ module SkillInstallerTest
         assert(repeated[:changed_skills].empty?, "expected repeated install to be idempotent")
       end
     end
+  end
+
+  def assert_custom_profiles_use_declared_skill_roots
+    previous = HQ.custom_harnesses
+    profiles = %w[codex claude opencode pi].map do |adapter|
+      HQ::HarnessConfig.new(key: "#{adapter}-wrapper", adapter: adapter, execution_command: "#{adapter}-wrapper")
+    end
+    HQ.custom_harnesses = profiles
+
+    with_installer do |installer, home, _source, _manifest|
+      statuses = installer.statuses
+      profile_statuses = statuses.select { |item| item[:harness].end_with?("-wrapper") }
+      assert(profile_statuses.map { |item| item[:harness] } == %w[
+        claude-wrapper codex-wrapper opencode-wrapper pi-wrapper
+      ], "expected custom profiles to appear after built-in skill targets")
+      assert(profile_statuses.to_h { |item| [item[:harness], item[:adapter]] } == {
+        "codex-wrapper" => "codex",
+        "claude-wrapper" => "claude",
+        "opencode-wrapper" => "opencode",
+        "pi-wrapper" => "pi"
+      }, "expected profile statuses to expose their declared adapters")
+
+      installed = installer.apply(harness: "opencode-wrapper", action: "install")
+      assert(installed.dig(:harness, :harness) == "opencode-wrapper" &&
+             installed.dig(:harness, :adapter) == "opencode" &&
+             installed.dig(:harness, :target_path) == File.join(home, ".config", "opencode", "skills"),
+             "expected custom OpenCode profile installs to use the native skill root")
+    end
+  ensure
+    HQ.custom_harnesses = previous if defined?(previous)
   end
 
   def assert_outdated_skill_updates_without_removing_extra_files
