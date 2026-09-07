@@ -6705,6 +6705,12 @@ module RemoteServerTest
            fred_settings.include?('data-initiate-personal-assistant>Set up FRED</button>') &&
            !fred_settings.include?("Setup is available through the Personal Assistant API"),
            "expected unconfigured FRED settings to hide prompt and configuration copy behind a setup action")
+    assert(fred_settings.include?('<a class="ui-button" href="#personal-assistant">Go to FRED</a>') &&
+           fred_settings.include?('<details class="pa-lifecycle">') &&
+           fred_settings.include?("Restart FRED with updated settings") &&
+           !fred_settings.include?('data-open-personal-assistant') &&
+           !fred_settings.include?("Start fresh conversation"),
+           "expected FRED settings to navigate directly and reserve restart for lifecycle controls")
     initiate_handler = js[:body][js[:body].index("function handleViewClick"), 1_500]
     assert(initiate_handler.include?('data-initiate-personal-assistant') &&
            initiate_handler.include?('navigate({ type: "tab", tab: "personal-assistant" })'),
@@ -6715,6 +6721,11 @@ module RemoteServerTest
            !js[:body].include?("Codex found; account access is checked when it runs.") &&
            !js[:body].include?("Open today’s conversation when you’re ready.".b),
            "expected FRED setup to explain its purpose without readiness noise or a ready screen")
+    assert(js[:body].include?('tychoLoadingState("Loading FRED", { className: "pa-loading-state", body: "Fetching today’s session." })'.b) &&
+           !js[:body].include?('data-open-personal-assistant') &&
+           !js[:body].include?('showGrowl("FRED opened"') &&
+           js[:body].include?('["ready", "dormant", "unconfigured"].includes(state.personalAssistant.state)'),
+           "expected visiting FRED to open its daily session without an opening ceremony")
     setup_handler = js[:body].split('if (["personal-assistant-setup-form", "personal-assistant-settings-form"]', 2).last.split('if (event.target.id === "server-connection-form")', 2).first
     assert(setup_handler.include?('apiPost("/personal-assistant/setup"') &&
            setup_handler.include?('apiPost("/personal-assistant/open"') &&

@@ -144,6 +144,7 @@ class PersonalAssistantTest
 
       assert_archive_retry_without_resummary(registry, dir)
       assert_start_failure_falls_back_once(registry, dir)
+      assert_setup_recovers_stale_unconfigured_state(registry, dir)
       assert_disabled_preserves_no_session(registry, dir)
       assert_dst_and_threaded_reconcile(registry, dir)
       assert_orphan_adoption_persists(registry, dir, clock)
@@ -278,6 +279,17 @@ class PersonalAssistantTest
     assert(lifecycle.status[:state] == "unconfigured" && !lifecycle.status[:configured], "expected disabled feature to stay dormant")
     assert_raises { lifecycle.open! }
     registry.update_personal_assistant!(registry.personal_assistant.merge("enabled" => true))
+  end
+
+  def self.assert_setup_recovers_stale_unconfigured_state(registry, dir)
+    path = File.join(dir, "stale-unconfigured.json")
+    HQ::FileStore.write_json(path, { "version" => 1, "phase" => "unconfigured" })
+    lifecycle = HQ::PersonalAssistantLifecycle.new(registry:, agent_store: FakeStore.new(agents: [], starts: 0), state_path: path)
+
+    configured = lifecycle.setup!("confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "UTC")
+    assert(configured[:configured] && configured[:state] == "ready",
+           "expected setup to recover an older configured FRED state marked unconfigured")
+    assert(lifecycle.open![:state] == "active", "expected recovered setup to open a daily FRED session")
   end
 
   def self.assert_restart_preserves_settings_history_and_task_references(registry, dir)

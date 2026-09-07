@@ -18,6 +18,7 @@ module RemoteUIAssetSnapshotTest
     assert_archived_agents_are_reference_only_and_read_only
     assert_personal_assistant_is_chat_first
     assert_personal_assistant_first_run_uses_starters
+    assert_personal_assistant_visits_without_opening_ceremony
     assert_personal_assistant_hides_internal_chat_events
     assert_agent_status_icons_use_lucide_without_badges
     puts "remote_ui_asset_snapshot_test: ok"
@@ -99,6 +100,26 @@ module RemoteUIAssetSnapshotTest
     unless javascript.include?("? personalAssistantVisibleConversationBlocks(allConversationBlocks)")
       raise "Personal Assistant visibility filter is not applied to its conversation renderer"
     end
+  end
+
+  def assert_personal_assistant_visits_without_opening_ceremony
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
+
+    required = [
+      '<a class="ui-button" href="#personal-assistant">Go to FRED</a>',
+      '<details class="pa-lifecycle">',
+      "Restart FRED with updated settings",
+      'tychoLoadingState("Loading FRED", { className: "pa-loading-state", body: "Fetching today’s session." })',
+      '["ready", "dormant", "unconfigured"].includes(state.personalAssistant.state)'
+    ]
+    missing = required.reject { |fragment| javascript.include?(fragment) }
+    raise "missing direct FRED visit contract: #{missing.join(", ")}" unless missing.empty?
+
+    forbidden = ["data-open-personal-assistant", "Start fresh conversation", "Open today’s conversation when you are ready."]
+    present = forbidden.select { |fragment| javascript.include?(fragment) }
+    raise "FRED still requires an opening ceremony: #{present.join(", ")}" unless present.empty?
+    raise "missing FRED loading state layout" unless css.include?(".pa-setup, .pa-loading-state")
   end
 
   def assert_initial_loading_shell_contract

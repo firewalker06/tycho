@@ -51,6 +51,7 @@ module HQ
       validate!(config)
       @registry.update_personal_assistant!(config.merge("enabled" => true))
       synchronize do |state|
+        state["phase"] = "ready" if state["phase"] == "unconfigured"
         state["phase"] ||= "ready"
         state["settings_updated_at"] = @clock.call.utc.iso8601
         payload(state)
@@ -378,7 +379,7 @@ module HQ
         introduction: INTRODUCTION, handoff_path: state["handoff_path"], error: state["last_error"],
         summary_run_id: state["summary_run_id"], config: config,
         active_settings: active ? { model: active.model, reasoning_effort: active.reasoning_effort, timezone: state["active_timezone"] } : nil,
-        settings_apply: active ? "Changes apply to the next daily conversation or a confirmed restart." : "Changes apply when you open FRED.",
+        settings_apply: active ? "Changes apply to the next daily conversation or when you restart FRED." : "Changes apply when you next visit FRED.",
         next_rollover_at: active && timezone.to_s != "" ? next_rollover_at(@clock.call, timezone) : nil,
         continuity: continuity_payload(state), history: history_payload(state),
         task_references: Array(state["task_references"]).last(20).reverse,

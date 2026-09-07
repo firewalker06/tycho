@@ -109,6 +109,13 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
           await page.locator('#personal-assistant-setup-form input[name="confirmed"]').check();
           await page.locator('#personal-assistant-setup-form button[type="submit"]').click();
           await page.locator('.pa-welcome').waitFor({ state: 'visible', timeout: 15000 });
+          await page.goto('http://127.0.0.1:#{PORT}/ui#settings');
+          const goToFred = page.locator('#settings-personal-assistant a[href="#personal-assistant"]');
+          if (await goToFred.count() !== 1) throw new Error('FRED settings did not offer a direct FRED link');
+          if (await page.locator('[data-open-personal-assistant]').count()) throw new Error('FRED still requires a manual opening control');
+          await goToFred.click();
+          await page.locator('.pa-welcome').waitFor({ state: 'visible', timeout: 15000 });
+          if ((await page.locator('.personal-assistant-page').innerText()).includes('Open conversation')) throw new Error('FRED retained opening-conversation ceremony copy');
           if (await page.locator('.pa-suggestions > li').count() !== 3) throw new Error('FRED starters did not render as a three-item list');
           if (await page.locator('select[data-pa-project-picker]').count()) throw new Error('FRED project starter still uses a select menu');
           const projectPicker = page.locator('[data-pa-project-picker]');
@@ -155,6 +162,7 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
           await page.locator('#composer #prompt-input').fill('Draft survives restart');
           await new Promise((resolve) => setTimeout(resolve, 600));
           await page.goto('http://127.0.0.1:#{PORT}/ui#settings');
+          await page.locator('.pa-lifecycle > summary').click();
           await page.locator('[data-restart-personal-assistant]').click();
           await page.locator('#confirmation-dialog[open] [data-confirmation-accept]').click();
           await page.goto('http://127.0.0.1:#{PORT}/ui#personal-assistant');
