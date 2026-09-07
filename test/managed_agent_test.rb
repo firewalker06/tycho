@@ -47,6 +47,7 @@ module ManagedAgentTest
     assert_model_and_reasoning_effort_persist_and_update
     assert_legacy_run_commands_backfill_model_and_reasoning_effort
     assert_model_and_reasoning_effort_arguments_apply_to_harnesses
+    assert_custom_harness_profiles_reuse_adapter_contracts
     assert_opencode_schema_guidance_hidden_from_logs
     assert_start_records_missing_harness_without_spawning
     assert_poll_stops_stale_unstructured_output
@@ -2532,6 +2533,166 @@ module ManagedAgentTest
            "expected custom harness env prefix to become child process environment")
   ensure
     HQ.custom_harnesses = old_harnesses if defined?(old_harnesses)
+  end
+
+  def assert_custom_harness_profiles_reuse_adapter_contracts
+    previous = HQ.custom_harnesses
+    profiles = %w[codex claude opencode pi].map do |adapter|
+      HQ::HarnessConfig.new(
+        key: "#{adapter}-wrapper",
+        adapter: adapter,
+        execution_command: [
+          "env", "TYCHO_CUSTOM_PROFILE=#{adapter}", "TYCHO_REMOTE_TOKEN=profile-secret",
+          "#{adapter}-wrapper", "--profile", "fixture"
+        ]
+      )
+    end
+    fixtures = {
+      "codex" => ["fixtures/parser/codex/custom_profile.jsonl", "custom-codex-session", "Custom Codex profile fixture."],
+      "claude" => ["fixtures/parser/claude/structuredoutput.jsonl", "00000000-0000-4000-8000-000000000001", "Reviewed demo change. Parser fixtures use synthetic data only. Report written to /tmp/hq-public-review.md and opened for user."],
+      "opencode" => ["fixtures/parser/opencode/structured.jsonl", "ses_fixture_structured", "STRUCTURED_OK"],
+      "pi" => ["fixtures/parser/pi/structured.jsonl", "00000000-1111-4222-8333-444444444444", "PI_FIXTURE_OK"]
+    }
+    HQ.custom_harnesses = profiles
+
+    Dir.mktmpdir("hq-custom-harness-profile-test") do |dir|
+      profiles.each do |profile|
+        adapter = profile.adapter
+        fixture_path, expected_session_id, expected_summary = fixtures.fetch(adapter)
+        fixture_lines = File.readlines(File.expand_path(fixture_path, __dir__))
+        prefix = profile.resolved_execution.fetch(:command)
+        expected_environment = { "TYCHO_CUSTOM_PROFILE" => adapter }
+        started_at = Time.utc(2026, 9, 7, 10, 0)
+        log_path = File.join(dir, "#{adapter}.raw.log")
+        File.write(log_path, "=== [2026-09-07 10:00:00] start ===\n#{fixture_lines.join}")
+        run = HQ::ManagedAgent::AgentRun.new(
+          started_at:,
+          finished_at: started_at + 60,
+          status: "succeeded",
+          log_path:,
+          log_start_offset: 0,
+          agent: profile.key
+        )
+        agent = HQ::ManagedAgent.new(
+          key: "#{adapter}-profile-agent",
+          name: "#{adapter} profile agent",
+          project_key: "demo",
+          template_key: "custom",
+          workspace: dir,
+          prompt: "System prompt",
+          agent: profile.key,
+          model: "fixture-model",
+          reasoning_effort: "high",
+          started_at:,
+          finished_at: started_at + 60,
+          log_path:,
+          runs: [run]
+        )
+        execution = agent.send(:build_command)
+        command = execution.fetch(:command)
+
+        assert(command.first(prefix.length) == prefix,
+               "expected #{adapter} custom profile to prefix its native command")
+        assert(execution.fetch(:env) == expected_environment,
+               "expected #{adapter} custom profile env prefix to reach its native command")
+        assert(argument_after(command, "--model") == "fixture-model",
+               "expected #{adapter} custom profile to reuse native model flags")
+        case adapter
+        when "codex"
+          assert(command[prefix.length, 2] == ["exec", "--model"],
+                 "expected custom Codex cold command to use codex exec")
+          assert(command.include?("--json") && command.include?("--output-schema"),
+                 "expected custom Codex profile to keep JSON and schema output")
+          assert(argument_after(command, "-c") == "model_reasoning_effort=\"high\"" &&
+                 command.include?("--dangerously-bypass-approvals-and-sandbox"),
+                 "expected custom Codex profile to keep native effort and permission flags")
+        when "claude"
+          assert(command.include?("--print") && argument_after(command, "--output-format") == "stream-json",
+                 "expected custom Claude profile to keep stream-json output")
+          assert(command.include?("--json-schema"), "expected custom Claude profile to keep schema output")
+          assert(argument_after(command, "--effort") == "high" && command.include?("--dangerously-skip-permissions"),
+                 "expected custom Claude profile to keep native effort and permission flags")
+        when "opencode"
+          assert(command[prefix.length, 3] == ["run", "--format", "json"],
+                 "expected custom OpenCode cold command to use opencode run JSON mode")
+          assert(agent.send(:prompt_for_execution, response_style: nil).include?("TYCHO STRUCTURED OUTPUT:"),
+                 "expected custom OpenCode profile to reuse hidden structured guidance")
+          assert(argument_after(command, "--variant") == "high" && command.include?("--auto"),
+                 "expected custom OpenCode profile to keep native effort and permission flags")
+        when "pi"
+          assert(command[prefix.length, 2] == ["--mode", "json"],
+                 "expected custom Pi cold command to use Pi JSON mode")
+          assert(agent.send(:prompt_for_execution, response_style: nil).include?("TYCHO STRUCTURED OUTPUT:"),
+                 "expected custom Pi profile to reuse hidden structured guidance")
+          assert(argument_after(command, "--thinking") == "high" && !command.include?("--tools"),
+                 "expected custom Pi profile to keep native thinking and full-access behavior")
+        end
+
+        agent.send(:capture_session_id!)
+        structured = HQ::AgentStructuredResult.from_log_lines(fixture_lines)
+        assert(agent.session_id == expected_session_id,
+               "expected #{adapter} profile to capture its native session ID from fixture output")
+        assert(structured && structured["summary"] == expected_summary,
+               "expected #{adapter} profile to extract structured fixture output")
+
+        resumed = HQ::ManagedAgent.from_hash(
+          agent.to_hash.merge(
+            "session_id" => expected_session_id,
+            "session_bootstrapped" => true,
+            "runs" => [{ "finished_at" => Time.now.iso8601, "status" => "succeeded" }]
+          )
+        )
+        resumed_command = resumed.send(:build_command).fetch(:command)
+        interactive = resumed.interactive_command
+        assert(resumed.send(:native_resume?), "expected #{adapter} profile to preserve native session continuity")
+        assert(interactive.fetch(:env) == expected_environment,
+               "expected #{adapter} interactive command to retain its profile environment")
+        case adapter
+        when "codex"
+          assert(resumed_command[prefix.length, 2] == %w[exec resume] && resumed_command.include?(expected_session_id),
+                 "expected custom Codex profile to resume natively")
+          assert(interactive.fetch(:command).last(2) == ["resume", expected_session_id],
+                 "expected custom Codex interactive command to resume natively")
+        when "claude"
+          assert(argument_after(resumed_command, "--resume") == expected_session_id,
+                 "expected custom Claude profile to resume natively")
+          assert(argument_after(interactive.fetch(:command), "--resume") == expected_session_id,
+                 "expected custom Claude interactive command to resume natively")
+        when "opencode", "pi"
+          assert(argument_after(resumed_command, "--session") == expected_session_id,
+                 "expected custom #{adapter} profile to resume natively")
+          assert(argument_after(interactive.fetch(:command), "--session") == expected_session_id,
+                 "expected custom #{adapter} interactive command to resume natively")
+        end
+
+        if %w[codex claude pi].include?(adapter)
+          launch = resumed.send(:structured_output_runner_launch, resumed_command, execution.fetch(:env))
+          runner_config = JSON.parse(launch.fetch(:env).fetch("TYCHO_AGENT_RUNNER_CONFIG"))
+          assert(runner_config["harness_adapter"] == adapter,
+                 "expected #{adapter} profile correction to use the declared adapter")
+          assert(runner_config["initial_command"].first(prefix.length) == prefix &&
+                 runner_config["correction_command"].first(prefix.length) == prefix,
+                 "expected #{adapter} profile corrections to keep the configured prefix")
+          sanitized = resumed.send(
+            :external_process_environment,
+            launch.fetch(:env).merge(
+              "BUNDLE_GEMFILE" => "profile-bundle",
+              "TYCHO_GITHUB_TOKEN" => "secret",
+              "TYCHO_REMOTE_TOKEN" => "secret"
+            )
+          )
+          assert(sanitized["TYCHO_CUSTOM_PROFILE"] == adapter &&
+                 sanitized["BUNDLE_GEMFILE"] == "profile-bundle" &&
+                 sanitized["TYCHO_GITHUB_TOKEN"].nil? && sanitized["TYCHO_REMOTE_TOKEN"].nil?,
+                 "expected #{adapter} profile env to keep declared overrides without leaking server credentials")
+        else
+          assert(!resumed.send(:structured_output_correction_supported?),
+                 "expected custom OpenCode profiles to retain native no-correction behavior")
+        end
+      end
+    end
+  ensure
+    HQ.custom_harnesses = previous if defined?(previous)
   end
 
   def assert_opencode_schema_guidance_hidden_from_logs

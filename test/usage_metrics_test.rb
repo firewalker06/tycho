@@ -20,6 +20,7 @@ module UsageMetricsTest
     assert_managed_run_finalization_persists_once
     assert_claude_model_usage_preserves_mixed_model_attribution
     assert_pi_usage_and_cost_are_summed_without_estimation
+    assert_custom_profiles_preserve_declared_metric_adapters
     assert_unknown_ids_models_and_prices_stay_unknown
     assert_retries_resumes_filters_and_report_statistics
     assert_start_failure_is_ingested_immediately
@@ -116,6 +117,35 @@ module UsageMetricsTest
       assert(session["mixed_model"] == false,
              "expected configured and observed provider-qualified Pi models not to appear mixed")
     end
+  end
+
+  def assert_custom_profiles_preserve_declared_metric_adapters
+    previous = HQ.custom_harnesses
+    profiles = %w[codex claude opencode pi].map do |adapter|
+      HQ::HarnessConfig.new(key: "#{adapter}-wrapper", adapter: adapter, execution_command: "#{adapter}-wrapper")
+    end
+    HQ.custom_harnesses = profiles
+    fixture_root = File.join(__dir__, "fixtures", "parser")
+    fixture_lines = {
+      "codex" => fixture_segments("codex_cumulative.jsonl").first,
+      "claude" => fixture("claude_model_usage.jsonl"),
+      "opencode" => File.readlines(File.join(fixture_root, "opencode", "structured.jsonl"), chomp: true),
+      "pi" => File.readlines(File.join(fixture_root, "pi", "structured.jsonl"), chomp: true)
+    }
+
+    profiles.each_with_index do |profile, index|
+      current = run("#{profile.adapter}-profile-metric", 16 + index,
+                    session_id: "#{profile.adapter}-profile-session", model: "gpt-5.5")
+      fixture_agent = agent(profile.key, "gpt-5.5", [current], session_id: current.session_id)
+      record = normalize(fixture_agent, current, usage_entries(fixture_lines.fetch(profile.adapter), profile.key))
+
+      assert(HQ::UsageMetrics::ProviderTelemetry.for(profile.key).adapter == profile.adapter,
+             "expected #{profile.key} telemetry provider to use #{profile.adapter}")
+      assert(record["harness"] == profile.key && record["harness_adapter"] == profile.adapter,
+             "expected #{profile.key} metrics to retain profile identity and native adapter")
+    end
+  ensure
+    HQ.custom_harnesses = previous if defined?(previous)
   end
 
   def assert_managed_run_finalization_persists_once

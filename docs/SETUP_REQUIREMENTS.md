@@ -31,7 +31,7 @@ install/build dependency, not a Tycho runtime subprocess dependency.
 | `claude` | Built-in Claude managed-agent harness | Soft feature fail. Agent start records a failed run if the executable is missing | Warn if missing; hard fail only for a Claude-agent profile |
 | `opencode` | Built-in OpenCode managed-agent harness | Soft feature fail. Agent start records a failed run if the executable is missing | Warn if missing; hard fail only for an OpenCode-agent profile |
 | `pi` | Built-in Pi Coding Agent harness (`@mariozechner/pi-coding-agent` 0.73.1 contract) | Soft feature fail. Agent start records a failed run if the executable is missing or no authenticated model is available | Warn if missing; hard fail only for a Pi-agent profile |
-| Custom Claude-compatible harnesses | Project-specific managed-agent execution | Soft feature fail. Tycho checks the configured executable before starting the agent | Validate configured command and warn with the harness key |
+| Custom harness profiles | Project-specific Codex, Claude, OpenCode, or Pi-compatible execution | Soft feature fail. Tycho checks the configured executable before starting the agent | Validate the configured command and use the declared adapter when a matching setup profile is requested |
 | `tailscale` | Remote UI auto-bind, MagicDNS URL, HTTPS Serve detection, terminal QR URL | Soft fail. Missing or stopped Tailscale returns `nil`; `tycho serve` falls back to localhost | Warn only when remote/tailnet access is requested |
 | `osascript` | macOS terminal automation for Ghostty, iTerm, and Apple Terminal command launches | Soft fail. Tycho logs AppleScript failures and keeps the TUI running | Check only on macOS; warn if absent or if terminal automation is requested |
 | `open` | macOS fallback for opening a terminal app at a project directory | Soft fail. Process spawn errors are logged | Check only on macOS; warn if absent |
@@ -104,7 +104,7 @@ bin/setup --profile all
    - `config/schedules.yml.example` to `~/.tycho/config/schedules.yml`
    - `config/hooks.example.yml` to `~/.tycho/config/hooks.yml`
 3. Check optional CLIs and print a feature readiness summary.
-5. For managed-agent projects, validate the selected built-in or custom harness.
+5. For managed-agent projects, validate the selected built-in or custom harness profile. A custom profile is checked through its declared adapter family.
 6. For Remote UI setup, check `TYCHO_REMOTE_TOKEN` when binding outside loopback and
    check Tailscale/HTTPS readiness when phone or push-notification use is requested.
 7. Run `bundle install` only when hard requirements and requested profiles pass.
@@ -131,8 +131,8 @@ Recommended soft failures:
 - Git is missing.
 - Tailscale is missing or stopped.
 - `osascript`, `open`, or `wezterm` terminal automation is unavailable.
-- Codex, Claude, OpenCode, Pi, or custom harnesses are missing when the user did not request
-  that agent profile.
+- Codex, Claude, OpenCode, Pi, or a custom profile executable is missing when the user did not request
+  that adapter profile.
 - Browser push prerequisites are missing.
 
 Soft failures should be reported as feature warnings with the affected Tycho

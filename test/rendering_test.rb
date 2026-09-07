@@ -139,10 +139,22 @@ module RenderingTest
     config_path = File.join(dir, "hq.yml")
     File.write(config_path, <<~YAML)
       custom_harnesses:
+        - key: codex-wrapper
+          adapter: codex
+          execution_command:
+            - /usr/local/bin/codex-wrapper
         - key: claude-wrapper
           adapter: claude
           execution_command:
             - /usr/local/bin/claude-wrapper
+        - key: opencode-wrapper
+          adapter: opencode
+          execution_command:
+            - /usr/local/bin/opencode-wrapper
+        - key: pi-wrapper
+          adapter: pi
+          execution_command:
+            - /usr/local/bin/pi-wrapper
       projects:
         - key: hq
           name: hq
@@ -2154,7 +2166,9 @@ module RenderingTest
     assert(plain_output.include?("codex"), "expected codex harness choice")
     assert(plain_output.include?("claude"), "expected claude harness choice")
     assert(plain_output.include?("pi"), "expected Pi harness choice")
-    assert(plain_output.include?("claude-wrapper"), "expected custom Claude harness choice")
+    %w[codex-wrapper claude-wrapper opencode-wrapper pi-wrapper].each do |profile|
+      assert(plain_output.include?(profile), "expected #{profile} custom harness choice")
+    end
     assert(plain_output.include?("Model:"), "expected model field in form")
     assert(plain_output.include?("Effort:"), "expected reasoning effort field in form")
     assert(template_names == template_names.sort,

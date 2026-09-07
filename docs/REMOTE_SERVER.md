@@ -149,7 +149,7 @@ The top-level mobile tabs are `Now`, `Agents`, and `Settings`. Agents is the can
 
 Settings → Configuration explains that response style is shared writing guidance for tone, clarity, and prose rather than task instructions. A missing policy stays collapsed behind **Add response style**. Once saved, the compact summary shows an excerpt, **Edit response style**, and a trash action that removes the global policy after confirmation. Opening the editor prefills existing content, while saving or canceling returns to the compact summary. Conversation Settings records whether the displayed agent run used the **Global**, **Custom**, or **Disabled** response-style source and combines model and reasoning effort into one row. It reads and writes `~/.tycho/config/response_style.md` by default, or `TYCHO_RESPONSE_STYLE_PATH` when configured. Saves use Tycho's atomic file store and retain the previous file as `response_style.md.bak`; focused edits survive polling refreshes.
 
-Settings → Skills reports the bundled Tycho skill as missing, installed, outdated, blocked, or errored for Codex, Claude Code, OpenCode, and Pi. Install and update are separate confirmed actions, target each harness's official personal skill directory, and report the exact skills changed. See [TYCHO_SKILLS.md](./TYCHO_SKILLS.md) for source, ownership, checksum, path, and verification details.
+Settings → Skills reports the bundled Tycho skill as missing, installed, outdated, blocked, or errored for each built-in harness and configured custom profile. A profile uses its declared Codex, Claude Code, OpenCode, or Pi skill root. Install and update are separate confirmed actions, target that adapter's official personal skill directory, and report the exact skills changed. See [TYCHO_SKILLS.md](./TYCHO_SKILLS.md) for source, ownership, checksum, path, and verification details.
 
 The Conversation composer has a full-screen editor for longer prompts. It opens as an accessible modal with a constrained writing canvas, focus containment, visual-viewport sizing for mobile keyboards, and only an X close control—no editor header or explanatory copy. Inline and full-screen Conversation and inquiry forms are stable islands during polling: surrounding conversation state refreshes without detaching, blurring, or reconstructing the live form control. Draft text, focus, selection, attachments, and editor mode therefore survive same-route polling refreshes. Drafts save locally while typing and survive reloads; route navigation, sending, the X control, or one Escape press exits full screen without discarding the draft.
 
@@ -529,7 +529,7 @@ Optional fields:
 - `prompt`: defaults to the selected template prompt unless overridden.
 - `workspace`: defaults to the project path on create.
 - `sandbox_mode`: defaults to the selected template sandbox mode.
-- `agent`: one of `codex`, `claude`, or a configured `custom_harnesses` key.
+- `agent`: one of `codex`, `claude`, `opencode`, `pi`, or a configured `custom_harnesses` key. A custom key follows its declared built-in adapter.
 - `model`: optional free-form per-agent model. Omit to inherit the template/project default; send an empty string when editing to clear the agent-level value.
 - `reasoning_effort`: optional free-form per-agent effort. Omit to inherit the template/project default; send an empty string when editing to clear the agent-level value.
 - `start`: when truthy, starts the agent immediately after creation.
@@ -887,11 +887,11 @@ Discovers skills for the project workspace and agent harness, reusing `HQ::Skill
 
 ### `GET /setup`
 
-Returns Remote UI readiness metadata: local URL, public Tailscale/MagicDNS URL, auth state, counts, harness readiness, skill installation status, schema/config readiness, log/storage summary, refresh intervals, and safety defaults. Harness readiness entries may include `model_suggestions`, `reasoning_effort_suggestions`, and `catalog_source`; these are UI hints only and are not validation allowlists.
+Returns Remote UI readiness metadata: local URL, public Tailscale/MagicDNS URL, auth state, counts, harness readiness, skill installation status, schema/config readiness, log/storage summary, refresh intervals, and safety defaults. Built-ins and configured custom profiles appear separately; a profile's readiness and catalog use its declared adapter. Harness readiness entries may include `model_suggestions`, `reasoning_effort_suggestions`, and `catalog_source`; these are UI hints only and are not validation allowlists.
 
 ### `GET /skills`
 
-Returns the source/version/verification guidance and missing, installed, outdated, blocked, or error state for Codex, Claude Code, OpenCode, and Pi. Paths are resolved against the Tycho server user's home directory.
+Returns the source/version/verification guidance and missing, installed, outdated, blocked, or error state for built-ins and configured custom profiles. A profile uses its declared Codex, Claude Code, OpenCode, or Pi root. Paths are resolved against the Tycho server user's home directory.
 
 ### `POST /skills/{harness}/install`
 

@@ -458,8 +458,10 @@ module HQ
         end
 
         adapter = harness["adapter"].to_s.strip.downcase
-        unless adapter == "claude"
-          raise ConfigError, "Unsupported adapter #{adapter.inspect} for custom harness #{key}. Supported adapters: claude"
+        unless HQ.supported_custom_harness_adapter?(adapter)
+          raise ConfigError,
+                "Unsupported adapter #{adapter.inspect} for custom harness #{key}. " \
+                "Supported adapters: #{CUSTOM_HARNESS_ADAPTERS.join(", ")}"
         end
 
         execution_command = harness["execution_command"]

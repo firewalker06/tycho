@@ -397,24 +397,33 @@ check_custom_harnesses() {
       data = YAML.load_file(ENV.fetch("TYCHO_SETUP_CONFIG_PATH")) || {}
       Array(data["custom_harnesses"]).each do |harness|
         key = harness.fetch("key", "unknown").to_s
+        adapter = harness["adapter"].to_s.strip.downcase
         executable = executable_for(harness["execution_command"])
-        status = available?(executable.to_s) ? "ok" : "missing"
-        puts [key, executable, status].join("\t")
+        status = if !%w[codex claude opencode pi].include?(adapter)
+                   "unsupported"
+                 elsif available?(executable.to_s)
+                   "ok"
+                 else
+                   "missing"
+                 end
+        puts [key, adapter, executable, status].join("\t")
       end
     ' 2>/dev/null
   )"
 
   [[ -n "$output" ]] || return
 
-  local key executable status
-  while IFS=$'\t' read -r key executable status; do
+  local key adapter executable status
+  while IFS=$'\t' read -r key adapter executable status; do
     [[ -n "$key" ]] || continue
-    if [[ "$status" == "ok" ]]; then
-      ok "Custom harness '$key' executable found: $executable"
-    elif profile_enabled claude; then
-      fail "Custom harness '$key' executable not found: ${executable:-execution command}"
+    if [[ "$status" == "unsupported" ]]; then
+      fail "Custom harness '$key' has unsupported adapter '${adapter:-missing}'; choose codex, claude, opencode, or pi"
+    elif [[ "$status" == "ok" ]]; then
+      ok "Custom harness '$key' ($adapter profile) executable found: $executable"
+    elif profile_enabled "$adapter"; then
+      fail "Custom harness '$key' ($adapter profile) executable not found: ${executable:-execution command}"
     else
-      warn "Custom harness '$key' executable not found: ${executable:-execution command}"
+      warn "Custom harness '$key' ($adapter profile) executable not found: ${executable:-execution command}"
     fi
   done <<< "$output"
 }

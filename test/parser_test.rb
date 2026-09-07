@@ -10,6 +10,7 @@ module ParserTest
   module_function
 
   CLAUDE_FIXTURE_DIR = File.expand_path("fixtures/parser/claude", __dir__)
+  CODEX_FIXTURE_DIR = File.expand_path("fixtures/parser/codex", __dir__)
   OPENCODE_FIXTURE_DIR = File.expand_path("fixtures/parser/opencode", __dir__)
   PI_FIXTURE_DIR = File.expand_path("fixtures/parser/pi", __dir__)
 
@@ -29,6 +30,7 @@ module ParserTest
     assert_opencode_resume_stream
     assert_pi_structured_stream
     assert_pi_error_stream
+    assert_custom_profiles_reuse_declared_native_parsers
     assert_chat_blocks_use_sequence_for_equal_timestamps
     assert_codex_turn_completed_usage_metadata
     assert_claude_result_usage_metadata
@@ -200,6 +202,52 @@ module ParserTest
            "expected malformed Pi JSON to surface a credential-safe error")
     assert(malformed.metadata["record_bytes"].positive? && !malformed.metadata.key?("raw"),
            "expected malformed Pi diagnostics without raw stream content")
+  end
+
+  def assert_custom_profiles_reuse_declared_native_parsers
+    previous = HQ.custom_harnesses
+    HQ.custom_harnesses = [
+      HQ::HarnessConfig.new(key: "codex-wrapper", adapter: "codex", execution_command: "codex-wrapper"),
+      HQ::HarnessConfig.new(key: "claude-wrapper", adapter: "claude", execution_command: "claude-wrapper"),
+      HQ::HarnessConfig.new(key: "opencode-wrapper", adapter: "opencode", execution_command: "opencode-wrapper"),
+      HQ::HarnessConfig.new(key: "pi-wrapper", adapter: "pi", execution_command: "pi-wrapper")
+    ]
+    fixtures = {
+      "codex-wrapper" => {
+        parser: HQ::Parser::Codex,
+        lines: File.readlines(File.join(CODEX_FIXTURE_DIR, "custom_profile.jsonl")),
+        summary: "Custom Codex profile fixture."
+      },
+      "claude-wrapper" => {
+        parser: HQ::Parser::Claude,
+        lines: File.readlines(File.join(CLAUDE_FIXTURE_DIR, "structuredoutput.jsonl")),
+        summary: "Reviewed demo change. Parser fixtures use synthetic data only. Report written to /tmp/hq-public-review.md and opened for user."
+      },
+      "opencode-wrapper" => {
+        parser: HQ::Parser::OpenCode,
+        lines: opencode_fixture_lines("structured"),
+        summary: "STRUCTURED_OK"
+      },
+      "pi-wrapper" => {
+        parser: HQ::Parser::Pi,
+        lines: File.readlines(File.join(PI_FIXTURE_DIR, "structured.jsonl")),
+        summary: "PI_FIXTURE_OK"
+      }
+    }
+
+    fixtures.each do |profile, fixture|
+      parser = HQ::Parser.for(profile)
+      conversation, system = HQ::Parser.parse_stream(fixture.fetch(:lines), agent_type: profile)
+      structured = HQ::AgentStructuredResult.from_log_lines(fixture.fetch(:lines))
+
+      assert(parser.is_a?(fixture.fetch(:parser)),
+             "expected #{profile} to reuse its declared native parser")
+      assert(!conversation.empty? || !system.empty?, "expected #{profile} fixture events to parse")
+      assert(structured && structured["summary"] == fixture.fetch(:summary),
+             "expected #{profile} structured result extraction through its declared adapter")
+    end
+  ensure
+    HQ.custom_harnesses = previous if defined?(previous)
   end
 
   def assert_chat_blocks_use_sequence_for_equal_timestamps

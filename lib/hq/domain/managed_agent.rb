@@ -4,6 +4,7 @@ require_relative "constants"
 require_relative "log_paths"
 require_relative "attachment_normalizer"
 require_relative "agent_command_builder"
+require_relative "harness_execution"
 require_relative "agent_memory"
 require_relative "agent_stream_projector"
 require_relative "agent_result_normalizer"
@@ -116,10 +117,6 @@ module HQ
                                 "if nothing remains to do afterward. `no_action_needed` is a quiet outcome that " \
                                 "suppresses operator unread and push notifications, so do not use it as a synonym " \
                                 "for \"finished\" or \"no next steps.\""
-    SERVER_ONLY_ENVIRONMENT_KEYS = %w[
-      TYCHO_GITHUB_TOKEN
-      TYCHO_REMOTE_TOKEN
-    ].freeze
     SUMMARY_SECTIONS_EXAMPLE = '{"type":"text","text":"## Findings\\n- First\\n- Second","url":null,"attachment":null}'
     SUMMARY_SECTIONS_GUIDANCE = "Always provide a non-empty `summary` as the concise preview. " \
                                 "Set `summary_sections` to `null` for simple runs. For substantive runs such as " \
@@ -926,18 +923,14 @@ module HQ
       command_builder.interactive
     end
 
-    def claude_command_prefix
+    def harness_execution
       custom = HQ.custom_harness(@agent)
-      return custom.resolved_execution.fetch(:command) if custom
+      if custom
+        execution = custom.resolved_execution
+        return { command: execution.fetch(:command), env: HarnessExecution.command_environment(execution.fetch(:env)) }
+      end
 
-      [claude_executable]
-    end
-
-    def claude_command_environment
-      custom = HQ.custom_harness(@agent)
-      return custom.resolved_execution.fetch(:env) if custom
-
-      {}
+      { command: [native_harness_executable], env: {} }
     end
 
     def rename!(name)
@@ -1209,6 +1202,7 @@ module HQ
 
     def command_builder(prompt: prompt_for_execution, session_id: @session_id,
                         session_bootstrapped: @session_bootstrapped)
+      execution = harness_execution
       AgentCommandBuilder.new(
         agent: @agent,
         harness_adapter: harness_adapter,
@@ -1219,11 +1213,8 @@ module HQ
         session_id: session_id,
         session_bootstrapped: session_bootstrapped,
         prompt: prompt,
-        codex_executable: codex_executable,
-        claude_command_prefix: claude_command_prefix,
-        claude_command_environment: claude_command_environment,
-        opencode_executable: opencode_executable,
-        pi_executable: pi_executable,
+        harness_command_prefix: execution.fetch(:command),
+        harness_command_environment: execution.fetch(:env),
         last_message_file_path: last_message_file_path,
         result_schema_path: AGENT_RESULT_SCHEMA,
         claude_result_schema: canonical_result_schema_json
@@ -1503,18 +1494,7 @@ module HQ
     end
 
     def external_process_environment(environment)
-      sanitized = {
-        "BUNDLE_BIN_PATH" => nil,
-        "BUNDLE_GEMFILE" => nil,
-        "BUNDLER_SETUP" => nil,
-        "BUNDLER_VERSION" => nil,
-        "GEM_HOME" => nil,
-        "GEM_PATH" => nil,
-        "RUBYLIB" => nil,
-        "RUBYOPT" => nil
-      }.merge(environment)
-      SERVER_ONLY_ENVIRONMENT_KEYS.each { |key| sanitized[key] = nil }
-      sanitized
+      HarnessExecution.environment(environment)
     end
 
     def last_message_file_path
@@ -2240,6 +2220,10 @@ module HQ
       lines[(start_index + 1)..] || []
     rescue StandardError
       []
+    end
+
+    def native_harness_executable
+      ExecutableResolver.command_for_tool(harness_adapter)
     end
 
     def codex_executable

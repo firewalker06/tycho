@@ -2584,7 +2584,7 @@ module HQ
 
     def skill_installation
       {
-        harnesses: @skill_installer.statuses
+        harnesses: @skill_installer.statuses(harnesses: HQ.harness_keys)
       }
     end
 
@@ -3841,23 +3841,29 @@ module HQ
     end
 
     def custom_harness_payload(config)
-      command = readiness_command_for(config.command_parts)
-      resolution = command ? ExecutableResolver.resolve(command) : nil
+      execution = config.resolved_execution
+      command = execution.fetch(:command)
+      resolution = command.empty? ? nil : ExecutableResolver.resolve(command.first)
       available = resolution&.available?
       detail = if available
-                 "adapter #{config.adapter}; #{command} #{executable_detail(resolution)}"
+                 "adapter #{config.adapter}; #{command.join(" ")} #{executable_detail(resolution)}"
                else
-                 "adapter #{config.adapter}; missing #{command || "execution command"}"
+                 "adapter #{config.adapter}; missing #{command.first || "execution command"}"
                end
       {
         name: config.key,
         ready: resolution&.available? ? true : false,
         detail: detail,
-        commands: config.command_parts,
+        commands: config.display_command_parts,
         adapter: config.adapter,
         path: resolution&.path,
         source: resolution&.source
-      }.merge(merge_harness_catalog_config(config.key, HarnessCatalog.for_custom(config)))
+      }.merge(
+        merge_harness_catalog_config(
+          config.key,
+          HarnessCatalog.for_custom(config, execution:, resolution:)
+        )
+      )
     end
 
     def merge_harness_catalog_config(name, payload)
@@ -3901,14 +3907,6 @@ module HQ
       else
         "available at #{resolution.path}"
       end
-    end
-
-    def readiness_command_for(parts)
-      values = Array(parts).map(&:to_s).reject(&:empty?)
-      return nil if values.empty?
-      return values.first unless values.first == "env"
-
-      values.drop(1).find { |value| !value.include?("=") }
     end
 
     def schema_readiness

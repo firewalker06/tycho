@@ -21,12 +21,13 @@ module RegistryTest
     assert_registry_ignores_hq_env_aliases
     assert_registry_uses_tycho_home_defaults
     assert_registry_resolves_hidden_groups_and_project_overrides
-    assert_registry_loads_custom_claude_harnesses
+    assert_registry_loads_custom_harness_profiles
     assert_registry_persists_remote_servers
     assert_registry_persists_session_loop_settings
     assert_custom_harness_resolves_executable_after_env_assignments
     assert_custom_harness_extracts_env_assignments_for_execution
-    assert_registry_rejects_unsupported_custom_harness_adapters
+    assert_custom_harness_uses_profile_path_to_resolve_executable
+    assert_registry_rejects_unknown_custom_harness_adapters
     assert_agent_store_prepends_project_tool_system_prompt
     assert_agent_store_timestamp_keys_avoid_exact_collisions
     assert_agent_store_backfills_project_tool_system_prompt
@@ -371,17 +372,26 @@ module RegistryTest
     end
   end
 
-  def assert_registry_loads_custom_claude_harnesses
+  def assert_registry_loads_custom_harness_profiles
     Dir.mktmpdir("hq-registry-custom-harness-test") do |dir|
       config_path = File.join(dir, "hq.yml")
       File.write(config_path, <<~YAML)
         custom_harnesses:
+          - key: codex-wrapper
+            adapter: codex
+            execution_command: /usr/local/bin/codex-wrapper
           - key: claude-wrapper
             adapter: claude
             execution_command:
               - /usr/local/bin/claude-wrapper
               - --profile
               - demo
+          - key: opencode-wrapper
+            adapter: opencode
+            execution_command: /usr/local/bin/opencode-wrapper
+          - key: pi-wrapper
+            adapter: pi
+            execution_command: /usr/local/bin/pi-wrapper
         projects:
           - key: web
             name: Web
@@ -390,7 +400,8 @@ module RegistryTest
       YAML
 
       registry = HQ::Registry.new(path: config_path)
-      harness = registry.custom_harnesses.first
+      harnesses = registry.custom_harnesses.to_h { |harness| [harness.key, harness] }
+      harness = harnesses.fetch("claude-wrapper")
 
       assert(harness.key == "claude-wrapper", "expected custom harness key")
       assert(harness.adapter == "claude", "expected custom harness to use Claude adapter")
@@ -398,6 +409,16 @@ module RegistryTest
              "expected custom harness command to preserve argv parts")
       assert(registry.projects.first.agent == "claude-wrapper",
              "expected project to accept custom harness key")
+      assert(harnesses.transform_values(&:adapter) == {
+        "codex-wrapper" => "codex",
+        "claude-wrapper" => "claude",
+        "opencode-wrapper" => "opencode",
+        "pi-wrapper" => "pi"
+      }, "expected each custom profile to declare a supported adapter family")
+      assert(HQ.harness_adapter("codex-wrapper") == "codex" &&
+             HQ.harness_adapter("opencode-wrapper") == "opencode" &&
+             HQ.harness_adapter("pi-wrapper") == "pi",
+             "expected custom profile keys to resolve through their native adapter")
     end
   end
 
@@ -440,17 +461,42 @@ module RegistryTest
              "expected executable command to omit env prefix and assignments")
       assert(execution[:env] == { "AWS_REGION" => "us-east-1", "CLAUDE_CODE_USE_BEDROCK" => "1" },
              "expected env prefix assignments to move into execution environment")
+      assert(harness.display_command_parts == [
+        "env", "AWS_REGION=[configured]", "CLAUDE_CODE_USE_BEDROCK=[configured]", "wrapped-claude", "--profile", "demo"
+      ], "expected display command to redact profile environment values without hiding wrapper flags")
     end
   end
 
-  def assert_registry_rejects_unsupported_custom_harness_adapters
+  def assert_custom_harness_uses_profile_path_to_resolve_executable
+    Dir.mktmpdir("hq-harness-profile-path-test") do |dir|
+      bin_dir = File.join(dir, "bin")
+      FileUtils.mkdir_p(bin_dir)
+      executable = File.join(bin_dir, "wrapped-codex")
+      File.write(executable, "#!/bin/sh\n")
+      File.chmod(0o755, executable)
+
+      harness = HQ::HarnessConfig.new(
+        key: "wrapped",
+        adapter: "codex",
+        execution_command: ["env", "PATH=#{bin_dir}", "wrapped-codex", "--profile", "demo"]
+      )
+      execution = harness.resolved_execution(path: "")
+
+      assert(execution[:command] == [executable, "--profile", "demo"],
+             "expected profile PATH to resolve the wrapper executable")
+      assert(execution[:env] == { "PATH" => bin_dir },
+             "expected profile PATH to remain available to the child process")
+    end
+  end
+
+  def assert_registry_rejects_unknown_custom_harness_adapters
     Dir.mktmpdir("hq-registry-custom-harness-error-test") do |dir|
       config_path = File.join(dir, "hq.yml")
       File.write(config_path, <<~YAML)
         custom_harnesses:
-          - key: custom-codex
-            adapter: codex
-            execution_command: custom-codex
+          - key: custom-unknown
+            adapter: cursor
+            execution_command: custom-unknown
         projects:
           - key: web
             name: Web
@@ -460,7 +506,8 @@ module RegistryTest
       begin
         HQ::Registry.new(path: config_path)
       rescue HQ::ConfigError => e
-        assert(e.message.include?("Unsupported adapter"), "expected unsupported adapter error")
+        assert(e.message.include?("Unsupported adapter") && e.message.include?("codex, claude, opencode, pi"),
+               "expected a finite supported-adapter error")
         return
       end
 

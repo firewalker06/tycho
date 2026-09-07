@@ -3,9 +3,8 @@
 module HQ
   class AgentCommandBuilder
     def initialize(agent:, harness_adapter:, workspace:, sandbox_mode:, model:, reasoning_effort:,
-                   session_id:, session_bootstrapped:, prompt:, codex_executable:, claude_command_prefix:,
-                   claude_command_environment: {},
-                   opencode_executable:, pi_executable:, last_message_file_path:, result_schema_path:, claude_result_schema:)
+                   session_id:, session_bootstrapped:, prompt:, harness_command_prefix:,
+                   harness_command_environment: {}, last_message_file_path:, result_schema_path:, claude_result_schema:)
       @agent = agent
       @harness_adapter = harness_adapter
       @workspace = workspace
@@ -15,11 +14,8 @@ module HQ
       @session_id = session_id.to_s
       @session_bootstrapped = session_bootstrapped
       @prompt = prompt
-      @codex_executable = codex_executable
-      @claude_command_prefix = claude_command_prefix
-      @claude_command_environment = claude_command_environment
-      @opencode_executable = opencode_executable
-      @pi_executable = pi_executable
+      @harness_command_prefix = Array(harness_command_prefix).map(&:to_s).reject(&:empty?)
+      @harness_command_environment = harness_command_environment.to_h
       @last_message_file_path = last_message_file_path
       @result_schema_path = result_schema_path
       @claude_result_schema = claude_result_schema
@@ -35,12 +31,7 @@ module HQ
     end
 
     def interactive
-      if claude_like_agent?
-        return build_interactive_claude_like_command(
-          command_prefix: @claude_command_prefix,
-          env: @claude_command_environment
-        )
-      end
+      return build_interactive_claude_like_command if claude_like_agent?
       return build_interactive_codex_command if codex_agent?
       return build_interactive_opencode_command if opencode_agent?
       return build_interactive_pi_command if pi_agent?
@@ -61,7 +52,7 @@ module HQ
     private
 
     def build_codex_command
-      command = [@codex_executable, "exec"]
+      command = harness_command_prefix + ["exec"]
       command << "resume" unless @session_id.empty?
       command.concat(model_arguments)
       command.concat(codex_reasoning_effort_arguments)
@@ -82,35 +73,35 @@ module HQ
       command << @session_id unless @session_id.empty?
       command << "--"
       command << @prompt
-      { command: command }
+      execution(command)
     end
 
     def build_claude_command
-      build_claude_like_command(command_prefix: @claude_command_prefix, env: @claude_command_environment)
+      build_claude_like_command
     end
 
     def build_opencode_command
-      command = [@opencode_executable, "run", "--format", "json", "--dir", @workspace]
+      command = harness_command_prefix + ["run", "--format", "json", "--dir", @workspace]
       command.concat(model_arguments)
       command.concat(opencode_variant_arguments)
       command << "--auto" if @sandbox_mode == "danger-full-access"
       command.concat(["--session", @session_id]) unless @session_id.empty?
       command << @prompt
-      { command: command }
+      execution(command)
     end
 
     def build_pi_command
-      command = [@pi_executable, "--mode", "json"]
+      command = harness_command_prefix + ["--mode", "json"]
       command.concat(model_arguments)
       command.concat(pi_thinking_arguments)
       command.concat(pi_safety_arguments)
       command.concat(["--session", @session_id]) unless @session_id.empty?
       command << @prompt
-      { command: command }
+      execution(command)
     end
 
     def build_interactive_codex_command
-      command = [@codex_executable]
+      command = harness_command_prefix
       command.concat(model_arguments)
       command.concat(codex_reasoning_effort_arguments)
       if @sandbox_mode == "danger-full-access"
@@ -121,41 +112,41 @@ module HQ
       end
       command.concat(["-C", @workspace])
       if @session_id.empty?
-        { command: command }
+        execution(command)
       else
-        { command: command + ["resume", @session_id] }
+        execution(command + ["resume", @session_id])
       end
     end
 
-    def build_interactive_claude_like_command(command_prefix:, env: {})
-      command = command_prefix.dup
+    def build_interactive_claude_like_command
+      command = harness_command_prefix
       command.concat(model_arguments)
       command.concat(claude_effort_arguments)
       command << "--dangerously-skip-permissions" if @sandbox_mode == "danger-full-access"
       command.concat(["--resume", @session_id]) unless @session_id.empty?
-      { command: command, env: env }
+      execution(command)
     end
 
     def build_interactive_opencode_command
-      command = [@opencode_executable, "run", "--interactive", "--dir", @workspace]
+      command = harness_command_prefix + ["run", "--interactive", "--dir", @workspace]
       command.concat(model_arguments)
       command.concat(opencode_variant_arguments)
       command << "--auto" if @sandbox_mode == "danger-full-access"
       command.concat(["--session", @session_id]) unless @session_id.empty?
-      { command: command }
+      execution(command)
     end
 
     def build_interactive_pi_command
-      command = [@pi_executable]
+      command = harness_command_prefix
       command.concat(model_arguments)
       command.concat(pi_thinking_arguments)
       command.concat(pi_safety_arguments)
       command.concat(["--session", @session_id]) unless @session_id.empty?
-      { command: command }
+      execution(command)
     end
 
-    def build_claude_like_command(command_prefix:, env: {})
-      command = command_prefix.dup
+    def build_claude_like_command
+      command = harness_command_prefix
       command.concat(model_arguments)
       command.concat(claude_effort_arguments)
       command << "--dangerously-skip-permissions" if @sandbox_mode == "danger-full-access"
@@ -163,7 +154,15 @@ module HQ
       command.concat(claude_session_arguments)
       command.concat(["--json-schema", @claude_result_schema]) if @claude_result_schema
       command << @prompt
-      { command: command, env: env }
+      execution(command)
+    end
+
+    def harness_command_prefix
+      @harness_command_prefix.dup
+    end
+
+    def execution(command)
+      { command: command, env: @harness_command_environment.dup }
     end
 
     def model_arguments

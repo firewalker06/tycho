@@ -23,10 +23,10 @@ module HQ
 
     module_function
 
-    def capture(command, timeout:, terminate_timeout: 0.5)
+    def capture(command, timeout:, terminate_timeout: 0.5, environment: {})
       stdout = Tempfile.new("tycho-command-out")
       stderr = Tempfile.new("tycho-command-err")
-      pid = Process.spawn(*Array(command), out: stdout.path, err: stderr.path, pgroup: true)
+      pid = Process.spawn(environment, *Array(command), out: stdout.path, err: stderr.path, pgroup: true)
       status = wait_for(pid, timeout)
       timed_out = status.nil?
       status ||= terminate(pid, timeout: terminate_timeout)
