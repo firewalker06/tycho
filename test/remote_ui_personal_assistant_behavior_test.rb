@@ -21,36 +21,12 @@ module RemoteUIPersonalAssistantBehaviorTest
         let depth = 0;
         let quote = "";
         let escaped = false;
-        let lineComment = false;
-        let blockComment = false;
         for (let index = opening; index < source.length; index += 1) {
           const char = source[index];
-          const next = source[index + 1];
-          if (lineComment) {
-            if (char === "\\n") lineComment = false;
-            continue;
-          }
-          if (blockComment) {
-            if (char === "*" && next === "/") {
-              blockComment = false;
-              index += 1;
-            }
-            continue;
-          }
           if (quote) {
             if (escaped) escaped = false;
             else if (char === "\\") escaped = true;
             else if (char === quote) quote = "";
-            continue;
-          }
-          if (char === "/" && next === "/") {
-            lineComment = true;
-            index += 1;
-            continue;
-          }
-          if (char === "/" && next === "*") {
-            blockComment = true;
-            index += 1;
             continue;
           }
           if (["'", '"', "`"].includes(char)) {
@@ -67,13 +43,23 @@ module RemoteUIPersonalAssistantBehaviorTest
         Map,
         Set,
         PERSONAL_ASSISTANT_ANNOUNCEMENT_LIMIT: 128,
+        PERSONAL_ASSISTANT_MAX_FAILURE_COUNT: 2,
+        PERSONAL_ASSISTANT_POLL_INTERVALS: { activeMs: 1500, idleMs: 12000, hiddenMs: 30000 },
+        document: { hidden: false },
         state: {
           personalAssistant: { configured: true },
           personalAssistantAnnouncementValues: new Map(),
+          personalAssistantProposals: [],
+          personalAssistantCurrentWork: null,
+          agentDetails: { fred: { running: true } },
+          failureCount: 0,
         },
         els: { view: null },
         escapeAttr: (value) => String(value),
         personalAssistantSubmissionForBlock: () => null,
+        personalAssistantSessionContext: () => ({ server_key: "local", active_key: "fred", generation: 1 }),
+        personalAssistantServerKey: () => "local",
+        personalAssistantSubmissionEntries: () => [],
       };
       vm.createContext(context);
       [
@@ -82,6 +68,8 @@ module RemoteUIPersonalAssistantBehaviorTest
         "personalAssistantShellRefreshNeeded",
         "personalAssistantConversationEventIdentity",
         "personalAssistantVisibleConversationBlocks",
+        "personalAssistantPollDelay",
+        "notePersonalAssistantRefreshFailure",
       ].forEach((name) => vm.runInContext(`${extractFunction(name)}\nthis.${name} = ${name};`, context));
 
       const assert = (condition, message) => {
@@ -129,6 +117,20 @@ module RemoteUIPersonalAssistantBehaviorTest
       context.commitPersonalAssistantAnnouncements();
       assert(liveValue(context.personalAssistantAnnouncementAttributes("current-work", "live")) === "polite",
              "recovery announcement was suppressed by historical state");
+
+      context.state.personalAssistant = { configured: true, active_key: "fred" };
+      assert(context.personalAssistantPollDelay() === 1500,
+             "active FRED polling lost its normal cadence");
+      context.notePersonalAssistantRefreshFailure();
+      assert(context.state.failureCount === 1 && context.personalAssistantPollDelay() === 12000,
+             "the first failed FRED poll did not use the bounded idle backoff");
+      context.notePersonalAssistantRefreshFailure();
+      context.notePersonalAssistantRefreshFailure();
+      assert(context.state.failureCount === 2 && context.personalAssistantPollDelay() === 30000,
+             "repeated failed FRED polls were not capped at the hidden backoff");
+      context.state.failureCount = 0;
+      assert(context.personalAssistantPollDelay() === 1500,
+             "successful FRED recovery did not restore active polling");
     JAVASCRIPT
 
     _stdout, stderr, status = Open3.capture3("node", "-e", script, APP_PATH, chdir: ROOT)
