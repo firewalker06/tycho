@@ -5761,6 +5761,18 @@ select {
 .pa-lifecycle, .pa-danger-zone { color: var(--muted); font-size: 13px; }.pa-lifecycle summary, .pa-danger-zone summary { cursor: pointer; color: var(--text); font-weight: 700; }.pa-lifecycle p, .pa-danger-zone p { margin: 8px 0; line-height: 1.45; }
 .pa-setup, .pa-loading-state { max-width: 520px; margin: 12px auto; }.pa-setup h2 { margin: 6px 0; font-size: 20px; }.pa-setup p { margin: 0 0 12px; color: var(--muted); line-height: 1.45; }.pa-config-form { gap: 10px; }.pa-config-form .ui-field { gap: 3px; }.pa-config-form .ui-field__description { font-size: 12px; }.pa-confirmation { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; }.pa-confirmation input { min-height: var(--touch-target); width: var(--touch-target); }
 .pa-inline-notice { max-width: 640px; margin: 14px auto 0; color: var(--muted); }
+.pa-message-send-status { max-width: 640px; margin: -7px auto 2px; font-size: 12px; font-weight: 700; }
+.pa-message-send-status.pending { color: var(--muted); }
+.pa-message-send-status.info { color: var(--accent); }
+.pa-message-send-status.danger { color: var(--danger); }
+.pa-message-send-status.warning { color: var(--warning); }
+.pa-submission-recovery { display: grid; gap: 8px; max-width: 640px; margin: 14px auto 0; }
+.pa-submission-recovery h3 { margin: 0; font-size: 14px; }
+.pa-submission-recovery article { display: grid; gap: 6px; border: 1px solid var(--border); border-left: 4px solid var(--warning); border-radius: 10px; padding: 11px 12px; background: var(--panel); }
+.pa-submission-recovery article.failed { border-left-color: var(--danger); }
+.pa-submission-recovery p, .pa-submission-recovery blockquote { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.pa-submission-recovery blockquote { color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.pa-submission-recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .pa-inline-action { display: grid; gap: 10px; max-width: 640px; margin: 12px 0 12px; border: 1px solid color-mix(in srgb, var(--accent) 72%, var(--border)); border-left: 4px solid var(--accent); border-radius: 12px; padding: 14px; background: color-mix(in srgb, var(--panel) 94%, var(--accent)); }
 .pa-inline-action.receipt { border-color: color-mix(in srgb, var(--success) 70%, var(--border)); border-left-color: var(--success); }
 .pa-action-label { color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
@@ -5812,6 +5824,7 @@ select {
   body:has(.personal-assistant-page) .content.agent-detail:has(.agent-workspace.conversation-only) { height: calc(100dvh - var(--app-header-height, 64px)); }
 }
 @media (max-width: 760px) { .pa-inline-action dl div { grid-template-columns: 64px minmax(0, 1fr); }.pa-project-starter-form { grid-template-columns: 1fr; }.pa-project-starter-form .ui-button { width: 100%; }.pa-continuity summary { display: grid; gap: 2px; }.pa-continuity summary span { text-align: left; } }
+@media (prefers-reduced-motion: reduce) { .message.user.pending { animation: none; } }
 
 
 .agent-dock:has(.skill-flyout:not(.hidden)) {
@@ -6258,8 +6271,33 @@ select {
   font-size: 12px;
 }
 
+.pa-control-error {
+  display: grid;
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--danger) 7%, var(--panel));
+  padding: 7px 8px;
+  color: var(--danger);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.prompt-queue-control-error {
+  margin-top: 1px;
+}
+
 .prompt-queue-blocked {
   margin: 0;
+}
+
+.inquiry-lifecycle-action {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.inquiry-control-error {
+  max-width: 260px;
 }
 
 .composer-editor-shell {
