@@ -108,8 +108,8 @@ next message without starting an automatic action loop. The pure action
 catalog, model schema, and server validation stay aligned through contract tests.
 Daily continuity and tracked work remain inspectable across conversations.
 Durable mutations use one server-lifetime bounded worker with frozen previews,
-conservative outcome verification, and read-only archived-action history that
-expires only unconfirmed approvals; the
+conservative outcome verification, and read-only archived-action history whose
+`expired_actions` subset contains only unconfirmed approvals; the
 measured fixture optimization coalesces repeated status/actions/current-work
 work without holding a global lock across long effects.
 Preserve the protected daily role, server-local identity, exact confirmation

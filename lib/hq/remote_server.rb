@@ -2064,8 +2064,10 @@ module HQ
       entry = @personal_assistant.continuity_history_entry(id)
       raise Error.new("Unknown Personal Assistant history entry", status: 404) unless entry
 
+      archived_actions = personal_assistant_archived_history_actions(entry)
       entry.merge(
-        "expired_actions" => personal_assistant_archived_history_actions(entry),
+        "archived_actions" => archived_actions,
+        "expired_actions" => archived_actions.select { |action| action["expired"] == true },
         "archived_conversation" => personal_assistant_archived_conversation_reference(entry)
       ).compact
     rescue ArgumentError => e
@@ -2748,16 +2750,9 @@ module HQ
         original_state = proposal["state"].to_s
         next unless %w[ready awaiting_confirmation queued executing verifying failed executed rejected].include?(original_state)
 
-        archived_outcome = case original_state
-                           when "ready", "awaiting_confirmation" then "expired"
-                           when "queued", "executing", "verifying" then "accepted"
-                           when "failed"
-                             proposal.dig("recovery", "state") == "outcome_unknown" ? "outcome_unknown" : "failed"
-                           else original_state
-                           end
         archived = proposal.reject do |key, _value|
           %w[preflight precondition_token preflight_frozen lease_expires_at claimed_at executed_at verification_started_at verified_at].include?(key)
-        end.merge("read_only" => true, "archived_outcome" => archived_outcome)
+        end.merge("read_only" => true)
         if %w[ready awaiting_confirmation].include?(original_state)
           archived.merge!("state" => "expired", "historical_state" => original_state, "expired" => true)
         end

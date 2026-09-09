@@ -80,13 +80,12 @@ relationship cannot leave an orphan.
 
 `GET /personal-assistant/history/:id` includes the selected historical
 `generation` and `agent_key`, plus old-generation proposals as
-`expired_actions`. The field carries read-only archived actions from that
-generation. Only `ready` and `awaiting_confirmation` proposals become
-`state: "expired"` with `archived_outcome: "expired"` and their original
-`historical_state`; accepted, in-flight, failed, uncertain, executed, and
-rejected actions retain their factual `state` and expose an explicit
-`archived_outcome` (`accepted`, `failed`, `outcome_unknown`, `executed`, or
-`rejected`). All archived actions omit preflight and precondition authority.
-When the archived agent is available, `archived_conversation` supplies
-read-only agent and conversation paths. These records are factual continuity
-only; they cannot be confirmed, retried, or executed in the new generation.
+`archived_actions`. `expired_actions` is only the subset of unconfirmed
+`ready` and `awaiting_confirmation` proposals that became `state: "expired"`
+with their original `historical_state`. Accepted, in-flight, failed,
+uncertain, executed, and rejected actions remain in `archived_actions` with
+their factual `state` and `recovery` data. Every archived action is read-only
+and omits preflight and precondition authority. When the archived agent is
+available, `archived_conversation` supplies read-only agent and conversation
+paths. These records are factual continuity only; they cannot be confirmed,
+retried, or executed in the new generation.
