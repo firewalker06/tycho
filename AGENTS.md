@@ -20,6 +20,7 @@ Runtime artifacts are written to `~/.tycho/logs/`, including app state files suc
 - `bundle exec bin/tycho metrics query [filters] [--json]` and `metrics backfill [--timezone ZONE]`: query or idempotently rebuild normalized run/native-session usage metrics.
 - `bin/test`: run the public CI-equivalent Ruby syntax and regression suite.
 - `bin/remote-ui-smoke`: start a throwaway Remote UI server with temp config/log roots, create a fixture agent, and run a Chrome/Playwright smoke check for composer refresh preservation and mobile dock layout.
+- `TYCHO_PHASE2_BACKEND_ROOT=/path/to/reviewed/archive bin/remote-ui-phase2-smoke`: run the Phase 2 FRED UI smoke against a reviewed, read-only Beta snapshot with isolated fixture roots; set `TYCHO_PLAYWRIGHT_PATH` or `TYCHO_CHROME_PATH` when local dependencies are outside the checkout.
 - `bin/capture-site-quickstart`: regenerate the v0.10.0 website launch and watch screenshots from deterministic synthetic Remote UI fixtures at 1440x900.
 - `bin/capture-site-tui-conversation`: regenerate the v0.10.0 website TUI conversation screenshot from a deterministic synthetic fixture at 1440x900.
 - `bin/capture-personal-assistant`: regenerate Personal Assistant captures from an isolated fixture server with pinned Playwright.

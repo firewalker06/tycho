@@ -1,0 +1,711 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "net/http"
+require "open3"
+require "rbconfig"
+require "socket"
+require "tmpdir"
+require "uri"
+
+ROOT = File.expand_path("..", __dir__)
+BETA_ROOT = ENV["TYCHO_PHASE2_BACKEND_ROOT"].to_s.strip
+PLAYWRIGHT_PATH = File.expand_path(ENV.fetch("TYCHO_PLAYWRIGHT_PATH", File.join(ROOT, "node_modules", "playwright")))
+CHROME_PATH = ENV.fetch("TYCHO_CHROME_PATH", ENV.fetch("CHROME_PATH", "")).to_s.strip
+
+def free_port
+  server = TCPServer.new("127.0.0.1", 0)
+  server.addr[1]
+ensure
+  server&.close
+end
+
+def write_fixture(dir)
+  config_dir = File.join(dir, "config")
+  home_dir = File.join(dir, "home")
+  tycho_home = File.join(dir, "tycho-home")
+  tmp_dir = File.join(dir, "tmp")
+  logs_dir = File.join(dir, "logs")
+  workspace = File.join(dir, "workspace")
+  [config_dir, home_dir, tycho_home, tmp_dir, logs_dir, workspace].each { |path| FileUtils.mkdir_p(path) }
+
+  config_path = File.join(config_dir, "hq.yml")
+  prompts_path = File.join(config_dir, "system_prompts.yml")
+  response_style_path = File.join(config_dir, "response_style.md")
+  schedules_path = File.join(config_dir, "schedules.yml")
+  fake_codex_path = File.join(dir, "fake-codex")
+  fake_gh_path = File.join(dir, "fake-gh")
+  executor_barrier_path = File.join(dir, "executor-barrier")
+  server_launcher_path = File.join(dir, "phase2-server-launcher.rb")
+  File.write(config_path, <<~YAML)
+    ---
+    custom_harnesses: []
+    harness_catalogs: {}
+    groups: {}
+    projects:
+      - key: web
+        name: Web fixture
+        path: #{workspace.to_json}
+        agent: codex
+        model: gpt-5.6-sol
+        reasoning_effort: medium
+  YAML
+  File.write(prompts_path, "---\ncustom: \"Reply with a short structured result.\"\n")
+  File.write(response_style_path, "Use concise factual replies.\n")
+  File.write(schedules_path, "---\nschedules: []\n")
+  File.write(fake_codex_path, <<~'RUBY')
+    #!/usr/bin/env ruby
+    require "json"
+
+    prompt = ARGV.join(" ")
+    fixture_name = prompt.include?("changed target") ? "Phase 2 changed receipt fixture" : "Phase 2 receipt fixture"
+    proposal = if prompt.include?("TYCHO INTERNAL SUMMARY ONLY")
+      nil
+    else
+      [{
+        "type" => "create_agent",
+        "description" => "Prepare the Phase 2 receipt fixture agent.",
+        "arguments" => {
+          "project_key" => "web",
+          "name" => fixture_name,
+          "prompt" => "Review the fixture project.",
+          "agent" => nil,
+          "model" => nil,
+          "reasoning_effort" => nil
+        }
+      }]
+    end
+    payload = {
+      "status" => "success",
+      "summary" => "FRED fixture reply.",
+      "summary_sections" => nil,
+      "inquiry" => nil,
+      "attachments" => nil,
+      "action_proposals" => proposal,
+      "memory_handoff" => {
+        "outcome" => "Fixture rollover summary.",
+        "decisions" => ["Keep action approval explicit."],
+        "continuing_context" => "Review the saved receipt fixture.",
+        "references" => ["fixture://phase2"],
+        "lessons" => ["Queued is not completed."],
+        "promotion_candidates" => []
+      }
+    }
+    output_index = ARGV.index("-o")
+    File.write(ARGV[output_index + 1], JSON.generate(payload)) if output_index
+    puts JSON.generate("type" => "thread.started", "thread_id" => "phase2-#{Process.pid}")
+    puts JSON.generate("type" => "item.completed", "item" => { "type" => "agent_message", "text" => JSON.generate(payload) })
+  RUBY
+  File.chmod(0o755, fake_codex_path)
+  File.write(fake_gh_path, <<~'SH')
+    #!/bin/sh
+    exit 1
+  SH
+  File.chmod(0o755, fake_gh_path)
+  FileUtils.mkdir_p(File.join(workspace, "docs"))
+  File.write(File.join(workspace, "docs", "README.md"), "# Phase 2 fixture\n")
+
+  {
+    config_path: config_path,
+    prompts_path: prompts_path,
+    response_style_path: response_style_path,
+    schedules_path: schedules_path,
+    fake_codex_path: fake_codex_path,
+    fake_gh_path: fake_gh_path,
+    home_dir: home_dir,
+    tycho_home: tycho_home,
+    tmp_dir: tmp_dir,
+    logs_dir: logs_dir,
+    workspace: workspace,
+    executor_barrier_path: executor_barrier_path,
+    server_launcher_path: server_launcher_path
+  }
+end
+
+def prepare_server_root(dir)
+  raise "Set TYCHO_PHASE2_BACKEND_ROOT to a reviewed Beta snapshot" if BETA_ROOT.empty?
+  raise "Missing committed Beta snapshot at #{BETA_ROOT}" unless File.file?(File.join(BETA_ROOT, "bin", "tycho"))
+
+  server_root = File.join(dir, "server")
+  FileUtils.mkdir_p(server_root)
+  FileUtils.cp_r(File.join(BETA_ROOT, "."), server_root)
+  remote_ui = File.join(server_root, "lib", "hq", "remote_ui")
+  FileUtils.rm_rf(remote_ui)
+  FileUtils.cp_r(File.join(ROOT, "lib", "hq", "remote_ui"), File.join(server_root, "lib", "hq"))
+  server_root
+end
+
+def write_server_launcher(path, server_root, executor_barrier_path)
+  File.write(path, <<~RUBY)
+    #!/usr/bin/env ruby
+    # frozen_string_literal: true
+
+    gemfile = #{File.join(server_root, "Gemfile").to_json}
+    if File.file?(gemfile)
+      ENV["BUNDLE_GEMFILE"] = gemfile
+      require "bundler/setup"
+    end
+    require #{File.join(server_root, "lib", "hq", "remote_server").to_json}
+
+    module TychoPhase2ExecutorBarrier
+      def execute_background_personal_assistant_action(type, arguments)
+        barrier = ENV["TYCHO_PHASE2_EXECUTOR_BARRIER"].to_s
+        release = "\#{barrier}.release"
+        if !barrier.empty? && !File.file?(release)
+          File.write("\#{barrier}.started", Process.pid.to_s)
+          deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 20
+          sleep 0.02 while !File.file?(release) && Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
+        end
+        super
+      end
+    end
+
+    HQ::RemoteServer.prepend(TychoPhase2ExecutorBarrier)
+    HQ::RemoteServer.new(host: "127.0.0.1", port: Integer(ARGV.fetch(0)), output: $stdout).start
+  RUBY
+  File.chmod(0o755, path)
+end
+
+def json_request(base_url, method, path, payload = nil)
+  uri = URI("#{base_url}#{path}")
+  request_class = { "GET" => Net::HTTP::Get, "POST" => Net::HTTP::Post, "PATCH" => Net::HTTP::Patch }.fetch(method)
+  request = request_class.new(uri)
+  request["Accept"] = "application/json"
+  if payload
+    request["Content-Type"] = "application/json"
+    request.body = JSON.generate(payload)
+  end
+  response = Net::HTTP.start(uri.hostname, uri.port) { |http| http.request(request) }
+  body = JSON.parse(response.body.to_s.empty? ? "{}" : response.body)
+  return [response, body] if response.is_a?(Net::HTTPSuccess) || response.code.to_i == 202
+
+  raise "#{method} #{path} failed: #{response.code} #{body.inspect}"
+end
+
+def seed_persisted_unknown_receipt(fixture, personal_assistant)
+  path = File.join(fixture.fetch(:logs_dir), "personal_assistant", "proposals.json")
+  FileUtils.mkdir_p(File.dirname(path))
+  proposal = {
+    "id" => "pa-persisted-unknown-fixture",
+    "digest" => "persisted-unknown-receipt",
+    "type" => "create_agent",
+    "arguments" => {
+      "project_key" => "web", "name" => "Persisted unknown fixture", "prompt" => "This effect must not be inferred.",
+      "agent" => nil, "model" => nil, "reasoning_effort" => nil
+    },
+    "description" => "A persisted action whose result is unknown.",
+    "active_key" => personal_assistant.fetch("active_key"),
+    "source_run_id" => "persisted-unknown-fixture",
+    "generation" => personal_assistant.fetch("generation"),
+    "state" => "failed",
+    "error" => "The action was interrupted before Tycho could prove its outcome.",
+    "code" => "outcome_unknown",
+    "recovery" => {
+      "state" => "outcome_unknown", "action" => "verify",
+      "reason" => "The process stopped while the action was in flight."
+    }
+  }
+  temporary = "#{path}.fixture"
+  File.write(temporary, JSON.pretty_generate("version" => 2, "proposals" => [proposal]))
+  File.rename(temporary, path)
+end
+
+def wait_for_server(base_url, log_path)
+  150.times do
+    response, = json_request(base_url, "GET", "/personal-assistant")
+    return if response.is_a?(Net::HTTPSuccess)
+  rescue Errno::ECONNREFUSED, Errno::ECONNRESET, EOFError
+    raise "Remote server exited early:\n#{File.read(log_path)}" if @server_pid && !process_alive?(@server_pid)
+  ensure
+    sleep 0.1
+  end
+  raise "Remote server did not become reachable:\n#{File.read(log_path)}"
+end
+
+def process_alive?(pid)
+  Process.kill(0, pid)
+  true
+rescue Errno::ESRCH
+  false
+end
+
+def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
+  File.write(path, <<~JS)
+    const fs = require("fs");
+    const path = require("path");
+    const { chromium } = require(#{PLAYWRIGHT_PATH.to_json});
+
+    const baseUrl = #{base_url.to_json};
+    const captureDir = #{capture_dir.to_json};
+    const executorBarrierPath = #{executor_barrier_path.to_json};
+    const requests = [];
+    const unexpectedConsoleErrors = [];
+      const expectedRecoveryErrors = [];
+      const blockedGates = [];
+      const expectedConsoleErrorStatuses = {};
+      const networkConsoleErrors = [];
+
+    function fail(message) {
+      throw new Error(message);
+    }
+
+    async function waitFor(page, predicate, arg, label, timeout = 15_000) {
+      await page.waitForFunction(predicate, arg, { timeout }).catch((error) => {
+        throw new Error(`${label}: ${error.message}`);
+      });
+    }
+
+    async function waitForFile(filePath, label, timeout = 15_000) {
+      const deadline = Date.now() + timeout;
+      while (!fs.existsSync(filePath)) {
+        if (Date.now() >= deadline) fail(`${label}: timed out waiting for ${filePath}`);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+
+    async function actionText(page, id) {
+      return page.evaluate((proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")]
+          .find((element) => element.dataset.proposalId === proposalId);
+        return card?.innerText || "";
+      }, id);
+    }
+
+    async function pendingActionId(page) {
+      return page.evaluate(() => {
+        const pending = [...document.querySelectorAll(".pa-inline-action[data-proposal-state='awaiting_confirmation']")];
+        return pending.length === 1 ? pending[0].dataset.proposalId : "";
+      });
+    }
+
+    async function sendPrompt(page, prompt) {
+      const input = page.locator("#composer #prompt-input");
+      if (await input.count() !== 1) fail("expected one FRED prompt input");
+      const submit = page.locator("#composer button[type='submit']");
+      if (await submit.count() !== 1) fail("expected one FRED submit button");
+      await input.fill(prompt);
+      await submit.click();
+    }
+
+    async function assertNoNestedForms(page, label) {
+      const nested = await page.evaluate(() => document.querySelectorAll("form form").length);
+      if (nested !== 0) fail(`${label}: found ${nested} nested forms`);
+    }
+
+    async function main() {
+      fs.mkdirSync(captureDir, { recursive: true });
+      const launchOptions = { headless: true };
+      if (#{CHROME_PATH.to_json}) launchOptions.executablePath = #{CHROME_PATH.to_json};
+      const browser = await chromium.launch(launchOptions);
+      const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+      const page = await context.newPage();
+      let confirmMode = "normal";
+      let currentWorkMode = "pass";
+      let staleConflictExpected = false;
+      let unknownConfirmExpected = false;
+      let confirmSeenResolve;
+      let confirmResponseResolve;
+      const confirmSeen = new Promise((resolve) => { confirmSeenResolve = resolve; });
+      const confirmResponse = new Promise((resolve) => { confirmResponseResolve = resolve; });
+
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (!url.pathname.startsWith("/personal-assistant")) return;
+        let body = null;
+        try { body = request.postDataJSON(); } catch (_error) { body = request.postData(); }
+        const record = { method: request.method(), path: url.pathname, body };
+        requests.push(record);
+        if (request.method() === "POST" && url.pathname.endsWith("/confirm")) confirmSeenResolve(record);
+      });
+      page.on("response", (response) => {
+        const url = new URL(response.url());
+        const method = response.request().method();
+        const status = response.status();
+        if (status >= 400) {
+          const expectedStale = status === 409 && method === "POST" && url.pathname.endsWith("/confirm") && staleConflictExpected;
+          const expectedUnavailable = status === 503 && method === "GET" && url.pathname === "/personal-assistant/current-work" && currentWorkMode === "unavailable";
+          const expectedUnknown = status === 503 && method === "POST" && url.pathname.endsWith("/confirm") && unknownConfirmExpected;
+          const detail = `${status} ${method} ${url.pathname}`;
+          if (expectedStale || expectedUnavailable || expectedUnknown) {
+            expectedRecoveryErrors.push(detail);
+            expectedConsoleErrorStatuses[status] = (expectedConsoleErrorStatuses[status] || 0) + 1;
+          }
+          else unexpectedConsoleErrors.push(detail);
+          if (expectedStale) staleConflictExpected = false;
+          if (expectedUnknown) unknownConfirmExpected = false;
+        }
+        if (method === "POST" && url.pathname.endsWith("/confirm")) {
+          confirmResponseResolve({ at: Date.now(), status: response.status() });
+        }
+      });
+      page.on("console", (message) => {
+        if (message.type() !== "error") return;
+        const text = message.text();
+        const status = text.match(/^Failed to load resource:.*status of (\\d+)/)?.[1];
+        if (status) {
+          networkConsoleErrors.push({ status, text });
+          return;
+        }
+        unexpectedConsoleErrors.push(text);
+      });
+      page.on("pageerror", (error) => unexpectedConsoleErrors.push(error.message));
+
+      await page.route("**/personal-assistant/actions/*/confirm", async (route) => {
+        if (confirmMode === "abort") {
+          confirmMode = "normal";
+          await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "fixture delivery interrupted" }) });
+        } else {
+          await route.continue();
+        }
+      });
+
+      await page.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "domcontentloaded" });
+      await waitFor(page, () => Boolean(document.querySelector(".personal-assistant-page")), null, "FRED page");
+      await waitFor(page, () => Boolean(document.querySelector(".pa-current-work")), null, "current work snapshot");
+      await assertNoNestedForms(page, "initial render");
+      const persistedUnknownId = "pa-persisted-unknown-fixture";
+      await waitFor(page, (proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        return Boolean(card && card.dataset.proposalState === "failed" && card.innerText.includes("Outcome unknown") && !card.innerText.includes("Completed"));
+      }, persistedUnknownId, "persisted unknown receipt");
+      if (await page.locator(`[data-proposal-id='${persistedUnknownId}'] [data-verify-pa-proposal]`).count() !== 1) fail("persisted unknown receipt did not expose verification");
+      await page.screenshot({ path: path.join(captureDir, "phase2-initial.png"), fullPage: false });
+
+      await sendPrompt(page, "Prepare a Phase 2 receipt action.");
+      await waitFor(page, () => document.querySelectorAll(".pa-inline-action[data-proposal-state='awaiting_confirmation']").length === 1, null, "first pending action");
+      const firstId = await pendingActionId(page);
+      if (!firstId) fail("first action proposal was not identified");
+      await waitFor(page, (proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        return Boolean(card && card.innerText.includes("Exact server preview") && card.innerText.includes("Prepared agent"));
+      }, firstId, "server-owned preview");
+      const firstCard = page.locator(`[data-proposal-id='${firstId}']`);
+      const confirmButton = firstCard.locator("[data-confirm-pa-proposal]");
+      if (await confirmButton.count() !== 1 || await confirmButton.isDisabled()) fail("first action did not become confirmable after preflight");
+
+      const confirmStartedAt = Date.now();
+      await confirmButton.click();
+      const seenRequest = await confirmSeen;
+      if (!seenRequest.body || seenRequest.body.confirmed !== true || !seenRequest.body.proposal_digest || !seenRequest.body.precondition_token) {
+        fail(`confirmation did not send the displayed digest and token: ${JSON.stringify(seenRequest.body)}`);
+      }
+      await waitFor(page, (proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        const confirm = card?.querySelector("[data-confirm-pa-proposal]");
+        return Boolean(card && card.innerText.includes("Confirming") && (!confirm || confirm.disabled));
+      }, firstId, "confirming state");
+      const accepted = await confirmResponse;
+      if (accepted.status !== 202) fail(`expected HTTP 202 acceptance, got ${accepted.status}`);
+      await waitForFile(`${executorBarrierPath}.started`, "delayed executor barrier");
+      const executorStartedAt = Date.now();
+      const delayedState = await actionText(page, firstId);
+      if (!/Queued|Executing|Running/.test(delayedState)) fail(`action did not remain visibly unfinished while the executor was blocked: ${delayedState}`);
+      await page.evaluate((proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        card?.querySelector("[data-confirm-pa-proposal]")?.click();
+      }, firstId);
+      const responsiveStart = Date.now();
+      const [currentWorkResponse] = await Promise.all([
+        page.request.get(`${baseUrl}/personal-assistant/current-work`),
+        page.goto(`${baseUrl}/ui#settings`, { waitUntil: "domcontentloaded" }),
+      ]);
+      const responsiveMs = Date.now() - responsiveStart;
+      if (!currentWorkResponse.ok() || responsiveMs > 3_000) fail(`current-work GET was not responsive while confirmation was delayed (${responsiveMs}ms)`);
+      await waitFor(page, () => Boolean(document.querySelector("#settings-personal-assistant")), null, "navigation while executor was blocked");
+      await page.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "domcontentloaded" });
+      await waitFor(page, () => Boolean(document.querySelector(".personal-assistant-page")), null, "return to FRED after blocked navigation");
+      const executorReleasedAt = Date.now();
+      fs.writeFileSync(`${executorBarrierPath}.release`, "release\\n");
+      await waitFor(page, (proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        return Boolean(card && card.innerText.includes("Completed") && card.querySelector("a[href^='#agent/']"));
+      }, firstId, "completed receipt and resource link");
+      const completionVisibleMs = Date.now() - accepted.at;
+      const confirmPosts = requests.filter((request) => request.method === "POST" && request.path.endsWith("/confirm"));
+      if (confirmPosts.length !== 1) fail(`duplicate confirmation submitted ${confirmPosts.length} requests`);
+      const agentsResponse = await page.request.get(`${baseUrl}/agents`);
+      if (!agentsResponse.ok()) fail(`agent catalog lookup failed after the action: ${agentsResponse.status()}`);
+      const agentsPayload = await agentsResponse.json();
+      const createdAgents = (agentsPayload.agents || []).filter((agent) => agent.name === "Phase 2 receipt fixture");
+      if (createdAgents.length !== 1 || createdAgents[0].model !== "gpt-5.6-sol") fail(`expected one completed fixture effect with the reviewed model: ${JSON.stringify(createdAgents)}`);
+      const originalPreview = firstCard.locator("details.pa-action-original");
+      if (await originalPreview.count() !== 1 || await originalPreview.evaluate((element) => element.open)) fail("completed receipt did not collapse its original preview");
+      if (await firstCard.locator(".pa-action-preview:visible").count() !== 0) fail("completed receipt exposed its full preview in the default view");
+      await page.waitForTimeout(2_600);
+      await page.screenshot({ path: path.join(captureDir, "phase2-completed-receipt.png"), fullPage: false });
+
+      await sendPrompt(page, "Prepare an action whose delivery result is unknown.");
+      await waitFor(page, () => document.querySelectorAll(".pa-inline-action[data-proposal-state='awaiting_confirmation']").length === 1, null, "unknown-result pending action");
+      const unknownId = await pendingActionId(page);
+      await waitFor(page, (proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        const confirm = card?.querySelector("[data-confirm-pa-proposal]");
+        return Boolean(card && confirm && !confirm.disabled && card.innerText.includes("Exact server preview"));
+      }, unknownId, "unknown-result server preview");
+      confirmMode = "abort";
+      unknownConfirmExpected = true;
+      await page.locator(`[data-proposal-id='${unknownId}'] [data-confirm-pa-proposal]`).click();
+      try {
+        await waitFor(page, (proposalId) => {
+          const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+          return Boolean(card && card.innerText.includes("Outcome unknown") && !card.innerText.includes("Completed"));
+        }, unknownId, "unknown recovery state");
+      } catch (error) {
+        const debug = await page.evaluate((proposalId) => [...document.querySelectorAll(".pa-inline-action")]
+          .filter((element) => element.dataset.proposalId === proposalId)
+          .map((element) => ({ state: element.dataset.proposalState, text: element.innerText })), unknownId);
+        throw new Error(`${error.message}; unknown card=${JSON.stringify(debug)}`);
+      }
+      await page.screenshot({ path: path.join(captureDir, "phase2-unknown-recovery.png"), fullPage: false });
+
+      await sendPrompt(page, "Prepare an action with a changed target.");
+      await waitFor(page, () => document.querySelectorAll(".pa-inline-action[data-proposal-state='awaiting_confirmation']").length >= 1, null, "stale-preview pending action");
+      const staleId = await page.evaluate(() => [...document.querySelectorAll(".pa-inline-action[data-proposal-state='awaiting_confirmation']")].at(-1)?.dataset.proposalId || "");
+      if (!staleId) fail("stale action proposal was not identified");
+      await waitFor(page, (proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        const confirm = card?.querySelector("[data-confirm-pa-proposal]");
+        return Boolean(card && confirm && !confirm.disabled && card.innerText.includes("Exact server preview"));
+      }, staleId, "stale-preview server preview");
+      const staleToken = await page.evaluate((proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        const row = [...(card?.querySelectorAll(".pa-technical-details dl > div") || [])].find((element) => element.querySelector("dt")?.textContent === "Precondition token");
+        return row?.querySelector("code")?.textContent || "";
+      }, staleId);
+      const changedProject = await page.request.fetch(`${baseUrl}/projects/web`, { method: "PATCH", data: { model: "gpt-5.6-changed" } });
+      if (!changedProject.ok()) fail(`fixture target change failed: ${changedProject.status()}`);
+      staleConflictExpected = true;
+      await page.locator(`[data-proposal-id='${staleId}'] [data-confirm-pa-proposal]`).click();
+      await waitFor(page, (proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        const confirm = card?.querySelector("[data-confirm-pa-proposal]");
+        return Boolean(card && /stale|did not run/i.test(card.innerText) && card.innerText.includes("gpt-5.6-changed") && confirm && !confirm.disabled && card.dataset.proposalState === "awaiting_confirmation");
+      }, staleId, "stale preview recovery");
+      const staleButton = page.locator(`[data-proposal-id='${staleId}'] [data-confirm-pa-proposal]`);
+      if (await staleButton.count() !== 1 || await staleButton.isDisabled()) fail("stale action did not retain a replacement confirmation path");
+      const refreshedToken = await page.evaluate((proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        const row = [...(card?.querySelectorAll(".pa-technical-details dl > div") || [])].find((element) => element.querySelector("dt")?.textContent === "Precondition token");
+        return row?.querySelector("code")?.textContent || "";
+      }, staleId);
+      if (!staleToken || !refreshedToken || staleToken === refreshedToken) fail("stale preview recovery did not load a new server token");
+      await staleButton.click();
+      await waitFor(page, (proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        return Boolean(card && card.innerText.includes("Completed") && card.querySelector("a[href^='#agent/']"));
+      }, staleId, "explicit confirmation after refreshed preview");
+      const staleConfirmPosts = requests.filter((request) => request.method === "POST" && request.path.endsWith(`${staleId}/confirm`));
+      if (staleConfirmPosts.length !== 2) fail(`stale preview recovery submitted ${staleConfirmPosts.length} confirmations instead of one conflict and one explicit retry`);
+      const changedAgentsResponse = await page.request.get(`${baseUrl}/agents`);
+      const changedAgentsPayload = await changedAgentsResponse.json();
+      const changedAgents = (changedAgentsPayload.agents || []).filter((agent) => String(agent.name || "").startsWith("Phase 2"));
+      if (changedAgents.length !== 2 || !changedAgents.some((agent) => agent.name === "Phase 2 changed receipt fixture" && agent.model === "gpt-5.6-changed")) fail(`explicit stale-preview confirmation did not create the changed target: ${JSON.stringify(changedAgents)}`);
+      await page.screenshot({ path: path.join(captureDir, "phase2-stale-preview.png"), fullPage: false });
+
+      await page.route("**/personal-assistant/current-work", async (route) => {
+        if (currentWorkMode === "pass") return route.continue();
+        if (currentWorkMode === "empty") {
+          await route.fulfill({ json: { schema_version: 1, revision: "empty", observed_at: new Date().toISOString(), fresh_until: new Date(Date.now() + 2_000).toISOString(), state: "fresh", agents: [], tracked: { agents: [], projects: [], schedules: [] } } });
+        } else {
+          await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "fixture current work unavailable" }) });
+        }
+      });
+      currentWorkMode = "empty";
+      await page.evaluate(() => refreshPersonalAssistant({ force: true }));
+      await waitFor(page, () => document.querySelector(".pa-current-work")?.innerText.includes("No active"), null, "empty current-work state");
+      currentWorkMode = "unavailable";
+      await page.evaluate(() => refreshPersonalAssistant({ force: true }));
+      await waitFor(page, () => document.querySelector(".pa-current-work")?.innerText.includes("could not read current work"), null, "unavailable current-work state");
+      await page.unroute("**/personal-assistant/current-work");
+
+      await sendPrompt(page, "Prepare a pending action for rollover history.");
+      await waitFor(page, () => document.querySelectorAll(".pa-inline-action[data-proposal-state='awaiting_confirmation']").length === 1, null, "rollover pending action");
+      const rolloverPendingId = await pendingActionId(page);
+      await waitFor(page, (proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        return Boolean(card && card.innerText.includes("Exact server preview"));
+      }, rolloverPendingId, "rollover pending action preview");
+
+      const draft = "Draft kept while the FRED day rolls over.";
+      const draftInput = page.locator("#composer #prompt-input");
+      await draftInput.fill(draft);
+      await page.evaluate(() => { if (typeof flushComposerDraftSaves === "function") flushComposerDraftSaves(); });
+      await waitFor(page, (value) => Object.values(localStorage).some((entry) => String(entry).includes(value)), draft, "draft persistence");
+      await page.evaluate(() => navigate({ type: "tab", tab: "settings" }));
+      await waitFor(page, () => Boolean(document.querySelector("#settings-personal-assistant")), null, "FRED settings");
+      const lifecycle = page.locator(".pa-lifecycle > summary");
+      if (await lifecycle.count() !== 1) fail("FRED lifecycle controls missing");
+      await lifecycle.click();
+      await page.locator("[data-restart-personal-assistant]").click();
+      await page.locator("#confirmation-dialog[open]").waitFor({ state: "visible", timeout: 15_000 });
+      await page.locator("[data-confirmation-accept]").click();
+
+      await page.evaluate(() => navigate({ type: "personalAssistant" }));
+      await waitFor(page, () => Boolean(document.querySelector(".pa-continuity")), null, "post-rollover continuity");
+      const historyResponse = await page.request.get(`${baseUrl}/personal-assistant`);
+      if (!historyResponse.ok()) fail(`post-rollover history lookup failed: ${historyResponse.status()}`);
+      const historyPayload = await historyResponse.json();
+      const historyEntries = historyPayload.personal_assistant?.history || [];
+      const historyId = historyEntries[0]?.id;
+      let historyDetail = null;
+      if (historyId) {
+        const historyDetailResponse = await page.request.get(`${baseUrl}/personal-assistant/history/${encodeURIComponent(historyId)}`);
+        if (historyDetailResponse.ok()) {
+          const historyDetailPayload = await historyDetailResponse.json();
+          historyDetail = historyDetailPayload.history || null;
+        } else {
+          blockedGates.push(`Beta history detail endpoint returned ${historyDetailResponse.status()}`);
+        }
+      } else {
+        blockedGates.push("Beta history list did not expose a saved rollover entry");
+      }
+      const expiredHistory = Array.isArray(historyDetail?.expired_actions) ? historyDetail.expired_actions : [];
+      if (!expiredHistory.some((proposal) => proposal.id === rolloverPendingId)) {
+        blockedGates.push(`Beta history detail does not expose rollover proposal ${rolloverPendingId} as expired_actions`);
+        await page.screenshot({ path: path.join(captureDir, "phase2-history-contract-blocked.png"), fullPage: false });
+      } else {
+        if (!historyId) fail("expired proposal was returned without a history entry id");
+      }
+      await assertNoNestedForms(page, "post-rollover render");
+      await waitFor(page, (value) => document.querySelector("#composer #prompt-input")?.value === value, draft, "draft after rollover");
+
+      const continuity = page.locator(".pa-continuity");
+      if (await continuity.count() !== 1) fail("FRED continuity panel missing after rollover");
+      if (!(await continuity.evaluate((element) => element.open))) await continuity.locator("summary").click();
+      const historyButton = page.locator("[data-open-pa-history]");
+      if (await historyButton.count() < 1) fail("saved history entry missing after rollover");
+      await historyButton.first().click();
+      await waitFor(page, () => Boolean(document.querySelector(".pa-history-entry")), null, "saved handoff detail");
+      if (expiredHistory.some((proposal) => proposal.id === rolloverPendingId)) {
+        await waitFor(page, (proposalId) => Boolean(document.querySelector(`[data-pa-expired-proposal-id='${proposalId}']`)), rolloverPendingId, "expired proposal from real history");
+        const expired = page.locator("[data-pa-expired-proposals]");
+        if (await expired.locator("[data-confirm-pa-proposal]").count() !== 0) fail("expired proposal exposed an approval control");
+      }
+      const savedText = await page.locator(".pa-history-entry").innerText();
+      if (!savedText.includes("Saved summary / handoff") || !savedText.includes("not a transcript")) fail(`saved summary was mislabeled: ${savedText}`);
+      if (historyDetail?.archived_conversation?.read_only === true) {
+        if (await page.locator(".pa-history-entry a[href^='#agent/']").count() !== 1) fail("archived conversation reference was not linked");
+      } else if (savedText.includes("Open archived conversation")) {
+        fail("saved handoff implied an archived conversation without a server reference");
+      }
+      await page.locator("[data-pa-back-active]").click();
+      await waitFor(page, () => !document.querySelector(".pa-history-entry"), null, "close saved history detail");
+      await waitFor(page, (value) => document.querySelector("#composer #prompt-input")?.value === value, draft, "draft after history close");
+      const historyDate = await page.locator(".pa-history-list li span").first().textContent();
+      if (!historyDate || /\b(?:AM|PM)\b|\d{1,2}:\d{2}/i.test(historyDate)) fail(`history active_date rendered as a timestamp: ${historyDate}`);
+
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await waitFor(page, () => window.matchMedia("(prefers-reduced-motion: reduce)").matches, null, "reduced-motion media");
+      const mobileInput = page.locator("#composer #prompt-input");
+      await mobileInput.focus();
+      await page.keyboard.insertText("keyboard draft");
+      if ((await mobileInput.inputValue()) !== `${draft}keyboard draft`) fail("mobile keyboard input was not retained");
+      if (await page.locator("[aria-live='polite']").count() < 1) fail("mobile FRED state has no live announcement");
+      const workBox = await page.locator(".pa-current-work").boundingBox();
+      if (!workBox || workBox.width > 390) fail(`current-work panel overflows 390px viewport: ${JSON.stringify(workBox)}`);
+      await page.screenshot({ path: path.join(captureDir, "phase2-mobile-rollover.png"), fullPage: false });
+      await assertNoNestedForms(page, "mobile render");
+
+      networkConsoleErrors.forEach(({ status, text }) => {
+        if (expectedConsoleErrorStatuses[status] > 0) expectedConsoleErrorStatuses[status] -= 1;
+        else unexpectedConsoleErrors.push(text);
+      });
+      if (unexpectedConsoleErrors.length) fail(`unexpected browser console errors: ${unexpectedConsoleErrors.join(" | ")}`);
+      console.log(JSON.stringify({
+        status: blockedGates.length ? "blocked" : "ok",
+        first_action_id: firstId,
+        persisted_unknown_action_id: persistedUnknownId,
+        unknown_action_id: unknownId,
+        stale_action_id: staleId,
+        rollover_pending_action_id: rolloverPendingId,
+        confirm_accept_ms: accepted.at - confirmStartedAt,
+        completion_visible_after_accept_ms: completionVisibleMs,
+        concurrent_current_work_ms: responsiveMs,
+        executor_blocked_ms: executorReleasedAt - executorStartedAt,
+        expected_recovery_errors: expectedRecoveryErrors,
+        blocked_gates: blockedGates,
+        capture_dir: captureDir
+      }, null, 2));
+      await browser.close();
+      return { blocked: blockedGates.length > 0 };
+    }
+
+    main().then((result) => {
+      if (result?.blocked) process.exitCode = 2;
+    }).catch((error) => {
+      console.error(error);
+      process.exit(1);
+    });
+  JS
+end
+
+Dir.mktmpdir("tycho-fred-phase2") do |dir|
+  fixture = write_fixture(dir)
+  server_root = prepare_server_root(dir)
+  write_server_launcher(fixture.fetch(:server_launcher_path), server_root, fixture.fetch(:executor_barrier_path))
+  port = free_port
+  base_url = "http://127.0.0.1:#{port}"
+  log_path = File.join(dir, "remote-server.log")
+  capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
+  capture_dir = File.join(Dir.tmpdir, "tycho-fred-phase2-captures") if capture_dir.empty?
+  FileUtils.mkdir_p(capture_dir)
+
+  path_aliases = %w[
+    TYCHO_HOME TYCHO_CONFIG_PATH TYCHO_SYSTEM_PROMPTS_PATH TYCHO_RESPONSE_STYLE_PATH
+    TYCHO_SCHEDULES_PATH TYCHO_LOGS_ROOT TYCHO_SKILLS_HOME TYCHO_PROJECTS_PATH
+    TYCHO_DATA_ROOT TYCHO_PERSONAL_ASSISTANT_PATH TYCHO_RUNTIME_ROOT
+    TYCHO_MANAGED_AGENTS_PATH TYCHO_CONFIG_DIR
+  ]
+  env = path_aliases.to_h { |name| [name, nil] }.merge(
+    "HOME" => fixture.fetch(:home_dir),
+    "TMPDIR" => fixture.fetch(:tmp_dir),
+    "TMP" => fixture.fetch(:tmp_dir),
+    "TEMP" => fixture.fetch(:tmp_dir),
+    "TYCHO_HOME" => fixture.fetch(:tycho_home),
+    "TYCHO_CONFIG_PATH" => fixture.fetch(:config_path),
+    "TYCHO_SYSTEM_PROMPTS_PATH" => fixture.fetch(:prompts_path),
+    "TYCHO_RESPONSE_STYLE_PATH" => fixture.fetch(:response_style_path),
+    "TYCHO_SCHEDULES_PATH" => fixture.fetch(:schedules_path),
+    "TYCHO_LOGS_ROOT" => fixture.fetch(:logs_dir),
+    "TYCHO_CODEX_BIN" => fixture.fetch(:fake_codex_path),
+    "TYCHO_GH_BIN" => fixture.fetch(:fake_gh_path),
+    "TYCHO_PHASE2_EXECUTOR_BARRIER" => fixture.fetch(:executor_barrier_path),
+    "TYCHO_REMOTE_TOKEN" => ""
+  )
+  @server_pid = Process.spawn(
+    env, RbConfig.ruby, fixture.fetch(:server_launcher_path), port.to_s,
+    chdir: server_root,
+    out: [log_path, "w"],
+    err: %i[child out],
+    pgroup: true
+  )
+  begin
+    wait_for_server(base_url, log_path)
+    json_request(base_url, "POST", "/personal-assistant/setup", { confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "UTC" })
+    _, opened = json_request(base_url, "POST", "/personal-assistant/open", {})
+    seed_persisted_unknown_receipt(fixture, opened.fetch("personal_assistant"))
+    browser_script = File.join(dir, "phase2-browser.js")
+    write_browser_script(browser_script, base_url, capture_dir, fixture.fetch(:executor_barrier_path))
+    browser_env = {
+      "NODE_PATH" => PLAYWRIGHT_PATH,
+      "TYCHO_PHASE2_BACKEND_ROOT" => BETA_ROOT,
+      "CHROME_PATH" => CHROME_PATH,
+      "TYCHO_PHASE2_EXECUTOR_BARRIER" => fixture.fetch(:executor_barrier_path)
+    }
+    stdout, stderr, status = Open3.capture3(browser_env, "node", browser_script, chdir: dir)
+    puts stdout unless stdout.empty?
+    warn stderr unless stderr.empty?
+    unless status.success?
+      warn File.read(log_path) if File.file?(log_path)
+      exit(status.exitstatus || 1)
+    end
+  ensure
+    if @server_pid && process_alive?(@server_pid)
+      Process.kill("TERM", -@server_pid)
+      Process.wait(@server_pid)
+    end
+  end
+end
