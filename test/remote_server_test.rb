@@ -6674,29 +6674,30 @@ module RemoteServerTest
            "expected assistant chat labels to render the bot-message-square icon")
     assert(js[:body].include?("function personalAssistantMessageIdentity"),
            "expected Personal Assistant messages to have a product-specific sender identity")
-    assert(css[:body].include?(".personal-assistant-page { display: grid; grid-template-rows: 68px minmax(0, 1fr) auto; width: 100%;") &&
-           !css[:body].include?(".personal-assistant-page { display: grid; grid-template-rows: 68px minmax(0, 1fr) auto; width: min(100%, 820px);"),
-           "expected FRED to use the full conversation width without the old 820px outer shell clamp")
-    assert(js[:body].include?('class="pa-tycho-nav header-mark"') &&
-           js[:body].include?('data-agent-switcher') &&
-           js[:body].include?('aria-controls="unread-agents-panel"'),
-           "expected the FRED Tycho logo to expose the shared agent switcher ARIA contract")
+    assert(js[:body].include?("function renderConversationWorkspace({") &&
+           js[:body].include?('classNames: ["conversation-only", "agent-workspace-conversation", "personal-assistant-page"]') &&
+           js[:body].include?('conversationStateKey: "personal-assistant-thread"') &&
+           css[:body].include?(".personal-assistant-page .agent-conversation-scroll") &&
+           !css[:body].include?(".personal-assistant-page { display: grid; grid-template-rows:"),
+           "expected FRED to reuse the ordinary Agent conversation workspace rather than own a parallel shell")
+    assert(response[:body].include?('id="header-mark"') &&
+           response[:body].include?('aria-controls="unread-agents-panel"'),
+           "expected FRED to retain the shared header agent switcher ARIA contract")
     assert(js[:body].include?("function agentSwitcherMark") &&
            js[:body].include?("function toggleUnreadPanel") &&
            js[:body].include?("function openUnreadPanelFromKeyboard") &&
            js[:body].include?("function handleUnreadPanelKeydown") &&
-           js[:body].include?("data-agent-switcher"),
-           "expected FRED logo clicks and Cmd/Ctrl+K to reuse the shared switcher state and keyboard behavior")
-    assert(css[:body].include?("body:has(.personal-assistant-page) .app-header > #unread-agents-panel") &&
-           css[:body].include?("position: fixed;") &&
-           css[:body].include?("width: min(420px, calc(100vw - 24px));") &&
-           css[:body].include?("grid-template-rows: auto auto minmax(0, 1fr);") &&
-           css[:body].include?(".app-header > #unread-agents-panel .unread-panel-list") &&
-           css[:body].include?("overflow-y: auto;"),
-           "expected FRED to keep the shared agent switcher compact with an independently scrolling result list")
-    assert(js[:body].include?("const maximumWidth = Math.min(420, window.innerWidth - 24);") &&
-           js[:body].include?('els.unreadPanel.style.right = "auto";'),
-           "expected FRED to clamp the switcher beside its trigger instead of stretching it across the viewport")
+           !js[:body].include?("function positionPersonalAssistantSwitcher"),
+           "expected FRED logo clicks and Cmd/Ctrl+K to use the ordinary shared switcher behavior")
+    assert(!css[:body].include?("body:has(.personal-assistant-page) .app-header") &&
+           !css[:body].include?(".pa-header") &&
+           !css[:body].include?(".pa-composer-row"),
+           "expected FRED to avoid a separate header, switcher, and composer layout")
+    assert(js[:body].include?('setHeader("FRED", "", "A", { titleHtml: personalAssistantHeaderTitleHtml(), hideSubtitle: true });') &&
+           js[:body].include?('setHeaderMore(personalAssistantMoreMenuHtml(), "FRED actions", "personal-assistant");') &&
+           js[:body].include?("function personalAssistantHeaderTitleHtml") &&
+           js[:body].include?("function personalAssistantMoreMenuHtml"),
+           "expected FRED to use the regular header while hiding Agent-only metadata and actions")
     assert(js[:body].include?("Friendly Robot for Execution Dispatcher"),
            "expected Personal Assistant UI to expand FRED where appropriate")
     fred_settings = js[:body].split("function renderPersonalAssistantSettings", 2).last.split("function personalAssistantActionCopy", 2).first
@@ -6752,10 +6753,10 @@ module RemoteServerTest
     assert(fred_conversation_filter&.include?('block?.kind === "message" && ["user", "assistant"].includes(block.role)') &&
            js[:body].include?("? personalAssistantVisibleConversationBlocks(allConversationBlocks)"),
            "expected FRED chat to hide internal activity and run-summary blocks without removing them from logs")
-    settings_markup = js[:body][js[:body].index('id="personal-assistant-settings-menu"'), 1_800]
-    assert(settings_markup.scan('role="menu"').length == 1 && !settings_markup.include?('class="pa-settings-details"') &&
-           !settings_markup.include?('Open app settings') && !settings_markup.include?('daily conversation and its continuity'),
-           "expected FRED settings overflow to contain only the compact Settings action")
+    settings_markup = js[:body].split("function personalAssistantMoreMenuHtml", 2).last.split("function renderSetup", 2).first
+    assert(settings_markup.include?('moreMenuButton({ label: "Settings", icon: "settings", attrs: "data-open-settings" })') &&
+           !settings_markup.include?("agentMoreMenuHtml") && !settings_markup.include?("settingsMoreMenuHtml"),
+           "expected FRED's shared-header overflow to contain only the compact Settings action")
     reset_handler = js[:body].split('if (event.target.closest("[data-reset-personal-assistant]"))', 2).last.split('const confirmPa', 2).first
     assert(js[:body].include?('data-reset-personal-assistant') && reset_handler.include?('Reset FRED?') &&
            reset_handler.include?("permanently deletes any active FRED session") &&
@@ -6877,7 +6878,7 @@ module RemoteServerTest
     assert(js[:body].include?("history.replaceState(null, \"\", routeHash(route))"),
            "expected Markdown hash links to preserve the attachment route")
     assert(js[:body].include?('const TOP_TABS = ["now", "personal-assistant", "agents", "settings"];') &&
-           js[:body].include?('setMainHeaderMore("personal-assistant")') &&
+           js[:body].include?('setHeaderMore(personalAssistantMoreMenuHtml(), "FRED actions", "personal-assistant");') &&
            js[:body].include?('label: "Settings"') &&
            response[:body].include?('data-tab="personal-assistant"'),
            "expected every primary view to retain top-right Settings access")

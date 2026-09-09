@@ -547,6 +547,8 @@ def write_smoke_script(path)
           const shellMetrics = async (page, selectors) => page.evaluate((selectors) => {
             const shell = document.querySelector(".app-shell");
             const header = document.querySelector(selectors.header);
+            const title = document.getElementById("screen-title");
+            const subtitle = document.getElementById("screen-subtitle");
             const content = document.querySelector(".content");
             const conversation = document.querySelector(selectors.conversation);
             const nav = document.querySelector(".bottom-nav");
@@ -585,7 +587,15 @@ def write_smoke_script(path)
             const firstConversationChildRect = firstConversationChild?.getBoundingClientRect();
             return {
               shell: { height: shellRect.height, top: parseFloat(getComputedStyle(shell).borderTopWidth), left: parseFloat(getComputedStyle(shell).borderLeftWidth), right: parseFloat(getComputedStyle(shell).borderRightWidth) },
-              header: { top: headerRect.top, height: headerRect.height, left: headerRect.left, right: headerRect.right, bottomBorder: parseFloat(getComputedStyle(header).borderBottomWidth) },
+              header: {
+                top: headerRect.top,
+                height: headerRect.height,
+                left: headerRect.left,
+                right: headerRect.right,
+                bottomBorder: parseFloat(getComputedStyle(header).borderBottomWidth),
+                title: title?.textContent.trim(),
+                subtitleHidden: subtitle?.classList.contains("hidden"),
+              },
               content: { top: contentRect.top, left: contentRect.left, right: contentRect.right, bottom: contentRect.bottom },
               conversation: { top: conversationRect.top, left: conversationRect.left, right: conversationRect.right, bottom: conversationRect.bottom },
               nav: {
@@ -618,9 +628,16 @@ def write_smoke_script(path)
           };
           const assertSharedShell = (ordinary, fred, viewport) => {
             ["height", "top", "left", "right"].forEach((key) => equalMetric(ordinary.shell[key], fred.shell[key], `shell ${key}`));
-            ["top", "height", "left", "right", "bottomBorder"].forEach((key) => equalMetric(ordinary.header[key], fred.header[key], `header ${key}`));
+            ["top", "left", "right", "bottomBorder"].forEach((key) => equalMetric(ordinary.header[key], fred.header[key], `header ${key}`));
+            if (fred.header.title !== "FRED" || !fred.header.subtitleHidden || ordinary.header.subtitleHidden) {
+              throw new Error(`FRED header did not preserve the shared shell while hiding Agent-only metadata: ${JSON.stringify({ ordinary: ordinary.header, fred: fred.header })}`);
+            }
             ["left", "right"].forEach((key) => equalMetric(ordinary.content[key], fred.content[key], `content ${key}`));
-            ["top", "left", "right"].forEach((key) => equalMetric(ordinary.conversation[key], fred.conversation[key], `conversation ${key}`));
+            ["left", "right"].forEach((key) => equalMetric(ordinary.conversation[key], fred.conversation[key], `conversation ${key}`));
+            [ordinary, fred].forEach((metrics, index) => {
+              const label = index === 0 ? "ordinary" : "FRED";
+              equalMetric(metrics.conversation.top - metrics.header.bottom, 0, `${label} conversation starts below header`);
+            });
             ["top", "left", "right", "bottom"].forEach((key) => equalMetric(ordinary.nav[key], fred.nav[key], `navigation ${key}`));
             [ordinary, fred].forEach((metrics, index) => {
               const label = index === 0 ? "ordinary" : "FRED";
@@ -633,70 +650,77 @@ def write_smoke_script(path)
             ordinary.nav.gaps.forEach((gap, index) => equalMetric(gap, fred.nav.gaps[index], `sidebar item gap ${index}`));
             ["left", "right", "bottom"].forEach((key) => equalMetric(ordinary.composer[key], fred.composer[key], `composer ${key}`));
             ["left", "right", "bottom"].forEach((key) => equalMetric(ordinary.composerForm[key], fred.composerForm[key], `composer form ${key}`));
-            ["left", "top", "right", "bottom"].forEach((key) => equalMetric(ordinary.settings[key], fred.settings[key], `settings ${key}`));
+            ["left", "right"].forEach((key) => equalMetric(ordinary.settings[key], fred.settings[key], `settings ${key}`));
+            [ordinary, fred].forEach((metrics, index) => {
+              const label = index === 0 ? "ordinary" : "FRED";
+              if (metrics.settings.top < metrics.header.top || metrics.settings.bottom > metrics.header.bottom) {
+                throw new Error(`${label} settings control escaped the shared header: ${JSON.stringify({ header: metrics.header, settings: metrics.settings })}`);
+              }
+            });
             if (!fred.desktopSettings.visible || Math.abs(fred.desktopSettings.left - fred.nav.left) > 1 || Math.abs(fred.desktopSettings.right - fred.nav.right) > 1 || Math.abs(fred.desktopSettings.bottom - (viewport.height - 12)) > 1) {
               throw new Error(`FRED desktop Settings lost its pinned sidebar position: ${JSON.stringify(fred.desktopSettings)}`);
             }
             if (!ordinary.firstConversationChild || !fred.firstConversationChild) throw new Error(`Conversation content is missing: ${JSON.stringify({ ordinary, fred })}`);
-            ["top", "gapFromConversation", "gapFromHeader"].forEach((key) => equalMetric(ordinary.firstConversationChild[key], fred.firstConversationChild[key], `first conversation child ${key}`));
+            [ordinary, fred].forEach((metrics, index) => {
+              const label = index === 0 ? "ordinary" : "FRED";
+              if (metrics.firstConversationChild.top < metrics.conversation.top || metrics.firstConversationChild.top >= metrics.conversation.bottom) {
+                throw new Error(`${label} conversation content escaped the shared scroll pane: ${JSON.stringify(metrics.firstConversationChild)}`);
+              }
+            });
             if (ordinary.overflow || fred.overflow || ordinary.shell.height < viewport.height - 1 || fred.shell.height < viewport.height - 1) throw new Error(`FRED shared shell overflowed or lost viewport height: ${JSON.stringify({ ordinary, fred, viewport })}`);
           };
           const openFredSwitcher = async (candidate) => {
-            const trigger = candidate.locator(".personal-assistant-page [data-agent-switcher]");
-            if (await trigger.count() !== 1) throw new Error("FRED did not expose exactly one agent switcher trigger");
+            const trigger = candidate.locator(".app-header #header-mark");
+            if (await trigger.count() !== 1) throw new Error("FRED did not use the shared agent switcher trigger");
             await trigger.click();
             await candidate.waitForSelector("#unread-agents-panel:not(.hidden)", { state: "visible", timeout: 10_000 });
-            return candidate.evaluate(() => {
-              const panel = document.querySelector("#unread-agents-panel");
-              const list = panel?.querySelector(".unread-panel-list");
-              const header = panel?.querySelector(".unread-panel-header");
-              const panelBox = panel?.getBoundingClientRect();
-              const listBox = list?.getBoundingClientRect();
-              const headerTop = header?.getBoundingClientRect().top;
-              if (list) list.scrollTop = list.scrollHeight;
-              return {
-                panel: {
-                  top: panelBox?.top,
-                  right: panelBox?.right,
-                  bottom: panelBox?.bottom,
-                  left: panelBox?.left,
-                  width: panelBox?.width,
-                  height: panelBox?.height,
-                  clientHeight: panel?.clientHeight,
-                  scrollHeight: panel?.scrollHeight,
-                  overflowY: panel ? getComputedStyle(panel).overflowY : null,
-                },
-                list: {
-                  height: listBox?.height,
-                  clientHeight: list?.clientHeight,
-                  scrollHeight: list?.scrollHeight,
-                  scrollTop: list?.scrollTop,
-                  overflowY: list ? getComputedStyle(list).overflowY : null,
-                },
-                headerScrollDelta: header ? Math.abs(header.getBoundingClientRect().top - headerTop) : null,
-                viewport: { width: innerWidth, height: innerHeight },
-              };
-            });
-          };
-          const assertBoundedFredSwitcher = (metrics, label) => {
-            const maximumWidth = Math.min(420, metrics.viewport.width - 24);
-            const maximumHeight = Math.min(460, metrics.viewport.height - 76);
-            const { panel, list, viewport } = metrics;
-            if (panel.left < 11 || panel.right > viewport.width - 11 || panel.top < 0 || panel.bottom > viewport.height - 11 ||
-                panel.width > maximumWidth + 1 || panel.height > maximumHeight + 1 || panel.overflowY !== "hidden" ||
-                panel.scrollHeight > panel.clientHeight + 1 || list.overflowY !== "auto" || list.scrollHeight <= list.clientHeight ||
-                list.scrollTop <= 0 || metrics.headerScrollDelta > 1) {
-              throw new Error(`FRED ${label} switcher is not a bounded, independently scrolling popover: ${JSON.stringify(metrics)}`);
-            }
           };
           const closeFredSwitcher = async (candidate) => {
             await candidate.keyboard.press("Escape");
             await candidate.waitForSelector("#unread-agents-panel", { state: "hidden", timeout: 10_000 });
           };
+          const assertFredHeaderActions = async (candidate) => {
+            await candidate.click("#header-more-button");
+            await candidate.waitForSelector("#header-more-panel:not(.hidden)", { state: "visible", timeout: 10_000 });
+            const labels = await candidate.locator("#header-more-panel [role='menuitem']").evaluateAll((items) => (
+              items.map((item) => item.querySelector("strong")?.textContent.trim())
+            ));
+            if (labels.length !== 1 || labels[0] !== "Settings") {
+              throw new Error(`FRED shared-header actions exposed Agent-only controls: ${JSON.stringify(labels)}`);
+            }
+            await candidate.keyboard.press("Escape");
+            await candidate.waitForSelector("#header-more-panel", { state: "hidden", timeout: 10_000 });
+          };
+          const fredNonUserBlockMetrics = async (candidate) => candidate.evaluate(() => {
+            const welcome = document.querySelector(".personal-assistant-page .pa-welcome");
+            const continuity = document.querySelector(".personal-assistant-page .pa-continuity");
+            if (!welcome || !continuity) return null;
+            const blockMetrics = (block) => {
+              const rect = block.getBoundingClientRect();
+              return { left: rect.left, right: rect.right };
+            };
+            return {
+              welcome: blockMetrics(welcome),
+              continuity: blockMetrics(continuity),
+            };
+          });
+          const assertFredNonUserBlocks = async (candidate, viewport, expected) => {
+            const metrics = await fredNonUserBlockMetrics(candidate);
+            if (!metrics) throw new Error("FRED onboarding or history block is missing");
+            ["welcome", "continuity"].forEach((block) => {
+              equalMetric(metrics[block].left, expected.left, `${viewport} FRED ${block} left edge`);
+              equalMetric(metrics[block].right, expected.right, `${viewport} FRED ${block} non-user gutter`);
+            });
+          };
           const desktopOrdinary = await shellMetrics(ordinaryPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .message-list", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
-          const desktopFred = await shellMetrics(fredPage, { header: ".pa-header", conversation: ".pa-conversation-scroll", firstConversationChild: ".pa-welcome", composer: ".pa-composer-row", composerForm: ".pa-composer-row #composer", settings: ".pa-settings summary" });
+          const desktopFred = await shellMetrics(fredPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .pa-welcome", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
           assertSharedShell(desktopOrdinary, desktopFred, desktopFred.viewport);
-          assertBoundedFredSwitcher(await openFredSwitcher(fredPage), "desktop");
+          await assertFredNonUserBlocks(fredPage, "desktop", {
+            left: desktopFred.conversation.left,
+            right: desktopFred.conversation.right - 32,
+          });
+          await assertFredHeaderActions(fredPage);
+          await openFredSwitcher(fredPage);
           await closeFredSwitcher(fredPage);
           if (captureDir) {
             await ordinaryPage.screenshot({ path: path.join(captureDir, "ordinary-conversation-desktop.png"), fullPage: false });
@@ -711,24 +735,32 @@ def write_smoke_script(path)
             await mobileFredPage.waitForSelector(".personal-assistant-page", { state: "visible", timeout: 10_000 });
             await mobileFredPage.waitForFunction(() => {
               const nav = document.querySelector(".bottom-nav");
-              const header = document.querySelector(".pa-header");
+              const header = document.querySelector(".app-header");
               return innerWidth === 390 && nav && header && nav.getBoundingClientRect().width > 0 && header.getBoundingClientRect().width === innerWidth;
             }, null, { timeout: 10_000 });
             const mobileOrdinary = await shellMetrics(mobileOrdinaryPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .message-list", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
-            const mobileFred = await shellMetrics(mobileFredPage, { header: ".pa-header", conversation: ".pa-conversation-scroll", firstConversationChild: ".pa-welcome", composer: ".pa-composer-row", composerForm: ".pa-composer-row #composer", settings: ".pa-settings summary" });
-            ["height", "bottomBorder"].forEach((key) => equalMetric(mobileOrdinary.header[key], mobileFred.header[key], `mobile header ${key}`));
+            const mobileFred = await shellMetrics(mobileFredPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .pa-welcome", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
+            ["bottomBorder"].forEach((key) => equalMetric(mobileOrdinary.header[key], mobileFred.header[key], `mobile header ${key}`));
+            if (mobileFred.header.title !== "FRED" || !mobileFred.header.subtitleHidden || mobileOrdinary.header.subtitleHidden) {
+              throw new Error(`FRED mobile header did not hide Agent-only metadata: ${JSON.stringify({ mobileOrdinary: mobileOrdinary.header, mobileFred: mobileFred.header })}`);
+            }
             if (mobileOrdinary.overflow || mobileFred.overflow ||
                 Math.abs(mobileFred.nav.left) > 1 || Math.abs(mobileFred.nav.right - mobileFred.viewport.width) > 1 ||
                 Math.abs(mobileFred.nav.bottom - mobileFred.viewport.height) > 1 || mobileFred.nav.items.length !== 3 ||
                 mobileFred.nav.items.some((item) => item[0] < -1 || item[1] < -1 || item[0] + item[2] > mobileFred.viewport.width + 1 || item[1] + item[3] > mobileFred.viewport.height + 1) ||
                 Math.abs(mobileFred.header.left) > 1 || Math.abs(mobileFred.header.right - mobileFred.viewport.width) > 1 ||
-                Math.abs(mobileFred.composerForm.left - 16) > 1 || Math.abs(mobileFred.composerForm.right - (mobileFred.viewport.width - 16)) > 1 ||
+                Math.abs(mobileFred.composerForm.left - mobileOrdinary.composerForm.left) > 1 || Math.abs(mobileFred.composerForm.right - mobileOrdinary.composerForm.right) > 1 ||
                 mobileFred.settings.left < 0 || mobileFred.settings.right > mobileFred.viewport.width ||
                 mobileFred.settings.top < 0 || mobileFred.settings.bottom > mobileFred.header.height + 1 ||
                 mobileFred.composer.bottom > mobileFred.nav.top || mobileFred.nav.top - mobileFred.composer.bottom > 8) {
               throw new Error(`FRED mobile shell overflowed or lost its intentional composer-to-nav gap: ${JSON.stringify({ mobileOrdinary, mobileFred })}`);
             }
-            assertBoundedFredSwitcher(await openFredSwitcher(mobileFredPage), "mobile");
+            await assertFredHeaderActions(mobileFredPage);
+            await assertFredNonUserBlocks(mobileFredPage, "mobile", {
+              left: mobileOrdinary.conversation.left,
+              right: mobileOrdinary.conversation.right - 28,
+            });
+            await openFredSwitcher(mobileFredPage);
             await closeFredSwitcher(mobileFredPage);
             if (captureDir) {
               await mobileOrdinaryPage.screenshot({ path: path.join(captureDir, "ordinary-conversation-mobile.png"), fullPage: false });

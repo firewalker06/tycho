@@ -38,12 +38,13 @@ module RemoteUIAssetSnapshotTest
       'function renderPersonalAssistantWelcome(',
       'pendingPersonalAssistantProposalIds: new Set()',
       'state.pendingPersonalAssistantProposalIds.has(id)',
-      'class="pa-tycho-nav header-mark"',
-      'data-agent-switcher',
-      'aria-label="Open agent switcher"',
-      'aria-controls="unread-agents-panel"',
-      '${brandLogoHtml(unreadAgents().length)}',
-      'function agentSwitcherMark'
+      'function renderConversationWorkspace({',
+      'classNames: ["conversation-only", "agent-workspace-conversation", "personal-assistant-page"]',
+      'conversationStateKey: "personal-assistant-thread"',
+      'function personalAssistantHeaderTitleHtml()',
+      'function personalAssistantMoreMenuHtml()',
+      'setHeader("FRED", "", "A", { titleHtml: personalAssistantHeaderTitleHtml(), hideSubtitle: true });',
+      'setHeaderMore(personalAssistantMoreMenuHtml(), "FRED actions", "personal-assistant");'
     ]
     missing = required_javascript.reject { |fragment| javascript.include?(fragment) }
     raise "missing chat-first Personal Assistant contract: #{missing.join(", ")}" unless missing.empty?
@@ -53,13 +54,17 @@ module RemoteUIAssetSnapshotTest
     raise "Personal Assistant still exposes permanent proposal clutter: #{present.join(", ")}" unless present.empty?
 
     required_css = [
-      '.personal-assistant-page { display: grid; grid-template-rows: 68px minmax(0, 1fr) auto;',
-      '.pa-conversation-scroll { min-height: 0; overflow-y: auto;',
-      '.pa-composer-row',
+      '.personal-assistant-page .agent-conversation-scroll',
+      '.agent-workspace.conversation-only .agent-conversation-scroll',
+      '.personal-assistant-page .agent-dock',
       'env(safe-area-inset-bottom, 0px)'
     ]
     missing_css = required_css.reject { |fragment| css.include?(fragment) }
     raise "missing chat-first layout contract: #{missing_css.join(", ")}" unless missing_css.empty?
+
+    legacy_css = ['.pa-header', '.pa-tycho-nav', '.pa-composer-row', 'body:has(.personal-assistant-page) .app-header']
+    present_css = legacy_css.select { |fragment| css.include?(fragment) }
+    raise "FRED still owns a duplicate conversation shell: #{present_css.join(", ")}" unless present_css.empty?
   end
 
   def assert_personal_assistant_first_run_uses_starters
@@ -80,7 +85,7 @@ module RemoteUIAssetSnapshotTest
     raise "missing Personal Assistant first-run starter contract: #{missing.join(", ")}" unless missing.empty?
 
     required_css = [
-      ".pa-tycho-nav .brand-logo { width: 32px; height: 32px;",
+      ".header-mark .brand-logo {",
       ".fred-avatar { display: inline-block; flex: 0 0 auto; width: 32px; height: 32px;"
     ]
     missing = required_css.reject { |fragment| css.include?(fragment) }
