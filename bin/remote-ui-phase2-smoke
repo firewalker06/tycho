@@ -11,7 +11,10 @@ require "tmpdir"
 require "uri"
 
 ROOT = File.expand_path("..", __dir__)
-BETA_ROOT = ENV["TYCHO_PHASE2_BACKEND_ROOT"].to_s.strip
+BETA_ROOT = begin
+  configured_root = ENV["TYCHO_PHASE2_BACKEND_ROOT"].to_s.strip
+  File.expand_path(configured_root.empty? ? ROOT : configured_root)
+end
 PLAYWRIGHT_PATH = File.expand_path(ENV.fetch("TYCHO_PLAYWRIGHT_PATH", File.join(ROOT, "node_modules", "playwright")))
 CHROME_PATH = ENV.fetch("TYCHO_CHROME_PATH", ENV.fetch("CHROME_PATH", "")).to_s.strip
 
@@ -60,7 +63,13 @@ def write_fixture(dir)
     require "json"
 
     prompt = ARGV.join(" ")
-    fixture_name = prompt.include?("changed target") ? "Phase 2 changed receipt fixture" : "Phase 2 receipt fixture"
+    fixture_name = if prompt.include?("changed target")
+      "Phase 2 changed receipt fixture"
+    elsif prompt.include?("delivery result is unknown")
+      "Phase 2 unknown receipt fixture"
+    else
+      "Phase 2 receipt fixture"
+    end
     proposal = if prompt.include?("TYCHO INTERNAL SUMMARY ONLY")
       nil
     else
@@ -125,12 +134,34 @@ def write_fixture(dir)
 end
 
 def prepare_server_root(dir)
-  raise "Set TYCHO_PHASE2_BACKEND_ROOT to a reviewed Beta snapshot" if BETA_ROOT.empty?
   raise "Missing committed Beta snapshot at #{BETA_ROOT}" unless File.file?(File.join(BETA_ROOT, "bin", "tycho"))
+  raise "Missing RemoteServer source at #{BETA_ROOT}" unless File.file?(File.join(BETA_ROOT, "lib", "hq", "remote_server.rb"))
 
   server_root = File.join(dir, "server")
-  FileUtils.mkdir_p(server_root)
-  FileUtils.cp_r(File.join(BETA_ROOT, "."), server_root)
+  FileUtils.mkdir_p(File.join(server_root, "lib"))
+  %w[Gemfile Gemfile.lock].each do |name|
+    source = File.join(BETA_ROOT, name)
+    FileUtils.cp(source, File.join(server_root, name)) if File.file?(source)
+  end
+  bundled_config_files = %w[
+    config/hq.yml.example
+    config/system_prompts.yml.example
+    config/response_style.md.example
+    config/schedules.yml.example
+    config/hooks.example.yml
+    config/schemas/agent_result.json
+  ]
+  bundled_config_files.each do |relative_path|
+    source = File.join(BETA_ROOT, relative_path)
+    raise "Missing bundled fixture file at #{source}" unless File.file?(source)
+
+    destination = File.join(server_root, relative_path)
+    FileUtils.mkdir_p(File.dirname(destination))
+    FileUtils.cp(source, destination)
+  end
+  FileUtils.mkdir_p(File.join(server_root, "bin"))
+  FileUtils.cp(File.join(BETA_ROOT, "bin", "tycho"), File.join(server_root, "bin", "tycho"))
+  FileUtils.cp_r(File.join(BETA_ROOT, "lib", "hq"), File.join(server_root, "lib"))
   remote_ui = File.join(server_root, "lib", "hq", "remote_ui")
   FileUtils.rm_rf(remote_ui)
   FileUtils.cp_r(File.join(ROOT, "lib", "hq", "remote_ui"), File.join(server_root, "lib", "hq"))
@@ -242,10 +273,10 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
     const executorBarrierPath = #{executor_barrier_path.to_json};
     const requests = [];
     const unexpectedConsoleErrors = [];
-      const expectedRecoveryErrors = [];
-      const blockedGates = [];
-      const expectedConsoleErrorStatuses = {};
-      const networkConsoleErrors = [];
+    const expectedRecoveryErrors = [];
+    const blockedGates = [];
+    const expectedConsoleErrorStatuses = {};
+    const networkConsoleErrors = [];
 
     function fail(message) {
       throw new Error(message);
@@ -302,6 +333,9 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
       const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
       const page = await context.newPage();
       let confirmMode = "normal";
+      let preflightFailureRemaining = 0;
+      let preflightFailureExpected = false;
+      let preflightUnavailableRemaining = 0;
       let currentWorkMode = "pass";
       let staleConflictExpected = false;
       let unknownConfirmExpected = false;
@@ -327,14 +361,16 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
           const expectedStale = status === 409 && method === "POST" && url.pathname.endsWith("/confirm") && staleConflictExpected;
           const expectedUnavailable = status === 503 && method === "GET" && url.pathname === "/personal-assistant/current-work" && currentWorkMode === "unavailable";
           const expectedUnknown = status === 503 && method === "POST" && url.pathname.endsWith("/confirm") && unknownConfirmExpected;
+          const expectedPreflight = status === 503 && method === "GET" && url.pathname.endsWith("/preflight") && preflightFailureExpected;
           const detail = `${status} ${method} ${url.pathname}`;
-          if (expectedStale || expectedUnavailable || expectedUnknown) {
+          if (expectedStale || expectedUnavailable || expectedUnknown || expectedPreflight) {
             expectedRecoveryErrors.push(detail);
             expectedConsoleErrorStatuses[status] = (expectedConsoleErrorStatuses[status] || 0) + 1;
           }
           else unexpectedConsoleErrors.push(detail);
           if (expectedStale) staleConflictExpected = false;
           if (expectedUnknown) unknownConfirmExpected = false;
+          if (expectedPreflight) preflightFailureExpected = false;
         }
         if (method === "POST" && url.pathname.endsWith("/confirm")) {
           confirmResponseResolve({ at: Date.now(), status: response.status() });
@@ -351,6 +387,34 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
         unexpectedConsoleErrors.push(text);
       });
       page.on("pageerror", (error) => unexpectedConsoleErrors.push(error.message));
+
+      await page.route("**/personal-assistant/actions/*/preflight", async (route) => {
+        if (preflightFailureRemaining > 0) {
+          preflightFailureRemaining -= 1;
+          preflightFailureExpected = true;
+          await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "fixture preview temporarily unavailable" }) });
+        } else if (preflightUnavailableRemaining > 0) {
+          preflightUnavailableRemaining -= 1;
+          const proposalId = new URL(route.request().url()).pathname.split("/").at(-2);
+          await route.fulfill({
+            json: {
+              preflight: {
+                proposal_id: proposalId,
+                digest: "unavailable-preview-digest",
+                active_key: "fixture-active-key",
+                generation: 1,
+                state: "awaiting_confirmation",
+                type: "create_agent",
+                prepared: false,
+                precondition_token: "unavailable-preview-token",
+                details: { available: false, reason: "The fixture target was removed before confirmation." },
+              },
+            },
+          });
+        } else {
+          await route.continue();
+        }
+      });
 
       await page.route("**/personal-assistant/actions/*/confirm", async (route) => {
         if (confirmMode === "abort") {
@@ -370,20 +434,33 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
         const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
         return Boolean(card && card.dataset.proposalState === "failed" && card.innerText.includes("Outcome unknown") && !card.innerText.includes("Completed"));
       }, persistedUnknownId, "persisted unknown receipt");
+      await waitFor(page, (proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        return Boolean(card && card.innerText.includes("Exact server preview"));
+      }, persistedUnknownId, "persisted unknown preview");
       if (await page.locator(`[data-proposal-id='${persistedUnknownId}'] [data-verify-pa-proposal]`).count() !== 1) fail("persisted unknown receipt did not expose verification");
       await page.screenshot({ path: path.join(captureDir, "phase2-initial.png"), fullPage: false });
 
+      preflightFailureRemaining = 1;
       await sendPrompt(page, "Prepare a Phase 2 receipt action.");
       await waitFor(page, () => document.querySelectorAll(".pa-inline-action[data-proposal-state='awaiting_confirmation']").length === 1, null, "first pending action");
       const firstId = await pendingActionId(page);
       if (!firstId) fail("first action proposal was not identified");
-      await waitFor(page, (proposalId) => {
-        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
-        return Boolean(card && card.innerText.includes("Exact server preview") && card.innerText.includes("Prepared agent"));
-      }, firstId, "server-owned preview");
       const firstCard = page.locator(`[data-proposal-id='${firstId}']`);
       const confirmButton = firstCard.locator("[data-confirm-pa-proposal]");
-      if (await confirmButton.count() !== 1 || await confirmButton.isDisabled()) fail("first action did not become confirmable after preflight");
+      await waitFor(page, (proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        return Boolean(card && card.innerText.includes("Could not load the exact server preview") && card.querySelector("[data-retry-pa-preflight]"));
+      }, firstId, "transient preview failure");
+      const retryPreview = firstCard.locator("[data-retry-pa-preflight]");
+      if (await retryPreview.count() !== 1) fail("transient preview failure did not expose one retry control");
+      await retryPreview.click();
+      await waitFor(page, (proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        const confirm = card?.querySelector("[data-confirm-pa-proposal]");
+        return Boolean(card && card.innerText.includes("Exact server preview") && card.innerText.includes("Prepared agent") && confirm && !confirm.disabled);
+      }, firstId, "preview recovery");
+      if (await confirmButton.count() !== 1 || await confirmButton.isDisabled()) fail("first action did not become confirmable after preview recovery");
 
       const confirmStartedAt = Date.now();
       await confirmButton.click();
@@ -436,6 +513,32 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
       await page.waitForTimeout(2_600);
       await page.screenshot({ path: path.join(captureDir, "phase2-completed-receipt.png"), fullPage: false });
 
+      preflightUnavailableRemaining = 1;
+      await sendPrompt(page, "Prepare an action whose target is unavailable.");
+      await waitFor(page, () => document.querySelectorAll(".pa-inline-action[data-proposal-state='awaiting_confirmation']").length === 1, null, "unavailable-target pending action");
+      const unavailableId = await pendingActionId(page);
+      await waitFor(page, (proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        const confirm = card?.querySelector("[data-confirm-pa-proposal]");
+        return Boolean(card && card.innerText.includes("The fixture target was removed before confirmation") && card.innerText.includes("Refresh preview") && confirm?.disabled);
+      }, unavailableId, "prepared=false preview reason");
+      const refreshUnavailable = page.locator(`[data-proposal-id='${unavailableId}'] [data-retry-pa-preflight]`);
+      if (await refreshUnavailable.count() !== 1) fail("prepared=false preview did not expose one refresh control");
+      await refreshUnavailable.click();
+      await waitFor(page, (proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        const confirm = card?.querySelector("[data-confirm-pa-proposal]");
+        return Boolean(card && card.innerText.includes("Exact server preview") && confirm && !confirm.disabled);
+      }, unavailableId, "prepared=false preview recovery");
+      const rejectUnavailable = page.locator(`[data-proposal-id='${unavailableId}'] [data-reject-pa-proposal]`);
+      if (await rejectUnavailable.count() !== 1) fail("prepared=false preview did not retain a reject control");
+      await rejectUnavailable.click();
+      await waitFor(page, (proposalId) => document.querySelector(`[data-proposal-id='${proposalId}'][data-proposal-state='rejected']`), unavailableId, "reject unavailable preview fixture");
+
+      const unknownAgentsBeforeResponse = await page.request.get(`${baseUrl}/agents`);
+      if (!unknownAgentsBeforeResponse.ok()) fail(`agent catalog lookup failed before unknown confirmation: ${unknownAgentsBeforeResponse.status()}`);
+      const unknownAgentsBeforePayload = await unknownAgentsBeforeResponse.json();
+      const unknownFixtureAgentsBefore = (unknownAgentsBeforePayload.agents || []).filter((agent) => agent.name === "Phase 2 unknown receipt fixture");
       await sendPrompt(page, "Prepare an action whose delivery result is unknown.");
       await waitFor(page, () => document.querySelectorAll(".pa-inline-action[data-proposal-state='awaiting_confirmation']").length === 1, null, "unknown-result pending action");
       const unknownId = await pendingActionId(page);
@@ -458,6 +561,26 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
           .map((element) => ({ state: element.dataset.proposalState, text: element.innerText })), unknownId);
         throw new Error(`${error.message}; unknown card=${JSON.stringify(debug)}`);
       }
+      const unknownCard = page.locator(`[data-proposal-id='${unknownId}']`);
+      if (await unknownCard.locator("[data-check-pa-action]").count() !== 1) fail("unknown confirmation did not expose a current-receipt check");
+      await unknownCard.locator("[data-check-pa-action]").click();
+      await waitFor(page, (proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        const confirm = card?.querySelector("[data-confirm-pa-proposal]");
+        return Boolean(card && card.innerText.includes("still shows this action awaiting confirmation") && card.innerText.includes("Exact server preview") && confirm && !confirm.disabled);
+      }, unknownId, "unknown receipt recovery check");
+      await unknownCard.locator("[data-confirm-pa-proposal]").click();
+      await waitFor(page, (proposalId) => {
+        const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
+        return Boolean(card && card.innerText.includes("Completed") && card.querySelector("a[href^='#agent/']"));
+      }, unknownId, "explicit confirmation after unknown receipt");
+      const unknownConfirmPosts = requests.filter((request) => request.method === "POST" && request.path.endsWith(`${unknownId}/confirm`));
+      if (unknownConfirmPosts.length !== 2) fail(`unknown confirmation recovery submitted ${unknownConfirmPosts.length} confirmations instead of one interrupted request and one explicit retry`);
+      const unknownAgentsAfterResponse = await page.request.get(`${baseUrl}/agents`);
+      if (!unknownAgentsAfterResponse.ok()) fail(`agent catalog lookup failed after unknown confirmation: ${unknownAgentsAfterResponse.status()}`);
+      const unknownAgentsAfterPayload = await unknownAgentsAfterResponse.json();
+      const unknownFixtureAgentsAfter = (unknownAgentsAfterPayload.agents || []).filter((agent) => agent.name === "Phase 2 unknown receipt fixture");
+      if (unknownFixtureAgentsAfter.length !== unknownFixtureAgentsBefore.length + 1) fail(`unknown confirmation recovery did not produce exactly one eventual effect: before=${unknownFixtureAgentsBefore.length} after=${unknownFixtureAgentsAfter.length}`);
       await page.screenshot({ path: path.join(captureDir, "phase2-unknown-recovery.png"), fullPage: false });
 
       await sendPrompt(page, "Prepare an action with a changed target.");
@@ -500,8 +623,8 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
       if (staleConfirmPosts.length !== 2) fail(`stale preview recovery submitted ${staleConfirmPosts.length} confirmations instead of one conflict and one explicit retry`);
       const changedAgentsResponse = await page.request.get(`${baseUrl}/agents`);
       const changedAgentsPayload = await changedAgentsResponse.json();
-      const changedAgents = (changedAgentsPayload.agents || []).filter((agent) => String(agent.name || "").startsWith("Phase 2"));
-      if (changedAgents.length !== 2 || !changedAgents.some((agent) => agent.name === "Phase 2 changed receipt fixture" && agent.model === "gpt-5.6-changed")) fail(`explicit stale-preview confirmation did not create the changed target: ${JSON.stringify(changedAgents)}`);
+      const changedAgents = (changedAgentsPayload.agents || []).filter((agent) => agent.name === "Phase 2 changed receipt fixture");
+      if (changedAgents.length !== 1 || changedAgents[0].model !== "gpt-5.6-changed") fail(`explicit stale-preview confirmation did not create the changed target: ${JSON.stringify(changedAgents)}`);
       await page.screenshot({ path: path.join(captureDir, "phase2-stale-preview.png"), fullPage: false });
 
       await page.route("**/personal-assistant/current-work", async (route) => {
@@ -561,9 +684,12 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
       } else {
         blockedGates.push("Beta history list did not expose a saved rollover entry");
       }
+      const archivedHistory = Array.isArray(historyDetail?.archived_actions) ? historyDetail.archived_actions : [];
       const expiredHistory = Array.isArray(historyDetail?.expired_actions) ? historyDetail.expired_actions : [];
-      if (!expiredHistory.some((proposal) => proposal.id === rolloverPendingId)) {
-        blockedGates.push(`Beta history detail does not expose rollover proposal ${rolloverPendingId} as expired_actions`);
+      const rolloverArchivedAction = archivedHistory.find((proposal) => proposal.id === rolloverPendingId);
+      const rolloverHistoryAction = expiredHistory.find((proposal) => proposal.id === rolloverPendingId);
+      if (!rolloverArchivedAction || !rolloverHistoryAction || rolloverArchivedAction.state !== "expired" || rolloverArchivedAction.expired !== true || rolloverArchivedAction.read_only !== true || rolloverHistoryAction.state !== "expired" || rolloverHistoryAction.expired !== true || rolloverHistoryAction.read_only !== true) {
+        blockedGates.push(`Beta history detail does not expose rollover proposal ${rolloverPendingId} as a truthful expired read-only archived_actions record and expired_actions subset`);
         await page.screenshot({ path: path.join(captureDir, "phase2-history-contract-blocked.png"), fullPage: false });
       } else {
         if (!historyId) fail("expired proposal was returned without a history entry id");
@@ -578,7 +704,7 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
       if (await historyButton.count() < 1) fail("saved history entry missing after rollover");
       await historyButton.first().click();
       await waitFor(page, () => Boolean(document.querySelector(".pa-history-entry")), null, "saved handoff detail");
-      if (expiredHistory.some((proposal) => proposal.id === rolloverPendingId)) {
+      if (rolloverHistoryAction) {
         await waitFor(page, (proposalId) => Boolean(document.querySelector(`[data-pa-expired-proposal-id='${proposalId}']`)), rolloverPendingId, "expired proposal from real history");
         const expired = page.locator("[data-pa-expired-proposals]");
         if (await expired.locator("[data-confirm-pa-proposal]").count() !== 0) fail("expired proposal exposed an approval control");
@@ -595,6 +721,85 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
       await waitFor(page, (value) => document.querySelector("#composer #prompt-input")?.value === value, draft, "draft after history close");
       const historyDate = await page.locator(".pa-history-list li span").first().textContent();
       if (!historyDate || /\b(?:AM|PM)\b|\d{1,2}:\d{2}/i.test(historyDate)) fail(`history active_date rendered as a timestamp: ${historyDate}`);
+
+      if (historyId && historyDetail) {
+        const realHistoryPath = `${baseUrl}/personal-assistant/history/${encodeURIComponent(historyId)}`;
+        let delayedHistoryMode = false;
+        await page.route(realHistoryPath, async (route) => {
+          if (delayedHistoryMode) await new Promise((resolve) => setTimeout(resolve, 700));
+          await route.fulfill({ json: { history: historyDetail } });
+        });
+        delayedHistoryMode = true;
+        const delayedHistoryButton = page.locator(`[data-open-pa-history='${historyId}']`);
+        if (await delayedHistoryButton.count() !== 1) fail("saved history entry was not available for close-race coverage");
+        await delayedHistoryButton.click();
+        await waitFor(page, () => Boolean(document.querySelector(".pa-history-entry [data-pa-back-active]")), null, "history loading close control");
+        const loadingBack = page.locator(".pa-history-entry [data-pa-back-active]");
+        if (await loadingBack.count() !== 1) fail("history loading state did not expose a close control");
+        await loadingBack.click();
+        await waitFor(page, () => !document.querySelector(".pa-history-entry"), null, "close history before response");
+        await page.waitForTimeout(850);
+        if (await page.locator(".pa-history-entry").count() !== 0) fail("late history response reopened a closed detail");
+        await page.unroute(realHistoryPath);
+
+        const raceAId = `${historyId}-selection-a`;
+        const raceBId = `${historyId}-selection-b`;
+        const historyA = { ...historyDetail, id: raceAId, summary: "History A", archived_actions: [], expired_actions: [] };
+        const historyB = {
+          ...historyDetail,
+          id: raceBId,
+          summary: "History B",
+          archived_actions: [
+            { id: `${raceBId}-expired`, type: "start_agent", arguments: { agent_key: "fixture-agent" }, state: "expired", historical_state: "awaiting_confirmation", read_only: true, expired: true },
+            { id: `${raceBId}-unknown`, type: "create_agent", arguments: { project_key: "web", name: "Unknown archived action" }, state: "failed", read_only: true, recovery: { state: "outcome_unknown" } },
+            { id: `${raceBId}-executed`, type: "create_agent", arguments: { project_key: "web", name: "Completed archived action" }, state: "executed", read_only: true },
+          ],
+          expired_actions: [
+            { id: `${raceBId}-expired`, type: "start_agent", arguments: { agent_key: "fixture-agent" }, state: "expired", historical_state: "awaiting_confirmation", read_only: true, expired: true },
+          ],
+        };
+        const personalAssistantPath = `${baseUrl}/personal-assistant`;
+        await page.route(personalAssistantPath, async (route) => {
+          const upstream = await route.fetch();
+          const payload = await upstream.json();
+          const source = payload.personal_assistant?.history?.[0] || {};
+          payload.personal_assistant.history = [
+            { ...source, id: raceAId, summary: "History A" },
+            { ...source, id: raceBId, summary: "History B" },
+          ];
+          await route.fulfill({ json: payload });
+        });
+        await page.route(`${baseUrl}/personal-assistant/history/${encodeURIComponent(raceAId)}`, async (route) => {
+          await new Promise((resolve) => setTimeout(resolve, 700));
+          await route.fulfill({ json: { history: historyA } });
+        });
+        await page.route(`${baseUrl}/personal-assistant/history/${encodeURIComponent(raceBId)}`, async (route) => {
+          await route.fulfill({ json: { history: historyB } });
+        });
+        await page.evaluate(() => refreshPersonalAssistant({ force: true }));
+        await waitFor(page, () => document.querySelectorAll("[data-open-pa-history]").length === 2, null, "history selection race entries");
+        const historyAButton = page.locator(`[data-open-pa-history='${raceAId}']`);
+        const historyBButton = page.locator(`[data-open-pa-history='${raceBId}']`);
+        if (await historyAButton.count() !== 1 || await historyBButton.count() !== 1) fail("history selection race entries were not unique");
+        await historyAButton.click();
+        await historyBButton.click();
+        await waitFor(page, () => document.querySelector(".pa-history-entry")?.innerText.includes("History B"), null, "latest history selection");
+        await page.waitForTimeout(850);
+        const selectedHistoryText = await page.locator(".pa-history-entry").innerText();
+        const archivedActionText = await page.locator(".pa-expired-proposals").innerText();
+        if (selectedHistoryText.includes("History A") || !selectedHistoryText.includes("History B") || !archivedActionText.includes("Outcome unknown") || !archivedActionText.includes("Completed")) fail(`history selection rendered the wrong or incomplete outcome: ${selectedHistoryText}\n${archivedActionText}`);
+        const raceActions = page.locator(".pa-expired-proposals [data-pa-history-action-id]");
+        if (await raceActions.count() !== 3 || await page.locator(".pa-expired-proposals [data-confirm-pa-proposal]").count() !== 0) fail("archived history outcomes were not read-only and complete");
+        const raceBack = page.locator(".pa-history-entry [data-pa-back-active]");
+        if (await raceBack.count() !== 1) fail("selected history detail did not expose a close control");
+        await raceBack.click();
+        await waitFor(page, () => !document.querySelector(".pa-history-entry"), null, "close selected history race detail");
+        await page.unroute(personalAssistantPath);
+        await page.unroute(`${baseUrl}/personal-assistant/history/${encodeURIComponent(raceAId)}`);
+        await page.unroute(`${baseUrl}/personal-assistant/history/${encodeURIComponent(raceBId)}`);
+        await page.evaluate(() => refreshPersonalAssistant({ force: true }));
+        await waitFor(page, (value) => Boolean(document.querySelector(`[data-open-pa-history='${value}']`)), historyId, "restore actual history after race coverage");
+      }
 
       await page.setViewportSize({ width: 390, height: 844 });
       await page.emulateMedia({ reducedMotion: "reduce" });
@@ -619,6 +824,7 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
         first_action_id: firstId,
         persisted_unknown_action_id: persistedUnknownId,
         unknown_action_id: unknownId,
+        unavailable_action_id: unavailableId,
         stale_action_id: staleId,
         rollover_pending_action_id: rolloverPendingId,
         confirm_accept_ms: accepted.at - confirmStartedAt,
