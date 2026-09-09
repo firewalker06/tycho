@@ -107,3 +107,21 @@ event) reduced status serialization from roughly 476 ms to 123 ms; warm
 status/actions/current-work reads measured about 0.6/0.7/0.6 ms. No harness
 ran in this fixture. These are fixture measurements, not production SLAs.
 Bootstrap `/setup` remained a separate 3.47 s catalog step.
+
+The focused Remote UI defers catalog, setup, and schedule discovery on the
+initial configured-FRED conversation path. Unconfigured onboarding and normal
+Settings/navigation still load setup discovery and keep the model, effort,
+timezone, and confirmation controls available. When actual FRED work or an
+unresolved submission is active, visible polling uses a 1.5 s cadence; idle
+polling uses 12 s, and hidden polling uses 30 s. Focused read failures reuse a
+bounded policy: the first visible failure backs off to idle cadence, repeated
+failures reach the hidden cadence, and the count is capped at two. A successful
+refresh restores the normal active/idle choice, while online, tab-return, and
+manual refreshes retry immediately.
+
+Refresh reconciliation keeps the current-work snapshot, composer draft, focus,
+and conversation scroll usable while a background read is pending. Unchanged
+responses use the existing render comparison; changed, unavailable, stale, and
+recovered values still render their factual state. The 3.47 s `/setup`
+measurement above is a historical synthetic catalog observation, not a claim
+about configured-FRED first-render or end-to-end latency.

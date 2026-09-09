@@ -60,6 +60,7 @@ module RemoteUIPersonalAssistantBehaviorTest
         personalAssistantSessionContext: () => ({ server_key: "local", active_key: "fred", generation: 1 }),
         personalAssistantServerKey: () => "local",
         personalAssistantSubmissionEntries: () => [],
+        personalAssistantRequest: (_requests, _key, factory) => factory(),
       };
       vm.createContext(context);
       [
@@ -70,6 +71,7 @@ module RemoteUIPersonalAssistantBehaviorTest
         "personalAssistantVisibleConversationBlocks",
         "personalAssistantPollDelay",
         "notePersonalAssistantRefreshFailure",
+        "requestPersonalAssistantCurrentWork",
       ].forEach((name) => vm.runInContext(`${extractFunction(name)}\nthis.${name} = ${name};`, context));
 
       const assert = (condition, message) => {
@@ -131,6 +133,74 @@ module RemoteUIPersonalAssistantBehaviorTest
       context.state.failureCount = 0;
       assert(context.personalAssistantPollDelay() === 1500,
              "successful FRED recovery did not restore active polling");
+
+      let resolveCurrentWork;
+      let rejectCurrentWork;
+      let renderCalls = 0;
+      context.location = { hash: "#personal-assistant" };
+      context.parseRoute = () => ({ type: "personalAssistant" });
+      context.personalAssistantSessionMatches = () => true;
+      context.apiGet = () => new Promise((resolve, reject) => {
+        resolveCurrentWork = resolve;
+        rejectCurrentWork = reject;
+      });
+      context.render = () => { renderCalls += 1; };
+      context.state.personalAssistantRequests = {
+        currentWork: {},
+        coordinator: { currentWorkSequence: 0, currentWorkApplied: 0 },
+      };
+      context.state.personalAssistantCurrentWork = { state: "fresh", agents: [] };
+      context.state.personalAssistantCurrentWorkState = "fresh";
+      context.state.personalAssistantCurrentWorkError = "";
+      context.state.renderedViewHtml = "stable-current-work-html";
+      const currentWorkRequest = context.requestPersonalAssistantCurrentWork("#personal-assistant", {
+        server_key: "local",
+        active_key: "fred",
+        generation: 1,
+      });
+      assert(context.state.personalAssistantCurrentWorkState === "fresh",
+             "background current-work polling replaced the visible snapshot with refreshing");
+      assert(context.state.renderedViewHtml === "stable-current-work-html",
+             "background current-work polling invalidated the visible snapshot before its response");
+      resolveCurrentWork({ state: "fresh", agents: [] });
+      currentWorkRequest.then(() => {
+        assert(renderCalls === 1, "current-work response did not use the existing render path");
+        assert(context.state.renderedViewHtml === "stable-current-work-html",
+               "unchanged current-work response bypassed the same-HTML render shortcut");
+
+        const changedCurrentWorkRequest = context.requestPersonalAssistantCurrentWork("#personal-assistant", {
+          server_key: "local",
+          active_key: "fred",
+          generation: 1,
+        });
+        assert(context.state.personalAssistantCurrentWorkState === "fresh",
+               "changed current-work polling replaced the visible snapshot with refreshing");
+        resolveCurrentWork({ state: "stale", agents: [{ key: "fred", status: "waiting" }] });
+        return changedCurrentWorkRequest.then(() => {
+          assert(context.state.personalAssistantCurrentWorkState === "stale",
+                 "changed current-work response did not update its visible state");
+          assert(renderCalls === 2, "changed current-work response did not use the existing render path");
+          assert(context.state.renderedViewHtml === "stable-current-work-html",
+                 "changed current-work response unnecessarily invalidated the existing view");
+
+          const failedCurrentWorkRequest = context.requestPersonalAssistantCurrentWork("#personal-assistant", {
+            server_key: "local",
+            active_key: "fred",
+            generation: 1,
+          });
+          assert(context.state.personalAssistantCurrentWorkState === "stale",
+                 "failed background current-work polling replaced the visible snapshot with refreshing");
+          rejectCurrentWork(new Error("offline"));
+          return failedCurrentWorkRequest.catch(() => {
+            assert(context.state.personalAssistantCurrentWorkState === "unavailable",
+                   "current-work failure did not surface an unavailable state");
+            assert(context.state.personalAssistantCurrentWorkError === "offline",
+                   "current-work failure did not retain its error");
+            assert(context.state.renderedViewHtml === "stable-current-work-html",
+                   "current-work failure unnecessarily invalidated the existing view");
+          });
+        });
+      });
     JAVASCRIPT
 
     _stdout, stderr, status = Open3.capture3("node", "-e", script, APP_PATH, chdir: ROOT)
