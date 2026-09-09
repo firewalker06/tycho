@@ -329,14 +329,22 @@ module RemoteUIPersonalAssistantBehaviorTest
                "current-work failure did not retain its error");
         assert(context.state.renderedViewHtml === "stable-current-work-html",
                "current-work failure unnecessarily invalidated the existing view");
+
+        console.log("remote_ui_personal_assistant_behavior_test: completed");
       })().catch((error) => {
         console.error(error.stack || error);
         process.exitCode = 1;
       });
     JAVASCRIPT
 
-    _stdout, stderr, status = Open3.capture3("node", "-e", script, APP_PATH, chdir: ROOT)
-    raise "Personal Assistant UI behavior regression failed: #{stderr.strip}" unless status.success?
+    stdout, stderr, status = Open3.capture3("node", "-e", script, APP_PATH, chdir: ROOT)
+    completion_marker = "remote_ui_personal_assistant_behavior_test: completed"
+    completed = stdout.lines.map(&:chomp).include?(completion_marker)
+    unless status.success? && completed
+      detail = stderr.strip
+      detail = "completion marker missing" unless completed
+      raise "Personal Assistant UI behavior regression failed: #{detail}"
+    end
 
     puts "remote_ui_personal_assistant_behavior_test: ok"
   end
