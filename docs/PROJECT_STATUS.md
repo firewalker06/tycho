@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-09-02
+2026-09-09
 
 ## Strategic Direction
 
@@ -81,6 +81,7 @@ Key references:
 | Remote UI agent activity | Keep a server-owned in-memory activity snapshot updated by lifecycle mutations and the existing notification reconciliation pass; poll its compact read-only endpoint independently from page refreshes | Logo unread counts and agent switching stay current while forms pause page polling, without adding another server loop or letting slower catalog responses overwrite newer activity |
 | Remote UI linked-agent navigation | Expose direct parent/child links beside composer attachments and mark linked sessions in the quick agent switcher; clicking the link symbol or pressing Tab drills into the selected agent's direct links | Delegation topology stays reachable after the conversation's relationship card scrolls out of view without adding another route or duplicating relationship state |
 | Running-agent prompt queue | Persist accepted queue entries and one durable claim in each managed-agent record; claim and dispatch under the existing agent-store lock, retain prepared claims on start failure, and let later accepted entries form the next batch. Remote UI keeps the composer enabled, renders client-ID-backed optimistic entries from local storage, and places Stop in the shared top action row. | Server acceptance order survives reloads, multiple clients cannot double-claim work, retry cannot duplicate the prepared user message, unresolved inquiries remain authoritative blockers, and rapid queue submissions stay visible and usable before network reconciliation. |
+| FRED durable action worker | Persist immutable proposal receipts as the action queue; confirm with a server-owned preview token, freeze effective settings, execute through one bounded post-daemon worker, and expose truthful prior-generation actions as read-only history | Effects are not repeated by duplicate confirmation, live work is protected by per-action locks and leases, nullable defaults cannot drift between preview and effect, uncertain verification stays unknown, and history cannot carry authorization across a rollover |
 | Remote multiserver resources | Keep one UI-serving broker, aggregate only compact Agent and Project resources through a disk-backed stale-while-revalidate catalog, and require explicit server identity for details and mutations | Combined lists stay responsive across peer failures and broker restarts; only a validated full snapshot may remove cached resources, while schedules, setup, GitHub, push, restart, and other server-level behavior remain local |
 | Project workspace browsing | Keep canonical path resolution, sensitive/generated-file policy, bounded listing, Markdown/image previews, and optimistic-lock plain-text edits in `ProjectWorkspace`; expose only relative paths through project-scoped endpoints | Remote and multiserver browsing must not leak host paths or let client routing bypass traversal, symlink, VCS, credential, binary, encoding, or size controls |
 | Remote credential ownership | Bind one bearer credential to each stable remote server key and verified scheme/host/effective-port origin; keep Tycho-managed values in atomic mode-`0600` `~/.tycho/config/remote_credentials.json`, with explicit per-server `token_env` overrides | CLI and broker share one resolver, multiple peers cannot select credentials by incidental names, origin changes require explicit recovery, and browser promotion removes its copy only after verified persistence |
@@ -106,6 +107,11 @@ schedules, and run results; returned results become bounded context for the
 next message without starting an automatic action loop. The pure action
 catalog, model schema, and server validation stay aligned through contract tests.
 Daily continuity and tracked work remain inspectable across conversations.
+Durable mutations use one server-lifetime bounded worker with frozen previews,
+conservative outcome verification, and read-only archived-action history whose
+`expired_actions` subset contains only unconfirmed approvals; the
+measured fixture optimization coalesces repeated status/actions/current-work
+work without holding a global lock across long effects.
 Preserve the protected daily role, server-local identity, exact confirmation
 for each mutation, and no blind retry after an uncertain execution outcome.
 

@@ -170,8 +170,8 @@ module HQ
       end
     end
 
-    def create_from_template(project, template_key)
-      existing = load
+    def create_from_template(project, template_key, existing_agents: nil)
+      existing = existing_agents || load
       suffix = next_suffix(project.key, existing)
       now = Time.now
       key = next_agent_key(project.key, existing, now:)
@@ -195,6 +195,31 @@ module HQ
       )
       seed_memory_system_prompts!(agent, project, template.prompt)
       attach_usage_metrics_store(agent)
+    end
+
+    # Keep the read, construction, and commit of a new agent in one store
+    # transaction so a concurrent foreground write cannot be overwritten by a
+    # worker's stale agent list.
+    def create_from_template_and_persist!(project, template_key, delegation: nil)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = create_from_template(project, template_key, existing_agents: agents)
+        yield target, agents if block_given?
+        if delegation
+          delegation[:validate]&.call(agents)
+          persist_created_delegation!(agents, target, delegation)
+        else
+          agents.unshift(target)
+        end
+        target
+      end
+    end
+
+    def update_agent!(key)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = find_agent_in!(agents, key)
+        yield target, agents if block_given?
+        target
+      end
     end
 
     def create_scheduled(project, schedule_key:, name:, system_message: nil, existing_agents: load)
@@ -318,8 +343,12 @@ module HQ
     end
 
     def accept_prompt_from!(child, actor:, agents: nil, now: Time.now)
-      current = agents || load
-      @delegation_coordinator.accept_prompt_from!(child:, actor:, now:)
+      return @delegation_coordinator.accept_prompt_from!(child:, actor:, now:) if agents
+
+      mutate(dispatch_prompt_queues: false) do |current, _events|
+        target = find_agent_in!(current, child.key)
+        @delegation_coordinator.accept_prompt_from!(child: target, actor:, now:)
+      end
     end
 
     def stop_agent!(key)
@@ -527,6 +556,24 @@ module HQ
     end
 
     private
+
+    def persist_created_delegation!(agents, child, delegation)
+      parent_key = delegation.fetch(:parent_key).to_s
+      parent = agents.find { |agent| agent.key == parent_key }
+      raise DelegationStore::Error, "Unknown parent agent: #{parent_key}" unless parent
+
+      paths = [AGENTS_FILE, DELEGATIONS_FILE, child.memory_path, parent.memory_path]
+      FileTransaction.run(paths) do
+        relation, = @delegation_coordinator.attach!(
+          agents:, child:, parent_key:, parent_server_id: delegation[:parent_server_id]
+        )
+        child.associate_parent!(relation.fetch("parent"))
+        @delegation_coordinator.accept_prompt_from!(child:, actor: delegation[:actor]) if delegation[:actor]
+        agents.unshift(child)
+        save_unlocked(agents)
+      end
+      child
+    end
 
     def find_agent_in!(agents, key)
       agents.find { |agent| agent.key == key.to_s } || raise(ArgumentError, "Unknown agent: #{key}")

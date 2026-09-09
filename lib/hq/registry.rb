@@ -91,6 +91,7 @@ module HQ
       @projects = []
       @groups = {}
       @system_prompts = {}
+      @config_lock_mutex = Mutex.new
       load!
     end
 
@@ -120,33 +121,36 @@ module HQ
     end
 
     def add_project!(attrs)
-      data = load_yaml(@path)
-      projects = Array(data["projects"])
-      key = attrs[:key].to_s.strip
-      raise ConfigError, "Missing project key" if key.empty?
-      raise ConfigError, "Duplicate project key: #{key}" if projects.any? { |p| p["key"].to_s == key }
+      key = with_config_lock do
+        data = load_yaml(@path)
+        projects = Array(data["projects"])
+        key = attrs[:key].to_s.strip
+        raise ConfigError, "Missing project key" if key.empty?
+        raise ConfigError, "Duplicate project key: #{key}" if projects.any? { |p| p["key"].to_s == key }
 
-      entry = { "key" => key, "name" => attrs[:name].to_s }
-      entry["group"] = attrs[:group].to_s unless attrs[:group].to_s.strip.empty?
-      entry["path"] = attrs[:path].to_s
-      entry["agent"] = attrs[:agent].to_s unless attrs[:agent].to_s.strip.empty?
-      %i[model reasoning_effort pr_url].each do |field|
-        value = attrs[field]
-        entry[field.to_s] = value.to_s unless value.to_s.strip.empty?
-      end
-      entry["response_style"] = attrs[:response_style] if attrs.key?(:response_style) && !attrs[:response_style].nil?
-      entry["hidden"] = attrs[:hidden] if attrs.key?(:hidden) && !attrs[:hidden].nil?
+        entry = { "key" => key, "name" => attrs[:name].to_s }
+        entry["group"] = attrs[:group].to_s unless attrs[:group].to_s.strip.empty?
+        entry["path"] = attrs[:path].to_s
+        entry["agent"] = attrs[:agent].to_s unless attrs[:agent].to_s.strip.empty?
+        %i[model reasoning_effort pr_url].each do |field|
+          value = attrs[field]
+          entry[field.to_s] = value.to_s unless value.to_s.strip.empty?
+        end
+        entry["response_style"] = attrs[:response_style] if attrs.key?(:response_style) && !attrs[:response_style].nil?
+        entry["hidden"] = attrs[:hidden] if attrs.key?(:hidden) && !attrs[:hidden].nil?
 
-      group = entry["group"].to_s
-      insert_index = nil
-      unless group.empty?
-        last_in_group = projects.rindex { |p| p["group"].to_s == group }
-        insert_index = last_in_group ? last_in_group + 1 : nil
+        group = entry["group"].to_s
+        insert_index = nil
+        unless group.empty?
+          last_in_group = projects.rindex { |p| p["group"].to_s == group }
+          insert_index = last_in_group ? last_in_group + 1 : nil
+        end
+        insert_index ? projects.insert(insert_index, entry) : projects.push(entry)
+        validate_project_entries!(projects)
+        data["projects"] = projects
+        write_yaml(@path, data)
+        key
       end
-      insert_index ? projects.insert(insert_index, entry) : projects.push(entry)
-      validate_project_entries!(projects)
-      data["projects"] = projects
-      write_yaml(@path, data)
       load!
       added = @projects.find { |p| p.key == key }
       HQ.hooks.publish("project.added", project_key: key, project_path: added&.path.to_s)
@@ -154,37 +158,40 @@ module HQ
     end
 
     def add_remote_server!(attrs)
-      data = load_yaml(@path)
-      servers = Array(data["remote_servers"])
-      url = normalize_remote_server_url(attrs[:url] || attrs["url"])
-      name = (attrs[:name] || attrs["name"]).to_s.strip
-      key = (attrs[:key] || attrs["key"]).to_s.strip
-      key = unique_remote_server_key(name, url, servers) if key.empty?
-      entry = {
-        "key" => key,
-        "name" => name.empty? ? key : name,
-        "url" => url,
-        "icon" => normalize_remote_server_icon(attrs[:icon] || attrs["icon"])
-      }
+      key = with_config_lock do
+        data = load_yaml(@path)
+        servers = Array(data["remote_servers"])
+        url = normalize_remote_server_url(attrs[:url] || attrs["url"])
+        name = (attrs[:name] || attrs["name"]).to_s.strip
+        key = (attrs[:key] || attrs["key"]).to_s.strip
+        key = unique_remote_server_key(name, url, servers) if key.empty?
+        entry = {
+          "key" => key,
+          "name" => name.empty? ? key : name,
+          "url" => url,
+          "icon" => normalize_remote_server_icon(attrs[:icon] || attrs["icon"])
+        }
 
-      existing_index = servers.index do |server|
-        server["key"].to_s == key || normalize_remote_server_url(server["url"]) == url
-      rescue ConfigError
-        false
-      end
-      if existing_index
-        existing = servers[existing_index]
-        entry["icon"] = normalize_remote_server_icon(existing["icon"]) unless attrs.key?(:icon) || attrs.key?("icon")
-        entry["token"] = existing["token"] if existing.key?("token")
-        entry["token_env"] = existing["token_env"] if existing.key?("token_env")
-        servers[existing_index] = entry
-      else
-        servers << entry
-      end
+        existing_index = servers.index do |server|
+          server["key"].to_s == key || normalize_remote_server_url(server["url"]) == url
+        rescue ConfigError
+          false
+        end
+        if existing_index
+          existing = servers[existing_index]
+          entry["icon"] = normalize_remote_server_icon(existing["icon"]) unless attrs.key?(:icon) || attrs.key?("icon")
+          entry["token"] = existing["token"] if existing.key?("token")
+          entry["token_env"] = existing["token_env"] if existing.key?("token_env")
+          servers[existing_index] = entry
+        else
+          servers << entry
+        end
 
-      build_remote_servers([entry])
-      data["remote_servers"] = servers
-      write_yaml(@path, data)
+        build_remote_servers([entry])
+        data["remote_servers"] = servers
+        write_yaml(@path, data)
+        key
+      end
       load!
       @remote_servers.find { |server| server.key == key }
     end
@@ -194,20 +201,22 @@ module HQ
       raise ConfigError, "Remote server key local is reserved for the current Tycho server" if value == "local"
       raise ConfigError, "Missing remote server key" if value.empty?
 
-      data = load_yaml(@path)
-      servers = Array(data["remote_servers"])
-      index = servers.index { |server| server["key"].to_s == value }
-      raise ConfigError, "Unknown remote server: #{value}" unless index
+      with_config_lock do
+        data = load_yaml(@path)
+        servers = Array(data["remote_servers"])
+        index = servers.index { |server| server["key"].to_s == value }
+        raise ConfigError, "Unknown remote server: #{value}" unless index
 
-      name = (attrs[:name] || attrs["name"]).to_s.strip
-      raise ConfigError, "Server name is required" if name.empty?
+        name = (attrs[:name] || attrs["name"]).to_s.strip
+        raise ConfigError, "Server name is required" if name.empty?
 
-      servers[index] = servers[index].merge(
-        "name" => name,
-        "icon" => normalize_remote_server_icon(attrs[:icon] || attrs["icon"])
-      )
-      data["remote_servers"] = servers
-      write_yaml(@path, data)
+        servers[index] = servers[index].merge(
+          "name" => name,
+          "icon" => normalize_remote_server_icon(attrs[:icon] || attrs["icon"])
+        )
+        data["remote_servers"] = servers
+        write_yaml(@path, data)
+      end
       load!
       @remote_servers.find { |server| server.key == value }
     end
@@ -217,33 +226,40 @@ module HQ
       raise ConfigError, "Remote server key local is reserved for the current Tycho server" if value == "local"
       raise ConfigError, "Missing remote server key" if value.empty?
 
-      data = load_yaml(@path)
-      servers = Array(data["remote_servers"])
-      next_servers = servers.reject { |server| server["key"].to_s == value }
-      raise ConfigError, "Unknown remote server: #{value}" if next_servers.length == servers.length
+      with_config_lock do
+        data = load_yaml(@path)
+        servers = Array(data["remote_servers"])
+        next_servers = servers.reject { |server| server["key"].to_s == value }
+        raise ConfigError, "Unknown remote server: #{value}" if next_servers.length == servers.length
 
-      if next_servers.empty?
-        data.delete("remote_servers")
-      else
-        data["remote_servers"] = next_servers
+        if next_servers.empty?
+          data.delete("remote_servers")
+        else
+          data["remote_servers"] = next_servers
+        end
+        write_yaml(@path, data)
       end
-      write_yaml(@path, data)
       load!
       value
     end
 
     def remove_remote_server_inline_token!(key)
       value = key.to_s.strip
-      data = load_yaml(@path)
-      servers = Array(data["remote_servers"])
-      entry = servers.find { |server| server["key"].to_s == value }
-      raise ConfigError, "Unknown remote server: #{value}" unless entry
+      removed = with_config_lock do
+        data = load_yaml(@path)
+        servers = Array(data["remote_servers"])
+        entry = servers.find { |server| server["key"].to_s == value }
+        raise ConfigError, "Unknown remote server: #{value}" unless entry
 
-      removed = entry.delete("token")
+        removed = entry.delete("token")
+        if removed
+          data["remote_servers"] = servers
+          write_yaml(@path, data)
+        end
+        removed
+      end
       return false if removed.nil?
 
-      data["remote_servers"] = servers
-      write_yaml(@path, data)
       load!
       true
     end
@@ -252,71 +268,87 @@ module HQ
       name = group_name.to_s.strip
       raise ConfigError, "Missing group name" if name.empty?
 
-      data = load_yaml(@path)
-      groups = data["groups"].is_a?(Hash) ? data["groups"] : {}
-      entry = groups[name]
-      entry = {} unless entry.is_a?(Hash)
+      result = with_config_lock do
+        data = load_yaml(@path)
+        groups = data["groups"].is_a?(Hash) ? data["groups"] : {}
+        entry = groups[name]
+        entry = {} unless entry.is_a?(Hash)
 
-      if hidden.nil?
-        entry.delete("hidden")
-      else
-        entry["hidden"] = hidden ? true : false
+        if hidden.nil?
+          entry.delete("hidden")
+        else
+          entry["hidden"] = hidden ? true : false
+        end
+
+        if entry.empty?
+          groups.delete(name)
+        else
+          groups[name] = entry
+        end
+        data["groups"] = groups unless groups.empty?
+        data.delete("groups") if groups.empty?
+
+        write_yaml(@path, data)
+        groups[name]
       end
-
-      if entry.empty?
-        groups.delete(name)
-      else
-        groups[name] = entry
-      end
-      data["groups"] = groups unless groups.empty?
-      data.delete("groups") if groups.empty?
-
-      write_yaml(@path, data)
       load!
       HQ.hooks.publish("group.updated", group: name, fields: ["hidden"])
-      groups[name]
+      result
     end
 
     def update_project_hidden!(project_key, hidden)
-      data = load_yaml(@path)
-      projects = Array(data["projects"])
-      project = projects.find { |item| item["key"].to_s == project_key.to_s }
+      project = with_config_lock do
+        data = load_yaml(@path)
+        projects = Array(data["projects"])
+        project = projects.find { |item| item["key"].to_s == project_key.to_s }
+        next nil unless project
+
+        if hidden.nil?
+          project.delete("hidden")
+        else
+          project["hidden"] = hidden ? true : false
+        end
+
+        write_yaml(@path, data)
+        project
+      end
       return nil unless project
 
-      if hidden.nil?
-        project.delete("hidden")
-      else
-        project["hidden"] = hidden ? true : false
-      end
-
-      write_yaml(@path, data)
       load!
       HQ.hooks.publish("project.updated", project_key: project_key.to_s, fields: ["hidden"])
       project
     end
 
     def update_project!(project_key, attrs)
-      data = load_yaml(@path)
-      projects = Array(data["projects"])
-      project = projects.find { |p| p["key"].to_s == project_key.to_s }
-      return nil unless project
+      result = with_config_lock do
+        data = load_yaml(@path)
+        projects = Array(data["projects"])
+        project = projects.find { |p| p["key"].to_s == project_key.to_s }
+        next nil unless project
 
-      changed = false
-      attrs.each do |field, value|
-        field = field.to_s
-        value = value.to_s.strip if value.is_a?(String)
-        if value.nil? || (value.is_a?(String) && value.empty?)
-          changed = true if project.key?(field)
-          project.delete(field)
-        elsif project[field] != value
-          project[field] = value
-          changed = true
+        changed = false
+        attrs.each do |field, value|
+          field = field.to_s
+          value = value.to_s.strip if value.is_a?(String)
+          if value.nil? || (value.is_a?(String) && value.empty?)
+            changed = true if project.key?(field)
+            project.delete(field)
+          elsif project[field] != value
+            project[field] = value
+            changed = true
+          end
         end
-      end
 
+        if changed
+          validate_project_entries!(projects)
+          write_yaml(@path, data)
+        end
+        [project, changed]
+      end
+      return nil unless result
+
+      project, changed = result
       if changed
-        validate_project_entries!(projects)
-        write_yaml(@path, data)
         load!
         HQ.hooks.publish("project.updated", project_key: project_key.to_s, fields: attrs.keys.map(&:to_s))
       end
@@ -330,21 +362,23 @@ module HQ
         raise ConfigError, "Unsupported harness #{key.inspect}. Supported: #{HQ.harness_keys.join(", ")}"
       end
 
-      data = load_yaml(@path)
-      catalogs = data["harness_catalogs"].is_a?(Hash) ? data["harness_catalogs"] : {}
-      entry = catalogs[key].is_a?(Hash) ? catalogs[key].dup : {}
-      entry["models"] = normalize_catalog_values(attrs["models"] || attrs[:models], preserve_case: true)
-      entry["reasoning_efforts"] = normalize_catalog_values(
-        attrs["reasoning_efforts"] || attrs["reasoning_effort_suggestions"] || attrs[:reasoning_efforts],
-        preserve_case: false
-      )
-      entry.delete("models") if entry["models"].empty?
-      entry.delete("reasoning_efforts") if entry["reasoning_efforts"].empty?
-      entry.empty? ? catalogs.delete(key) : catalogs[key] = entry
-      data["harness_catalogs"] = catalogs
-      data.delete("harness_catalogs") if catalogs.empty?
+      with_config_lock do
+        data = load_yaml(@path)
+        catalogs = data["harness_catalogs"].is_a?(Hash) ? data["harness_catalogs"] : {}
+        entry = catalogs[key].is_a?(Hash) ? catalogs[key].dup : {}
+        entry["models"] = normalize_catalog_values(attrs["models"] || attrs[:models], preserve_case: true)
+        entry["reasoning_efforts"] = normalize_catalog_values(
+          attrs["reasoning_efforts"] || attrs["reasoning_effort_suggestions"] || attrs[:reasoning_efforts],
+          preserve_case: false
+        )
+        entry.delete("models") if entry["models"].empty?
+        entry.delete("reasoning_efforts") if entry["reasoning_efforts"].empty?
+        entry.empty? ? catalogs.delete(key) : catalogs[key] = entry
+        data["harness_catalogs"] = catalogs
+        data.delete("harness_catalogs") if catalogs.empty?
 
-      write_yaml(@path, data)
+        write_yaml(@path, data)
+      end
       load!
       harness_catalog(key)
     end
@@ -355,35 +389,41 @@ module HQ
 
     def update_session_loop_settings!(attrs)
       settings = build_session_loop_settings(attrs, configured: true)
-      data = load_yaml(@path)
-      data["session_loops"] = {
-        "interval_minutes" => settings.fetch(:interval_minutes),
-        "end_time" => settings.fetch(:end_time),
-        "prompt_templates" => settings.fetch(:prompt_templates).map do |template|
-          {
-            "key" => template.fetch(:key),
-            "name" => template.fetch(:name),
-            "prompt" => template.fetch(:prompt)
-          }
-        end
-      }
-      write_yaml(@path, data)
+      with_config_lock do
+        data = load_yaml(@path)
+        data["session_loops"] = {
+          "interval_minutes" => settings.fetch(:interval_minutes),
+          "end_time" => settings.fetch(:end_time),
+          "prompt_templates" => settings.fetch(:prompt_templates).map do |template|
+            {
+              "key" => template.fetch(:key),
+              "name" => template.fetch(:name),
+              "prompt" => template.fetch(:prompt)
+            }
+          end
+        }
+        write_yaml(@path, data)
+      end
       load!
       @session_loop_settings
     end
 
     def update_personal_assistant!(attrs)
-      data = load_yaml(@path)
-      data["personal_assistant"] = attrs
-      write_yaml(@path, data)
+      with_config_lock do
+        data = load_yaml(@path)
+        data["personal_assistant"] = attrs
+        write_yaml(@path, data)
+      end
       load!
       @personal_assistant
     end
 
     def clear_personal_assistant!
-      data = load_yaml(@path)
-      data.delete("personal_assistant")
-      write_yaml(@path, data)
+      with_config_lock do
+        data = load_yaml(@path)
+        data.delete("personal_assistant")
+        write_yaml(@path, data)
+      end
       load!
       @personal_assistant
     end
@@ -405,21 +445,26 @@ module HQ
     end
 
     def archive_project!(project_key, archived_path: nil)
-      data = load_yaml(@path)
-      projects = Array(data["projects"])
-      project_index = projects.index { |project| project["key"].to_s == project_key.to_s }
-      return nil unless project_index
+      project = with_config_lock do
+        data = load_yaml(@path)
+        projects = Array(data["projects"])
+        project_index = projects.index { |candidate| candidate["key"].to_s == project_key.to_s }
+        next nil unless project_index
 
-      project = projects.delete_at(project_index)
-      data["projects"] = projects
+        project = projects.delete_at(project_index)
+        data["projects"] = projects
 
-      target_path = archived_path || default_archived_path
-      archived = load_yaml(target_path, optional: true)
-      archived["projects"] = Array(archived["projects"]).reject { |item| item["key"].to_s == project_key.to_s }
-      archived["projects"] << project
+        target_path = archived_path || default_archived_path
+        archived = load_yaml(target_path, optional: true)
+        archived["projects"] = Array(archived["projects"]).reject { |item| item["key"].to_s == project_key.to_s }
+        archived["projects"] << project
 
-      write_yaml(@path, data)
-      write_yaml(target_path, archived)
+        write_yaml(@path, data)
+        write_yaml(target_path, archived)
+        project
+      end
+      return nil unless project
+
       HQ.hooks.publish("project.archived", project_key: project_key.to_s)
       project
     end
@@ -862,6 +907,18 @@ module HQ
 
     def write_yaml(path, data)
       FileStore.write_yaml(path, data)
+    end
+
+    def with_config_lock
+      @config_lock_mutex.synchronize do
+        FileUtils.mkdir_p(File.dirname(@path))
+        File.open("#{@path}.lock", File::RDWR | File::CREAT, 0o600) do |file|
+          file.flock(File::LOCK_EX)
+          yield
+        ensure
+          file.flock(File::LOCK_UN)
+        end
+      end
     end
 
     def normalized_system_prompts

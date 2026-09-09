@@ -54,3 +54,38 @@ Each message ID has one server-local acceptance record. The record fingerprints 
 Acceptance transitions are monotonic. `staged` and `message_recorded` records become `queued`, `accepted`, `dispatched`, or `start_failed` when the corresponding journal, queue, or positive run evidence exists. If recording or launch acknowledgement is interrupted, the result is `unknown`; unknown and launch-attempted records are never replayed or launched again without positive run evidence. The lookup may advance a record only from observed journal, queue, claim, or run evidence, and evidence-only promotion does not append or launch work.
 
 An acceptance-backed queue deletion records `queued -> unknown` with a cancellation-in-flight marker before the non-dispatching delete, then records terminal `canceled` only after the queue mutation is durable. The delete response and acceptance lookup expose the canceled receipt; an identical POST returns `409` with `canceled` and never requeues, while a repeated DELETE replays the receipt. If deletion or its receipt write is interrupted, the acceptance remains `unknown` and returns `cancellation_unknown`; absence of a queue entry is not enough to claim cancellation. If a matching run wins a cancel-versus-dispatch race, positive run evidence promotes the receipt to `dispatched` or `start_failed`, never back to `queued`. The server keeps the newest 256 full records and leaves `acceptance_expired` tombstones for evicted IDs in the active generation, so an evicted ID cannot silently append or start again during that session. Tombstones from closed generations are pruned when the next generation opens; an old request still fails the active-key/generation guard and cannot mutate the new session, while lookup of the pruned ID returns not found. Remote attachments use the request ID in their deterministic cache key, so a replay does not import a second copy.
+
+### Durable action worker and history
+
+FRED action proposals are a durable queue with monotonic receipts. A single
+bounded worker starts after Remote Server daemonization, periodically recovers
+only expired leases, and holds each action's execution lock through claim,
+effect, and receipt. Duplicate confirmation reads the stored receipt without
+waiting for that lock. A server-owned `precondition_token` accompanies the
+proposal digest; confirmation freezes the displayed preview and effective
+create-agent settings, including explicit null values and the resolved
+workspace. Later GETs do not replace that frozen preview. Unavailable previews
+return HTTP 409 with `details.code: "preview_unavailable"` and never queue or
+execute the action. Null fields in an update-project proposal remain
+unchanged; they are not expanded into a stale snapshot of the project.
+
+Before an effect, the worker checks the active FRED generation and the frozen
+material precondition. Verification does not use that pre-effect token as
+proof: current matching state is only an observation. Without a committed
+receipt or a durable marker unique to the proposal, verification remains
+`outcome_unknown` and cannot claim completion or no effect. Start and create
+operations use AgentStore's read-modify-write transaction; delegated creation
+commits the child, relationship, and delegation memory together, so a failed
+relationship cannot leave an orphan.
+
+`GET /personal-assistant/history/:id` includes the selected historical
+`generation` and `agent_key`, plus old-generation proposals as
+`archived_actions`. `expired_actions` is only the subset of unconfirmed
+`ready` and `awaiting_confirmation` proposals that became `state: "expired"`
+with their original `historical_state`. Accepted, in-flight, failed,
+uncertain, executed, and rejected actions remain in `archived_actions` with
+their factual `state` and `recovery` data. Every archived action is read-only
+and omits preflight and precondition authority. When the archived agent is
+available, `archived_conversation` supplies read-only agent and conversation
+paths. These records are factual continuity only; they cannot be confirmed,
+retried, or executed in the new generation.

@@ -1173,7 +1173,11 @@ module RemoteServerTest
         actions.register_finalized!([item], active_key:, source_run_id: run_id).first
       end
       confirm = lambda do |proposal|
-        server.send(:route, service, "POST", "/personal-assistant/actions/#{proposal.fetch("id")}/confirm", { "confirmed" => true }, nil).dig(:body, :proposal)
+        preflight = server.send(:route, service, "GET", "/personal-assistant/actions/#{proposal.fetch("id")}/preflight", {}, nil).fetch(:body).fetch(:preflight)
+        server.send(:route, service, "POST", "/personal-assistant/actions/#{proposal.fetch("id")}/confirm", {
+                      "confirmed" => true, "proposal_digest" => proposal.fetch("digest"),
+                      "precondition_token" => preflight.fetch("precondition_token")
+                    }, nil).dig(:body, :proposal)
       end
 
       created_project = register.call(
@@ -1239,18 +1243,13 @@ module RemoteServerTest
       )
       begin
         confirm.call(duplicate_project)
-        raise "expected duplicate project creation to fail"
-      rescue HQ::RemoteServer::Error
-        nil
+        raise "expected unavailable duplicate project preview to be rejected"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.details&.fetch("code", nil) == "preview_unavailable",
+               "expected duplicate project confirmation to reject its unavailable preview")
       end
-      verified = server.send(:route, service, "POST", "/personal-assistant/actions/#{duplicate_project.fetch("id")}/verify", {}, nil).dig(:body, :proposal)
-      assert(verified["state"] == "executed", "expected verification to observe the existing matching project without creating it again")
-      service.record_personal_assistant_action_outcome!(verified)
-      receipts = service.conversation(active_key).select do |entry|
-        entry.dig(:metadata, "personal_assistant_action_proposal_id") == duplicate_project["id"]
-      end
-      assert(receipts.length == 2 && receipts.last[:content].include?("Tycho completed create_project."),
-             "expected verified success to correct the earlier failed receipt exactly once")
+      assert(actions.proposal(duplicate_project.fetch("id"))["state"] == "awaiting_confirmation",
+             "expected an unavailable duplicate project preview to remain unaccepted")
       stale = register.call(
         { "type" => "start_agent", "description" => "Start later", "arguments" => { "agent_key" => inspected_agent[:key] } }, "fred-stale-action"
       )
