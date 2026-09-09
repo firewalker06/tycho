@@ -121,7 +121,6 @@ module HQ
       RemoteServerControl.publish(host: @host, port: @port)
       @shutdown = false
       @restart_requested = false
-      @personal_assistant_action_worker.start!
       shutdown = proc do
         @shutdown = true
         begin
@@ -145,6 +144,9 @@ module HQ
         @output.flush if @output.respond_to?(:flush)
       end
       daemonize_after_startup! if @daemonize_after_startup
+      # Process.daemon forks away every non-calling thread. Start the bounded
+      # FRED worker only after the final serving process exists.
+      @personal_assistant_action_worker.start!
       warm_resource_catalog!
 
       until @shutdown
@@ -2062,7 +2064,10 @@ module HQ
       entry = @personal_assistant.continuity_history_entry(id)
       raise Error.new("Unknown Personal Assistant history entry", status: 404) unless entry
 
-      entry
+      entry.merge(
+        "expired_actions" => personal_assistant_expired_history_actions(entry),
+        "archived_conversation" => personal_assistant_archived_conversation_reference(entry)
+      ).compact
     rescue ArgumentError => e
       raise Error.new(e.message, status: 404)
     end
@@ -2377,6 +2382,7 @@ module HQ
         action_conflict!("A server-owned precondition token is required", code: "precondition_required") if token.empty?
 
         displayed = personal_assistant_action_preflight(id)
+        ensure_personal_assistant_preview_available!(displayed)
         latest = @personal_assistant_actions.receipt!(id, digest:)
         return replayed_personal_assistant_action(id, digest:) unless %w[ready awaiting_confirmation].include?(latest["state"])
         current = build_personal_assistant_action_preflight(proposal, status: @personal_assistant.status)
@@ -2393,8 +2399,22 @@ module HQ
             execution_arguments: personal_assistant_action_execution_arguments(proposal, displayed)
           )
         end
+      elsif PersonalAssistantActionCatalog::MUTATIONS.include?(proposal["type"]) && %w[ready awaiting_confirmation].include?(proposal["state"])
+        action_conflict!("A proposal digest is required", code: "proposal_digest_required") if digest.empty?
+        action_conflict!("Assistant proposal has changed", code: "proposal_changed") unless digest == proposal["digest"].to_s
+        action_conflict!("A server-owned precondition token is required", code: "precondition_required") if token.empty?
+        displayed = personal_assistant_action_preflight(id)
+        ensure_personal_assistant_preview_available!(displayed)
+        action_conflict!("The displayed action preview is stale", code: "precondition_changed") unless displayed["precondition_token"].to_s == token
+        @personal_assistant_actions.freeze_preflight!(
+          id,
+          displayed,
+          precondition_token: token,
+          execution_arguments: personal_assistant_action_execution_arguments(proposal, displayed)
+        )
       elsif !token.empty?
         displayed = personal_assistant_action_preflight(id)
+        ensure_personal_assistant_preview_available!(displayed)
         action_conflict!("The displayed action preview is stale", code: "precondition_changed") unless displayed["precondition_token"].to_s == token
         if %w[ready awaiting_confirmation].include?(proposal["state"])
           @personal_assistant_actions.freeze_preflight!(
@@ -2434,6 +2454,7 @@ module HQ
     end
 
     def revalidate_personal_assistant_action!(proposal)
+      ensure_personal_assistant_preview_available!(proposal["preflight"]) if proposal["preflight"].is_a?(Hash)
       token = proposal["precondition_token"].to_s.strip
       return true if token.empty?
 
@@ -2600,6 +2621,12 @@ module HQ
       raise Error.new(message, status: 409, details: { "code" => code })
     end
 
+    def ensure_personal_assistant_preview_available!(preview)
+      return if preview.is_a?(Hash) && preview["prepared"] == true && preview.dig("details", "available") != false
+
+      action_conflict!("The action preview is unavailable", code: "preview_unavailable")
+    end
+
     def reject_personal_assistant_action(id)
       ensure_current_personal_assistant_action!(id)
       @personal_assistant_actions.reject!(id)
@@ -2668,7 +2695,9 @@ module HQ
       when "install_or_update_tycho_skill"
         change_skills(arguments.fetch("harness"), arguments.fetch("action"), "confirmed" => true)
       when "create_agent"
-        { "agent" => create_agent(arguments.merge("start" => false), actor: DelegationActor.user_actor) }
+        execution = arguments.dup
+        effective_settings = execution.delete("__fred_effective_settings")
+        { "agent" => create_agent(execution.merge("start" => false), actor: DelegationActor.user_actor, effective_settings:) }
       when "message_agent"
         submit_prompt(arguments.fetch("agent_key"), "prompt" => arguments.fetch("prompt"), actor: DelegationActor.user_actor)
       when "start_agent" then start_agent(arguments.fetch("agent_key"), {}, actor: DelegationActor.user_actor)
@@ -2708,6 +2737,38 @@ module HQ
       { "project" => project(arguments.fetch("key")) }
     rescue ConfigError => e
       raise Error.new(e.message, status: 400)
+    end
+
+    def personal_assistant_expired_history_actions(entry)
+      active_key = entry["agent_key"].to_s
+      return [] if active_key.empty?
+
+      @personal_assistant_actions.proposals.filter_map do |proposal|
+        next unless proposal["active_key"].to_s == active_key
+        next unless %w[ready awaiting_confirmation queued executing verifying failed].include?(proposal["state"].to_s)
+
+        proposal.reject do |key, _value|
+          %w[preflight precondition_token preflight_frozen lease_expires_at claimed_at executed_at verification_started_at verified_at].include?(key)
+        end.merge(
+          "state" => "expired",
+          "historical_state" => proposal["state"],
+          "read_only" => true,
+          "expired" => true
+        )
+      end
+    end
+
+    def personal_assistant_archived_conversation_reference(entry)
+      key = entry["agent_key"].to_s
+      return nil if key.empty? || !@agent_archive_store.find(key)
+
+      encoded = URI.encode_www_form_component(key)
+      {
+        "agent_key" => key,
+        "read_only" => true,
+        "path" => "/agents/#{encoded}",
+        "conversation_path" => "/agents/#{encoded}/conversation"
+      }
     end
 
     def update_personal_assistant_project(arguments)
@@ -3956,7 +4017,6 @@ module HQ
       target = reject_personal_assistant_control!(find_agent!(key))
       target = associate_delegation_from_attrs!(target, attrs, actor:)
       @agent_store.accept_prompt_from!(target, actor:) if target.delegation_parent
-      save_agent(target)
       target = @agent_store.start_agent!(target.key) unless target.running?
       @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target) }
@@ -3969,19 +4029,27 @@ module HQ
       { agent: agent_payload(target) }
     end
 
-    def create_agent(attrs = {}, actor: nil, **attribute_keywords)
+    def create_agent(attrs = {}, actor: nil, effective_settings: nil, **attribute_keywords)
       attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
       actor ||= delegation_actor_from_attrs(attrs)
       project = find_project!(attrs["project_key"])
       template_key = attrs["template_key"].to_s
       template_key = project.agent_templates.first&.key.to_s if template_key.empty?
-      validate_delegation_parent!(attrs, agents: load_all_agents, actor:) unless attrs["parent_agent_key"].to_s.strip.empty?
-      target = @agent_store.create_from_template_and_persist!(project, template_key) do |candidate, _current|
-        candidate.update!(**agent_attrs(candidate, attrs, project: project, creating: true))
+      parent_key = attrs["parent_agent_key"].to_s.strip
+      delegation = if parent_key.empty?
+                     nil
+                   else
+                     {
+                       parent_key:,
+                       parent_server_id: attrs["parent_server_id"],
+                       actor:,
+                       validate: ->(agents) { validate_delegation_parent!(attrs, agents:, actor:) }
+                     }
+                   end
+      target = @agent_store.create_from_template_and_persist!(project, template_key, delegation:) do |candidate, _current|
+        candidate.update!(**agent_attrs(candidate, attrs, project: project, creating: true, effective: effective_settings))
         @agent_store.ensure_project_context_prompt!(candidate, project)
       end
-      target = associate_delegation_from_attrs!(target, attrs, actor:) unless attrs["parent_agent_key"].to_s.strip.empty?
-      @agent_store.accept_prompt_from!(target, actor:) if target.delegation_parent
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"])
       @agent_activity_snapshot.upsert!(target)
       agent_payload(target)
@@ -4133,24 +4201,24 @@ module HQ
 
       case proposal["type"]
       when "create_agent"
+        effective = {}
         {
           "agent" => "harness",
           "model" => "model",
           "reasoning_effort" => "reasoning_effort"
         }.each do |argument_key, detail_key|
-          arguments[argument_key] = details[detail_key] if details.key?(detail_key)
+          next unless details.key?(detail_key)
+
+          arguments[argument_key] = details[detail_key]
+          effective[argument_key] = details[detail_key]
         end
+        workspace = details.dig("project", "path")
+        effective["workspace"] = workspace if details.dig("project", "path")
+        arguments["__fred_effective_settings"] = effective unless effective.empty?
       when "create_project"
         after = details["after"]
         if after.is_a?(Hash)
           %w[key name path group agent model reasoning_effort].each do |key|
-            arguments[key] = after[key] if after.key?(key)
-          end
-        end
-      when "update_project"
-        after = details["after"]
-        if after.is_a?(Hash)
-          %w[name group agent model reasoning_effort].each do |key|
             arguments[key] = after[key] if after.key?(key)
           end
         end
@@ -5373,19 +5441,44 @@ module HQ
       "#{value.sub(%r{/+\z}, "")}/"
     end
 
-    def agent_attrs(target, attrs, project:, creating:)
+    def agent_attrs(target, attrs, project:, creating:, effective: nil)
+      effective = effective.transform_keys(&:to_s) if effective.is_a?(Hash)
       template_key = attrs["template_key"].to_s
       template_key = target.template_key if template_key.empty?
       template = project.agent_templates.find { |candidate| candidate.key == template_key } ||
                  project.agent_templates.first
       prompt = attrs.key?("prompt") ? attrs["prompt"].to_s : target.prompt.to_s
       name = attrs.key?("name") ? attrs["name"].to_s : target.name.to_s
-      workspace = attrs.key?("workspace") ? attrs["workspace"].to_s : target.workspace.to_s
+      workspace = if effective&.key?("workspace")
+                    effective["workspace"].to_s
+                  elsif attrs.key?("workspace")
+                    attrs["workspace"].to_s
+                  else
+                    target.workspace.to_s
+                  end
       sandbox_mode = attrs.key?("sandbox_mode") ? attrs["sandbox_mode"].to_s : target.sandbox_mode.to_s
       sandbox_mode = template.sandbox_mode.to_s if sandbox_mode.empty?
-      agent_value = attrs.key?("agent") && !attrs["agent"].nil? ? attrs["agent"] : target.agent
-      model_value = attrs.key?("model") && !attrs["model"].nil? ? attrs["model"] : target.model
-      effort_value = attrs.key?("reasoning_effort") && !attrs["reasoning_effort"].nil? ? attrs["reasoning_effort"] : target.reasoning_effort
+      agent_value = if effective&.key?("agent")
+                      effective["agent"]
+                    elsif attrs.key?("agent") && !attrs["agent"].nil?
+                      attrs["agent"]
+                    else
+                      target.agent
+                    end
+      model_value = if effective&.key?("model")
+                      effective["model"]
+                    elsif attrs.key?("model") && !attrs["model"].nil?
+                      attrs["model"]
+                    else
+                      target.model
+                    end
+      effort_value = if effective&.key?("reasoning_effort")
+                       effective["reasoning_effort"]
+                     elsif attrs.key?("reasoning_effort") && !attrs["reasoning_effort"].nil?
+                       attrs["reasoning_effort"]
+                     else
+                       target.reasoning_effort
+                     end
       agent = agent_value.to_s.strip.downcase
       model = model_value.to_s.strip
       reasoning_effort = effort_value.to_s.strip.downcase

@@ -4,6 +4,7 @@ require "fileutils"
 require "json"
 require "net/http"
 require "socket"
+require "stringio"
 require "tmpdir"
 require "thread"
 require "timeout"
@@ -18,6 +19,7 @@ PHASE2_TEST_FIXTURES = File.join(PHASE2_TEST_HOME, "fixtures")
 FileUtils.mkdir_p([PHASE2_TEST_TMPDIR, PHASE2_TEST_FIXTURES])
 %w[
   TYCHO_CONFIG_PATH TYCHO_SYSTEM_PROMPTS_PATH TYCHO_RESPONSE_STYLE_PATH
+  TYCHO_CONFIG_DIR
   TYCHO_LOGS_ROOT TYCHO_SCHEDULES_PATH TYCHO_SCHEDULES_ROOT
   TYCHO_SCHEDULES_STATE_PATH TYCHO_SCHEDULER_DAEMON_PATH
 ].each { |name| ENV.delete(name) }
@@ -83,21 +85,74 @@ class Phase2CountingRemoteService < HQ::RemoteService
   end
 end
 
+class Phase2WorkerSpy
+  attr_reader :actions
+
+  def initialize(actions, on_start: nil)
+    @actions = actions
+    @on_start = on_start
+    @started = false
+  end
+
+  def start!
+    @started = true
+    @on_start&.call
+    true
+  end
+
+  alias start start!
+
+  def started?
+    @started
+  end
+
+  def shutdown
+    true
+  end
+
+  def wake!
+    true
+  end
+end
+
 class PersonalAssistantPhase2Test
   def self.run
+    assert_internal_isolation
     assert_background_confirmation_is_durable_and_nonblocking
     assert_background_http_status_stays_responsive
     assert_frozen_preview_reconciles_stale_defaults
     assert_frozen_effective_settings_reach_executor
+    assert_frozen_create_agent_fields_and_nullable_patch
+    assert_unavailable_preview_is_rejected
     assert_schedule_precondition_ignores_derived_next_run
+    assert_daemon_starts_worker_after_daemonization
     assert_personal_assistant_snapshot_coalesces_bundle_builds
     assert_current_work_honors_live_visibility
     assert_verification_never_claims_observed_state
     assert_worker_create_preserves_foreground_create
     assert_worker_create_preserves_foreground_update
+    assert_start_preserves_concurrent_create
+    assert_delegated_create_failure_is_atomic
     assert_worker_project_create_preserves_foreground_update
     assert_worker_project_create_preserves_foreground_settings
+    assert_history_exposes_expired_actions_read_only
     puts "personal_assistant_phase2_test: OK"
+  end
+
+  def self.assert_internal_isolation
+    paths = [
+      HQ::Registry::DEFAULT_PATH, HQ::USER_CONFIG_DIR, HQ::USER_SCHEDULES_DIR, HQ::USER_LOGS_DIR,
+      HQ::AGENTS_FILE, HQ::PERSONAL_ASSISTANT_DIR, HQ::SCHEDULES_FILE, HQ::SCHEDULES_STATE_FILE,
+      HQ::AGENT_LOGS_DIR
+    ]
+    root = "#{File.expand_path(PHASE2_TEST_HOME)}/"
+    paths.each do |path|
+      expanded = File.expand_path(path)
+      assert(expanded.start_with?(root), "expected test runtime path to stay under #{PHASE2_TEST_HOME}: #{expanded}")
+    end
+    assert(ENV["TYCHO_CONFIG_DIR"].to_s.empty?, "expected TYCHO_CONFIG_DIR to be cleared before HQ load")
+    assert(ENV["TYCHO_CODEX_BIN"] == File.join(PHASE2_TEST_HOME, "missing-codex"),
+           "expected fixture tests to use a missing Codex executable")
   end
 
   def self.assert_background_confirmation_is_durable_and_nonblocking
@@ -108,7 +163,8 @@ class PersonalAssistantPhase2Test
         executor: ->(*) { started << true; release.pop; { "ok" => true } }
       )
       fixture.open!(service, server)
-      proposal = fixture.register(actions, "start_agent", { "agent_key" => "missing-agent" }, "start-1")
+      target = service.create_agent("project_key" => "web", "name" => "Blocked action target", "prompt" => "Probe")
+      proposal = fixture.register(actions, "start_agent", { "agent_key" => target[:key] }, "start-1")
       preview = fixture.route(server, service, "GET", "/personal-assistant/actions/#{proposal["id"]}/preflight", {})
       token = preview.dig(:body, :preflight, "precondition_token")
       confirmed = fixture.route(server, service, "POST", "/personal-assistant/actions/#{proposal["id"]}/confirm", {
@@ -259,6 +315,109 @@ class PersonalAssistantPhase2Test
       created = agents.find { |agent| agent.name == "Frozen Settings" }
       assert(created&.model == expected_model, "expected the effect to use the frozen model after a default change")
       worker.shutdown
+    end
+  end
+
+  def self.assert_frozen_create_agent_fields_and_nullable_patch
+    with_fixture do |fixture|
+      fixture.registry.update_project!("web", "model" => nil)
+      service = nil
+      service, server, actions, worker = fixture.build(
+        executor: lambda do |type, arguments|
+          fixture.registry.update_project!("web", "model" => "changed-after-guard")
+          service.send(:reload_projects_from_registry!)
+          service.execute_personal_assistant_action(type, arguments)
+        end
+      )
+      fixture.open!(service, server)
+      proposal = fixture.register(actions, "create_agent", {
+        "project_key" => "web", "name" => "Frozen nil", "prompt" => "Preserve nil", "agent" => nil,
+        "model" => nil, "reasoning_effort" => nil
+      }, "frozen-nil-1")
+      preflight = fixture.route(server, service, "GET", "/personal-assistant/actions/#{proposal["id"]}/preflight", {}).dig(:body, :preflight)
+      original_workspace = preflight.dig("details", "project", "path")
+      confirmed = fixture.route(server, service, "POST", "/personal-assistant/actions/#{proposal["id"]}/confirm", {
+        "confirmed" => true, "proposal_digest" => proposal["digest"], "precondition_token" => preflight["precondition_token"]
+      })
+      assert(confirmed[:status] == 202, "expected nil effective settings confirmation to queue")
+      worker.start!
+      wait_until { actions.proposal(proposal["id"])["state"] == "executed" }
+      created = HQ::AgentStore.new(service.instance_variable_get(:@projects)).load.find { |agent| agent.name == "Frozen nil" }
+      assert(created && created.model.nil? && created.workspace == original_workspace,
+             "expected a frozen nil model and workspace to survive changed project defaults")
+      worker.shutdown
+    end
+
+    with_fixture do |fixture|
+      service = nil
+      service, server, actions, worker = fixture.build(
+        executor: lambda do |type, arguments|
+          fixture.registry.update_project!("web", "model" => "concurrent-model")
+          service.send(:reload_projects_from_registry!)
+          service.execute_personal_assistant_action(type, arguments)
+        end
+      )
+      fixture.open!(service, server)
+      proposal = fixture.register(actions, "update_project", {
+        "project_key" => "web", "name" => "Renamed only", "group" => nil, "agent" => nil,
+        "model" => nil, "reasoning_effort" => nil
+      }, "nullable-patch-1")
+      preflight = fixture.route(server, service, "GET", "/personal-assistant/actions/#{proposal["id"]}/preflight", {}).dig(:body, :preflight)
+      confirmed = fixture.route(server, service, "POST", "/personal-assistant/actions/#{proposal["id"]}/confirm", {
+        "confirmed" => true, "proposal_digest" => proposal["digest"], "precondition_token" => preflight["precondition_token"]
+      })
+      assert(confirmed[:status] == 202, "expected a nullable project patch confirmation to queue")
+      worker.start!
+      wait_until { actions.proposal(proposal["id"])["state"] == "executed" }
+      project = service.registry.projects.find { |candidate| candidate.key == "web" }
+      assert(project.name == "Renamed only" && project.model == "concurrent-model",
+             "expected a name-only patch not to overwrite a concurrent model change")
+      worker.shutdown
+    end
+  end
+
+  def self.assert_unavailable_preview_is_rejected
+    with_fixture do |fixture|
+      executed = false
+      service, server, actions, worker = fixture.build(executor: ->(*) { executed = true })
+      fixture.open!(service, server)
+      proposal = fixture.register(actions, "start_agent", { "agent_key" => "missing-agent" }, "unavailable-preview-1")
+      preflight = fixture.route(server, service, "GET", "/personal-assistant/actions/#{proposal["id"]}/preflight", {}).dig(:body, :preflight)
+      assert(preflight["prepared"] == false && preflight.dig("details", "available") == false,
+             "expected a missing target to produce an unavailable preview")
+      response = fixture.route(server, service, "POST", "/personal-assistant/actions/#{proposal["id"]}/confirm", {
+        "confirmed" => true, "proposal_digest" => proposal["digest"], "precondition_token" => preflight["precondition_token"]
+      })
+      assert(response[:status] == 409 && response.dig(:body, :details, "code") == "preview_unavailable",
+             "expected unavailable previews to be rejected before queue acceptance")
+      assert(actions.proposal(proposal["id"])["state"] == "awaiting_confirmation" && !executed,
+             "expected an unavailable preview to leave no queued job or effect")
+      worker.shutdown
+    end
+  end
+
+  def self.assert_daemon_starts_worker_after_daemonization
+    with_fixture do |fixture|
+      actions = HQ::PersonalAssistantActions.new(
+        path: File.join(fixture.dir, "daemon-proposals.json"), auto_execute: false,
+        executor: ->(*) { {} }
+      )
+      worker = Phase2WorkerSpy.new(actions)
+      server = nil
+      observed = Queue.new
+      daemonizer = lambda do |_nochdir, _noclose|
+        observed << worker.started?
+        server.shutdown
+      end
+      server = HQ::RemoteServer.new(
+        host: "127.0.0.1", port: fixture.free_port, daemonize_after_startup: true,
+        daemonizer:, daemon_log_path: File.join(fixture.dir, "remote-daemon.log"),
+        output: StringIO.new, personal_assistant_action_worker: worker
+      )
+      thread = Thread.new { server.start }
+      thread.join(2)
+      assert(!thread.alive? && observed.pop == false && worker.started?,
+             "expected the FRED worker to start only in the post-daemon serving process")
     end
   end
 
@@ -453,6 +612,73 @@ class PersonalAssistantPhase2Test
         foreground&.join(2)
         worker.shutdown
       end
+    end
+  end
+
+  def self.assert_start_preserves_concurrent_create
+    with_fixture do |fixture|
+      service, server, actions, worker = fixture.build(executor: ->(*) { {} })
+      fixture.open!(service, server)
+      target = service.create_agent("project_key" => "web", "name" => "Start target", "prompt" => "Probe")
+      other = HQ::RemoteService.new(registry: fixture.registry)
+      other.create_agent("project_key" => "web", "name" => "Concurrent create", "prompt" => "Must survive")
+      service.define_singleton_method(:save_agent) { raise "start must not save a stale whole agent list" }
+      store = service.instance_variable_get(:@agent_store)
+      store.define_singleton_method(:start_agent!) { |key| load.find { |agent| agent.key == key } }
+      service.start_agent(target[:key])
+      assert(store.load.any? { |agent| agent.name == "Concurrent create" },
+             "expected start to avoid a stale whole-store save")
+      worker.shutdown
+    end
+  end
+
+  def self.assert_delegated_create_failure_is_atomic
+    with_fixture do |fixture|
+      service, server, actions, worker = fixture.build(executor: ->(*) { {} })
+      fixture.open!(service, server)
+      parent = service.create_agent("project_key" => "web", "name" => "Delegation parent", "prompt" => "Parent")
+      coordinator = Class.new(HQ::DelegationCoordinator) do
+        def attach!(**)
+          raise HQ::DelegationStore::Error, "simulated delegation failure"
+        end
+      end.new
+      store = HQ::AgentStore.new(service.instance_variable_get(:@projects), delegation_coordinator: coordinator)
+      service.instance_variable_set(:@agent_store, store)
+      begin
+        service.create_agent(
+          "project_key" => "web", "name" => "Orphan must not remain", "prompt" => "Child",
+          "parent_agent_key" => parent[:key]
+        )
+        raise "expected delegated creation to fail"
+      rescue HQ::RemoteServer::Error => e
+        assert([403, 409].include?(e.status), "expected delegated creation failure to be reported as a guarded error")
+      end
+      assert(store.load.none? { |agent| agent.name == "Orphan must not remain" },
+             "expected delegated creation failure to roll back the child record")
+      worker.shutdown
+    end
+  end
+
+  def self.assert_history_exposes_expired_actions_read_only
+    with_fixture do |fixture|
+      service, server, actions, worker = fixture.build(executor: ->(*) { {} })
+      fixture.open!(service, server)
+      pending = fixture.register(actions, "start_agent", { "agent_key" => "missing-agent" }, "history-pending-1")
+      old_key = service.personal_assistant[:active_key]
+      restarted = fixture.route(server, service, "POST", "/personal-assistant/restart", { "confirmed" => true })
+      assert(restarted[:status] == 200 && restarted.dig(:body, :personal_assistant, :active_key) != old_key,
+             "expected restart to create a new FRED generation")
+      history = fixture.route(server, service, "GET", "/personal-assistant/history", {})
+      history_id = history.dig(:body, :history, 0, "id")
+      entry = fixture.route(server, service, "GET", "/personal-assistant/history/#{history_id}", {})
+      expired = entry.dig(:body, :history, "expired_actions")&.find { |action| action["id"] == pending["id"] }
+      assert(expired && expired["state"] == "expired" && expired["read_only"] == true && expired["historical_state"] == "awaiting_confirmation",
+             "expected a rolled-over pending proposal to become a real expired read-only history record")
+      assert(expired["precondition_token"].nil? && entry.dig(:body, :history, "archived_conversation", "agent_key") == old_key,
+             "expected history to strip acceptance authority while linking the archived conversation")
+      assert(fixture.route(server, service, "GET", "/personal-assistant/actions", {}).dig(:body, :proposals).none? { |action| action["id"] == pending["id"] },
+             "expected the new active action list to exclude the old proposal")
+      worker.shutdown
     end
   end
 

@@ -291,7 +291,8 @@ module HQ
         raise ArgumentError, "FRED history entry is unavailable" unless File.file?(path)
 
         fit_handoff_json(bounded_handoff(FileStore.read_json(path, fallback: {})), 12_000).merge(
-          "id" => entry["id"], "active_date" => entry["active_date"], "closed_at" => entry["closed_at"], "reason" => entry["reason"]
+          "id" => entry["id"], "active_date" => entry["active_date"], "generation" => entry["generation"],
+          "agent_key" => entry["agent_key"], "closed_at" => entry["closed_at"], "reason" => entry["reason"]
         )
       end
     end
