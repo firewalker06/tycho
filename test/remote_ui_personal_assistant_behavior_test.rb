@@ -69,6 +69,8 @@ module RemoteUIPersonalAssistantBehaviorTest
       vm.createContext(context);
       [
         "personalAssistantAnnouncementAttributes",
+        "personalAssistantActionReceiptAnnouncementAttributes",
+        "renderPersonalAssistantProposal",
         "commitPersonalAssistantAnnouncements",
         "personalAssistantShellRefreshNeeded",
         "personalAssistantConversationEventIdentity",
@@ -126,6 +128,51 @@ module RemoteUIPersonalAssistantBehaviorTest
       context.commitPersonalAssistantAnnouncements();
       assert(liveValue(context.personalAssistantAnnouncementAttributes("current-work", "live")) === "polite",
              "recovery announcement was suppressed by historical state");
+
+      context.escapeHtml = (value) => String(value);
+      context.personalAssistantActionCopy = () => ({ label: "Test action", target: "target", effect: "effect" });
+      context.personalAssistantProposalExpired = () => false;
+      context.personalAssistantActionPreflight = () => null;
+      context.personalAssistantProposalSettings = () => "";
+      context.personalAssistantPreviewRows = () => "";
+      context.personalAssistantActionStatus = () => "Queued";
+      context.personalAssistantActionReceiptCopy = () => "Completed — the same result";
+      context.personalAssistantActionRecovery = () => "";
+      context.renderPersonalAssistantResult = () => "";
+      context.personalAssistantProposalInstruction = () => "instruction";
+      context.state.personalAssistantActionStateOverrides = {};
+      context.state.pendingPersonalAssistantProposalIds = new Set();
+      context.state.personalAssistantActionPreflightErrors = {};
+      context.state.personalAssistantActionErrors = {};
+      context.state.personalAssistantAnnouncementValues = new Map();
+      const proposalA = { id: "proposal-a", state: "queued" };
+      const proposalB = { id: "proposal-b", state: "queued" };
+      const receiptMount = (html) => ({
+        dataset: {
+          paAnnouncementRegion: html.match(/data-pa-announcement-region="([^"]*)"/)[1],
+          paAnnouncementValue: html.match(/data-pa-announcement-value="([^"]*)"/)[1],
+        },
+      });
+      const queuedA = context.renderPersonalAssistantProposal(proposalA);
+      const queuedB = context.renderPersonalAssistantProposal(proposalB);
+      assert(liveValue(queuedA) === "polite" && liveValue(queuedB) === "polite",
+             "distinct proposals sharing receipt text were globally deduplicated");
+      assert(queuedA.includes('data-pa-announcement-region="action-receipt:proposal-a"') &&
+        queuedB.includes('data-pa-announcement-region="action-receipt:proposal-b"'),
+      "receipt announcements did not retain proposal identity");
+      mounted = [receiptMount(queuedA), receiptMount(queuedB)];
+      context.commitPersonalAssistantAnnouncements();
+      assert(liveValue(context.renderPersonalAssistantProposal(proposalA)) === "off" &&
+        liveValue(context.renderPersonalAssistantProposal(proposalB)) === "off",
+      "unchanged receipt announcements were not suppressed after a view rebuild");
+      const completedA = context.renderPersonalAssistantProposal({ ...proposalA, state: "executed" });
+      assert(liveValue(completedA) === "polite",
+             "receipt state changes were suppressed when the visible text stayed the same");
+      mounted = [receiptMount(completedA), receiptMount(queuedB)];
+      context.commitPersonalAssistantAnnouncements();
+      const recoveredA = context.renderPersonalAssistantProposal(proposalA);
+      assert(liveValue(recoveredA) === "polite",
+             "receipt recovery to an earlier state was suppressed by historical state");
 
       context.state.personalAssistant = { configured: true, active_key: "fred" };
       assert(context.personalAssistantPollDelay() === 1500,
