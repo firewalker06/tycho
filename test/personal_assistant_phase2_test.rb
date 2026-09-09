@@ -127,6 +127,7 @@ class PersonalAssistantPhase2Test
     assert_schedule_precondition_ignores_derived_next_run
     assert_daemon_starts_worker_after_daemonization
     assert_personal_assistant_snapshot_coalesces_bundle_builds
+    assert_timezone_cache_reuses_until_boundary
     assert_current_work_honors_live_visibility
     assert_verification_never_claims_observed_state
     assert_worker_create_preserves_foreground_create
@@ -458,6 +459,31 @@ class PersonalAssistantPhase2Test
       assert(service.bundle_calls == 1, "expected consecutive status/actions/current-work reads to share one bundle build")
       puts "personal_assistant_snapshot: #{elapsed_ms}ms across 3 reads, 1 bundle build"
     end
+  end
+
+  def self.assert_timezone_cache_reuses_until_boundary
+    cache = HQ::PersonalAssistantLifecycle::TimezoneSnapshotCache.new
+    original_tz = ENV["TZ"]
+    cases = [
+      ["spring", Time.utc(2026, 3, 8, 5), "America/New_York", "2026-03-08", "2026-03-09T04:00:00Z"],
+      ["fall", Time.utc(2026, 11, 1, 4), "America/New_York", "2026-11-01", "2026-11-02T05:00:00Z"],
+      ["backward", Time.utc(2026, 3, 8, 6), "America/New_York", "2026-03-08", "2026-03-09T04:00:00Z"],
+      ["tokyo", Time.utc(2026, 9, 9, 12), "Asia/Tokyo", "2026-09-09", "2026-09-09T15:00:00Z"],
+      ["utc", Time.utc(2026, 9, 9, 12), "UTC", "2026-09-09", "2026-09-10T00:00:00Z"]
+    ]
+    cases.each do |name, now, timezone, date, boundary|
+      value = cache.fetch(now, timezone)
+      assert(value[:date] == date && value[:next_rollover_at] == boundary && value[:next_at] > now.to_f,
+             "expected #{name} timezone snapshot to preserve its date and next boundary")
+    end
+
+    before_boundary = cache.fetch(Time.utc(2026, 9, 9, 23, 59, 59), "UTC")
+    at_boundary = cache.fetch(Time.utc(2026, 9, 10), "UTC")
+    assert(before_boundary[:date] == "2026-09-09" && before_boundary[:next_rollover_at] == "2026-09-10T00:00:00Z",
+           "expected the exact-boundary probe to start with the prior UTC day")
+    assert(at_boundary[:date] == "2026-09-10" && at_boundary[:next_rollover_at] == "2026-09-11T00:00:00Z",
+           "expected timezone cache to refresh at the exact derived boundary")
+    assert(ENV["TZ"] == original_tz, "expected timezone calculation not to change process TZ")
   end
 
   def self.assert_current_work_honors_live_visibility

@@ -89,3 +89,21 @@ and omits preflight and precondition authority. When the archived agent is
 available, `archived_conversation` supplies read-only agent and conversation
 paths. These records are factual continuity only; they cannot be confirmed,
 retried, or executed in the new generation.
+
+### Progress and measured latency
+
+Conversation polling reads the durable `AgentEventJournal` projection. Stable
+`event_id`, `run_id`, source, and journal sequence metadata make repeated full
+reads safe across reconnects; partial structured output never enters the
+action proposal store. A projected semantic assistant event is visible through
+conversation before the final structured result is persisted.
+
+The Remote Server shares a bounded timezone snapshot cache across its short-lived
+services. It computes the local date and next daily boundary together in a
+child-only timezone environment, reuses them until the derived boundary, and
+never changes process-global `TZ`. The synthetic 101-agent inventory/progress
+fixture (100 non-running agents plus one FRED session with a projected semantic
+event) reduced status serialization from roughly 476 ms to 123 ms; warm
+status/actions/current-work reads measured about 0.6/0.7/0.6 ms. No harness
+ran in this fixture. These are fixture measurements, not production SLAs.
+Bootstrap `/setup` remained a separate 3.47 s catalog step.
