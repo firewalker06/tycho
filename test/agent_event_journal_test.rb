@@ -13,6 +13,7 @@ module AgentEventJournalTest
     assert_concurrent_writers_share_one_sequence
     assert_legacy_replacement_assigns_sequences
     assert_append_migrates_legacy_prefix_before_new_event
+    assert_strict_reader_rejects_corrupt_journal
     puts "agent_event_journal_test: ok"
   end
 
@@ -79,6 +80,21 @@ module AgentEventJournalTest
       events = journal.events
       assert(events.map { |event| event["sequence"] } == [1, 2], "expected legacy sequence assignment")
       assert(events.all? { |event| !event["event_id"].to_s.empty? }, "expected durable identities")
+    end
+  end
+
+  def assert_strict_reader_rejects_corrupt_journal
+    Dir.mktmpdir("tycho-event-journal-corrupt") do |dir|
+      path = File.join(dir, "memory.jsonl")
+      File.write(path, "{not-json}\n")
+      journal = HQ::AgentEventJournal.new(path)
+
+      begin
+        journal.events!
+        raise "expected strict journal reads to reject corrupt data"
+      rescue JSON::ParserError
+        nil
+      end
     end
   end
 

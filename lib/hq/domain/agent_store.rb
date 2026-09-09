@@ -51,8 +51,10 @@ module HQ
       agents
     end
 
-    def load_with_poll_events
-      with_exclusive_lock { load_with_poll_events_unlocked }
+    def load_with_poll_events(process_delegations: true, dispatch_prompt_queues: true)
+      with_exclusive_lock do
+        load_with_poll_events_unlocked(process_delegations:, dispatch_prompt_queues:)
+      end
     end
 
     def mutate(dispatch_prompt_queues: true)
@@ -330,7 +332,7 @@ module HQ
       end
     end
 
-    def enqueue_prompt!(key, prompt:, attachments: nil, accepted_at: nil, id: nil)
+    def enqueue_prompt!(key, prompt:, attachments: nil, accepted_at: nil, id: nil, client_request_id: nil)
       mutate do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
@@ -338,12 +340,13 @@ module HQ
 
         attributes = { prompt:, attachments:, accepted_at: accepted_at || Time.now }
         attributes[:id] = id if id
+        attributes[:client_request_id] = client_request_id if client_request_id
         [target, target.enqueue_prompt!(**attributes)]
       end
     end
 
     def edit_queued_prompt!(key, entry_id, prompt:)
-      mutate do |agents, _events|
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
 
@@ -352,7 +355,7 @@ module HQ
     end
 
     def delete_queued_prompt!(key, entry_id)
-      mutate do |agents, _events|
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
 
@@ -391,7 +394,7 @@ module HQ
       end
     end
 
-    def accept_ordinary_prompt!(key, text:, attachments:, actor:, retire_inquiry_id: nil)
+    def accept_ordinary_prompt!(key, text:, attachments:, actor:, retire_inquiry_id: nil, metadata: nil, event_id: nil)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = find_agent_in!(agents, key)
         active_id = target.latest_inquiry_id.to_s
@@ -411,12 +414,14 @@ module HQ
         end
 
         accept_prompt_from!(target, actor:, agents:)
-        target.add_user_message!(text, attachments:, metadata: target.message_author_metadata(actor))
+        author_metadata = target.message_author_metadata(actor)
+        message_metadata = [author_metadata, metadata].select { |value| value.is_a?(Hash) }.reduce({}) { |result, value| result.merge(value) }
+        target.add_user_message!(text, attachments:, metadata: message_metadata, event_id:)
         target
       end
     end
 
-    def answer_inquiry!(key, inquiry_id:, answer:, attachments:, feedback: nil, feedback_embedded: false)
+    def answer_inquiry!(key, inquiry_id:, answer:, attachments:, feedback: nil, feedback_embedded: false, metadata: nil, event_id_prefix: nil)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = find_agent_in!(agents, key)
         expected_id = target.latest_inquiry_id.to_s
@@ -425,9 +430,12 @@ module HQ
         end
 
         accept_delegation_prompt!(target, owner: "user")
-        target.add_user_message!(answer, inquiry_id: expected_id, attachments:)
+        target.add_user_message!(answer, inquiry_id: expected_id, attachments:, metadata:, event_id: event_id_prefix)
         unless feedback_embedded || feedback.to_s.empty?
-          target.add_user_message!(feedback, metadata: { "inquiry_feedback" => true })
+          feedback_metadata = { "inquiry_feedback" => true }
+          feedback_metadata.merge!(metadata) if metadata.is_a?(Hash)
+          feedback_event_id = event_id_prefix.to_s.empty? ? nil : "#{event_id_prefix}:feedback"
+          target.add_user_message!(feedback, metadata: feedback_metadata, event_id: feedback_event_id)
         end
         target
       end
@@ -546,9 +554,15 @@ module HQ
       end
 
       baseline = claim["baseline_run_count"].to_i
+      run_metadata = { "prompt_queue_claim_id" => claim["id"] }
+      request_ids = Array(claim["personal_assistant_client_request_ids"]).filter_map do |id|
+        value = id.to_s.strip
+        value.empty? ? nil : value
+      end
+      run_metadata["personal_assistant_client_request_ids"] = request_ids unless request_ids.empty?
       accepted = begin
         stamp = @delegation_coordinator.ownership_stamp(agent.key)
-        stamp ? agent.start!(delegation_stamp: stamp) : agent.start!
+        stamp ? agent.start!(delegation_stamp: stamp, run_metadata:) : agent.start!(run_metadata:)
       rescue StandardError => e
         agent.fail_prompt_queue_dispatch!(dispatch_failure_message(e.message))
         save_unlocked(agents)

@@ -432,13 +432,15 @@ module HQ
       result
     end
 
-    def enqueue_prompt!(prompt:, attachments: nil, accepted_at: Time.now, id: SecureRandom.uuid)
+    def enqueue_prompt!(prompt:, attachments: nil, accepted_at: Time.now, id: SecureRandom.uuid, client_request_id: nil)
       entry = {
         "id" => id.to_s,
         "prompt" => prompt.to_s.strip,
         "attachments" => normalize_attachments(attachments) || [],
         "accepted_at" => accepted_at.utc.iso8601(6)
       }
+      request_id = client_request_id.to_s.strip
+      entry["client_request_id"] = request_id unless request_id.empty?
       raise ArgumentError, "Queued prompt is required" if entry["prompt"].empty?
 
       @prompt_queue << entry
@@ -475,6 +477,11 @@ module HQ
         "baseline_run_count" => run_count,
         "message_appended" => false
       }
+      client_request_ids = @prompt_queue.filter_map do |entry|
+        id = entry["client_request_id"].to_s.strip
+        id.empty? ? nil : id
+      end
+      @prompt_queue_claim["personal_assistant_client_request_ids"] = client_request_ids unless client_request_ids.empty?
       @prompt_queue = []
       @prompt_queue_dispatch_error = nil
       @prompt_queue_claim
@@ -488,7 +495,13 @@ module HQ
       entries = Array(claim["entries"])
       prompt = entries.map { |entry| entry["prompt"].to_s.strip }.reject(&:empty?).join("\n\n---\n\n")
       attachments = entries.flat_map { |entry| Array(entry["attachments"]) }
-      add_user_message!(prompt, attachments:, metadata: { "prompt_queue_claim_id" => claim["id"] })
+      metadata = { "prompt_queue_claim_id" => claim["id"] }
+      request_ids = Array(claim["personal_assistant_client_request_ids"]).filter_map do |id|
+        value = id.to_s.strip
+        value.empty? ? nil : value
+      end
+      metadata["personal_assistant_client_request_ids"] = request_ids unless request_ids.empty?
+      add_user_message!(prompt, attachments:, metadata:)
       claim["message_appended"] = true
       true
     end
@@ -706,7 +719,7 @@ module HQ
         run.finished_at = @finished_at
         run.exit_code = @last_exit_code
         run.status = "failed"
-        run.metadata = (run.metadata || {}).merge("spawn_error" => e.message)
+        run.metadata = (run.metadata || {}).merge("start_failure" => true, "spawn_error" => e.message)
         FileUtils.rm_f(run_pid_file_path(run.run_id))
         before_spawn&.call(run)
         begin
@@ -967,7 +980,7 @@ module HQ
       response_style_source_for(resolved_response_style)
     end
 
-    def add_user_message!(content, inquiry_id: nil, attachments: nil, metadata: nil)
+    def add_user_message!(content, inquiry_id: nil, attachments: nil, metadata: nil, event_id: nil)
       text = content.to_s.strip
       return if text.empty?
 
@@ -990,8 +1003,11 @@ module HQ
       @messages << AgentMessage.new(role: "user", content: text, created_at:, metadata: message_metadata)
       trim_messages!
       memory_store.append_user_message!(text, created_at:, attachments: normalized_attachments,
-                                        metadata: memory_metadata)
-      memory_store.append_inquiry_response!(text, created_at:, inquiry_id: resolved_inquiry_id) if inquiry
+                                        metadata: memory_metadata, event_id:)
+      if inquiry
+        inquiry_event_id = event_id.to_s.strip.empty? ? nil : "#{event_id}:inquiry-response"
+        memory_store.append_inquiry_response!(text, created_at:, inquiry_id: resolved_inquiry_id, event_id: inquiry_event_id)
+      end
       HQ.hooks.publish("agent.message.user_added",
                        agent_key: @key,
                        project_key: @project_key,
@@ -1332,6 +1348,9 @@ module HQ
         file.puts
       end
 
+      metadata = run_metadata.is_a?(Hash) ? run_metadata.dup : {}
+      metadata["start_failure"] = true
+      metadata["start_error"] = message.to_s[0, 600]
       failed_run = record_run!(AgentRun.new(
         run_id: SecureRandom.uuid,
         started_at: @started_at,
@@ -1343,7 +1362,7 @@ module HQ
         agent: @agent,
         model: @model,
         log_start_offset: log_start_offset,
-        metadata: run_metadata.is_a?(Hash) ? run_metadata : {}
+        metadata:
       ))
       if @usage_metrics_store
         UsageMetrics.record_run(
@@ -1937,7 +1956,11 @@ module HQ
         "entries" => entries,
         "claimed_at" => value["claimed_at"].to_s,
         "baseline_run_count" => value["baseline_run_count"].to_i,
-        "message_appended" => value["message_appended"] == true
+        "message_appended" => value["message_appended"] == true,
+        "personal_assistant_client_request_ids" => Array(value["personal_assistant_client_request_ids"]).filter_map do |request_id|
+          normalized = request_id.to_s.strip
+          normalized.empty? ? nil : normalized
+        end
       }
     end
 
@@ -1966,7 +1989,8 @@ module HQ
         "prompt" => prompt,
         "attachments" => normalize_attachments(value["attachments"]) || [],
         "accepted_at" => value["accepted_at"].to_s,
-        "updated_at" => value["updated_at"].to_s.empty? ? nil : value["updated_at"].to_s
+        "updated_at" => value["updated_at"].to_s.empty? ? nil : value["updated_at"].to_s,
+        "client_request_id" => value["client_request_id"].to_s.empty? ? nil : value["client_request_id"].to_s
       }.compact
     end
 

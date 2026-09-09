@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "date"
+require "digest"
 require "fileutils"
 require "json"
 require "time"
@@ -15,12 +16,47 @@ require_relative "memory_handoff"
 module HQ
   class PersonalAssistantLifecycle
     ROLE = "personal_assistant_daily"
+    MESSAGE_ACCEPTANCE_LIMIT = 256
+    MESSAGE_ACCEPTANCE_STATES = %w[staged message_recorded accepted queued dispatched start_failed unknown canceled rejected expired].freeze
+    MESSAGE_ACCEPTANCE_TRANSITIONS = {
+      "staged" => %w[staged message_recorded queued accepted dispatched start_failed unknown rejected],
+      "message_recorded" => %w[message_recorded queued accepted dispatched start_failed unknown],
+      "accepted" => %w[accepted],
+      "queued" => %w[queued dispatched start_failed unknown],
+      "dispatched" => %w[dispatched],
+      "start_failed" => %w[start_failed],
+      "unknown" => %w[unknown dispatched start_failed canceled],
+      "canceled" => %w[canceled],
+      "rejected" => %w[rejected],
+      "expired" => %w[expired]
+    }.freeze
     INTRODUCTION = "I’m FRED, your Tycho Personal Assistant. I can explain Tycho, inspect agents, projects, schedules, and recent runs, and prepare project or agent work on this server.\n\nI report action results as data. I only propose mutations for exact Tycho confirmation; I never make arbitrary tooling changes. Creating an agent prepares it, and starting or messaging it needs its own confirmation.\n\nI use one daily conversation with a bounded handoff to the next day. Try: ‘Show running agents’, ‘Explain schedules’, or ‘Prepare an agent to review this project’."
+
+    class SessionConflict < ArgumentError
+      attr_reader :code, :active_key, :generation
+
+      def initialize(message, code:, active_key: nil, generation: nil)
+        super(message)
+        @code = code
+        @active_key = active_key
+        @generation = generation
+      end
+    end
+
+    class AcceptanceConflict < ArgumentError
+      attr_reader :code
+
+      def initialize(message, code:)
+        super(message)
+        @code = code
+      end
+    end
 
     def initialize(registry:, agent_store:, clock: -> { Time.now }, state_path: File.join(PERSONAL_ASSISTANT_DIR, "state.json"), summary_runner: nil, archiver: nil)
       @registry, @agent_store, @clock, @state_path = registry, agent_store, clock, state_path
       @summary_runner = summary_runner
       @archiver = archiver || method(:archive_internal!)
+      @synchronization_key = "hq-pa-lifecycle-#{object_id}"
     end
 
     def status
@@ -43,6 +79,150 @@ module HQ
 
     def accepting_prompts?(key)
       synchronize { |state| snapshot_finalized_proposals!(state); reconcile!(state); state["phase"] == "active" && state["active_key"] == key.to_s }
+    end
+
+    def with_active_session!(active_key:, generation:)
+      key = active_key.to_s.strip
+      supplied_generation = normalize_generation(generation)
+      synchronize do |state|
+        reconcile!(state, dispatch_prompt_queues: false)
+        context = validate_active_context!(state, key, supplied_generation)
+        yield context
+      end
+    end
+
+    def with_message_acceptance_lock(client_request_id)
+      id = client_request_id.to_s.strip
+      raise ArgumentError, "FRED client_request_id is required" if id.empty?
+
+      path = File.join(File.dirname(@state_path), "message-acceptances", "#{Digest::SHA256.hexdigest(id)}.lock")
+      FileUtils.mkdir_p(File.dirname(path))
+      File.open(path, File::RDWR | File::CREAT, 0o600) do |lock|
+        lock.flock(File::LOCK_EX)
+        yield
+      ensure
+        lock.flock(File::LOCK_UN)
+      end
+    end
+
+    def assert_active_session!(active_key:, generation:)
+      with_active_session!(active_key:, generation:) { |context| context }
+    end
+
+    def begin_message_acceptance!(client_request_id:, active_key:, generation:, fingerprint:, payload:, validate: true)
+      id = client_request_id.to_s.strip
+      key = active_key.to_s.strip
+      supplied_generation = normalize_generation(generation)
+      raise ArgumentError, "FRED client_request_id is required" if id.empty?
+      raise ArgumentError, "FRED message fingerprint is required" if fingerprint.to_s.empty?
+
+      synchronize do |state|
+        if validate
+          reconcile!(state, dispatch_prompt_queues: false)
+          validate_active_context!(state, key, supplied_generation)
+        end
+        prune_message_acceptance_tombstones!(state, generation: supplied_generation)
+        acceptances = Array(state["message_acceptances"]).select { |record| record.is_a?(Hash) }
+        existing = acceptances.find { |record| record["client_request_id"].to_s == id }
+        if existing
+          if existing["fingerprint"].to_s != fingerprint.to_s
+            raise AcceptanceConflict.new("FRED client_request_id was already used with a different payload", code: "payload_mismatch")
+          end
+
+          [deep_copy(existing), false]
+        else
+          expired = Array(state["message_acceptance_tombstones"]).find do |record|
+            record.is_a?(Hash) && record["client_request_id"].to_s == id
+          end
+          if expired
+            raise AcceptanceConflict.new("FRED client_request_id has expired and cannot be reused", code: "acceptance_expired")
+          end
+
+          now = @clock.call.utc.iso8601(6)
+          bounded_payload = bounded_message_payload(payload)
+          record = {
+            "client_request_id" => id,
+            "active_key" => key,
+            "generation" => supplied_generation,
+            "fingerprint" => fingerprint.to_s,
+            "payload" => bounded_payload,
+            "state" => "staged",
+            "message_id" => nil,
+            "inquiry_id" => bounded_payload["inquiry_id"],
+            "start_requested" => payload.is_a?(Hash) && payload["start"] == true,
+            "launch_attempted" => false,
+            "created_at" => now,
+            "updated_at" => now
+          }
+          retained = acceptances + [record]
+          evicted = retained[0, [retained.length - MESSAGE_ACCEPTANCE_LIMIT, 0].max]
+          unless evicted.empty?
+            tombstones = Array(state["message_acceptance_tombstones"]).select { |item| item.is_a?(Hash) }
+            tombstones.concat(evicted.map { |item| acceptance_tombstone(item, now:) })
+            state["message_acceptance_tombstones"] = tombstones.uniq { |item| item["client_request_id"].to_s }
+          end
+          state["message_acceptances"] = retained.last(MESSAGE_ACCEPTANCE_LIMIT)
+          [deep_copy(record), true]
+        end
+      end
+    end
+
+    def update_message_acceptance!(client_request_id, attributes)
+      id = client_request_id.to_s.strip
+      synchronize do |state|
+        record = Array(state["message_acceptances"]).find { |candidate| candidate.is_a?(Hash) && candidate["client_request_id"].to_s == id }
+        unless record
+          expired = Array(state["message_acceptance_tombstones"]).find do |candidate|
+            candidate.is_a?(Hash) && candidate["client_request_id"].to_s == id
+          end
+          raise AcceptanceConflict.new("FRED message acceptance has expired", code: "acceptance_expired") if expired
+
+          raise ArgumentError, "Unknown FRED message acceptance"
+        end
+
+        updates = attributes.is_a?(Hash) ? attributes.transform_keys(&:to_s) : {}
+        if updates.key?("state")
+          next_state = updates["state"].to_s
+          raise ArgumentError, "Invalid FRED message acceptance state" unless MESSAGE_ACCEPTANCE_STATES.include?(next_state)
+
+          current_state = record["state"].to_s
+          unless MESSAGE_ACCEPTANCE_TRANSITIONS.fetch(current_state, []).include?(next_state)
+            raise ArgumentError, "Invalid FRED message acceptance transition: #{current_state} -> #{next_state}"
+          end
+        end
+        allowed = %w[state message_id inquiry_id queue_entry_id queue_claim_id run_id error code attachments start_requested launch_attempted]
+        record.merge!(updates.slice(*allowed).compact)
+        record["updated_at"] = @clock.call.utc.iso8601(6)
+        deep_copy(record)
+      end
+    end
+
+    def message_acceptance(client_request_id)
+      record = message_acceptance_record(client_request_id)
+      record && public_message_acceptance(record)
+    end
+
+    def message_acceptance_record(client_request_id)
+      id = client_request_id.to_s.strip
+      synchronize do |state|
+        record = Array(state["message_acceptances"]).find { |candidate| candidate.is_a?(Hash) && candidate["client_request_id"].to_s == id }
+        record ||= Array(state["message_acceptance_tombstones"]).find do |candidate|
+          candidate.is_a?(Hash) && candidate["client_request_id"].to_s == id
+        end
+        record ? deep_copy(record) : nil
+      end
+    end
+
+    def message_acceptance_for_queue_entry(queue_entry_id)
+      id = queue_entry_id.to_s.strip
+      return nil if id.empty?
+
+      synchronize do |state|
+        record = Array(state["message_acceptances"]).find do |candidate|
+          candidate.is_a?(Hash) && (candidate["queue_entry_id"].to_s == id || candidate["client_request_id"].to_s == id)
+        end
+        record ? deep_copy(record) : nil
+      end
     end
 
     def setup!(attrs)
@@ -128,6 +308,7 @@ module HQ
           state.merge!("active_key" => protected.key, "active_date" => local_date(protected.created_at || @clock.call, config.fetch("timezone")), "active_timezone" => config.fetch("timezone"), "phase" => "active")
         end
         if state["active_key"]
+          prune_message_acceptance_tombstones!(state)
           payload(state)
         else
           now = @clock.call
@@ -140,6 +321,7 @@ module HQ
           agent = ManagedAgent.new(key: "personal-assistant-#{date}-#{state["generation"].to_i + 1}", name: "Personal Assistant · #{date}", project_key: "__personal_assistant__", template_key: "personal_assistant_daily", workspace: workspace, prompt:, created_at: now, agent: "codex", model: config.fetch("model"), reasoning_effort: config.fetch("reasoning_effort"), messages: [ManagedAgent::AgentMessage.new(role: "system", content: prompt, created_at: now)], role: ROLE)
           @agent_store.create_personal_assistant!(agent)
           state.merge!("active_key" => agent.key, "active_date" => date, "active_timezone" => config.fetch("timezone"), "generation" => state["generation"].to_i + 1, "phase" => "active")
+          prune_message_acceptance_tombstones!(state)
           state.delete("summary_run_id"); state.delete("summary_intent_id")
           if state.dig("recovery", "state") == "fallback_continuity"
             state["recovery"] = state["recovery"].merge("state" => "recovered", "recovered_at" => now.utc.iso8601)
@@ -174,6 +356,95 @@ module HQ
     end
 
     private
+
+    def normalize_generation(value)
+      number = value.is_a?(Integer) ? value : Integer(value.to_s, 10)
+      raise ArgumentError if number <= 0
+
+      number
+    rescue ArgumentError, TypeError
+      raise SessionConflict.new("FRED session generation is required", code: "stale_session")
+    end
+
+    def validate_active_context!(state, key, supplied_generation)
+      expected_key = state["active_key"].to_s
+      expected_generation = state["generation"].to_i
+      phase = state["phase"].to_s
+      if phase != "active" || expected_key.empty?
+        raise SessionConflict.new("FRED session is no longer accepting work", code: "session_unavailable",
+                                  active_key: expected_key.empty? ? nil : expected_key,
+                                  generation: expected_generation.positive? ? expected_generation : nil)
+      end
+      return { "active_key" => expected_key, "generation" => expected_generation } if key == expected_key && supplied_generation == expected_generation
+
+      raise SessionConflict.new("FRED session changed; refresh and try again", code: "stale_session",
+                                active_key: expected_key, generation: expected_generation)
+    end
+
+    def bounded_message_payload(value)
+      payload = value.is_a?(Hash) ? value : {}
+      {
+        "active_key" => truncate(payload["active_key"], 160),
+        "generation" => payload["generation"].to_i,
+        "prompt" => truncate(payload["prompt"], 16_000),
+        "inquiry_id" => truncate(payload["inquiry_id"], 160),
+        "retire_inquiry_id" => truncate(payload["retire_inquiry_id"], 160),
+        "kind" => truncate(payload["kind"], 80),
+        "start" => payload["start"] == true,
+        "attachments" => Array(payload["attachments"]).first(5).filter_map do |attachment|
+          next unless attachment.is_a?(Hash)
+
+          attachment.slice("filename", "name", "mime_type", "content_type", "content_sha256", "type", "kind", "title", "path", "url")
+        end
+      }.delete_if { |_key, item| item.nil? || item == "" }
+    end
+
+    def public_message_acceptance(record)
+      {
+        "client_request_id" => record["client_request_id"],
+        "active_key" => record["active_key"],
+        "generation" => record["generation"].to_i,
+        "state" => record["state"],
+        "message_id" => record["message_id"],
+        "inquiry_id" => record["inquiry_id"],
+        "queue_entry_id" => record["queue_entry_id"],
+        "queue_claim_id" => record["queue_claim_id"],
+        "run_id" => record["run_id"],
+        "error" => record["error"],
+        "code" => record["code"],
+        "start_requested" => record["start_requested"] == true,
+        "launch_attempted" => record["launch_attempted"] == true,
+        "created_at" => record["created_at"],
+        "updated_at" => record["updated_at"]
+      }.delete_if { |_key, item| item.nil? || item == "" }
+    end
+
+    def acceptance_tombstone(record, now:)
+      {
+        "client_request_id" => record["client_request_id"],
+        "active_key" => record["active_key"],
+        "generation" => record["generation"].to_i,
+        "state" => "expired",
+        "code" => "acceptance_expired",
+        "created_at" => record["created_at"],
+        "updated_at" => now
+      }
+    end
+
+    def prune_message_acceptance_tombstones!(state, generation: state["generation"])
+      current_generation = generation.to_i
+      return if current_generation <= 0
+
+      state["message_acceptance_tombstones"] = Array(state["message_acceptance_tombstones"]).select do |record|
+        record.is_a?(Hash) && record["generation"].to_i == current_generation
+      end
+    end
+
+    def deep_copy(value)
+      JSON.parse(JSON.generate(value))
+    rescue JSON::ParserError, JSON::GeneratorError
+      value.dup
+    end
 
     def configured!
       config = @registry.personal_assistant
@@ -232,7 +503,7 @@ module HQ
       path
     end
 
-    def reconcile!(state)
+    def reconcile!(state, dispatch_prompt_queues: true)
       unless @registry.personal_assistant["enabled"] == true
         adopt_orphan!(state)
         return unless controlled_shutdown!(state)
@@ -242,7 +513,12 @@ module HQ
         return
       end
       return unless state["active_key"]
-      unless @agent_store.load.any? { |agent| agent.key == state["active_key"] && agent.personal_assistant? }
+      agents = if @agent_store.respond_to?(:load_with_poll_events)
+                  @agent_store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues:).first
+                else
+                  @agent_store.load
+                end
+      unless agents.any? { |agent| agent.key == state["active_key"] && agent.personal_assistant? }
         state.delete("active_key"); state.delete("active_date"); state.delete("active_timezone")
         state["phase"] = "dormant"
         return
@@ -360,8 +636,25 @@ module HQ
     end
 
     def synchronize
+      context = Thread.current[@synchronization_key]
+      if context
+        result = yield(context.fetch(:state))
+        persist(context.fetch(:state))
+        return result
+      end
+
       FileUtils.mkdir_p(File.dirname(@state_path))
-      File.open("#{@state_path}.lock", "w") { |lock| lock.flock(File::LOCK_EX); state = FileStore.read_json(@state_path, fallback: {}); result = yield state; persist(state); result }
+      File.open("#{@state_path}.lock", "w") do |lock|
+        lock.flock(File::LOCK_EX)
+        state = FileStore.read_json(@state_path, fallback: {})
+        Thread.current[@synchronization_key] = { state: }
+        result = yield state
+        persist(state)
+        result
+      ensure
+        Thread.current[@synchronization_key] = nil
+        lock&.flock(File::LOCK_UN)
+      end
     end
 
     def persist(state)
