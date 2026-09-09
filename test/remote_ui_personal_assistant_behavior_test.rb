@@ -15,8 +15,9 @@ module RemoteUIPersonalAssistantBehaviorTest
       const source = fs.readFileSync(process.argv[1], "utf8");
 
       function extractFunction(name) {
-        const start = source.indexOf(`function ${name}`);
-        if (start < 0) throw new Error(`missing ${name}`);
+        const marker = source.indexOf(`function ${name}`);
+        if (marker < 0) throw new Error(`missing ${name}`);
+        const start = source.slice(marker - 6, marker) === "async " ? marker - 6 : marker;
         const opening = source.indexOf("{", source.indexOf(")", start));
         let depth = 0;
         let quote = "";
@@ -58,9 +59,12 @@ module RemoteUIPersonalAssistantBehaviorTest
         escapeAttr: (value) => String(value),
         personalAssistantSubmissionForBlock: () => null,
         personalAssistantSessionContext: () => ({ server_key: "local", active_key: "fred", generation: 1 }),
+        personalAssistantSessionMatches: () => true,
         personalAssistantServerKey: () => "local",
         personalAssistantSubmissionEntries: () => [],
         personalAssistantRequest: (_requests, _key, factory) => factory(),
+        loadPersonalAssistantSubmissionStates: () => {},
+        applyPersonalAssistantItem: (item) => { context.state.personalAssistant = item; },
       };
       vm.createContext(context);
       [
@@ -72,6 +76,9 @@ module RemoteUIPersonalAssistantBehaviorTest
         "personalAssistantPollDelay",
         "notePersonalAssistantRefreshFailure",
         "requestPersonalAssistantCurrentWork",
+        "personalAssistantStatusRequestIsCurrent",
+        "requestPersonalAssistantStatus",
+        "ensureConversation",
       ].forEach((name) => vm.runInContext(`${extractFunction(name)}\nthis.${name} = ${name};`, context));
 
       const assert = (condition, message) => {
@@ -134,36 +141,158 @@ module RemoteUIPersonalAssistantBehaviorTest
       assert(context.personalAssistantPollDelay() === 1500,
              "successful FRED recovery did not restore active polling");
 
-      let resolveCurrentWork;
-      let rejectCurrentWork;
-      let renderCalls = 0;
-      context.location = { hash: "#personal-assistant" };
-      context.parseRoute = () => ({ type: "personalAssistant" });
-      context.personalAssistantSessionMatches = () => true;
-      context.apiGet = () => new Promise((resolve, reject) => {
-        resolveCurrentWork = resolve;
-        rejectCurrentWork = reject;
-      });
-      context.render = () => { renderCalls += 1; };
-      context.state.personalAssistantRequests = {
-        currentWork: {},
-        coordinator: { currentWorkSequence: 0, currentWorkApplied: 0 },
-      };
-      context.state.personalAssistantCurrentWork = { state: "fresh", agents: [] };
-      context.state.personalAssistantCurrentWorkState = "fresh";
-      context.state.personalAssistantCurrentWorkError = "";
-      context.state.renderedViewHtml = "stable-current-work-html";
-      const currentWorkRequest = context.requestPersonalAssistantCurrentWork("#personal-assistant", {
-        server_key: "local",
-        active_key: "fred",
-        generation: 1,
-      });
-      assert(context.state.personalAssistantCurrentWorkState === "fresh",
-             "background current-work polling replaced the visible snapshot with refreshing");
-      assert(context.state.renderedViewHtml === "stable-current-work-html",
-             "background current-work polling invalidated the visible snapshot before its response");
-      resolveCurrentWork({ state: "fresh", agents: [] });
-      currentWorkRequest.then(() => {
+      (async () => {
+        context.location = { hash: "#personal-assistant" };
+        context.parseRoute = () => ({ type: "personalAssistant" });
+        context.personalAssistantSessionContext = (item = context.state.personalAssistant) => {
+          const activeKey = String(item?.active_key || "").trim();
+          const generation = Number(item?.generation);
+          return activeKey && Number.isInteger(generation)
+            ? { server_key: "local", active_key: activeKey, generation }
+            : null;
+        };
+        context.personalAssistantSessionMatches = (captured) => {
+          const current = context.personalAssistantSessionContext();
+          return Boolean(current && captured && current.server_key === captured.server_key &&
+            current.active_key === captured.active_key && current.generation === captured.generation);
+        };
+
+        const oldSession = { active_key: "fred-old", generation: 1 };
+        const newSession = { active_key: "fred-new", generation: 2 };
+        context.personalAssistantRequest = (requests, key, factory) => {
+          if (requests[key]?.promise) return requests[key].promise;
+          const request = { promise: Promise.resolve().then(factory) };
+          requests[key] = request;
+          request.promise.then(
+            () => { if (requests[key] === request) delete requests[key]; },
+            () => { if (requests[key] === request) delete requests[key]; }
+          );
+          return request.promise;
+        };
+        context.state.personalAssistantRequests = {
+          status: null,
+          conversations: {},
+          coordinator: { sequence: 0, applied: 0 },
+        };
+        context.state.personalAssistant = oldSession;
+        context.apiGet = () => Promise.resolve({ personal_assistant: oldSession });
+        const staleStatusRequest = context.requestPersonalAssistantStatus(true, "#personal-assistant");
+        context.state.personalAssistant = newSession;
+        await staleStatusRequest;
+        assert(context.state.personalAssistant === newSession,
+               "status read captured before restart overwrote the new session");
+
+        context.state.personalAssistant = oldSession;
+        context.apiGet = () => Promise.resolve({ personal_assistant: newSession });
+        await context.requestPersonalAssistantStatus(true, "#personal-assistant");
+        assert(context.state.personalAssistant === newSession,
+               "normal status polling did not discover a new generation");
+
+        context.state.personalAssistant = null;
+        context.apiGet = () => Promise.resolve({ personal_assistant: oldSession });
+        const staleInitialStatusRequest = context.requestPersonalAssistantStatus(true, "#personal-assistant");
+        context.state.personalAssistant = newSession;
+        await staleInitialStatusRequest;
+        assert(context.state.personalAssistant === newSession,
+               "status read captured with no session overwrote a newly opened session");
+
+        context.state.personalAssistant = null;
+        await context.requestPersonalAssistantStatus(true, "#personal-assistant");
+        assert(context.state.personalAssistant === oldSession,
+               "initial status discovery was blocked by the null-session guard");
+
+        context.state.personalAssistant = oldSession;
+        context.state.personalAssistantLoadState = "ready";
+        context.state.personalAssistantLoadError = "";
+        context.state.failureCount = 0;
+        let rejectStatus;
+        context.apiGet = () => new Promise((_resolve, reject) => {
+          rejectStatus = reject;
+        });
+        const staleErrorRequest = context.requestPersonalAssistantStatus(true, "#personal-assistant");
+        const coalescedStaleErrorRequest = context.requestPersonalAssistantStatus(true, "#personal-assistant");
+        await Promise.resolve();
+        context.state.personalAssistant = newSession;
+        rejectStatus(new Error("old offline"));
+        const staleErrorResults = await Promise.all([staleErrorRequest, coalescedStaleErrorRequest]);
+        assert(staleErrorResults.every((result) => result === null),
+               "coalesced obsolete status errors did not resolve as obsolete reads");
+        assert(context.state.personalAssistant === newSession &&
+          context.state.personalAssistantLoadState === "ready" &&
+          context.state.personalAssistantLoadError === "" && context.state.failureCount === 0,
+        "obsolete status error marked the new session unavailable or backed off polling");
+
+        context.apiGet = () => Promise.reject(new Error("current offline"));
+        let currentStatusError;
+        try {
+          await context.requestPersonalAssistantStatus(true, "#personal-assistant");
+        } catch (error) {
+          currentStatusError = error;
+        }
+        assert(currentStatusError?.message === "current offline" &&
+          context.state.personalAssistantLoadState === "error" &&
+          context.state.personalAssistantLoadError === "current offline",
+        "current status errors stopped surfacing");
+
+        let conversationReads = 0;
+        const runningAgent = {
+          key: "fred",
+          role: "personal_assistant_daily",
+          running: true,
+          revision: "rev-1",
+        };
+        context.personalAssistantAgent = (agent) => agent?.role === "personal_assistant_daily";
+        context.findAgent = () => runningAgent;
+        context.setConversationLoading = () => {};
+        context.reconcilePersonalAssistantConversation = () => {};
+        context.reconcilePersonalAssistantTerminalRuns = () => {};
+        context.render = () => {};
+        context.state.personalAssistant = { active_key: "fred", generation: 1 };
+        context.state.conversations = {
+          fred: { revision: "rev-1", blocks: [], loaded: true, loading: false },
+        };
+        context.state.loadingConversations = {};
+        context.state.personalAssistantRequests = { conversations: {} };
+        context.apiGet = () => {
+          conversationReads += 1;
+          return Promise.resolve({ conversation: [] });
+        };
+        await context.ensureConversation(runningAgent, false);
+        assert(conversationReads === 1,
+               "running FRED skipped its focused conversation read on an unchanged revision");
+        const idleAgent = { ...runningAgent, running: false };
+        await context.ensureConversation(idleAgent, false);
+        assert(conversationReads === 1,
+               "idle FRED lost its revision-cache conversation shortcut");
+
+        let resolveCurrentWork;
+        let rejectCurrentWork;
+        let renderCalls = 0;
+        context.apiGet = () => new Promise((resolve, reject) => {
+          resolveCurrentWork = resolve;
+          rejectCurrentWork = reject;
+        });
+        context.render = () => { renderCalls += 1; };
+        context.state.personalAssistantRequests = {
+          currentWork: {},
+          coordinator: { currentWorkSequence: 0, currentWorkApplied: 0 },
+        };
+        context.state.personalAssistantCurrentWork = { state: "fresh", agents: [] };
+        context.state.personalAssistantCurrentWorkState = "fresh";
+        context.state.personalAssistantCurrentWorkError = "";
+        context.state.renderedViewHtml = "stable-current-work-html";
+        const currentWorkRequest = context.requestPersonalAssistantCurrentWork("#personal-assistant", {
+          server_key: "local",
+          active_key: "fred",
+          generation: 1,
+        });
+        assert(context.state.personalAssistantCurrentWorkState === "fresh",
+               "background current-work polling replaced the visible snapshot with refreshing");
+        assert(context.state.renderedViewHtml === "stable-current-work-html",
+               "background current-work polling invalidated the visible snapshot before its response");
+        await Promise.resolve();
+        resolveCurrentWork({ state: "fresh", agents: [] });
+        await currentWorkRequest;
         assert(renderCalls === 1, "current-work response did not use the existing render path");
         assert(context.state.renderedViewHtml === "stable-current-work-html",
                "unchanged current-work response bypassed the same-HTML render shortcut");
@@ -175,31 +304,34 @@ module RemoteUIPersonalAssistantBehaviorTest
         });
         assert(context.state.personalAssistantCurrentWorkState === "fresh",
                "changed current-work polling replaced the visible snapshot with refreshing");
+        await Promise.resolve();
         resolveCurrentWork({ state: "stale", agents: [{ key: "fred", status: "waiting" }] });
-        return changedCurrentWorkRequest.then(() => {
-          assert(context.state.personalAssistantCurrentWorkState === "stale",
-                 "changed current-work response did not update its visible state");
-          assert(renderCalls === 2, "changed current-work response did not use the existing render path");
-          assert(context.state.renderedViewHtml === "stable-current-work-html",
-                 "changed current-work response unnecessarily invalidated the existing view");
+        await changedCurrentWorkRequest;
+        assert(context.state.personalAssistantCurrentWorkState === "stale",
+               "changed current-work response did not update its visible state");
+        assert(renderCalls === 2, "changed current-work response did not use the existing render path");
+        assert(context.state.renderedViewHtml === "stable-current-work-html",
+               "changed current-work response unnecessarily invalidated the existing view");
 
-          const failedCurrentWorkRequest = context.requestPersonalAssistantCurrentWork("#personal-assistant", {
-            server_key: "local",
-            active_key: "fred",
-            generation: 1,
-          });
-          assert(context.state.personalAssistantCurrentWorkState === "stale",
-                 "failed background current-work polling replaced the visible snapshot with refreshing");
-          rejectCurrentWork(new Error("offline"));
-          return failedCurrentWorkRequest.catch(() => {
-            assert(context.state.personalAssistantCurrentWorkState === "unavailable",
-                   "current-work failure did not surface an unavailable state");
-            assert(context.state.personalAssistantCurrentWorkError === "offline",
-                   "current-work failure did not retain its error");
-            assert(context.state.renderedViewHtml === "stable-current-work-html",
-                   "current-work failure unnecessarily invalidated the existing view");
-          });
+        const failedCurrentWorkRequest = context.requestPersonalAssistantCurrentWork("#personal-assistant", {
+          server_key: "local",
+          active_key: "fred",
+          generation: 1,
         });
+        assert(context.state.personalAssistantCurrentWorkState === "stale",
+               "failed background current-work polling replaced the visible snapshot with refreshing");
+        await Promise.resolve();
+        rejectCurrentWork(new Error("offline"));
+        await failedCurrentWorkRequest.catch(() => {});
+        assert(context.state.personalAssistantCurrentWorkState === "unavailable",
+               "current-work failure did not surface an unavailable state");
+        assert(context.state.personalAssistantCurrentWorkError === "offline",
+               "current-work failure did not retain its error");
+        assert(context.state.renderedViewHtml === "stable-current-work-html",
+               "current-work failure unnecessarily invalidated the existing view");
+      })().catch((error) => {
+        console.error(error.stack || error);
+        process.exitCode = 1;
       });
     JAVASCRIPT
 
