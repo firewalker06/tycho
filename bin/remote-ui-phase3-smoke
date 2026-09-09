@@ -1,0 +1,1465 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "open3"
+
+load File.expand_path("remote-ui-phase2-smoke", __dir__)
+
+PHASE3_ROOT = File.expand_path("..", __dir__)
+PHASE3_PLAYWRIGHT_PATH = File.expand_path(
+  ENV.fetch("TYCHO_PLAYWRIGHT_PATH", File.join(PHASE3_ROOT, "node_modules", "playwright"))
+)
+PHASE3_CHROME_PATH = ENV.fetch(
+  "TYCHO_CHROME_PATH",
+  ENV.fetch("CHROME_PATH", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+).to_s.strip
+PHASE3_SAMPLE_COUNT = Integer(ENV.fetch("TYCHO_PHASE3_SAMPLES", "4"), 10)
+PHASE3_CAPTURE_DIR = ENV["TYCHO_PHASE3_CAPTURE_DIR"].to_s.strip
+PHASE3_COMPLETION_SENTINEL = "TYCHO_PHASE3_BROWSER_COMPLETE_v1"
+
+PHASE3_FAKE_CODEX = <<~'RUBY'
+  #!/usr/bin/env ruby
+  require "json"
+
+  prompt = ARGV.join(" ")
+  sample_token = prompt[/phase3-sample-([A-Za-z0-9_-]+)/, 1]
+  token = sample_token || Process.pid.to_s
+  control = ENV.fetch("TYCHO_PHASE3_FAKE_HARNESS_CONTROL")
+  output_index = ARGV.index("-o")
+  output_path = output_index && ARGV[output_index + 1]
+  internal_summary = prompt.include?("[TYCHO INTERNAL SUMMARY ONLY]")
+  emit = lambda do |event|
+    puts JSON.generate(event)
+    $stdout.flush
+  end
+
+  # Harness catalog discovery is a short command probe, not a Phase 3 run.
+  # Keep it deterministic so the fixture does not turn a two-second catalog
+  # timeout into an artificial observe/release barrier.
+  if ARGV.include?("debug") && ARGV.include?("models")
+    puts JSON.generate(
+      "models" => [{
+        "slug" => "gpt-5.6-sol",
+        "display_name" => "GPT-5.6 Sol",
+        "default_reasoning_level" => "medium",
+        "supported_reasoning_levels" => %w[minimal low medium high max].map { |effort| { "effort" => effort } }
+      }]
+    )
+    exit 0
+  end
+
+  quick_payload = {
+    "status" => "success",
+    "summary" => "Synthetic FRED handoff completed without actions.",
+    "summary_sections" => [{ "type" => "text", "text" => "Synthetic FRED handoff; no actions proposed." }],
+    "inquiry" => nil,
+    "attachments" => nil,
+    "action_proposals" => [],
+    "memory_handoff" => {
+      "outcome" => "Synthetic FRED handoff completed without actions.",
+      "decisions" => [],
+      "continuing_context" => "",
+      "references" => [],
+      "lessons" => [],
+      "promotion_candidates" => []
+    }
+  }
+  quick_payload["summary"] = "Synthetic internal FRED handoff completed without actions." if internal_summary
+
+  # The daily rollover summary is an internal structured handoff and must be
+  # quick and side-effect free. Other non-sample probes use the same safe
+  # result; only explicit Phase 3 samples enter the marker barriers below.
+  # Harness catalog probes and internal summaries must never consume a sample
+  # barrier or simulate active-harness load.
+  if internal_summary || !sample_token
+    File.write(output_path, JSON.generate(quick_payload)) if output_path
+    emit.call("type" => "thread.started", "thread_id" => "phase3-quick-#{Process.pid}")
+    emit.call("type" => "item.completed", "item" => { "type" => "agent_message", "text" => JSON.generate(quick_payload) })
+    exit 0
+  end
+
+  marker = ->(name) { File.write("#{control}.#{name}.#{token}", "#{Process.pid}\n") }
+
+  marker.call("started")
+  emit.call("type" => "thread.started", "thread_id" => "phase3-#{Process.pid}")
+  observe_path = "#{control}.observe.#{token}"
+  observe_deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 30
+  sleep 0.02 while !File.file?(observe_path) && Process.clock_gettime(Process::CLOCK_MONOTONIC) < observe_deadline
+  progress = "Phase3 semantic progress #{token}: the fake harness persisted this event before final output."
+  emit.call("type" => "item.completed", "item" => { "type" => "agent_message", "text" => progress })
+  marker.call("progress")
+  deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 30
+  release_path = "#{control}.release.#{token}"
+  sleep 0.02 while !File.file?(release_path) && Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
+
+  payload = {
+    "status" => "success",
+    "summary" => "Phase3 final result #{token}.",
+    "summary_sections" => nil,
+    "inquiry" => nil,
+    "attachments" => nil,
+    "action_proposals" => [{
+      "type" => "create_agent",
+      "description" => "Prepare one Phase3 reconciliation fixture agent.",
+      "arguments" => {
+        "project_key" => "web",
+        "name" => "Phase3 fixture #{token}",
+        "prompt" => "Do not start this fixture agent.",
+        "agent" => nil,
+        "model" => nil,
+        "reasoning_effort" => nil
+      }
+    }],
+    "memory_handoff" => nil
+  }
+  File.write(output_path, JSON.generate(payload)) if output_path
+  emit.call("type" => "item.completed", "item" => { "type" => "agent_message", "text" => JSON.generate(payload) })
+  marker.call("final")
+RUBY
+
+def write_phase3_browser_script(path, base_url, control_path, logs_dir, capture_dir, sample_count)
+  File.write(path, <<~JS)
+    const fs = require("fs");
+    const path = require("path");
+    const { performance } = require("perf_hooks");
+    const { chromium } = require(#{PHASE3_PLAYWRIGHT_PATH.to_json});
+
+    const baseUrl = #{base_url.to_json};
+    const controlPath = #{control_path.to_json};
+    const logsDir = #{logs_dir.to_json};
+    const captureDir = #{capture_dir.to_json};
+    const sampleCount = #{sample_count};
+    const requests = [];
+    let intentionallyOffline = false;
+    let intentionalOfflineAbortCount = 0;
+    let intentionalStaleStatusErrorCount = 0;
+
+    function fail(message) {
+      throw new Error(message);
+    }
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    async function closeBrowserBounded(browser) {
+      if (!browser) return;
+      let timer;
+      await Promise.race([
+        browser.close(),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(false), 5_000);
+          timer.unref?.();
+        }),
+      ]).then((closed) => {
+        if (timer) clearTimeout(timer);
+        if (closed === false) console.error("bounded browser cleanup timed out");
+      }).catch((error) => console.error(`bounded browser cleanup failed: ${error.message}`));
+    }
+
+    async function waitForFile(filePath, label, timeout = 15_000) {
+      const deadline = Date.now() + timeout;
+      while (!fs.existsSync(filePath)) {
+        if (Date.now() >= deadline) fail(`${label}: timed out waiting for ${filePath}`);
+        await sleep(25);
+      }
+      return { monotonic_ms: performance.now(), wall_ms: Date.now() };
+    }
+
+    async function waitFor(page, predicate, arg, label, timeout = 15_000) {
+      await page.waitForFunction(predicate, arg, { timeout }).catch((error) => {
+        throw new Error(`${label}: ${error.message}`);
+      });
+    }
+
+    async function requestJson(client, method, requestPath, data) {
+      const url = `${baseUrl}${requestPath}`;
+      const request = client.request || client;
+      const response = method === "GET"
+        ? await request.get(url)
+        : await request.post(url, { data });
+      const body = await response.json();
+      if (!response.ok()) fail(`${method} ${requestPath}: HTTP ${response.status()} ${JSON.stringify(body)}`);
+      return body;
+    }
+
+    function persistedEvent(marker, runId) {
+      const pending = [logsDir];
+      while (pending.length) {
+        const current = pending.pop();
+        let entries;
+        try {
+          entries = fs.readdirSync(current, { withFileTypes: true });
+        } catch (_error) {
+          continue;
+        }
+        for (const entry of entries) {
+          const candidate = path.join(current, entry.name);
+          if (entry.isDirectory()) {
+            pending.push(candidate);
+            continue;
+          }
+          if (!entry.name.endsWith(".memory.jsonl")) continue;
+          let lines;
+          try {
+            lines = fs.readFileSync(candidate, "utf8").split("\\n");
+          } catch (_error) {
+            continue;
+          }
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            let event;
+            try {
+              event = JSON.parse(line);
+            } catch (_error) {
+              continue;
+            }
+            if (String(event.run_id || "") !== String(runId || "") || !String(event.content || "").includes(marker)) continue;
+            const recordedAt = String(event.recorded_at || "").trim();
+            if (!recordedAt) continue;
+            return { recorded_at: recordedAt, event_id: event.event_id || null, path: candidate };
+          }
+        }
+      }
+      return null;
+    }
+
+    async function waitForPersistedEvent(marker, runId, label, timeout = 15_000) {
+      const deadline = Date.now() + timeout;
+      while (Date.now() < deadline) {
+        const event = persistedEvent(marker, runId);
+        if (event) return { ...event, observed_at: performance.now(), observed_wall_at: Date.now() };
+        await sleep(25);
+      }
+      fail(`${label}: persisted event was not found in the isolated journal`);
+    }
+
+    function recordedAtEpochMs(value) {
+      const raw = String(value || "").trim();
+      const match = raw.match(/^(.*)\\.(\\d+)(Z|[+-]\\d{2}:\\d{2})$/);
+      if (!match) return Date.parse(raw);
+      const fraction = match[2];
+      const milliseconds = fraction.slice(0, 3).padEnd(3, "0");
+      const base = Date.parse(`${match[1]}.${milliseconds}${match[3]}`);
+      if (!Number.isFinite(base)) return base;
+      const extraMicroseconds = Number(fraction.slice(3, 6).padEnd(3, "0"));
+      return base + (extraMicroseconds / 1000);
+    }
+
+    async function persistedToPaintMs(page, persisted, visibleAt) {
+      const visibleWallMs = await page.evaluate((value) => performance.timeOrigin + value, visibleAt);
+      const persistedWallMs = recordedAtEpochMs(persisted.recorded_at);
+      if (!Number.isFinite(persistedWallMs)) fail(`invalid persisted recorded_at: ${persisted.recorded_at}`);
+      return {
+        latency_ms: visibleWallMs - persistedWallMs,
+        persisted_recorded_at: persisted.recorded_at,
+        persisted_event_id: persisted.event_id,
+        persisted_observed_at: persisted.observed_at,
+      };
+    }
+
+    async function pollConversation(page, agentKey, marker, runId, timeout = 15_000) {
+      const deadline = Date.now() + timeout;
+      let lastPayload = null;
+      while (Date.now() < deadline) {
+        const response = await page.request.get(`${baseUrl}/agents/${encodeURIComponent(agentKey)}/conversation`);
+        if (response.ok()) {
+          lastPayload = await response.json();
+          const blocks = Array.isArray(lastPayload.conversation) ? lastPayload.conversation : [];
+          const block = blocks.find((candidate) => String(candidate.content || "").includes(marker) && String(candidate.metadata?.run_id || candidate.run_id || "") === String(runId));
+          if (block) return { observedAt: performance.now(), observedWallAt: Date.now(), payload: lastPayload, block };
+        }
+        await sleep(40);
+      }
+      fail(`conversation did not expose ${marker} for run ${runId}: ${JSON.stringify(lastPayload)}`);
+    }
+
+    async function pollActions(page, marker, timeout = 15_000) {
+      const deadline = Date.now() + timeout;
+      let lastPayload = null;
+      while (Date.now() < deadline) {
+        const response = await page.request.get(`${baseUrl}/personal-assistant/actions`);
+        if (response.ok()) {
+          lastPayload = await response.json();
+          if (JSON.stringify(lastPayload).includes(marker)) return { observedAt: performance.now(), payload: lastPayload };
+        }
+        await sleep(40);
+      }
+      fail(`actions did not expose ${marker}: ${JSON.stringify(lastPayload)}`);
+    }
+
+    async function assertNoActionForMarker(page, marker, label) {
+      const response = await page.request.get(`${baseUrl}/personal-assistant/actions`);
+      if (!response.ok()) fail(`${label}: actions lookup failed with ${response.status()}`);
+      const payload = await response.json();
+      const serverMatch = JSON.stringify(payload).includes(marker);
+      const domMatch = await page.evaluate((value) => Array.from(document.querySelectorAll(".pa-inline-action"))
+        .some((element) => element.dataset.proposalState === "awaiting_confirmation" && element.textContent.includes(value)), marker);
+      if (serverMatch || domMatch) {
+        fail(`${label}: progress exposed an approval before final output: ${JSON.stringify({ server_match: serverMatch, dom_match: domMatch })}`);
+      }
+      return { server_match: serverMatch, dom_match: domMatch };
+    }
+
+    function summarize(values) {
+      const sorted = values.slice().sort((left, right) => left - right);
+      if (!sorted.length) return { count: 0, min: null, p50: null, p95: null, max: null };
+      const percentile = (fraction) => sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
+      return {
+        count: sorted.length,
+        min: Number(sorted[0].toFixed(1)),
+        p50: Number(percentile(0.5).toFixed(1)),
+        p95: Number(percentile(0.95).toFixed(1)),
+        max: Number(sorted[sorted.length - 1].toFixed(1)),
+      };
+    }
+
+    function enforceTimingTargets(report) {
+      for (const [viewport, metrics] of Object.entries(report.distributions || {})) {
+        const pending = metrics.submit_to_pending_paint_opportunity_ms;
+        if (pending.count && pending.p95 > 100) report.blocked_gates.push(`${viewport}: pending paint opportunity p95 ${pending.p95}ms exceeds 100ms target`);
+        const progress = metrics.persisted_progress_to_visible_paint_opportunity_ms;
+        if (progress.count && progress.p95 > 2_000) report.blocked_gates.push(`${viewport}: persisted progress paint opportunity p95 ${progress.p95}ms exceeds 2000ms target`);
+        const terminal = metrics.terminal_to_visible_paint_opportunity_ms;
+        if (terminal.count && terminal.p95 > 2_000) report.blocked_gates.push(`${viewport}: terminal paint opportunity p95 ${terminal.p95}ms exceeds 2000ms target`);
+      }
+    }
+
+    function markerPath(kind, token) {
+      return `${controlPath}.${kind}.${token}`;
+    }
+
+    function recordRequest(request) {
+      const url = new URL(request.url());
+      if (!url.pathname.startsWith("/personal-assistant") && !url.pathname.includes("/conversation") && !["/setup", "/resources"].includes(url.pathname)) return;
+      let requestBody = null;
+      try {
+        requestBody = JSON.parse(request.postData() || "null");
+      } catch (_error) {
+        requestBody = null;
+      }
+      const record = { request, method: request.method(), path: url.pathname, startedAt: performance.now(), startedWallAt: Date.now(), responseAt: null, responseWallAt: null, status: null, requestBody, responseBodyPromise: null };
+      requests.push(record);
+      return record;
+    }
+
+    function successfulResponse(request) {
+      return request.responseAt !== null && request.failed !== true && Number(request.status) >= 200 && Number(request.status) < 400;
+    }
+
+    function captureColdWaterfall(report) {
+      const firstComposerAt = report.waterfall.first_composer_at;
+      const firstAcceptanceAt = report.waterfall.first_acceptance_at;
+      const shellRequests = requests.filter((request) => ["/setup", "/resources"].includes(request.path) &&
+        (firstAcceptanceAt === null || request.startedAt <= firstAcceptanceAt));
+      const describe = (request) => ({
+        method: request.method,
+        path: request.path,
+        issued_at: request.startedAt,
+        completed_at: request.responseAt,
+        duration_ms: request.responseAt === null ? null : Number((request.responseAt - request.startedAt).toFixed(1)),
+        status: request.status,
+        successful: successfulResponse(request),
+        failed: request.failed === true,
+        completed_before_first_composer: firstComposerAt !== null && successfulResponse(request) && request.responseAt <= firstComposerAt,
+        in_flight_at_first_acceptance: firstAcceptanceAt !== null && (!successfulResponse(request) || request.responseAt > firstAcceptanceAt),
+      });
+      report.waterfall.cold_shell_request_counts = {
+        issued: shellRequests.length,
+        completed: shellRequests.filter(successfulResponse).length,
+        failed: shellRequests.filter((request) => request.failed === true || (request.responseAt !== null && !successfulResponse(request))).length,
+        in_flight_at_first_acceptance: shellRequests.filter((request) => !successfulResponse(request) || (firstAcceptanceAt !== null && request.responseAt > firstAcceptanceAt)).length,
+      };
+      report.waterfall.ui_setup_requests = shellRequests.filter((request) => request.path === "/setup").map(describe);
+      report.waterfall.resources_requests = shellRequests.filter((request) => request.path === "/resources").map(describe);
+      report.waterfall.setup_completed_before_first_composer = report.waterfall.ui_setup_requests.some((request) => request.completed_before_first_composer);
+      report.waterfall.setup_completed_before_first_acceptance = report.waterfall.ui_setup_requests.some((request) => request.successful && firstAcceptanceAt !== null && request.completed_at <= firstAcceptanceAt);
+      report.waterfall.resources_completed_before_first_composer = report.waterfall.resources_requests.some((request) => request.completed_before_first_composer);
+      report.waterfall.cold_window_closed_at = firstAcceptanceAt;
+    }
+
+    async function waitForRequest(predicate, label, timeout = 15_000) {
+      const deadline = Date.now() + timeout;
+      while (Date.now() < deadline) {
+        const match = requests.find(predicate);
+        if (match && successfulResponse(match)) return match;
+        await sleep(20);
+      }
+      fail(`${label}: request did not complete`);
+    }
+
+    async function waitForObservedRequest(predicate, label, timeout = 15_000) {
+      const deadline = Date.now() + timeout;
+      while (Date.now() < deadline) {
+        const match = requests.find(predicate);
+        if (match) return match;
+        await sleep(20);
+      }
+      fail(`${label}: request was not observed`);
+    }
+
+    async function waitForObservedRequestCount(predicate, count, label, timeout = 15_000) {
+      const deadline = Date.now() + timeout;
+      while (Date.now() < deadline) {
+        const matches = requests.filter(predicate);
+        if (matches.length >= count) return matches;
+        await sleep(20);
+      }
+      fail(`${label}: observed ${requests.filter(predicate).length}, expected ${count}`);
+    }
+
+    async function armPaintObservation(page, kind, { runId = "", marker = "", terminal = false, clientRequestId = "" } = {}) {
+      return page.evaluate(({ kind: observationKind, runId: expectedRunId, marker: expectedMarker, terminal: terminalObservation, clientRequestId: expectedClientRequestId }) => {
+        window.__phase3PaintObservers ||= {};
+        window.__phase3PaintObservations ||= {};
+        window.__phase3PaintObservers[observationKind]?.disconnect();
+        const observation = {
+          kind: observationKind,
+          run_id: expectedRunId,
+          marker: expectedMarker,
+          armed_wall_at: Date.now(),
+          armed_at: performance.now(),
+          already_present_at_arm: false,
+          dom_at: null,
+          dom_wall_at: null,
+          paint_at: null,
+          paint_wall_at: null,
+        };
+        window.__phase3PaintObservations[observationKind] = observation;
+        const visible = (element) => {
+          if (!element || !element.getClientRects().length) return false;
+          for (let node = element; node && node !== document.body; node = node.parentElement) {
+            if (node.hidden || node.getAttribute("aria-hidden") === "true") return false;
+            const style = getComputedStyle(node);
+            if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
+          }
+          return true;
+        };
+        const conversationEvent = (element) => Boolean(
+          element?.matches("article[data-pa-event-id][data-pa-run-id]") &&
+          element.closest(".agent-conversation-scroll") &&
+          !element.closest("[data-run-summary-id]")
+        );
+        const eventMatches = (element) => {
+          const eventRunId = String(element.dataset.paRunId || "");
+          const eventId = String(element.dataset.paEventId || "");
+          return conversationEvent(element) &&
+            (eventRunId === expectedRunId || eventId.startsWith(`${expectedRunId}:`)) &&
+            visible(element) && element.textContent.includes(expectedMarker);
+        };
+        const statusMatches = () => {
+          if (!terminalObservation) return true;
+          return Array.from(document.querySelectorAll("[data-pa-message-status]"))
+            .some((status) => {
+              const requestId = status.dataset.clientRequestId || status.previousElementSibling?.dataset?.clientRequestId || "";
+              return requestId === expectedClientRequestId &&
+                status.closest(".agent-conversation-scroll") &&
+                visible(status) && ["accepted", "failed", "completed", "unknown"].includes(status.getAttribute("data-pa-message-status"));
+            });
+        };
+        const conversationEvents = () => Array.from(document.querySelectorAll(".agent-conversation-scroll article[data-pa-event-id][data-pa-run-id]"));
+        observation.already_present_at_arm = Boolean(conversationEvents().find((element) => eventMatches(element)) && statusMatches());
+        const collect = () => {
+          const event = conversationEvents().find((element) => eventMatches(element));
+          if (!event || !statusMatches() || observation.paint_at !== null) return;
+          observation.dom_at = performance.now();
+          observation.dom_wall_at = Date.now();
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (observation.paint_at === null) {
+              observation.paint_at = performance.now();
+              observation.paint_wall_at = Date.now();
+            }
+          }));
+        };
+        const observer = new MutationObserver(collect);
+        window.__phase3PaintObservers[observationKind] = observer;
+        observer.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+        collect();
+        return {
+          armed_at: observation.armed_at,
+          armed_wall_at: observation.armed_wall_at,
+          already_present_at_arm: observation.already_present_at_arm,
+        };
+      }, { kind, runId, marker, terminal, clientRequestId });
+    }
+
+    async function waitForPaintObservation(page, kind, label, timeout = 15_000) {
+      await waitFor(page, (observationKind) => Boolean(window.__phase3PaintObservations?.[observationKind]?.paint_at), kind, label, timeout);
+      return page.evaluate((observationKind) => ({ ...window.__phase3PaintObservations[observationKind] }), kind);
+    }
+
+    function assertAnnouncementIdentities(snapshot, label) {
+      if (!snapshot.length) fail(`${label}: no non-empty status announcements`);
+      // Keep generic live regions (for example the speech-mode status) in the
+      // snapshot, but only FRED-owned regions need a semantic identity. This
+      // does not turn a missing key into a pass for an action receipt: its
+      // proposal owner remains in the snapshot and is checked below.
+      const semanticAnnouncements = snapshot.filter((entry) => entry.proposal_id || entry.announcement_key || entry.key);
+      if (!semanticAnnouncements.length) return;
+      const keys = semanticAnnouncements.map((entry) => entry.key).filter(Boolean);
+      if (keys.length !== semanticAnnouncements.length || new Set(keys).size !== keys.length) {
+        fail(`${label}: announcements lack unique stable identities: ${JSON.stringify(snapshot)}`);
+      }
+    }
+
+    function recordUnchangedReceiptAnnouncementGate(before, after, label, report) {
+      const previous = new Map(before
+        .filter((entry) => entry.proposal_id)
+        .map((entry) => [`${entry.proposal_id}:${entry.text}`, entry]));
+      after
+        .filter((entry) => entry.proposal_id)
+        .forEach((entry) => {
+          const old = previous.get(`${entry.proposal_id}:${entry.text}`);
+          if (old && entry.aria_live === "polite") {
+            report.blocked_gates.push(`${label}: unchanged receipt ${entry.proposal_id} remained aria-live=polite after refresh`);
+          }
+        });
+    }
+
+    async function uniqueLocator(locator, label) {
+      const count = await locator.count();
+      if (count !== 1) fail(`${label}: expected one element, got ${count}`);
+      return locator;
+    }
+
+    async function prepareEditor(page, token, fullscreen, sample) {
+      let input = await uniqueLocator(page.locator("#composer #prompt-input"), "FRED prompt input");
+      if (fullscreen) {
+        const open = await uniqueLocator(page.locator("#composer [data-toggle-composer-full-screen]"), "open full-screen control");
+        await open.click();
+        await waitFor(page, () => Boolean(document.querySelector("#composer.composer-full-screen")), null, "full-screen editor");
+        input = await uniqueLocator(page.locator("#composer #prompt-input"), "full-screen prompt input");
+      }
+      const draft = `phase3 editor ${token}`;
+      await input.fill(draft);
+      await input.focus();
+      await input.evaluate((element) => element.setSelectionRange(2, Math.min(8, element.value.length)));
+      const attachmentInput = page.locator("[data-prompt-attachment-input]");
+      const attachmentCount = await attachmentInput.count();
+      if (attachmentCount !== 1) fail(`prompt attachment input: expected one element, got ${attachmentCount}`);
+      await waitFor(page, () => {
+        const input = document.querySelector("[data-prompt-attachment-input]");
+        return Boolean(input && !input.disabled);
+      }, null, `${token} prompt attachment control enabled`, 5_000);
+      const attachmentSetStartedAt = performance.now();
+      const attachmentRequestStart = requests.length;
+      await attachmentInput.setInputFiles({
+        name: `phase3-${token}.txt`,
+        mimeType: "text/plain",
+        buffer: Buffer.from(`Phase3 attachment ${token}`),
+      });
+      await waitFor(page, () => document.querySelectorAll(".pending-attachment").length === 1, null, "pending attachment");
+      Object.assign(sample, {
+        initial_attachment_set_to_pending_ms: performance.now() - attachmentSetStartedAt,
+        initial_attachment_requests: requests.slice(attachmentRequestStart).map((request) => request.path),
+      });
+
+      // Attachment selection intentionally performs a normal render. Establish
+      // the retention baseline only after that render, then restore the exact
+      // focus/selection that the typing gate will exercise.
+      input = await uniqueLocator(page.locator("#composer #prompt-input"), `${token} post-attachment prompt input`);
+      await input.focus();
+      await input.evaluate((element) => element.setSelectionRange(2, Math.min(8, element.value.length)));
+
+      const before = await page.evaluate(() => {
+        const composer = document.querySelector("#composer");
+        const inputElement = document.querySelector("#composer #prompt-input");
+        const scroll = document.querySelector(".agent-conversation-scroll");
+        if (scroll) scroll.scrollTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight - 4);
+        window.__phase3ComposerNode = composer;
+        return {
+          value: inputElement?.value || "",
+          active: document.activeElement === inputElement,
+          selectionStart: inputElement?.selectionStart,
+          selectionEnd: inputElement?.selectionEnd,
+          attachmentCount: document.querySelectorAll(".pending-attachment").length,
+          scrollTop: scroll?.scrollTop || 0,
+          announcements: Array.from(document.querySelectorAll("[aria-live][role='status']"))
+            .map((element) => {
+              const action = element.closest(".pa-inline-action[data-proposal-id]");
+              const proposalId = action?.dataset.proposalId || null;
+              const text = element.textContent.trim();
+              const explicitKey = element.dataset.paAnnouncementKey || element.id || element.dataset.paEventId || element.dataset.clientRequestId || element.dataset.paMessageStatus || null;
+              return {
+                key: explicitKey || (proposalId ? `proposal:${proposalId}:${text}` : null),
+                announcement_key: element.dataset.paAnnouncementKey || null,
+                proposal_id: proposalId,
+                aria_live: element.getAttribute("aria-live"),
+                text,
+              };
+            })
+            .filter((entry) => entry.text),
+        };
+      });
+      if (before.value !== draft || before.selectionStart !== 2 || before.selectionEnd !== Math.min(8, draft.length)) {
+        fail(`attachment render changed the prepared draft: ${JSON.stringify({ before, expected: { draft, selectionStart: 2, selectionEnd: Math.min(8, draft.length) } })}`);
+      }
+      if (!before.active || before.attachmentCount !== 1) fail(`attachment render did not restore the prepared editor: ${JSON.stringify({ before })}`);
+      assertAnnouncementIdentities(before.announcements, `${token} after attachment render`);
+      return { input, draft: before.value, before, after: before };
+    }
+
+    async function performSample(page, agentKey, viewport, index, fullscreen, report) {
+      const token = `${viewport}-${index}-${Date.now()}`.replace(/[^A-Za-z0-9_-]/g, "-");
+      const sample = { viewport, index, token, fullscreen };
+      report.samples.push(sample);
+      const editor = await prepareEditor(page, token, fullscreen, sample);
+      const submitPrompt = `phase3-sample-${token}`;
+      const submitInput = await uniqueLocator(page.locator("#composer #prompt-input"), `${token} submit prompt input`);
+      await submitInput.fill(submitPrompt);
+      await submitInput.focus();
+      const submit = await uniqueLocator(page.locator("#composer button[type='submit']"), "FRED submit button");
+      await page.evaluate(() => {
+        window.__phase3PendingObserver?.disconnect();
+        window.__phase3PendingRecords = [];
+        const collect = () => {
+          document.querySelectorAll("[data-pa-message-status]").forEach((status) => {
+            const requestId = status.dataset.clientRequestId || status.previousElementSibling?.dataset?.clientRequestId || "";
+            const state = status.getAttribute("data-pa-message-status") || "";
+            if (!requestId || !["sending", "queued", "dispatching"].includes(state) || status.offsetParent === null || !status.getClientRects().length) return;
+            const record = {
+              client_request_id: requestId,
+              state,
+              explicit: Boolean(status.dataset.clientRequestId),
+              appeared_at: performance.now(),
+              paint_at: null,
+            };
+            if (!window.__phase3PendingRecords.some((item) => item.client_request_id === requestId && item.state === state)) {
+              window.__phase3PendingRecords.push(record);
+              requestAnimationFrame(() => requestAnimationFrame(() => {
+                if (record.paint_at === null) record.paint_at = performance.now();
+              }));
+            }
+          });
+        };
+        window.__phase3PendingObserver = new MutationObserver(collect);
+        window.__phase3PendingObserver.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+        collect();
+      });
+      const pendingAppearancePromise = page.waitForFunction(
+        () => Array.isArray(window.__phase3PendingRecords) && window.__phase3PendingRecords.some((record) => Number.isFinite(record.paint_at)),
+        null,
+        { timeout: 5_000 }
+      ).then(() => page.evaluate(() => window.__phase3PendingRecords.find((record) => Number.isFinite(record.paint_at))));
+      const submitEvent = page.evaluate(() => new Promise((resolve, reject) => {
+        const form = document.querySelector("#composer");
+        if (!form) return reject(new Error("FRED composer disappeared before submit"));
+        form.addEventListener("submit", () => resolve({ performance_now: performance.now(), wall_ms: Date.now() }), { once: true });
+      }));
+      await submit.click();
+      const submitAt = await submitEvent;
+      // Consume the observer's first matching double-RAF timestamp before
+      // waiting on the acceptance response. The pending metric must not be
+      // sequenced behind the HTTP round trip it measures alongside.
+      const pendingRecord = await pendingAppearancePromise.catch((error) => {
+        throw new Error(`${token} pending DOM observation: ${error.message}`);
+      });
+      const messageRequest = await waitForRequest(
+        (request) => request.method === "POST" && request.path === "/personal-assistant/messages" &&
+          String(request.requestBody?.prompt || "") === submitPrompt,
+        `${token} acceptance request`
+      );
+      const clientRequestId = String(messageRequest.requestBody?.client_request_id || "").trim();
+      if (!clientRequestId) fail(`${token} acceptance request did not expose client_request_id`);
+      if (pendingRecord.client_request_id !== clientRequestId) {
+        fail(`${token} pending DOM was not attributable to its submitted request: ${JSON.stringify({ pendingRecord, clientRequestId })}`);
+      }
+      const pendingPaintAt = Number(pendingRecord.paint_at);
+      if (!Number.isFinite(pendingPaintAt)) fail(`${token} pending observer did not record a paint opportunity`);
+      report.metrics[viewport].submit_to_pending_paint_opportunity_ms.push(pendingPaintAt - submitAt.performance_now);
+      await page.evaluate(() => window.__phase3PendingObserver?.disconnect());
+      report.metrics[viewport].post_start_to_acceptance_ms.push(messageRequest.responseAt - messageRequest.startedAt);
+      const responseBody = await messageRequest.responseBodyPromise;
+      const acceptance = responseBody?.acceptance || {};
+      if (responseBody?.accepted !== true || !["dispatched", "start_failed", "unknown"].includes(String(acceptance.state || ""))) {
+        fail(`${token} did not receive an authoritative acceptance response: ${JSON.stringify(responseBody)}`);
+      }
+      const runId = String(acceptance.run_id || "").trim();
+      if (!runId) fail(`${token} acceptance has no attributable run_id: ${JSON.stringify(acceptance)}`);
+      const explicitPendingIdentity = await page.evaluate((id) => {
+        const escaped = CSS.escape(id);
+        return Boolean(document.querySelector(`[data-pa-message-status][data-client-request-id='${escaped}']`));
+      }, clientRequestId);
+      Object.assign(sample, {
+        client_request_id: clientRequestId,
+        run_id: runId,
+        acceptance_state: acceptance.state,
+        pending_state: pendingRecord.state,
+        pending_appeared_at: pendingRecord.appeared_at,
+        pending_paint_at: pendingPaintAt,
+        submit_to_request_start_ms: messageRequest.startedWallAt - submitAt.wall_ms,
+        submit_to_acceptance_ms: messageRequest.responseWallAt - submitAt.wall_ms,
+        explicit_pending_status_identity: explicitPendingIdentity,
+      });
+      if (!explicitPendingIdentity) report.blocked_gates.push(`${token}: pending send-status lacks data-client-request-id`);
+      if (report.waterfall.first_send_acceptance_ms == null) {
+        report.waterfall.first_send_acceptance_ms = messageRequest.responseAt - messageRequest.startedAt;
+        report.waterfall.first_acceptance_at = messageRequest.responseAt;
+      }
+      await waitForFile(markerPath("started", token), `${token} fake harness start`);
+      const progressMarker = `Phase3 semantic progress ${token}`;
+      const progressObservationKind = `${fullscreen ? "background" : "regular"}-progress-${token}`;
+      const progressObserver = await armPaintObservation(page, progressObservationKind, { runId, marker: progressMarker });
+      fs.writeFileSync(markerPath("observe", token), "observe\\n");
+      const progressMarkerObservedAt = await waitForFile(markerPath("progress", token), `${token} fake harness progress`);
+      const progressObserved = await pollConversation(page, agentKey, progressMarker, runId);
+      const persistedProgress = await waitForPersistedEvent(progressMarker, runId, `${token} progress`);
+      sample.pre_final_progress_action_check = await assertNoActionForMarker(page, token, `${token} pre-final progress`);
+
+      if (fullscreen && !(await page.locator("#composer.composer-full-screen").count())) {
+        const reopen = await uniqueLocator(page.locator("#composer [data-toggle-composer-full-screen]"), `${token} reopen full-screen control`);
+        await reopen.click();
+        await waitFor(page, () => Boolean(document.querySelector("#composer.composer-full-screen")), null, `${token} reopened full-screen editor`);
+      }
+      const retainedInput = await uniqueLocator(page.locator("#composer #prompt-input"), `${token} retained draft input`);
+      const retainedDraft = `retained draft ${token}`;
+      await retainedInput.fill(retainedDraft);
+      await retainedInput.focus();
+      await retainedInput.evaluate((element) => element.setSelectionRange(element.value.length, element.value.length));
+      const retainedAttachmentInput = await uniqueLocator(page.locator("[data-prompt-attachment-input]"), `${token} retained attachment input`);
+      const retainedAttachmentSetStartedAt = performance.now();
+      const retainedAttachmentRequestStart = requests.length;
+      await retainedAttachmentInput.setInputFiles({
+        name: `phase3-retained-${token}.txt`,
+        mimeType: "text/plain",
+        buffer: Buffer.from(`Retained Phase3 attachment ${token}`),
+      });
+      await waitFor(page, () => document.querySelectorAll(".pending-attachment").length === 1, null, `${token} retained attachment`);
+      sample.retained_attachment_set_to_pending_ms = performance.now() - retainedAttachmentSetStartedAt;
+      sample.retained_attachment_requests = requests.slice(retainedAttachmentRequestStart).map((request) => request.path);
+      const retainedAfterAttachment = await uniqueLocator(page.locator("#composer #prompt-input"), `${token} post-attachment retained input`);
+      await retainedAfterAttachment.focus();
+      await retainedAfterAttachment.evaluate((element) => element.setSelectionRange(element.value.length, element.value.length));
+      const retainedBefore = await page.evaluate(() => {
+        const composer = document.querySelector("#composer");
+        const input = document.querySelector("#composer #prompt-input");
+        const scroll = document.querySelector(".agent-conversation-scroll");
+        if (scroll) scroll.scrollTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight - 4);
+        window.__phase3ComposerNode = composer;
+        return {
+          value: input?.value || "",
+          active: document.activeElement === input,
+          selectionStart: input?.selectionStart,
+          selectionEnd: input?.selectionEnd,
+          attachmentCount: document.querySelectorAll(".pending-attachment").length,
+          fullScreen: Boolean(document.querySelector("#composer.composer-full-screen")),
+          scrollTop: scroll?.scrollTop || 0,
+          announcements: Array.from(document.querySelectorAll("[aria-live][role='status']"))
+            .map((element) => {
+              const action = element.closest(".pa-inline-action[data-proposal-id]");
+              const proposalId = action?.dataset.proposalId || null;
+              const text = element.textContent.trim();
+              const explicitKey = element.dataset.paAnnouncementKey || element.id || element.dataset.paEventId || element.dataset.clientRequestId || element.dataset.paMessageStatus || null;
+              return {
+                key: explicitKey || (proposalId ? `proposal:${proposalId}:${text}` : null),
+                announcement_key: element.dataset.paAnnouncementKey || null,
+                proposal_id: proposalId,
+                aria_live: element.getAttribute("aria-live"),
+                text,
+              };
+            })
+            .filter((entry) => entry.text),
+        };
+      });
+      if (retainedBefore.value !== retainedDraft || retainedBefore.selectionStart !== retainedDraft.length || retainedBefore.selectionEnd !== retainedDraft.length || !retainedBefore.active || retainedBefore.attachmentCount !== 1) {
+        fail(`${token} retained draft was not established after attachment render: ${JSON.stringify({ retainedBefore, retainedDraft })}`);
+      }
+      assertAnnouncementIdentities(retainedBefore.announcements, `${token} progress before scheduled refresh`);
+      const retainedSuffix = " typed while scheduled polling remains active";
+      const automaticPollingStart = performance.now();
+      for (const character of retainedSuffix) {
+        await page.keyboard.insertText(character);
+        await sleep(100);
+      }
+      const typingFinishedAt = performance.now();
+      let automaticPolls = [];
+      try {
+        automaticPolls = await waitForObservedRequestCount(
+          (request) => request.method === "GET" && request.path === "/personal-assistant" &&
+            successfulResponse(request) && request.startedAt >= automaticPollingStart,
+          2,
+          `${token} normal scheduled polling during continuous typing`,
+          7_000
+        );
+      } catch (error) {
+        report.blocked_gates.push(`${token}: ${error.message}`);
+      }
+      const pollsStartedWhileTyping = automaticPolls.filter((request) => request.startedAt < typingFinishedAt).length;
+      const pollsCompletedWhileTyping = automaticPolls.filter((request) => successfulResponse(request) && request.responseAt <= typingFinishedAt).length;
+      if (pollsCompletedWhileTyping < 2) {
+        report.blocked_gates.push(`${token}: continuous typing completed only ${pollsCompletedWhileTyping} automatic poll ticks before typing ended`);
+      }
+      const retainedAfter = await page.evaluate(() => {
+        const input = document.querySelector("#composer #prompt-input");
+        return {
+          value: input?.value || "",
+          active: document.activeElement === input,
+          selectionStart: input?.selectionStart,
+          selectionEnd: input?.selectionEnd,
+          attachmentCount: document.querySelectorAll(".pending-attachment").length,
+          fullScreen: Boolean(document.querySelector("#composer.composer-full-screen")),
+          sameComposer: window.__phase3ComposerNode === document.querySelector("#composer"),
+          scrollTop: document.querySelector(".agent-conversation-scroll")?.scrollTop || 0,
+          announcements: Array.from(document.querySelectorAll("[aria-live][role='status']"))
+            .map((element) => {
+              const action = element.closest(".pa-inline-action[data-proposal-id]");
+              const proposalId = action?.dataset.proposalId || null;
+              const text = element.textContent.trim();
+              const explicitKey = element.dataset.paAnnouncementKey || element.id || element.dataset.paEventId || element.dataset.clientRequestId || element.dataset.paMessageStatus || null;
+              return {
+                key: explicitKey || (proposalId ? `proposal:${proposalId}:${text}` : null),
+                announcement_key: element.dataset.paAnnouncementKey || null,
+                proposal_id: proposalId,
+                aria_live: element.getAttribute("aria-live"),
+                text,
+              };
+            })
+            .filter((entry) => entry.text),
+        };
+      });
+      const expectedRetained = `${retainedDraft}${retainedSuffix}`;
+      if (retainedAfter.value !== expectedRetained || retainedAfter.selectionStart !== expectedRetained.length || retainedAfter.selectionEnd !== expectedRetained.length || !retainedAfter.active || !retainedAfter.sameComposer || retainedAfter.attachmentCount !== 1 || (fullscreen && !retainedAfter.fullScreen)) {
+        fail(`${token} retained editor state changed during scheduled refresh: ${JSON.stringify({ editor, retainedBefore, retainedAfter, progressObserved, automaticPolls: automaticPolls.length })}`);
+      }
+      assertAnnouncementIdentities(retainedAfter.announcements, `${token} progress after scheduled refresh`);
+      recordUnchangedReceiptAnnouncementGate(retainedBefore.announcements, retainedAfter.announcements, `${token} progress refresh`, report);
+      if (Math.abs(retainedAfter.scrollTop - retainedBefore.scrollTop) > 8) fail(`${token} conversation scroll changed during progress refresh: ${JSON.stringify({ retainedBefore, retainedAfter })}`);
+      sample.automatic_poll_requests_observed_after_typing_start = automaticPolls.length;
+      sample.automatic_poll_requests_started_during_typing = pollsStartedWhileTyping;
+      sample.automatic_poll_requests_completed_while_typing = pollsCompletedWhileTyping;
+      sample.typing_duration_ms = typingFinishedAt - automaticPollingStart;
+      const progressObservation = await waitForPaintObservation(page, progressObservationKind, `${token} progress DOM paint opportunity`);
+      const progressTiming = await persistedToPaintMs(page, persistedProgress, progressObservation.paint_at);
+      if (progressObservation.already_present_at_arm) {
+        sample.progress_observation_late = true;
+        report.blocked_gates.push(`${token}: progress observer was armed after the matching DOM was already present; latency is an observation bound, not an earliest-paint sample`);
+      } else if (!fullscreen) {
+        report.metrics[viewport].persisted_progress_to_visible_paint_opportunity_ms.push(progressTiming.latency_ms);
+      }
+      Object.assign(sample, {
+        progress_recorded_at: progressTiming.persisted_recorded_at,
+        progress_event_id: progressTiming.persisted_event_id,
+        progress_endpoint_observed_at: progressObserved.observedAt,
+        progress_endpoint_observed_wall_at: progressObserved.observedWallAt,
+        progress_persisted_observed_at: progressTiming.persisted_observed_at,
+        progress_persisted_observed_wall_at: persistedProgress.observed_wall_at,
+        progress_marker_observed_at: progressMarkerObservedAt.monotonic_ms,
+        progress_marker_observed_wall_at: progressMarkerObservedAt.wall_ms,
+        progress_observer_armed_at: progressObserver.armed_at,
+        progress_observer_armed_wall_at: progressObserver.armed_wall_at,
+        progress_already_present_at_arm: progressObserver.already_present_at_arm,
+        progress_dom_at: progressObservation.dom_at,
+        progress_dom_wall_at: progressObservation.dom_wall_at,
+        progress_paint_at: progressObservation.paint_at,
+        progress_paint_wall_at: progressObservation.paint_wall_at,
+        progress_marker_to_dom_ms: progressObservation.dom_wall_at - progressMarkerObservedAt.wall_ms,
+        progress_endpoint_to_dom_ms: progressObservation.dom_wall_at - progressObserved.observedWallAt,
+        ...(fullscreen ? { progress_background_paint_at: progressObservation.paint_at } : { progress_visible_paint_at: progressObservation.paint_at }),
+      });
+
+      const terminalMarker = `Phase3 final result ${token}`;
+      const terminalObservationKind = `${fullscreen ? "background" : "regular"}-terminal-${token}`;
+      await armPaintObservation(page, terminalObservationKind, { runId, marker: terminalMarker, terminal: true, clientRequestId });
+      fs.writeFileSync(markerPath("release", token), "release\\n");
+      await waitForFile(markerPath("final", token), `${token} fake harness final`);
+      const terminalObserved = await pollConversation(page, agentKey, terminalMarker, runId);
+      const persistedTerminal = await waitForPersistedEvent(terminalMarker, runId, `${token} terminal`);
+      await pollActions(page, token);
+      const terminalObservation = await waitForPaintObservation(page, terminalObservationKind, `${token} terminal DOM paint opportunity`);
+      const explicitTerminalIdentity = await page.evaluate((id) => {
+        const escaped = CSS.escape(id);
+        return Boolean(document.querySelector(`[data-pa-message-status][data-client-request-id='${escaped}']`));
+      }, clientRequestId);
+      if (!explicitTerminalIdentity) report.blocked_gates.push(`${token}: terminal send-status lacks data-client-request-id`);
+      if (fullscreen && await page.locator("#composer.composer-full-screen").count()) {
+        const close = await uniqueLocator(page.locator("#composer.composer-full-screen [data-toggle-composer-full-screen]"), `${token} close full-screen before action reconciliation`);
+        await close.click();
+        await waitFor(page, () => !document.querySelector("#composer.composer-full-screen"), null, `${token} closed full-screen for action reconciliation`);
+        sample.fullscreen_closed_for_reconciliation = true;
+      }
+      await waitFor(page, (marker) => Array.from(document.querySelectorAll(".pa-inline-action[data-proposal-state='awaiting_confirmation']"))
+        .filter((element) => element.textContent.includes(marker)).length === 1, token, `${token} pending action`);
+      const terminalTiming = await persistedToPaintMs(page, persistedTerminal, terminalObservation.paint_at);
+      if (!fullscreen) report.metrics[viewport].terminal_to_visible_paint_opportunity_ms.push(terminalTiming.latency_ms);
+      Object.assign(sample, {
+        terminal_recorded_at: terminalTiming.persisted_recorded_at,
+        terminal_event_id: terminalTiming.persisted_event_id,
+        terminal_endpoint_observed_at: terminalObserved.observedAt,
+        terminal_endpoint_observed_wall_at: terminalObserved.observedWallAt,
+        terminal_persisted_observed_at: terminalTiming.persisted_observed_at,
+        terminal_persisted_observed_wall_at: persistedTerminal.observed_wall_at,
+        terminal_dom_at: terminalObservation.dom_at,
+        terminal_dom_wall_at: terminalObservation.dom_wall_at,
+        terminal_paint_at: terminalObservation.paint_at,
+        terminal_paint_wall_at: terminalObservation.paint_wall_at,
+        terminal_endpoint_to_dom_ms: terminalObservation.dom_wall_at - terminalObserved.observedWallAt,
+        ...(fullscreen ? { terminal_background_paint_at: terminalObservation.paint_at } : { terminal_visible_paint_at: terminalObservation.paint_at }),
+      });
+      const proposalIds = await page.evaluate((marker) => Array.from(document.querySelectorAll(".pa-inline-action[data-proposal-state='awaiting_confirmation']"))
+        .filter((element) => element.textContent.includes(marker)).map((element) => element.dataset.proposalId), token);
+      if (new Set(proposalIds).size !== proposalIds.length) fail(`${token} duplicate actionable proposal IDs: ${JSON.stringify(proposalIds)}`);
+
+      await page.evaluate(() => Promise.all([
+        refreshPersonalAssistant({ force: true }),
+        refreshPersonalAssistant({ force: true }),
+      ]));
+      await waitFor(page, (marker) => Array.from(document.querySelectorAll(".pa-inline-action[data-proposal-state='awaiting_confirmation']"))
+        .filter((element) => element.textContent.includes(marker)).length === 1, token, `${token} reconciled action`);
+      const reconciledIds = await page.evaluate((marker) => Array.from(document.querySelectorAll(".pa-inline-action[data-proposal-state='awaiting_confirmation']"))
+        .filter((element) => element.textContent.includes(marker)).map((element) => element.dataset.proposalId), token);
+      if (JSON.stringify(reconciledIds) !== JSON.stringify(proposalIds)) fail(`${token} reconciliation changed actionable proposal identity: ${JSON.stringify({ proposalIds, reconciledIds })}`);
+      const reject = await uniqueLocator(
+        page.locator(".pa-inline-action[data-proposal-state='awaiting_confirmation']")
+          .filter({ hasText: token })
+          .locator("[data-reject-pa-proposal]"),
+        `${token} reject action`
+      );
+      await reject.click();
+      await waitFor(page, (marker) => !Array.from(document.querySelectorAll(".pa-inline-action[data-proposal-state='awaiting_confirmation']"))
+        .some((element) => element.textContent.includes(marker)), token, `${token} rejected action`);
+      const announcementsAfter = await page.evaluate(() => Array.from(document.querySelectorAll("[aria-live][role='status']"))
+        .map((element) => {
+          const action = element.closest(".pa-inline-action[data-proposal-id]");
+          const proposalId = action?.dataset.proposalId || null;
+          const text = element.textContent.trim();
+          const explicitKey = element.dataset.paAnnouncementKey || element.id || element.dataset.paEventId || element.dataset.clientRequestId || element.dataset.paMessageStatus || null;
+          return {
+            key: explicitKey || (proposalId ? `proposal:${proposalId}:${text}` : null),
+            announcement_key: element.dataset.paAnnouncementKey || null,
+            proposal_id: proposalId,
+            aria_live: element.getAttribute("aria-live"),
+            text,
+          };
+        })
+        .filter((entry) => entry.text));
+      assertAnnouncementIdentities(announcementsAfter, `${token} after reconciliation`);
+      report.announcement_checks.push({ viewport, token, before: editor.before.announcements, after: announcementsAfter });
+      Object.assign(sample, { progress_observed_at: progressObserved.observedAt, terminal_observed_at: terminalObserved.observedAt, action_ids: proposalIds });
+      sample.completed = true;
+    }
+
+    async function checkVisibilityAndOffline(page, report) {
+      const before = requests.length;
+      await page.evaluate(() => {
+        Object.defineProperty(document, "hidden", { configurable: true, value: true });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await page.waitForTimeout(250);
+      const hiddenRequests = requests.length - before;
+      if (hiddenRequests !== 0) fail(`hidden tab started ${hiddenRequests} request(s)`);
+      await page.evaluate(() => {
+        Object.defineProperty(document, "hidden", { configurable: true, value: false });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await waitForObservedRequest((request, index) => index >= before && request.path === "/personal-assistant" && successfulResponse(request), "visible-tab FRED resume");
+      await waitFor(page, () => document.querySelector(".personal-assistant-page") !== null, null, "visible-tab FRED page");
+      report.guard_checks.hidden_visible = { hidden_requests: hiddenRequests, resumed: true };
+
+      const offlineStart = requests.length;
+      intentionallyOffline = true;
+      await page.route(`${baseUrl}/personal-assistant`, async (route) => {
+        intentionalOfflineAbortCount += 1;
+        await route.abort("failed");
+      });
+      await page.evaluate(() => window.dispatchEvent(new Event("offline")));
+      await page.evaluate(() => refresh({ force: true }));
+      await waitFor(page, () => /Offline|unavailable/i.test(document.body.innerText), null, "offline recovery state", 5_000);
+      await page.unroute(`${baseUrl}/personal-assistant`);
+      intentionallyOffline = false;
+      await page.evaluate(() => {
+        window.dispatchEvent(new Event("online"));
+        return refresh({ force: true });
+      });
+      await waitForObservedRequest((request, index) => index >= offlineStart && request.path === "/personal-assistant" && successfulResponse(request), "online reconnect request", 10_000);
+      await waitFor(page, () => document.querySelector(".personal-assistant-page") !== null, null, "online FRED page");
+      report.guard_checks.offline_reconnect = true;
+    }
+
+    async function restartFredThroughSettings(page, label) {
+      const headerMore = await uniqueLocator(page.locator("#header-more-button"), `${label} header actions button`);
+      await headerMore.click();
+      const settingsAction = await uniqueLocator(page.locator("#header-more-panel [data-open-settings]"), `${label} Settings action`);
+      await settingsAction.click();
+      await waitFor(page, () => document.body.dataset.routeTab === "settings", null, `${label} Settings route`);
+      await waitFor(page, () => Boolean(document.querySelector("#settings-personal-assistant")), null, `${label} Settings FRED section`);
+      const lifecycle = await uniqueLocator(page.locator("#settings-personal-assistant details.pa-lifecycle"), `${label} Settings FRED lifecycle details`);
+      await lifecycle.locator("summary").click();
+      await waitFor(page, () => Boolean(document.querySelector("#settings-personal-assistant details.pa-lifecycle[open]")), null, `${label} Settings FRED lifecycle controls`);
+      const restartButton = await uniqueLocator(page.locator("#settings-personal-assistant [data-restart-personal-assistant]"), `${label} Settings FRED restart control`);
+      const restartRequestIndex = requests.length;
+      await restartButton.click();
+      await waitFor(page, () => Boolean(document.querySelector("[data-confirmation-accept]")), null, `${label} Settings FRED restart confirmation`);
+      const restartConfirm = await uniqueLocator(page.locator("[data-confirmation-accept]"), `${label} Settings FRED restart confirmation button`);
+      await restartConfirm.click();
+      const restartedRequest = await waitForRequest(
+        (request, index) => index >= restartRequestIndex && request.method === "POST" && request.path === "/personal-assistant/restart",
+        `${label} Settings FRED restart request`
+      );
+      const restartedBody = await restartedRequest.responseBodyPromise;
+      const nextAgentKey = String(restartedBody.personal_assistant?.active_key || "").trim();
+      const nextGeneration = Number(restartedBody.personal_assistant?.generation);
+      if (!nextAgentKey || !Number.isInteger(nextGeneration)) fail(`${label} restart did not return a new session: ${JSON.stringify(restartedBody)}`);
+      return { nextAgentKey, nextGeneration, restartedBody, restartRequestIndex };
+    }
+
+    async function checkRouteSessionAndOutOfOrder(page, report) {
+      const personalPath = `${baseUrl}/personal-assistant`;
+      let delayedResponse = false;
+      let releaseOldResponse = false;
+      let heldPayload = null;
+      let staleRefresh = null;
+      // Start Settings as a real browser navigation before holding the old
+      // status response. Configured FRED deliberately defers shell discovery
+      // on its conversation route; Settings' normal boot loads that shell and
+      // commits the real restart controls before the overlap test begins.
+      await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "domcontentloaded" });
+      await waitFor(page, () => document.body.dataset.routeTab === "settings", null, "Settings warm route for session guard");
+      await waitFor(page, () => Boolean(document.querySelector("#settings-personal-assistant")), null, "Settings warm FRED section");
+      await page.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "domcontentloaded" });
+      await waitFor(page, () => Boolean(document.querySelector(".personal-assistant-page")), null, "return to FRED before session guard");
+      await waitFor(page, () => Boolean(document.querySelector("#composer #prompt-input")), null, "FRED composer before session guard");
+      const quietDeadline = Date.now() + 5_000;
+      while (requests.some((request) => request.path === "/personal-assistant" && request.responseAt === null)) {
+        if (Date.now() >= quietDeadline) fail("session guard: an earlier FRED status request never completed");
+        await sleep(20);
+      }
+      await sleep(100);
+      await page.route(personalPath, async (route) => {
+        try {
+          const upstream = await route.fetch();
+          const payload = await upstream.json();
+          if (!delayedResponse) {
+            delayedResponse = true;
+            heldPayload = payload;
+            while (!releaseOldResponse) await sleep(20);
+          }
+          await route.fulfill({ json: payload });
+        } catch (error) {
+          // A navigation or explicit unroute can consume the held response;
+          // Playwright reports that teardown as an already-handled route.
+          if (!String(error.message || error).includes("already handled")) throw error;
+        }
+      });
+      try {
+        const firstRequestIndex = requests.length;
+        staleRefresh = page.evaluate(() => refreshPersonalAssistant({ force: true }));
+        await waitForObservedRequest((request, index) => index >= firstRequestIndex && request.method === "GET" && request.path === "/personal-assistant" && request.responseAt === null, "stale session request");
+        const heldDeadline = Date.now() + 5_000;
+        while (!heldPayload) {
+          if (Date.now() >= heldDeadline) fail("session guard: held status payload was not captured");
+          await sleep(20);
+        }
+
+        // Start the new session while the old response is still held. The
+        // actual Settings lifecycle must commit before the old response is
+        // released, otherwise the test cannot prove an out-of-order guard.
+        const { nextAgentKey, nextGeneration } = await restartFredThroughSettings(page, "success session guard");
+        const heldSession = heldPayload?.personal_assistant || {};
+        if (String(heldSession.active_key || "") === nextAgentKey || Number(heldSession.generation) === nextGeneration) {
+          fail(`held status response was not the pre-restart session: ${JSON.stringify({ held: heldSession, restarted: { active_key: nextAgentKey, generation: nextGeneration } })}`);
+        }
+
+        // Return through the visible Settings link while the original status
+        // response is still held. This exercises the production restart and
+        // route/session commit path without manufacturing request versions.
+        const returnToFred = await uniqueLocator(
+          page.locator("#settings-personal-assistant a[href='#personal-assistant']"),
+          "Settings return to FRED link"
+        );
+        await returnToFred.click();
+        await waitFor(page, () => Boolean(document.querySelector(".personal-assistant-page")), null, "return to FRED after Settings restart");
+        await waitFor(page, (key) => document.querySelector("#composer")?.dataset.agentKey === key, nextAgentKey, "new FRED session before stale response release");
+
+        releaseOldResponse = true;
+        await staleRefresh;
+        const renderedAgentKey = await page.locator("#composer").getAttribute("data-agent-key");
+        if (renderedAgentKey !== nextAgentKey) fail(`stale session response replaced the current FRED agent: ${JSON.stringify({ renderedAgentKey, nextAgentKey })}`);
+        await page.evaluate(() => { window.location.hash = "#now"; });
+        await waitFor(page, () => !document.querySelector(".personal-assistant-page"), null, "route guard leaves FRED");
+        await page.evaluate(() => { window.location.hash = "#personal-assistant"; });
+        await waitFor(page, () => Boolean(document.querySelector(".personal-assistant-page")), null, "route guard returns to FRED");
+        await waitFor(page, (key) => document.querySelector("#composer")?.dataset.agentKey === key, nextAgentKey, "route guard returns to committed FRED session");
+        report.guard_checks.route_session_out_of_order = {
+          delayed_old_response: delayedResponse,
+          settings_restart_confirmed: true,
+          returned_to_fred_before_old_response_release: true,
+          old_response_released_after_new_commit: true,
+          held_active_key: heldSession.active_key || null,
+          held_generation: heldSession.generation ?? null,
+          route_exit_reenter_after_commit: true,
+          active_key: nextAgentKey,
+          generation: nextGeneration,
+        };
+      } finally {
+        releaseOldResponse = true;
+        if (staleRefresh) await staleRefresh.catch(() => null);
+        await page.unroute(personalPath);
+      }
+
+      let rejectedDelayedResponse = false;
+      let releaseRejectedResponse = false;
+      let rejectedHeldPayload = null;
+      let rejectedRefresh = null;
+      await page.route(personalPath, async (route) => {
+        try {
+          const upstream = await route.fetch();
+          const payload = await upstream.json();
+          if (!rejectedDelayedResponse) {
+            rejectedDelayedResponse = true;
+            rejectedHeldPayload = payload;
+            while (!releaseRejectedResponse) await sleep(20);
+            intentionalStaleStatusErrorCount += 1;
+            await route.fulfill({
+              status: 503,
+              contentType: "application/json",
+              body: JSON.stringify({ error: "held stale FRED status" }),
+            });
+            return;
+          }
+          await route.fulfill({ json: payload });
+        } catch (error) {
+          if (!String(error.message || error).includes("already handled")) throw error;
+        }
+      });
+      try {
+        const firstRejectedRequestIndex = requests.length;
+        rejectedRefresh = page.evaluate(() => refreshPersonalAssistant({ force: true }));
+        await waitForObservedRequest(
+          (request, index) => index >= firstRejectedRequestIndex && request.method === "GET" && request.path === "/personal-assistant" && request.responseAt === null,
+          "stale error session request"
+        );
+        const heldRejectedDeadline = Date.now() + 5_000;
+        while (!rejectedHeldPayload) {
+          if (Date.now() >= heldRejectedDeadline) fail("stale error session guard: held status payload was not captured");
+          await sleep(20);
+        }
+
+        const restarted = await restartFredThroughSettings(page, "stale error session guard");
+        const heldRejectedSession = rejectedHeldPayload.personal_assistant || {};
+        if (String(heldRejectedSession.active_key || "") === restarted.nextAgentKey || Number(heldRejectedSession.generation) === restarted.nextGeneration) {
+          fail(`held stale error response was not the pre-restart session: ${JSON.stringify({ held: heldRejectedSession, restarted: restarted.nextAgentKey })}`);
+        }
+        const returnToFred = await uniqueLocator(
+          page.locator("#settings-personal-assistant a[href='#personal-assistant']"),
+          "stale error Settings return to FRED link"
+        );
+        await returnToFred.click();
+        await waitFor(page, () => Boolean(document.querySelector(".personal-assistant-page")), null, "return to FRED after stale error restart");
+        await waitFor(page, (key) => document.querySelector("#composer")?.dataset.agentKey === key, restarted.nextAgentKey, "new FRED session before stale error release");
+
+        releaseRejectedResponse = true;
+        await rejectedRefresh.catch(() => null);
+        await page.unroute(personalPath);
+        await page.waitForTimeout(100);
+        const healthAfterStaleError = await page.evaluate(() => {
+          if (typeof state === "undefined") return { available: false };
+          const item = state.personalAssistant || {};
+          return {
+            available: true,
+            active_key: item.active_key || null,
+            generation: Number.isInteger(Number(item.generation)) ? Number(item.generation) : null,
+            failure_count: Number(state.failureCount || 0),
+            load_state: state.personalAssistantLoadState || null,
+            load_error: state.personalAssistantLoadError || "",
+            connection: state.connection || "",
+            header_subtitle: state.headerSubtitle || "",
+          };
+        });
+        if (!healthAfterStaleError.available) fail("stale error session guard: read-only page state was unavailable");
+        if (healthAfterStaleError.active_key !== restarted.nextAgentKey || healthAfterStaleError.generation !== restarted.nextGeneration) {
+          fail(`stale error response changed the committed page session: ${JSON.stringify({ healthAfterStaleError, expected: { active_key: restarted.nextAgentKey, generation: restarted.nextGeneration } })}`);
+        }
+        if (healthAfterStaleError.failure_count !== 0 || healthAfterStaleError.load_error || /FRED unavailable|Activity unavailable|Sending is paused/i.test(`${healthAfterStaleError.connection} ${healthAfterStaleError.header_subtitle}`)) {
+          fail(`stale error response changed the committed session health: ${JSON.stringify(healthAfterStaleError)}`);
+        }
+        const recoveryRequestIndex = requests.length;
+        let automaticRecovery = false;
+        try {
+          await waitForObservedRequest(
+            (request, index) => index >= recoveryRequestIndex && request.method === "GET" && request.path === "/personal-assistant" && successfulResponse(request),
+            "stale error session automatic recovery",
+            18_000
+          );
+          automaticRecovery = true;
+        } catch (error) {
+          report.blocked_gates.push(`stale error session automatic recovery after normal idle cadence: ${error.message}`);
+        }
+        const staleErrorSurface = await page.evaluate(() => /FRED unavailable|Activity unavailable|Sending is paused/i.test(document.body.innerText));
+        if (staleErrorSurface) fail("stale error response left the committed FRED session in a visible failure state");
+        const renderedAfterStaleError = await page.locator("#composer").getAttribute("data-agent-key");
+        if (renderedAfterStaleError !== restarted.nextAgentKey) fail(`stale error response replaced the current FRED agent: ${JSON.stringify({ renderedAfterStaleError, expected: restarted.nextAgentKey })}`);
+        report.guard_checks.route_session_stale_error = {
+          delayed_old_response: rejectedDelayedResponse,
+          old_response_rejected_after_new_commit: true,
+          held_active_key: heldRejectedSession.active_key || null,
+          held_generation: heldRejectedSession.generation ?? null,
+          active_key: restarted.nextAgentKey,
+          generation: restarted.nextGeneration,
+          automatic_recovery_request_succeeded: automaticRecovery,
+          immediate_page_health: healthAfterStaleError,
+          visible_failure_state: false,
+        };
+      } finally {
+        releaseRejectedResponse = true;
+        if (rejectedRefresh) await rejectedRefresh.catch(() => null);
+        await page.unroute(personalPath);
+      }
+    }
+
+    async function main() {
+      fs.mkdirSync(captureDir, { recursive: true });
+      const report = {
+        status: "ok",
+        base_url: baseUrl,
+        sample_count_requested: sampleCount,
+        metrics: {
+          desktop: { submit_to_pending_paint_opportunity_ms: [], post_start_to_acceptance_ms: [], persisted_progress_to_visible_paint_opportunity_ms: [], terminal_to_visible_paint_opportunity_ms: [] },
+          mobile: { submit_to_pending_paint_opportunity_ms: [], post_start_to_acceptance_ms: [], persisted_progress_to_visible_paint_opportunity_ms: [], terminal_to_visible_paint_opportunity_ms: [] },
+        },
+        samples: [],
+        sample_coverage: {},
+        announcement_checks: [],
+        guard_checks: {},
+        blocked_gates: [],
+        waterfall: { first_composer_at: null, first_acceptance_at: null },
+      };
+      let browser = null;
+      try {
+        const launchOptions = { headless: true };
+        if (#{PHASE3_CHROME_PATH.to_json} && fs.existsSync(#{PHASE3_CHROME_PATH.to_json})) launchOptions.executablePath = #{PHASE3_CHROME_PATH.to_json};
+        browser = await chromium.launch(launchOptions);
+        const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+        // Configure the temporary fixture through the API before opening any
+        // browser page. This keeps the cold configured waterfall free of
+        // unconfigured onboarding discovery.
+        const unconfigured = await requestJson(context.request, "GET", "/personal-assistant");
+        report.waterfall.unconfigured_onboarding_state = unconfigured.personal_assistant?.state || null;
+        report.waterfall.unconfigured_onboarding_available = unconfigured.personal_assistant?.configured === false;
+        const setupOpenStart = performance.now();
+        await requestJson(context.request, "POST", "/personal-assistant/setup", { confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "UTC" });
+        const opened = await requestJson(context.request, "POST", "/personal-assistant/open", {});
+        report.waterfall.fixture_configuration_ms = performance.now() - setupOpenStart;
+        const agentKey = opened.personal_assistant.active_key;
+        report.agent_key = agentKey;
+        const page = await context.newPage();
+        page.on("request", (request) => { recordRequest(request); });
+        page.on("response", (response) => {
+          const record = requests.find((item) => item.request === response.request());
+          if (record) {
+            record.responseAt = performance.now();
+            record.responseWallAt = Date.now();
+            record.status = response.status();
+            record.responseBodyPromise = response.json().catch(() => null);
+          }
+        });
+        page.on("requestfailed", (request) => {
+          const record = requests.find((item) => item.request === request);
+          if (record) {
+            record.responseAt = performance.now();
+            record.responseWallAt = Date.now();
+            record.failed = true;
+            record.responseBodyPromise = Promise.resolve(null);
+          }
+        });
+        page.on("console", (message) => {
+          if (message.type() !== "error") return;
+          const text = message.text();
+          const expectedOfflineNetworkError = intentionalOfflineAbortCount > 0 &&
+            /^Failed to load resource:.*net::ERR_(FAILED|INTERNET_DISCONNECTED)\\b/.test(text);
+          if (expectedOfflineNetworkError) {
+            intentionalOfflineAbortCount -= 1;
+            return;
+          }
+          const expectedStaleStatusError = intentionalStaleStatusErrorCount > 0 &&
+            /^Failed to load resource:.*status of 503 \\(Service Unavailable\\)$/.test(text) &&
+            requests.some((request) => request.path === "/personal-assistant" && request.status === 503);
+          if (expectedStaleStatusError) {
+            intentionalStaleStatusErrorCount -= 1;
+            return;
+          }
+          report.blocked_gates.push(`console: ${text}`);
+        });
+        page.on("pageerror", (error) => report.blocked_gates.push(`pageerror: ${error.message}`));
+
+        // The cold waterfall is only browser-issued configured work. Do not
+        // let the unconfigured onboarding or fixture setup requests pollute it.
+        requests.splice(0, requests.length);
+        const navigationStart = performance.now();
+        await page.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "domcontentloaded" });
+        await waitFor(page, () => Boolean(document.querySelector(".personal-assistant-page")), null, "FRED page");
+        await waitFor(page, () => Boolean(document.querySelector("#composer #prompt-input")), null, "first usable composer");
+        report.waterfall.first_composer_ms = performance.now() - navigationStart;
+        report.waterfall.first_composer_at = performance.now();
+        await page.screenshot({ path: path.join(captureDir, "phase3-initial-composer.png"), fullPage: false });
+
+        for (const viewport of [
+          { name: "desktop", width: 1280, height: 900, reducedMotion: "no-preference" },
+          { name: "mobile", width: 390, height: 844, reducedMotion: "reduce" },
+        ]) {
+          await page.setViewportSize({ width: viewport.width, height: viewport.height });
+          await page.emulateMedia({ reducedMotion: viewport.reducedMotion });
+          await waitFor(page, (width) => window.innerWidth === width, viewport.width, `${viewport.name} viewport`);
+          for (let index = 0; index < sampleCount; index += 1) {
+            try {
+              // Establish one unobscured latency sample first; the second
+              // sample is the fullscreen preservation gate, and later samples
+              // reuse both paths without calling a forced refresh.
+              await performSample(page, agentKey, viewport.name, index, index === 1, report);
+              await page.reload({ waitUntil: "domcontentloaded" });
+              await waitFor(page, () => Boolean(document.querySelector(".personal-assistant-page")), null, `${viewport.name} sample reset page`, 10_000);
+              await waitFor(page, () => Boolean(document.querySelector("#composer #prompt-input")), null, `${viewport.name} sample reset composer`, 10_000);
+            } catch (error) {
+              report.blocked_gates.push(`${viewport.name} sample ${index + 1}: ${error.message}`);
+              const pendingToken = report.samples.at(-1)?.token;
+              if (pendingToken) {
+                fs.writeFileSync(markerPath("observe", pendingToken), "observe\\n");
+                fs.writeFileSync(markerPath("release", pendingToken), "release\\n");
+              }
+              try {
+                if (pendingToken && fs.existsSync(markerPath("started", pendingToken))) {
+                  await waitForFile(markerPath("final", pendingToken), `${viewport.name} failed sample cleanup`, 5_000);
+                }
+                await page.reload({ waitUntil: "domcontentloaded" });
+                await waitFor(page, () => Boolean(document.querySelector("#composer #prompt-input")), null, `${viewport.name} reset composer`, 10_000);
+              } catch (cleanupError) {
+                report.blocked_gates.push(`${viewport.name} sample cleanup: ${cleanupError.message}`);
+              }
+            }
+          }
+          await page.screenshot({ path: path.join(captureDir, `phase3-${viewport.name}.png`), fullPage: false });
+        }
+
+        for (const viewport of ["desktop", "mobile"]) {
+          const begunSamples = report.samples.filter((sample) => sample.viewport === viewport);
+          const samples = begunSamples.filter((sample) => sample.completed === true);
+          const fullscreenSamples = samples.filter((sample) => sample.fullscreen);
+          const regularSamples = samples.filter((sample) => !sample.fullscreen);
+          report.sample_coverage[viewport] = {
+            requested: sampleCount,
+            begun: begunSamples.length,
+            completed: samples.length,
+            regular: regularSamples.length,
+            fullscreen: fullscreenSamples.length,
+          };
+          if (samples.length !== sampleCount || regularSamples.length < sampleCount - 1 || fullscreenSamples.length !== 1) {
+            report.blocked_gates.push(`${viewport}: incomplete regular/fullscreen sample coverage ${JSON.stringify(report.sample_coverage[viewport])}`);
+          }
+        }
+
+        try {
+          await checkVisibilityAndOffline(page, report);
+        } catch (error) {
+          report.blocked_gates.push(`visibility/offline/reconnect: ${error.message}`);
+        }
+
+        try {
+          await checkRouteSessionAndOutOfOrder(page, report);
+        } catch (error) {
+          report.blocked_gates.push(`route/session/out-of-order guards: ${error.message}`);
+        }
+
+        captureColdWaterfall(report);
+
+        // Reset only the temporary fixture after configured measurements are
+        // complete, then verify onboarding in a separate browser page. The
+        // browser assertion is intentionally last so its setup discovery
+        // cannot contaminate the configured cold-start request queue.
+        await requestJson(context.request, "POST", "/personal-assistant/reset", { confirmed: true });
+        const onboardingPage = await context.newPage();
+        try {
+          await onboardingPage.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "domcontentloaded" });
+          await waitFor(onboardingPage, () => Boolean(document.querySelector(".pa-setup")), null, "unconfigured FRED setup controls");
+          report.waterfall.unconfigured_browser_controls = await onboardingPage.evaluate(() => ({
+            setup: Boolean(document.querySelector("#personal-assistant-setup-form")),
+            model: Boolean(document.querySelector("#pa-model")),
+            reasoning_effort: Boolean(document.querySelector("#pa-reasoning-effort")),
+            timezone: Boolean(document.querySelector("#pa-timezone")),
+            confirmation: Boolean(document.querySelector("#personal-assistant-setup-form input[name='confirmed']")),
+          }));
+          if (!Object.values(report.waterfall.unconfigured_browser_controls).every(Boolean)) {
+            fail(`unconfigured browser controls are incomplete: ${JSON.stringify(report.waterfall.unconfigured_browser_controls)}`);
+          }
+          report.waterfall.unconfigured_browser_check_at_end = true;
+        } finally {
+          await onboardingPage.close();
+        }
+
+        report.distributions = {};
+        for (const [viewport, metrics] of Object.entries(report.metrics)) {
+          report.distributions[viewport] = Object.fromEntries(Object.entries(metrics).map(([name, values]) => [name, summarize(values)]));
+        }
+        enforceTimingTargets(report);
+        report.status = report.blocked_gates.length ? "blocked" : "ok";
+      } catch (error) {
+        report.status = "blocked";
+        report.blocked_gates.push(`fixture: ${error.message}`);
+      } finally {
+        fs.writeFileSync(path.join(captureDir, "phase3-metrics.json"), JSON.stringify(report, null, 2));
+        await closeBrowserBounded(browser);
+      }
+      console.log(JSON.stringify(report, null, 2));
+      console.log("#{PHASE3_COMPLETION_SENTINEL}");
+      return report.status === "blocked";
+    }
+
+    main().then((blocked) => {
+      if (blocked && process.env.TYCHO_PHASE3_REPORT_ONLY !== "1") process.exitCode = 2;
+    }).catch((error) => {
+      console.error(error);
+      process.exit(1);
+    });
+  JS
+end
+
+abort "TYCHO_PHASE3_SAMPLES must be at least 2; n=1 is an incomplete debug run, never an overall success" if PHASE3_SAMPLE_COUNT < 2
+
+capture_dir = PHASE3_CAPTURE_DIR.empty? ? File.join(Dir.tmpdir, "tycho-fred-phase3-captures") : PHASE3_CAPTURE_DIR
+ui_root = ENV["TYCHO_PHASE3_UI_ROOT"].to_s.strip
+ui_root = PHASE3_ROOT if ui_root.empty?
+unless File.file?(File.join(ui_root, "lib", "hq", "remote_ui", "assets", "app.js"))
+  abort "Missing Phase3 UI overlay at #{ui_root}"
+end
+unless File.file?(PHASE3_PLAYWRIGHT_PATH) || File.directory?(PHASE3_PLAYWRIGHT_PATH)
+  abort "Missing Playwright at #{PHASE3_PLAYWRIGHT_PATH}; set TYCHO_PLAYWRIGHT_PATH"
+end
+
+with_isolated_remote_ui_fixture(
+  backend_root: PHASE3_ROOT,
+  ui_root: ui_root,
+  fake_codex_script: PHASE3_FAKE_CODEX,
+  capture_dir: capture_dir,
+  prepare_personal_assistant: false,
+  extra_env: ->(fixture) do
+    { "TYCHO_PHASE3_FAKE_HARNESS_CONTROL" => fixture.fetch(:phase3_harness_control_path) }
+  end
+) do |context|
+  control_path = context.fetch(:phase3_harness_control_path)
+  script_path = File.join(context.fetch(:dir), "phase3-browser.js")
+  write_phase3_browser_script(
+    script_path,
+    context.fetch(:base_url),
+    control_path,
+    context.fetch(:logs_dir),
+    context.fetch(:capture_dir),
+    PHASE3_SAMPLE_COUNT
+  )
+  browser_env = {
+    "NODE_PATH" => PHASE3_PLAYWRIGHT_PATH,
+    "CHROME_PATH" => PHASE3_CHROME_PATH,
+    "TYCHO_PHASE3_FAKE_HARNESS_CONTROL" => control_path,
+  }
+  stdout, stderr, status = Open3.capture3(browser_env, "node", script_path, chdir: context.fetch(:dir))
+  puts stdout unless stdout.empty?
+  warn stderr unless stderr.empty?
+  unless stdout.lines.any? { |line| line.chomp == PHASE3_COMPLETION_SENTINEL }
+    warn "Phase 3 browser fixture did not emit #{PHASE3_COMPLETION_SENTINEL}; child completion is unproven"
+    warn File.read(context.fetch(:log_path)) if File.file?(context.fetch(:log_path))
+    exit(1)
+  end
+  unless status.success? || (ENV["TYCHO_PHASE3_REPORT_ONLY"] == "1" && status.exitstatus == 2)
+    warn File.read(context.fetch(:log_path)) if File.file?(context.fetch(:log_path))
+    exit(status.exitstatus || 1)
+  end
+end

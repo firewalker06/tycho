@@ -17,6 +17,7 @@ BETA_ROOT = begin
 end
 PLAYWRIGHT_PATH = File.expand_path(ENV.fetch("TYCHO_PLAYWRIGHT_PATH", File.join(ROOT, "node_modules", "playwright")))
 CHROME_PATH = ENV.fetch("TYCHO_CHROME_PATH", ENV.fetch("CHROME_PATH", "")).to_s.strip
+PHASE2_COMPLETION_SENTINEL = "TYCHO_PHASE2_BROWSER_COMPLETE_v1"
 
 def free_port
   server = TCPServer.new("127.0.0.1", 0)
@@ -25,7 +26,7 @@ ensure
   server&.close
 end
 
-def write_fixture(dir)
+def write_fixture(dir, fake_codex_script: nil)
   config_dir = File.join(dir, "config")
   home_dir = File.join(dir, "home")
   tycho_home = File.join(dir, "tycho-home")
@@ -41,6 +42,7 @@ def write_fixture(dir)
   fake_codex_path = File.join(dir, "fake-codex")
   fake_gh_path = File.join(dir, "fake-gh")
   executor_barrier_path = File.join(dir, "executor-barrier")
+  phase3_harness_control_path = File.join(dir, "phase3-harness")
   server_launcher_path = File.join(dir, "phase2-server-launcher.rb")
   File.write(config_path, <<~YAML)
     ---
@@ -58,7 +60,7 @@ def write_fixture(dir)
   File.write(prompts_path, "---\ncustom: \"Reply with a short structured result.\"\n")
   File.write(response_style_path, "Use concise factual replies.\n")
   File.write(schedules_path, "---\nschedules: []\n")
-  File.write(fake_codex_path, <<~'RUBY')
+  File.write(fake_codex_path, fake_codex_script || <<~'RUBY')
     #!/usr/bin/env ruby
     require "json"
 
@@ -129,18 +131,19 @@ def write_fixture(dir)
     logs_dir: logs_dir,
     workspace: workspace,
     executor_barrier_path: executor_barrier_path,
+    phase3_harness_control_path: phase3_harness_control_path,
     server_launcher_path: server_launcher_path
   }
 end
 
-def prepare_server_root(dir)
-  raise "Missing committed Beta snapshot at #{BETA_ROOT}" unless File.file?(File.join(BETA_ROOT, "bin", "tycho"))
-  raise "Missing RemoteServer source at #{BETA_ROOT}" unless File.file?(File.join(BETA_ROOT, "lib", "hq", "remote_server.rb"))
+def prepare_server_root(dir, backend_root: BETA_ROOT, ui_root: ROOT)
+  raise "Missing committed backend snapshot at #{backend_root}" unless File.file?(File.join(backend_root, "bin", "tycho"))
+  raise "Missing RemoteServer source at #{backend_root}" unless File.file?(File.join(backend_root, "lib", "hq", "remote_server.rb"))
 
   server_root = File.join(dir, "server")
   FileUtils.mkdir_p(File.join(server_root, "lib"))
   %w[Gemfile Gemfile.lock].each do |name|
-    source = File.join(BETA_ROOT, name)
+    source = File.join(backend_root, name)
     FileUtils.cp(source, File.join(server_root, name)) if File.file?(source)
   end
   bundled_config_files = %w[
@@ -152,7 +155,7 @@ def prepare_server_root(dir)
     config/schemas/agent_result.json
   ]
   bundled_config_files.each do |relative_path|
-    source = File.join(BETA_ROOT, relative_path)
+    source = File.join(backend_root, relative_path)
     raise "Missing bundled fixture file at #{source}" unless File.file?(source)
 
     destination = File.join(server_root, relative_path)
@@ -160,11 +163,11 @@ def prepare_server_root(dir)
     FileUtils.cp(source, destination)
   end
   FileUtils.mkdir_p(File.join(server_root, "bin"))
-  FileUtils.cp(File.join(BETA_ROOT, "bin", "tycho"), File.join(server_root, "bin", "tycho"))
-  FileUtils.cp_r(File.join(BETA_ROOT, "lib", "hq"), File.join(server_root, "lib"))
+  FileUtils.cp(File.join(backend_root, "bin", "tycho"), File.join(server_root, "bin", "tycho"))
+  FileUtils.cp_r(File.join(backend_root, "lib", "hq"), File.join(server_root, "lib"))
   remote_ui = File.join(server_root, "lib", "hq", "remote_ui")
   FileUtils.rm_rf(remote_ui)
-  FileUtils.cp_r(File.join(ROOT, "lib", "hq", "remote_ui"), File.join(server_root, "lib", "hq"))
+  FileUtils.cp_r(File.join(ui_root, "lib", "hq", "remote_ui"), File.join(server_root, "lib", "hq"))
   server_root
 end
 
@@ -174,6 +177,11 @@ def write_server_launcher(path, server_root, executor_barrier_path)
     # frozen_string_literal: true
 
     gemfile = #{File.join(server_root, "Gemfile").to_json}
+    %w[
+      RUBYOPT RUBYLIB RUBYLIB_PREFIX RUBY_HOME GEM_HOME GEM_PATH
+      BUNDLE_BIN_PATH BUNDLE_GEMFILE BUNDLE_PATH BUNDLE_WITH BUNDLE_WITHOUT
+      BUNDLE_FROZEN BUNDLE_APP_CONFIG BUNDLE_USER_CONFIG
+    ].each { |name| ENV.delete(name) }
     if File.file?(gemfile)
       ENV["BUNDLE_GEMFILE"] = gemfile
       require "bundler/setup"
@@ -325,13 +333,30 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
       if (nested !== 0) fail(`${label}: found ${nested} nested forms`);
     }
 
+    async function closeBrowserBounded(browser) {
+      if (!browser) return;
+      let timer;
+      await Promise.race([
+        browser.close(),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(false), 5_000);
+          timer.unref?.();
+        }),
+      ]).then((closed) => {
+        if (timer) clearTimeout(timer);
+        if (closed === false) console.error("bounded browser cleanup timed out");
+      }).catch((error) => console.error(`bounded browser cleanup failed: ${error.message}`));
+    }
+
     async function main() {
       fs.mkdirSync(captureDir, { recursive: true });
       const launchOptions = { headless: true };
       if (#{CHROME_PATH.to_json}) launchOptions.executablePath = #{CHROME_PATH.to_json};
-      const browser = await chromium.launch(launchOptions);
-      const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-      const page = await context.newPage();
+      let browser = null;
+      try {
+        browser = await chromium.launch(launchOptions);
+        const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+        const page = await context.newPage();
       let confirmMode = "normal";
       let preflightFailureRemaining = 0;
       let preflightFailureExpected = false;
@@ -493,8 +518,8 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
       await waitFor(page, () => Boolean(document.querySelector("#settings-personal-assistant")), null, "navigation while executor was blocked");
       await page.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "domcontentloaded" });
       await waitFor(page, () => Boolean(document.querySelector(".personal-assistant-page")), null, "return to FRED after blocked navigation");
-      const executorReleasedAt = Date.now();
       fs.writeFileSync(`${executorBarrierPath}.release`, "release\\n");
+      const executorReleasedAt = Date.now();
       await waitFor(page, (proposalId) => {
         const card = [...document.querySelectorAll(".pa-inline-action")].find((element) => element.dataset.proposalId === proposalId);
         return Boolean(card && card.innerText.includes("Completed") && card.querySelector("a[href^='#agent/']"));
@@ -720,7 +745,7 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
       await waitFor(page, () => !document.querySelector(".pa-history-entry"), null, "close saved history detail");
       await waitFor(page, (value) => document.querySelector("#composer #prompt-input")?.value === value, draft, "draft after history close");
       const historyDate = await page.locator(".pa-history-list li span").first().textContent();
-      if (!historyDate || /\b(?:AM|PM)\b|\d{1,2}:\d{2}/i.test(historyDate)) fail(`history active_date rendered as a timestamp: ${historyDate}`);
+      if (!historyDate || /\\b(?:AM|PM)\\b|\\d{1,2}:\\d{2}/i.test(historyDate)) fail(`history active_date rendered as a timestamp: ${historyDate}`);
 
       if (historyId && historyDetail) {
         const realHistoryPath = `${baseUrl}/personal-assistant/history/${encodeURIComponent(historyId)}`;
@@ -835,8 +860,11 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
         blocked_gates: blockedGates,
         capture_dir: captureDir
       }, null, 2));
-      await browser.close();
-      return { blocked: blockedGates.length > 0 };
+      console.log("#{PHASE2_COMPLETION_SENTINEL}");
+        return { blocked: blockedGates.length > 0 };
+      } finally {
+        await closeBrowserBounded(browser);
+      }
     }
 
     main().then((result) => {
@@ -848,70 +876,119 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
   JS
 end
 
-Dir.mktmpdir("tycho-fred-phase2") do |dir|
-  fixture = write_fixture(dir)
-  server_root = prepare_server_root(dir)
-  write_server_launcher(fixture.fetch(:server_launcher_path), server_root, fixture.fetch(:executor_barrier_path))
-  port = free_port
-  base_url = "http://127.0.0.1:#{port}"
-  log_path = File.join(dir, "remote-server.log")
-  capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
-  capture_dir = File.join(Dir.tmpdir, "tycho-fred-phase2-captures") if capture_dir.empty?
-  FileUtils.mkdir_p(capture_dir)
+def with_isolated_remote_ui_fixture(
+  backend_root: BETA_ROOT,
+  ui_root: ROOT,
+  fake_codex_script: nil,
+  extra_env: {},
+  capture_dir: nil,
+  prepare_personal_assistant: true,
+  seed_unknown: false
+)
+  Dir.mktmpdir("tycho-fred-remote-ui") do |dir|
+    fixture = write_fixture(dir, fake_codex_script:)
+    server_root = prepare_server_root(dir, backend_root:, ui_root:)
+    write_server_launcher(fixture.fetch(:server_launcher_path), server_root, fixture.fetch(:executor_barrier_path))
+    port = free_port
+    base_url = "http://127.0.0.1:#{port}"
+    log_path = File.join(dir, "remote-server.log")
+    capture_dir = capture_dir.to_s.strip
+    capture_dir = File.join(Dir.tmpdir, "tycho-fred-remote-ui-captures") if capture_dir.empty?
+    FileUtils.mkdir_p(capture_dir)
 
-  path_aliases = %w[
-    TYCHO_HOME TYCHO_CONFIG_PATH TYCHO_SYSTEM_PROMPTS_PATH TYCHO_RESPONSE_STYLE_PATH
-    TYCHO_SCHEDULES_PATH TYCHO_LOGS_ROOT TYCHO_SKILLS_HOME TYCHO_PROJECTS_PATH
-    TYCHO_DATA_ROOT TYCHO_PERSONAL_ASSISTANT_PATH TYCHO_RUNTIME_ROOT
-    TYCHO_MANAGED_AGENTS_PATH TYCHO_CONFIG_DIR
-  ]
-  env = path_aliases.to_h { |name| [name, nil] }.merge(
-    "HOME" => fixture.fetch(:home_dir),
-    "TMPDIR" => fixture.fetch(:tmp_dir),
-    "TMP" => fixture.fetch(:tmp_dir),
-    "TEMP" => fixture.fetch(:tmp_dir),
-    "TYCHO_HOME" => fixture.fetch(:tycho_home),
-    "TYCHO_CONFIG_PATH" => fixture.fetch(:config_path),
-    "TYCHO_SYSTEM_PROMPTS_PATH" => fixture.fetch(:prompts_path),
-    "TYCHO_RESPONSE_STYLE_PATH" => fixture.fetch(:response_style_path),
-    "TYCHO_SCHEDULES_PATH" => fixture.fetch(:schedules_path),
-    "TYCHO_LOGS_ROOT" => fixture.fetch(:logs_dir),
-    "TYCHO_CODEX_BIN" => fixture.fetch(:fake_codex_path),
-    "TYCHO_GH_BIN" => fixture.fetch(:fake_gh_path),
-    "TYCHO_PHASE2_EXECUTOR_BARRIER" => fixture.fetch(:executor_barrier_path),
-    "TYCHO_REMOTE_TOKEN" => ""
-  )
-  @server_pid = Process.spawn(
-    env, RbConfig.ruby, fixture.fetch(:server_launcher_path), port.to_s,
-    chdir: server_root,
-    out: [log_path, "w"],
-    err: %i[child out],
-    pgroup: true
-  )
-  begin
-    wait_for_server(base_url, log_path)
-    json_request(base_url, "POST", "/personal-assistant/setup", { confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "UTC" })
-    _, opened = json_request(base_url, "POST", "/personal-assistant/open", {})
-    seed_persisted_unknown_receipt(fixture, opened.fetch("personal_assistant"))
-    browser_script = File.join(dir, "phase2-browser.js")
-    write_browser_script(browser_script, base_url, capture_dir, fixture.fetch(:executor_barrier_path))
+    path_aliases = %w[
+      TYCHO_HOME TYCHO_CONFIG_PATH TYCHO_SYSTEM_PROMPTS_PATH TYCHO_RESPONSE_STYLE_PATH
+      TYCHO_SCHEDULES_PATH TYCHO_LOGS_ROOT TYCHO_SKILLS_HOME TYCHO_PROJECTS_PATH
+      TYCHO_DATA_ROOT TYCHO_PERSONAL_ASSISTANT_PATH TYCHO_RUNTIME_ROOT
+      TYCHO_MANAGED_AGENTS_PATH TYCHO_CONFIG_DIR TYCHO_SCHEDULES_ROOT
+      TYCHO_SCHEDULES_STATE_PATH TYCHO_SCHEDULER_DAEMON_PATH
+      RUBYOPT RUBYLIB RUBYLIB_PREFIX RUBY_HOME GEM_HOME GEM_PATH
+      BUNDLE_BIN_PATH BUNDLE_GEMFILE BUNDLE_PATH BUNDLE_WITH BUNDLE_WITHOUT
+      BUNDLE_FROZEN BUNDLE_APP_CONFIG BUNDLE_USER_CONFIG
+    ]
+    resolved_extra_env = extra_env.respond_to?(:call) ? extra_env.call(fixture) : extra_env
+    resolved_extra_env = {} if resolved_extra_env.nil?
+    # These nil values must be present at Process.spawn: Ruby consumes
+    # RUBYOPT/RUBYLIB and Bundler loader state before the child can execute its
+    # launcher cleanup. The launcher then installs only the copied Gemfile.
+    env = path_aliases.to_h { |name| [name, nil] }.merge(
+      "HOME" => fixture.fetch(:home_dir),
+      "TMPDIR" => fixture.fetch(:tmp_dir),
+      "TMP" => fixture.fetch(:tmp_dir),
+      "TEMP" => fixture.fetch(:tmp_dir),
+      "TYCHO_HOME" => fixture.fetch(:tycho_home),
+      "TYCHO_CONFIG_PATH" => fixture.fetch(:config_path),
+      "TYCHO_SYSTEM_PROMPTS_PATH" => fixture.fetch(:prompts_path),
+      "TYCHO_RESPONSE_STYLE_PATH" => fixture.fetch(:response_style_path),
+      "TYCHO_SCHEDULES_PATH" => fixture.fetch(:schedules_path),
+      "TYCHO_LOGS_ROOT" => fixture.fetch(:logs_dir),
+      "TYCHO_CODEX_BIN" => fixture.fetch(:fake_codex_path),
+      "TYCHO_GH_BIN" => fixture.fetch(:fake_gh_path),
+      "TYCHO_PHASE2_EXECUTOR_BARRIER" => fixture.fetch(:executor_barrier_path),
+      "TYCHO_REMOTE_TOKEN" => ""
+    ).merge(resolved_extra_env.transform_keys(&:to_s))
+    @server_pid = Process.spawn(
+      env, RbConfig.ruby, fixture.fetch(:server_launcher_path), port.to_s,
+      chdir: server_root,
+      out: [log_path, "w"],
+      err: %i[child out],
+      pgroup: true
+    )
+    begin
+      wait_for_server(base_url, log_path)
+      personal_assistant = nil
+      if prepare_personal_assistant
+        json_request(base_url, "POST", "/personal-assistant/setup", {
+          confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "UTC"
+        })
+        _, opened = json_request(base_url, "POST", "/personal-assistant/open", {})
+        personal_assistant = opened.fetch("personal_assistant")
+        seed_persisted_unknown_receipt(fixture, personal_assistant) if seed_unknown
+      end
+      yield fixture.merge(
+        dir:, server_root:, base_url:, log_path:, capture_dir:, personal_assistant:
+      )
+    ensure
+      if @server_pid && process_alive?(@server_pid)
+        Process.kill("TERM", -@server_pid)
+        Process.wait(@server_pid)
+      end
+      @server_pid = nil
+    end
+  end
+end
+
+def run_phase2_smoke
+  with_isolated_remote_ui_fixture(
+    capture_dir: ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"],
+    seed_unknown: true
+  ) do |context|
+    browser_script = File.join(context.fetch(:dir), "phase2-browser.js")
+    write_browser_script(
+      browser_script,
+      context.fetch(:base_url),
+      context.fetch(:capture_dir),
+      context.fetch(:executor_barrier_path)
+    )
     browser_env = {
       "NODE_PATH" => PLAYWRIGHT_PATH,
       "TYCHO_PHASE2_BACKEND_ROOT" => BETA_ROOT,
       "CHROME_PATH" => CHROME_PATH,
-      "TYCHO_PHASE2_EXECUTOR_BARRIER" => fixture.fetch(:executor_barrier_path)
+      "TYCHO_PHASE2_EXECUTOR_BARRIER" => context.fetch(:executor_barrier_path)
     }
-    stdout, stderr, status = Open3.capture3(browser_env, "node", browser_script, chdir: dir)
+    stdout, stderr, status = Open3.capture3(browser_env, "node", browser_script, chdir: context.fetch(:dir))
     puts stdout unless stdout.empty?
     warn stderr unless stderr.empty?
-    unless status.success?
-      warn File.read(log_path) if File.file?(log_path)
-      exit(status.exitstatus || 1)
+    unless stdout.lines.any? { |line| line.chomp == PHASE2_COMPLETION_SENTINEL }
+      warn "Phase 2 browser smoke did not emit #{PHASE2_COMPLETION_SENTINEL}; child completion is unproven"
+      warn File.read(context.fetch(:log_path)) if File.file?(context.fetch(:log_path))
+      exit(1)
     end
-  ensure
-    if @server_pid && process_alive?(@server_pid)
-      Process.kill("TERM", -@server_pid)
-      Process.wait(@server_pid)
+    unless status.success?
+      warn File.read(context.fetch(:log_path)) if File.file?(context.fetch(:log_path))
+      exit(status.exitstatus || 1)
     end
   end
 end
+
+run_phase2_smoke if $PROGRAM_NAME == __FILE__
