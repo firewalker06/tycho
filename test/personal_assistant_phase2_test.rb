@@ -127,6 +127,7 @@ class PersonalAssistantPhase2Test
     assert_schedule_precondition_ignores_derived_next_run
     assert_daemon_starts_worker_after_daemonization
     assert_personal_assistant_snapshot_coalesces_bundle_builds
+    assert_timezone_cache_reuses_until_boundary
     assert_current_work_honors_live_visibility
     assert_verification_never_claims_observed_state
     assert_worker_create_preserves_foreground_create
@@ -458,6 +459,20 @@ class PersonalAssistantPhase2Test
       assert(service.bundle_calls == 1, "expected consecutive status/actions/current-work reads to share one bundle build")
       puts "personal_assistant_snapshot: #{elapsed_ms}ms across 3 reads, 1 bundle build"
     end
+  end
+
+  def self.assert_timezone_cache_reuses_until_boundary
+    cache = HQ::PersonalAssistantLifecycle::TimezoneSnapshotCache.new
+    before_boundary = Time.utc(2026, 3, 8, 6, 59, 59)
+    first = cache.fetch(before_boundary, "America/New_York")
+    second = cache.fetch(before_boundary + 1, "America/New_York")
+    assert(first[:date] == second[:date] && first[:next_rollover_at] == second[:next_rollover_at],
+           "expected timezone date and boundary to remain cached before rollover")
+
+    after_boundary = Time.iso8601(first.fetch(:next_rollover_at)) + 1
+    next_day = cache.fetch(after_boundary, "America/New_York")
+    assert(next_day[:date] != first[:date] && next_day[:next_rollover_at] != first[:next_rollover_at],
+           "expected timezone cache to refresh at the derived boundary")
   end
 
   def self.assert_current_work_honors_live_visibility

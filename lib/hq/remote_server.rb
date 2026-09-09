@@ -100,6 +100,7 @@ module HQ
       @agent_activity_snapshot = agent_activity_snapshot || AgentActivitySnapshot.new
       @personal_assistant_actions = personal_assistant_action_worker&.respond_to?(:actions) ? personal_assistant_action_worker.actions : build_personal_assistant_action_store
       @personal_assistant_action_worker = personal_assistant_action_worker || build_personal_assistant_action_worker
+      @personal_assistant_timezone_cache = PersonalAssistantLifecycle::TimezoneSnapshotCache.new
       @personal_assistant_snapshot_lock = Mutex.new
       @personal_assistant_snapshot = nil
       @personal_assistant_snapshot_revision = 0
@@ -209,7 +210,8 @@ module HQ
         restartable: restartable?,
         agent_activity_snapshot: @agent_activity_snapshot,
         personal_assistant_actions: @personal_assistant_actions,
-        personal_assistant_action_worker: @personal_assistant_action_worker
+        personal_assistant_action_worker: @personal_assistant_action_worker,
+        personal_assistant_timezone_cache: @personal_assistant_timezone_cache
       )
     end
 
@@ -318,7 +320,8 @@ module HQ
         restartable: restartable?,
         agent_activity_snapshot: @agent_activity_snapshot,
         personal_assistant_actions: @personal_assistant_actions,
-        personal_assistant_action_worker: @personal_assistant_action_worker
+        personal_assistant_action_worker: @personal_assistant_action_worker,
+        personal_assistant_timezone_cache: @personal_assistant_timezone_cache
       )
       result = route(service, request.method, request.path, json_body(request), request)
       status = result.fetch(:status, 200)
@@ -364,7 +367,8 @@ module HQ
       service = RemoteService.new(server_url: "http://#{@host}:#{@port}",
                                   public_url: @public_url,
                                   auth_required: !@token.empty?,
-                                  agent_activity_snapshot: @agent_activity_snapshot)
+                                  agent_activity_snapshot: @agent_activity_snapshot,
+                                  personal_assistant_timezone_cache: @personal_assistant_timezone_cache)
       service.dispatch_agent_push_notifications!
     rescue StandardError => e
       HQ.logger.warn("Push") { "Agent push notification poll failed: #{e.class} - #{e.message}" }
@@ -915,7 +919,8 @@ module HQ
         public_url: @public_url,
         auth_required: !@token.empty?,
         restartable: restartable?,
-        agent_activity_snapshot: @agent_activity_snapshot
+        agent_activity_snapshot: @agent_activity_snapshot,
+        personal_assistant_timezone_cache: @personal_assistant_timezone_cache
       )
       @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
       @resource_catalog.refresh(
@@ -1782,13 +1787,15 @@ module HQ
                    agent_activity_snapshot: AgentActivitySnapshot.new,
                    personal_assistant_actions: nil,
                    personal_assistant_action_worker: nil,
+                   personal_assistant_timezone_cache: nil,
                    clock: -> { Time.now })
       @registry = registry
       @clock = clock
       @projects = registry.projects.map { |config| Project.new(config) }
       @agent_store = AgentStore.new(@projects)
       @personal_assistant = PersonalAssistantLifecycle.new(
-        registry:, agent_store: @agent_store, clock: @clock, state_path: File.join(HQ::PERSONAL_ASSISTANT_DIR, "state.json")
+        registry:, agent_store: @agent_store, clock: @clock, state_path: File.join(HQ::PERSONAL_ASSISTANT_DIR, "state.json"),
+        timezone_cache: personal_assistant_timezone_cache
       )
       @personal_assistant_action_worker = personal_assistant_action_worker
       @personal_assistant_actions = personal_assistant_actions || personal_assistant_action_worker&.actions

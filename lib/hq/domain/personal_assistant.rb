@@ -32,6 +32,54 @@ module HQ
     }.freeze
     INTRODUCTION = "I’m FRED, your Tycho Personal Assistant. I can explain Tycho, inspect agents, projects, schedules, and recent runs, and prepare project or agent work on this server.\n\nI report action results as data. I only propose mutations for exact Tycho confirmation; I never make arbitrary tooling changes. Creating an agent prepares it, and starting or messaging it needs its own confirmation.\n\nI use one daily conversation with a bounded handoff to the next day. Try: ‘Show running agents’, ‘Explain schedules’, or ‘Prepare an agent to review this project’."
 
+    # Remote requests construct a fresh lifecycle service, but the derived
+    # timezone boundary is valid for the whole server until that boundary.
+    # Keep this cache narrow and server-owned; it never changes process TZ.
+    class TimezoneSnapshotCache
+      def initialize
+        @lock = Mutex.new
+        @entries = {}
+      end
+
+      def fetch(now, timezone)
+        key = timezone.to_s
+        current = @lock.synchronize { @entries[key] }
+        return current.dup if reusable?(current, now)
+
+        computed = compute(now, key)
+        @lock.synchronize do
+          current = @entries[key]
+          @entries[key] = computed unless reusable?(current, now)
+          (@entries[key] || computed).dup
+        end
+      end
+
+      private
+
+      def reusable?(entry, now)
+        entry.is_a?(Hash) && entry[:next_at] && now.to_f >= entry[:computed_at].to_f && now.to_f < entry[:next_at].to_f
+      end
+
+      def compute(now, timezone)
+        output = IO.popen(
+          { "TZ" => timezone },
+          [
+            RbConfig.ruby, "-rtime", "-rdate", "-e",
+            "now = Time.at(ARGV[0].to_f).getlocal; date = Date.new(now.year, now.month, now.day) + 1; puts [now.strftime('%F'), Time.local(date.year, date.month, date.day).utc.iso8601].join('|')",
+            now.to_f.to_s
+          ],
+          &:read
+        ).to_s.strip
+        date, boundary = output.split("|", 2)
+        next_at = Time.iso8601(boundary).to_f
+        raise "invalid timezone snapshot" if date.to_s.empty?
+
+        { date:, next_rollover_at: boundary, computed_at: now.to_f, next_at: }
+      rescue StandardError
+        { date: now.strftime("%F"), next_rollover_at: nil, computed_at: now.to_f, next_at: nil }
+      end
+    end
+
     class SessionConflict < ArgumentError
       attr_reader :code, :active_key, :generation
 
@@ -52,8 +100,9 @@ module HQ
       end
     end
 
-    def initialize(registry:, agent_store:, clock: -> { Time.now }, state_path: File.join(PERSONAL_ASSISTANT_DIR, "state.json"), summary_runner: nil, archiver: nil)
+    def initialize(registry:, agent_store:, clock: -> { Time.now }, state_path: File.join(PERSONAL_ASSISTANT_DIR, "state.json"), summary_runner: nil, archiver: nil, timezone_cache: nil)
       @registry, @agent_store, @clock, @state_path = registry, agent_store, clock, state_path
+      @timezone_cache = timezone_cache || TimezoneSnapshotCache.new
       @summary_runner = summary_runner
       @archiver = archiver || method(:archive_internal!)
       @synchronization_key = "hq-pa-lifecycle-#{object_id}"
@@ -483,19 +532,11 @@ module HQ
     end
 
     def local_date(now, timezone)
-      output = IO.popen({ "TZ" => timezone }, [RbConfig.ruby, "-e", "puts Time.at(ARGV[0].to_f).getlocal.strftime('%F')", now.to_f.to_s], &:read).to_s.strip
-      output.empty? ? now.strftime("%F") : output
+      @timezone_cache.fetch(now, timezone).fetch(:date)
     end
 
     def next_rollover_at(now, timezone)
-      output = IO.popen(
-        { "TZ" => timezone },
-        [RbConfig.ruby, "-rtime", "-rdate", "-e", "now = Time.at(ARGV[0].to_f).getlocal; date = Date.new(now.year, now.month, now.day) + 1; puts Time.local(date.year, date.month, date.day).utc.iso8601", now.to_f.to_s],
-        &:read
-      ).to_s.strip
-      output.empty? ? nil : output
-    rescue StandardError
-      nil
+      @timezone_cache.fetch(now, timezone).fetch(:next_rollover_at)
     end
 
     def workspace

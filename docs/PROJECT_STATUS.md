@@ -111,7 +111,10 @@ Durable mutations use one server-lifetime bounded worker with frozen previews,
 conservative outcome verification, and read-only archived-action history whose
 `expired_actions` subset contains only unconfirmed approvals; the
 measured fixture optimization coalesces repeated status/actions/current-work
-work without holding a global lock across long effects.
+work and caches timezone boundaries across request services without holding a
+global lock across long effects. Phase3 measurement also confirms that durable
+semantic conversation events appear before final structured output, so focused
+polling remains sufficient without a new stream protocol.
 Preserve the protected daily role, server-local identity, exact confirmation
 for each mutation, and no blind retry after an uncertain execution outcome.
 
