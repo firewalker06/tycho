@@ -1282,10 +1282,67 @@ def write_smoke_script(path)
           await restoreInquiry.click();
           await waitForNode(() => phaseRequests.some((request) => request.method === "POST" && request.path === `/personal-assistant/inquiries/${inquiryId}/restore`));
           await phasePage.waitForSelector("#inquiry-form", { state: "visible", timeout: 10_000 });
+          const inquiryAgentKey = await phasePage.evaluate(() => state.personalAssistant?.active_key || "");
+          const preparationFailureAnswer = "phase1 answer retained after attachment preparation";
+          await phasePage.locator("#inquiry-form [data-inquiry-control]").first().fill(preparationFailureAnswer);
+          await phasePage.locator("#inquiry-feedback").fill("Retain this answer while attachment preparation fails.");
+          await phasePage.evaluate((key) => {
+            state.pendingPromptAttachments[key] = [{
+              id: "phase1-inquiry-attachment-prep-failure",
+              filename: "phase1-preparation-failure.txt",
+              mimeType: "text/plain",
+              type: "text",
+              size: 7,
+              file: new File(["fixture"], "phase1-preparation-failure.txt", { type: "text/plain" }),
+            }];
+            window.__originalInquiryAttachmentPayloads = pendingAttachmentPayloads;
+            pendingAttachmentPayloads = async () => {
+              throw new Error("Phase 1 attachment preparation failed");
+            };
+          }, inquiryAgentKey);
+          const answerPath = `/personal-assistant/inquiries/${inquiryId}/answer`;
+          const answerPostCountBeforePreparationFailure = requestsFor(answerPath, "POST").length;
+          await phasePage.locator("#inquiry-form button[type='submit']").click();
+          await phasePage.waitForFunction(({ key, prompt }) => {
+            const recovery = Array.from(document.querySelectorAll("[data-pa-submission-recovery]")).find((element) => element.textContent.includes(prompt));
+            const record = Object.values(state.personalAssistantSubmissionStates || {}).find((candidate) => candidate.prompt?.includes(prompt));
+            const answer = document.querySelector("#inquiry-form [data-inquiry-control]");
+            const attachment = pendingAttachmentsFor(key).find((candidate) => candidate.id === "phase1-inquiry-attachment-prep-failure");
+            return Boolean(recovery && record && record.state === "failed" && answer?.value === prompt && attachment);
+          }, { key: inquiryAgentKey, prompt: preparationFailureAnswer }, { timeout: 10_000, polling: 100 });
+          const preparationFailureState = await phasePage.evaluate(({ key, prompt }) => {
+            const recovery = Array.from(document.querySelectorAll("[data-pa-submission-recovery]")).find((element) => element.textContent.includes(prompt));
+            const record = Object.values(state.personalAssistantSubmissionStates || {}).find((candidate) => candidate.prompt?.includes(prompt));
+            return {
+              answer: document.querySelector("#inquiry-form [data-inquiry-control]")?.value || "",
+              feedback: document.querySelector("#inquiry-feedback")?.value || "",
+              attachmentRetained: pendingAttachmentsFor(key).some((candidate) => candidate.id === "phase1-inquiry-attachment-prep-failure"),
+              recovery: recovery?.textContent || "",
+              failureKind: recovery?.dataset.paSubmissionFailureKind || "",
+              state: record?.state || "",
+            };
+          }, { key: inquiryAgentKey, prompt: preparationFailureAnswer });
+          if (requestsFor(answerPath, "POST").length !== answerPostCountBeforePreparationFailure ||
+              preparationFailureState.state === "sending" ||
+              !preparationFailureState.recovery.includes("Message was not sent") ||
+              !preparationFailureState.recovery.includes("Phase 1 attachment preparation failed") ||
+              preparationFailureState.recovery.includes("Delivery status is unknown") ||
+              preparationFailureState.failureKind !== "pre_post" ||
+              preparationFailureState.answer !== preparationFailureAnswer ||
+              preparationFailureState.feedback !== "Retain this answer while attachment preparation fails." ||
+              !preparationFailureState.attachmentRetained) {
+            throw new Error(`FRED inquiry attachment preparation failure was not recoverable before POST: ${JSON.stringify({ answerPostCountBeforePreparationFailure, answerPostCountAfter: requestsFor(answerPath, "POST").length, preparationFailureState })}`);
+          }
+          await phasePage.evaluate((key) => {
+            pendingAttachmentPayloads = window.__originalInquiryAttachmentPayloads;
+            state.pendingPromptAttachments[key] = [];
+            state.renderedViewHtml = "";
+            render({ preserveLiveEditor: true });
+          }, inquiryAgentKey);
           await phasePage.locator("#inquiry-form [data-inquiry-control]").first().fill("continue");
           await phasePage.locator("#inquiry-form button[type='submit']").click();
-          await waitForNode(() => phaseRequests.some((request) => request.method === "POST" && request.path === `/personal-assistant/inquiries/${inquiryId}/answer`));
-          const answerRequest = phaseRequests.find((request) => request.method === "POST" && request.path === `/personal-assistant/inquiries/${inquiryId}/answer`);
+          await waitForNode(() => phaseRequests.some((request) => request.method === "POST" && request.path === answerPath));
+          const answerRequest = phaseRequests.find((request) => request.method === "POST" && request.path === answerPath);
           if (!answerRequest?.body.active_key || !Number.isInteger(answerRequest.body.generation) || !answerRequest.body.client_request_id) {
             throw new Error(`FRED inquiry answer lost stable identity/context: ${JSON.stringify(answerRequest)}`);
           }
