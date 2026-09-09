@@ -114,7 +114,13 @@ measured fixture optimization coalesces repeated status/actions/current-work
 work and caches timezone boundaries across request services without holding a
 global lock across long effects. Phase3 measurement also confirms that durable
 semantic conversation events appear before final structured output, so focused
-polling remains sufficient without a new stream protocol.
+polling remains sufficient without a new stream protocol. Configured FRED
+defers the slow shell/setup discovery on its focused conversation path; actual
+active work polls at 1.5 s, idle work at 12 s, and hidden work at 30 s, with a
+two-failure cap, recovery reset, and immediate explicit retry. Current-work
+reconciliation preserves drafts, focus, scroll, and unchanged DOM. The
+historical synthetic `/setup` observation of 3.47 s remains a catalog
+measurement, not a final UI latency claim.
 Preserve the protected daily role, server-local identity, exact confirmation
 for each mutation, and no blind retry after an uncertain execution outcome.
 
@@ -388,6 +394,7 @@ and queued-run push notification behavior. Schedule-management work remains on
 - [x] Sticky Settings section navigator over one continuous page and copyable native session ID in Conversation Settings
 - [x] In-flow desktop conversation composer with resize-aware mobile content reservation
 - [x] Accessible full-screen Conversation editor with polling-safe autosaved drafts, focus containment, mobile visual-viewport sizing, and Escape-to-exit
+- [x] Focused configured-FRED refresh defers shell discovery, preserves composer state during polling, skips unchanged current-work DOM replacement, and uses bounded visible/idle/hidden recovery cadence
 - [x] Focused Summary/Attachment full-view controls and compact mobile follow-up composer
 - [x] Finalized-run estimated session-cost snapshots on latest and historical Summary pages, including Codex token-delta estimates from an auditable OpenAI model rate card, explicit rebuild backfill, and no startup log scan
 - [ ] Dedicated mobile activity/log detail page
