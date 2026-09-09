@@ -26,9 +26,11 @@ end
 def write_fixture(dir)
   config_dir = File.join(dir, "config")
   home_dir = File.join(dir, "home")
+  tycho_home_dir = File.join(dir, "tycho-home")
   workspace = File.join(dir, "workspace")
   FileUtils.mkdir_p(config_dir)
   FileUtils.mkdir_p(home_dir)
+  FileUtils.mkdir_p(tycho_home_dir)
   FileUtils.mkdir_p(workspace)
 
   config_path = File.join(config_dir, "hq.yml")
@@ -118,6 +120,7 @@ def write_fixture(dir)
     fake_codex_path: fake_codex_path,
     fake_gh_path: fake_gh_path,
     home_dir: home_dir,
+    tycho_home_dir: tycho_home_dir,
     logs_dir: File.join(dir, "logs")
   }
 end
@@ -777,6 +780,537 @@ def write_smoke_script(path)
       }
 
       await assertPersonalAssistantConversationShell();
+
+      async function assertPersonalAssistantPhase1() {
+        const fredBackendUrl = process.env.TYCHO_REMOTE_UI_FRED_PHASE1_BACKEND_URL;
+        if (!fredBackendUrl) return;
+
+        const holdPath = process.env.TYCHO_REMOTE_UI_FRED_HOLD_PATH;
+        const inquiryPath = process.env.TYCHO_REMOTE_UI_FRED_INQUIRY_PATH;
+        const codexPath = process.env.TYCHO_REMOTE_UI_FRED_CODEX_PATH;
+        if (!holdPath || !inquiryPath || !codexPath) throw new Error("Phase 1 browser fixture needs hold, inquiry, and Codex paths");
+
+        const phaseRequests = [];
+        const phaseErrors = [];
+        const expectedRecoveryConsoleErrors = [];
+        let expectedQueueConflictPath = "";
+        let expectedInquiryConflictPath = "";
+        const expectedFairAcceptanceIds = new Set();
+        const phaseContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true });
+        const phasePage = await phaseContext.newPage();
+        await phasePage.emulateMedia({ reducedMotion: "reduce" });
+        phasePage.on("console", (message) => {
+          if (message.type() !== "error") return;
+          const index = expectedRecoveryConsoleErrors.indexOf(message.text());
+          if (index >= 0) expectedRecoveryConsoleErrors.splice(index, 1);
+          else phaseErrors.push(message.text());
+        });
+        phasePage.on("pageerror", (error) => phaseErrors.push(error.message));
+
+        const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+        const requestBody = (request) => {
+          const raw = request.postData();
+          if (!raw) return {};
+          try { return JSON.parse(raw); } catch (_error) { return {}; }
+        };
+        const fredPath = (pathname) => pathname === "/personal-assistant" ||
+          pathname.startsWith("/personal-assistant/") || /^\\/agents\\/[^/]+\\/conversation$/.test(pathname);
+        const shellPath = (pathname) => pathname === "/setup" || pathname.startsWith("/setup/") ||
+          pathname === "/schedules" || pathname.startsWith("/schedules/") || pathname.startsWith("/servers/resources");
+        const upstreamResponse = async (route) => {
+          const request = route.request();
+          const url = new URL(request.url());
+          const headers = { ...request.headers() };
+          ["host", "content-length", "origin", "referer"].forEach((name) => delete headers[name]);
+          const options = {
+            url: new URL(`${url.pathname}${url.search}`, fredBackendUrl).toString(),
+            method: request.method(),
+            headers,
+          };
+          const postData = request.postData();
+          if (postData !== null) options.postData = postData;
+          return route.fetch(options);
+        };
+        await phasePage.route("**/*", async (route) => {
+          const request = route.request();
+          let url;
+          try { url = new URL(request.url()); } catch (_error) { return route.continue(); }
+          if (!shellPath(url.pathname) && !fredPath(url.pathname)) return route.continue();
+          if (shellPath(url.pathname)) {
+            await sleep(1_800);
+            return route.continue();
+          }
+
+          const body = requestBody(request);
+          const phaseRequest = { method: request.method(), path: url.pathname, body };
+          phaseRequests.push(phaseRequest);
+          const delayedPrompt = "phase1 delayed first message";
+          const lostPrompt = "phase1 lost response";
+          if (request.method() === "POST" && url.pathname === "/personal-assistant/messages" && body.prompt === delayedPrompt) {
+            await sleep(1_200);
+          }
+          if (request.method() === "POST" && url.pathname === "/personal-assistant/messages" && body.prompt === lostPrompt) {
+            const response = await upstreamResponse(route);
+            await response.body();
+            expectedRecoveryConsoleErrors.push("Failed to load resource: net::ERR_FAILED");
+            return route.abort("failed");
+          }
+          if (request.method() === "POST" && url.pathname.startsWith("/personal-assistant/inquiries/") && url.pathname.endsWith("/dismiss") &&
+              phaseRequests.filter((candidate) => candidate.method === "POST" && candidate.path === url.pathname).length > 1) {
+            await sleep(350);
+          }
+          const response = await upstreamResponse(route);
+          const status = response.status();
+          const fairAcceptanceId = url.pathname.startsWith("/personal-assistant/messages/acceptance/")
+            ? decodeURIComponent(url.pathname.split("/").at(-1) || "") : "";
+          if (status === 404 && request.method() === "GET" && expectedFairAcceptanceIds.has(fairAcceptanceId)) {
+            expectedRecoveryConsoleErrors.push("Failed to load resource: the server responded with a status of 404 (Not Found)");
+          }
+          if (request.method() === "PATCH" && url.pathname === expectedQueueConflictPath && [404, 409].includes(status)) {
+            expectedRecoveryConsoleErrors.push(`Failed to load resource: the server responded with a status of ${status} (${status === 404 ? "Not Found" : "Conflict"})`);
+          }
+          if (request.method() === "POST" && url.pathname === expectedInquiryConflictPath && phaseRequests.filter((candidate) => (
+            candidate.method === "POST" && candidate.path === url.pathname
+          )).length > 1 && status === 409) {
+            expectedRecoveryConsoleErrors.push("Failed to load resource: the server responded with a status of 409 (Conflict)");
+          }
+          if ((request.method() === "DELETE" && url.pathname.startsWith("/personal-assistant/prompt-queue/")) ||
+              (request.method() === "POST" && url.pathname === "/personal-assistant/messages")) {
+            const responseBody = await response.body();
+            try { phaseRequest.response = JSON.parse(responseBody.toString()); } catch (_error) { phaseRequest.response = {}; }
+            return route.fulfill({ response, body: responseBody });
+          }
+          return route.fulfill({ response });
+        });
+
+        const submit = async (prompt) => {
+          const input = phasePage.locator("#composer #prompt-input");
+          await input.fill(prompt);
+          await phasePage.locator("#composer button[type='submit']:visible").last().click();
+        };
+        const userMessageIds = async (prompt) => phasePage.locator("article.message.user").evaluateAll((articles, expected) => (
+          articles.filter((article) => article.textContent.includes(expected)).map((article) => article.dataset.clientRequestId).filter(Boolean)
+        ), prompt);
+        const waitForNode = async (predicate, timeout = 10_000, label = "") => {
+          const deadline = Date.now() + timeout;
+          while (!predicate()) {
+            if (Date.now() >= deadline) {
+              const snapshot = await phasePage.evaluate(() => ({
+                hash: location.hash,
+                forms: Array.from(document.querySelectorAll("[data-prompt-queue-edit-form]")).map((form) => ({
+                  entryId: form.dataset.entryId,
+                  hidden: form.classList.contains("hidden"),
+                  prompt: form.querySelector("textarea")?.value,
+                  submitDisabled: form.querySelector("button[type='submit']")?.disabled,
+                  pending: form.getAttribute("aria-busy"),
+                })),
+              }));
+              throw new Error(`${label || "Phase 1 browser state"} timed out: ${JSON.stringify(snapshot)}`);
+            }
+            await phasePage.waitForTimeout(100);
+          }
+        };
+        const assertNoNestedForms = async (label) => {
+          const nestedForms = await phasePage.evaluate(() => Array.from(document.querySelectorAll("form form")).map((form) => ({
+            id: form.id,
+            entryId: form.dataset.entryId || "",
+            owner: form.closest("form")?.id || "",
+          })));
+          if (nestedForms.length) throw new Error(`${label} produced nested forms: ${JSON.stringify(nestedForms)}`);
+        };
+        const waitForUserMessageCount = (prompt, count, timeout = 10_000) => phasePage.waitForFunction(({ expectedPrompt, expectedCount }) => (
+          Array.from(document.querySelectorAll("article.message.user"))
+            .filter((article) => article.textContent.includes(expectedPrompt)).length >= expectedCount
+        ), { expectedPrompt: prompt, expectedCount: count }, { timeout, polling: 100 });
+        const waitForMessageStatus = (prompt, status, timeout = 12_000) => phasePage.waitForFunction(({ expectedPrompt, expectedStatus }) => (
+          Array.from(document.querySelectorAll("article.message.user")).some((article) => {
+            if (!article.textContent.includes(expectedPrompt)) return false;
+            return article.nextElementSibling?.dataset.paMessageStatus === expectedStatus;
+          })
+        ), { expectedPrompt: prompt, expectedStatus: status }, { timeout, polling: 100 });
+        const mutationRequests = () => phaseRequests.filter((request) => ["POST", "PATCH", "PUT", "DELETE"].includes(request.method));
+        const requestsFor = (path, method = null) => phaseRequests.filter((request) => request.path === path && (!method || request.method === method));
+
+        try {
+          const shellStartedAt = Date.now();
+          await phasePage.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "domcontentloaded" });
+          await phasePage.waitForSelector(".personal-assistant-page[data-personal-assistant-state='active']", { state: "visible", timeout: 10_000 });
+          const shellReadyMs = Date.now() - shellStartedAt;
+          if (shellReadyMs >= 1_600) throw new Error(`FRED status/conversation waited for the delayed shell: ${shellReadyMs}ms`);
+          await phasePage.waitForSelector("#composer #prompt-input", { state: "visible", timeout: 10_000 });
+          await assertNoNestedForms("initial FRED composer");
+
+          const delayedPrompt = "phase1 delayed first message";
+          const newerDraft = "phase1 newer draft stays intact";
+          fs.writeFileSync(holdPath, "hold");
+          const pendingStartedAt = Date.now();
+          await submit(delayedPrompt);
+          await phasePage.waitForSelector("[data-pa-message-status='sending']", { state: "visible", timeout: 2_000 });
+          const firstPendingPaintMs = Date.now() - pendingStartedAt;
+          if (firstPendingPaintMs >= 1_000) throw new Error(`First FRED message did not paint promptly: ${firstPendingPaintMs}ms`);
+          await phasePage.locator("#composer #prompt-input").fill(newerDraft);
+          fs.rmSync(holdPath, { force: true });
+          await phasePage.waitForSelector("[data-pa-message-status='running']", { state: "visible", timeout: 10_000 });
+          const runningSeenAt = Date.now();
+          const activePollDelay = await phasePage.evaluate(() => personalAssistantPollDelay());
+          if (activePollDelay !== 4_000) throw new Error(`Active FRED polling lost its measured 4s cadence: ${activePollDelay}`);
+          await waitForMessageStatus(delayedPrompt, "accepted");
+          const terminalFreshnessMs = Date.now() - runningSeenAt;
+          if ((await phasePage.locator("#composer #prompt-input").inputValue()) !== newerDraft) {
+            throw new Error("A newer FRED draft was overwritten by the completed response");
+          }
+
+          const duplicatePrompt = "phase1 duplicate intended text";
+          await submit(duplicatePrompt);
+          await waitForUserMessageCount(duplicatePrompt, 1);
+          await submit(duplicatePrompt);
+          await waitForUserMessageCount(duplicatePrompt, 2);
+          await waitForMessageStatus(duplicatePrompt, "accepted");
+          const duplicateIds = await userMessageIds(duplicatePrompt);
+          if (new Set(duplicateIds).size !== 2) throw new Error(`Duplicate intended text did not retain two request identities: ${JSON.stringify(duplicateIds)}`);
+
+          const fairUnknownIds = await phasePage.evaluate(() => {
+            const context = personalAssistantSessionContext();
+            const agentKey = state.personalAssistant?.active_key || "";
+            return Array.from({ length: 6 }, (_value, index) => {
+              const clientRequestId = `client-phase1-fair-${Date.now().toString(36)}-${index}`;
+              updatePersonalAssistantSubmission(clientRequestId, "unknown", {
+                prompt: `phase1 unresolved ${index}`,
+                agent_key: agentKey,
+                active_key: context.active_key,
+                generation: context.generation,
+                server_key: context.server_key,
+                acceptance_state: "unknown",
+                message_recorded: false,
+              });
+              return clientRequestId;
+            });
+          });
+          fairUnknownIds.forEach((clientRequestId) => expectedFairAcceptanceIds.add(clientRequestId));
+          await phasePage.evaluate(() => reconcilePersonalAssistantSubmissions());
+          await phasePage.evaluate(() => reconcilePersonalAssistantSubmissions());
+          const fairAcceptanceRequests = phaseRequests.filter((request) => request.method === "GET" &&
+            request.path.startsWith("/personal-assistant/messages/acceptance/") &&
+            fairUnknownIds.includes(decodeURIComponent(request.path.split("/").at(-1) || "")));
+          const fairAcceptanceIds = new Set(fairAcceptanceRequests.map((request) => decodeURIComponent(request.path.split("/").at(-1) || "")));
+          if (fairAcceptanceIds.size !== fairUnknownIds.length) {
+            throw new Error(`FRED acceptance reconciliation starved older unresolved records: ${JSON.stringify({ fairUnknownIds, fairAcceptanceRequests })}`);
+          }
+          const retainedFairUnknownIds = await phasePage.evaluate((ids) => ids.filter((id) => (
+            state.personalAssistantSubmissionStates[personalAssistantSubmissionStorageId({
+              server_key: personalAssistantServerKey(),
+              active_key: personalAssistantSessionContext()?.active_key,
+              generation: personalAssistantSessionContext()?.generation,
+              client_request_id: id,
+            })]?.state === "unknown"
+          )), fairUnknownIds);
+          if (retainedFairUnknownIds.length !== fairUnknownIds.length) {
+            throw new Error(`FRED unresolved acceptance records were evicted: ${JSON.stringify({ fairUnknownIds, retainedFairUnknownIds })}`);
+          }
+
+          const queueSeedPrompt = "phase1 queue seed holds the run";
+          const queueKeepPrompt = "phase1 queue retained for failure";
+          const queueDeletePrompt = "phase1 queue deleted explicitly";
+          fs.writeFileSync(holdPath, "hold");
+          await submit(queueSeedPrompt);
+          await phasePage.waitForSelector("[data-pa-message-status='running']", { state: "visible", timeout: 10_000 });
+          await submit(queueKeepPrompt);
+          await submit(queueDeletePrompt);
+          await phasePage.waitForSelector("[data-prompt-queue]", { state: "visible", timeout: 10_000 });
+          await assertNoNestedForms("FRED queue first paint");
+          await phasePage.locator("[data-prompt-queue]").evaluate((queue) => { queue.open = true; });
+          await phasePage.waitForFunction(() => document.querySelectorAll("[data-prompt-queue-entry]").length >= 2, null, { timeout: 10_000, polling: 100 });
+          const fullScreenToggle = phasePage.locator("#composer [data-toggle-composer-full-screen]");
+          if (await fullScreenToggle.count()) {
+            await fullScreenToggle.click();
+            try {
+              await phasePage.waitForSelector("#composer.composer-full-screen", { state: "visible", timeout: 5_000 });
+            } catch (error) {
+              const fullScreenDebug = await phasePage.evaluate(() => ({
+                composer: document.querySelector("#composer")?.outerHTML.slice(0, 500) || "",
+                fullScreenKeys: Array.from(state.fullScreenComposerKeys || []),
+                hash: location.hash,
+              }));
+              throw new Error(`FRED full-screen editor did not render: ${JSON.stringify({ fullScreenDebug, error: error.message })}`);
+            }
+            const fullScreenInput = phasePage.locator("#composer #prompt-input");
+            const fullScreenDraft = "phase1 full-screen draft survives refresh";
+            await fullScreenInput.fill(fullScreenDraft);
+            await fullScreenInput.focus();
+            await phasePage.evaluate(() => refresh({ force: true, forceConversation: true }));
+            await phasePage.waitForFunction((expected) => document.querySelector("#composer #prompt-input")?.value === expected, fullScreenDraft, { timeout: 10_000, polling: 100 });
+            await assertNoNestedForms("full-screen FRED refresh");
+            const fullScreenQueueState = await phasePage.evaluate(() => ({
+              activeElement: document.activeElement?.id || "",
+              queueInsideComposer: Boolean(document.querySelector("#composer [data-prompt-queue]")),
+              queueInDock: Boolean(document.querySelector("[data-agent-dock] > [data-prompt-queue]")),
+            }));
+            if (fullScreenQueueState.queueInsideComposer || !fullScreenQueueState.queueInDock || fullScreenQueueState.activeElement !== "prompt-input") {
+              throw new Error(`Full-screen FRED refresh moved the queue or lost editor focus: ${JSON.stringify(fullScreenQueueState)}`);
+            }
+            await phasePage.locator("#composer [data-toggle-composer-full-screen]").click();
+            await phasePage.waitForSelector("#composer:not(.composer-full-screen)", { state: "visible", timeout: 5_000 });
+            await assertNoNestedForms("dock FRED after full-screen close");
+          }
+          const queueEntries = phasePage.locator("[data-prompt-queue-entry]");
+          const keepEntry = queueEntries.filter({ hasText: queueKeepPrompt }).first();
+          const deleteEntry = queueEntries.filter({ hasText: queueDeletePrompt }).first();
+          if (await keepEntry.count() !== 1 || await deleteEntry.count() !== 1) throw new Error("FRED queue fixture did not expose both queued controls");
+          const deleteEntryId = await deleteEntry.getAttribute("data-prompt-queue-entry");
+          await keepEntry.locator("[data-edit-queued-prompt]").click();
+          const entryId = await keepEntry.getAttribute("data-prompt-queue-entry");
+          const saveOwnership = await keepEntry.locator("[data-prompt-queue-edit-form] button[type='submit']").evaluate((button) => ({
+            formId: button.form?.id || "",
+            formEntryId: button.form?.dataset.entryId || "",
+          }));
+          if (saveOwnership.formId === "composer" || saveOwnership.formEntryId !== entryId) {
+            throw new Error(`FRED queue Save has the wrong browser form owner: ${JSON.stringify({ entryId, saveOwnership })}`);
+          }
+          const editState = await keepEntry.evaluate((entry) => ({
+            buttonDisabled: entry.querySelector("[data-edit-queued-prompt]")?.disabled,
+            formHidden: entry.querySelector("[data-prompt-queue-edit-form]")?.classList.contains("hidden"),
+          }));
+          if (editState.buttonDisabled || editState.formHidden) throw new Error(`FRED queue edit control did not open: ${JSON.stringify(editState)}`);
+          const editedQueuePrompt = "phase1 queue retained after edit";
+          await keepEntry.locator("[data-prompt-queue-edit-form] textarea").fill(editedQueuePrompt);
+          const editedValue = await keepEntry.locator("[data-prompt-queue-edit-form] textarea").inputValue();
+          if (editedValue !== editedQueuePrompt) throw new Error(`FRED queue edit did not retain typed value: ${editedValue}`);
+          await keepEntry.locator("[data-prompt-queue-edit-form] button[type='submit']").click();
+          await waitForNode(() => phaseRequests.some((request) => request.method === "PATCH" && request.path.startsWith("/personal-assistant/prompt-queue/")), 10_000, "FRED queue edit request");
+          await phasePage.waitForFunction((prompt) => Array.from(document.querySelectorAll("[data-prompt-queue-entry] strong")).some((strong) => strong.textContent.includes(prompt)), editedQueuePrompt, { timeout: 10_000, polling: 100 });
+
+          const queueConflictPrompt = "phase1 queue conflict stays editable locally";
+          await submit(queueConflictPrompt);
+          const conflictEntry = queueEntries.filter({ hasText: queueConflictPrompt }).first();
+          await conflictEntry.waitFor({ state: "visible", timeout: 10_000 });
+          const conflictEntryId = await conflictEntry.getAttribute("data-prompt-queue-entry");
+          expectedQueueConflictPath = `/personal-assistant/prompt-queue/${encodeURIComponent(conflictEntryId)}`;
+          await waitForNode(() => phaseRequests.some((request) => request.method === "POST" &&
+            request.path === "/personal-assistant/messages" &&
+            request.response?.acceptance?.client_request_id === conflictEntryId &&
+            request.response?.acceptance?.queue_entry_id === conflictEntryId), 10_000, "FRED queue conflict acceptance");
+          const conflictDelete = await phasePage.evaluate(async (entryId) => {
+            const context = state.personalAssistant;
+            const response = await fetch(`/personal-assistant/prompt-queue/${encodeURIComponent(entryId)}`, {
+              method: "DELETE",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ active_key: context.active_key, generation: context.generation }),
+            });
+            return { status: response.status, body: await response.json() };
+          }, conflictEntryId);
+          if (conflictDelete.status !== 200 || conflictDelete.body.acceptance?.state !== "canceled") {
+            const conflictState = await phasePage.evaluate(() => {
+              const item = state.personalAssistant;
+              const agent = item?.active_key ? (state.agentDetails[item.active_key] || item.agent) : null;
+              return {
+                entries: (agent?.prompt_queue?.entries || []).map((entry) => ({ id: entry.id, clientRequestId: entry.client_request_id, prompt: entry.prompt, state: entry.state })),
+                agentRunning: agent?.running,
+              };
+            });
+            const conflictPost = phaseRequests.find((request) => request.method === "POST" &&
+              request.path === "/personal-assistant/messages" && request.response?.acceptance?.client_request_id === conflictEntryId);
+            throw new Error(`FRED queue conflict fixture did not delete through the reviewed route: ${JSON.stringify({ conflictDelete, conflictPost, conflictEntryId, conflictState })}`);
+          }
+          await conflictEntry.locator("[data-edit-queued-prompt]").click();
+          const conflictEditPrompt = "phase1 stale queue edit remains in the form";
+          await conflictEntry.locator("[data-prompt-queue-edit-form] textarea").fill(conflictEditPrompt);
+          await conflictEntry.locator("[data-prompt-queue-edit-form] button[type='submit']").click();
+          const conflictError = phasePage.locator(`[data-pa-control-error='queue-edit:${conflictEntryId}']`);
+          await conflictError.waitFor({ state: "visible", timeout: 10_000 });
+          const conflictErrorText = await conflictError.textContent();
+          if (!(conflictErrorText.includes("no longer editable") || conflictErrorText.includes("Unknown queued prompt"))) {
+            throw new Error(`FRED queue conflict error was not factual: ${await conflictError.textContent()}`);
+          }
+          if (await conflictEntry.locator("[data-prompt-queue-edit-form] textarea").inputValue() !== conflictEditPrompt) {
+            throw new Error("FRED queue conflict discarded the edited text");
+          }
+          await phasePage.evaluate(() => refresh({ force: true, forceConversation: true }));
+          await phasePage.waitForFunction((entryId) => !document.querySelector(`[data-prompt-queue-entry='${CSS.escape(entryId)}']`), conflictEntryId, { timeout: 10_000, polling: 100 });
+          await assertNoNestedForms("forced FRED queue refresh");
+
+          await deleteEntry.locator("[data-delete-queued-prompt]").click();
+          await waitForNode(() => phaseRequests.some((request) => request.method === "DELETE" &&
+            request.path.endsWith(`/${deleteEntryId}`) && request.response), 10_000, "FRED queue delete response");
+          const queuePatch = requestsFor("/personal-assistant/prompt-queue/", "PATCH");
+          const queueDelete = requestsFor("/personal-assistant/prompt-queue/", "DELETE");
+          if (!phaseRequests.some((request) => request.method === "PATCH" && request.path.startsWith("/personal-assistant/prompt-queue/")) ||
+              !phaseRequests.some((request) => request.method === "DELETE" && request.path.startsWith("/personal-assistant/prompt-queue/"))) {
+            throw new Error(`FRED queue edit/delete did not use dedicated routes: ${JSON.stringify({ queuePatch, queueDelete, phaseRequests })}`);
+          }
+          const queueMutationBodies = phaseRequests.filter((request) => request.path.startsWith("/personal-assistant/prompt-queue/") && ["PATCH", "DELETE"].includes(request.method));
+          if (!queueMutationBodies.every((request) => request.body.active_key && Number.isInteger(request.body.generation))) {
+            throw new Error(`FRED queue mutations lost captured session context: ${JSON.stringify(queueMutationBodies)}`);
+          }
+          const deletedQueueRequest = phaseRequests.find((request) => request.method === "DELETE" && request.path.endsWith(`/${deleteEntryId}`));
+          if (deletedQueueRequest?.response?.acceptance?.state !== "canceled" || deletedQueueRequest.response?.canceled !== true) {
+            throw new Error(`FRED queue deletion did not return a durable canceled receipt: ${JSON.stringify(deletedQueueRequest)}`);
+          }
+          await phasePage.waitForFunction((clientRequestId) => (
+            Object.values(state.personalAssistantSubmissionStates || {}).some((record) => (
+              record.client_request_id === clientRequestId && record.state === "canceled"
+            ))
+          ), deleteEntryId, { timeout: 5_000, polling: 100 });
+          const canceledLookup = await phasePage.evaluate(async (clientRequestId) => {
+            const response = await fetch(`/personal-assistant/messages/acceptance/${encodeURIComponent(clientRequestId)}`);
+            return response.json();
+          }, deleteEntryId);
+          if (canceledLookup.acceptance?.state !== "canceled") {
+            throw new Error(`FRED canceled acceptance did not survive read-only lookup: ${JSON.stringify(canceledLookup)}`);
+          }
+
+          fs.renameSync(codexPath, `${codexPath}.disabled`);
+          fs.rmSync(holdPath, { force: true });
+          await phasePage.waitForSelector(".prompt-queue-error", { state: "visible", timeout: 12_000 });
+          await waitForMessageStatus(editedQueuePrompt, "failed");
+          if (await phasePage.locator(`[data-pa-submission-recovery]`).filter({ hasText: editedQueuePrompt }).count() !== 1) {
+            throw new Error("Queued start failure did not remain visible as a FRED recovery record");
+          }
+          fs.renameSync(`${codexPath}.disabled`, codexPath);
+          await phasePage.locator("[data-retry-prompt-queue]").click();
+          await waitForNode(() => phaseRequests.some((request) => request.method === "POST" && request.path === "/personal-assistant/prompt-queue/retry"));
+          const retryRequest = phaseRequests.find((request) => request.method === "POST" && request.path === "/personal-assistant/prompt-queue/retry");
+          if (!retryRequest.body.active_key || !Number.isInteger(retryRequest.body.generation)) throw new Error(`Queue retry lost FRED session context: ${JSON.stringify(retryRequest)}`);
+          await phasePage.waitForFunction(() => {
+            const item = state.personalAssistant;
+            const agent = item?.active_key ? (state.agentDetails[item.active_key] || item.agent) : null;
+            return Boolean(agent) && !agent.running && !agent.prompt_queue?.dispatch_error && !(agent.prompt_queue?.entries || []).length;
+          }, null, { timeout: 12_000, polling: 100 });
+
+          const failedRunPrompt = "phase1 terminal failed run";
+          await submit(failedRunPrompt);
+          await waitForMessageStatus(failedRunPrompt, "failed", 15_000);
+          const failedRunRecovery = phasePage.locator("[data-pa-submission-recovery]").filter({ hasText: failedRunPrompt }).first();
+          await failedRunRecovery.waitFor({ state: "visible", timeout: 10_000 });
+          const failedRunCopy = await failedRunRecovery.textContent();
+          if (!failedRunCopy.includes("FRED run failed") || failedRunCopy.includes("Message failed to send") || failedRunCopy.includes("FRED did not accept this message")) {
+            throw new Error(`Terminal FRED run failure used delivery-failure copy: ${failedRunCopy}`);
+          }
+
+          const lostPrompt = "phase1 lost response";
+          const lostPostCountBefore = requestsFor("/personal-assistant/messages", "POST").length;
+          await submit(lostPrompt);
+          const lostRecovery = phasePage.locator("[data-pa-submission-recovery]").filter({ hasText: lostPrompt }).first();
+          await lostRecovery.waitFor({ state: "visible", timeout: 10_000 });
+          await phasePage.waitForSelector("[data-pa-message-status='unknown']", { state: "visible", timeout: 2_000 });
+          if (requestsFor("/personal-assistant/messages", "POST").length !== lostPostCountBefore + 1) {
+            throw new Error("Lost FRED response triggered an automatic retry");
+          }
+          await lostRecovery.locator("[data-check-pa-submission]").click();
+          await phasePage.waitForFunction((prompt) => {
+            const article = Array.from(document.querySelectorAll("article.message.user")).find((candidate) => candidate.textContent.includes(prompt));
+            const status = article?.nextElementSibling?.dataset.paMessageStatus;
+            return status === "accepted" || status === "running";
+          }, lostPrompt, { timeout: 12_000, polling: 100 });
+          if (requestsFor("/personal-assistant/messages", "POST").length !== lostPostCountBefore + 1) throw new Error("Acceptance lookup retried the lost FRED message");
+
+          const navigationPrompt = "phase1 response after navigation";
+          await submit(navigationPrompt);
+          await phasePage.evaluate(() => navigate({ type: "tab", tab: "agents" }));
+          await phasePage.waitForFunction(() => location.hash === "#agents", null, { timeout: 5_000, polling: 100 });
+          await phasePage.waitForTimeout(1_500);
+          if (await phasePage.evaluate(() => location.hash) !== "#agents" || await phasePage.locator(".personal-assistant-page").count() !== 0) {
+            throw new Error("A stale FRED response forced navigation back to the conversation");
+          }
+
+          await phasePage.setViewportSize({ width: 1440, height: 900 });
+          await phasePage.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "domcontentloaded" });
+          await phasePage.waitForSelector(".personal-assistant-page", { state: "visible", timeout: 10_000 });
+          fs.writeFileSync(inquiryPath, "inquiry");
+          const inquiryPrompt = "phase1 inquiry controls";
+          await submit(inquiryPrompt);
+          try {
+            await phasePage.waitForSelector("#inquiry-form", { state: "visible", timeout: 12_000 });
+          } catch (error) {
+            const inquiryResponse = phaseRequests.filter((request) => request.method === "POST" && request.path === "/personal-assistant/messages").at(-1);
+            const viewState = await phasePage.evaluate(() => ({
+              route: location.hash,
+              personalAssistant: state.personalAssistant,
+              agent: state.personalAssistant?.active_key ? state.agentDetails[state.personalAssistant.active_key] : null,
+            }));
+            throw new Error(`FRED inquiry did not render: ${JSON.stringify({ inquiryResponse, viewState, error: error.message })}`);
+          }
+          const inquiryId = await phasePage.locator("#inquiry-form").getAttribute("data-inquiry-id");
+          expectedInquiryConflictPath = `/personal-assistant/inquiries/${encodeURIComponent(inquiryId)}/dismiss`;
+          const inquiryConflict = await phasePage.evaluate(async (id) => {
+            const context = state.personalAssistant;
+            const response = await fetch(`/personal-assistant/inquiries/${encodeURIComponent(id)}/dismiss`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ active_key: context.active_key, generation: context.generation }),
+            });
+            return { status: response.status, body: await response.json() };
+          }, inquiryId);
+          if (inquiryConflict.status !== 200) throw new Error(`FRED inquiry conflict fixture could not establish a stale action: ${JSON.stringify(inquiryConflict)}`);
+          await phasePage.locator("#inquiry-form .composer-action-menu > summary").click();
+          await phasePage.locator(`[data-inquiry-lifecycle-action='dismiss'][data-inquiry-id='${inquiryId}']`).click();
+          await phasePage.waitForFunction((id) => {
+            const button = document.querySelector(`[data-inquiry-lifecycle-action='dismiss'][data-inquiry-id='${CSS.escape(id)}']`);
+            const agentKey = button?.dataset.agentKey;
+            return Boolean(button) && button.disabled && state.pendingInquiryActions.get(agentKey) === "dismiss";
+          }, inquiryId, { timeout: 2_000, polling: 25 });
+          await waitForNode(() => phaseRequests.some((request) => request.method === "POST" && request.path === `/personal-assistant/inquiries/${inquiryId}/dismiss`));
+          const inquiryError = phasePage.locator(`[data-pa-control-error='inquiry-dismiss:${inquiryId}']`);
+          try {
+            await inquiryError.waitFor({ state: "visible", timeout: 10_000 });
+          } catch (error) {
+            const inquiryDebug = await phasePage.evaluate((id) => ({
+              agent: state.personalAssistant?.active_key ? state.agentDetails[state.personalAssistant.active_key] : null,
+              controlErrors: state.personalAssistantControlErrors,
+              context: personalAssistantSessionContext(),
+              controls: Array.from(document.querySelectorAll("[data-pa-control-error]")).map((element) => ({
+                text: element.textContent,
+                value: element.getAttribute("data-pa-control-error"),
+              })),
+              form: document.querySelector("#inquiry-form")?.outerHTML.slice(0, 1200) || "",
+              inquiryId: id,
+              pending: Array.from(state.pendingInquiryActions.entries()),
+            }), inquiryId);
+            throw new Error(`FRED inquiry control error did not render: ${JSON.stringify({ inquiryDebug, error: error.message })}`);
+          }
+          if (!(await inquiryError.textContent()).includes("Inquiry has changed")) {
+            throw new Error(`FRED inquiry conflict error was not factual: ${await inquiryError.textContent()}`);
+          }
+          await phasePage.evaluate(() => refresh({ force: true, forceConversation: true }));
+          await phasePage.waitForFunction(() => !document.querySelector("#inquiry-form") && document.querySelector("#composer"), null, { timeout: 10_000, polling: 100 });
+          await phasePage.locator("#composer .composer-action-menu > summary").click();
+          const restoreInquiry = phasePage.locator(`[data-inquiry-lifecycle-action='restore'][data-inquiry-id='${inquiryId}']`);
+          await restoreInquiry.waitFor({ state: "visible", timeout: 10_000 });
+          await phasePage.waitForFunction((id) => {
+            const button = document.querySelector(`[data-inquiry-lifecycle-action='restore'][data-inquiry-id='${CSS.escape(id)}']`);
+            return Boolean(button) && !button.disabled;
+          }, inquiryId, { timeout: 10_000, polling: 100 });
+          await restoreInquiry.click();
+          await waitForNode(() => phaseRequests.some((request) => request.method === "POST" && request.path === `/personal-assistant/inquiries/${inquiryId}/restore`));
+          await phasePage.waitForSelector("#inquiry-form", { state: "visible", timeout: 10_000 });
+          await phasePage.locator("#inquiry-form [data-inquiry-control]").first().fill("continue");
+          await phasePage.locator("#inquiry-form button[type='submit']").click();
+          await waitForNode(() => phaseRequests.some((request) => request.method === "POST" && request.path === `/personal-assistant/inquiries/${inquiryId}/answer`));
+          const answerRequest = phaseRequests.find((request) => request.method === "POST" && request.path === `/personal-assistant/inquiries/${inquiryId}/answer`);
+          if (!answerRequest?.body.active_key || !Number.isInteger(answerRequest.body.generation) || !answerRequest.body.client_request_id) {
+            throw new Error(`FRED inquiry answer lost stable identity/context: ${JSON.stringify(answerRequest)}`);
+          }
+
+          const invalidGeneric = mutationRequests().filter((request) => request.path.startsWith("/agents/") &&
+            (request.path.includes("/messages") || request.path.includes("/inquiries/") || request.path.includes("/prompt-queue/")));
+          if (invalidGeneric.length) throw new Error(`FRED controls used protected generic endpoints: ${JSON.stringify(invalidGeneric)}`);
+          if (phaseErrors.length) throw new Error(`Phase 1 browser console errors: ${phaseErrors.join(" | ")}`);
+          if (captureDir) {
+            await phasePage.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "domcontentloaded" });
+            await phasePage.screenshot({ path: path.join(captureDir, "fred-phase1-desktop.png"), fullPage: false });
+            await phasePage.setViewportSize({ width: 390, height: 844 });
+            await phasePage.screenshot({ path: path.join(captureDir, "fred-phase1-mobile.png"), fullPage: false });
+          }
+          console.log(`remote-ui-smoke: FRED Phase 1 ok (first pending ${firstPendingPaintMs}ms, terminal freshness ${terminalFreshnessMs}ms, active poll ${activePollDelay}ms)`);
+        } finally {
+          fs.rmSync(holdPath, { force: true });
+          fs.rmSync(inquiryPath, { force: true });
+          if (fs.existsSync(`${codexPath}.disabled`) && !fs.existsSync(codexPath)) fs.renameSync(`${codexPath}.disabled`, codexPath);
+          await phasePage.unrouteAll({ behavior: "ignoreErrors" });
+          await phaseContext.close();
+        }
+      }
+
+      if (process.env.TYCHO_REMOTE_UI_FRED_PHASE1_BACKEND_URL) await assertPersonalAssistantPhase1();
 
       async function assertLoadingShellFailureRecovery() {
         const failurePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -7059,6 +7593,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   base_url = "http://127.0.0.1:#{port}"
   log_path = File.join(dir, "remote-server.log")
   env = {
+    "TYCHO_HOME" => fixture.fetch(:tycho_home_dir),
     "TYCHO_SKILLS_HOME" => fixture.fetch(:home_dir),
     "TYCHO_CONFIG_PATH" => fixture.fetch(:config_path),
     "TYCHO_SYSTEM_PROMPTS_PATH" => fixture.fetch(:prompts_path),
@@ -7149,6 +7684,11 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       "TYCHO_REMOTE_UI_TAKEOVER_AGENT_KEY" => security_agent_key,
       "CHROME_PATH" => browser
     }
+    smoke_env["TYCHO_REMOTE_UI_FRED_PHASE1_BACKEND_URL"] = ENV["TYCHO_REMOTE_UI_FRED_PHASE1_BACKEND_URL"] if ENV["TYCHO_REMOTE_UI_FRED_PHASE1_BACKEND_URL"]
+    %w[HOLD_PATH DELAY_PATH INQUIRY_PATH CODEX_PATH].each do |suffix|
+      key = "TYCHO_REMOTE_UI_FRED_#{suffix}"
+      smoke_env[key] = ENV[key] if ENV[key]
+    end
     if ENV["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"].to_s == "1"
       smoke_env["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"] = "1"
     end

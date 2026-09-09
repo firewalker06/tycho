@@ -73,7 +73,7 @@ module RemoteUIAssetSnapshotTest
     required_javascript = [
       "function personalAssistantHasRealConversation(blocks)",
       'block?.kind === "message" && ["user", "assistant"].includes(block.role)',
-      "const starter = agent && item.state === \"active\" && !personalAssistantHasRealConversation(blocks);",
+      "const starter = agent && item.state === \"active\" && !personalAssistantHasRealConversation(allBlocks);",
       "${starter ? renderPersonalAssistantWelcome(",
       'querySelector("#composer #prompt-input")',
       "function personalAssistantProjectForPicker",
