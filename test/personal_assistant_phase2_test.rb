@@ -136,6 +136,7 @@ class PersonalAssistantPhase2Test
     assert_worker_project_create_preserves_foreground_update
     assert_worker_project_create_preserves_foreground_settings
     assert_history_exposes_expired_actions_read_only
+    assert_history_preserves_truthful_accepted_states
     puts "personal_assistant_phase2_test: OK"
   end
 
@@ -664,6 +665,18 @@ class PersonalAssistantPhase2Test
       service, server, actions, worker = fixture.build(executor: ->(*) { {} })
       fixture.open!(service, server)
       pending = fixture.register(actions, "start_agent", { "agent_key" => "missing-agent" }, "history-pending-1")
+      uncertain = fixture.register(actions, "start_agent", { "agent_key" => "uncertain-agent" }, "history-unknown-1")
+      actions.enqueue!(uncertain["id"], confirmed: true, digest: uncertain["digest"])
+      state = HQ::FileStore.read_json(actions.path, fallback: {})
+      stored_uncertain = state.fetch("proposals").find { |proposal| proposal["id"] == uncertain["id"] }
+      stored_uncertain.merge!(
+        "state" => "failed",
+        "code" => "outcome_unknown",
+        "recovery" => {
+          "state" => "outcome_unknown", "action" => "verify", "reason" => "The effect outcome is not provable."
+        }
+      )
+      HQ::FileStore.write_json(actions.path, state)
       old_key = service.personal_assistant[:active_key]
       restarted = fixture.route(server, service, "POST", "/personal-assistant/restart", { "confirmed" => true })
       assert(restarted[:status] == 200 && restarted.dig(:body, :personal_assistant, :active_key) != old_key,
@@ -676,8 +689,57 @@ class PersonalAssistantPhase2Test
              "expected a rolled-over pending proposal to become a real expired read-only history record")
       assert(expired["precondition_token"].nil? && entry.dig(:body, :history, "archived_conversation", "agent_key") == old_key,
              "expected history to strip acceptance authority while linking the archived conversation")
+      archived_unknown = entry.dig(:body, :history, "expired_actions")&.find { |action| action["id"] == uncertain["id"] }
+      assert(archived_unknown && archived_unknown["state"] == "failed" && archived_unknown["archived_outcome"] == "outcome_unknown" &&
+             archived_unknown["read_only"] == true && archived_unknown["recovery"]["state"] == "outcome_unknown" &&
+             archived_unknown["expired"] != true,
+             "expected an accepted uncertain action to retain its truthful read-only outcome")
       assert(fixture.route(server, service, "GET", "/personal-assistant/actions", {}).dig(:body, :proposals).none? { |action| action["id"] == pending["id"] },
              "expected the new active action list to exclude the old proposal")
+      worker.shutdown
+    end
+  end
+
+  def self.assert_history_preserves_truthful_accepted_states
+    with_fixture do |fixture|
+      service, server, actions, worker = fixture.build(executor: ->(*) { {} })
+      fixture.open!(service, server)
+      proposals = {
+        "queued" => fixture.register(actions, "start_agent", { "agent_key" => "queued-agent" }, "history-queued-1"),
+        "executing" => fixture.register(actions, "start_agent", { "agent_key" => "executing-agent" }, "history-executing-1"),
+        "verifying" => fixture.register(actions, "start_agent", { "agent_key" => "verifying-agent" }, "history-verifying-1"),
+        "failed" => fixture.register(actions, "start_agent", { "agent_key" => "failed-agent" }, "history-failed-1"),
+        "executed" => fixture.register(actions, "start_agent", { "agent_key" => "executed-agent" }, "history-executed-1"),
+        "rejected" => fixture.register(actions, "start_agent", { "agent_key" => "rejected-agent" }, "history-rejected-1")
+      }
+      state = HQ::FileStore.read_json(actions.path, fallback: {})
+      state.fetch("proposals").each do |proposal|
+        original_state = proposals.find { |_state, candidate| candidate["id"] == proposal["id"] }&.first
+        next unless original_state
+
+        proposal["state"] = original_state
+        proposal["recovery"] = { "state" => "outcome_unknown", "action" => "verify", "reason" => "Unknown." } if original_state == "failed"
+      end
+      HQ::FileStore.write_json(actions.path, state)
+      old_key = service.personal_assistant[:active_key]
+      service.instance_variable_get(:@personal_assistant).restart!({ "confirmed" => true })
+      history = fixture.route(server, service, "GET", "/personal-assistant/history", {})
+      history_id = history.dig(:body, :history, 0, "id")
+      entry = fixture.route(server, service, "GET", "/personal-assistant/history/#{history_id}", {})
+      archived = entry.dig(:body, :history, "expired_actions")
+
+      expected_outcomes = {
+        "queued" => "accepted", "executing" => "accepted", "verifying" => "accepted",
+        "failed" => "outcome_unknown", "executed" => "executed", "rejected" => "rejected"
+      }
+      expected_outcomes.each do |original_state, outcome|
+        action = archived&.find { |candidate| candidate["id"] == proposals.fetch(original_state)["id"] }
+        assert(action && action["state"] == original_state && action["archived_outcome"] == outcome &&
+               action["read_only"] == true && action["expired"] != true && action["precondition_token"].nil?,
+               "expected #{original_state} history to remain truthful and read-only")
+      end
+      assert(entry.dig(:body, :history, "archived_conversation", "agent_key") == old_key,
+             "expected truthful archived actions to remain attached to the prior conversation")
       worker.shutdown
     end
   end

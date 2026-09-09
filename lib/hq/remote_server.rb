@@ -2065,7 +2065,7 @@ module HQ
       raise Error.new("Unknown Personal Assistant history entry", status: 404) unless entry
 
       entry.merge(
-        "expired_actions" => personal_assistant_expired_history_actions(entry),
+        "expired_actions" => personal_assistant_archived_history_actions(entry),
         "archived_conversation" => personal_assistant_archived_conversation_reference(entry)
       ).compact
     rescue ArgumentError => e
@@ -2739,22 +2739,29 @@ module HQ
       raise Error.new(e.message, status: 400)
     end
 
-    def personal_assistant_expired_history_actions(entry)
+    def personal_assistant_archived_history_actions(entry)
       active_key = entry["agent_key"].to_s
       return [] if active_key.empty?
 
       @personal_assistant_actions.proposals.filter_map do |proposal|
         next unless proposal["active_key"].to_s == active_key
-        next unless %w[ready awaiting_confirmation queued executing verifying failed].include?(proposal["state"].to_s)
+        original_state = proposal["state"].to_s
+        next unless %w[ready awaiting_confirmation queued executing verifying failed executed rejected].include?(original_state)
 
-        proposal.reject do |key, _value|
+        archived_outcome = case original_state
+                           when "ready", "awaiting_confirmation" then "expired"
+                           when "queued", "executing", "verifying" then "accepted"
+                           when "failed"
+                             proposal.dig("recovery", "state") == "outcome_unknown" ? "outcome_unknown" : "failed"
+                           else original_state
+                           end
+        archived = proposal.reject do |key, _value|
           %w[preflight precondition_token preflight_frozen lease_expires_at claimed_at executed_at verification_started_at verified_at].include?(key)
-        end.merge(
-          "state" => "expired",
-          "historical_state" => proposal["state"],
-          "read_only" => true,
-          "expired" => true
-        )
+        end.merge("read_only" => true, "archived_outcome" => archived_outcome)
+        if %w[ready awaiting_confirmation].include?(original_state)
+          archived.merge!("state" => "expired", "historical_state" => original_state, "expired" => true)
+        end
+        archived
       end
     end
 
