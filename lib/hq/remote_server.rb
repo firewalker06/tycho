@@ -2015,21 +2015,64 @@ module HQ
     def delete_personal_assistant_queued_prompt(entry_id, attrs = {}, actor: DelegationActor.user_actor)
       raise Error.new("Parent-declared requests cannot delete FRED's prompt queue", status: 403) if actor.parent?
 
+      cancellation_id = nil
       with_personal_assistant_session!(attrs) do |context|
         target = personal_assistant_target_for_context!(context)
-        unless target.prompt_queue.any? { |entry| entry["id"].to_s == entry_id.to_s }
-          state = target.queued_prompts.find { |entry| entry["id"].to_s == entry_id.to_s }
-          raise Error.new("Queued prompt is no longer deletable", status: 409) if state
+        queue_entry = target.prompt_queue.find { |entry| entry["id"].to_s == entry_id.to_s }
+        state = target.queued_prompts.find { |entry| entry["id"].to_s == entry_id.to_s }
+        acceptance = @personal_assistant.message_acceptance_for_queue_entry(entry_id)
+        acceptance = reconcile_personal_assistant_acceptance!(acceptance) if acceptance
+
+        if acceptance && acceptance["state"] == "canceled"
+          raise Error.new("Queued prompt cancellation is inconsistent with the queue", status: 409) if queue_entry || state
+
+          return personal_assistant_canceled_queue_response(acceptance["client_request_id"], target, context, replayed: true)
+        end
+        raise Error.new("Queued prompt is no longer deletable", status: 409) if !queue_entry && state
+
+        if acceptance && acceptance["state"] == "unknown" && acceptance["code"].to_s.start_with?("cancellation_")
+          raise_personal_assistant_acceptance_error(
+            acceptance["client_request_id"], "FRED could not prove whether the queued message was canceled", code: "cancellation_unknown"
+          ) unless queue_entry
+          cancellation_id = acceptance["client_request_id"]
+        elsif acceptance && acceptance["state"] == "queued"
+          cancellation_id = acceptance["client_request_id"]
+          @personal_assistant.update_message_acceptance!(
+            cancellation_id, "state" => "unknown", "code" => "cancellation_in_flight"
+          )
+        elsif acceptance
+          raise Error.new("Queued prompt is no longer deletable", status: 409)
         end
 
         target, entry = @agent_store.delete_queued_prompt!(target.key, entry_id)
         Array(entry["attachments"]).each { |attachment| cleanup_uploaded_attachment_file(target, attachment) }
         @agent_activity_snapshot.upsert!(target)
-        { accepted: true, active_key: context["active_key"], generation: context["generation"], deleted: prompt_queue_entry_payload(target, entry), agent: agent_payload(target) }
+        if cancellation_id
+          @personal_assistant.update_message_acceptance!(cancellation_id, "state" => "canceled", "code" => "canceled")
+          personal_assistant_canceled_queue_response(cancellation_id, target, context, replayed: false).merge(
+            deleted: prompt_queue_entry_payload(target, entry)
+          )
+        else
+          { accepted: true, active_key: context["active_key"], generation: context["generation"], deleted: prompt_queue_entry_payload(target, entry), agent: agent_payload(target) }
+        end
       end
+    rescue Error
+      raise
     rescue ArgumentError => e
+      if cancellation_id
+        raise_personal_assistant_acceptance_error(
+          cancellation_id, "FRED could not prove whether the queued message was canceled", code: "cancellation_unknown"
+        )
+      end
+
       status = e.message.start_with?("Unknown queued prompt") ? 404 : 409
       raise Error.new(e.message, status:)
+    rescue StandardError
+      raise_personal_assistant_acceptance_error(
+        cancellation_id, "FRED could not prove whether the queued message was canceled", code: "cancellation_unknown"
+      ) if cancellation_id
+
+      raise
     end
 
     def retry_personal_assistant_prompt_queue(attrs = {}, actor: DelegationActor.user_actor)
@@ -3733,6 +3776,8 @@ module HQ
       case record["state"]
       when "accepted", "queued", "dispatched"
         return personal_assistant_message_response(id, replayed: true)
+      when "canceled"
+        raise_personal_assistant_acceptance_error(id, "FRED canceled this message", code: "canceled")
       when "rejected"
         raise_personal_assistant_acceptance_error(id, "FRED rejected this message acceptance", code: "rejected")
       when "expired"
@@ -3740,6 +3785,10 @@ module HQ
       when "start_failed"
         raise_personal_assistant_acceptance_error(id, "FRED message was accepted, but the requested run could not start", code: "start_failed")
       when "unknown"
+        if record["code"].to_s.start_with?("cancellation_")
+          raise_personal_assistant_acceptance_error(id, "FRED could not prove whether the queued message was canceled", code: "cancellation_unknown")
+        end
+
         raise_personal_assistant_acceptance_error(id, "FRED could not prove whether the requested run started", code: "acceptance_unknown")
       when "staged"
         evidence = personal_assistant_message_evidence(id, context["active_key"])
@@ -3773,8 +3822,7 @@ module HQ
 
     def apply_personal_assistant_message!(id, attrs, context:, kind:, inquiry_id:, answer:, feedback:, feedback_embedded:, prompt:)
       metadata = {
-        "personal_assistant_client_request_id" => id,
-        "personal_assistant_acceptance_id" => id
+        "personal_assistant_client_request_id" => id
       }
       event_id = "personal-assistant-message:#{id}"
       if kind == "inquiry_answer"
@@ -3860,7 +3908,8 @@ module HQ
     def reconcile_personal_assistant_acceptance!(record)
       id = record["client_request_id"].to_s
       state = record["state"].to_s
-      return record if %w[accepted dispatched start_failed rejected expired].include?(state)
+      return record if %w[accepted dispatched start_failed canceled rejected expired].include?(state)
+      cancellation_unknown = state == "unknown" && record["code"].to_s.start_with?("cancellation_")
 
       target = personal_assistant_agent_for(record["active_key"])
       return record unless target
@@ -3876,6 +3925,7 @@ module HQ
 
         return @personal_assistant.update_message_acceptance!(id, "state" => "dispatched", "run_id" => run.run_id)
       end
+      return record if cancellation_unknown
       if evidence[:queue_entry] && %w[staged message_recorded queued].include?(state)
         return @personal_assistant.update_message_acceptance!(
           id, "state" => "queued", "queue_entry_id" => evidence[:queue_entry]["id"], "queue_claim_id" => evidence[:queue_claim_id]
@@ -3938,9 +3988,21 @@ module HQ
     end
 
     def personal_assistant_run_metadata(client_request_id)
+      { "personal_assistant_client_request_id" => client_request_id.to_s }
+    end
+
+    def personal_assistant_canceled_queue_response(client_request_id, target, context, replayed:)
+      acceptance = @personal_assistant.message_acceptance(client_request_id)
       {
-        "personal_assistant_client_request_id" => client_request_id.to_s,
-        "personal_assistant_acceptance_id" => client_request_id.to_s
+        accepted: true,
+        canceled: true,
+        replayed:,
+        client_request_id: client_request_id.to_s,
+        active_key: context["active_key"],
+        generation: context["generation"],
+        acceptance:,
+        agent: agent_payload(target),
+        conversation: conversation_for_agent(target)
       }
     end
 
@@ -3996,7 +4058,7 @@ module HQ
     def mark_personal_assistant_acceptance_unknown!(client_request_id, error)
       record = @personal_assistant.message_acceptance_record(client_request_id)
       return unless record
-      return if %w[accepted queued dispatched start_failed rejected expired].include?(record["state"].to_s)
+      return if %w[accepted queued dispatched start_failed canceled rejected expired].include?(record["state"].to_s)
 
       @personal_assistant.update_message_acceptance!(
         client_request_id, "state" => "unknown", "code" => "acceptance_unknown", "error" => error.to_s[0, 600]

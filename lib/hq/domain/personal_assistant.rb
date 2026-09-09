@@ -17,15 +17,16 @@ module HQ
   class PersonalAssistantLifecycle
     ROLE = "personal_assistant_daily"
     MESSAGE_ACCEPTANCE_LIMIT = 256
-    MESSAGE_ACCEPTANCE_STATES = %w[staged message_recorded accepted queued dispatched start_failed unknown rejected expired].freeze
+    MESSAGE_ACCEPTANCE_STATES = %w[staged message_recorded accepted queued dispatched start_failed unknown canceled rejected expired].freeze
     MESSAGE_ACCEPTANCE_TRANSITIONS = {
-      "staged" => %w[staged message_recorded queued accepted unknown rejected],
-      "message_recorded" => %w[message_recorded queued accepted unknown],
+      "staged" => %w[staged message_recorded queued accepted dispatched start_failed unknown rejected],
+      "message_recorded" => %w[message_recorded queued accepted dispatched start_failed unknown],
       "accepted" => %w[accepted],
       "queued" => %w[queued dispatched start_failed unknown],
       "dispatched" => %w[dispatched],
       "start_failed" => %w[start_failed],
-      "unknown" => %w[unknown dispatched start_failed],
+      "unknown" => %w[unknown dispatched start_failed canceled],
+      "canceled" => %w[canceled],
       "rejected" => %w[rejected],
       "expired" => %w[expired]
     }.freeze
@@ -207,6 +208,18 @@ module HQ
         record = Array(state["message_acceptances"]).find { |candidate| candidate.is_a?(Hash) && candidate["client_request_id"].to_s == id }
         record ||= Array(state["message_acceptance_tombstones"]).find do |candidate|
           candidate.is_a?(Hash) && candidate["client_request_id"].to_s == id
+        end
+        record ? deep_copy(record) : nil
+      end
+    end
+
+    def message_acceptance_for_queue_entry(queue_entry_id)
+      id = queue_entry_id.to_s.strip
+      return nil if id.empty?
+
+      synchronize do |state|
+        record = Array(state["message_acceptances"]).find do |candidate|
+          candidate.is_a?(Hash) && (candidate["queue_entry_id"].to_s == id || candidate["client_request_id"].to_s == id)
         end
         record ? deep_copy(record) : nil
       end

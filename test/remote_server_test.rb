@@ -662,6 +662,51 @@ module RemoteServerTest
                "expected a start_failed duplicate not to return accepted true")
       end
 
+      lifecycle = service.instance_variable_get(:@personal_assistant)
+      evidence_payload = lambda do |id|
+        context.merge("client_request_id" => id, "kind" => "message", "prompt" => "Evidence for #{id}", "start" => false)
+      end
+      staged_id = "client-staged-run-evidence"
+      staged_payload = evidence_payload.call(staged_id)
+      lifecycle.begin_message_acceptance!(
+        client_request_id: staged_id, active_key: context["active_key"], generation: context["generation"],
+        fingerprint: Digest::SHA256.hexdigest(JSON.generate(staged_payload)), payload: staged_payload, validate: false
+      )
+      recorded_id = "client-recorded-failure-evidence"
+      recorded_payload = evidence_payload.call(recorded_id).merge("start" => true)
+      lifecycle.begin_message_acceptance!(
+        client_request_id: recorded_id, active_key: context["active_key"], generation: context["generation"],
+        fingerprint: Digest::SHA256.hexdigest(JSON.generate(recorded_payload)), payload: recorded_payload, validate: false
+      )
+      lifecycle.update_message_acceptance!(recorded_id, "state" => "message_recorded", "message_id" => recorded_id)
+      evidence_agent = store.load.find { |candidate| candidate.key == session[:active_key] }
+      now = Time.now
+      evidence_agent.runs.concat([
+        HQ::ManagedAgent::AgentRun.new(
+          run_id: "fred-staged-evidence-run", started_at: now, finished_at: now, status: "succeeded",
+          log_path: evidence_agent.raw_log_path,
+          metadata: { "personal_assistant_client_request_id" => staged_id }
+        ),
+        HQ::ManagedAgent::AgentRun.new(
+          run_id: "fred-recorded-failure-evidence-run", started_at: now, finished_at: now, status: "failed",
+          log_path: evidence_agent.raw_log_path,
+          metadata: { "personal_assistant_client_request_id" => recorded_id, "start_failure" => true }
+        )
+      ])
+      store.save([evidence_agent])
+      staged_lookup = server.send(:route, service, "GET", "/personal-assistant/messages/acceptance/#{staged_id}", {}, nil).fetch(:body)
+      recorded_lookup = server.send(:route, service, "GET", "/personal-assistant/messages/acceptance/#{recorded_id}", {}, nil).fetch(:body)
+      assert(staged_lookup.dig(:acceptance, "state") == "dispatched" &&
+             staged_lookup.dig(:acceptance, "run_id") == "fred-staged-evidence-run",
+             "expected positive run evidence to promote a staged acceptance to dispatched")
+      assert(recorded_lookup.dig(:acceptance, "state") == "start_failed" &&
+             recorded_lookup.dig(:acceptance, "run_id") == "fred-recorded-failure-evidence-run",
+             "expected positive start-failure evidence to promote a recorded acceptance to start_failed")
+      evidence_events = HQ::AgentMemory.new(store.load.find { |candidate| candidate.key == session[:active_key] }).events.select do |event|
+        event["type"] == "user_message" && [staged_id, recorded_id].include?(event.dig("metadata", "personal_assistant_client_request_id"))
+      end
+      assert(evidence_events.empty?, "expected evidence-only acceptance reconciliation not to append the message again")
+
         concurrent_context = context
         threads = %w[a b].map do |suffix|
           Thread.new do
@@ -845,6 +890,89 @@ module RemoteServerTest
         assert(queued[:accepted] && queued.dig(:acceptance, "state") == "queued",
                "expected a message submitted during a FRED run to be durably queued")
 
+        cancel_request = context.merge(
+          "client_request_id" => "client-queued-cancel", "prompt" => "Cancel this queued FRED message.", "start" => false
+        )
+        cancel_queued = server.send(:route, service, "POST", "/personal-assistant/messages", cancel_request, nil).fetch(:body)
+        assert(cancel_queued[:accepted] && cancel_queued.dig(:acceptance, "state") == "queued",
+               "expected the cancellation fixture to begin as a queued acceptance")
+        canceled = server.send(
+          :route, service, "DELETE", "/personal-assistant/prompt-queue/client-queued-cancel", context, nil
+        ).fetch(:body)
+        assert(canceled[:accepted] && canceled[:canceled] && !canceled[:replayed] &&
+               canceled.dig(:acceptance, "state") == "canceled" &&
+               canceled.dig(:deleted, "id") == "client-queued-cancel",
+               "expected dedicated queue deletion to settle a durable canceled receipt")
+        canceled_lookup = server.send(
+          :route, service, "GET", "/personal-assistant/messages/acceptance/client-queued-cancel", {}, nil
+        ).fetch(:body)
+        assert(canceled_lookup.dig(:acceptance, "state") == "canceled",
+               "expected acceptance lookup to reconcile the canceled queue receipt")
+        begin
+          server.send(:route, service, "POST", "/personal-assistant/messages", cancel_request, nil)
+          raise "expected a canceled FRED message replay to remain unavailable"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 409 && e.details[:code] == "canceled" &&
+                 e.details.dig(:acceptance, "state") == "canceled",
+                 "expected an identical canceled message replay to return its receipt without requeue")
+        end
+        canceled_replay = server.send(
+          :route, service, "DELETE", "/personal-assistant/prompt-queue/client-queued-cancel", context, nil
+        ).fetch(:body)
+        assert(canceled_replay[:accepted] && canceled_replay[:canceled] && canceled_replay[:replayed] &&
+               canceled_replay.dig(:acceptance, "state") == "canceled",
+               "expected repeated queue cancellation to replay the durable receipt without dispatch")
+
+        interrupted_id = "client-queued-cancel-interrupted"
+        interrupted_request = context.merge(
+          "client_request_id" => interrupted_id, "prompt" => "Interrupt this queued cancellation.", "start" => false
+        )
+        interrupted_queued = server.send(:route, service, "POST", "/personal-assistant/messages", interrupted_request, nil).fetch(:body)
+        assert(interrupted_queued.dig(:acceptance, "state") == "queued",
+               "expected the interrupted cancellation fixture to begin as queued")
+        lifecycle = service.instance_variable_get(:@personal_assistant)
+        original_acceptance_update = lifecycle.method(:update_message_acceptance!)
+        lifecycle.define_singleton_method(:update_message_acceptance!) do |client_request_id, attributes|
+          if client_request_id.to_s == interrupted_id && attributes.is_a?(Hash) && attributes["state"] == "canceled"
+            raise IOError, "simulated lost cancellation acknowledgement"
+          end
+
+          original_acceptance_update.call(client_request_id, attributes)
+        end
+        begin
+          server.send(:route, service, "DELETE", "/personal-assistant/prompt-queue/#{interrupted_id}", context, nil)
+          raise "expected an interrupted queue cancellation to remain unknown"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 409 && e.details[:code] == "cancellation_unknown" &&
+                 e.details.dig(:acceptance, "state") == "unknown",
+                 "expected an interrupted cancellation to return an unknown receipt without success")
+        ensure
+          lifecycle.singleton_class.remove_method(:update_message_acceptance!)
+        end
+        interrupted_lookup = server.send(
+          :route, service, "GET", "/personal-assistant/messages/acceptance/#{interrupted_id}", {}, nil
+        ).fetch(:body)
+        assert(interrupted_lookup.dig(:acceptance, "state") == "unknown" &&
+               interrupted_lookup.dig(:acceptance, "code") == "cancellation_in_flight",
+               "expected lookup to preserve cancellation uncertainty rather than claiming canceled")
+        begin
+          server.send(:route, service, "POST", "/personal-assistant/messages", interrupted_request, nil)
+          raise "expected an interrupted cancellation replay to remain unavailable"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 409 && e.details[:code] == "cancellation_unknown" &&
+                 e.details.dig(:acceptance, "state") == "unknown",
+                 "expected an interrupted cancellation replay not to requeue or report accepted")
+        end
+
+        race_id = "client-queued-cancel-dispatch-race"
+        race_request = context.merge(
+          "client_request_id" => race_id, "prompt" => "Dispatch wins this cancellation race.", "start" => false
+        )
+        race_queued = server.send(:route, service, "POST", "/personal-assistant/messages", race_request, nil).fetch(:body)
+        assert(race_queued.dig(:acceptance, "state") == "queued",
+               "expected the cancellation race fixture to begin as queued")
+        lifecycle.update_message_acceptance!(race_id, "state" => "unknown", "code" => "cancellation_in_flight")
+
         FileUtils.rm_f(fake_gate)
         deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5.0
         loop do
@@ -860,6 +988,12 @@ module RemoteServerTest
         assert(reconciled.dig(:acceptance, "state") == "dispatched" &&
                !reconciled.dig(:acceptance, "run_id").to_s.empty?,
                "expected queued FRED acceptance to reconcile to its positive dispatched run evidence")
+        race_lookup = server.send(
+          :route, service, "GET", "/personal-assistant/messages/acceptance/#{race_id}", {}, nil
+        ).fetch(:body)
+        assert(race_lookup.dig(:acceptance, "state") == "dispatched" &&
+               !race_lookup.dig(:acceptance, "run_id").to_s.empty?,
+               "expected positive dispatch evidence to win a cancellation race without downgrading to queued")
       ensure
         FileUtils.rm_f(fake_gate)
         if old_codex_bin
