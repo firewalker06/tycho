@@ -1244,13 +1244,14 @@ module RemoteServerTest
         nil
       end
       verified = server.send(:route, service, "POST", "/personal-assistant/actions/#{duplicate_project.fetch("id")}/verify", {}, nil).dig(:body, :proposal)
-      assert(verified["state"] == "executed", "expected verification to observe the existing matching project without creating it again")
+      assert(verified["state"] == "failed" && verified.dig("recovery", "state") == "outcome_unknown",
+             "expected verification to keep an observed matching project outcome_unknown without a committed receipt")
       service.record_personal_assistant_action_outcome!(verified)
       receipts = service.conversation(active_key).select do |entry|
         entry.dig(:metadata, "personal_assistant_action_proposal_id") == duplicate_project["id"]
       end
-      assert(receipts.length == 2 && receipts.last[:content].include?("Tycho completed create_project."),
-             "expected verified success to correct the earlier failed receipt exactly once")
+      assert(receipts.length == 2 && receipts.last[:content].include?("The outcome is unknown."),
+             "expected verification to preserve an unknown outcome exactly once")
       stale = register.call(
         { "type" => "start_agent", "description" => "Start later", "arguments" => { "agent_key" => inspected_agent[:key] } }, "fred-stale-action"
       )

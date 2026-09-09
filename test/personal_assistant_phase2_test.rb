@@ -1,7 +1,12 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "json"
+require "net/http"
+require "socket"
 require "tmpdir"
+require "thread"
+require "timeout"
 require "yaml"
 
 # Bind every HQ path before loading the application. These tests create and
@@ -24,11 +29,74 @@ ENV["TYCHO_CODEX_BIN"] = File.join(PHASE2_TEST_HOME, "missing-codex")
 
 require_relative "../lib/hq/remote_server"
 
+class Phase2BarrierAgentStore < HQ::AgentStore
+  def initialize(projects, barrier:, release:)
+    super(projects)
+    @barrier = barrier
+    @release = release
+    @signaled = false
+  end
+
+  def mutate(dispatch_prompt_queues: true)
+    super do |agents, events|
+      if Thread.current[:phase2_worker_barrier] && !@signaled
+        @signaled = true
+        @barrier << true
+        @release.pop
+      end
+      yield agents, events
+    end
+  end
+end
+
+class Phase2BarrierRegistry < HQ::Registry
+  def initialize(path:, system_prompts_path:, barrier:, release:)
+    @barrier = barrier
+    @release = release
+    @signaled = false
+    super(path:, system_prompts_path:)
+  end
+
+  private
+
+  def write_yaml(path, data)
+    if path == @path && Thread.current[:phase2_worker_barrier] && !@signaled
+      @signaled = true
+      @barrier << true
+      @release.pop
+    end
+    super
+  end
+end
+
+class Phase2CountingRemoteService < HQ::RemoteService
+  attr_reader :bundle_calls
+
+  def initialize(**kwargs)
+    @bundle_calls = 0
+    super
+  end
+
+  def personal_assistant_bundle
+    @bundle_calls += 1
+    super
+  end
+end
+
 class PersonalAssistantPhase2Test
   def self.run
     assert_background_confirmation_is_durable_and_nonblocking
+    assert_background_http_status_stays_responsive
     assert_frozen_preview_reconciles_stale_defaults
+    assert_frozen_effective_settings_reach_executor
     assert_schedule_precondition_ignores_derived_next_run
+    assert_personal_assistant_snapshot_coalesces_bundle_builds
+    assert_current_work_honors_live_visibility
+    assert_verification_never_claims_observed_state
+    assert_worker_create_preserves_foreground_create
+    assert_worker_create_preserves_foreground_update
+    assert_worker_project_create_preserves_foreground_update
+    assert_worker_project_create_preserves_foreground_settings
     puts "personal_assistant_phase2_test: OK"
   end
 
@@ -115,6 +183,85 @@ class PersonalAssistantPhase2Test
     end
   end
 
+  def self.assert_background_http_status_stays_responsive
+    with_fixture do |fixture|
+      started = Queue.new
+      release = Queue.new
+      service, _direct_server, actions, worker = fixture.build(
+        executor: ->(*) { started << true; release.pop; { "ok" => true } }
+      )
+      fixture.open!(service, _direct_server)
+      FileUtils.cp(fixture.registry.path, HQ::Registry::DEFAULT_PATH)
+      target = service.create_agent(
+        "project_key" => "web", "name" => "HTTP Target", "prompt" => "HTTP target prompt", "agent" => "codex"
+      )
+      proposal = fixture.register(actions, "start_agent", { "agent_key" => target[:key] }, "http-start-1")
+      port = fixture.free_port
+      service.instance_variable_set(:@server_url, "http://127.0.0.1:#{port}")
+      server = HQ::RemoteServer.new(host: "127.0.0.1", port:, personal_assistant_action_worker: worker)
+      thread = Thread.new { server.start }
+      begin
+        fixture.wait_for_http!(port)
+        preflight_status, preflight = fixture.http_request(port, "GET", "/personal-assistant/actions/#{proposal["id"]}/preflight")
+        assert(preflight_status == 200, "expected HTTP preflight to succeed")
+        token = preflight.dig("preflight", "precondition_token")
+        confirm_status, confirmed = fixture.http_request(
+          port, "POST", "/personal-assistant/actions/#{proposal["id"]}/confirm",
+          "confirmed" => true, "proposal_digest" => proposal["digest"], "precondition_token" => token
+        )
+        assert(confirm_status == 202 && confirmed["queued"], "expected HTTP confirmation to queue")
+        take_barrier(started)
+        began = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        status_code, _status = fixture.http_request(port, "GET", "/personal-assistant")
+        elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - began
+        assert(status_code == 200 && elapsed < 0.5,
+               "expected a concurrent real HTTP GET to remain responsive (status=#{status_code}, elapsed=#{elapsed.round(3)})")
+      ensure
+        release << true
+        server.shutdown
+        thread.join(2)
+        thread.kill if thread.alive?
+      end
+    end
+  end
+
+  def self.assert_frozen_effective_settings_reach_executor
+    with_fixture do |fixture|
+      service = nil
+      observed_arguments = Queue.new
+      executor = lambda do |type, arguments|
+        fixture.registry.update_project!("web", "model" => "changed-between-guard-effect")
+        service.send(:reload_projects_from_registry!)
+        observed_arguments << arguments
+        service.execute_personal_assistant_action(type, arguments)
+      end
+      service, server, actions, worker = fixture.build(executor:)
+      fixture.open!(service, server)
+      proposal = fixture.register(actions, "create_agent", {
+        "project_key" => "web", "name" => "Frozen Settings", "prompt" => "Use the displayed model",
+        "agent" => nil, "model" => nil, "reasoning_effort" => nil
+      }, "frozen-settings-1")
+      preview = fixture.route(server, service, "GET", "/personal-assistant/actions/#{proposal["id"]}/preflight", {})
+      preflight = preview.dig(:body, :preflight)
+      confirmed = fixture.route(server, service, "POST", "/personal-assistant/actions/#{proposal["id"]}/confirm", {
+        "confirmed" => true, "proposal_digest" => proposal["digest"],
+        "precondition_token" => preflight["precondition_token"]
+      })
+      assert(confirmed[:status] == 202, "expected frozen settings confirmation to queue")
+
+      worker.start!
+      wait_until { actions.proposal(proposal["id"])["state"] == "executed" }
+      executed_arguments = observed_arguments.pop
+      expected_model = preflight.dig("details", "model")
+      assert(executed_arguments["model"] == expected_model && executed_arguments["reasoning_effort"] == preflight.dig("details", "reasoning_effort"),
+             "expected the executor to receive the frozen effective settings")
+      agents = HQ::AgentStore.new(service.instance_variable_get(:@projects)).load
+      created = agents.find { |agent| agent.name == "Frozen Settings" }
+      assert(created&.model == expected_model, "expected the effect to use the frozen model after a default change")
+      worker.shutdown
+    end
+  end
+
   def self.assert_schedule_precondition_ignores_derived_next_run
     with_fixture do |fixture|
       fixture.write_schedules!
@@ -132,6 +279,290 @@ class PersonalAssistantPhase2Test
       second = fixture.route(server, service, "GET", "/personal-assistant/actions/#{proposal["id"]}/preflight", {})
       assert(second.dig(:body, :preflight, "precondition_token") == first_token,
              "expected clock-only next-run changes not to invalidate schedule intent")
+    end
+  end
+
+  def self.assert_personal_assistant_snapshot_coalesces_bundle_builds
+    with_fixture do |fixture|
+      service, server, _actions, = fixture.build(
+        executor: ->(*) { { "ok" => true } }, service_class: Phase2CountingRemoteService
+      )
+      fixture.open!(service, server)
+      started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      first = fixture.route(server, service, "GET", "/personal-assistant", {})
+      actions = fixture.route(server, service, "GET", "/personal-assistant/actions", {})
+      current_work = fixture.route(server, service, "GET", "/personal-assistant/current-work", {})
+      elapsed_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at) * 1000).round(1)
+      assert(first[:status] == 200 && actions[:status] == 200 && current_work[:status] == 200,
+             "expected shared personal assistant snapshot routes to succeed")
+      assert(service.bundle_calls == 1, "expected consecutive status/actions/current-work reads to share one bundle build")
+      puts "personal_assistant_snapshot: #{elapsed_ms}ms across 3 reads, 1 bundle build"
+    end
+  end
+
+  def self.assert_current_work_honors_live_visibility
+    with_fixture do |fixture|
+      service, server, actions, = fixture.build(executor: ->(*) { { "ok" => true } })
+      fixture.open!(service, server)
+      fixture.write_schedules!
+      proposal = fixture.register(actions, "create_project", {
+        "key" => "tracked-project", "name" => "Tracked Project", "path" => fixture.dir,
+        "group" => nil, "agent" => nil, "model" => nil, "reasoning_effort" => nil
+      }, "tracked-project-1")
+      schedule_proposal = fixture.register(actions, "create_schedule", {
+        "key" => "daily", "name" => "Daily", "cron" => "0 9 * * *", "timezone" => "UTC",
+        "project_key" => "web", "agent_name" => "Daily agent", "message" => "Review.", "system_message" => nil
+      }, "tracked-schedule-1")
+      actions.track!(proposal["id"], "kind" => "project", "key" => "web", "name" => "Web", "proposal_id" => proposal["id"])
+      actions.track!(schedule_proposal["id"], "kind" => "schedule", "key" => "daily", "name" => "Daily", "proposal_id" => schedule_proposal["id"])
+      visible = fixture.route(server, service, "GET", "/personal-assistant/current-work", {})
+      assert(visible[:status] == 200 && visible.dig(:body, :tracked, :projects).any? { |item| item[:key] == "web" },
+             "expected a visible tracked project in current work")
+      assert(visible.dig(:body, :tracked, :schedules).any? { |item| item[:key] == "daily" },
+             "expected a schedule attached to a visible project in current work")
+      fixture.registry.update_project_hidden!("web", true)
+      service.send(:reload_projects_from_registry!)
+      hidden = fixture.route(server, service, "GET", "/personal-assistant/current-work", {})
+      assert(hidden[:status] == 200 && hidden.dig(:body, :tracked, :projects).none? { |item| item[:key] == "web" },
+             "expected hidden tracked resources to disappear from current work")
+      assert(hidden.dig(:body, :tracked, :schedules).none? { |item| item[:key] == "daily" },
+             "expected schedules attached to hidden projects to disappear from current work")
+    end
+  end
+
+  def self.assert_verification_never_claims_observed_state
+    with_fixture do |fixture|
+      service, server, actions, = fixture.build(executor: ->(*) { raise "uncertain effect" })
+      fixture.open!(service, server)
+      agent_args = {
+        "project_key" => "web", "name" => "Unrelated Matching Agent", "prompt" => "Same prompt",
+        "agent" => "codex", "model" => "inherited-model", "reasoning_effort" => "low"
+      }
+      agent_proposal = fixture.register(actions, "create_agent", agent_args, "verify-agent-1")
+      preview = fixture.route(server, service, "GET", "/personal-assistant/actions/#{agent_proposal["id"]}/preflight", {})
+      service.create_agent(agent_args)
+      verification = service.send(:verify_personal_assistant_action_execution, "create_agent", agent_args,
+                                   agent_proposal.merge("preflight" => preview.dig(:body, :preflight)))
+      assert(verification["completed"] != true && verification["no_effect"] != true,
+             "expected an unrelated matching agent to remain outcome_unknown")
+
+      update_args = {
+        "project_key" => "web", "name" => nil, "group" => nil, "agent" => nil,
+        "model" => "inherited-model", "reasoning_effort" => nil
+      }
+      update_proposal = fixture.register(actions, "update_project", update_args, "verify-settings-1")
+      update_preview = fixture.route(server, service, "GET", "/personal-assistant/actions/#{update_proposal["id"]}/preflight", {})
+      settings_verification = service.send(:verify_personal_assistant_action_execution, "update_project", update_args,
+                                           update_proposal.merge("preflight" => update_preview.dig(:body, :preflight)))
+      assert(settings_verification["completed"] != true && settings_verification["no_effect"] != true,
+             "expected matching settings without a committed receipt to remain outcome_unknown")
+
+      running_target = Object.new
+      running_target.define_singleton_method(:running?) { true }
+      service.define_singleton_method(:find_agent!) { |_key| running_target }
+      running_verification = service.send(
+        :verify_personal_assistant_action_execution, "start_agent", { "agent_key" => "independently-running" },
+        { "id" => "verify-running-1" }
+      )
+      assert(running_verification["completed"] != true && running_verification["no_effect"] != true,
+             "expected an independently running target to remain outcome_unknown")
+    end
+  end
+
+  def self.assert_worker_create_preserves_foreground_create
+    with_fixture do |fixture|
+      barrier = Queue.new
+      release = Queue.new
+      service = nil
+      executor = lambda do |type, arguments|
+        Thread.current[:phase2_worker_barrier] = true
+        service.execute_personal_assistant_action(type, arguments)
+      end
+      service, server, actions, worker = fixture.build(executor:)
+      fixture.open!(service, server)
+      store = replace_agent_store(service, barrier:, release:)
+      proposal = fixture.register(actions, "create_agent", {
+        "project_key" => "web", "name" => "Worker Created", "prompt" => "Worker prompt",
+        "agent" => nil, "model" => nil, "reasoning_effort" => nil
+      }, "worker-create-1")
+      actions.enqueue!(proposal["id"], confirmed: true, digest: proposal["digest"])
+
+      foreground = nil
+      released = false
+      begin
+        worker.start!
+        take_barrier(barrier)
+        foreground = Thread.new do
+          service.create_agent("project_key" => "web", "name" => "Foreground Created", "prompt" => "Foreground prompt", "agent" => "codex")
+        end
+        sleep 0.05
+        assert(foreground.alive?, "expected foreground create to wait for the worker store transaction")
+        release << true
+        released = true
+        foreground.value
+        wait_until { actions.proposal(proposal["id"])["state"] == "executed" }
+        names = store.load.map(&:name)
+        assert(names.include?("Worker Created") && names.include?("Foreground Created"),
+               "expected worker and foreground creates to survive the same store race")
+      ensure
+        release << true unless released
+        foreground&.join(2)
+        worker.shutdown
+      end
+    end
+  end
+
+  def self.assert_worker_create_preserves_foreground_update
+    with_fixture do |fixture|
+      service = nil
+      service, server, actions, worker = fixture.build(
+        executor: lambda do |type, arguments|
+          Thread.current[:phase2_worker_barrier] = true
+          service.execute_personal_assistant_action(type, arguments)
+        end
+      )
+      fixture.open!(service, server)
+      base = service.create_agent("project_key" => "web", "name" => "Base Agent", "prompt" => "Base prompt", "agent" => "codex")
+      barrier = Queue.new
+      release = Queue.new
+      store = replace_agent_store(service, barrier:, release:)
+      proposal = fixture.register(actions, "create_agent", {
+        "project_key" => "web", "name" => "Worker Alongside Update", "prompt" => "Worker prompt",
+        "agent" => nil, "model" => nil, "reasoning_effort" => nil
+      }, "worker-update-1")
+      actions.enqueue!(proposal["id"], confirmed: true, digest: proposal["digest"])
+
+      foreground = nil
+      released = false
+      begin
+        worker.start!
+        take_barrier(barrier)
+        foreground = Thread.new { service.update_agent(base[:key], "name" => "Foreground Updated") }
+        sleep 0.05
+        assert(foreground.alive?, "expected foreground update to wait for the worker store transaction")
+        release << true
+        released = true
+        foreground.value
+        wait_until { actions.proposal(proposal["id"])["state"] == "executed" }
+        agents = store.load
+        assert(agents.any? { |agent| agent.name == "Foreground Updated" } &&
+               agents.any? { |agent| agent.name == "Worker Alongside Update" },
+               "expected worker create and foreground update to survive the same store race")
+      ensure
+        release << true unless released
+        foreground&.join(2)
+        worker.shutdown
+      end
+    end
+  end
+
+  def self.assert_worker_project_create_preserves_foreground_update
+    with_fixture do |fixture|
+      barrier = Queue.new
+      release = Queue.new
+      barrier_registry = Phase2BarrierRegistry.new(
+        path: fixture.registry.path,
+        system_prompts_path: fixture.registry.system_prompts_path,
+        barrier:, release:
+      )
+      service = nil
+      service, server, actions, worker = fixture.build(
+        executor: lambda do |type, arguments|
+          Thread.current[:phase2_worker_barrier] = true
+          service.execute_personal_assistant_action(type, arguments)
+        end
+      )
+      fixture.open!(service, server)
+      service.instance_variable_set(:@registry, barrier_registry)
+      worker_path = File.join(fixture.dir, "worker-project")
+      FileUtils.mkdir_p(worker_path)
+      proposal = fixture.register(actions, "create_project", {
+        "key" => "worker-project", "name" => "Worker Project", "path" => worker_path,
+        "group" => nil, "agent" => nil, "model" => nil, "reasoning_effort" => nil
+      }, "worker-project-1")
+      actions.enqueue!(proposal["id"], confirmed: true, digest: proposal["digest"])
+
+      foreground = nil
+      released = false
+      begin
+        worker.start!
+        take_barrier(barrier)
+        foreground = Thread.new { service.update_project("web", "name" => "Foreground Web") }
+        sleep 0.05
+        assert(foreground.alive?, "expected foreground project update to wait for the worker config transaction")
+        release << true
+        released = true
+        foreground.value
+        wait_until { actions.proposal(proposal["id"])["state"] == "executed" }
+        projects = Array(YAML.safe_load(File.read(fixture.registry.path))["projects"])
+        worker_project = projects.find { |project| project["key"] == "worker-project" }
+        web = projects.find { |project| project["key"] == "web" }
+        assert(worker_project && web["name"] == "Foreground Web",
+               "expected worker project creation and foreground project update to survive the config race")
+      ensure
+        release << true unless released
+        foreground&.join(2)
+        worker.shutdown
+      end
+    end
+  end
+
+  def self.assert_worker_project_create_preserves_foreground_settings
+    with_fixture do |fixture|
+      barrier = Queue.new
+      release = Queue.new
+      barrier_registry = Phase2BarrierRegistry.new(
+        path: fixture.registry.path,
+        system_prompts_path: fixture.registry.system_prompts_path,
+        barrier:, release:
+      )
+      service = nil
+      service, server, actions, worker = fixture.build(
+        executor: lambda do |type, arguments|
+          Thread.current[:phase2_worker_barrier] = true
+          service.execute_personal_assistant_action(type, arguments)
+        end
+      )
+      fixture.open!(service, server)
+      service.instance_variable_set(:@registry, barrier_registry)
+      worker_path = File.join(fixture.dir, "worker-settings-project")
+      FileUtils.mkdir_p(worker_path)
+      proposal = fixture.register(actions, "create_project", {
+        "key" => "worker-settings-project", "name" => "Worker Settings Project", "path" => worker_path,
+        "group" => nil, "agent" => nil, "model" => nil, "reasoning_effort" => nil
+      }, "worker-settings-project-1")
+      actions.enqueue!(proposal["id"], confirmed: true, digest: proposal["digest"])
+
+      foreground = nil
+      released = false
+      begin
+        worker.start!
+        take_barrier(barrier)
+        foreground = Thread.new do
+          barrier_registry.update_personal_assistant!(
+            "enabled" => true,
+            "model" => "foreground-model",
+            "reasoning_effort" => "low",
+            "timezone" => "UTC"
+          )
+        end
+        sleep 0.05
+        assert(foreground.alive?, "expected FRED settings update to wait for the worker config transaction")
+        release << true
+        released = true
+        foreground.value
+        wait_until { actions.proposal(proposal["id"])["state"] == "executed" }
+        data = YAML.safe_load(File.read(fixture.registry.path))
+        projects = Array(data["projects"])
+        settings = data["personal_assistant"]
+        assert(projects.any? { |project| project["key"] == "worker-settings-project" } &&
+               settings["model"] == "foreground-model" && settings["timezone"] == "UTC",
+               "expected worker project creation and foreground FRED settings to survive the config race")
+      ensure
+        release << true unless released
+        foreground&.join(2)
+        worker.shutdown
+      end
     end
   end
 
@@ -204,7 +635,7 @@ class PersonalAssistantPhase2Test
   end
 
   class Fixture
-    attr_reader :registry
+    attr_reader :dir, :registry
 
     def initialize(dir, registry)
       @dir = dir
@@ -212,7 +643,7 @@ class PersonalAssistantPhase2Test
       @now = Time.utc(2026, 9, 9, 12)
     end
 
-    def build(executor:)
+    def build(executor:, service_class: HQ::RemoteService)
       action_path = File.join(@dir, "proposals.json")
       service = nil
       actions = HQ::PersonalAssistantActions.new(
@@ -225,7 +656,7 @@ class PersonalAssistantPhase2Test
         end
       )
       worker = HQ::PersonalAssistantActionWorker.new(actions:, worker_id: "fixture-worker", wait: 0.01, lease_seconds: 30)
-      service = HQ::RemoteService.new(
+      service = service_class.new(
         registry: @registry, server_url: "http://127.0.0.1:7399", clock: -> { @now },
         personal_assistant_actions: actions, personal_assistant_action_worker: worker
       )
@@ -275,6 +706,36 @@ class PersonalAssistantPhase2Test
     def advance_clock!(seconds)
       @now += seconds
     end
+
+    def free_port
+      socket = TCPServer.new("127.0.0.1", 0)
+      port = socket.addr[1]
+      socket.close
+      port
+    end
+
+    def wait_for_http!(port)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+      loop do
+        socket = TCPSocket.new("127.0.0.1", port)
+        socket.close
+        return true
+      rescue Errno::ECONNREFUSED, Errno::EADDRNOTAVAIL
+        raise "timed out waiting for phase2 HTTP server" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+        sleep 0.01
+      end
+    end
+
+    def http_request(port, method, path, body = {})
+      uri = URI("http://127.0.0.1:#{port}#{path}")
+      request_class = Net::HTTP.const_get(method.capitalize)
+      request = request_class.new(uri)
+      request["Content-Type"] = "application/json"
+      request.body = JSON.generate(body) unless body.empty?
+      response = Net::HTTP.start(uri.host, uri.port) { |http| http.request(request) }
+      [response.code.to_i, JSON.parse(response.body)]
+    end
   end
 
   def self.wait_until(timeout: 2)
@@ -284,6 +745,18 @@ class PersonalAssistantPhase2Test
 
       sleep 0.01
     end
+  end
+
+  def self.take_barrier(barrier)
+    Timeout.timeout(2) { barrier.pop }
+  rescue Timeout::Error
+    raise "timed out waiting for the worker write barrier"
+  end
+
+  def self.replace_agent_store(service, barrier:, release:)
+    store = Phase2BarrierAgentStore.new(service.instance_variable_get(:@projects), barrier:, release:)
+    service.instance_variable_set(:@agent_store, store)
+    store
   end
 
   def self.assert(value, message)

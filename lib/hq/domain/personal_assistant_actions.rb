@@ -167,7 +167,7 @@ module HQ
 
     # A displayed preview may move with an unaccepted proposal. Once frozen by
     # confirmation, it is immutable and later GETs must return it verbatim.
-    def set_preflight!(id, preflight, precondition_token: nil, freeze: false)
+    def set_preflight!(id, preflight, precondition_token: nil, execution_arguments: nil, freeze: false)
       result = synchronize do |current|
         target = current.fetch("proposals").find { |item| item["id"] == id.to_s }
         raise ArgumentError, "Unknown proposal" unless target
@@ -190,14 +190,15 @@ module HQ
         if freeze
           target["preflight_frozen"] = true
           target["accepted_preflight_at"] = timestamp
+          target["execution_arguments"] = deep_copy(execution_arguments) if execution_arguments.is_a?(Hash)
         end
         public_proposal(target)
       end
       result
     end
 
-    def freeze_preflight!(id, preflight, precondition_token:)
-      set_preflight!(id, preflight, precondition_token:, freeze: true)
+    def freeze_preflight!(id, preflight, precondition_token:, execution_arguments: nil)
+      set_preflight!(id, preflight, precondition_token:, execution_arguments:, freeze: true)
     end
 
     def execute!(id, confirmed: false)
@@ -240,7 +241,7 @@ module HQ
           claimed = true
           target.dup
         end
-        verification = @verifier.call(proposal.fetch("type"), proposal.fetch("arguments"), proposal)
+        verification = @verifier.call(proposal.fetch("type"), execution_arguments(proposal), proposal)
         synchronize do |current|
           target = current.fetch("proposals").find { |item| item["id"] == id.to_s }
           target["verification"] = verification
@@ -342,7 +343,7 @@ module HQ
       end
 
       begin
-        result = @executor.call(proposal.fetch("type"), proposal.fetch("arguments"))
+        result = @executor.call(proposal.fetch("type"), execution_arguments(proposal))
       rescue StandardError => e
         return fail_execution!(id, e)
       end
@@ -434,6 +435,13 @@ module HQ
                 error.details["code"] || error.details[:code]
               end
       value.to_s unless value.to_s.empty?
+    end
+
+    def execution_arguments(proposal)
+      stored = proposal["execution_arguments"]
+      return deep_copy(stored) if stored.is_a?(Hash)
+
+      deep_copy(proposal.fetch("arguments"))
     end
 
     def verify_digest!(proposal, digest)

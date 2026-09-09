@@ -265,10 +265,9 @@ module HQ
         service.registry.path
       ]
       paths.map do |path|
-        stat = File.stat(path)
-        [path, stat.mtime.to_f, stat.size]
+        [path, Digest::SHA256.hexdigest(File.binread(path))]
       rescue Errno::ENOENT
-        [path, nil, nil]
+        [path, nil]
       end
     end
 
@@ -2267,6 +2266,11 @@ module HQ
           (state == "succeeded" && recent)
       end
       tracked = { agents: [], projects: [], schedules: [] }
+      visible_project_keys = visible_projects.map(&:key)
+      visible_agent_keys = Array(activity[:agents]).filter_map { |agent| agent[:key].to_s unless agent[:key].to_s.empty? }
+      visible_schedule_keys = schedule_registry.schedules.filter_map do |schedule|
+        schedule.key if visible_project_keys.include?(schedule.project_key.to_s)
+      end
       Array(actions).each do |action|
         reference = action["tracked"]
         next unless reference.is_a?(Hash)
@@ -2277,6 +2281,12 @@ module HQ
 
         key = reference["key"].to_s
         next if key.empty? || tracked[collection].any? { |item| item[:key] == key }
+        visible = case kind
+                  when "agent" then visible_agent_keys.include?(key)
+                  when "project" then visible_project_keys.include?(key)
+                  when "schedule" then visible_schedule_keys.include?(key)
+                  end
+        next unless visible
 
         tracked[collection] << {
           id: "#{kind}:#{key}",
@@ -2375,11 +2385,25 @@ module HQ
           return replayed_personal_assistant_action(id, digest:) unless %w[ready awaiting_confirmation].include?(latest["state"])
           action_conflict!("The displayed action preview is stale", code: "precondition_changed")
         end
-        @personal_assistant_actions.freeze_preflight!(id, displayed, precondition_token: token) if %w[ready awaiting_confirmation].include?(proposal["state"])
+        if %w[ready awaiting_confirmation].include?(proposal["state"])
+          @personal_assistant_actions.freeze_preflight!(
+            id,
+            displayed,
+            precondition_token: token,
+            execution_arguments: personal_assistant_action_execution_arguments(proposal, displayed)
+          )
+        end
       elsif !token.empty?
         displayed = personal_assistant_action_preflight(id)
         action_conflict!("The displayed action preview is stale", code: "precondition_changed") unless displayed["precondition_token"].to_s == token
-        @personal_assistant_actions.freeze_preflight!(id, displayed, precondition_token: token) if %w[ready awaiting_confirmation].include?(proposal["state"])
+        if %w[ready awaiting_confirmation].include?(proposal["state"])
+          @personal_assistant_actions.freeze_preflight!(
+            id,
+            displayed,
+            precondition_token: token,
+            execution_arguments: personal_assistant_action_execution_arguments(proposal, displayed)
+          )
+        end
       end
 
       if background_personal_assistant_actions?
@@ -2692,59 +2716,44 @@ module HQ
       { "project" => update_project(key, attrs) }
     end
 
-    # This is reconciliation, never a retry. A completed value means the
-    # requested observable state exists now; unknown results stay failed and
-    # require a fresh model proposal plus another exact confirmation.
+    # Verification never infers ownership from current state. Only a committed
+    # action receipt is authoritative; without one, recovery stays unknown.
     def verify_personal_assistant_action_execution(type, arguments, proposal)
       case type
       when "create_agent"
         matches = load_all_agents.select do |agent|
           agent.project_key == arguments["project_key"] && agent.name == arguments["name"] && agent.prompt == arguments["prompt"]
         end
-        return verification_completed("agent" => agent_payload(matches.first)) if matches.one?
-        matches.empty? ? verification_no_effect("No matching agent exists.") : verification_unknown("Several matching agents exist; the original outcome is unknown.")
+        state = matches.empty? ? "no matching agent" : "matching agent state observed"
+        verification_unknown("#{state}; no committed receipt proves this proposal created it.")
       when "create_project"
         target = @projects.find { |project| project.key == arguments["key"] }
-        return verification_no_effect("No project with that key exists.") unless target
-
-        matches = target.name == arguments["name"] && target.path == arguments["path"] &&
-                  (arguments["group"].nil? || target.group == arguments["group"]) &&
-                  (arguments["agent"].nil? || target.config.agent.to_s == arguments["agent"]) &&
-                  (arguments["model"].nil? || target.config.model.to_s == arguments["model"]) &&
-                  (arguments["reasoning_effort"].nil? || target.config.reasoning_effort.to_s == arguments["reasoning_effort"])
-        matches ? verification_completed("project" => project(target.key)) : verification_unknown("A project with that key exists but does not match the requested project.")
+        state = target ? "project state observed" : "no project with that key"
+        verification_unknown("#{state}; no committed receipt proves this proposal changed it.")
       when "update_project"
         target = @projects.find { |project| project.key == arguments["project_key"] }
-        return verification_unknown("The project no longer exists.") unless target
-
-        values = arguments.reject { |field, value| field == "project_key" || value.nil? }
-        matches = values.all? do |field, value|
-          case field
-          when "name" then target.name == value
-          when "group" then target.group == value
-          else target.config.public_send(field).to_s == value.to_s
-          end
-        end
-        matches ? verification_completed("project" => project(target.key)) : verification_unknown("The project does not have the requested settings.")
+        state = target ? "project settings observed" : "project no longer exists"
+        verification_unknown("#{state}; no committed receipt proves this proposal changed them.")
       when "create_schedule"
         target = schedules.find { |schedule| schedule[:key].to_s == arguments["key"] }
-        return verification_no_effect("No schedule with that key exists.") unless target
-
-        matches = %w[name cron timezone project_key agent_name message].all? { |field| target[field.to_sym].to_s == arguments[field].to_s } &&
-                  (arguments["system_message"].nil? || target[:system_message].to_s == arguments["system_message"])
-        matches ? verification_completed("schedule" => target) : verification_unknown("A schedule with that key exists but does not match the requested schedule.")
+        state = target ? "schedule state observed" : "no schedule with that key"
+        verification_unknown("#{state}; no committed receipt proves this proposal created it.")
       when "pause_schedule"
         target = schedule(arguments["schedule_key"])
-        target[:paused] ? verification_completed("schedule" => target) : verification_unknown("The schedule is not paused.")
+        state = target[:paused] ? "paused schedule state observed" : "schedule is not paused"
+        verification_unknown("#{state}; no committed receipt proves this proposal paused it.")
       when "resume_schedule"
         target = schedule(arguments["schedule_key"])
-        !target[:paused] ? verification_completed("schedule" => target) : verification_unknown("The schedule is still paused.")
+        state = !target[:paused] ? "resumed schedule state observed" : "schedule is still paused"
+        verification_unknown("#{state}; no committed receipt proves this proposal resumed it.")
       when "start_agent"
         target = find_agent!(arguments["agent_key"])
-        target.running? ? verification_completed("agent" => agent_payload(target)) : verification_unknown("The agent is not running.")
+        state = target.running? ? "running agent state observed" : "agent is not running"
+        verification_unknown("#{state}; no committed receipt proves this proposal started it.")
       when "stop_agent"
         target = find_agent!(arguments["agent_key"])
-        !target.running? ? verification_completed("agent" => agent_payload(target)) : verification_unknown("The agent is still running.")
+        state = target.running? ? "agent is still running" : "stopped agent state observed"
+        verification_unknown("#{state}; no committed receipt proves this proposal stopped it.")
       else
         verification_unknown("Tycho cannot safely verify this action without repeating it.")
       end
@@ -2752,16 +2761,8 @@ module HQ
       verification_unknown(e.message)
     end
 
-    def verification_completed(result)
-      { "completed" => true, "result" => result }
-    end
-
     def verification_unknown(reason)
       { "completed" => false, "reason" => reason }
-    end
-
-    def verification_no_effect(reason)
-      { "completed" => false, "no_effect" => true, "reason" => reason }
     end
 
     def record_personal_assistant_action_outcome!(proposal)
@@ -4124,6 +4125,38 @@ module HQ
     end
 
     private
+
+    def personal_assistant_action_execution_arguments(proposal, preflight)
+      arguments = proposal.fetch("arguments").dup
+      details = preflight["details"] if preflight.is_a?(Hash)
+      return arguments unless details.is_a?(Hash)
+
+      case proposal["type"]
+      when "create_agent"
+        {
+          "agent" => "harness",
+          "model" => "model",
+          "reasoning_effort" => "reasoning_effort"
+        }.each do |argument_key, detail_key|
+          arguments[argument_key] = details[detail_key] if details.key?(detail_key)
+        end
+      when "create_project"
+        after = details["after"]
+        if after.is_a?(Hash)
+          %w[key name path group agent model reasoning_effort].each do |key|
+            arguments[key] = after[key] if after.key?(key)
+          end
+        end
+      when "update_project"
+        after = details["after"]
+        if after.is_a?(Hash)
+          %w[name group agent model reasoning_effort].each do |key|
+            arguments[key] = after[key] if after.key?(key)
+          end
+        end
+      end
+      arguments
+    end
 
     def with_personal_assistant_session!(attrs)
       attrs = attrs.is_a?(Hash) ? attrs.transform_keys(&:to_s) : {}
