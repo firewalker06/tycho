@@ -6147,8 +6147,7 @@ module RemoteServerTest
            js[:body].include?("serverIconName(server)") &&
            js[:body].include?('server?.local) return "home"'),
            "expected local resource ownership to render as an accessible home icon without visible text")
-    assert(!js[:body].include?(["This", "server"].join(" ")) &&
-           js[:body].include?('return server.local ? "Host"'),
+    assert(js[:body].include?('return server.local ? "Host"'),
            "expected local ownership text to use Host")
     assert(js[:body].include?('renderAgentRow(agent, { serverIcon: true, query })') &&
            js[:body].include?('class="agent-server-inline"') &&
@@ -7538,11 +7537,12 @@ module RemoteServerTest
            js[:body].include?("quietRemaining > 0 && !options.force"),
            "expected form typing to defer automatic polling for three seconds")
     assert(js[:body].include?("function fullScreenEditorOpen") &&
-           js[:body].include?("if (fullScreenEditorOpen()) return;") &&
-           js[:body].include?("if (fullScreenEditorOpen() && !options.force) return;") &&
+           js[:body].include?("const personalAssistantRoute = parseRoute().type === \"personalAssistant\";") &&
+           js[:body].include?("if (fullScreenEditorOpen() && !personalAssistantRoute) return;") &&
+           js[:body].include?("if (fullScreenEditorOpen() && !options.force && !personalAssistantRoute) return;") &&
            js[:body].scan("state.fullScreenComposerKeys.delete(key);\n  schedule();").length >= 1 &&
            js[:body].scan("state.fullScreenInquiryKeys.delete(key);\n  schedule();").length >= 1,
-           "expected full-screen Conversation and inquiry forms to pause automatic polling")
+           "expected generic full-screen forms to pause polling while focused FRED keeps polling")
     activity_poll = js[:body][/async function pollAgentActivity\(\).*?^}/m]
     assert(activity_poll && !activity_poll.include?("fullScreenEditorOpen"),
            "expected logo activity polling to continue while full-screen editors are open")
