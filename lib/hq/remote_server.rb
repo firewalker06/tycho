@@ -46,6 +46,7 @@ require_relative "domain/skill_installer"
 require_relative "domain/onboarding"
 require_relative "domain/personal_assistant"
 require_relative "domain/personal_assistant_actions"
+require_relative "domain/personal_assistant_action_worker"
 require_relative "domain/visibility"
 require_relative "domain/web_push_notifier"
 require_relative "domain/usage_metrics"
@@ -82,7 +83,8 @@ module HQ
     def initialize(host: DEFAULT_HOST, port: DEFAULT_PORT, public_url: nil, startup_messages: nil,
                    restart_command: nil, token: HQ.env("REMOTE_TOKEN"), logger: HQ.logger, output: $stdout,
                    daemonize_after_startup: false, daemon_log_path: REMOTE_DAEMON_LOG_FILE, daemonizer: nil,
-                   resource_catalog: nil, resource_snapshot_path: nil, agent_activity_snapshot: nil)
+                   resource_catalog: nil, resource_snapshot_path: nil, agent_activity_snapshot: nil,
+                   personal_assistant_action_worker: nil)
       @host = host.to_s.empty? ? DEFAULT_HOST : host.to_s
       @port = port.to_i.positive? ? port.to_i : DEFAULT_PORT
       @public_url = public_url.to_s
@@ -96,6 +98,21 @@ module HQ
       @daemonizer = daemonizer
       @resource_catalog = resource_catalog || RemoteResourceCatalog.new(snapshot_path: resource_snapshot_path)
       @agent_activity_snapshot = agent_activity_snapshot || AgentActivitySnapshot.new
+      @personal_assistant_actions = personal_assistant_action_worker&.respond_to?(:actions) ? personal_assistant_action_worker.actions : build_personal_assistant_action_store
+      @personal_assistant_action_worker = personal_assistant_action_worker || build_personal_assistant_action_worker
+      @personal_assistant_snapshot_lock = Mutex.new
+      @personal_assistant_snapshot = nil
+      @personal_assistant_snapshot_revision = 0
+    end
+
+    # The listener and the single FRED action worker share one explicit server
+    # lifetime. Tests and embedding callers can stop both without sending a
+    # process signal.
+    def shutdown
+      @shutdown = true
+      close_listener!
+      @personal_assistant_action_worker&.shutdown
+      true
     end
 
     def start
@@ -104,6 +121,7 @@ module HQ
       RemoteServerControl.publish(host: @host, port: @port)
       @shutdown = false
       @restart_requested = false
+      @personal_assistant_action_worker.start!
       shutdown = proc do
         @shutdown = true
         begin
@@ -143,6 +161,7 @@ module HQ
         poll_agent_push_notifications! unless @shutdown
       end
     ensure
+      @personal_assistant_action_worker&.shutdown
       RemoteServerControl.clear(host: @host, port: @port)
       server&.close unless server&.closed?
       @daemon_log_io&.close
@@ -159,6 +178,97 @@ module HQ
 
       def query_params
         @query_params ||= URI.decode_www_form(query.to_s).to_h
+      end
+    end
+
+    def build_personal_assistant_action_store
+      PersonalAssistantActions.new(
+        path: File.join(HQ::PERSONAL_ASSISTANT_DIR, "proposals.json"),
+        executor: method(:execute_background_personal_assistant_action),
+        verifier: method(:verify_background_personal_assistant_action),
+        guard: method(:guard_background_personal_assistant_action),
+        auto_execute: false
+      )
+    end
+
+    def build_personal_assistant_action_worker
+      PersonalAssistantActionWorker.new(
+        actions: @personal_assistant_actions,
+        logger: @logger,
+        on_result: method(:record_background_personal_assistant_action)
+      )
+    end
+
+    def background_personal_assistant_service
+      RemoteService.new(
+        server_url: "http://#{@host}:#{@port}",
+        public_url: @public_url,
+        auth_required: !@token.empty?,
+        restartable: restartable?,
+        agent_activity_snapshot: @agent_activity_snapshot,
+        personal_assistant_actions: @personal_assistant_actions,
+        personal_assistant_action_worker: @personal_assistant_action_worker
+      )
+    end
+
+    def execute_background_personal_assistant_action(type, arguments)
+      background_personal_assistant_service.execute_personal_assistant_action(type, arguments)
+    end
+
+    def verify_background_personal_assistant_action(type, arguments, proposal)
+      background_personal_assistant_service.verify_personal_assistant_action_execution(type, arguments, proposal)
+    end
+
+    def guard_background_personal_assistant_action(proposal)
+      service = background_personal_assistant_service
+      service.ensure_personal_assistant_action_active!(proposal)
+      service.revalidate_personal_assistant_action!(proposal)
+    end
+
+    def record_background_personal_assistant_action(proposal)
+      background_personal_assistant_service.record_personal_assistant_action_outcome!(proposal)
+      invalidate_personal_assistant_snapshot!
+    end
+
+    def invalidate_personal_assistant_snapshot!
+      @personal_assistant_snapshot_lock.synchronize do
+        @personal_assistant_snapshot = nil
+        @personal_assistant_snapshot_revision += 1
+      end
+    end
+
+    def personal_assistant_snapshot(service)
+      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      signature = personal_assistant_snapshot_signature(service)
+      snapshot_revision = @personal_assistant_snapshot_lock.synchronize { @personal_assistant_snapshot_revision }
+      cached = @personal_assistant_snapshot_lock.synchronize do
+        snapshot = @personal_assistant_snapshot
+        snapshot if snapshot && snapshot.fetch(:signature) == signature && now - snapshot.fetch(:created_at) < 2
+      end
+      return cached.fetch(:payload) if cached
+
+      payload = service.personal_assistant_bundle
+      finished_signature = personal_assistant_snapshot_signature(service)
+      @personal_assistant_snapshot_lock.synchronize do
+        if @personal_assistant_snapshot_revision == snapshot_revision && signature == finished_signature
+          @personal_assistant_snapshot = { created_at: now, signature: signature, payload: payload }
+        end
+      end
+      payload
+    end
+
+    def personal_assistant_snapshot_signature(service)
+      paths = [
+        @personal_assistant_actions.path,
+        File.join(HQ::PERSONAL_ASSISTANT_DIR, "state.json"),
+        HQ::AGENTS_FILE,
+        service.registry.path
+      ]
+      paths.map do |path|
+        stat = File.stat(path)
+        [path, stat.mtime.to_f, stat.size]
+      rescue Errno::ENOENT
+        [path, nil, nil]
       end
     end
 
@@ -205,7 +315,9 @@ module HQ
         public_url: @public_url,
         auth_required: !@token.empty?,
         restartable: restartable?,
-        agent_activity_snapshot: @agent_activity_snapshot
+        agent_activity_snapshot: @agent_activity_snapshot,
+        personal_assistant_actions: @personal_assistant_actions,
+        personal_assistant_action_worker: @personal_assistant_action_worker
       )
       result = route(service, request.method, request.path, json_body(request), request)
       status = result.fetch(:status, 200)
@@ -261,6 +373,7 @@ module HQ
       parts = path.split("/").reject(&:empty?)
       body = body.is_a?(Hash) ? body.dup : {}
       actor = request_actor(body)
+      invalidate_personal_assistant_snapshot! if parts.first == "personal-assistant" && method != "GET"
 
       if parts.first == "servers"
         broker = RemoteBroker.new(registry: service.registry, server_url: service.server_url)
@@ -333,7 +446,14 @@ module HQ
         end
       end
       return ok(service.agent_activity) if method == "GET" && parts == ["activity"]
-      return ok(personal_assistant: service.personal_assistant) if method == "GET" && parts == ["personal-assistant"]
+      if method == "GET" && parts == ["personal-assistant"]
+        bundle = personal_assistant_snapshot(service)
+        return ok(personal_assistant: bundle.fetch(:personal_assistant))
+      end
+      if method == "GET" && parts == ["personal-assistant", "current-work"]
+        bundle = personal_assistant_snapshot(service)
+        return ok(bundle.fetch(:current_work))
+      end
       return ok(history: service.personal_assistant_history) if method == "GET" && parts == ["personal-assistant", "history"]
       if method == "GET" && parts.length == 3 && parts[0, 2] == ["personal-assistant", "history"]
         return ok(history: service.personal_assistant_history(parts[2]))
@@ -358,9 +478,21 @@ module HQ
       if method == "POST" && parts == ["personal-assistant", "prompt-queue", "retry"]
         return ok(service.retry_personal_assistant_prompt_queue(body, actor:))
       end
-      return ok(proposals: service.personal_assistant_actions) if method == "GET" && parts == ["personal-assistant", "actions"]
+      if method == "GET" && parts == ["personal-assistant", "actions"]
+        bundle = personal_assistant_snapshot(service)
+        return ok(proposals: bundle.fetch(:actions))
+      end
+      if method == "GET" && parts.length == 3 && parts[0, 2] == ["personal-assistant", "actions"]
+        return ok(proposal: service.personal_assistant_action(parts[2]))
+      end
+      if method == "GET" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "preflight"
+        return ok(preflight: service.personal_assistant_action_preflight(parts[2]))
+      end
       if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "confirm"
-        return ok(proposal: service.confirm_personal_assistant_action(parts[2], body))
+        result = service.confirm_personal_assistant_action(parts[2], body)
+        return accepted(result) if service.background_personal_assistant_actions?
+
+        return ok(proposal: result)
       end
       if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "reject"
         return ok(proposal: service.reject_personal_assistant_action(parts[2]))
@@ -1646,17 +1778,24 @@ module HQ
                    skill_installer: nil,
                    github_client: GitHubAPIClient.new,
                    pull_request_diff_store: PullRequestDiff::Store.new,
-                   agent_activity_snapshot: AgentActivitySnapshot.new)
+                   agent_activity_snapshot: AgentActivitySnapshot.new,
+                   personal_assistant_actions: nil,
+                   personal_assistant_action_worker: nil,
+                   clock: -> { Time.now })
       @registry = registry
+      @clock = clock
       @projects = registry.projects.map { |config| Project.new(config) }
       @agent_store = AgentStore.new(@projects)
       @personal_assistant = PersonalAssistantLifecycle.new(
-        registry:, agent_store: @agent_store, state_path: File.join(HQ::PERSONAL_ASSISTANT_DIR, "state.json")
+        registry:, agent_store: @agent_store, clock: @clock, state_path: File.join(HQ::PERSONAL_ASSISTANT_DIR, "state.json")
       )
-      @personal_assistant_actions = PersonalAssistantActions.new(
+      @personal_assistant_action_worker = personal_assistant_action_worker
+      @personal_assistant_actions = personal_assistant_actions || personal_assistant_action_worker&.actions
+      @personal_assistant_actions ||= PersonalAssistantActions.new(
         path: File.join(HQ::PERSONAL_ASSISTANT_DIR, "proposals.json"),
         executor: method(:execute_personal_assistant_action), verifier: method(:verify_personal_assistant_action_execution),
-        guard: method(:ensure_personal_assistant_action_active!)
+        guard: method(:ensure_personal_assistant_action_active!),
+        auto_execute: personal_assistant_action_worker.nil?, clock: @clock
       )
       @agent_archive_store = AgentArchiveStore.new
       @push_subscription_store = push_subscription_store
@@ -1875,14 +2014,29 @@ module HQ
     end
 
     def personal_assistant
-      status = @personal_assistant.status
-      ingest_personal_assistant_actions!(status)
-      status = @personal_assistant.reconcile
-      agent = load_all_agents.find { |candidate| candidate.key == status[:active_key] && candidate.personal_assistant? }
-      payload = status.merge(capabilities: personal_assistant_capabilities)
-      agent ? payload.merge(agent: agent_payload(agent)) : payload
+      personal_assistant_bundle.fetch(:personal_assistant)
     rescue ArgumentError => e
       raise Error.new(e.message, status: 409)
+    end
+
+    def personal_assistant_bundle
+      status = @personal_assistant.reconcile
+      ingest_personal_assistant_actions!(status)
+      actions = @personal_assistant_actions.proposals.select { |proposal| proposal["active_key"] == status[:active_key] }
+      agent = load_all_agents.find { |candidate| candidate.key == status[:active_key] && candidate.personal_assistant? }
+      payload = status.merge(capabilities: personal_assistant_capabilities)
+      payload = payload.merge(agent: agent_payload(agent)) if agent
+      {
+        personal_assistant: payload,
+        actions: actions,
+        current_work: current_work_payload(status, actions)
+      }
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 409)
+    end
+
+    def personal_assistant_current_work
+      personal_assistant_bundle.fetch(:current_work)
     end
 
     def setup_personal_assistant(attrs)
@@ -2089,10 +2243,66 @@ module HQ
     end
 
     def personal_assistant_actions
-      status = @personal_assistant.status
-      ingest_personal_assistant_actions!(status)
-      status = @personal_assistant.reconcile
-      @personal_assistant_actions.proposals.select { |proposal| proposal["active_key"] == status[:active_key] }
+      personal_assistant_bundle.fetch(:actions)
+    end
+
+    def personal_assistant_action(id)
+      @personal_assistant_actions.proposal(id)
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: e.message == "Unknown proposal" ? 404 : 409)
+    end
+
+    def current_work_payload(status, actions)
+      now = @clock.call.utc
+      activity = @agent_activity_snapshot.snapshot
+      recent_cutoff = now - (24 * 60 * 60)
+      agents = Array(activity[:agents]).select do |agent|
+        state = agent[:status].to_s
+        recent = [agent[:finished_at], agent[:updated_at]].compact.any? do |value|
+          Time.iso8601(value.to_s) >= recent_cutoff
+        rescue ArgumentError
+          false
+        end
+        %w[running awaiting-input blocked failed partial].include?(state) ||
+          (state == "succeeded" && recent)
+      end
+      tracked = { agents: [], projects: [], schedules: [] }
+      Array(actions).each do |action|
+        reference = action["tracked"]
+        next unless reference.is_a?(Hash)
+
+        kind = reference["kind"].to_s
+        collection = { "agent" => :agents, "project" => :projects, "schedule" => :schedules }[kind]
+        next unless collection
+
+        key = reference["key"].to_s
+        next if key.empty? || tracked[collection].any? { |item| item[:key] == key }
+
+        tracked[collection] << {
+          id: "#{kind}:#{key}",
+          key: key,
+          name: reference["name"],
+          proposal_id: reference["proposal_id"],
+          link: "/#{kind == "agent" ? "agents" : kind + "s"}/#{URI.encode_www_form_component(key)}"
+        }.compact
+      end
+      observed_at = activity[:generated_at] || now.iso8601
+      revision = Digest::SHA256.hexdigest(JSON.generate([activity[:revision], agents, tracked]))
+      {
+        schema_version: 1,
+        revision: revision,
+        observed_at: observed_at,
+        fresh_until: (now + 2).iso8601,
+        state: activity[:ready] ? "fresh" : "unavailable",
+        active_key: status[:active_key],
+        generation: status[:generation],
+        agents: agents,
+        tracked: tracked
+      }
+    end
+
+    def background_personal_assistant_actions?
+      !@personal_assistant_action_worker.nil?
     end
 
     def personal_assistant_capabilities
@@ -2107,21 +2317,263 @@ module HQ
         dedicated_endpoints: {
           inquiries: ["answer", "dismiss", "restore"],
           prompt_queue: ["edit", "delete", "retry"]
+        },
+        actions: {
+          confirmation: ["confirmed", "proposal_digest", "precondition_token"],
+          preflight_path: "/personal-assistant/actions/:id/preflight",
+          lookup_path: "/personal-assistant/actions/:id",
+          current_work_path: "/personal-assistant/current-work",
+          background: background_personal_assistant_actions?
         }
       }
     end
 
+    def personal_assistant_action_preflight(id)
+      proposal = @personal_assistant_actions.proposal(id)
+      stored = proposal["preflight"]
+      return stored if proposal["preflight_frozen"] == true && stored.is_a?(Hash)
+
+      status = @personal_assistant.status
+      ensure_personal_assistant_action_active!(proposal, status:)
+      preview = build_personal_assistant_action_preflight(proposal, status:)
+      @personal_assistant_actions.set_preflight!(id, preview, precondition_token: preview.fetch("precondition_token"))
+      preview
+    rescue Error
+      raise
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: e.message == "Unknown proposal" ? 404 : 409)
+    end
+
     def confirm_personal_assistant_action(id, attrs)
-      attempted = false
-      ensure_current_personal_assistant_action!(id)
-      attempted = true
-      proposal = @personal_assistant_actions.execute!(id, confirmed: attrs["confirmed"] == true)
-      record_personal_assistant_action_outcome!(proposal)
+      attrs = attrs.is_a?(Hash) ? attrs.transform_keys(&:to_s) : {}
+      proposal = ensure_current_personal_assistant_action!(id)
+      unless attrs["confirmed"] == true
+        raise Error.new("Exact Tycho confirmation is required", status: 409,
+                        details: { "code" => "confirmation_required" })
+      end
+
+      digest = attrs["proposal_digest"].to_s.strip
+      token = attrs["precondition_token"].to_s.strip
+      if background_personal_assistant_actions?
+        action_conflict!("A proposal digest is required", code: "proposal_digest_required") if digest.empty?
+        action_conflict!("Assistant proposal has changed", code: "proposal_changed") unless digest == proposal["digest"].to_s
+        unless %w[ready awaiting_confirmation].include?(proposal["state"])
+          if proposal["state"] != "rejected" && proposal["preflight_frozen"] == true
+            action_conflict!("A server-owned precondition token is required", code: "precondition_required") if token.empty?
+            action_conflict!("The displayed action preview is stale", code: "precondition_changed") unless token == proposal["precondition_token"].to_s
+          end
+          return replayed_personal_assistant_action(id, digest:)
+        end
+        action_conflict!("A server-owned precondition token is required", code: "precondition_required") if token.empty?
+
+        displayed = personal_assistant_action_preflight(id)
+        latest = @personal_assistant_actions.receipt!(id, digest:)
+        return replayed_personal_assistant_action(id, digest:) unless %w[ready awaiting_confirmation].include?(latest["state"])
+        current = build_personal_assistant_action_preflight(proposal, status: @personal_assistant.status)
+        unless displayed["precondition_token"].to_s == token && current["precondition_token"].to_s == token
+          latest = @personal_assistant_actions.receipt!(id, digest:)
+          return replayed_personal_assistant_action(id, digest:) unless %w[ready awaiting_confirmation].include?(latest["state"])
+          action_conflict!("The displayed action preview is stale", code: "precondition_changed")
+        end
+        @personal_assistant_actions.freeze_preflight!(id, displayed, precondition_token: token) if %w[ready awaiting_confirmation].include?(proposal["state"])
+      elsif !token.empty?
+        displayed = personal_assistant_action_preflight(id)
+        action_conflict!("The displayed action preview is stale", code: "precondition_changed") unless displayed["precondition_token"].to_s == token
+        @personal_assistant_actions.freeze_preflight!(id, displayed, precondition_token: token) if %w[ready awaiting_confirmation].include?(proposal["state"])
+      end
+
+      if background_personal_assistant_actions?
+        receipt = @personal_assistant_actions.enqueue!(id, confirmed: true, digest:)
+        @personal_assistant_action_worker.wake!
+        receipt.merge("queued" => receipt.dig("proposal", "state") == "queued")
+      else
+        proposal = @personal_assistant_actions.execute!(id, confirmed: true)
+        record_personal_assistant_action_outcome!(proposal)
+      end
     rescue ArgumentError => e
       raise Error.new(e.message, status: 409)
     rescue Error
-      record_personal_assistant_action_outcome!(@personal_assistant_actions.proposal(id)) if attempted
       raise
+    rescue StandardError => e
+      proposal = @personal_assistant_actions.proposal(id) rescue nil
+      record_personal_assistant_action_outcome!(proposal) if proposal
+      raise Error.new(e.message, status: 409)
+    end
+
+    def replayed_personal_assistant_action(id, digest:)
+      receipt = @personal_assistant_actions.receipt!(id, digest:)
+      receipt.merge(
+        "accepted" => receipt["state"] != "rejected",
+        "queued" => false,
+        "replayed" => true
+      )
+    end
+
+    def revalidate_personal_assistant_action!(proposal)
+      token = proposal["precondition_token"].to_s.strip
+      return true if token.empty?
+
+      current = build_personal_assistant_action_preflight(proposal, status: @personal_assistant.status)
+      return true if current["precondition_token"].to_s == token
+
+      action_conflict!("The action preview changed before execution", code: "precondition_changed")
+    end
+
+    def build_personal_assistant_action_preflight(proposal, status:)
+      details = personal_assistant_action_details(proposal.fetch("type"), proposal.fetch("arguments"))
+      material = {
+        "active_key" => status[:active_key],
+        "generation" => status[:generation],
+        "proposal_digest" => proposal["digest"],
+        "type" => proposal["type"],
+        "arguments" => proposal["arguments"],
+        "details" => personal_assistant_action_precondition_details(details)
+      }
+      token = Digest::SHA256.hexdigest(JSON.generate(material))
+      {
+        "proposal_id" => proposal["id"],
+        "digest" => proposal["digest"],
+        "active_key" => proposal["active_key"],
+        "generation" => status[:generation],
+        "state" => proposal["state"],
+        "type" => proposal["type"],
+        "prepared" => details.fetch("available", true) && details.fetch("prepared", true),
+        "precondition" => { "kind" => "server_state", "token" => token },
+        "precondition_token" => token,
+        "details" => details
+      }
+    rescue Error, ScheduleRegistry::Error, ArgumentError => e
+      details = { "available" => false, "prepared" => false, "reason" => e.message, "resolved_server" => resolved_personal_assistant_server }
+      token = Digest::SHA256.hexdigest(JSON.generate("proposal_digest" => proposal["digest"], "details" => details))
+      {
+        "proposal_id" => proposal["id"], "digest" => proposal["digest"], "active_key" => proposal["active_key"],
+        "generation" => status[:generation], "state" => proposal["state"], "type" => proposal["type"],
+        "prepared" => false, "precondition" => { "kind" => "server_state", "token" => token },
+        "precondition_token" => token, "details" => details
+      }
+    end
+
+    def personal_assistant_action_details(type, arguments)
+      case type
+      when "create_agent"
+        project = find_project!(arguments.fetch("project_key"))
+        template = project.agent_templates.first
+        harness = arguments["agent"].nil? ? template.agent : arguments["agent"]
+        model = arguments["model"].nil? ? template.model : arguments["model"]
+        effort = arguments["reasoning_effort"].nil? ? template.reasoning_effort : arguments["reasoning_effort"]
+        unless HQ.supported_harness?(harness.to_s)
+          raise Error.new("Unsupported agent #{harness.inspect}", status: 409)
+        end
+        {
+          "available" => true, "prepared" => true, "resolved_server" => resolved_personal_assistant_server,
+          "project" => personal_assistant_project_reference(project), "user_owned" => true,
+          "name" => arguments["name"], "harness" => harness, "model" => model,
+          "reasoning_effort" => effort, "starts" => false
+        }
+      when "start_agent", "message_agent", "stop_agent"
+        target = find_agent!(arguments.fetch("agent_key"))
+        {
+          "available" => true, "resolved_server" => resolved_personal_assistant_server,
+          "target" => { "key" => target.key, "name" => target.display_name, "project_key" => target.project_key },
+          "status" => target.status, "running" => target.running?, "last_run_id" => target.last_run&.run_id
+        }.compact
+      when "create_project"
+        if @projects.any? { |project| project.key == arguments["key"] }
+          raise Error.new("Project already exists: #{arguments["key"]}", status: 409)
+        end
+        harness = arguments["agent"].to_s.strip
+        harness = HQ.harness_keys.first if harness.empty?
+        {
+          "available" => true, "prepared" => true, "resolved_server" => resolved_personal_assistant_server,
+          "before" => nil,
+          "after" => {
+            "key" => arguments["key"], "name" => arguments["name"], "path" => arguments["path"],
+            "group" => arguments["group"], "agent" => harness, "model" => arguments["model"],
+            "reasoning_effort" => arguments["reasoning_effort"]
+          }
+        }
+      when "update_project"
+        project = find_project!(arguments.fetch("project_key"))
+        before = personal_assistant_project_settings(project)
+        after = before.merge(
+          "name" => arguments["name"].nil? ? before["name"] : arguments["name"],
+          "group" => arguments["group"].nil? ? before["group"] : arguments["group"],
+          "agent" => arguments["agent"].nil? ? before["agent"] : arguments["agent"],
+          "model" => arguments["model"].nil? ? before["model"] : arguments["model"],
+          "reasoning_effort" => arguments["reasoning_effort"].nil? ? before["reasoning_effort"] : arguments["reasoning_effort"]
+        )
+        { "available" => true, "prepared" => true, "resolved_server" => resolved_personal_assistant_server,
+          "project" => personal_assistant_project_reference(project), "before" => before, "after" => after }
+      when "create_schedule"
+        raise Error.new("Schedule already exists: #{arguments["key"]}", status: 409) if schedule_registry.find(arguments["key"])
+
+        personal_assistant_schedule_details(arguments.merge("operation" => "create"), existing: nil)
+      when "pause_schedule", "resume_schedule"
+        schedule = schedule_registry.find(arguments.fetch("schedule_key"))
+        raise Error.new("Unknown schedule: #{arguments["schedule_key"]}", status: 404) unless schedule
+        personal_assistant_schedule_details({ "schedule_key" => schedule.key, "operation" => type.delete_suffix("_schedule") }, existing: schedule)
+      when "install_or_update_tycho_skill"
+        { "available" => true, "prepared" => true, "resolved_server" => resolved_personal_assistant_server,
+          "harness" => arguments["harness"], "action" => arguments["action"] }
+      else
+        { "available" => true, "prepared" => true, "resolved_server" => resolved_personal_assistant_server }
+      end
+    end
+
+    def personal_assistant_schedule_details(arguments, existing:)
+      schedule = existing
+      if schedule.nil?
+        schedule = ScheduleDefinition.new(
+          key: arguments.fetch("key"), name: arguments.fetch("name"), cron: arguments.fetch("cron"),
+          timezone: arguments.fetch("timezone"), project_key: arguments.fetch("project_key"),
+          agent_name: arguments.fetch("agent_name"), message: arguments.fetch("message"),
+          system_message: arguments["system_message"]
+        )
+      end
+      project = find_project!(schedule.project_key)
+      schedule_state = ScheduleStore.new.load[schedule.key] || ScheduleState.new(key: schedule.key, enabled: true, status: "scheduled")
+      operation = arguments["operation"].to_s
+      operation = "create" if operation.empty?
+      enabled_before = schedule_state.enabled != false
+      enabled_after = case operation
+                      when "pause" then false
+                      when "resume" then true
+                      else enabled_before
+                      end
+      next_run = schedule.next_due_after(@clock.call).iso8601
+      {
+        "available" => true, "prepared" => true, "resolved_server" => resolved_personal_assistant_server,
+        "schedule" => { "key" => schedule.key, "name" => schedule.name, "cron" => schedule.cron,
+                         "timezone" => schedule.timezone, "next_run" => next_run, "project_key" => project.key,
+                         "agent_name" => schedule.agent_name, "agent_key" => schedule.agent_key },
+        "operation" => operation, "enabled_before" => enabled_before, "enabled_after" => enabled_after
+      }.compact
+    end
+
+    def personal_assistant_action_precondition_details(details)
+      stable = JSON.parse(JSON.generate(details))
+      stable.dig("schedule")&.delete("next_run")
+      stable
+    end
+
+    def resolved_personal_assistant_server
+      { "id" => "local", "url" => @server_url.empty? ? nil : @server_url, "local" => true }.compact
+    end
+
+    def personal_assistant_project_reference(project)
+      { "key" => project.key, "name" => project.name, "path" => project.path, "group" => project.group }
+    end
+
+    def personal_assistant_project_settings(project)
+      {
+        "key" => project.key, "name" => project.name, "group" => project.group, "path" => project.path,
+        "agent" => project.config.agent, "model" => project.config.model,
+        "reasoning_effort" => project.config.reasoning_effort
+      }
+    end
+
+    def action_conflict!(message, code:)
+      raise Error.new(message, status: 409, details: { "code" => code })
     end
 
     def reject_personal_assistant_action(id)
@@ -2152,8 +2604,8 @@ module HQ
       raise Error.new(e.message, status: 404)
     end
 
-    def ensure_personal_assistant_action_active!(proposal)
-      status = @personal_assistant.status
+    def ensure_personal_assistant_action_active!(proposal, status: nil)
+      status ||= @personal_assistant.status
       return if status[:state] == "active" && proposal["active_key"] == status[:active_key]
 
       raise Error.new("This action belongs to an earlier FRED conversation", status: 409)
@@ -2217,6 +2669,7 @@ module HQ
 
         proposals = @personal_assistant_actions.register_finalized!(snapshot["proposals"], active_key: snapshot["active_key"], source_run_id: snapshot["run_id"])
         proposals.each { |proposal| record_personal_assistant_action_outcome!(proposal) if %w[executed failed].include?(proposal["state"]) }
+        @personal_assistant_action_worker&.wake! if proposals.any? { |proposal| proposal["state"] == "ready" }
         @personal_assistant.mark_finalized_proposals_registered!(snapshot["run_id"])
       end
     rescue ArgumentError => e
@@ -3521,14 +3974,13 @@ module HQ
       project = find_project!(attrs["project_key"])
       template_key = attrs["template_key"].to_s
       template_key = project.agent_templates.first&.key.to_s if template_key.empty?
-      target = @agent_store.create_from_template(project, template_key)
-      target.update!(**agent_attrs(target, attrs, project: project, creating: true))
-      @agent_store.ensure_project_context_prompt!(target, project)
-      current = load_all_agents
-      current.unshift(target)
-      target = associate_delegation_from_attrs!(target, attrs, agents: current, creating: true, actor:)
-      @agent_store.accept_prompt_from!(target, actor:, agents: current) if target.delegation_parent
-      save_agents(sort_agents(current))
+      validate_delegation_parent!(attrs, agents: load_all_agents, actor:) unless attrs["parent_agent_key"].to_s.strip.empty?
+      target = @agent_store.create_from_template_and_persist!(project, template_key) do |candidate, _current|
+        candidate.update!(**agent_attrs(candidate, attrs, project: project, creating: true))
+        @agent_store.ensure_project_context_prompt!(candidate, project)
+      end
+      target = associate_delegation_from_attrs!(target, attrs, actor:) unless attrs["parent_agent_key"].to_s.strip.empty?
+      @agent_store.accept_prompt_from!(target, actor:) if target.delegation_parent
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"])
       @agent_activity_snapshot.upsert!(target)
       agent_payload(target)
@@ -3537,19 +3989,20 @@ module HQ
     end
 
     def update_agent(key, attrs)
-      target = reject_personal_assistant_control!(find_agent!(key))
-      raise Error.new("Agent is running", status: 409) if target.running?
+      target = @agent_store.update_agent!(key) do |candidate, _agents, _events|
+        reject_personal_assistant_control!(candidate)
+        raise Error.new("Agent is running", status: 409) if candidate.running?
 
-      project = find_project!(target.project_key)
-      resolved = agent_attrs(target, attrs, project: project, creating: false)
-      other_keys = %i[template_key workspace prompt sandbox_mode agent model reasoning_effort response_style]
-      if other_keys.all? { |key_name| resolved[key_name] == target.public_send(key_name) }
-        target.rename!(resolved[:name])
-      else
-        target.update!(**resolved)
-        @agent_store.ensure_project_context_prompt!(target, project)
+        project = find_project!(candidate.project_key)
+        resolved = agent_attrs(candidate, attrs, project: project, creating: false)
+        other_keys = %i[template_key workspace prompt sandbox_mode agent model reasoning_effort response_style]
+        if other_keys.all? { |key_name| resolved[key_name] == candidate.public_send(key_name) }
+          candidate.rename!(resolved[:name])
+        else
+          candidate.update!(**resolved)
+          @agent_store.ensure_project_context_prompt!(candidate, project)
+        end
       end
-      save_agent(target)
       agent_payload(target)
     end
 
@@ -4897,9 +5350,12 @@ module HQ
       workspace = attrs.key?("workspace") ? attrs["workspace"].to_s : target.workspace.to_s
       sandbox_mode = attrs.key?("sandbox_mode") ? attrs["sandbox_mode"].to_s : target.sandbox_mode.to_s
       sandbox_mode = template.sandbox_mode.to_s if sandbox_mode.empty?
-      agent = (attrs.key?("agent") ? attrs["agent"].to_s : target.agent.to_s).strip.downcase
-      model = attrs.key?("model") ? attrs["model"].to_s.strip : target.model.to_s
-      reasoning_effort = attrs.key?("reasoning_effort") ? attrs["reasoning_effort"].to_s.strip.downcase : target.reasoning_effort.to_s
+      agent_value = attrs.key?("agent") && !attrs["agent"].nil? ? attrs["agent"] : target.agent
+      model_value = attrs.key?("model") && !attrs["model"].nil? ? attrs["model"] : target.model
+      effort_value = attrs.key?("reasoning_effort") && !attrs["reasoning_effort"].nil? ? attrs["reasoning_effort"] : target.reasoning_effort
+      agent = agent_value.to_s.strip.downcase
+      model = model_value.to_s.strip
+      reasoning_effort = effort_value.to_s.strip.downcase
       response_style = agent_response_style_for(target, attrs, template:, creating:)
       workspace = project.path if workspace.empty? && creating
 
@@ -5223,11 +5679,6 @@ module HQ
     def associate_delegation_from_attrs!(target, attrs, agents: nil, creating: false,
                                          actor: DelegationActor.user_actor)
       parent_key = attrs["parent_agent_key"].to_s.strip
-      if actor.parent?
-        if !parent_key.empty? && parent_key != actor.agent_key
-          raise Error.new("An agent can delegate only as itself", status: 403)
-        end
-      end
       if parent_key.empty?
         return target unless creating
 
@@ -5235,10 +5686,7 @@ module HQ
       end
 
       current = agents || load_all_agents
-      parent = current.find { |agent| agent.key == parent_key }
-      unless parent && HQ::Visibility.agent_visible?(parent, @projects)
-        raise Error.new("Unknown parent agent: #{parent_key}", status: 404)
-      end
+      validate_delegation_parent!(attrs, agents: current, actor:)
       @agent_store.persist_with_delegation!(
         agents: current,
         child: target,
@@ -5249,6 +5697,18 @@ module HQ
       )
     rescue DelegationStore::Error => e
       raise Error.new(e.message, status: 409)
+    end
+
+    def validate_delegation_parent!(attrs, agents:, actor:)
+      parent_key = attrs["parent_agent_key"].to_s.strip
+      if actor.parent? && parent_key != actor.agent_key
+        raise Error.new("An agent can delegate only as itself", status: 403)
+      end
+
+      parent = agents.find { |agent| agent.key == parent_key }
+      return parent if parent && HQ::Visibility.agent_visible?(parent, @projects)
+
+      raise Error.new("Unknown parent agent: #{parent_key}", status: 404)
     end
 
     def delegation_actor_from_attrs(attrs)

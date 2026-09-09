@@ -120,37 +120,39 @@ module HQ
     end
 
     def add_project!(attrs)
-      data = load_yaml(@path)
-      projects = Array(data["projects"])
-      key = attrs[:key].to_s.strip
-      raise ConfigError, "Missing project key" if key.empty?
-      raise ConfigError, "Duplicate project key: #{key}" if projects.any? { |p| p["key"].to_s == key }
+      with_config_lock do
+        data = load_yaml(@path)
+        projects = Array(data["projects"])
+        key = attrs[:key].to_s.strip
+        raise ConfigError, "Missing project key" if key.empty?
+        raise ConfigError, "Duplicate project key: #{key}" if projects.any? { |p| p["key"].to_s == key }
 
-      entry = { "key" => key, "name" => attrs[:name].to_s }
-      entry["group"] = attrs[:group].to_s unless attrs[:group].to_s.strip.empty?
-      entry["path"] = attrs[:path].to_s
-      entry["agent"] = attrs[:agent].to_s unless attrs[:agent].to_s.strip.empty?
-      %i[model reasoning_effort pr_url].each do |field|
-        value = attrs[field]
-        entry[field.to_s] = value.to_s unless value.to_s.strip.empty?
-      end
-      entry["response_style"] = attrs[:response_style] if attrs.key?(:response_style) && !attrs[:response_style].nil?
-      entry["hidden"] = attrs[:hidden] if attrs.key?(:hidden) && !attrs[:hidden].nil?
+        entry = { "key" => key, "name" => attrs[:name].to_s }
+        entry["group"] = attrs[:group].to_s unless attrs[:group].to_s.strip.empty?
+        entry["path"] = attrs[:path].to_s
+        entry["agent"] = attrs[:agent].to_s unless attrs[:agent].to_s.strip.empty?
+        %i[model reasoning_effort pr_url].each do |field|
+          value = attrs[field]
+          entry[field.to_s] = value.to_s unless value.to_s.strip.empty?
+        end
+        entry["response_style"] = attrs[:response_style] if attrs.key?(:response_style) && !attrs[:response_style].nil?
+        entry["hidden"] = attrs[:hidden] if attrs.key?(:hidden) && !attrs[:hidden].nil?
 
-      group = entry["group"].to_s
-      insert_index = nil
-      unless group.empty?
-        last_in_group = projects.rindex { |p| p["group"].to_s == group }
-        insert_index = last_in_group ? last_in_group + 1 : nil
+        group = entry["group"].to_s
+        insert_index = nil
+        unless group.empty?
+          last_in_group = projects.rindex { |p| p["group"].to_s == group }
+          insert_index = last_in_group ? last_in_group + 1 : nil
+        end
+        insert_index ? projects.insert(insert_index, entry) : projects.push(entry)
+        validate_project_entries!(projects)
+        data["projects"] = projects
+        write_yaml(@path, data)
+        load!
+        added = @projects.find { |p| p.key == key }
+        HQ.hooks.publish("project.added", project_key: key, project_path: added&.path.to_s)
+        key
       end
-      insert_index ? projects.insert(insert_index, entry) : projects.push(entry)
-      validate_project_entries!(projects)
-      data["projects"] = projects
-      write_yaml(@path, data)
-      load!
-      added = @projects.find { |p| p.key == key }
-      HQ.hooks.publish("project.added", project_key: key, project_path: added&.path.to_s)
-      key
     end
 
     def add_remote_server!(attrs)
@@ -296,31 +298,33 @@ module HQ
     end
 
     def update_project!(project_key, attrs)
-      data = load_yaml(@path)
-      projects = Array(data["projects"])
-      project = projects.find { |p| p["key"].to_s == project_key.to_s }
-      return nil unless project
+      with_config_lock do
+        data = load_yaml(@path)
+        projects = Array(data["projects"])
+        project = projects.find { |p| p["key"].to_s == project_key.to_s }
+        return nil unless project
 
-      changed = false
-      attrs.each do |field, value|
-        field = field.to_s
-        value = value.to_s.strip if value.is_a?(String)
-        if value.nil? || (value.is_a?(String) && value.empty?)
-          changed = true if project.key?(field)
-          project.delete(field)
-        elsif project[field] != value
-          project[field] = value
-          changed = true
+        changed = false
+        attrs.each do |field, value|
+          field = field.to_s
+          value = value.to_s.strip if value.is_a?(String)
+          if value.nil? || (value.is_a?(String) && value.empty?)
+            changed = true if project.key?(field)
+            project.delete(field)
+          elsif project[field] != value
+            project[field] = value
+            changed = true
+          end
         end
-      end
 
-      if changed
-        validate_project_entries!(projects)
-        write_yaml(@path, data)
-        load!
-        HQ.hooks.publish("project.updated", project_key: project_key.to_s, fields: attrs.keys.map(&:to_s))
+        if changed
+          validate_project_entries!(projects)
+          write_yaml(@path, data)
+          load!
+          HQ.hooks.publish("project.updated", project_key: project_key.to_s, fields: attrs.keys.map(&:to_s))
+        end
+        project
       end
-      project
     end
 
     def update_harness_catalog!(harness_key, attrs)
@@ -862,6 +866,16 @@ module HQ
 
     def write_yaml(path, data)
       FileStore.write_yaml(path, data)
+    end
+
+    def with_config_lock
+      FileUtils.mkdir_p(File.dirname(@path))
+      File.open("#{@path}.lock", File::RDWR | File::CREAT, 0o600) do |file|
+        file.flock(File::LOCK_EX)
+        yield
+      ensure
+        file.flock(File::LOCK_UN)
+      end
     end
 
     def normalized_system_prompts

@@ -170,8 +170,8 @@ module HQ
       end
     end
 
-    def create_from_template(project, template_key)
-      existing = load
+    def create_from_template(project, template_key, existing_agents: nil)
+      existing = existing_agents || load
       suffix = next_suffix(project.key, existing)
       now = Time.now
       key = next_agent_key(project.key, existing, now:)
@@ -195,6 +195,26 @@ module HQ
       )
       seed_memory_system_prompts!(agent, project, template.prompt)
       attach_usage_metrics_store(agent)
+    end
+
+    # Keep the read, construction, and commit of a new agent in one store
+    # transaction so a concurrent foreground write cannot be overwritten by a
+    # worker's stale agent list.
+    def create_from_template_and_persist!(project, template_key)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = create_from_template(project, template_key, existing_agents: agents)
+        yield target, agents if block_given?
+        agents.unshift(target)
+        target
+      end
+    end
+
+    def update_agent!(key)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = find_agent_in!(agents, key)
+        yield target, agents if block_given?
+        target
+      end
     end
 
     def create_scheduled(project, schedule_key:, name:, system_message: nil, existing_agents: load)
