@@ -47,6 +47,9 @@ module RemoteServerTest
     assert_remote_response_style_settings
     assert_remote_session_loop_settings
     assert_remote_personal_assistant_routes
+    assert_remote_personal_assistant_message_acceptance
+    assert_remote_personal_assistant_acceptance_launch_and_queue_reconciliation
+    assert_remote_personal_assistant_dedicated_routes
     assert_remote_personal_assistant_action_execution
     assert_remote_archived_personal_assistant_history
     assert_remote_skill_installation_requires_confirmation
@@ -509,7 +512,7 @@ module RemoteServerTest
       File.write(protected_attachment_path, "Protected FRED attachment\n")
       protected_agent.add_user_message!("Keep this attachment.", attachments: [{ "type" => "file", "title" => "Protected attachment", "path" => protected_attachment_path }])
       service.send(:save_agent, protected_agent)
-      protected_attachment_id = service.agent(key)[:attachments].first.fetch("id")
+      protected_attachment_id = service.personal_assistant.dig(:agent, :attachments, 0, "id")
       protected_log_paths = protected_agent.log_files.select { |path| File.exist?(path) }
       begin
         server.send(:route, service, "DELETE", "/attachments/#{protected_attachment_id}", {}, nil)
@@ -544,6 +547,479 @@ module RemoteServerTest
              "expected reset to remove FRED model, reasoning effort, and timezone from configuration")
       assert(HQ::FileStore.read_json(proposals_path, fallback: {}).fetch("proposals", []).empty?,
              "expected reset to clear pending and historical FRED action state")
+    end
+  end
+
+  def assert_remote_personal_assistant_message_acceptance
+    with_remote_temp_store do |dir|
+      old_codex_bin = ENV["TYCHO_CODEX_BIN"]
+      ENV["TYCHO_CODEX_BIN"] = File.join(dir, "missing-fred-codex")
+      begin
+        workspace = File.join(dir, "workspace")
+        write_project_workspace(workspace)
+        service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
+        server = HQ::RemoteServer.new
+        server.send(:route, service, "POST", "/personal-assistant/setup", {
+                      "confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta"
+                    }, nil)
+        opened = server.send(:route, service, "POST", "/personal-assistant/open", {}, nil)
+        session = opened.dig(:body, :personal_assistant)
+        context = { "active_key" => session[:active_key], "generation" => session[:generation] }
+        post_message = lambda do |body|
+          server.send(:route, service, "POST", "/personal-assistant/messages", body, nil).fetch(:body)
+        end
+
+      attachment = {
+        "filename" => "note.txt",
+        "mime_type" => "text/plain",
+        "content_base64" => Base64.strict_encode64("hello from FRED")
+      }
+      first_request = context.merge(
+        "client_request_id" => "client-duplicate-message",
+        "prompt" => "Record this once.",
+        "attachments" => [attachment],
+        "start" => false
+      )
+      first = post_message.call(first_request)
+      replay = post_message.call(first_request)
+      assert(first[:accepted] && first.dig(:acceptance, "state") == "accepted",
+             "expected the first FRED message to return a durable accepted state")
+      assert(replay[:accepted] && replay[:replayed] && replay.dig(:acceptance, "state") == "accepted",
+             "expected an identical FRED message to replay its acceptance")
+      fred = service.send(:find_agent!, session[:active_key])
+      message_events = HQ::AgentMemory.new(fred).events.select do |event|
+        event["type"] == "user_message" && event.dig("metadata", "personal_assistant_client_request_id") == "client-duplicate-message"
+      end
+      assert(message_events.length == 1, "expected duplicate FRED messages to append one journal event")
+      assert(fred.attachments.count { |item| item["source"] == "remote_upload" } == 1,
+             "expected duplicate FRED messages to import one attachment")
+
+      begin
+        post_message.call(first_request.merge("prompt" => "A different payload."))
+        raise "expected client request payload mismatch"
+      rescue HQ::RemoteServer::Error => e
+        code = e.details.is_a?(Hash) ? (e.details[:code] || e.details["code"]) : nil
+        assert(e.status == 409 && code == "payload_mismatch",
+               "expected a reused FRED request ID with another payload to conflict: #{e.details.inspect}")
+      end
+
+      store = service.instance_variable_get(:@agent_store)
+      start_attempts = 0
+      store.define_singleton_method(:start_agent!) do |_key, run_metadata: nil|
+        start_attempts += 1
+        raise IOError, "simulated lost FRED start acknowledgement"
+      end
+      lost_request = context.merge(
+        "client_request_id" => "client-lost-ack",
+        "prompt" => "Record before the launch acknowledgement is lost.",
+        "start" => true
+      )
+      begin
+        post_message.call(lost_request)
+        raise "expected an unknown start outcome"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.details[:code] == "acceptance_unknown",
+               "expected an interrupted FRED launch to return acceptance_unknown")
+      ensure
+        store.singleton_class.remove_method(:start_agent!)
+      end
+      lookup = server.send(:route, service, "GET", "/personal-assistant/messages/acceptance/client-lost-ack", {}, nil)
+      assert(lookup.dig(:body, :acceptance, "state") == "unknown" &&
+             lookup.dig(:body, :acceptance, "launch_attempted") == true,
+             "expected lookup to preserve an unknown launch outcome")
+      lost_events = HQ::AgentMemory.new(service.send(:find_agent!, session[:active_key])).events.select do |event|
+        event["type"] == "user_message" && event.dig("metadata", "personal_assistant_client_request_id") == "client-lost-ack"
+      end
+      assert(lost_events.length == 1, "expected the lost acknowledgement path to retain its one message")
+      begin
+        post_message.call(lost_request)
+        raise "expected unknown acceptance replay to remain unavailable"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.details[:code] == "acceptance_unknown" && start_attempts == 1,
+               "expected an unknown acceptance not to launch again or report accepted")
+      end
+
+      failed_start_request = context.merge(
+        "client_request_id" => "client-start-failed",
+        "prompt" => "Record a proven startup failure.",
+        "start" => true
+      )
+      begin
+        post_message.call(failed_start_request)
+        raise "expected a proven FRED startup failure"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.details[:code] == "start_failed",
+               "expected a recorded FRED startup failure to remain actionable")
+      end
+      failed_lookup = server.send(:route, service, "GET", "/personal-assistant/messages/acceptance/client-start-failed", {}, nil)
+      assert(failed_lookup.dig(:body, :acceptance, "state") == "start_failed",
+             "expected lookup to preserve the distinct start_failed state")
+      begin
+        post_message.call(failed_start_request)
+        raise "expected start_failed acceptance replay to remain rejected"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.details[:code] == "start_failed",
+               "expected a start_failed duplicate not to return accepted true")
+      end
+
+        concurrent_context = context
+        threads = %w[a b].map do |suffix|
+          Thread.new do
+            post_message.call(concurrent_context.merge(
+                                 "client_request_id" => "client-concurrent-#{suffix}",
+                                 "prompt" => "Concurrent request #{suffix}",
+                                 "start" => false
+                               ))
+          end
+        end
+        concurrent = threads.map(&:value)
+        assert(concurrent.all? { |response| response[:accepted] && response.dig(:acceptance, "state") == "accepted" },
+               "expected concurrent FRED request IDs to receive independent durable acceptances")
+
+        same_id_request = context.merge(
+          "client_request_id" => "client-concurrent-same",
+          "prompt" => "The same request must append once.",
+          "start" => false
+        )
+        same_id_threads = 2.times.map do
+          Thread.new { post_message.call(same_id_request) }
+        end
+        same_id_responses = same_id_threads.map(&:value)
+        assert(same_id_responses.all? { |response| response[:accepted] && response.dig(:acceptance, "state") == "accepted" },
+               "expected same-ID concurrent FRED requests to resolve to accepted or replayed")
+        assert(same_id_responses.count { |response| response[:replayed] } == 1,
+               "expected exactly one same-ID concurrent FRED request to be a replay")
+        same_id_events = HQ::AgentMemory.new(service.send(:find_agent!, session[:active_key])).events.count do |event|
+          event["type"] == "user_message" && event.dig("metadata", "personal_assistant_client_request_id") == "client-concurrent-same"
+        end
+        assert(same_id_events == 1, "expected same-ID concurrent FRED requests to append one journal event")
+
+        old_context = context
+        restarted = server.send(:route, service, "POST", "/personal-assistant/restart", { "confirmed" => true }, nil)
+        new_session = restarted.dig(:body, :personal_assistant)
+        assert(new_session[:active_key] != old_context["active_key"] && new_session[:generation] > old_context["generation"],
+               "expected restart to roll the FRED session identity")
+        begin
+          post_message.call(old_context.merge(
+                              "client_request_id" => "client-stale-rollover",
+                              "prompt" => "Must not enter the new FRED session.",
+                              "start" => false
+                            ))
+          raise "expected a stale FRED session request to fail"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 409 && e.details[:code] == "stale_session",
+                 "expected a request captured before rollover to fail with stale_session")
+        end
+
+        lifecycle = service.instance_variable_get(:@personal_assistant)
+        257.times do |index|
+          payload = {
+            "active_key" => new_session[:active_key], "generation" => new_session[:generation],
+            "kind" => "message", "prompt" => "Retention #{index}", "start" => false
+          }
+          lifecycle.begin_message_acceptance!(
+            client_request_id: "client-retention-#{index}",
+            active_key: new_session[:active_key], generation: new_session[:generation],
+            fingerprint: Digest::SHA256.hexdigest(JSON.generate(payload)), payload:, validate: false
+          )
+        end
+        expired = lifecycle.message_acceptance("client-retention-0")
+        assert(expired["state"] == "expired" && expired["code"] == "acceptance_expired",
+               "expected evicted FRED acceptance IDs to leave explicit tombstones")
+        begin
+          lifecycle.begin_message_acceptance!(
+            client_request_id: "client-retention-0",
+            active_key: new_session[:active_key], generation: new_session[:generation],
+            fingerprint: "another", payload: { "prompt" => "reuse" }, validate: false
+          )
+          raise "expected an expired acceptance ID to remain unavailable"
+        rescue HQ::PersonalAssistantLifecycle::AcceptanceConflict => e
+          assert(e.code == "acceptance_expired", "expected expired FRED IDs not to be silently reusable")
+        end
+
+        next_session = server.send(:route, service, "POST", "/personal-assistant/restart", { "confirmed" => true }, nil)
+        next_context = {
+          "active_key" => next_session.dig(:body, :personal_assistant, :active_key),
+          "generation" => next_session.dig(:body, :personal_assistant, :generation)
+        }
+        state_path = File.join(HQ::PERSONAL_ASSISTANT_DIR, "state.json")
+        state = HQ::FileStore.read_json(state_path, fallback: {})
+        tombstones = Array(state["message_acceptance_tombstones"])
+        assert(tombstones.none? { |item| item["generation"].to_i == new_session[:generation].to_i },
+               "expected closed-generation FRED tombstones to be pruned")
+        assert(lifecycle.message_acceptance("client-retention-0").nil?,
+               "expected lookup to stop retaining an evicted ID after its generation closes")
+
+        begin
+          post_message.call(context.merge(
+                              "client_request_id" => "client-pruned-stale",
+                              "prompt" => "Must stay outside the later FRED session.",
+                              "start" => false
+                            ))
+          raise "expected a stale context to fail after tombstone pruning"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 409 && e.details[:code] == "stale_session",
+                 "expected stale FRED context rejection to survive tombstone pruning")
+        end
+
+        257.times do |index|
+          payload = {
+            "active_key" => next_context["active_key"], "generation" => next_context["generation"],
+            "kind" => "message", "prompt" => "Current generation retention #{index}", "start" => false
+          }
+          lifecycle.begin_message_acceptance!(
+            client_request_id: "client-current-retention-#{index}",
+            active_key: next_context["active_key"], generation: next_context["generation"],
+            fingerprint: Digest::SHA256.hexdigest(JSON.generate(payload)), payload:, validate: false
+          )
+        end
+        current_expired = lifecycle.message_acceptance("client-current-retention-0")
+        assert(current_expired["state"] == "expired" && current_expired["code"] == "acceptance_expired",
+               "expected current-generation anti-replay tombstones to remain available")
+      end
+    ensure
+      if old_codex_bin
+        ENV["TYCHO_CODEX_BIN"] = old_codex_bin
+      else
+        ENV.delete("TYCHO_CODEX_BIN")
+      end
+    end
+  end
+
+  def assert_remote_personal_assistant_acceptance_launch_and_queue_reconciliation
+    with_remote_temp_store do |dir|
+      old_codex_bin = ENV["TYCHO_CODEX_BIN"]
+      old_fake_gate = ENV["TYCHO_FRED_FAKE_GATE"]
+      fake_codex = File.join(dir, "fake-fred-codex")
+      fake_gate = File.join(dir, "hold-first-fred-run")
+      File.write(fake_codex, <<~RUBY)
+        #!#{RbConfig.ruby}
+        require "json"
+
+        gate = ENV["TYCHO_FRED_FAKE_GATE"].to_s
+        sleep 0.01 while !gate.empty? && File.exist?(gate)
+        result = {
+          "status" => "success",
+          "summary" => "FRED fake harness completed.",
+          "summary_sections" => nil,
+          "inquiry" => nil,
+          "attachments" => nil,
+          "memory_handoff" => nil
+        }
+        output_index = ARGV.index("-o")
+        File.write(ARGV.fetch(output_index + 1), JSON.generate(result)) if output_index
+        puts JSON.generate("type" => "thread.started", "thread_id" => "fred-fake-session")
+        puts JSON.generate(
+          "type" => "item.completed",
+          "item" => { "type" => "agent_message", "text" => JSON.generate(result) }
+        )
+      RUBY
+      File.chmod(0o755, fake_codex)
+      FileUtils.touch(fake_gate)
+      ENV["TYCHO_CODEX_BIN"] = fake_codex
+      ENV["TYCHO_FRED_FAKE_GATE"] = fake_gate
+      begin
+        workspace = File.join(dir, "workspace")
+        write_project_workspace(workspace)
+        service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
+        server = HQ::RemoteServer.new
+        server.send(:route, service, "POST", "/personal-assistant/setup", {
+                      "confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta"
+                    }, nil)
+        opened = server.send(:route, service, "POST", "/personal-assistant/open", {}, nil)
+        session = opened.dig(:body, :personal_assistant)
+        context = { "active_key" => session[:active_key], "generation" => session[:generation] }
+
+        launched = server.send(
+          :route, service, "POST", "/personal-assistant/messages",
+          context.merge("client_request_id" => "client-positive-launch", "prompt" => "Start this FRED run.", "start" => true), nil
+        ).fetch(:body)
+        assert(launched[:accepted] && launched.dig(:acceptance, "state") == "dispatched" &&
+               !launched.dig(:acceptance, "run_id").to_s.empty?,
+               "expected a successful fake FRED launch to resolve as dispatched")
+
+        queued = server.send(
+          :route, service, "POST", "/personal-assistant/messages",
+          context.merge("client_request_id" => "client-queued-reconcile", "prompt" => "Queue this FRED run.", "start" => false), nil
+        ).fetch(:body)
+        assert(queued[:accepted] && queued.dig(:acceptance, "state") == "queued",
+               "expected a message submitted during a FRED run to be durably queued")
+
+        FileUtils.rm_f(fake_gate)
+        deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5.0
+        loop do
+          current = service.agent(session[:active_key])
+          break if current[:run_count].to_i >= 2
+          raise "expected the fake FRED queue dispatch to finish" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+          sleep 0.02
+        end
+        reconciled = server.send(
+          :route, service, "GET", "/personal-assistant/messages/acceptance/client-queued-reconcile", {}, nil
+        ).fetch(:body)
+        assert(reconciled.dig(:acceptance, "state") == "dispatched" &&
+               !reconciled.dig(:acceptance, "run_id").to_s.empty?,
+               "expected queued FRED acceptance to reconcile to its positive dispatched run evidence")
+      ensure
+        FileUtils.rm_f(fake_gate)
+        if old_codex_bin
+          ENV["TYCHO_CODEX_BIN"] = old_codex_bin
+        else
+          ENV.delete("TYCHO_CODEX_BIN")
+        end
+        if old_fake_gate
+          ENV["TYCHO_FRED_FAKE_GATE"] = old_fake_gate
+        else
+          ENV.delete("TYCHO_FRED_FAKE_GATE")
+        end
+      end
+    end
+  end
+
+  def assert_remote_personal_assistant_dedicated_routes
+    with_remote_temp_store do |dir|
+      old_codex_bin = ENV["TYCHO_CODEX_BIN"]
+      ENV["TYCHO_CODEX_BIN"] = File.join(dir, "missing-fred-codex")
+      begin
+        workspace = File.join(dir, "workspace")
+        write_project_workspace(workspace)
+        registry = registry_for_project(dir, workspace)
+        service = HQ::RemoteService.new(registry:)
+        server = HQ::RemoteServer.new
+        server.send(:route, service, "POST", "/personal-assistant/setup", {
+                      "confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta"
+                    }, nil)
+        opened = server.send(:route, service, "POST", "/personal-assistant/open", {}, nil)
+        session = opened.dig(:body, :personal_assistant)
+        context = { "active_key" => session[:active_key], "generation" => session[:generation] }
+        store = service.instance_variable_get(:@agent_store)
+
+      seed_inquiry = lambda do |number|
+        agent = store.load.find { |candidate| candidate.key == session[:active_key] }
+        started_at = Time.now - number
+        run = HQ::ManagedAgent::AgentRun.new(
+          run_id: "fred-inquiry-run-#{number}", started_at:, finished_at: started_at + 1,
+          status: "input_required", log_path: agent.raw_log_path
+        )
+        inquiry = {
+          "message" => "Choose FRED step #{number}",
+          "fields" => [{ "key" => "next_step", "label" => "Next step", "input_type" => "text", "required" => true }]
+        }
+        agent.runs << run
+        agent.structured_result = { "status" => "input_required", "summary" => "Needs input", "inquiry" => inquiry }
+        inquiry_id = agent.send(:inquiry_identity, inquiry, run:)
+        HQ::AgentMemory.new(agent).append_inquiry_request!(inquiry, created_at: started_at + 1, inquiry_id:)
+        store.save([agent])
+        inquiry_id
+      end
+
+      first_inquiry = seed_inquiry.call(1)
+      answer = server.send(
+        :route, service, "POST", "/personal-assistant/inquiries/#{first_inquiry}/answer",
+        context.merge(
+          "client_request_id" => "client-inquiry-answer-1",
+          "answer" => JSON.generate("next_step" => "Continue"),
+          "feedback" => "Use the smallest safe step.",
+          "start" => false
+        ), nil
+      ).fetch(:body)
+      assert(answer[:accepted] && answer.dig(:acceptance, "state") == "accepted" &&
+             answer.dig(:acceptance, "inquiry_id") == first_inquiry,
+             "expected the dedicated inquiry answer route to use its path inquiry ID")
+
+      second_inquiry = seed_inquiry.call(2)
+      dismissed = server.send(
+        :route, service, "POST", "/personal-assistant/inquiries/#{second_inquiry}/dismiss", context, nil
+      ).fetch(:body)
+      restored = server.send(
+        :route, service, "POST", "/personal-assistant/inquiries/#{second_inquiry}/restore", context, nil
+      ).fetch(:body)
+      assert(dismissed[:accepted] && dismissed[:inquiry_id] == second_inquiry,
+             "expected the dedicated dismiss route to suspend the requested inquiry")
+      assert(restored[:accepted] && restored[:restored] && restored[:inquiry_id] == second_inquiry,
+             "expected the dedicated restore route to restore the requested inquiry")
+
+      begin
+        server.send(:route, service, "POST", "/agents/#{session[:active_key]}/inquiries/#{second_inquiry}/answer", {
+                      "answer" => "forbidden"
+                    }, nil)
+        raise "expected generic FRED inquiry control rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("dedicated lifecycle"),
+               "expected generic inquiry control to reject the protected FRED session")
+      end
+
+      server.send(
+        :route, service, "POST", "/personal-assistant/inquiries/#{second_inquiry}/answer",
+        context.merge("client_request_id" => "client-inquiry-answer-2", "answer" => "Proceed", "start" => false), nil
+      )
+
+      queue_entry = "fred-queue-edit"
+      agent = store.load.find { |candidate| candidate.key == session[:active_key] }
+      agent.enqueue_prompt!(prompt: "Original queued prompt", id: queue_entry)
+      store.save([agent])
+      edited = server.send(
+        :route, service, "PATCH", "/personal-assistant/prompt-queue/#{queue_entry}",
+        context.merge("prompt" => "Edited queued prompt"), nil
+      ).fetch(:body)
+      assert(edited[:accepted] && edited.dig(:queue_entry, "prompt") == "Edited queued prompt",
+             "expected the dedicated queue edit route to update a queued FRED entry")
+      deleted = server.send(
+        :route, service, "DELETE", "/personal-assistant/prompt-queue/#{queue_entry}", context, nil
+      ).fetch(:body)
+      assert(deleted[:accepted] && deleted.dig(:deleted, "id") == queue_entry,
+             "expected the dedicated queue delete route to delete a queued FRED entry")
+
+      claimed_entry = "fred-queue-claimed"
+      agent = store.load.find { |candidate| candidate.key == session[:active_key] }
+      agent.enqueue_prompt!(prompt: "Already claimed queued prompt", id: claimed_entry)
+      agent.send(:claim_pending_prompts!)
+      agent.send(:fail_prompt_queue_dispatch!, "claimed entry fixture")
+      store.save([agent])
+      begin
+        server.send(
+          :route, service, "PATCH", "/personal-assistant/prompt-queue/#{claimed_entry}",
+          context.merge("prompt" => "Must not edit a claimed prompt"), nil
+        )
+        raise "expected an already-claimed queue edit to conflict"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("no longer editable"),
+               "expected an already-claimed queue edit to return a conflict")
+      end
+      begin
+        server.send(
+          :route, service, "DELETE", "/personal-assistant/prompt-queue/#{claimed_entry}", context, nil
+        )
+        raise "expected an already-claimed queue delete to conflict"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("no longer deletable"),
+               "expected an already-claimed queue delete to return a conflict")
+      end
+
+      retry_agent = store.load.find { |candidate| candidate.key == session[:active_key] }
+      retry_agent.enqueue_prompt!(prompt: "Retry this queued prompt", id: "fred-queue-retry")
+      retry_agent.send(:claim_pending_prompts!)
+      retry_agent.send(:fail_prompt_queue_dispatch!, "simulated dispatch failure")
+      store.save([retry_agent])
+      retried = server.send(
+        :route, service, "POST", "/personal-assistant/prompt-queue/retry", context, nil
+      ).fetch(:body)
+      assert(retried[:accepted] && retried.dig(:agent, :prompt_queue, "dispatch_error"),
+             "expected the dedicated queue retry route to perform one explicit retry")
+
+      begin
+        server.send(:route, service, "POST", "/personal-assistant/prompt-queue/retry", context.merge("parent_agent_key" => "parent"), nil)
+        raise "expected parent-declared FRED queue retry rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 403, "expected parent-declared FRED queue control to remain forbidden")
+      end
+      end
+    ensure
+      if old_codex_bin
+        ENV["TYCHO_CODEX_BIN"] = old_codex_bin
+      else
+        ENV.delete("TYCHO_CODEX_BIN")
+      end
     end
   end
 
@@ -670,7 +1146,16 @@ module RemoteServerTest
                   }, nil)
       opened = server.send(:route, service, "POST", "/personal-assistant/open", {}, nil)
       archived_key = opened.dig(:body, :personal_assistant, :active_key)
-      service.submit_personal_assistant_prompt({ "prompt" => "Keep this archived conversation readable." })
+      session = service.personal_assistant
+      service.submit_personal_assistant_prompt(
+        {
+          "prompt" => "Keep this archived conversation readable.",
+          "client_request_id" => "client-archive-history",
+          "active_key" => session[:active_key],
+          "generation" => session[:generation],
+          "start" => false
+        }
+      )
       restarted = server.send(:route, service, "POST", "/personal-assistant/restart", { "confirmed" => true }, nil)
       assert(restarted.dig(:body, :personal_assistant, :active_key) != archived_key, "expected restart to archive the previous FRED session")
 
@@ -7401,7 +7886,7 @@ module RemoteServerTest
 
   def with_stubbed_agent_start
     original = HQ::ManagedAgent.instance_method(:start!)
-    HQ::ManagedAgent.define_method(:start!) do
+    HQ::ManagedAgent.define_method(:start!) do |delegation_stamp: nil, run_metadata: nil|
       now = Time.now
       FileUtils.mkdir_p(File.dirname(raw_log_path))
       File.write(raw_log_path, "prompt=#{send(:prompt_for_execution)}\n")
@@ -7415,7 +7900,10 @@ module RemoteServerTest
         exit_code: 0,
         status: "succeeded",
         log_path: raw_log_path,
-        command: "stubbed"
+        command: "stubbed",
+        delegation_owner: delegation_stamp&.fetch("owner", nil),
+        delegation_generation: delegation_stamp&.fetch("generation", nil),
+        metadata: run_metadata.is_a?(Hash) ? run_metadata : {}
       )
       self
     end
@@ -7426,7 +7914,7 @@ module RemoteServerTest
 
   def with_stubbed_agent_start_error(message)
     original = HQ::ManagedAgent.instance_method(:start!)
-    HQ::ManagedAgent.define_method(:start!) { raise message }
+    HQ::ManagedAgent.define_method(:start!) { |delegation_stamp: nil, run_metadata: nil, before_spawn: nil| raise message }
     yield
   ensure
     HQ::ManagedAgent.define_method(:start!, original)

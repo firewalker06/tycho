@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "base64"
+require "digest"
 require "fileutils"
 require "securerandom"
 require "time"
@@ -64,7 +65,7 @@ module HQ
       @agent = agent
     end
 
-    def import_remote_uploads!(uploads, created_at: Time.now)
+    def import_remote_uploads!(uploads, created_at: Time.now, dedupe_key: nil)
       items = Array(uploads).select { |item| item.is_a?(Hash) }
       return [] if items.empty?
 
@@ -74,7 +75,7 @@ module HQ
 
       total_bytes = 0
       prepared = items.each_with_index.map do |attrs, index|
-        upload = prepare_remote_upload!(attrs, created_at:, index:)
+        upload = prepare_remote_upload!(attrs, created_at:, index:, dedupe_key:)
         total_bytes += upload.fetch(:attachment).fetch("size_bytes")
         if total_bytes > MAX_TOTAL_BYTES
           raise ArgumentError, "Attachments are larger than #{human_bytes(MAX_TOTAL_BYTES)} total"
@@ -88,7 +89,7 @@ module HQ
 
     private
 
-    def prepare_remote_upload!(attrs, created_at:, index:)
+    def prepare_remote_upload!(attrs, created_at:, index:, dedupe_key: nil)
       filename = safe_filename(attrs["filename"] || attrs["name"] || "attachment")
       content_type = attrs["mime_type"].to_s.strip
       content_type = attrs["content_type"].to_s.strip if content_type.empty?
@@ -101,7 +102,7 @@ module HQ
 
       extension = attachment_extension(filename, content_type)
       normalized_type = attachment_content_type(extension, content_type)
-      id = attachment_id(created_at, index)
+      id = attachment_id(created_at, index, dedupe_key:, bytes:, filename:, content_type:)
       path = File.join(asset_dir(id), "original#{extension}")
 
       attachment = {
@@ -170,7 +171,14 @@ module HQ
       content_type.to_s.empty? ? "application/octet-stream" : content_type
     end
 
-    def attachment_id(created_at, index)
+    def attachment_id(created_at, index, dedupe_key: nil, bytes: nil, filename: nil, content_type: nil)
+      unless dedupe_key.to_s.empty?
+        digest = Digest::SHA256.hexdigest(
+          [dedupe_key, index, filename, content_type, Digest::SHA256.hexdigest(bytes.to_s)].join("\0")
+        )
+        return "att_#{digest[0, 32]}"
+      end
+
       stamp = created_at.utc.strftime("%Y%m%d%H%M%S")
       "att_#{stamp}_#{index + 1}_#{SecureRandom.hex(5)}"
     end

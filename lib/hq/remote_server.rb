@@ -259,6 +259,7 @@ module HQ
 
     def route(service, method, path, body, request = nil)
       parts = path.split("/").reject(&:empty?)
+      body = body.is_a?(Hash) ? body.dup : {}
       actor = request_actor(body)
 
       if parts.first == "servers"
@@ -342,6 +343,21 @@ module HQ
       return ok(personal_assistant: service.restart_personal_assistant(body)) if method == "POST" && parts == ["personal-assistant", "restart"]
       return ok(personal_assistant: service.reset_personal_assistant(body)) if method == "POST" && parts == ["personal-assistant", "reset"]
       return ok(service.submit_personal_assistant_prompt(body, actor:)) if method == "POST" && parts == ["personal-assistant", "messages"]
+      if method == "GET" && parts.length == 4 && parts[0, 3] == ["personal-assistant", "messages", "acceptance"]
+        return ok(acceptance: service.personal_assistant_message_acceptance(parts[3]))
+      end
+      if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "inquiries"]
+        return ok(service.answer_personal_assistant_inquiry(parts[2], body, actor:)) if parts[3] == "answer"
+        return ok(service.dismiss_personal_assistant_inquiry(parts[2], body, actor:)) if parts[3] == "dismiss"
+        return ok(service.restore_personal_assistant_inquiry(parts[2], body, actor:)) if parts[3] == "restore"
+      end
+      if parts.length == 3 && parts[0, 2] == ["personal-assistant", "prompt-queue"]
+        return ok(service.edit_personal_assistant_queued_prompt(parts[2], body, actor:)) if %w[PATCH PUT].include?(method)
+        return ok(service.delete_personal_assistant_queued_prompt(parts[2], body, actor:)) if method == "DELETE"
+      end
+      if method == "POST" && parts == ["personal-assistant", "prompt-queue", "retry"]
+        return ok(service.retry_personal_assistant_prompt_queue(body, actor:))
+      end
       return ok(proposals: service.personal_assistant_actions) if method == "GET" && parts == ["personal-assistant", "actions"]
       if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "confirm"
         return ok(proposal: service.confirm_personal_assistant_action(parts[2], body))
@@ -1606,6 +1622,7 @@ module HQ
     MAX_PULL_REQUEST_INBOX_ITEMS = 100
     MAX_PROMPT_PULL_REQUEST_CONTEXTS = 5
     MAX_PROMPT_PULL_REQUEST_COMMENT_BYTES = 8 * 1024
+    PROMPT_CLIENT_REQUEST_ID_PATTERN = /\Aclient-[a-zA-Z0-9-]{1,100}\z/
     IMAGE_CONTENT_TYPES = {
       ".gif" => "image/gif",
       ".heic" => "image/heic",
@@ -1907,10 +1924,125 @@ module HQ
     end
 
     def submit_personal_assistant_prompt(attrs, actor: DelegationActor.user_actor)
-      key = @personal_assistant.status[:active_key]
-      raise Error.new("Open FRED before sending a message", status: 409) if key.to_s.empty?
+      raise Error.new("Parent-declared requests cannot message FRED", status: 403) if actor.parent?
 
-      submit_prompt(key, attrs, actor:, personal_assistant_lifecycle: true)
+      attrs = attrs.is_a?(Hash) ? attrs.transform_keys(&:to_s) : {}
+      accept_personal_assistant_message(attrs, kind: "message")
+    end
+
+    def personal_assistant_message_acceptance(client_request_id)
+      id = client_request_id.to_s.strip
+      raise Error.new("FRED message acceptance was not found", status: 404,
+                      details: { "code" => "acceptance_not_found", "client_request_id" => id }) if id.empty?
+
+      @personal_assistant.with_message_acceptance_lock(id) do
+        record = @personal_assistant.message_acceptance_record(id)
+        unless record
+          raise Error.new("FRED message acceptance was not found", status: 404,
+                          details: { "code" => "acceptance_not_found", "client_request_id" => id })
+        end
+
+        reconcile_personal_assistant_acceptance!(record)
+        @personal_assistant.message_acceptance(id)
+      end
+    end
+
+    def answer_personal_assistant_inquiry(inquiry_id, attrs = {}, actor: DelegationActor.user_actor)
+      raise Error.new("Parent-declared requests cannot answer FRED inquiries", status: 403) if actor.parent?
+
+      attrs = attrs.is_a?(Hash) ? attrs.transform_keys(&:to_s) : {}
+      answer = required_text(attrs, "answer", fallback: "prompt")
+      feedback = attrs["feedback"].to_s.strip
+      answer, feedback_embedded = inquiry_answer_with_feedback(answer, feedback, supplied: attrs.key?("feedback"))
+      accept_personal_assistant_message(
+        attrs.merge("prompt" => answer), kind: "inquiry_answer", inquiry_id: inquiry_id.to_s,
+        answer:, feedback:, feedback_embedded:
+      )
+    end
+
+    def dismiss_personal_assistant_inquiry(inquiry_id, attrs = {}, actor: DelegationActor.user_actor)
+      raise Error.new("Parent-declared requests cannot dismiss FRED inquiries", status: 403) if actor.parent?
+
+      with_personal_assistant_session!(attrs) do |context|
+        target = personal_assistant_target_for_context!(context)
+        target = @agent_store.suspend_inquiry!(target.key, inquiry_id)
+        @agent_activity_snapshot.upsert!(target)
+        {
+          accepted: true, inquiry_id: inquiry_id.to_s, active_key: context["active_key"],
+          generation: context["generation"], agent: agent_payload(target), conversation: conversation_for_agent(target)
+        }
+      end
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
+    end
+
+    def restore_personal_assistant_inquiry(inquiry_id, attrs = {}, actor: DelegationActor.user_actor)
+      raise Error.new("Parent-declared requests cannot restore FRED inquiries", status: 403) if actor.parent?
+
+      with_personal_assistant_session!(attrs) do |context|
+        target = personal_assistant_target_for_context!(context)
+        target = @agent_store.restore_inquiry!(target.key, inquiry_id)
+        @agent_activity_snapshot.upsert!(target)
+        {
+          accepted: true, restored: true, inquiry_id: inquiry_id.to_s, active_key: context["active_key"],
+          generation: context["generation"], agent: agent_payload(target), conversation: conversation_for_agent(target)
+        }
+      end
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
+    end
+
+    def edit_personal_assistant_queued_prompt(entry_id, attrs = {}, actor: DelegationActor.user_actor)
+      raise Error.new("Parent-declared requests cannot edit FRED's prompt queue", status: 403) if actor.parent?
+
+      with_personal_assistant_session!(attrs) do |context|
+        target = personal_assistant_target_for_context!(context)
+        unless target.prompt_queue.any? { |entry| entry["id"].to_s == entry_id.to_s }
+          state = target.queued_prompts.find { |entry| entry["id"].to_s == entry_id.to_s }
+          raise Error.new("Queued prompt is no longer editable", status: 409) if state
+        end
+
+        prompt = required_text(attrs, "prompt", fallback: "content")
+        target, entry = @agent_store.edit_queued_prompt!(target.key, entry_id, prompt:)
+        @agent_activity_snapshot.upsert!(target)
+        { accepted: true, active_key: context["active_key"], generation: context["generation"], queue_entry: prompt_queue_entry_payload(target, entry), agent: agent_payload(target) }
+      end
+    rescue ArgumentError => e
+      status = e.message.start_with?("Unknown queued prompt") ? 404 : 409
+      raise Error.new(e.message, status:)
+    end
+
+    def delete_personal_assistant_queued_prompt(entry_id, attrs = {}, actor: DelegationActor.user_actor)
+      raise Error.new("Parent-declared requests cannot delete FRED's prompt queue", status: 403) if actor.parent?
+
+      with_personal_assistant_session!(attrs) do |context|
+        target = personal_assistant_target_for_context!(context)
+        unless target.prompt_queue.any? { |entry| entry["id"].to_s == entry_id.to_s }
+          state = target.queued_prompts.find { |entry| entry["id"].to_s == entry_id.to_s }
+          raise Error.new("Queued prompt is no longer deletable", status: 409) if state
+        end
+
+        target, entry = @agent_store.delete_queued_prompt!(target.key, entry_id)
+        Array(entry["attachments"]).each { |attachment| cleanup_uploaded_attachment_file(target, attachment) }
+        @agent_activity_snapshot.upsert!(target)
+        { accepted: true, active_key: context["active_key"], generation: context["generation"], deleted: prompt_queue_entry_payload(target, entry), agent: agent_payload(target) }
+      end
+    rescue ArgumentError => e
+      status = e.message.start_with?("Unknown queued prompt") ? 404 : 409
+      raise Error.new(e.message, status:)
+    end
+
+    def retry_personal_assistant_prompt_queue(attrs = {}, actor: DelegationActor.user_actor)
+      raise Error.new("Parent-declared requests cannot retry FRED's prompt queue", status: 403) if actor.parent?
+
+      with_personal_assistant_session!(attrs) do |context|
+        target = personal_assistant_target_for_context!(context)
+        target = @agent_store.retry_prompt_queue!(target.key)
+        @agent_activity_snapshot.upsert!(target)
+        { accepted: true, active_key: context["active_key"], generation: context["generation"], agent: agent_payload(target), conversation: conversation_for_agent(target) }
+      end
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
     end
 
     def personal_assistant_actions
@@ -1924,7 +2056,15 @@ module HQ
       {
         types: PersonalAssistantActionCatalog::TYPES,
         read_only: PersonalAssistantActionCatalog::READ_ONLY,
-        mutations: PersonalAssistantActionCatalog::MUTATIONS
+        mutations: PersonalAssistantActionCatalog::MUTATIONS,
+        message_acceptance: {
+          required: ["client_request_id", "active_key", "generation"],
+          lookup_path: "/personal-assistant/messages/acceptance/:client_request_id"
+        },
+        dedicated_endpoints: {
+          inquiries: ["answer", "dismiss", "restore"],
+          prompt_queue: ["edit", "delete", "retry"]
+        }
       }
     end
 
@@ -3101,10 +3241,14 @@ module HQ
 
     def conversation(key)
       target = find_agent_reference!(key)
+      conversation_for_agent(target)
+    end
+
+    def conversation_for_agent(target)
       blocks = AgentChatLog.new(target).chat_blocks
       return conversation_messages(target) if blocks.empty?
 
-      reference_context = delegation_reference_context
+      reference_context = target.personal_assistant? ? delegation_reference_context([target]) : delegation_reference_context
       blocks.map do |block|
         content, metadata = sanitized_delegation_block(block.content.to_s, block.metadata, reference_context:)
         {
@@ -3139,17 +3283,17 @@ module HQ
       agent_payload(target)
     end
 
-    def submit_prompt(key, attrs = {}, actor: nil, personal_assistant_lifecycle: false, **attribute_keywords)
+    def submit_prompt(key, attrs = {}, actor: nil, personal_assistant_lifecycle: false, acceptance_id: nil, message_metadata: nil, session_context: nil, **attribute_keywords)
       attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
       actor ||= delegation_actor_from_attrs(attrs)
       target = find_agent!(key)
       reject_personal_assistant_control!(target) if target.personal_assistant? && !personal_assistant_lifecycle
-      if target.personal_assistant? && !@personal_assistant.accepting_prompts?(key)
+      if target.personal_assistant? && (!personal_assistant_lifecycle || session_context.nil?) && !@personal_assistant.accepting_prompts?(key)
         raise Error.new("Personal Assistant is closing for daily rollover and is not accepting new prompts", status: 409)
       end
       target = associate_delegation_from_attrs!(target, attrs, actor:)
       pull_request_context = render_prompt_pull_request_contexts(target, attrs)
-      attachments = import_prompt_attachments(target, attrs)
+      attachments = import_prompt_attachments(target, attrs, dedupe_key: acceptance_id)
       text = prompt_text(attrs, attachments:)
       text = [text, pull_request_context].reject(&:empty?).join("\n")
       if target.running?
@@ -3158,7 +3302,8 @@ module HQ
             target.key,
             prompt: text,
             attachments:,
-            id: prompt_client_request_id(attrs)
+            id: prompt_client_request_id(attrs),
+            client_request_id: acceptance_id
           )
           @agent_activity_snapshot.upsert!(target)
           return {
@@ -3185,7 +3330,9 @@ module HQ
           text:,
           attachments:,
           actor:,
-          retire_inquiry_id: attrs["retire_inquiry_id"]
+          retire_inquiry_id: attrs["retire_inquiry_id"],
+          metadata: message_metadata,
+          event_id: acceptance_id && "personal-assistant-message:#{acceptance_id}"
         )
       end
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"]) && !target.running?
@@ -3481,6 +3628,423 @@ module HQ
     end
 
     private
+
+    def with_personal_assistant_session!(attrs)
+      attrs = attrs.is_a?(Hash) ? attrs.transform_keys(&:to_s) : {}
+      begin
+        @personal_assistant.with_active_session!(active_key: attrs["active_key"], generation: attrs["generation"]) do |context|
+          yield context
+        end
+      rescue PersonalAssistantLifecycle::SessionConflict => e
+        details = { code: e.code }
+        details[:active_key] = e.active_key unless e.active_key.to_s.empty?
+        details[:generation] = e.generation if e.generation.to_i.positive?
+        raise Error.new(e.message, status: 409, details:)
+      end
+    end
+
+    def personal_assistant_target_for_context!(context)
+      agents = if @agent_store.respond_to?(:load_with_poll_events)
+                  @agent_store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+                else
+                  @agent_store.load
+                end
+      target = agents.find { |agent| agent.key == context["active_key"] && agent.personal_assistant? }
+      unless target
+        raise Error.new("FRED active session is unavailable", status: 409,
+                        details: { code: "session_unavailable", active_key: context["active_key"], generation: context["generation"] })
+      end
+
+      target
+    end
+
+    def personal_assistant_client_request_id!(attrs)
+      id = attrs["client_request_id"].to_s.strip
+      return id if id.match?(PROMPT_CLIENT_REQUEST_ID_PATTERN)
+
+      code = id.empty? ? "client_request_id_required" : "client_request_id_invalid"
+      raise Error.new("FRED client_request_id must match client-[A-Za-z0-9-]{1,100}", status: 400, details: { code: })
+    end
+
+    def accept_personal_assistant_message(attrs, kind:, inquiry_id: nil, answer: nil, feedback: "", feedback_embedded: false)
+      id = personal_assistant_client_request_id!(attrs)
+      prompt = answer || prompt_text(attrs, attachments: Array(attrs["attachments"]))
+
+      @personal_assistant.with_message_acceptance_lock(id) do
+        with_personal_assistant_session!(attrs) do |context|
+          payload = personal_assistant_message_payload(
+            attrs, context:, kind:, prompt:, inquiry_id:, feedback:
+          )
+          fingerprint = Digest::SHA256.hexdigest(JSON.generate(canonical_personal_assistant_value(payload)))
+          record, created = @personal_assistant.begin_message_acceptance!(
+            client_request_id: id, active_key: context["active_key"], generation: context["generation"],
+            fingerprint:, payload:, validate: false
+          )
+          if created
+            complete_personal_assistant_message!(
+              record, attrs, context:, kind:, inquiry_id:, answer:, feedback:, feedback_embedded:, prompt:
+            )
+          else
+            resume_personal_assistant_message!(
+              record, attrs, context:, kind:, inquiry_id:, answer:, feedback:, feedback_embedded:, prompt:
+            )
+          end
+        end
+      end
+    rescue PersonalAssistantLifecycle::AcceptanceConflict => e
+      raise Error.new(e.message, status: 409, details: { code: e.code, client_request_id: id })
+    end
+
+    def complete_personal_assistant_message!(record, attrs, context:, kind:, inquiry_id:, answer:, feedback:, feedback_embedded:, prompt:)
+      id = record.fetch("client_request_id")
+      begin
+        result = apply_personal_assistant_message!(
+          id, attrs, context:, kind:, inquiry_id:, answer:, feedback:, feedback_embedded:, prompt:
+        )
+        if result[:queued]
+          @personal_assistant.update_message_acceptance!(id, "state" => "queued", "queue_entry_id" => result.dig(:queue_entry, "id"))
+        else
+          @personal_assistant.update_message_acceptance!(id, "state" => "message_recorded", "message_id" => id)
+        end
+      rescue Error => e
+        reject_personal_assistant_acceptance!(id, e)
+        raise
+      rescue StandardError => e
+        mark_personal_assistant_acceptance_unknown!(id, e.message)
+        raise_personal_assistant_acceptance_error(
+          id, "FRED could not prove whether the message was recorded", code: "acceptance_unknown"
+        )
+      end
+
+      if result[:queued]
+        return personal_assistant_message_response(id, result:, replayed: false)
+      end
+      unless record["start_requested"]
+        @personal_assistant.update_message_acceptance!(id, "state" => "accepted")
+        return personal_assistant_message_response(id, result:, replayed: false)
+      end
+
+      start_personal_assistant_message!(id, attrs, context:, result:)
+    end
+
+    def resume_personal_assistant_message!(record, attrs, context:, kind:, inquiry_id:, answer:, feedback:, feedback_embedded:, prompt:)
+      id = record.fetch("client_request_id")
+      record = reconcile_personal_assistant_acceptance!(record)
+      case record["state"]
+      when "accepted", "queued", "dispatched"
+        return personal_assistant_message_response(id, replayed: true)
+      when "rejected"
+        raise_personal_assistant_acceptance_error(id, "FRED rejected this message acceptance", code: "rejected")
+      when "expired"
+        raise_personal_assistant_acceptance_error(id, "FRED message acceptance has expired and cannot be replayed", code: "acceptance_expired")
+      when "start_failed"
+        raise_personal_assistant_acceptance_error(id, "FRED message was accepted, but the requested run could not start", code: "start_failed")
+      when "unknown"
+        raise_personal_assistant_acceptance_error(id, "FRED could not prove whether the requested run started", code: "acceptance_unknown")
+      when "staged"
+        evidence = personal_assistant_message_evidence(id, context["active_key"])
+        if evidence[:journal_unavailable]
+          unless evidence[:queue_entry]
+            mark_personal_assistant_acceptance_unknown!(id, "The FRED message journal is unavailable")
+            raise_personal_assistant_acceptance_error(id, "FRED could not prove whether the message was recorded", code: "acceptance_unknown")
+          end
+        end
+        if evidence[:queue_entry]
+          @personal_assistant.update_message_acceptance!(id, "state" => "queued", "queue_entry_id" => evidence[:queue_entry]["id"])
+          return personal_assistant_message_response(id, replayed: true)
+        end
+        unless evidence[:message]
+          return complete_personal_assistant_message!(
+            record, attrs, context:, kind:, inquiry_id:, answer:, feedback:, feedback_embedded:, prompt:
+          )
+        end
+
+        @personal_assistant.update_message_acceptance!(id, "state" => "message_recorded", "message_id" => id)
+        record = @personal_assistant.message_acceptance_record(id)
+      end
+
+      if record["state"] == "message_recorded" && record["start_requested"] == true && record["launch_attempted"] != true
+        start_personal_assistant_message!(id, attrs, context:, result: nil)
+      else
+        @personal_assistant.update_message_acceptance!(id, "state" => "accepted") if record["state"] == "message_recorded"
+        personal_assistant_message_response(id, replayed: true)
+      end
+    end
+
+    def apply_personal_assistant_message!(id, attrs, context:, kind:, inquiry_id:, answer:, feedback:, feedback_embedded:, prompt:)
+      metadata = {
+        "personal_assistant_client_request_id" => id,
+        "personal_assistant_acceptance_id" => id
+      }
+      event_id = "personal-assistant-message:#{id}"
+      if kind == "inquiry_answer"
+        target = personal_assistant_target_for_context!(context)
+        attachments = import_prompt_attachments(target, attrs, dedupe_key: id)
+        target = @agent_store.answer_inquiry!(
+          target.key,
+          inquiry_id: inquiry_id,
+          answer: answer || prompt,
+          attachments:,
+          feedback:,
+          feedback_embedded:,
+          metadata:,
+          event_id_prefix: event_id
+        )
+        @agent_activity_snapshot.upsert!(target)
+        { agent: agent_payload(target), conversation: conversation_for_agent(target) }
+      else
+        submit_prompt(
+          context.fetch("active_key"), attrs.merge("start" => false),
+          actor: DelegationActor.user_actor, personal_assistant_lifecycle: true,
+          acceptance_id: id, message_metadata: metadata, session_context: context
+        )
+      end
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 409)
+    end
+
+    def start_personal_assistant_message!(id, attrs, context:, result: nil)
+      # Persist an unknown outcome before entering the external start path. A
+      # process crash after this write must never cause a duplicate start on
+      # the next client request; only a recorded run can resolve it.
+      @personal_assistant.update_message_acceptance!(
+        id, "state" => "unknown", "code" => "launch_in_flight", "launch_attempted" => true
+      )
+      target = nil
+      begin
+        target = @agent_store.start_agent!(
+          context.fetch("active_key"),
+          run_metadata: personal_assistant_run_metadata(id)
+        )
+      rescue StandardError => e
+        target = personal_assistant_agent_for(context["active_key"])
+        run = personal_assistant_run_for(target, id)
+        return finalize_personal_assistant_start!(id, target, run, result:) if run
+
+        @personal_assistant.update_message_acceptance!(id, "state" => "unknown", "code" => "acceptance_unknown", "error" => e.message)
+        raise_personal_assistant_acceptance_error(id, "FRED could not prove whether the requested run started", code: "acceptance_unknown")
+      end
+
+      run = personal_assistant_run_for(target, id)
+      finalize_personal_assistant_start!(id, target, run, result:)
+    end
+
+    def finalize_personal_assistant_start!(id, target, run, result: nil)
+      if run && run.metadata.is_a?(Hash) && run.metadata["start_failure"] == true
+        @personal_assistant.update_message_acceptance!(
+          id, "state" => "start_failed", "code" => "start_failed", "run_id" => run.run_id,
+          "error" => target&.last_summary.to_s
+        )
+        return raise_personal_assistant_acceptance_error(
+          id, "FRED message was accepted, but the requested run could not start", code: "start_failed"
+        )
+      end
+      unless run
+        @personal_assistant.update_message_acceptance!(id, "state" => "unknown", "code" => "acceptance_unknown", "error" => "No matching run was recorded")
+        return raise_personal_assistant_acceptance_error(
+          id, "FRED could not prove whether the requested run started", code: "acceptance_unknown"
+        )
+      end
+
+      @personal_assistant.update_message_acceptance!(id, "state" => "dispatched", "run_id" => run.run_id)
+      target ||= personal_assistant_agent_for(@personal_assistant.message_acceptance_record(id)["active_key"])
+      @agent_activity_snapshot.upsert!(target) if target
+      response_result = if target
+                          { agent: agent_payload(target), conversation: conversation_for_agent(target) }
+                        else
+                          result
+                        end
+      personal_assistant_message_response(id, result: response_result, replayed: false)
+    end
+
+    def reconcile_personal_assistant_acceptance!(record)
+      id = record["client_request_id"].to_s
+      state = record["state"].to_s
+      return record if %w[accepted dispatched start_failed rejected expired].include?(state)
+
+      target = personal_assistant_agent_for(record["active_key"])
+      return record unless target
+
+      evidence = personal_assistant_message_evidence(id, target.key)
+      if (run = personal_assistant_run_for(target, id))
+        if run.metadata.is_a?(Hash) && run.metadata["start_failure"] == true
+          return @personal_assistant.update_message_acceptance!(
+            id, "state" => "start_failed", "code" => "start_failed", "run_id" => run.run_id,
+            "error" => target.last_summary.to_s
+          )
+        end
+
+        return @personal_assistant.update_message_acceptance!(id, "state" => "dispatched", "run_id" => run.run_id)
+      end
+      if evidence[:queue_entry] && %w[staged message_recorded queued].include?(state)
+        return @personal_assistant.update_message_acceptance!(
+          id, "state" => "queued", "queue_entry_id" => evidence[:queue_entry]["id"], "queue_claim_id" => evidence[:queue_claim_id]
+        )
+      end
+      if evidence[:message] && %w[staged message_recorded].include?(state)
+        return @personal_assistant.update_message_acceptance!(id, "state" => "message_recorded", "message_id" => id)
+      end
+      return record if evidence[:journal_unavailable]
+
+      record
+    end
+
+    def personal_assistant_message_evidence(client_request_id, active_key)
+      target = personal_assistant_agent_for(active_key)
+      return {} unless target
+
+      queue_entry = target.queued_prompts.find do |entry|
+        entry["id"].to_s == client_request_id.to_s || entry["client_request_id"].to_s == client_request_id.to_s
+      end
+      claim = target.prompt_queue_claim
+      claim_entry = Array(claim&.fetch("entries", nil)).find do |entry|
+        entry["id"].to_s == client_request_id.to_s || entry["client_request_id"].to_s == client_request_id.to_s
+      end
+      journal_unavailable = false
+      message = begin
+        AgentMemory.new(target).personal_assistant_message_event(client_request_id)
+      rescue StandardError
+        journal_unavailable = true
+        nil
+      end
+      {
+        message:,
+        queue_entry: queue_entry || claim_entry,
+        queue_claim_id: claim_entry && claim["id"],
+        journal_unavailable:
+      }
+    end
+
+    def personal_assistant_agent_for(key)
+      key = key.to_s
+      return nil if key.empty?
+
+      agents = if @agent_store.respond_to?(:load_with_poll_events)
+                  @agent_store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+                else
+                  @agent_store.load
+                end
+      agents.find { |agent| agent.key == key && agent.personal_assistant? }
+    end
+
+    def personal_assistant_run_for(target, client_request_id)
+      return nil unless target
+
+      id = client_request_id.to_s
+      target.runs.reverse.find do |run|
+        metadata = run.metadata
+        metadata.is_a?(Hash) && (metadata["personal_assistant_client_request_id"].to_s == id || Array(metadata["personal_assistant_client_request_ids"]).map(&:to_s).include?(id))
+      end
+    end
+
+    def personal_assistant_run_metadata(client_request_id)
+      {
+        "personal_assistant_client_request_id" => client_request_id.to_s,
+        "personal_assistant_acceptance_id" => client_request_id.to_s
+      }
+    end
+
+    def personal_assistant_message_response(client_request_id, result: nil, replayed: true)
+      acceptance = @personal_assistant.message_acceptance(client_request_id)
+      body = {
+        accepted: true,
+        replayed: replayed,
+        client_request_id: client_request_id.to_s,
+        active_key: acceptance && acceptance["active_key"],
+        generation: acceptance && acceptance["generation"],
+        acceptance:
+      }
+      body[:inquiry_id] = acceptance["inquiry_id"] if acceptance && acceptance["inquiry_id"]
+      body[:queued] = true if acceptance && acceptance["state"] == "queued"
+      if result.is_a?(Hash)
+        body[:queued] = true if result[:queued]
+        body[:queue_entry] = result[:queue_entry] if result[:queue_entry]
+        body[:agent] = result[:agent] if result[:agent]
+        body[:conversation] = result[:conversation] if result[:conversation]
+      end
+      unless body[:agent]
+        target = personal_assistant_agent_for(acceptance && acceptance["active_key"])
+        if target
+          body[:agent] = agent_payload(target)
+          body[:conversation] = conversation_for_agent(target)
+          if acceptance && acceptance["state"] == "queued"
+            body[:queue_entry] = body[:agent].dig(:prompt_queue, "entries")&.find { |entry| entry["id"] == client_request_id.to_s }
+          end
+        end
+      end
+      body
+    end
+
+    def raise_personal_assistant_acceptance_error(client_request_id, message, code:)
+      acceptance = @personal_assistant.message_acceptance(client_request_id)
+      details = { code:, acceptance: }
+      raise Error.new(message, status: 409, details:)
+    end
+
+    def reject_personal_assistant_acceptance!(client_request_id, error)
+      record = @personal_assistant.message_acceptance_record(client_request_id)
+      return unless record
+      return unless %w[staged message_recorded].include?(record["state"].to_s)
+
+      details = error.respond_to?(:details) && error.details.is_a?(Hash) ? error.details : {}
+      code = details[:code] || details["code"]
+      @personal_assistant.update_message_acceptance!(
+        client_request_id, "state" => "rejected", "code" => code || "rejected", "error" => error.message
+      )
+    end
+
+    def mark_personal_assistant_acceptance_unknown!(client_request_id, error)
+      record = @personal_assistant.message_acceptance_record(client_request_id)
+      return unless record
+      return if %w[accepted queued dispatched start_failed rejected expired].include?(record["state"].to_s)
+
+      @personal_assistant.update_message_acceptance!(
+        client_request_id, "state" => "unknown", "code" => "acceptance_unknown", "error" => error.to_s[0, 600]
+      )
+    end
+
+    def personal_assistant_message_payload(attrs, context:, kind:, prompt:, inquiry_id:, feedback:)
+      {
+        "active_key" => context["active_key"],
+        "generation" => context["generation"],
+        "kind" => kind.to_s,
+        "prompt" => prompt.to_s.strip,
+        "inquiry_id" => inquiry_id.to_s.strip.empty? ? nil : inquiry_id.to_s.strip,
+        "retire_inquiry_id" => attrs["retire_inquiry_id"].to_s.strip.empty? ? nil : attrs["retire_inquiry_id"].to_s.strip,
+        "feedback" => feedback.to_s,
+        "start" => truthy?(attrs["start"]),
+        "pull_request_contexts" => attrs["pull_request_contexts"],
+        "attachments" => personal_assistant_attachment_fingerprints(attrs["attachments"])
+      }.delete_if { |_key, value| value.nil? }
+    end
+
+    def personal_assistant_attachment_fingerprints(value)
+      Array(value).first(5).map do |attachment|
+        next attachment.to_s unless attachment.is_a?(Hash)
+
+        fingerprint = attachment.each_with_object({}) do |(key, item), result|
+          next if %w[content_base64 base64 content].include?(key.to_s)
+
+          result[key.to_s] = item
+        end
+        content = attachment["content_base64"] || attachment["base64"] || attachment["content"]
+        fingerprint["content_sha256"] = Digest::SHA256.hexdigest(content.to_s) unless content.nil?
+        canonical_personal_assistant_value(fingerprint)
+      end
+    end
+
+    def canonical_personal_assistant_value(value)
+      case value
+      when Hash
+        value.each_with_object({}) do |(key, item), result|
+          result[key.to_s] = canonical_personal_assistant_value(item)
+        end.sort.to_h
+      when Array
+        value.map { |item| canonical_personal_assistant_value(item) }
+      else
+        value
+      end
+    end
 
     def validate_ad_hoc_remote_url!(value)
       uri = URI.parse(value.to_s.strip)
@@ -4410,11 +4974,11 @@ module HQ
       value == true || %w[true yes on 1].include?(value.to_s.downcase)
     end
 
-    def import_prompt_attachments(target, attrs)
+    def import_prompt_attachments(target, attrs, dedupe_key: nil)
       uploads = attrs["attachments"]
       return [] unless uploads.is_a?(Array) && uploads.any?
 
-      AgentAttachmentStore.new(target).import_remote_uploads!(uploads)
+      AgentAttachmentStore.new(target).import_remote_uploads!(uploads, dedupe_key:)
     rescue ArgumentError => e
       raise Error.new(e.message, status: 400)
     end
@@ -4516,7 +5080,11 @@ module HQ
     end
 
     def delegation_payload(agent, reference_context: nil, relationship_context: nil)
-      reference_context ||= delegation_reference_context
+      reference_context ||= if agent.personal_assistant?
+                              delegation_reference_context([agent])
+                            else
+                              delegation_reference_context
+                            end
       relationship_context ||= delegation_relationship_context
       relationships = {
         "parent" => relationship_context.fetch(:parents)[agent.key],
@@ -4929,6 +5497,7 @@ module HQ
         "prompt" => entry["prompt"],
         "accepted_at" => entry["accepted_at"],
         "updated_at" => entry["updated_at"],
+        "client_request_id" => entry["client_request_id"],
         "state" => entry["state"] || "queued",
         "attachments" => Array(entry["attachments"]).map do |attachment|
           attachment.slice("id", "type", "kind", "title", "mime_type", "size_bytes", "created_at")

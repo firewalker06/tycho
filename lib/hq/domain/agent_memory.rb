@@ -227,6 +227,19 @@ module HQ
       nil
     end
 
+    def personal_assistant_message_event(client_request_id)
+      id = client_request_id.to_s.strip
+      return nil if id.empty?
+
+      journal.events!.reverse_each do |event|
+        next unless event["type"] == "user_message"
+        next unless event.dig("metadata", "personal_assistant_client_request_id").to_s == id
+
+        return event
+      end
+      nil
+    end
+
     def personal_assistant_action_results_after(time)
       threshold = time.is_a?(Time) ? time : nil
       read_events.filter_map do |event|
@@ -332,7 +345,7 @@ module HQ
       false
     end
 
-    def append_user_message!(content, created_at: Time.now, attachments: nil, metadata: nil)
+    def append_user_message!(content, created_at: Time.now, attachments: nil, metadata: nil, event_id: nil)
       text = content.to_s.strip
       return if text.empty?
 
@@ -340,12 +353,13 @@ module HQ
       event_metadata = metadata.is_a?(Hash) ? metadata.dup : {}
       event_metadata.merge!(attachment_metadata(normalized_attachments) || {})
       append_attachment_records!(normalized_attachments, created_at:) if normalized_attachments.any?
-      append_event!(
+      event = {
         "type" => "user_message",
         "content" => text,
         "created_at" => created_at.iso8601,
         "metadata" => event_metadata.empty? ? nil : event_metadata
-      )
+      }
+      event_id.to_s.strip.empty? ? append_event!(event) : append_unique_event!(event_id, event)
     end
 
     def append_assistant_message!(content, created_at: Time.now, metadata: nil)
@@ -469,7 +483,7 @@ module HQ
       )
     end
 
-    def append_inquiry_response!(content, created_at: Time.now, inquiry_id: nil)
+    def append_inquiry_response!(content, created_at: Time.now, inquiry_id: nil, event_id: nil)
       text = content.to_s.strip
       return if text.empty?
 
@@ -483,12 +497,13 @@ module HQ
         nil
       end
 
-      append_event!(
+      event = {
         "type" => "inquiry_response",
         "content" => text,
         "created_at" => created_at.iso8601,
         "metadata" => metadata.empty? ? nil : metadata
-      )
+      }
+      event_id.to_s.strip.empty? ? append_event!(event) : append_unique_event!(event_id, event)
     end
 
     def append_inquiry_cancelled!(created_at: Time.now, inquiry_id: nil)

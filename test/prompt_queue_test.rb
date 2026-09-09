@@ -284,7 +284,7 @@ module PromptQueueTest
 
   def with_stubbed_start(error: nil)
     original = HQ::ManagedAgent.instance_method(:start!)
-    HQ::ManagedAgent.define_method(:start!) do |delegation_stamp: nil|
+    HQ::ManagedAgent.define_method(:start!) do |delegation_stamp: nil, run_metadata: nil|
       raise error if error
 
       now = Time.now
@@ -296,7 +296,8 @@ module PromptQueueTest
         run_id: SecureRandom.uuid, started_at: now, finished_at: now, exit_code: 0,
         status: "succeeded", log_path: raw_log_path, command: "stubbed",
         delegation_owner: delegation_stamp&.fetch("owner", nil),
-        delegation_generation: delegation_stamp&.fetch("generation", nil)
+        delegation_generation: delegation_stamp&.fetch("generation", nil),
+        metadata: run_metadata.is_a?(Hash) ? run_metadata : {}
       )
       true
     end
@@ -308,7 +309,7 @@ module PromptQueueTest
   def with_stubbed_running_start
     original = HQ::ManagedAgent.instance_method(:start!)
     pids = []
-    HQ::ManagedAgent.define_method(:start!) do |delegation_stamp: nil|
+    HQ::ManagedAgent.define_method(:start!) do |delegation_stamp: nil, run_metadata: nil|
       now = Time.now
       pid = Process.spawn(RbConfig.ruby, "-e", "sleep 60", pgroup: true, out: File::NULL, err: File::NULL)
       pids << pid
@@ -321,7 +322,8 @@ module PromptQueueTest
         run_id: run_id, run_scoped_status: true, started_at: now,
         status: "running", log_path: raw_log_path,
         command: "stubbed-running", delegation_owner: delegation_stamp&.fetch("owner", nil),
-        delegation_generation: delegation_stamp&.fetch("generation", nil)
+        delegation_generation: delegation_stamp&.fetch("generation", nil),
+        metadata: run_metadata.is_a?(Hash) ? run_metadata : {}
       )
       true
     end

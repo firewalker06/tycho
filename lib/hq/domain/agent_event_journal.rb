@@ -23,6 +23,12 @@ module HQ
       []
     end
 
+    def events!
+      return [] unless File.exist?(path)
+
+      with_file(File::LOCK_SH) { |file| read_events(file, strict: true) }
+    end
+
     def append(event, event_id: nil)
       append_with_status(event, event_id:).first
     end
@@ -90,7 +96,7 @@ module HQ
       end
     end
 
-    def read_events(file)
+    def read_events(file, strict: false)
       file.rewind
       file.each_line.filter_map do |line|
         next if line.to_s.strip.empty?
@@ -98,6 +104,8 @@ module HQ
         event = JSON.parse(line)
         event if event.is_a?(Hash)
       rescue JSON::ParserError
+        raise if strict
+
         nil
       end
     end
