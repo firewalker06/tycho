@@ -101,7 +101,9 @@ conversation before the final structured result is persisted.
 The Remote Server shares a bounded timezone snapshot cache across its short-lived
 services. It computes the local date and next daily boundary together in a
 child-only timezone environment, reuses them until the derived boundary, and
-never changes process-global `TZ`. The isolated 101-agent fixture reduced
-active status from roughly 476 ms to 123 ms; warm status/actions/current-work
-reads measured about 0.6/0.7/0.6 ms. These are fixture measurements, not
-production SLAs. Bootstrap `/setup` remained a separate 3.47 s catalog step.
+never changes process-global `TZ`. The synthetic 101-agent inventory/progress
+fixture (100 non-running agents plus one FRED session with a projected semantic
+event) reduced status serialization from roughly 476 ms to 123 ms; warm
+status/actions/current-work reads measured about 0.6/0.7/0.6 ms. No harness
+ran in this fixture. These are fixture measurements, not production SLAs.
+Bootstrap `/setup` remained a separate 3.47 s catalog step.
