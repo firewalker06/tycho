@@ -5413,6 +5413,49 @@ Saved safely.
         if (value !== draft) throw new Error(`Composer draft was not preserved: ${JSON.stringify(value)}`);
         await assertEditorExcludedFromRefresh("#composer:not(.composer-full-screen)", "Inline conversation form", "#prompt-input");
 
+        // Polling may observe a server snapshot while the user is composing.
+        // The browser must retain the rendered history and scroll position until
+        // the explicit accessible control is activated.
+        const stagedConversation = await page.evaluate((key) => {
+          const baseline = Array.from({ length: 28 }, (_item, index) => ({
+            id: `manual-load-${index}`,
+            kind: "message",
+            role: index % 2 ? "assistant" : "user",
+            content: `Existing message ${index}`,
+            created_at: new Date(1_700_000_000_000 + index * 1000).toISOString(),
+          }));
+          state.conversations[key] = { revision: "manual-load-baseline", blocks: baseline, loaded: true, loading: false };
+          delete state.pendingConversationUpdates[key];
+          render({ preserveLiveEditor: true });
+          const root = document.querySelector("[data-agent-conversation-scroll]");
+          root.scrollTop = Math.max(0, root.scrollHeight - root.clientHeight - 120);
+          const before = root.scrollTop;
+          receiveConversationSnapshot(key, [...baseline, {
+            id: "manual-load-new",
+            kind: "message",
+            role: "assistant",
+            content: "Server message staged for manual loading",
+            created_at: new Date().toISOString(),
+          }], "manual-load-next");
+          render({ preserveLiveEditor: true });
+          return {
+            before,
+            after: document.querySelector("[data-agent-conversation-scroll]").scrollTop,
+            draft: document.querySelector("#prompt-input")?.value,
+            button: document.querySelector("[data-load-pending-conversation]")?.getAttribute("aria-label"),
+            stagedVisible: document.body.textContent.includes("Server message staged for manual loading"),
+          };
+        }, agentKey);
+        if (stagedConversation.button !== "Load 1 new message" || stagedConversation.stagedVisible ||
+            stagedConversation.draft !== draft || Math.abs(stagedConversation.after - stagedConversation.before) > 8) {
+          throw new Error(`Manual conversation loading changed the visible snapshot before activation: ${JSON.stringify(stagedConversation)}`);
+        }
+        await page.click("[data-load-pending-conversation]");
+        await page.waitForFunction(() => document.body.textContent.includes("Server message staged for manual loading"), { timeout: 10_000 });
+        if (await page.locator("[data-load-pending-conversation]").count() || (await page.locator("#prompt-input").inputValue()) !== draft) {
+          throw new Error("Manual conversation loading did not apply the staged snapshot while preserving the composer");
+        }
+
         const expandButtonGeometry = await page.locator(".composer-full-screen-button").evaluate((button) => {
           const control = button.getBoundingClientRect();
           const icon = button.querySelector(".ui-icon").getBoundingClientRect();
