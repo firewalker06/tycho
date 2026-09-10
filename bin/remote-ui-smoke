@@ -5873,6 +5873,17 @@ Saved safely.
         }
         await page.click("[data-toggle-inquiry-full-screen]");
         await page.waitForSelector("#inquiry-form.inquiry-form-full-screen", { state: "visible", timeout: 10_000 });
+        await page.locator("#inquiry-feedback").press("Tab");
+        const inquiryTabTarget = await page.evaluate(() => {
+          const active = document.activeElement;
+          return {
+            uploadButton: active?.matches("[data-add-prompt-attachment]"),
+            hiddenFileInput: active?.matches("[data-prompt-attachment-input]"),
+          };
+        });
+        if (!inquiryTabTarget.uploadButton || inquiryTabTarget.hiddenFileInput) {
+          throw new Error(`Inquiry feedback Tab must skip the hidden file input: ${JSON.stringify(inquiryTabTarget)}`);
+        }
         const inquiryModalBox = await page.locator("#inquiry-form.inquiry-form-full-screen").boundingBox();
         const inquiryModalRole = await page.locator("#inquiry-form").getAttribute("role");
         const inquiryBackgroundInert = await page.locator("[data-agent-workspace]").evaluate((element) => element.inert);

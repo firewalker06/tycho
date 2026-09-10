@@ -157,6 +157,13 @@ module HQ
           next
         end
 
+        if parent.latest_inquiry
+          reports.each do |report|
+            delegation_store.update_report!(report.fetch("id"), resume_state: "awaiting_parent_input")
+          end
+          next
+        end
+
         parent_workspace = canonical_workspace(parent.workspace)
         conflicts = agents.any? do |agent|
           agent.key != parent.key && canonical_workspace(agent.workspace) == parent_workspace && agent.running?
