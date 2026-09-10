@@ -18,6 +18,7 @@ module SchedulerTest
   def run!
     with_stubbed_agent_start do
       assert_schedule_registry_validates_scope_and_prompt_paths
+      assert_schedule_execution_overrides_round_trip_and_apply
       assert_schedule_store_tracks_daemon_state
       assert_scheduler_run_reuses_schedule_agent_session
       assert_scheduler_adopts_existing_session_and_expires_loop
@@ -140,6 +141,43 @@ module SchedulerTest
       YAML
       assert_raises(HQ::ScheduleRegistry::Error, "expected message_file outside schedules/ to be rejected") do
         HQ::ScheduleRegistry.new(path: invalid_file, projects: registry.projects.map { |config| HQ::Project.new(config) }).schedules
+      end
+    end
+  end
+
+  def assert_schedule_execution_overrides_round_trip_and_apply
+    with_temp_runtime do |dir|
+      registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: override
+            cron: "0 9 * * *"
+            target:
+              type: agent
+              project_key: web
+              agent: claude
+              model: claude-opus-5
+              reasoning_effort: high
+              message: "Run with overrides."
+      YAML
+      projects = registry.projects.map { |config| HQ::Project.new(config) }
+      schedules = HQ::ScheduleRegistry.new(path: schedule_path, projects: projects).schedules
+      schedule = schedules.fetch(0)
+      assert(schedule.execution_overrides == { agent: "claude", model: "claude-opus-5", reasoning_effort: "high" },
+             "expected schedule execution override round trip")
+
+      scheduler = build_scheduler(registry, schedule_path)
+      started = scheduler.run_now("override", now: Time.new(2026, 7, 16, 9, 0, 0, "+07:00"))
+      agent = started.fetch(:agent)
+      assert(agent.agent == "claude" && agent.model == "claude-opus-5" && agent.reasoning_effort == "high",
+             "expected scheduled session to use target execution overrides")
+
+      invalid = HQ::ScheduleRegistry.new(
+        path: schedule_path,
+        projects: projects,
+        harness_catalogs: { "claude" => HQ::HarnessCatalogConfig.new(key: "claude", models: ["claude-opus-5"], reasoning_efforts: ["high"]) }
+      )
+      assert_raises(HQ::ScheduleRegistry::Error, "expected configured harness catalog to reject an invalid override") do
+        invalid.update("override", "model" => "not-in-catalog")
       end
     end
   end

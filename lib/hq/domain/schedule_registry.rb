@@ -5,6 +5,7 @@ require "yaml"
 
 require_relative "constants"
 require_relative "file_store"
+require_relative "../harness_registry"
 
 module HQ
   class CronExpression
@@ -107,7 +108,7 @@ module HQ
   ScheduleDefinition = Struct.new(
     :key, :name, :enabled, :cron, :timezone, :project_key, :agent_name,
     :agent_key, :system_message, :message_source, :message, :message_file, :message_path,
-    :ends_at, :policy,
+    :ends_at, :policy, :agent, :model, :reasoning_effort,
     keyword_init: true
   ) do
     def cron_expression
@@ -147,6 +148,10 @@ module HQ
     def expired?(time = Time.now)
       ends_at && time >= ends_at
     end
+
+    def execution_overrides
+      { agent:, model:, reasoning_effort: }.compact
+    end
   end
 
   class ScheduleRegistry
@@ -154,10 +159,11 @@ module HQ
 
     attr_reader :path, :projects, :schedules_root
 
-    def initialize(path: SCHEDULES_FILE, projects:, schedules_root: nil)
+    def initialize(path: SCHEDULES_FILE, projects:, schedules_root: nil, harness_catalogs: {})
       @path = File.expand_path(path)
       @projects = projects
       @schedules_root = File.expand_path(schedules_root || USER_SCHEDULES_DIR)
+      @harness_catalogs = harness_catalogs || {}
     end
 
     def schedules
@@ -291,6 +297,9 @@ module HQ
       assign_clean_string(target, "name", values, source_key: "agent_name", fallback: target["name"])
       assign_clean_string(target, "agent_key", values, fallback: target["agent_key"])
       assign_clean_string(target, "system_message", values, fallback: target["system_message"])
+      assign_clean_string(target, "agent", values, fallback: target["agent"])
+      assign_clean_string(target, "model", values, fallback: target["model"])
+      assign_clean_string(target, "reasoning_effort", values, fallback: target["reasoning_effort"])
       source = clean_string(values["message_source"], fallback: target["message_source"])
       source = target["message_file"].to_s.empty? ? "inline" : "file" if source.to_s.empty?
       target["message_source"] = source
@@ -356,9 +365,13 @@ module HQ
       ends_at = optional_time!(entry["ends_at"], label: "schedule #{key.inspect} ends_at")
 
       project_key = required_string(target, "project_key", label: "schedule #{key.inspect} target")
-      project_for!(key, project_key)
+      project = project_for!(key, project_key)
       source, message, message_file, message_path = message_fields!(key, target)
       policy = normalize_policy!(key, entry["policy"])
+      agent = optional_nil_string(target["agent"]&.to_s&.downcase)
+      model = optional_nil_string(target["model"])
+      reasoning_effort = optional_nil_string(target["reasoning_effort"]&.to_s&.downcase)
+      validate_execution_overrides!(key, project, agent:, model:, reasoning_effort:)
 
       ScheduleDefinition.new(
         key: key,
@@ -375,7 +388,10 @@ module HQ
         message_file: message_file,
         message_path: message_path,
         ends_at: ends_at,
-        policy: policy
+        policy: policy,
+        agent: agent,
+        model: model,
+        reasoning_effort: reasoning_effort
       )
     end
 
@@ -447,6 +463,31 @@ module HQ
     def optional_string(value, fallback:)
       text = value.to_s.strip
       text.empty? ? fallback.to_s : text
+    end
+
+    def optional_nil_string(value)
+      text = value.to_s.strip
+      text.empty? ? nil : text
+    end
+
+    def validate_execution_overrides!(key, project, agent:, model:, reasoning_effort:)
+      harness = agent || project.config.agent
+      unless HQ.supported_harness?(harness)
+        raise Error, "Schedule #{key.inspect} has unsupported harness #{harness.inspect}. Supported: #{HQ.harness_keys.join(", ")}"
+      end
+
+      catalog = @harness_catalogs[harness.to_s]
+      return unless catalog
+
+      configured_models = Array(catalog.models).map(&:to_s).reject(&:empty?)
+      if model && configured_models.any? && !configured_models.include?(model)
+        raise Error, "Schedule #{key.inspect} model #{model.inspect} is not allowed for harness #{harness.inspect}"
+      end
+
+      configured_efforts = Array(catalog.reasoning_efforts).map { |value| value.to_s.downcase }.reject(&:empty?)
+      if reasoning_effort && configured_efforts.any? && !configured_efforts.include?(reasoning_effort)
+        raise Error, "Schedule #{key.inspect} reasoning_effort #{reasoning_effort.inspect} is not allowed for harness #{harness.inspect}"
+      end
     end
 
     def optional_time!(value, label:)

@@ -4805,7 +4805,7 @@ module HQ
     end
 
     def schedule_registry
-      ScheduleRegistry.new(projects: @projects)
+      ScheduleRegistry.new(projects: @projects, harness_catalogs: @registry.harness_catalogs)
     end
 
     def schedule_definition!(key)
