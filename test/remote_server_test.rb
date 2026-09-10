@@ -5035,6 +5035,7 @@ module RemoteServerTest
       write_project_workspace(workspace)
       notifier = RecordingPushNotifier.new
       service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace), web_push_notifier: notifier)
+      service.setup_personal_assistant("confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "UTC")
       finished_at = Time.now - 60
       fred = HQ::ManagedAgent.new(
         key: "personal-assistant-test-1", name: "Personal Assistant · today", project_key: "__personal_assistant__",
@@ -5042,7 +5043,20 @@ module RemoteServerTest
         started_at: finished_at, finished_at: finished_at, last_exit_code: 0, summary: "Prepared the release request.", unread: true,
         runs: [HQ::ManagedAgent::AgentRun.new(started_at: finished_at, finished_at: finished_at, exit_code: 0, status: "succeeded")]
       )
-      HQ::AgentStore.new([]).save([fred])
+      historical_fred = HQ::ManagedAgent.new(
+        key: "personal-assistant-yesterday-0", name: "Personal Assistant · yesterday", project_key: "__personal_assistant__",
+        template_key: "personal_assistant_daily", workspace: workspace, prompt: "Assist.", role: "personal_assistant_daily",
+        started_at: finished_at, finished_at: finished_at, last_exit_code: 0, summary: "Old work.", unread: true,
+        runs: [HQ::ManagedAgent::AgentRun.new(started_at: finished_at, finished_at: finished_at, exit_code: 0, status: "succeeded")]
+      )
+      HQ::AgentStore.new([]).save([fred, historical_fred])
+      HQ::FileStore.write_json(File.join(HQ::PERSONAL_ASSISTANT_DIR, "state.json"), {
+                                 "active_key" => fred.key, "active_date" => Time.now.utc.strftime("%F"),
+                                 "active_timezone" => "UTC", "generation" => 1, "phase" => "active"
+                               })
+
+      active_notification_keys = service.send(:notification_agents, HQ::AgentStore.new([]).load).select(&:personal_assistant?).map(&:key)
+      assert(active_notification_keys == [fred.key], "expected only the active FRED generation to join notification reconciliation")
 
       result = service.dispatch_agent_push_notifications!
       assert(result[:events] == 1, "expected a protected FRED session to dispatch one notification")
@@ -5054,6 +5068,12 @@ module RemoteServerTest
       assert(service.agents.empty?, "expected FRED to remain outside the generic agent catalog")
       service.dispatch_agent_push_notifications!
       assert(notifier.payloads.length == 1, "expected FRED notification deduplication to survive polling")
+      HQ::FileStore.write_json(File.join(HQ::PERSONAL_ASSISTANT_DIR, "state.json"), {
+                                 "active_key" => fred.key, "active_date" => Time.now.utc.strftime("%F"),
+                                 "active_timezone" => "UTC", "generation" => 1, "phase" => "closing"
+                               })
+      assert(service.send(:notification_agents, HQ::AgentStore.new([]).load).none?(&:personal_assistant?),
+             "expected a closing FRED generation to be excluded from unread and push reconciliation")
     end
   end
 
@@ -7034,6 +7054,13 @@ module RemoteServerTest
            "expected Agent detail to mark read from visible render state rather than data fetch")
     assert(js[:body].include?("readMarkTimer"),
            "expected Agent detail read marking to use a guarded dwell timer")
+    assert(js[:body].include?("function schedulePersonalAssistantReading") &&
+           js[:body].include?("personalAssistantReadMarkTimer") &&
+           js[:body].include?("route.type !== \"personalAssistant\"") &&
+           js[:body].include?("personalAssistantSessionMatches(context)"),
+           "expected FRED unread clearing to cancel on navigation and reject stale daily generations")
+    assert(js[:body].include?("personalAssistantReadingContext === contextId"),
+           "expected repeated FRED renders to coalesce an in-flight read mutation")
     assert(js[:body].include?("/reading"),
            "expected Agent detail read state to use the reading endpoint")
     assert(js[:body].include?('if (agent.unread) return "Unread";'),
