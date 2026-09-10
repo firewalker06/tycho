@@ -130,6 +130,19 @@ module HQ
       synchronize { |state| snapshot_finalized_proposals!(state); reconcile!(state); state["phase"] == "active" && state["active_key"] == key.to_s }
     end
 
+    # Notification polling observes the current daily generation without
+    # dispatching queued work or advancing a closing session.
+    def active_notification_session
+      synchronize do |state|
+        reconcile!(state, dispatch_prompt_queues: false)
+        return nil unless state["phase"] == "active"
+
+        key = state["active_key"].to_s
+        generation = state["generation"].to_i
+        key.empty? || generation <= 0 ? nil : { "active_key" => key, "generation" => generation }
+      end
+    end
+
     def with_active_session!(active_key:, generation:)
       key = active_key.to_s.strip
       supplied_generation = normalize_generation(generation)

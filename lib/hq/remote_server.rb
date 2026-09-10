@@ -4720,7 +4720,19 @@ module HQ
     # FRED is deliberately outside the generic agent catalog, yet its finished
     # work still deserves the same unread and push reconciliation.
     def notification_agents(agents)
-      visible_agents(agents) + agents.select(&:personal_assistant?)
+      visible_agents(agents) + active_personal_assistant_notification_agents(agents)
+    end
+
+    def active_personal_assistant_notification_agents(agents)
+      session = @personal_assistant.active_notification_session
+      return [] unless session
+
+      active_key = session["active_key"].to_s
+      return [] if active_key.empty?
+
+      agents.select { |agent| agent.personal_assistant? && agent.key == active_key }
+    rescue ArgumentError
+      []
     end
 
     def hidden_setting_value(attrs)
