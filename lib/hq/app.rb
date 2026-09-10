@@ -2238,6 +2238,7 @@ def selected_screen_items
       end
       @agent_chat_form.composer.clear unless @agent_chat_form.inquiry_active?
       save_agents!
+      Scheduler.new(registry: @registry).resume_after_user_message(agent.key) if agent.scheduled?
       unless agent.running?
         replacement = @agent_store.start_agent!(agent.key)
         @agents[@agents.index { |item| item.key == agent.key }] = replacement

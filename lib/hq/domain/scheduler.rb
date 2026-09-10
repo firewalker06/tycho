@@ -80,6 +80,29 @@ module HQ
       { status: :resumed, schedule: schedule_payload(schedule, state) }
     end
 
+    # Re-enable only schedules that this scheduler explicitly stopped while their
+    # own managed session awaited a user's reply. Manual pauses and all other
+    # stopped conditions intentionally remain unchanged.
+    def resume_after_user_message(agent_key, now: Time.now)
+      key = agent_key.to_s
+      return [] if key.empty?
+
+      states = store.load
+      resumed = schedule_registry.schedules.filter_map do |schedule|
+        state = states[schedule.key]
+        next unless state&.stopped_for_awaiting_input?
+        next unless state.last_target_key.to_s == key
+
+        resume_state!(schedule, state, now:, reason: "user_message")
+        schedule_payload(schedule, state)
+      end
+      store.save(states) if resumed.any?
+      resumed
+    rescue ScheduleRegistry::Error => e
+      HQ.logger.warn("Scheduler") { "Skipped auto-resume after user message: #{e.message}" }
+      []
+    end
+
     def resume_and_run_now(key, now: Time.now, dry_run: false)
       schedule, states, state = schedule_state_for(key)
       ensure_not_expired!(schedule, state, states, now:)
@@ -270,7 +293,10 @@ module HQ
         last_target_key: state.last_target_key,
         run_count: state.run_count.to_i,
         session_run_count: agent ? agent.run_count.to_i : state.run_count.to_i,
-        skip_count: state.skip_count.to_i
+        skip_count: state.skip_count.to_i,
+        stopped_reason: state.stopped_reason,
+        last_resume_reason: state.last_resume_reason,
+        resumed_at: state.resumed_at&.iso8601
       }
     end
 
@@ -316,7 +342,7 @@ module HQ
       return false unless schedule.expired?(now)
       return false if state.stopped? && state.last_status.to_s == "expired"
 
-      state.mark_stopped!(now:)
+      state.mark_stopped!(now:, reason: "expired")
       state.next_due_at = nil
       state.last_status = "expired"
       state.last_error = nil
@@ -369,6 +395,7 @@ module HQ
       state.last_target_key = agent.key
       state.next_due_at = schedule.next_due_after(now)
       state.resumed_at = nil
+      state.last_resume_reason = nil
       state.run_count = state.run_count.to_i + 1
       publish("schedule.started", schedule, state, agent_key: agent.key)
 
@@ -384,7 +411,7 @@ module HQ
       end
       state.last_status = "failed"
       state.last_error = e.message
-      state.mark_stopped!(now:)
+      state.mark_stopped!(now:, reason: "failure")
       notify_schedule_failure(schedule, state, now:, error: e.message)
       publish("schedule.failed", schedule, state, error: e.message)
       publish("schedule.stopped", schedule, state, reason: "failure")
@@ -409,7 +436,7 @@ module HQ
       state.last_status = agent.status
       state.last_error = agent.last_summary
       state.last_finished_at ||= agent.finished_at || now
-      state.mark_stopped!(now:)
+      state.mark_stopped!(now:, reason: "awaiting_input")
       notify_schedule_input_required(schedule, state, agent, now:)
       publish("schedule.stopped", schedule, state, agent_key: agent.key, reason: "input_required")
       { status: :skipped, schedule: schedule_payload(schedule, state) }
@@ -420,7 +447,7 @@ module HQ
       state.last_error = reason
       state.skip_count = state.skip_count.to_i + 1
       state.next_due_at = schedule.next_due_after(now)
-      state.mark_stopped!(now:) if reason.to_s == "interactive"
+      state.mark_stopped!(now:, reason: "interactive") if reason.to_s == "interactive"
       publish("schedule.skipped", schedule, state, reason:)
     end
 
@@ -465,14 +492,15 @@ module HQ
       agents.find { |agent| agent.key == key }
     end
 
-    def resume_state!(schedule, state, now:)
+    def resume_state!(schedule, state, now:, reason: nil)
       was_stopped = state.stopped?
       was_paused = state.paused?
       state.mark_scheduled!
       state.next_due_at = schedule.next_due_after(now)
       state.resumed_at = now if was_stopped || was_paused
-      reason = was_stopped ? "stopped" : (was_paused ? "paused" : "manual")
-      publish("schedule.resumed", schedule, state, reason: reason)
+      state.last_resume_reason = reason if was_stopped || was_paused
+      event_reason = reason || (was_stopped ? "stopped" : (was_paused ? "paused" : "manual"))
+      publish("schedule.resumed", schedule, state, reason: event_reason)
     end
 
     def ensure_not_expired!(schedule, state, states, now:)
@@ -552,7 +580,7 @@ module HQ
       state.last_status = agent.status
       state.last_error = agent.last_summary
       state.failure_started_at ||= now
-      state.mark_stopped!(now:)
+      state.mark_stopped!(now:, reason: "awaiting_input")
       notify_schedule_input_required(schedule, state, agent, now:)
       publish("schedule.stopped", schedule, state, agent_key: agent.key, reason: "input_required")
     end
@@ -561,7 +589,7 @@ module HQ
       state.last_status = agent.status
       state.last_error = agent.last_summary
       state.failure_started_at ||= now
-      state.mark_stopped!(now:)
+      state.mark_stopped!(now:, reason: "failure")
       notify_schedule_failure(schedule, state, now:, agent:)
       publish("schedule.failed", schedule, state, agent_key: agent.key, status: agent.status)
       publish("schedule.stopped", schedule, state, agent_key: agent.key, reason: "failure")

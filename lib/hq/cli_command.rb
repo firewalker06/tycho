@@ -1557,6 +1557,7 @@ module HQ
       store.accept_prompt_from!(agent, actor: opts.fetch(:actor), agents: agents)
       agent.add_user_message!(message, metadata: agent.message_author_metadata(opts.fetch(:actor)))
       store.save(agents)
+      scheduler.resume_after_user_message(agent.key) if opts.fetch(:actor).user? && agent.scheduled?
       agent = store.start_agent!(agent.key)
       if agent.running?
         print_sent_agent(agent_cli_payload(agent), json: opts[:json], out: out)

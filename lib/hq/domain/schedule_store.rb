@@ -35,7 +35,7 @@ module HQ
     :key, :status, :enabled, :paused_at, :last_due_at, :last_started_at, :last_finished_at,
     :last_status, :last_error, :last_target_kind, :last_target_key, :previous_target_key,
     :next_due_at, :run_count, :skip_count, :first_success_notified_at, :failure_started_at,
-    :recovery_notified_at, :resumed_at,
+    :recovery_notified_at, :resumed_at, :stopped_reason, :last_resume_reason,
     keyword_init: true
   ) do
     OPERATOR_STATUSES = %w[scheduled paused stopped].freeze
@@ -70,7 +70,9 @@ module HQ
         first_success_notified_at: parse_time(hash["first_success_notified_at"]),
         failure_started_at: parse_time(hash["failure_started_at"]),
         recovery_notified_at: parse_time(hash["recovery_notified_at"]),
-        resumed_at: parse_time(hash["resumed_at"])
+        resumed_at: parse_time(hash["resumed_at"]),
+        stopped_reason: hash["stopped_reason"],
+        last_resume_reason: hash["last_resume_reason"]
       )
     end
 
@@ -120,7 +122,9 @@ module HQ
         "first_success_notified_at" => first_success_notified_at&.iso8601,
         "failure_started_at" => failure_started_at&.iso8601,
         "recovery_notified_at" => recovery_notified_at&.iso8601,
-        "resumed_at" => resumed_at&.iso8601
+        "resumed_at" => resumed_at&.iso8601,
+        "stopped_reason" => stopped_reason,
+        "last_resume_reason" => last_resume_reason
       }.compact
     end
 
@@ -153,18 +157,27 @@ module HQ
       self.status = "scheduled"
       self.enabled = true
       self.paused_at = nil
+      self.stopped_reason = nil
     end
 
     def mark_paused!(now: Time.now)
       self.status = "paused"
       self.enabled = false
       self.paused_at ||= now
+      self.stopped_reason = nil
+      self.last_resume_reason = nil
     end
 
-    def mark_stopped!(now: Time.now)
+    def mark_stopped!(now: Time.now, reason: nil)
       self.status = "stopped"
       self.enabled = false
       self.paused_at ||= now
+      self.stopped_reason = reason
+      self.last_resume_reason = nil
+    end
+
+    def stopped_for_awaiting_input?
+      stopped? && stopped_reason == "awaiting_input"
     end
   end
 

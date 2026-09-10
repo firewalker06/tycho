@@ -249,19 +249,24 @@ class PersonalAssistantPhase2Test
         executor: ->(*) { started << true; release.pop; { "ok" => true } }
       )
       fixture.open!(service, _direct_server)
-      FileUtils.cp(fixture.registry.path, HQ::Registry::DEFAULT_PATH)
       target = service.create_agent(
         "project_key" => "web", "name" => "HTTP Target", "prompt" => "HTTP target prompt", "agent" => "codex"
       )
+      assert(service.instance_variable_get(:@personal_assistant).status[:state] == "active",
+             "expected fixture FRED session to remain active before HTTP server startup")
       proposal = fixture.register(actions, "start_agent", { "agent_key" => target[:key] }, "http-start-1")
       port = fixture.free_port
       service.instance_variable_set(:@server_url, "http://127.0.0.1:#{port}")
-      server = HQ::RemoteServer.new(host: "127.0.0.1", port:, personal_assistant_action_worker: worker)
+      server = HQ::RemoteServer.new(
+        host: "127.0.0.1", port:, personal_assistant_action_worker: worker,
+        registry: fixture.registry,
+        clock: -> { Time.utc(2026, 9, 9, 12) }
+      )
       thread = Thread.new { server.start }
       begin
         fixture.wait_for_http!(port)
         preflight_status, preflight = fixture.http_request(port, "GET", "/personal-assistant/actions/#{proposal["id"]}/preflight")
-        assert(preflight_status == 200, "expected HTTP preflight to succeed")
+        assert(preflight_status == 200, "expected HTTP preflight to succeed: #{preflight.inspect}")
         token = preflight.dig("preflight", "precondition_token")
         confirm_status, confirmed = fixture.http_request(
           port, "POST", "/personal-assistant/actions/#{proposal["id"]}/confirm",
