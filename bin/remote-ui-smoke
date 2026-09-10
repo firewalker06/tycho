@@ -5417,6 +5417,8 @@ Saved safely.
         // The browser must retain the rendered history and scroll position until
         // the explicit accessible control is activated.
         const stagedConversation = await page.evaluate((key) => {
+          clearTimeout(state.timer);
+          state.timer = null;
           const baseline = Array.from({ length: 28 }, (_item, index) => ({
             id: `manual-load-${index}`,
             kind: "message",
@@ -5428,9 +5430,26 @@ Saved safely.
           delete state.pendingConversationUpdates[key];
           render({ preserveLiveEditor: true });
           const root = document.querySelector("[data-agent-conversation-scroll]");
-          root.scrollTop = Math.max(0, root.scrollHeight - root.clientHeight - 120);
+          root.scrollTop = 0;
           const before = root.scrollTop;
+          const pending = {
+            id: "pending-fred-manual-load",
+            kind: "message",
+            role: "user",
+            content: "FRED optimistic message remains visible",
+            created_at: new Date().toISOString(),
+            client_request_id: "fred-manual-load",
+            metadata: { personal_assistant_client_request_id: "fred-manual-load" },
+          };
+          state.pendingConversationMessages[key] = [pending];
           receiveConversationSnapshot(key, [...baseline, {
+            id: "fred-manual-load-server",
+            kind: "message",
+            role: "user",
+            content: pending.content,
+            created_at: pending.created_at,
+            metadata: { personal_assistant_client_request_id: "fred-manual-load" },
+          }, {
             id: "manual-load-new",
             kind: "message",
             role: "assistant",
@@ -5438,21 +5457,33 @@ Saved safely.
             created_at: new Date().toISOString(),
           }], "manual-load-next");
           render({ preserveLiveEditor: true });
+          const button = document.querySelector("[data-load-pending-conversation]");
+          const rootRect = root.getBoundingClientRect();
+          const buttonRect = button?.getBoundingClientRect();
           return {
             before,
             after: document.querySelector("[data-agent-conversation-scroll]").scrollTop,
             draft: document.querySelector("#prompt-input")?.value,
-            button: document.querySelector("[data-load-pending-conversation]")?.getAttribute("aria-label"),
+            button: button?.getAttribute("aria-label"),
+            buttonIntersectsViewport: Boolean(buttonRect && buttonRect.bottom > rootRect.top && buttonRect.top < rootRect.bottom),
             stagedVisible: document.body.textContent.includes("Server message staged for manual loading"),
+            optimisticCount: document.body.textContent.split(pending.content).length - 1,
           };
         }, agentKey);
-        if (stagedConversation.button !== "Load 1 new message" || stagedConversation.stagedVisible ||
+        if (stagedConversation.button !== "Load 2 new messages" || !stagedConversation.buttonIntersectsViewport ||
+            stagedConversation.stagedVisible || stagedConversation.optimisticCount !== 1 ||
             stagedConversation.draft !== draft || Math.abs(stagedConversation.after - stagedConversation.before) > 8) {
           throw new Error(`Manual conversation loading changed the visible snapshot before activation: ${JSON.stringify(stagedConversation)}`);
         }
         await page.click("[data-load-pending-conversation]");
-        await page.waitForFunction(() => document.body.textContent.includes("Server message staged for manual loading"), { timeout: 10_000 });
-        if (await page.locator("[data-load-pending-conversation]").count() || (await page.locator("#prompt-input").inputValue()) !== draft) {
+        const loadedConversation = await page.evaluate((key) => ({
+          contentLoaded: state.conversations[key]?.blocks?.some((block) => block.content === "Server message staged for manual loading"),
+          pendingCleared: !state.pendingConversationUpdates[key],
+          visibleFreds: document.body.textContent.split("FRED optimistic message remains visible").length - 1,
+        }), agentKey);
+        if (!loadedConversation.contentLoaded || !loadedConversation.pendingCleared ||
+            await page.locator("[data-load-pending-conversation]").count() || loadedConversation.visibleFreds !== 1 ||
+            (await page.locator("#prompt-input").inputValue()) !== draft) {
           throw new Error("Manual conversation loading did not apply the staged snapshot while preserving the composer");
         }
 
