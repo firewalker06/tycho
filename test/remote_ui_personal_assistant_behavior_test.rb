@@ -43,6 +43,10 @@ module RemoteUIPersonalAssistantBehaviorTest
       const context = {
         Map,
         Set,
+        REMOTE_HELPERS: {
+          conversationBlocksMatch: (left, right) => JSON.stringify(left) === JSON.stringify(right),
+          unseenConversationBlocks: (_left, right) => right,
+        },
         PERSONAL_ASSISTANT_ANNOUNCEMENT_LIMIT: 128,
         PERSONAL_ASSISTANT_MAX_FAILURE_COUNT: 2,
         PERSONAL_ASSISTANT_POLL_INTERVALS: { activeMs: 1500, idleMs: 12000, hiddenMs: 30000 },
@@ -80,6 +84,7 @@ module RemoteUIPersonalAssistantBehaviorTest
         "requestPersonalAssistantCurrentWork",
         "personalAssistantStatusRequestIsCurrent",
         "requestPersonalAssistantStatus",
+        "receiveConversationSnapshot",
         "ensureConversation",
       ].forEach((name) => vm.runInContext(`${extractFunction(name)}\nthis.${name} = ${name};`, context));
 

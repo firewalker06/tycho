@@ -18,6 +18,9 @@ module RemoteUIConversationLoadingTest
 
       const conversationLoading = context.window.TychoRemoteHelpers.conversationLoading;
       const agentComposerState = context.window.TychoRemoteHelpers.agentComposerState;
+      const conversationBlocksMatch = context.window.TychoRemoteHelpers.conversationBlocksMatch;
+      const unseenConversationBlocks = context.window.TychoRemoteHelpers.unseenConversationBlocks;
+      const pendingConversationBlockAcknowledged = context.window.TychoRemoteHelpers.pendingConversationBlockAcknowledged;
       const conversations = {
         alpha: { blocks: [], loaded: true, loading: false },
       };
@@ -47,6 +50,33 @@ module RemoteUIConversationLoadingTest
       if (failedComposerCheck) {
         const [label, actual, expected] = failedComposerCheck;
         throw new Error(`${label}: expected ${expected}, got ${actual}`);
+      }
+
+      const rendered = [
+        { id: "one", kind: "message", role: "user", content: "Keep this visible" },
+        { id: "two", kind: "message", role: "assistant", content: "Existing reply" },
+      ];
+      const incoming = [...rendered, { id: "three", kind: "message", role: "assistant", content: "Arrived while composing" }];
+      const unseen = unseenConversationBlocks(rendered, incoming);
+      if (unseen.length !== 1 || unseen[0].id !== "three") {
+        throw new Error(`new server message was not staged exactly once: ${JSON.stringify(unseen)}`);
+      }
+      if (conversationBlocksMatch(rendered, incoming) || !conversationBlocksMatch(rendered, [...rendered])) {
+        throw new Error("conversation snapshot comparison did not preserve the rendered baseline");
+      }
+
+      const optimistic = { id: "local", kind: "message", role: "user", content: "Optimistic prompt", client_request_id: "request-1" };
+      const acknowledged = { id: "server", kind: "message", role: "user", content: "Optimistic prompt", metadata: { personal_assistant_client_request_id: "request-1" } };
+      if (!pendingConversationBlockAcknowledged(optimistic, [acknowledged])) {
+        throw new Error("server acknowledgement did not suppress the duplicate optimistic message");
+      }
+      if (pendingConversationBlockAcknowledged(optimistic, rendered)) {
+        throw new Error("unrelated server history acknowledged an optimistic message");
+      }
+      const legacyPending = { id: "local-legacy", kind: "message", role: "user", content: "Same legacy prompt", created_at: "2026-09-10T00:00:00Z" };
+      const legacyAcknowledged = { id: "server-legacy", kind: "message", role: "user", content: "Same legacy prompt", created_at: "2026-09-10T00:00:02Z" };
+      if (!pendingConversationBlockAcknowledged(legacyPending, [legacyAcknowledged])) {
+        throw new Error("nearby legacy acknowledgement did not suppress a duplicate optimistic message");
       }
     JAVASCRIPT
 

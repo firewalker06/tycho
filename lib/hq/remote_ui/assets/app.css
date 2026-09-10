@@ -6105,6 +6105,21 @@ select {
   white-space: nowrap;
 }
 
+.new-conversation-messages {
+  position: sticky;
+  bottom: 12px;
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  margin: 12px auto;
+}
+
+.new-conversation-messages .ui-button {
+  box-shadow: 0 3px 14px color-mix(in srgb, #000 24%, transparent);
+}
+
 .composer {
   position: relative;
   display: grid;
