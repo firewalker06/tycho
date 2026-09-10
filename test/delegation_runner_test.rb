@@ -120,7 +120,7 @@ module DelegationRunnerTest
       raise "missing detached callback message" unless callback
       raise "callback did not name child" unless callback.dig("metadata", "agent_reference", "agent_key") == child_key
 
-      child_record = JSON.parse(File.read(agents_path)).find { |agent| agent["key"] == child_key }
+      child_record = wait_for_agent(agents_path, child_key, minimum_runs: 1)
       child_memory_path = child_record.fetch("log_path").sub(/\.raw\.log\z/, ".memory.jsonl")
       child_events = File.readlines(child_memory_path).map { |line| JSON.parse(line) }
       signed_prompt = child_events.find { |event| event["content"] == "Execute the delegated work" }

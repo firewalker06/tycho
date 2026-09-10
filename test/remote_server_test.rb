@@ -6014,6 +6014,10 @@ module RemoteServerTest
     assert(js[:body].include?("data-agent-dock"), "expected Agent detail composer to live in a dock")
     assert(js[:body].include?("function renderInquiryForm"),
            "expected Agent detail to render structured inquiry forms")
+    prompt_attachment_input = js[:body][/function renderPromptAttachmentInput\(agent\).*?^}/m]
+    assert(prompt_attachment_input&.include?('data-prompt-attachment-input') &&
+           prompt_attachment_input.include?('tabindex="-1"'),
+           "expected inquiry attachment inputs to stay out of the keyboard tab order")
     assert(js[:body].include?("function renderInquiryLoadingSkeleton") &&
            js[:body].include?('composerState === "inquiry-loading"') &&
            js[:body].include?('class="inquiry-loading-tools"') &&
