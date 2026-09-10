@@ -1,0 +1,71 @@
+# frozen_string_literal: true
+
+require "open3"
+
+module RemoteUIPromptQueueTest
+  module_function
+
+  ROOT = File.expand_path("..", __dir__)
+  APP_PATH = File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js")
+
+  def run!
+    script = <<~'JAVASCRIPT'
+      const fs = require("fs");
+      const vm = require("vm");
+      const source = fs.readFileSync(process.argv[1], "utf8");
+
+      function extractFunction(name) {
+        const start = source.indexOf(`function ${name}`);
+        if (start < 0) throw new Error(`missing ${name}`);
+        const opening = source.indexOf("{", source.indexOf(")", start));
+        let depth = 0;
+        let quote = "";
+        let escaped = false;
+        for (let index = opening; index < source.length; index += 1) {
+          const char = source[index];
+          if (quote) {
+            if (escaped) escaped = false;
+            else if (char === "\\") escaped = true;
+            else if (char === quote) quote = "";
+            continue;
+          }
+          if (["'", '"', "`"].includes(char)) {
+            quote = char;
+            continue;
+          }
+          if (char === "{") depth += 1;
+          if (char === "}" && --depth === 0) return source.slice(start, index + 1);
+        }
+        throw new Error(`unterminated ${name}`);
+      }
+
+      const context = {
+        escapeAttr: (value) => String(value),
+        escapeHtml: (value) => String(value),
+        personalAssistantControlError: () => null,
+      };
+      vm.createContext(context);
+      vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\nthis.renderPromptQueueEntry = renderPromptQueueEntry;`, context);
+
+      const agent = { key: "queue-agent" };
+      const legacy = context.renderPromptQueueEntry(agent, { id: "legacy", prompt: "Queued before state" }, 0);
+      if (!legacy.includes("Queued</small>") || legacy.includes('data-edit-queued-prompt="legacy" data-agent-key="queue-agent" disabled') ||
+          legacy.includes('data-delete-queued-prompt="legacy" data-agent-key="queue-agent" disabled')) {
+        throw new Error("state-less queued entries must keep enabled edit and delete controls");
+      }
+
+      const claimed = context.renderPromptQueueEntry(agent, { id: "claimed", prompt: "Already claimed", state: "dispatching" }, 0);
+      if (!claimed.includes("Dispatching</small>") || !claimed.includes('data-edit-queued-prompt="claimed" data-agent-key="queue-agent" disabled') ||
+          !claimed.includes('data-delete-queued-prompt="claimed" data-agent-key="queue-agent" disabled')) {
+        throw new Error("claimed queue entries must keep edit and delete controls disabled");
+      }
+    JAVASCRIPT
+
+    output, status = Open3.capture2e("node", "-e", script, APP_PATH)
+    raise output unless status.success?
+
+    puts "remote_ui_prompt_queue_test: ok"
+  end
+end
+
+RemoteUIPromptQueueTest.run! if $PROGRAM_NAME == __FILE__
