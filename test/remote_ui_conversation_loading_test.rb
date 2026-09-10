@@ -64,6 +64,11 @@ module RemoteUIConversationLoadingTest
       if (conversationBlocksMatch(rendered, incoming) || !conversationBlocksMatch(rendered, [...rendered])) {
         throw new Error("conversation snapshot comparison did not preserve the rendered baseline");
       }
+      const amended = [{ id: "two", kind: "message", role: "assistant", content: "Existing reply amended", metadata: { progress: "complete" } }];
+      const original = [{ id: "two", kind: "message", role: "assistant", content: "Existing reply", metadata: { progress: "running" } }];
+      if (conversationBlocksMatch(original, amended) || unseenConversationBlocks(original, amended).length !== 1) {
+        throw new Error("same-ID content or metadata amendments were not staged");
+      }
 
       const optimistic = { id: "local", kind: "message", role: "user", content: "Optimistic prompt", client_request_id: "request-1" };
       const acknowledged = { id: "server", kind: "message", role: "user", content: "Optimistic prompt", metadata: { personal_assistant_client_request_id: "request-1" } };
