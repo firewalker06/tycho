@@ -6436,8 +6436,17 @@ module RemoteServerTest
            js[:body].include?("Runs in current session"),
            "expected schedule rows to show current-session run counts with threshold colors")
     assert(js[:body].include?('label: "Refresh session"') &&
-           js[:body].include?('data-schedule-action="refresh-session"'),
-           "expected schedule actions to refresh the current session")
+           js[:body].include?('data-schedule-action="refresh-session"') &&
+           js[:body].include?('sublabel: "Archive this session and run a fresh one"') &&
+           js[:body].include?('icon: "folderSync"'),
+           "expected Schedule refresh-session action to use folder-sync for archive-and-run")
+    assert(js[:body].include?('folderDown: `') &&
+           js[:body].include?('M12 10v6') &&
+           js[:body].include?('iconSvg("folderDown")') &&
+           js[:body].scan('icon: "folderDown"').length >= 3 &&
+           !js[:body].include?('icon: "archive"') &&
+           !js[:body].include?('iconSvg("archive")'),
+           "expected every Remote UI archive control to use the Lucide folder-down icon")
     assert(js[:body].include?('label: "Run now"') &&
            js[:body].include?('attrs: `data-schedule-action="run" data-schedule-key="${escapeAttr(schedule.key)}"`') &&
            !js[:body].include?("schedule-run-button"),
