@@ -130,12 +130,15 @@ module HQ
       synchronize { |state| snapshot_finalized_proposals!(state); reconcile!(state); state["phase"] == "active" && state["active_key"] == key.to_s }
     end
 
-    # Notification polling observes the current daily generation without
-    # dispatching queued work or advancing a closing session.
+    # Notification polling is observational: it must neither dispatch queued
+    # work nor advance/modify a closing session.
     def active_notification_session
       synchronize do |state|
-        reconcile!(state, dispatch_prompt_queues: false)
+        return nil unless @registry.personal_assistant["enabled"] == true
         return nil unless state["phase"] == "active"
+
+        timezone = state["active_timezone"] || @registry.personal_assistant["timezone"]
+        return nil if timezone.to_s.empty? || state["active_date"] != local_date(@clock.call, timezone)
 
         key = state["active_key"].to_s
         generation = state["generation"].to_i

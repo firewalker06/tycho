@@ -370,7 +370,9 @@ module HQ
       return if now - @last_agent_push_poll < AGENT_PUSH_POLL_INTERVAL
 
       @last_agent_push_poll = now
-      service = RemoteService.new(server_url: "http://#{@host}:#{@port}",
+      service = RemoteService.new(registry: @registry || Registry.new,
+                                  clock: @clock,
+                                  server_url: "http://#{@host}:#{@port}",
                                   public_url: @public_url,
                                   auth_required: !@token.empty?,
                                   agent_activity_snapshot: @agent_activity_snapshot,
