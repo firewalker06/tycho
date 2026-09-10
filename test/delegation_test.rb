@@ -54,7 +54,7 @@ class DelegationTest
       @running = false
     end
 
-    def finish_run!(suffix, owner: "parent", generation: 1)
+    def finish_run!(suffix, owner: "parent", generation: 1, status: @status)
       @run_count += 1
       @last_run = FakeRun.new(
         run_id: "run-#{@key}-#{suffix}",
@@ -63,6 +63,8 @@ class DelegationTest
         delegation_generation: generation
       )
       @session_id = @last_run.session_id
+      @status = status
+      @structured_result["status"] = status
       @running = false
     end
 
@@ -238,6 +240,23 @@ class DelegationTest
       callback_events = events.select { |event| event.dig("metadata", "delegation_callback") }
       assert(callback_events.length == 1, "expected callback message deduplication")
       assert(events.any? { |event| event["type"] == "delegation_event" }, "expected contextual creation event")
+
+      waiting_parent = FakeAgent.new(key: "waiting-parent", root: dir, running: true,
+                                     workspace: File.join(dir, "waiting-parent-workspace"))
+      waiting_child = FakeAgent.new(key: "waiting-child", root: dir,
+                                    workspace: File.join(dir, "waiting-child-workspace"))
+      waiting_agents = [waiting_parent, waiting_child]
+      coordinator.attach!(agents: waiting_agents, child: waiting_child, parent_key: waiting_parent.key)
+      coordinator.process!(waiting_agents)
+      waiting_report = store.reports.find { |item| item["child_run_id"] == "run-waiting-child" }
+      assert(waiting_report["resume_state"] == "parent_running",
+             "expected child callback to wait for its running parent")
+      waiting_parent.finish_run!("asked-user", status: "input_required")
+      coordinator.process!(waiting_agents)
+      waiting_report = store.reports.find { |item| item["child_run_id"] == "run-waiting-child" }
+      assert(!waiting_parent.running?, "expected parent inquiry to block automatic callback resume")
+      assert(waiting_report["resume_state"] == "awaiting_parent_input",
+             "expected callback to remain pending until explicit parent input")
 
       quiet_parent = FakeAgent.new(key: "quiet-parent", root: dir,
                                    workspace: File.join(dir, "quiet-parent-workspace"))
