@@ -3501,6 +3501,9 @@ module RemoteServerTest
                               "timezone" => "UTC",
                               "project_key" => "web",
                               "agent_name" => "Daily Agent",
+                              "agent" => "claude",
+                              "model" => "claude-opus-5",
+                              "reasoning_effort" => "high",
                               "system_message" => "Daily system context.",
                               "message_source" => "inline",
                               "message" => "Check the project.",
@@ -3515,6 +3518,10 @@ module RemoteServerTest
       assert(created.dig(:body, :schedule, :project_key) == "web", "expected created schedule project")
       assert(created.dig(:body, :schedule, :system_message) == "Daily system context.",
              "expected created schedule system message")
+      assert(created.dig(:body, :schedule, :agent) == "claude" &&
+             created.dig(:body, :schedule, :model) == "claude-opus-5" &&
+             created.dig(:body, :schedule, :reasoning_effort) == "high",
+             "expected API schedule creation to return execution overrides")
       assert(created.dig(:body, :schedule, :policy, "overlap") == "skip",
              "expected schedule policy to use the fixed overlap default")
 
@@ -3524,6 +3531,9 @@ module RemoteServerTest
                               "cron" => "30 11 * * 1-5",
                               "timezone" => "local",
                               "project_key" => "web",
+                              "agent" => "",
+                              "model" => "",
+                              "reasoning_effort" => "",
                               "system_message" => "Updated system context.",
                               "message_source" => "inline",
                               "message" => "Check weekdays.",
@@ -3537,6 +3547,9 @@ module RemoteServerTest
       assert(updated.dig(:body, :schedule, :cron) == "30 11 * * 1-5", "expected updated schedule cron")
       assert(updated.dig(:body, :schedule, :system_message) == "Updated system context.",
              "expected updated schedule system message")
+      assert(updated.dig(:body, :schedule, :agent).nil? && updated.dig(:body, :schedule, :model).nil? &&
+             updated.dig(:body, :schedule, :reasoning_effort).nil?,
+             "expected empty API values to clear execution overrides")
       assert(updated.dig(:body, :schedule, :policy) == {
         "overlap" => "skip",
         "missed" => "run_once_on_start",

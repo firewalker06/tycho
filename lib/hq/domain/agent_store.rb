@@ -222,7 +222,7 @@ module HQ
       end
     end
 
-    def create_scheduled(project, schedule_key:, name:, system_message: nil, existing_agents: load)
+    def create_scheduled(project, schedule_key:, name:, system_message: nil, execution_overrides: {}, existing_agents: load)
       now = Time.now
       key = next_agent_key(project.key, existing_agents, now:)
       prompt = scheduled_system_prompt(schedule_key:, name:, system_message:)
@@ -236,9 +236,9 @@ module HQ
         workspace: project.path,
         prompt: prompt,
         sandbox_mode: "danger-full-access",
-        agent: project.respond_to?(:agent) ? project.agent : project.config.agent,
-        model: project.respond_to?(:model) ? project.model : project.config.model,
-        reasoning_effort: project.respond_to?(:reasoning_effort) ? project.reasoning_effort : project.config.reasoning_effort,
+        agent: execution_overrides[:agent] || (project.respond_to?(:agent) ? project.agent : project.config.agent),
+        model: execution_overrides[:model] || (project.respond_to?(:model) ? project.model : project.config.model),
+        reasoning_effort: execution_overrides[:reasoning_effort] || (project.respond_to?(:reasoning_effort) ? project.reasoning_effort : project.config.reasoning_effort),
         response_style: project.respond_to?(:response_style) ? project.response_style : project.config.response_style,
         messages: system_messages,
         created_at: now,

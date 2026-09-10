@@ -28,7 +28,7 @@ module HQ
       @projects = registry.projects.map { |config| Project.new(config) }
       @agent_store = AgentStore.new(@projects)
       @personal_assistant = PersonalAssistantLifecycle.new(registry:, agent_store: @agent_store)
-      @schedule_registry = schedule_registry || ScheduleRegistry.new(projects: @projects)
+      @schedule_registry = schedule_registry || ScheduleRegistry.new(projects: @projects, harness_catalogs: registry.harness_catalogs)
       @store = store
       @push_notification_store = push_notification_store
       @web_push_notifier = web_push_notifier || WebPushNotifier.new
@@ -277,6 +277,9 @@ module HQ
         paused: state.paused?,
         stopped: state.stopped?,
         project_key: schedule.project_key,
+        agent: schedule.agent,
+        model: schedule.model,
+        reasoning_effort: schedule.reasoning_effort,
         agent_name: schedule.agent_name,
         target_agent_key: schedule.agent_key,
         system_message: schedule.system_message,
@@ -458,6 +461,7 @@ module HQ
         schedule_key: schedule.key,
         name: schedule.agent_name,
         system_message: schedule.system_message,
+        execution_overrides: schedule.execution_overrides,
         existing_agents: agents
       )
     end

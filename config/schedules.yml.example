@@ -13,6 +13,9 @@
 #       project_key: tycho
 #       name: Tycho scheduled maintenance
 #       agent_key: existing-agent-key # optional; adopts an existing session
+#       agent: codex # optional; defaults to the project harness
+#       model: gpt-5.4 # optional; defaults to the project model
+#       reasoning_effort: high # optional; defaults to the project effort
 #       message_source: file
 #       message_file: schedules/weekday-maintenance.md
 #     policy:

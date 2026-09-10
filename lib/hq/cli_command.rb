@@ -425,6 +425,49 @@ module HQ
         end
       end
 
+      module ScheduleOptions
+        def schedule_options(create:)
+          option :name, desc: "Schedule display name"
+          option :cron, desc: "Five-field cron expression"
+          option :timezone, desc: "local or UTC"
+          option :project_key, desc: "Target project key"
+          option :agent_name, desc: "Scheduled session name"
+          option :agent_key, desc: "Existing session to adopt"
+          option :agent, desc: "Optional harness override"
+          option :model, desc: "Optional model override"
+          option :reasoning_effort, desc: "Optional reasoning effort override"
+          option :system_message, desc: "Stable system context"
+          option :message, desc: "Run message"
+          option :ends_at, desc: "Optional ISO 8601 end timestamp"
+        end
+      end
+
+      class ScheduleCreate < Dry::CLI::Command
+        extend CommandMetadata
+        extend ScheduleOptions
+        desc "Create a schedule"
+        argument :schedule_key, required: true, desc: "Schedule key"
+        schedule_options(create: true)
+        usage_template "schedule create %{schedule_key} --cron CRON --project-key PROJECT --message MESSAGE [options]"
+
+        def call(schedule_key:, **opts)
+          exit CLICommand.create_schedule(schedule_key, opts, out: out, err: err)
+        end
+      end
+
+      class ScheduleUpdate < Dry::CLI::Command
+        extend CommandMetadata
+        extend ScheduleOptions
+        desc "Update a schedule"
+        argument :schedule_key, required: true, desc: "Schedule key"
+        schedule_options(create: false)
+        usage_template "schedule update %{schedule_key} [options]"
+
+        def call(schedule_key:, **opts)
+          exit CLICommand.update_schedule(schedule_key, opts, out: out, err: err)
+        end
+      end
+
       class ScheduleValidate < Dry::CLI::Command
         extend CommandMetadata
 
@@ -495,6 +538,8 @@ module HQ
       end
 
       register "schedule", Schedule do |prefix|
+        prefix.register "create", ScheduleCreate
+        prefix.register "update", ScheduleUpdate
         prefix.register "validate", ScheduleValidate
         prefix.register "list", ScheduleList
         prefix.register "run", ScheduleRun
@@ -2190,6 +2235,23 @@ module HQ
       failure(e.message, err:)
     end
 
+    def create_schedule(key, opts, out: $stdout, err: $stderr)
+      attrs = schedule_attrs(opts).merge("key" => key)
+      schedule = schedule_registry.create(attrs)
+      out.puts "Created schedule #{schedule.key}."
+      0
+    rescue ScheduleRegistry::Error => e
+      failure(e.message, err:)
+    end
+
+    def update_schedule(key, opts, out: $stdout, err: $stderr)
+      schedule = schedule_registry.update(key, schedule_attrs(opts))
+      out.puts "Updated schedule #{schedule.key}."
+      0
+    rescue ScheduleRegistry::Error => e
+      failure(e.message, err:)
+    end
+
     def schedule_list_table(rows)
       headers = %w[Key Project Status Next Last Agent Runs Skips]
       table_rows = rows.map do |row|
@@ -2221,6 +2283,19 @@ module HQ
 
     def scheduler
       Scheduler.new
+    end
+
+    def schedule_registry
+      registry = Registry.new
+      ScheduleRegistry.new(projects: registry.projects.map { |config| Project.new(config) }, harness_catalogs: registry.harness_catalogs)
+    end
+
+    def schedule_attrs(opts)
+      opts.each_with_object({}) do |(key, value), attrs|
+        next if value.nil?
+
+        attrs[key.to_s] = value
+      end
     end
 
     def darwin_amd64?
