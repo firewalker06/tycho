@@ -29,6 +29,7 @@ module SchedulerTest
       assert_refresh_failure_keeps_replacement_recoverable
       assert_expired_refresh_preserves_current_session
       assert_schedule_waits_for_human_input
+      assert_schedule_auto_resumes_only_after_awaiting_input_reply
     end
     assert_schedule_daemon_supervisor_spawns_external_daemon
     assert_bin_schedule_list_lists_configured_schedules
@@ -556,6 +557,42 @@ module SchedulerTest
       assert(state.last_status == "awaiting-input", "expected schedule to preserve the agent attention status")
       assert(state.last_target_key == agent.key, "expected schedule to keep the input-required session linked")
       assert(read_agents.map(&:key) == [agent.key], "expected input-required session to remain active")
+    end
+  end
+
+  def assert_schedule_auto_resumes_only_after_awaiting_input_reply
+    with_temp_runtime do |dir|
+      registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: weekday
+            cron: "0 9 * * 1-5"
+            target:
+              type: agent
+              project_key: web
+              name: Weekday maintenance
+              message: "Run maintenance."
+      YAML
+      scheduler = build_scheduler(registry, schedule_path)
+      started = scheduler.run_now("weekday")
+      agent = started.fetch(:agent)
+      state = HQ::ScheduleStore.new.load.fetch("weekday")
+      state.mark_stopped!(reason: "awaiting_input")
+      HQ::ScheduleStore.new.save("weekday" => state)
+
+      resumed = scheduler.resume_after_user_message(agent.key)
+      state = HQ::ScheduleStore.new.load.fetch("weekday")
+      assert(resumed.map { |item| item[:key] } == ["weekday"], "expected the awaiting-input schedule to resume")
+      assert(state.scheduled? && state.last_resume_reason == "user_message",
+             "expected auto-resume provenance to be visible in schedule state")
+
+      state.mark_paused!
+      HQ::ScheduleStore.new.save("weekday" => state)
+      assert(scheduler.resume_after_user_message(agent.key).empty?, "expected manual pause to remain paused")
+
+      state = HQ::ScheduleStore.new.load.fetch("weekday")
+      state.mark_stopped!(reason: "failure")
+      HQ::ScheduleStore.new.save("weekday" => state)
+      assert(scheduler.resume_after_user_message(agent.key).empty?, "expected unrelated stopped state to remain stopped")
     end
   end
 

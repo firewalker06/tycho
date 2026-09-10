@@ -17,6 +17,7 @@ module RemoteServerTest
   def run!
     assert_remote_agent_lifecycle
     assert_remote_agent_delegation_lifecycle
+    assert_remote_user_message_auto_resumes_awaiting_schedule
     assert_remote_agent_response_style_selection_is_independent
     assert_remote_archive_reconciles_scheduled_agent_state
     assert_remote_agent_bulk_archive
@@ -86,6 +87,53 @@ module RemoteServerTest
     assert_server_daemonizes_after_startup_to_log
     assert_server_prints_request_logs
     puts "remote_server_test: ok"
+  end
+
+  def assert_remote_user_message_auto_resumes_awaiting_schedule
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      File.write(HQ::SCHEDULES_FILE, <<~YAML)
+        schedules:
+          - key: weekday
+            cron: "0 9 * * 1-5"
+            target:
+              type: agent
+              project_key: web
+              name: Weekday maintenance
+              agent_key: scheduled-agent
+              message: "Run maintenance."
+      YAML
+      service = HQ::RemoteService.new(registry: registry)
+      agent = service.create_agent(
+        "project_key" => "web", "name" => "Scheduled agent", "prompt" => "Maintain", "agent" => "codex"
+      )
+      stored = service.send(:load_all_agents).find { |item| item.key == agent[:key] }
+      stored.associate_schedule!("weekday")
+      service.send(:save_agent, stored)
+
+      state = HQ::ScheduleStore.new.state_for({}, "weekday")
+      state.last_target_key = agent[:key]
+      state.mark_stopped!(reason: "awaiting_input")
+      HQ::ScheduleStore.new.save("weekday" => state)
+
+      response = service.submit_prompt(agent[:key], "prompt" => "Use main.", "start" => false)
+      assert(response.dig(:resumed_schedules, 0, :key) == "weekday",
+             "expected a user message to report the resumed schedule")
+      resumed = HQ::ScheduleStore.new.load.fetch("weekday")
+      assert(resumed.scheduled? && resumed.last_resume_reason == "user_message",
+             "expected user message to resume only the recorded awaiting-input stop")
+
+      resumed.mark_paused!
+      HQ::ScheduleStore.new.save("weekday" => resumed)
+      parent = service.create_agent(
+        "project_key" => "web", "name" => "Parent", "prompt" => "Coordinate", "agent" => "codex"
+      )
+      service.submit_prompt(agent[:key], "prompt" => "Parent follow-up", "parent_agent_key" => parent[:key], "start" => false)
+      assert(HQ::ScheduleStore.new.load.fetch("weekday").paused?,
+             "expected delegated parent messages not to override a deliberate manual pause")
+    end
   end
 
   def assert_remote_agent_delegation_lifecycle
@@ -6496,8 +6544,9 @@ module RemoteServerTest
            js[:body].include?('statusBadge(titleFromKey(scheduleStatusLabel(schedule)), className)'),
            "expected Remote UI schedule status labels to render inline with the title")
     assert(js[:body].include?("const ends = schedule.ends_at") &&
-           js[:body].include?("return `${project} / ${next}${ends} / ${humanizeCron(schedule.cron)}`;"),
-           "expected Remote UI schedule rows to show optional loop expiry without last outcome")
+           js[:body].include?("schedule.last_resume_reason === \"user_message\"") &&
+           js[:body].include?("resumed after your reply"),
+           "expected Remote UI schedule rows to show optional loop expiry and user-message auto-resume state")
     assert(!js[:body].include?("last ${schedule.last_status}"),
            "expected Remote UI schedule rows not to render last status text")
     assert(js[:body].include?("MagicDNS push requires Tailscale HTTPS"),

@@ -84,7 +84,7 @@ module HQ
                    restart_command: nil, token: HQ.env("REMOTE_TOKEN"), logger: HQ.logger, output: $stdout,
                    daemonize_after_startup: false, daemon_log_path: REMOTE_DAEMON_LOG_FILE, daemonizer: nil,
                    resource_catalog: nil, resource_snapshot_path: nil, agent_activity_snapshot: nil,
-                   personal_assistant_action_worker: nil)
+                   personal_assistant_action_worker: nil, registry: nil, clock: -> { Time.now })
       @host = host.to_s.empty? ? DEFAULT_HOST : host.to_s
       @port = port.to_i.positive? ? port.to_i : DEFAULT_PORT
       @public_url = public_url.to_s
@@ -98,6 +98,8 @@ module HQ
       @daemonizer = daemonizer
       @resource_catalog = resource_catalog || RemoteResourceCatalog.new(snapshot_path: resource_snapshot_path)
       @agent_activity_snapshot = agent_activity_snapshot || AgentActivitySnapshot.new
+      @registry = registry
+      @clock = clock
       @personal_assistant_actions = personal_assistant_action_worker&.respond_to?(:actions) ? personal_assistant_action_worker.actions : build_personal_assistant_action_store
       @personal_assistant_action_worker = personal_assistant_action_worker || build_personal_assistant_action_worker
       @personal_assistant_timezone_cache = PersonalAssistantLifecycle::TimezoneSnapshotCache.new
@@ -204,6 +206,8 @@ module HQ
 
     def background_personal_assistant_service
       RemoteService.new(
+        registry: @registry || Registry.new,
+        clock: @clock,
         server_url: "http://#{@host}:#{@port}",
         public_url: @public_url,
         auth_required: !@token.empty?,
@@ -314,6 +318,8 @@ module HQ
       end
 
       service = RemoteService.new(
+        registry: @registry || Registry.new,
+        clock: @clock,
         server_url: "http://#{@host}:#{@port}",
         public_url: @public_url,
         auth_required: !@token.empty?,
@@ -3903,8 +3909,9 @@ module HQ
         )
       end
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"]) && !target.running?
+      resumed_schedules = actor.user? && target.scheduled? ? scheduler.resume_after_user_message(target.key) : []
       @agent_activity_snapshot.upsert!(target)
-      { agent: agent_payload(target), conversation: conversation(target.key) }
+      { agent: agent_payload(target), conversation: conversation(target.key), resumed_schedules: resumed_schedules }
     rescue DelegationStore::Error => e
       raise Error.new(e.message, status: actor&.parent? ? 403 : 409)
     rescue ArgumentError => e
@@ -3960,8 +3967,9 @@ module HQ
         feedback_embedded:
       )
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"]) && !target.running?
+      resumed_schedules = target.scheduled? ? scheduler.resume_after_user_message(target.key) : []
       @agent_activity_snapshot.upsert!(target)
-      { agent: agent_payload(target), conversation: conversation(target.key) }
+      { agent: agent_payload(target), conversation: conversation(target.key), resumed_schedules: resumed_schedules }
     rescue ArgumentError => e
       raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
     end
