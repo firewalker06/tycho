@@ -77,6 +77,7 @@ module RemoteServerTest
     assert_serve_command_accepts_daemon_mode
     assert_remote_push_subscription_lifecycle
     assert_remote_agent_push_notifications
+    assert_remote_fred_push_notifications
     assert_remote_search_index_includes_agents_and_projects
     assert_remote_skills_payload_uses_discovery
     assert_remote_ui_routes_load_without_auth
@@ -499,6 +500,14 @@ module RemoteServerTest
       personal_status = server.send(:route, service, "GET", "/personal-assistant", {}, nil)
       assert(personal_status.dig(:body, :personal_assistant, :agent, :key) == key,
              "expected dedicated FRED status API to retain the protected conversation detail")
+      fred = service.send(:find_agent!, key)
+      fred.mark_unread!
+      service.send(:save_agent, fred)
+      read = server.send(:route, service, "PUT", "/personal-assistant/reading", {
+                           "active_key" => key,
+                           "generation" => opened.dig(:body, :personal_assistant, :generation)
+                         }, nil)
+      assert(!read.dig(:body, :agent, :unread), "expected the active FRED session to clear unread through its protected route")
       proposals_path = File.join(HQ::PERSONAL_ASSISTANT_DIR, "proposals.json")
       HQ::FileStore.write_json(proposals_path, {
                                  "proposals" => [
@@ -5017,6 +5026,34 @@ module RemoteServerTest
 
       service.dispatch_agent_push_notifications!
       assert(notifier.payloads.length == 2, "expected duplicate agent push events to be suppressed")
+    end
+  end
+
+  def assert_remote_fred_push_notifications
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      notifier = RecordingPushNotifier.new
+      service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace), web_push_notifier: notifier)
+      finished_at = Time.now - 60
+      fred = HQ::ManagedAgent.new(
+        key: "personal-assistant-test-1", name: "Personal Assistant · today", project_key: "__personal_assistant__",
+        template_key: "personal_assistant_daily", workspace: workspace, prompt: "Assist.", role: "personal_assistant_daily",
+        started_at: finished_at, finished_at: finished_at, last_exit_code: 0, summary: "Prepared the release request.", unread: true,
+        runs: [HQ::ManagedAgent::AgentRun.new(started_at: finished_at, finished_at: finished_at, exit_code: 0, status: "succeeded")]
+      )
+      HQ::AgentStore.new([]).save([fred])
+
+      result = service.dispatch_agent_push_notifications!
+      assert(result[:events] == 1, "expected a protected FRED session to dispatch one notification")
+      payload = notifier.payloads.first
+      assert(payload[:title] == "FRED finished" && payload[:url] == "/#personal-assistant",
+             "expected FRED push to use distinct copy and its dedicated route")
+      assert(payload[:badge_count] == 1 && payload[:body].start_with?("FRED:"),
+             "expected FRED push to participate in the shared unread badge")
+      assert(service.agents.empty?, "expected FRED to remain outside the generic agent catalog")
+      service.dispatch_agent_push_notifications!
+      assert(notifier.payloads.length == 1, "expected FRED notification deduplication to survive polling")
     end
   end
 

@@ -493,6 +493,7 @@ module HQ
         bundle = personal_assistant_snapshot(service)
         return ok(proposals: bundle.fetch(:actions))
       end
+      return ok(agent: service.mark_personal_assistant_read(body)) if method == "PUT" && parts == ["personal-assistant", "reading"]
       if method == "GET" && parts.length == 3 && parts[0, 2] == ["personal-assistant", "actions"]
         return ok(proposal: service.personal_assistant_action(parts[2]))
       end
@@ -3781,9 +3782,10 @@ module HQ
     def dispatch_agent_push_notifications!
       agents, events = load_agents_with_events
       visible = visible_agents(agents)
+      notification_candidates = notification_agents(agents)
       @agent_activity_snapshot.replace!(visible)
-      visible_keys = visible.map(&:key)
-      dispatch_agent_push_events(events.select { |event| visible_keys.include?(event.agent_key) }, agents: visible)
+      notification_keys = notification_candidates.map(&:key)
+      dispatch_agent_push_events(events.select { |event| notification_keys.include?(event.agent_key) }, agents: notification_candidates)
     end
 
     def metrics_query(filters = {})
@@ -3854,6 +3856,17 @@ module HQ
         save_agent(target)
       end
       agent_payload(target)
+    end
+
+    def mark_personal_assistant_read(attrs)
+      with_personal_assistant_session!(attrs) do |context|
+        target = personal_assistant_target_for_context!(context)
+        if target.unread?
+          target.mark_read!
+          save_agent(target)
+        end
+        agent_payload(target)
+      end
     end
 
     def submit_prompt(key, attrs = {}, actor: nil, personal_assistant_lifecycle: false, acceptance_id: nil, message_metadata: nil, session_context: nil, **attribute_keywords)
@@ -4704,6 +4717,12 @@ module HQ
       HQ::Visibility.visible_agents(agents, @projects).reject(&:personal_assistant?)
     end
 
+    # FRED is deliberately outside the generic agent catalog, yet its finished
+    # work still deserves the same unread and push reconciliation.
+    def notification_agents(agents)
+      visible_agents(agents) + agents.select(&:personal_assistant?)
+    end
+
     def hidden_setting_value(attrs)
       raise Error.new("Missing hidden value") unless attrs.key?("hidden")
 
@@ -4849,9 +4868,10 @@ module HQ
     def load_all_agents
       agents, events = load_agents_with_events
       visible = visible_agents(agents)
+      notification_candidates = notification_agents(agents)
       @agent_activity_snapshot.replace!(visible)
-      visible_keys = visible.map(&:key)
-      dispatch_agent_push_events(events.select { |event| visible_keys.include?(event.agent_key) }, agents: visible)
+      notification_keys = notification_candidates.map(&:key)
+      dispatch_agent_push_events(events.select { |event| notification_keys.include?(event.agent_key) }, agents: notification_candidates)
       agents
     end
 
@@ -5178,16 +5198,17 @@ module HQ
       status = agent.status
       if status == "awaiting-input"
         event = "input_required"
-        title = "Agent requires response"
+        title = agent.personal_assistant? ? "FRED requires response" : "Agent requires response"
       elsif %w[succeeded failed stopped blocked].include?(status)
         event = "finished"
-        title = status == "succeeded" ? "Agent finished" : "Agent finished: #{status}"
+        prefix = agent.personal_assistant? ? "FRED finished" : "Agent finished"
+        title = status == "succeeded" ? prefix : "#{prefix}: #{status}"
       else
         return nil
       end
 
       group_count = [unread_count.to_i, 1].max
-      body = "#{agent.display_name}: #{truncate(agent.last_summary, 120)}"
+      body = "#{agent.personal_assistant? ? "FRED" : agent.display_name}: #{truncate(agent.last_summary, 120)}"
       body = "#{body} (#{group_count} unread agents)" if group_count > 1
 
       {
@@ -5199,7 +5220,7 @@ module HQ
           renotify: event == "input_required",
           silent: event != "input_required",
           badge_count: group_count,
-          url: "/#agent/#{agent.key}"
+          url: agent.personal_assistant? ? "/#personal-assistant" : "/#agent/#{agent.key}"
         }
       }
     end
@@ -5275,6 +5296,13 @@ module HQ
         summary: agent.last_summary,
         updated_at: agent.last_activity_at&.iso8601
       }
+    end
+
+    def personal_assistant_quick_switch_summary(agent)
+      request = agent.messages.reverse.find do |message|
+        message.role == "user" && !message.metadata&.fetch("personal_assistant_summary", false)
+      end
+      truncate(request&.content.to_s.strip.empty? ? agent.last_summary : request.content, 120)
     end
 
     def archived_project_count
@@ -5677,6 +5705,8 @@ module HQ
         last_exit_code: agent.last_exit_code,
         last_result: agent.last_result_label,
         summary: agent.last_summary,
+        role: agent.personal_assistant? ? "personal_assistant_daily" : nil,
+        quick_switch_summary: agent.personal_assistant? ? personal_assistant_quick_switch_summary(agent) : nil,
         cost_snapshot: agent.cost_snapshot,
         latest_inquiry: inquiry,
         suspended_inquiry: suspended_inquiry_payload(agent),
