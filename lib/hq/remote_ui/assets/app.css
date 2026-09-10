@@ -916,6 +916,18 @@ h3 {
   box-shadow: none;
 }
 
+.switcher-fred-row {
+  border-left: 3px solid var(--accent);
+}
+
+.fred-switcher-avatar {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+
 .unread-agents-panel .switcher-agent-row.selected {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 18%, var(--panel-soft));
