@@ -7061,6 +7061,14 @@ module RemoteServerTest
     assert(!js[:body].include?("detailFooterFocused"),
            "expected detail header to stay visible while the footer is focused")
     assert(js[:body].include?("data-go-recent"), "expected Agent conversation detail to show a Go to recent action")
+    assert(js[:body].include?("renderConversationCatchUpActions") &&
+           js[:body].include?("data-load-pending-conversation") &&
+           js[:body].include?("Conversation catch-up"),
+           "expected staged-message and Go to recent controls to share an accessible catch-up group")
+    assert(js[:body].include?("iconSvg(\"chevronDown\")") &&
+           css[:body].include?(".load-new-messages-fab") &&
+           !css[:body].include?(".new-conversation-messages"),
+           "expected bottom catch-up controls to reuse the downward chevron without a top-sticky message control")
     assert(js[:body].include?('!["summary", "attachment"].includes(detailKind)'),
            "expected Summary and Attachment views to omit Go to recent")
     assert(js[:body].include?("function updateGoRecentVisibility"),

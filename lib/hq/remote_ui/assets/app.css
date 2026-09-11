@@ -5853,6 +5853,14 @@ select {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.conversation-catchup-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
 }
 
@@ -6103,23 +6111,9 @@ select {
   }
 }
 
+.load-new-messages-fab,
 .go-recent-fab {
   white-space: nowrap;
-}
-
-.new-conversation-messages {
-  position: sticky;
-  top: 12px;
-  z-index: 3;
-  display: flex;
-  justify-content: center;
-  width: fit-content;
-  max-width: calc(100% - 24px);
-  margin: 12px auto;
-}
-
-.new-conversation-messages .ui-button {
-  box-shadow: 0 3px 14px color-mix(in srgb, #000 24%, transparent);
 }
 
 .composer {
