@@ -718,6 +718,92 @@ def write_smoke_script(path)
           const desktopOrdinary = await shellMetrics(ordinaryPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .message-list", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
           const desktopFred = await shellMetrics(fredPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .pa-welcome", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
           assertSharedShell(desktopOrdinary, desktopFred, desktopFred.viewport);
+          const desktopCatchUp = await ordinaryPage.evaluate((key) => {
+            const baseline = Array.from({ length: 28 }, (_item, index) => ({
+              id: `desktop-catch-up-${index}`,
+              kind: "message",
+              role: index % 2 ? "assistant" : "user",
+              content: `Desktop catch-up message ${index}`,
+            }));
+            const incoming = [...baseline, {
+              id: "desktop-catch-up-new",
+              kind: "message",
+              role: "assistant",
+              content: "Desktop staged message",
+            }];
+            state.conversations[key] = { revision: "desktop-catch-up", blocks: baseline, loaded: true, loading: false };
+            state.pendingConversationUpdates[key] = { revision: "desktop-catch-up-next", blockCount: incoming.length, unseenCount: 1, digest: "desktop-catch-up-next" };
+            const originalApiGet = apiGet;
+            apiGet = async (path) => {
+              if (String(path).endsWith(`/agents/${encodeURIComponent(key)}/conversation`)) {
+                apiGet = originalApiGet;
+                return { conversation: incoming, conversation_revision: "desktop-catch-up-next", conversation_digest: "desktop-catch-up-next" };
+              }
+              return originalApiGet(path);
+            };
+            state.renderedViewHtml = "";
+            render({ preserveLiveEditor: true });
+            const root = document.querySelector("[data-agent-conversation-scroll]");
+            root.scrollTop = 0;
+            updateGoRecentVisibility();
+            const dock = document.querySelector("[data-agent-dock]");
+            const load = document.querySelector("[data-load-pending-conversation]");
+            const recent = document.querySelector("[data-go-recent]");
+            const loadRect = load?.getBoundingClientRect();
+            const recentRect = recent?.getBoundingClientRect();
+            return {
+              labels: [load?.textContent.trim(), recent?.textContent.trim()],
+              group: load?.parentElement?.getAttribute("aria-label"),
+              inDock: [load, recent].every((button) => button?.closest("[data-agent-dock]") === dock),
+              visible: [loadRect, recentRect].every((rect) => rect && rect.top >= 0 && rect.bottom <= innerHeight),
+              arrow: load?.querySelector(".ui-icon path")?.getAttribute("d"),
+              stagedVisible: document.body.textContent.includes("Desktop staged message"),
+              scrollTop: root.scrollTop,
+            };
+          }, agentKey);
+          if (desktopCatchUp.labels.join(",") !== "Load 1 new message,Go to recent" || desktopCatchUp.group !== "Conversation catch-up" ||
+              !desktopCatchUp.inDock || !desktopCatchUp.visible || desktopCatchUp.arrow !== "m6 9 6 6 6-6" || desktopCatchUp.stagedVisible || desktopCatchUp.scrollTop > 8) {
+            throw new Error(`Desktop conversation catch-up controls lost their staged bottom-dock behavior: ${JSON.stringify(desktopCatchUp)}`);
+          }
+          await ordinaryPage.click("[data-load-pending-conversation]");
+          await ordinaryPage.waitForSelector("[data-load-pending-conversation]", { state: "detached", timeout: 10_000 });
+          const desktopCatchUpLoaded = await ordinaryPage.evaluate((key) => ({
+            loaded: state.conversations[key]?.blocks?.some((block) => block.content === "Desktop staged message"),
+            pendingCleared: !state.pendingConversationUpdates[key],
+          }), agentKey);
+          if (!desktopCatchUpLoaded.loaded || !desktopCatchUpLoaded.pendingCleared) {
+            throw new Error(`Desktop catch-up activation did not fetch and apply staged messages: ${JSON.stringify(desktopCatchUpLoaded)}`);
+          }
+          await ordinaryPage.evaluate((key) => {
+            const current = state.conversations[key];
+            const incoming = [...current.blocks, {
+              id: "desktop-keyboard-catch-up-new",
+              kind: "message",
+              role: "assistant",
+              content: "Desktop keyboard staged message",
+            }];
+            state.pendingConversationUpdates[key] = { revision: "desktop-keyboard-catch-up-next", blockCount: incoming.length, unseenCount: 1, digest: "desktop-keyboard-catch-up-next" };
+            const originalApiGet = apiGet;
+            apiGet = async (path) => {
+              if (String(path).endsWith(`/agents/${encodeURIComponent(key)}/conversation`)) {
+                apiGet = originalApiGet;
+                return { conversation: incoming, conversation_revision: "desktop-keyboard-catch-up-next", conversation_digest: "desktop-keyboard-catch-up-next" };
+              }
+              return originalApiGet(path);
+            };
+            state.renderedViewHtml = "";
+            render({ preserveLiveEditor: true });
+          }, agentKey);
+          await ordinaryPage.locator("[data-load-pending-conversation]").focus();
+          await ordinaryPage.keyboard.press("Enter");
+          await ordinaryPage.waitForSelector("[data-load-pending-conversation]", { state: "detached", timeout: 10_000 });
+          const keyboardCatchUp = await ordinaryPage.evaluate((key) => ({
+            loaded: state.conversations[key]?.blocks?.some((block) => block.content === "Desktop keyboard staged message"),
+            focusedId: document.activeElement?.id,
+          }), agentKey);
+          if (!keyboardCatchUp.loaded || keyboardCatchUp.focusedId !== "prompt-input") {
+            throw new Error(`Keyboard catch-up activation did not restore focus to the composer: ${JSON.stringify(keyboardCatchUp)}`);
+          }
           await assertFredNonUserBlocks(fredPage, "desktop", {
             left: desktopFred.conversation.left,
             right: desktopFred.conversation.right - 32,
@@ -743,6 +829,40 @@ def write_smoke_script(path)
             }, null, { timeout: 10_000 });
             const mobileOrdinary = await shellMetrics(mobileOrdinaryPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .message-list", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
             const mobileFred = await shellMetrics(mobileFredPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .pa-welcome", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
+            const mobileCatchUp = await mobileOrdinaryPage.evaluate((key) => {
+              const baseline = Array.from({ length: 28 }, (_item, index) => ({
+                id: `mobile-catch-up-${index}`,
+                kind: "message",
+                role: index % 2 ? "assistant" : "user",
+                content: `Mobile catch-up message ${index}`,
+              }));
+              state.conversations[key] = { revision: "mobile-catch-up", blocks: baseline, loaded: true, loading: false };
+              state.pendingConversationUpdates[key] = { revision: "mobile-catch-up-next", blockCount: 30, unseenCount: 2, digest: "mobile-catch-up-next" };
+              state.renderedViewHtml = "";
+              render({ preserveLiveEditor: true });
+              const root = document.querySelector("[data-agent-conversation-scroll]");
+              root.scrollTop = 0;
+              updateGoRecentVisibility();
+              const dock = document.querySelector("[data-agent-dock]");
+              const load = document.querySelector("[data-load-pending-conversation]");
+              const recent = document.querySelector("[data-go-recent]");
+              const dockRect = dock?.getBoundingClientRect();
+              const loadRect = load?.getBoundingClientRect();
+              const recentRect = recent?.getBoundingClientRect();
+              return {
+                labels: [load?.textContent.trim(), recent?.textContent.trim()],
+                group: load?.parentElement?.getAttribute("aria-label"),
+                inDock: [load, recent].every((button) => button?.closest("[data-agent-dock]") === dock),
+                visible: [loadRect, recentRect].every((rect) => rect && rect.top >= 0 && rect.bottom <= innerHeight),
+                targetHeights: [loadRect, recentRect].every((rect) => rect?.height >= 38),
+                noOverlap: Boolean(loadRect && recentRect && !(loadRect.right < recentRect.left || recentRect.right < loadRect.left || loadRect.bottom < recentRect.top || recentRect.bottom < loadRect.top)),
+                dockTop: dockRect?.top,
+              };
+            }, agentKey);
+            if (mobileCatchUp.labels.join(",") !== "Load 2 new messages,Go to recent" || mobileCatchUp.group !== "Conversation catch-up" ||
+                !mobileCatchUp.inDock || !mobileCatchUp.visible || !mobileCatchUp.targetHeights || mobileCatchUp.noOverlap) {
+              throw new Error(`Mobile conversation catch-up controls lost their bottom dock layout: ${JSON.stringify(mobileCatchUp)}`);
+            }
             ["bottomBorder"].forEach((key) => equalMetric(mobileOrdinary.header[key], mobileFred.header[key], `mobile header ${key}`));
             if (mobileFred.header.title !== "FRED" || !mobileFred.header.subtitleHidden || mobileOrdinary.header.subtitleHidden) {
               throw new Error(`FRED mobile header did not hide Agent-only metadata: ${JSON.stringify({ mobileOrdinary: mobileOrdinary.header, mobileFred: mobileFred.header })}`);
@@ -5476,19 +5596,26 @@ Saved safely.
           };
           render({ preserveLiveEditor: true });
           const button = document.querySelector("[data-load-pending-conversation]");
-          const rootRect = root.getBoundingClientRect();
+          const dock = document.querySelector("[data-agent-dock]");
+          const composer = document.querySelector("#composer");
           const buttonRect = button?.getBoundingClientRect();
+          const dockRect = dock?.getBoundingClientRect();
+          const composerRect = composer?.getBoundingClientRect();
           return {
             before,
             after: document.querySelector("[data-agent-conversation-scroll]").scrollTop,
             draft: document.querySelector("#prompt-input")?.value,
             button: button?.getAttribute("aria-label"),
-            buttonIntersectsViewport: Boolean(buttonRect && buttonRect.bottom > rootRect.top && buttonRect.top < rootRect.bottom),
+            catchUpGroup: button?.closest(".conversation-catchup-actions")?.getAttribute("aria-label"),
+            buttonInBottomDock: Boolean(buttonRect && dockRect && button.closest("[data-agent-dock]") === dock && buttonRect.top >= dockRect.top && buttonRect.bottom <= dockRect.bottom),
+            buttonAboveComposer: Boolean(buttonRect && composerRect && buttonRect.bottom <= composerRect.top),
+            downArrow: button?.querySelector(".ui-icon path")?.getAttribute("d"),
             stagedVisible: document.body.textContent.includes("Server message staged for manual loading"),
             optimisticCount: document.body.textContent.split(pending.content).length - 1,
           };
         }, agentKey);
-        if (stagedConversation.button !== "Load 2 new messages" || !stagedConversation.buttonIntersectsViewport ||
+        if (stagedConversation.button !== "Load 2 new messages" || stagedConversation.catchUpGroup !== "Conversation catch-up" ||
+            !stagedConversation.buttonInBottomDock || !stagedConversation.buttonAboveComposer || stagedConversation.downArrow !== "m6 9 6 6 6-6" ||
             stagedConversation.stagedVisible || stagedConversation.optimisticCount !== 1 ||
             stagedConversation.draft !== draft || Math.abs(stagedConversation.after - stagedConversation.before) > 8) {
           throw new Error(`Manual conversation loading changed the visible snapshot before activation: ${JSON.stringify(stagedConversation)}`);
