@@ -35,7 +35,7 @@ module RemoteUIAssetSnapshotTest
       'Technical details',
       'data-confirm-pa-proposal=',
       'data-reject-pa-proposal=',
-      'function renderPersonalAssistantRecommendations(item)',
+      'function renderPersonalAssistantRecommendations(item, blocks = [], options = {})',
       'pendingPersonalAssistantProposalIds: new Set()',
       'state.pendingPersonalAssistantProposalIds.has(id)',
       'function renderConversationWorkspace({',
@@ -71,14 +71,17 @@ module RemoteUIAssetSnapshotTest
     javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
     css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
     required_javascript = [
-      "function personalAssistantHasRealConversation(blocks)",
-      'block?.kind === "message" && ["user", "assistant"].includes(block.role)',
-      "const starter = agent && item.state === \"active\" && !personalAssistantHasRealConversation(allBlocks);",
-      "${starter ? renderPersonalAssistantRecommendations(",
+      "function personalAssistantRecommendationContext(item, entry, index)",
+      "function submitPersonalAssistantRecommendation(suggestion)",
+      'class="message assistant pa-recommendations"',
+      "renderPersonalAssistantRecommendations(item, allBlocks",
+      "leadingHtml: recommendations",
+      "form.requestSubmit(submitter)",
       'querySelector("#composer #prompt-input")',
       '<h2>Recommendations</h2>',
       'aria-label="FRED recommendations"',
       'data-recommendation-source=',
+      'personal_assistant_recommendation',
       'name="external_events_prompt"'
     ]
     missing = required_javascript.reject { |fragment| javascript.include?(fragment) }

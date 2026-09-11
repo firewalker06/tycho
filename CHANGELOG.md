@@ -4,6 +4,9 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+- Keep FRED's dated recommendations visible in the conversation and submit a
+  selected recommendation as a durable, replay-safe user request with its
+  recommendation context preserved.
 - Add validated Balanced, Direct, Steady, and Upbeat FRED personalities with
   accessible Settings previews and stable per-conversation prompt composition.
 - Replace FRED's static starting surface with daily recommendation actions based

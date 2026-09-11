@@ -653,6 +653,42 @@ module RemoteServerTest
       assert(fred.attachments.count { |item| item["source"] == "remote_upload" } == 1,
              "expected duplicate FRED messages to import one attachment")
 
+      recommendation = session.dig(:recommendations, "items", 0)
+      recommendation_request = context.merge(
+        "client_request_id" => "client-recommendation-message",
+        "prompt" => recommendation.fetch("prompt"),
+        "recommendation" => recommendation.merge(
+          "id" => "#{session.dig(:recommendations, "for_date")}:0",
+          "for_date" => session.dig(:recommendations, "for_date"),
+          "source" => session.dig(:recommendations, "source")
+        ),
+        "start" => false
+      )
+      selected = post_message.call(recommendation_request)
+      selected_replay = post_message.call(recommendation_request)
+      assert(selected[:accepted] && selected_replay[:replayed],
+             "expected recommendation selection to use durable message acceptance and replay")
+      recommendation_events = HQ::AgentMemory.new(service.send(:find_agent!, session[:active_key])).events.select do |event|
+        event["type"] == "user_message" &&
+          event.dig("metadata", "personal_assistant_client_request_id") == "client-recommendation-message"
+      end
+      recorded_recommendation = recommendation_events.first&.dig("metadata", "personal_assistant_recommendation")
+      assert(recommendation_events.length == 1 &&
+             recorded_recommendation&.fetch("prompt") == recommendation.fetch("prompt") &&
+             recorded_recommendation&.fetch("id") == "#{session.dig(:recommendations, "for_date")}:0",
+             "expected one replayable user message with authoritative recommendation context")
+
+      begin
+        post_message.call(recommendation_request.merge(
+          "client_request_id" => "client-mismatched-recommendation",
+          "recommendation" => recommendation.merge("prompt" => "A different prompt")
+        ))
+        raise "expected mismatched recommendation rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.details[:code] == "recommendation_mismatch",
+               "expected recommendation wording mismatch to fail before persistence")
+      end
+
       begin
         post_message.call(first_request.merge("prompt" => "A different payload."))
         raise "expected client request payload mismatch"
@@ -5691,7 +5727,8 @@ module RemoteServerTest
            "expected the mobile Quick Agent form to fill and scroll within the viewport")
     assert(css[:body].include?("--touch-target: 44px") && css[:body].include?("--control-height: 44px"),
            "expected audited Remote UI controls to share accessible sizing tokens")
-    assert(css[:body].include?(".pa-suggestion { display: grid; width: 100%; min-height: var(--touch-target);"),
+    assert(css[:body].include?(".pa-suggestion { display: grid;") &&
+           css[:body].include?("width: 100%; min-height: var(--touch-target);"),
            "expected FRED first-run list actions to meet the shared 44px touch target")
     assert(css[:body].include?(".top-actions .search-box"),
            "expected Agents tab search to flex inside the action row")
@@ -7525,7 +7562,7 @@ module RemoteServerTest
            "expected first-use FRED flow not to silently submit fixed settings")
     assert(js[:body].include?("personalAssistant ? \"/personal-assistant/messages\""),
            "expected FRED messages to use the dedicated Personal Assistant API")
-    fred_recommendations = js[:body].split("function renderPersonalAssistantRecommendations", 2).last.split("function personalAssistantHasRealConversation", 2).first
+    fred_recommendations = js[:body].split("function renderPersonalAssistantRecommendations", 2).last.split("function personalAssistantConversationEventIdentity", 2).first
     assert(fred_recommendations.include?('<h2>Recommendations</h2>') &&
            fred_recommendations.include?('class="pa-suggestions" aria-label="FRED recommendations"') &&
            fred_recommendations.include?('data-pa-suggestion=') &&

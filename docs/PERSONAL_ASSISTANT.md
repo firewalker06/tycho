@@ -14,7 +14,9 @@ Personality presets change stable voice and interaction principles: Balanced is 
 
 ## Recommendations
 
-An empty daily conversation starts with recommendation buttons instead of a current-work dashboard or a static capability list. Selecting a recommendation only fills the normal composer; it does not send a prompt or approve a mutation.
+Each daily conversation starts with a FRED recommendation message instead of a current-work dashboard or a static capability list. The message remains at the head of the conversation after chat content loads. Selecting a recommendation immediately creates a normal user request and uses the same durable acceptance, queueing, run, and recovery path as an equivalent typed prompt; it does not approve a mutation.
+
+Tycho records the recommendation date, source, title, prompt, and stable within-day identity on that user message. The selected action stays intelligible after refresh or replay, and its button becomes a disabled Selected state. Interrupted submissions recover from the locally persisted acceptance record with the same client request ID, so checking or replaying acceptance cannot append the request twice.
 
 During daily rollover, the existing summary turn produces three to five bounded recommendation prompts for the next local date. The server-side FRED agent uses its installed skills and local read-only resources to inspect available daily-journal signals and new or updated Miki knowledge, then combines them with unfinished work, useful cleanup, and FRED's documented Tycho capabilities. Unavailable sources are treated as absent rather than invented. Tycho persists one set per date in the Personal Assistant lifecycle state. A same-day restart preserves that set. First use, stale state, and failed summaries show explicit starter or fallback recommendations instead of an empty or misleading generated state.
 

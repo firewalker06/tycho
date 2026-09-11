@@ -5749,14 +5749,18 @@ select {
 .fred-avatar { display: inline-block; flex: 0 0 auto; width: 32px; height: 32px; border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--border)); border-radius: 50%; object-fit: cover; object-position: center; background: var(--panel-soft); }
 .message-role .fred-avatar { width: 22px; height: 22px; }
 .pa-status-dot { width: 9px; height: 9px; border-radius: 999px; background: var(--success); }
-.pa-welcome { display: grid; gap: 16px; width: calc(100% - 28px); max-width: 100%; margin: 0 28px 0 0; border: 1px solid var(--border); border-radius: 12px; padding: 16px; background: var(--panel); }
-.pa-welcome-heading { display: grid; gap: 4px; }
-.pa-welcome h2 { margin: 0; font-size: 18px; }
-.pa-welcome-heading p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
+.pa-recommendations { gap: 8px; border-color: color-mix(in srgb, var(--accent) 36%, var(--border)); background: color-mix(in srgb, var(--panel) 96%, var(--accent)); }
+.pa-recommendations-content { display: grid; gap: 14px; white-space: normal; }
+.pa-recommendations-heading { display: grid; gap: 4px; }
+.pa-recommendations h2 { margin: 0; font-size: 17px; }
+.pa-recommendations-heading p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
 .pa-suggestions { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .pa-suggestions > li { min-width: 0; }
-.pa-suggestion { display: grid; width: 100%; min-height: var(--touch-target); border: 1px solid color-mix(in srgb, var(--accent) 54%, var(--border)); border-radius: 10px; padding: 11px 12px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.pa-suggestion { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; min-height: var(--touch-target); border: 1px solid color-mix(in srgb, var(--accent) 54%, var(--border)); border-radius: 10px; padding: 11px 12px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .pa-suggestion:hover, .pa-suggestion:focus-visible { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--panel-soft)); }
+.pa-suggestion.selected, .pa-suggestion:disabled { cursor: default; }
+.pa-suggestion.selected { border-color: color-mix(in srgb, var(--success) 58%, var(--border)); background: color-mix(in srgb, var(--success) 8%, transparent); opacity: 1; }
+.pa-recommendation-state { color: var(--success); font-size: 12px; font-weight: 750; }
 .pa-starter-copy { display: grid; gap: 3px; min-width: 0; }
 .pa-starter-copy strong { color: var(--text); font-size: 14px; }
 .pa-starter-copy span { color: var(--muted); font-size: 13px; line-height: 1.4; }

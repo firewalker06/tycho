@@ -167,7 +167,19 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
           const firstRecommendation = recommendationButtons.first();
           const recommendationPrompt = await firstRecommendation.getAttribute('data-pa-suggestion');
           await firstRecommendation.click();
-          await page.waitForFunction((prompt) => document.querySelector('#composer #prompt-input')?.value === prompt, recommendationPrompt, { timeout: 15000 });
+          const selectedRequest = page.locator('.message.user', { hasText: recommendationPrompt });
+          await selectedRequest.waitFor({ state: 'visible', timeout: 15000 });
+          await page.locator('.pa-recommendations').waitFor({ state: 'visible', timeout: 15000 });
+          if (await page.locator('.pa-recommendations .pa-suggestion.selected:disabled').count() !== 1) throw new Error('Selected recommendation did not become a disabled durable state');
+          const active = await (await page.request.get('http://127.0.0.1:#{PORT}/personal-assistant')).json();
+          const conversationBeforeReload = await (await page.request.get(`http://127.0.0.1:#{PORT}/agents/${encodeURIComponent(active.personal_assistant.active_key)}/conversation`)).json();
+          const recordedSelections = conversationBeforeReload.conversation.filter((block) => block.role === 'user' && block.content === recommendationPrompt && block.metadata?.personal_assistant_recommendation);
+          if (recordedSelections.length !== 1) throw new Error(`Recommendation selection was not persisted exactly once: ${JSON.stringify(recordedSelections)}`);
+          await page.reload();
+          await page.waitForFunction(() => { const boot = document.querySelector('#tycho-boot-shell'); return !boot || getComputedStyle(boot).display === 'none' || getComputedStyle(boot).visibility === 'hidden'; }, null, { timeout: 15000 });
+          await page.locator('.pa-recommendations').waitFor({ state: 'visible', timeout: 15000 });
+          await page.locator('.message.user', { hasText: recommendationPrompt }).waitFor({ state: 'visible', timeout: 15000 });
+          if (await page.locator('.message.user', { hasText: recommendationPrompt }).count() !== 1) throw new Error('Recommendation request duplicated during replay');
           if ((await page.locator('.personal-assistant-page').innerText()).includes('What FRED can do')) throw new Error('FRED retained its static capability list');
           if (await page.locator('.pa-current-work, #pa-project-starter-form').count()) throw new Error('FRED retained a removed starting surface');
           if (#{(ENV["TYCHO_PERSONAL_ASSISTANT_RECOMMENDATIONS_ONLY"] == "1").to_json}) {
@@ -297,6 +309,7 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
       capture.call("fred-unconfigured-settings-mobile.png", "iPhone 13", "#settings-personal-assistant", "Set up FRED", route: "settings")
     end
     verify_initiate.call
+    exit if ENV["TYCHO_PERSONAL_ASSISTANT_RECOMMENDATIONS_ONLY"] == "1"
     exit if ENV["TYCHO_PERSONAL_ASSISTANT_VERIFY_ONLY"] == "1"
     verify_zero_project_entry.call
     capture.call("fred-compact-settings-menu-desktop.png", "Desktop Chrome", ".personal-assistant-page", "Recommendations", open_menu: true)
