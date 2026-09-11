@@ -582,7 +582,8 @@ module HQ
         return ok(service.update_agent_delegation(key, body)) if %w[PATCH PUT].include?(method) && tail == ["delegation"]
         return ok(service.archive_agent(key)) if method == "DELETE" && tail.empty?
         return created(service.create_agent_loop(key, body)) if method == "POST" && tail == ["loop-schedule"]
-        return ok(conversation: service.conversation(key)) if method == "GET" && tail == ["conversation"]
+        return ok(service.conversation_snapshot(key)) if method == "GET" && tail == ["conversation"]
+        return ok(metadata: service.conversation_metadata(key)) if method == "GET" && tail == ["conversation", "metadata"]
         return ok(debug: service.agent_debug(key)) if method == "GET" && tail == ["debug"]
         return ok(log: service.agent_log(key, request&.query_params || {})) if method == "GET" && tail == ["logs"]
         if method == "POST" && tail == ["memory", "capture", "dry-run"]
@@ -3817,8 +3818,27 @@ module HQ
     end
 
     def conversation(key)
+      conversation_snapshot(key).fetch(:conversation)
+    end
+
+    def conversation_snapshot(key)
       target = find_agent_reference!(key)
-      conversation_for_agent(target)
+      blocks = conversation_for_agent(target)
+      {
+        conversation: blocks,
+        conversation_revision: agent_revision(target),
+        conversation_block_count: blocks.length,
+        conversation_digest: Digest::SHA256.hexdigest(JSON.generate(blocks))
+      }
+    end
+
+    def conversation_metadata(key)
+      snapshot = conversation_snapshot(key)
+      {
+        revision: snapshot.fetch(:conversation_revision),
+        block_count: snapshot.fetch(:conversation_block_count),
+        digest: snapshot.fetch(:conversation_digest)
+      }
     end
 
     def conversation_for_agent(target)

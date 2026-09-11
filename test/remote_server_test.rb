@@ -2879,9 +2879,23 @@ module RemoteServerTest
       end
       summary_index = conversation.index(summary)
       memory_summary = memory.events.find { |event| event["type"] == "run_summary" }
+      server = HQ::RemoteServer.new
+      metadata_response = server.send(
+        :route,
+        service,
+        "GET",
+        "/agents/#{created[:key]}/conversation/metadata",
+        {},
+        nil
+      )
+      metadata = metadata_response.dig(:body, :metadata)
 
       assert(summary&.dig(:content)&.include?("A detailed run summary"),
              "expected Remote UI conversation payload to include run summary blocks")
+      assert(metadata[:block_count] == conversation.length && !metadata_response[:body].key?(:conversation),
+             "expected conversation metadata polling to omit the full block payload")
+      assert(!metadata[:revision].to_s.empty?,
+             "expected conversation metadata polling to expose the current revision")
       assert(summary&.dig(:content)&.include?("Second paragraph"),
              "expected Remote UI conversation payload to expose full run summaries for preview truncation")
       assert(summary&.dig(:metadata, "summary_id").to_s.start_with?("summary-"),
@@ -7059,8 +7073,9 @@ module RemoteServerTest
            "expected Agent detail scrolling to avoid reopening a docked Summary panel")
     assert(js[:body].include?("function shouldOpenSummaryForSucceededAgent"),
            "expected Agent detail to open the Summary page when the active agent succeeds")
-    assert(js[:body].include?("!agentSucceeded(previous) && agentSucceeded(next)"),
-           "expected Summary to open only on a success transition")
+    assert(js[:body].include?("REMOTE_HELPERS.shouldOpenSucceededAgentSummary(previous, next, route.type)") &&
+           helpers_js[:body].include?("previous.scheduled || next.scheduled || previous.schedule_key || next.schedule_key"),
+           "expected Summary to open only for unscheduled agent success transitions")
     assert(js[:body].include?('navigate({ type: "agentSummary", key: currentRoute.key });'),
            "expected successful agent transitions to navigate to the Summary page")
     assert(js[:body].include?("conversationTailMarkers"),

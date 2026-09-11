@@ -45,6 +45,11 @@ module RemoteUIPersonalAssistantBehaviorTest
         Set,
         REMOTE_HELPERS: {
           conversationBlocksMatch: (left, right) => JSON.stringify(left) === JSON.stringify(right),
+          conversationSnapshotRequestMode: (conversation, revision, options = {}) => {
+            if (!conversation?.loaded) return "snapshot";
+            if (!options.force && conversation.revision === revision) return "none";
+            return "metadata";
+          },
           unseenConversationBlocks: (_left, right) => right,
         },
         PERSONAL_ASSISTANT_ANNOUNCEMENT_LIMIT: 128,
@@ -85,6 +90,7 @@ module RemoteUIPersonalAssistantBehaviorTest
         "personalAssistantStatusRequestIsCurrent",
         "requestPersonalAssistantStatus",
         "receiveConversationSnapshot",
+        "receiveConversationMetadata",
         "ensureConversation",
       ].forEach((name) => vm.runInContext(`${extractFunction(name)}\nthis.${name} = ${name};`, context));
 
@@ -304,14 +310,17 @@ module RemoteUIPersonalAssistantBehaviorTest
           fred: { revision: "rev-1", blocks: [], loaded: true, loading: false },
         };
         context.state.loadingConversations = {};
+        context.state.pendingConversationUpdates = {};
         context.state.personalAssistantRequests = { conversations: {} };
-        context.apiGet = () => {
+        let conversationPath = "";
+        context.apiGet = (path) => {
           conversationReads += 1;
-          return Promise.resolve({ conversation: [] });
+          conversationPath = path;
+          return Promise.resolve({ metadata: { revision: "rev-1", block_count: 0 } });
         };
         await context.ensureConversation(runningAgent, false);
-        assert(conversationReads === 1,
-               "running FRED skipped its focused conversation read on an unchanged revision");
+        assert(conversationReads === 1 && conversationPath.endsWith("/conversation/metadata"),
+               "running FRED did not use a metadata-only focused conversation read");
         const idleAgent = { ...runningAgent, running: false };
         await context.ensureConversation(idleAgent, false);
         assert(conversationReads === 1,
