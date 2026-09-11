@@ -69,6 +69,41 @@ module RemoteUIPromptQueueTest
           !callback.includes('data-delete-queued-prompt="callback" data-agent-key="queue-agent" disabled')) {
         throw new Error("delegated replies must expose captured authority and immutable controls");
       }
+
+      const requestContext = {
+        personalAssistantAgent: () => false,
+        findAgent: () => null,
+        personalAssistantSessionContext: () => null,
+      };
+      vm.createContext(requestContext);
+      vm.runInContext(`${extractFunction("personalAssistantEndpointAdapter")}\nthis.personalAssistantEndpointAdapter = personalAssistantEndpointAdapter;`, requestContext);
+      const clientRequestId = "client-queue-reconciliation";
+      const adapter = requestContext.personalAssistantEndpointAdapter("queue-agent", { personalAssistant: false });
+      const requestBody = adapter.writeBody({ prompt: "One queued prompt", start: true }, clientRequestId);
+      if (requestBody.client_request_id !== clientRequestId) {
+        throw new Error("generic queued submissions must send their optimistic ID for server reconciliation");
+      }
+
+      const queueContext = {
+        escapeAttr: (value) => String(value),
+        escapeHtml: (value) => String(value),
+        iconSvg: () => "",
+        personalAssistantControlError: () => null,
+        optimisticPromptQueueEntries: () => [{
+          id: clientRequestId, prompt: "One queued prompt", state: "queued", attachments: []
+        }],
+      };
+      vm.createContext(queueContext);
+      vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\n${extractFunction("renderPromptQueue")}\nthis.renderPromptQueue = renderPromptQueue;`, queueContext);
+      const queueHtml = queueContext.renderPromptQueue({
+        key: "queue-agent",
+        prompt_queue: { entries: [{
+          id: requestBody.client_request_id, prompt: requestBody.prompt, state: "queued", source: "user"
+        }] },
+      });
+      if ((queueHtml.match(/data-prompt-queue-entry=/g) || []).length !== 1 || !queueHtml.includes("1 queued")) {
+        throw new Error("one accepted queued submission must reconcile to one rendered queue row");
+      }
     JAVASCRIPT
 
     output, status = Open3.capture2e("node", "-e", script, APP_PATH)
