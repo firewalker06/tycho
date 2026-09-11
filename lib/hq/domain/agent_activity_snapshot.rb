@@ -15,12 +15,14 @@ module HQ
       @agents = {}
     end
 
-    def replace!(agents)
+    def replace!(agents, extra_unread_count: 0)
       replacement = Array(agents).to_h { |agent| [agent.key, activity_payload(agent)] }
+      extra_unread = [extra_unread_count.to_i, 0].max
       @mutex.synchronize do
-        return false if @ready && @agents == replacement
+        return false if @ready && @agents == replacement && @extra_unread_count == extra_unread
 
         @agents = replacement
+        @extra_unread_count = extra_unread
         changed!
       end
       true
@@ -55,7 +57,7 @@ module HQ
           revision: @revision,
           generated_at: @generated_at,
           ready: @ready,
-          unread_count: agents.count { |agent| agent[:unread] },
+          unread_count: agents.count { |agent| agent[:unread] } + @extra_unread_count.to_i,
           agents: agents
         }
       end

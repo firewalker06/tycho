@@ -697,7 +697,9 @@ module HQ
       activity = {
         schema_version: AgentActivitySnapshot::SCHEMA_VERSION,
         generated_at: Time.now.utc.iso8601,
-        unread_count: servers.sum { |server| server[:agents].count { |agent| agent[:unread] } },
+        unread_count: servers.sum do |server|
+          server[:local] ? local[:unread_count].to_i : server[:agents].count { |agent| agent[:unread] }
+        end,
         servers: servers
       }
       activity[:revision] = Digest::SHA256.hexdigest(JSON.generate(activity.except(:generated_at)))
@@ -3788,9 +3790,8 @@ module HQ
 
     def dispatch_agent_push_notifications!
       agents, events = load_agents_with_events
-      visible = visible_agents(agents)
       notification_candidates = notification_agents(agents)
-      @agent_activity_snapshot.replace!(visible)
+      replace_agent_activity_snapshot!(agents)
       notification_keys = notification_candidates.map(&:key)
       dispatch_agent_push_events(events.select { |event| notification_keys.include?(event.agent_key) }, agents: notification_candidates)
     end
@@ -4801,6 +4802,15 @@ module HQ
       []
     end
 
+    # FRED remains outside the generic agent catalog, but an active unread FRED
+    # session is still operator attention and belongs in aggregate unread counts.
+    def replace_agent_activity_snapshot!(agents)
+      @agent_activity_snapshot.replace!(
+        visible_agents(agents),
+        extra_unread_count: active_personal_assistant_notification_agents(agents).count(&:unread?)
+      )
+    end
+
     def hidden_setting_value(attrs)
       raise Error.new("Missing hidden value") unless attrs.key?("hidden")
 
@@ -4945,9 +4955,8 @@ module HQ
 
     def load_all_agents
       agents, events = load_agents_with_events
-      visible = visible_agents(agents)
       notification_candidates = notification_agents(agents)
-      @agent_activity_snapshot.replace!(visible)
+      replace_agent_activity_snapshot!(agents)
       notification_keys = notification_candidates.map(&:key)
       dispatch_agent_push_events(events.select { |event| notification_keys.include?(event.agent_key) }, agents: notification_candidates)
       agents
@@ -5091,7 +5100,7 @@ module HQ
 
     def save_agents(agents)
       @agent_store.save(agents)
-      @agent_activity_snapshot.replace!(visible_agents(agents))
+      replace_agent_activity_snapshot!(agents)
     end
 
     def sort_agents(agents)

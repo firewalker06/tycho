@@ -35,8 +35,16 @@ module AgentActivitySnapshotTest
     assert(awaiting[:revision] == 2 && awaiting[:unread_count] == 1,
            "expected unread activity to advance the revision")
     assert(awaiting.dig(:agents, 0, :awaiting_input), "expected inquiry activity")
+
+    assert(snapshot.replace!([finished], extra_unread_count: 1),
+           "expected an unread protected session to update aggregate activity")
+    assert(snapshot.snapshot[:unread_count] == 2,
+           "expected protected-session attention to contribute without entering the agent catalog")
+    assert(snapshot.snapshot[:agents].length == 1,
+           "expected protected-session attention not to duplicate a catalog agent")
     assert(snapshot.remove!(agent.key), "expected activity removal")
-    assert(snapshot.snapshot[:agents].empty?, "expected the removed agent to leave the snapshot")
+    assert(snapshot.snapshot[:agents].empty? && snapshot.snapshot[:unread_count] == 1,
+           "expected removing a catalog agent to retain protected-session attention")
 
     parent = fake_agent(key: "parent-agent", status: "running", unread: false)
     child = fake_agent(
