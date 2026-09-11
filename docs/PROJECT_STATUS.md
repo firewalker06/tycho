@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-09-09
+2026-09-11
 
 ## Strategic Direction
 
@@ -107,7 +107,11 @@ summary failures degrade to explicit safe starters, while same-day restarts keep
 the current set. The former Current Work panel, fixed starter question, project
 picker, and static capability list no longer occupy FRED's starting surface.
 Setup keeps visible model, effort, timezone, and explicit confirmation, with
-catalog suggestions and FRED access before the first project. Settings edits
+catalog suggestions and FRED access before the first project. Four trusted,
+versioned personality presets change FRED's stable interaction principles while
+leaving safety, truthfulness, structured output, confirmations, and response-style
+overrides intact; missing configuration remains backwards-compatible with the
+Balanced preset. Settings edits
 and a non-destructive restart are separate from destructive reset. Readable
 action previews and useful receipts connect requests to projects, agents,
 schedules, and run results; returned results become bounded context for the

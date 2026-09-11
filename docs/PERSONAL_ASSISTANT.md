@@ -4,11 +4,13 @@ FRED helps you set up Tycho projects, prepare and follow agents, inspect results
 
 ## Getting started
 
-Visit FRED, review the model, reasoning effort, timezone, and external-event preference, then confirm setup. Visiting automatically creates or resumes the current daily session; it does not run a model. Start with a recommendation or write your own request. FRED is available before you have a project.
+Visit FRED, review the model, reasoning effort, timezone, personality, and external-event preference, then confirm setup. Visiting automatically creates or resumes the current daily session; it does not run a model. Start with a recommendation or write your own request. FRED is available before you have a project.
 
 The setup form uses the server's Codex catalog when available. Executable readiness is not a guarantee that authentication or a particular model will work. Setup keeps a manual model fallback when discovery is unavailable.
 
 Settings can be changed without deleting your conversation. Saved changes apply to the next daily conversation, or you can explicitly restart FRED to apply them now. Restart is an advanced lifecycle action: it archives the current idle conversation and keeps settings and continuity. Reset is separate: it deletes the active session and its logs, clears settings and active continuity, and removes pending actions. It does not erase previously archived conversations or historical handoff files.
+
+Personality presets change stable voice and interaction principles: Balanced is clear and practical, Direct is decisive and plain-spoken, Steady is calm and grounded, and Upbeat is curious and encouraging. Existing configurations without a personality use Balanced. Presets are trusted, versioned Tycho content rather than free-form prompt text, and cannot weaken factual standards, task precision, structured output, action confirmation, safety rules, or higher-priority instructions. User response-style guidance still controls presentation where it is more specific.
 
 ## Recommendations
 

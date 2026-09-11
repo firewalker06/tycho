@@ -4,6 +4,8 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+- Add validated Balanced, Direct, Steady, and Upbeat FRED personalities with
+  accessible Settings previews and stable per-conversation prompt composition.
 - Replace FRED's static starting surface with daily recommendation actions based
   on handoff continuity, recent internal signals, and an optional server-side
   external-events prompt in Settings.
