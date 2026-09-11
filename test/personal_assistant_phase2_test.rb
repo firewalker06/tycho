@@ -656,7 +656,7 @@ class PersonalAssistantPhase2Test
       other.create_agent("project_key" => "web", "name" => "Concurrent create", "prompt" => "Must survive")
       service.define_singleton_method(:save_agent) { raise "start must not save a stale whole agent list" }
       store = service.instance_variable_get(:@agent_store)
-      store.define_singleton_method(:start_agent!) { |key| load.find { |agent| agent.key == key } }
+      store.define_singleton_method(:start_agent!) { |key, **_options| load.find { |agent| agent.key == key } }
       service.start_agent(target[:key])
       assert(store.load.any? { |agent| agent.name == "Concurrent create" },
              "expected start to avoid a stale whole-store save")

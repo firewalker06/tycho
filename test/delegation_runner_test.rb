@@ -129,8 +129,15 @@ module DelegationRunnerTest
         raise "local --parent-agent send did not persist the parent signature"
       end
 
-      ledger = JSON.parse(File.read(File.join(logs, "agent_delegations.json")))
-      reports = ledger.fetch("reports").select { |report| report.dig("child", "agent_key") == child_key }
+      reports = []
+      deadline = Time.now + 12
+      until Time.now >= deadline
+        ledger = JSON.parse(File.read(File.join(logs, "agent_delegations.json")))
+        reports = ledger.fetch("reports").select { |report| report.dig("child", "agent_key") == child_key }
+        break if reports.length == 1 && reports.first["resume_state"] == "resumed"
+
+        sleep 0.05
+      end
       raise "expected one deduplicated child report" unless reports.length == 1
       raise "expected automatic resume record" unless reports.first["resume_state"] == "resumed"
     end

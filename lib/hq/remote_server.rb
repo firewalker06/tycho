@@ -618,7 +618,10 @@ module HQ
           return ok(service.delete_queued_prompt(key, tail[1])) if method == "DELETE"
         end
         return ok(service.retry_prompt_queue(key)) if method == "POST" && tail == ["prompt-queue", "retry"]
-        return ok(service.submit_prompt(key, body, actor:)) if method == "POST" && [%w[messages], %w[prompt]].include?(tail)
+        if method == "POST" && [%w[messages], %w[prompt]].include?(tail)
+          result = service.submit_prompt(key, body, actor:)
+          return result[:queued] ? accepted(result) : ok(result)
+        end
         return ok(service.start_agent(key, body, actor:)) if method == "POST" && tail == ["start"]
         return ok(service.stop_agent(key)) if method == "POST" && tail == ["stop"]
         return created(service.clone_agent(key, body)) if method == "POST" && tail == ["clone"]
@@ -3906,19 +3909,28 @@ module HQ
       text = [text, pull_request_context].reject(&:empty?).join("\n")
       if target.running?
         begin
-          target, entry = @agent_store.enqueue_prompt!(
+          target, entry = @agent_store.enqueue_prompt_from!(
             target.key,
             prompt: text,
             attachments:,
+            actor:,
             id: prompt_client_request_id(attrs),
-            client_request_id: acceptance_id
+            client_request_id: acceptance_id,
+            message_metadata:,
+            source: actor.parent? ? "parent" : "user"
           )
+          resumed_schedules = actor.user? && target.scheduled? ? scheduler.resume_after_user_message(target.key) : []
           @agent_activity_snapshot.upsert!(target)
+          visible_entries = target.queued_prompts
           return {
+            accepted: true,
             queued: true,
+            started: false,
+            queue_position: visible_entries.index { |candidate| candidate["id"] == entry["id"] }.to_i + 1,
             queue_entry: prompt_queue_entry_payload(target, entry),
             agent: agent_payload(target),
-            conversation: conversation(target.key)
+            conversation: conversation(target.key),
+            resumed_schedules: resumed_schedules
           }
         rescue ArgumentError => e
           raise unless e.message == "Agent is no longer running"
@@ -4069,7 +4081,7 @@ module HQ
       target = reject_personal_assistant_control!(find_agent!(key))
       target = associate_delegation_from_attrs!(target, attrs, actor:)
       @agent_store.accept_prompt_from!(target, actor:) if target.delegation_parent
-      target = @agent_store.start_agent!(target.key) unless target.running?
+      target = @agent_store.start_agent!(target.key, prefer_queued: true) unless target.running?
       @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target) }
     end
@@ -6206,8 +6218,12 @@ module HQ
     end
 
     def prompt_queue_payload(agent)
+      entries = agent.queued_prompts
       {
-        "entries" => agent.queued_prompts.map { |entry| prompt_queue_entry_payload(agent, entry) },
+        "entries" => entries.each_with_index.map do |entry, index|
+          prompt_queue_entry_payload(agent, entry).merge("position" => index + 1)
+        end,
+        "pending_count" => entries.length,
         "dispatch_error" => agent.prompt_queue_dispatch_error,
         "blocked_by_inquiry" => agent.inquiry_blocking_prompt_queue?
       }
@@ -6228,6 +6244,8 @@ module HQ
         "updated_at" => entry["updated_at"],
         "client_request_id" => entry["client_request_id"],
         "state" => entry["state"] || "queued",
+        "source" => entry["source"] || "legacy",
+        "authority" => entry["authority"]&.slice("owner", "generation"),
         "attachments" => Array(entry["attachments"]).map do |attachment|
           attachment.slice("id", "type", "kind", "title", "mime_type", "size_bytes", "created_at")
         end

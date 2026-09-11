@@ -432,7 +432,8 @@ module HQ
       result
     end
 
-    def enqueue_prompt!(prompt:, attachments: nil, accepted_at: Time.now, id: SecureRandom.uuid, client_request_id: nil)
+    def enqueue_prompt!(prompt:, attachments: nil, accepted_at: Time.now, id: SecureRandom.uuid, client_request_id: nil,
+                        authority: nil, message_metadata: nil, source: nil)
       entry = {
         "id" => id.to_s,
         "prompt" => prompt.to_s.strip,
@@ -441,6 +442,9 @@ module HQ
       }
       request_id = client_request_id.to_s.strip
       entry["client_request_id"] = request_id unless request_id.empty?
+      entry["authority"] = normalize_prompt_queue_authority(authority) if authority
+      entry["message_metadata"] = message_metadata if message_metadata.is_a?(Hash) && !message_metadata.empty?
+      entry["source"] = source.to_s unless source.to_s.empty?
       raise ArgumentError, "Queued prompt is required" if entry["prompt"].empty?
 
       @prompt_queue << entry
@@ -450,6 +454,7 @@ module HQ
     def edit_queued_prompt!(id, prompt:, updated_at: Time.now)
       entry = @prompt_queue.find { |candidate| candidate["id"] == id.to_s }
       raise ArgumentError, "Unknown queued prompt: #{id}" unless entry
+      raise ArgumentError, "Delegated replies cannot be edited" if entry["source"] == "delegation_callback"
 
       text = prompt.to_s.strip
       raise ArgumentError, "Queued prompt is required" if text.empty?
@@ -462,6 +467,7 @@ module HQ
     def delete_queued_prompt!(id)
       index = @prompt_queue.index { |candidate| candidate["id"] == id.to_s }
       raise ArgumentError, "Unknown queued prompt: #{id}" unless index
+      raise ArgumentError, "Delegated replies cannot be deleted" if @prompt_queue[index]["source"] == "delegation_callback"
 
       @prompt_queue.delete_at(index)
     end
@@ -470,19 +476,20 @@ module HQ
       return @prompt_queue_claim if @prompt_queue_claim
       return nil if @prompt_queue.empty?
 
+      entries = if !@prompt_queue.first["client_request_id"].to_s.empty?
+                  @prompt_queue.shift(@prompt_queue.length)
+                else
+                  [@prompt_queue.shift]
+                end
       @prompt_queue_claim = {
         "id" => SecureRandom.uuid,
-        "entries" => @prompt_queue,
+        "entries" => entries,
         "claimed_at" => claimed_at.utc.iso8601(6),
         "baseline_run_count" => run_count,
         "message_appended" => false
       }
-      client_request_ids = @prompt_queue.filter_map do |entry|
-        id = entry["client_request_id"].to_s.strip
-        id.empty? ? nil : id
-      end
+      client_request_ids = entries.map { |entry| entry["client_request_id"].to_s.strip }.reject(&:empty?)
       @prompt_queue_claim["personal_assistant_client_request_ids"] = client_request_ids unless client_request_ids.empty?
-      @prompt_queue = []
       @prompt_queue_dispatch_error = nil
       @prompt_queue_claim
     end
@@ -493,9 +500,11 @@ module HQ
       return false if claim["message_appended"]
 
       entries = Array(claim["entries"])
-      prompt = entries.map { |entry| entry["prompt"].to_s.strip }.reject(&:empty?).join("\n\n---\n\n")
-      attachments = entries.flat_map { |entry| Array(entry["attachments"]) }
+      entry = entries.first || {}
+      prompt = entries.map { |candidate| candidate["prompt"].to_s.strip }.reject(&:empty?).join("\n\n---\n\n")
+      attachments = entries.flat_map { |candidate| Array(candidate["attachments"]) }
       metadata = { "prompt_queue_claim_id" => claim["id"] }
+      metadata.merge!(entry["message_metadata"]) if entry["message_metadata"].is_a?(Hash)
       request_ids = Array(claim["personal_assistant_client_request_ids"]).filter_map do |id|
         value = id.to_s.strip
         value.empty? ? nil : value
@@ -523,6 +532,16 @@ module HQ
       !last_run&.metadata&.fetch("prompt_queue_claim_id", nil).to_s.empty?
     end
 
+    def dispatched_prompt_queue_claim
+      claim = @prompt_queue_claim
+      return nil unless claim
+      return nil unless last_run&.metadata&.fetch("prompt_queue_claim_id", nil).to_s == claim["id"].to_s
+      return nil unless run_count > claim["baseline_run_count"].to_i
+      return nil if last_run.metadata&.fetch("start_failure", false)
+
+      claim
+    end
+
     def fail_prompt_queue_dispatch!(message, failed_at: Time.now)
       @prompt_queue_dispatch_error = {
         "message" => message.to_s.strip,
@@ -543,8 +562,13 @@ module HQ
     end
 
     def prompt_queue_dispatchable?
-      !running? && !inquiry_blocking_prompt_queue? && last_run &&
+      has_run_context = last_run || next_prompt_queue_entry&.fetch("source", nil) == "delegation_callback"
+      !running? && !inquiry_blocking_prompt_queue? && @prompt_queue_dispatch_error.nil? && has_run_context &&
         ((@prompt_queue_claim && @prompt_queue_dispatch_error.nil?) || (!@prompt_queue.empty? && !@prompt_queue_claim))
+    end
+
+    def pending_prompts?
+      !@prompt_queue.empty? || !@prompt_queue_claim.nil?
     end
 
     def unread?
@@ -1984,7 +2008,7 @@ module HQ
       prompt = value["prompt"].to_s.strip
       return nil if id.empty? || prompt.empty?
 
-      {
+      result = {
         "id" => id,
         "prompt" => prompt,
         "attachments" => normalize_attachments(value["attachments"]) || [],
@@ -1992,6 +2016,32 @@ module HQ
         "updated_at" => value["updated_at"].to_s.empty? ? nil : value["updated_at"].to_s,
         "client_request_id" => value["client_request_id"].to_s.empty? ? nil : value["client_request_id"].to_s
       }.compact
+      authority = normalize_prompt_queue_authority(value["authority"])
+      result["authority"] = authority if authority
+      result["message_metadata"] = value["message_metadata"] if value["message_metadata"].is_a?(Hash)
+      result["source"] = value["source"].to_s unless value["source"].to_s.empty?
+      result
+    end
+
+    def next_prompt_queue_entry
+      Array(@prompt_queue_claim&.fetch("entries", nil)).first || @prompt_queue.first
+    end
+
+    def normalize_prompt_queue_authority(value)
+      return nil unless value.is_a?(Hash)
+
+      owner = value["owner"].to_s
+      generation = value["generation"]
+      relationship_id = value["relationship_id"].to_s
+      return nil unless %w[parent user].include?(owner)
+      return nil unless generation.is_a?(Integer) && generation.positive?
+      return nil if relationship_id.empty?
+
+      {
+        "relationship_id" => relationship_id,
+        "owner" => owner,
+        "generation" => generation
+      }
     end
 
     def normalize_attachment(value)

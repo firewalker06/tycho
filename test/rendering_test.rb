@@ -1651,7 +1651,7 @@ module RenderingTest
     agent.define_singleton_method(:add_user_message!) { |_| submissions += 1 }
     agent.define_singleton_method(:start!) { nil }
     app.define_singleton_method(:save_agents!) { nil }
-    app.instance_variable_get(:@agent_store).define_singleton_method(:start_agent!) do |_key|
+    app.instance_variable_get(:@agent_store).define_singleton_method(:start_agent!) do |_key, **_options|
       agent.start!
       agent
     end
@@ -1709,7 +1709,7 @@ module RenderingTest
     app = build_input_required_chat_app
     agent = app.instance_variable_get(:@agents).first
     agent.define_singleton_method(:start!) { @started = true }
-    app.instance_variable_get(:@agent_store).define_singleton_method(:start_agent!) do |_key|
+    app.instance_variable_get(:@agent_store).define_singleton_method(:start_agent!) do |_key, **_options|
       agent.start!
       agent
     end
@@ -2345,7 +2345,7 @@ module RenderingTest
       end
       created_agent
     end
-    store.define_singleton_method(:start_agent!) do |_key|
+    store.define_singleton_method(:start_agent!) do |_key, **_options|
       created_agent.start!
       created_agent
     end
@@ -2412,7 +2412,7 @@ module RenderingTest
       end
       created_agent
     end
-    store.define_singleton_method(:start_agent!) do |_key|
+    store.define_singleton_method(:start_agent!) do |_key, **_options|
       created_agent.start!
       created_agent
     end

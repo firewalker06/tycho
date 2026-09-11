@@ -113,8 +113,11 @@ module HQ
     def refresh_session(key, now: Time.now)
       schedule, states, state = schedule_state_for(key)
       ensure_not_expired!(schedule, state, states, now:)
-      target = last_agent(schedule, state, load_agents)
+      target = last_agent(schedule, state, load_agents(dispatch_prompt_queues: false))
       if target
+        if target.pending_prompts?
+          raise RefreshError, "Scheduled session #{target.key.inspect} has queued prompts; let them drain before refreshing"
+        end
         stop_scheduled_session!(target) if target.running?
         @agent_store.archive_agent!(target.key)
         reconcile_archived_agent!(target.key, archived_agent: target, now:)
@@ -249,8 +252,8 @@ module HQ
 
     private
 
-    def load_agents
-      agents, = @agent_store.load_with_poll_events
+    def load_agents(dispatch_prompt_queues: true)
+      agents, = @agent_store.load_with_poll_events(dispatch_prompt_queues:)
       agents
     end
 

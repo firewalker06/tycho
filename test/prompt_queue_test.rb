@@ -12,9 +12,13 @@ module PromptQueueTest
 
   def run!
     assert_queue_persists_and_reconciles_across_clients
-    assert_claim_race_starts_one_combined_run
+    assert_claim_race_drains_fifo_without_overlap
     assert_dispatch_failure_retains_one_prepared_batch_for_retry
     assert_entries_accepted_after_claim_form_a_consecutive_batch
+    assert_authority_is_captured_per_fifo_entry
+    assert_callback_can_start_a_never_run_parent
+    assert_stop_pauses_and_archive_refuses_pending_work
+    assert_legacy_entries_load_without_authority
     assert_late_status_write_cannot_finish_successor_run
     assert_active_and_restorable_inquiries_block_dispatch
     assert_manual_prompt_retires_inquiry_without_dropping_queue
@@ -46,9 +50,16 @@ module PromptQueueTest
       end.map(&:value)
 
       assert(responses.all? { |response| response[:queued] }, "expected running submissions to enqueue")
+      route_response = HQ::RemoteServer.allocate.send(
+        :route, first, "POST", "/agents/#{agent.key}/messages",
+        { "prompt" => "queued through HTTP", "start" => true }, nil
+      )
+      assert(route_response[:status] == 202 && route_response.dig(:body, :queued),
+             "expected the running-agent API to acknowledge durable queue acceptance with HTTP 202")
       persisted = second.agent(agent.key).dig(:prompt_queue, "entries")
-      assert(persisted.length == 4, "expected all clients to see four persisted queue entries")
-      assert(persisted.map { |entry| entry.fetch("id") }.sort == 4.times.map { |index| "client-queue-test-#{index + 1}" },
+      assert(persisted.length == 5, "expected all clients to see five persisted queue entries")
+      assert(persisted.map { |entry| entry["id"] }.grep(/\Aclient-queue-test-/).sort ==
+             4.times.map { |index| "client-queue-test-#{index + 1}" },
              "expected client queue IDs to survive server acceptance for optimistic reconciliation")
       accepted = persisted.map { |entry| entry.fetch("accepted_at") }
       assert(accepted == accepted.sort, "expected server acceptance order to be stable")
@@ -59,14 +70,14 @@ module PromptQueueTest
       assert(edited.dig(:queue_entry, "prompt") == "edited prompt", "expected individual queue edits")
       first.delete_queued_prompt(agent.key, persisted[2].fetch("id"))
       reconciled = second.agent(agent.key).dig(:prompt_queue, "entries")
-      assert(reconciled.length == 3 && reconciled.any? { |entry| entry["prompt"] == "edited prompt" },
+      assert(reconciled.length == 4 && reconciled.any? { |entry| entry["prompt"] == "edited prompt" },
              "expected edits and deletes to reconcile across clients")
     ensure
       stop_process(pid)
     end
   end
 
-  def assert_claim_race_starts_one_combined_run
+  def assert_claim_race_drains_fifo_without_overlap
     with_queue_store do |registry, workspace|
       agent, pid = running_agent(workspace)
       store = HQ::AgentStore.new(registry.projects)
@@ -81,15 +92,15 @@ module PromptQueueTest
       end
 
       persisted = store.load.find { |candidate| candidate.key == agent.key }
-      assert(persisted.run_count == 2, "expected a multi-client claim race to start exactly one follow-up run")
+      assert(persisted.run_count == 3, "expected two FIFO entries to start one serial follow-up run each")
       assert(persisted.queued_prompts.empty?, "expected an accepted claim to be removed")
       assert(persisted.last_run_from_prompt_queue?,
              "expected a queue-dispatched run to retain its queue provenance")
-      queued_message = HQ::AgentMemory.new(persisted).events.find do |event|
+      queued_messages = HQ::AgentMemory.new(persisted).events.select do |event|
         event.dig("metadata", "prompt_queue_claim_id")
       end
-      assert(queued_message["content"] == "first accepted\n\n---\n\nsecond accepted",
-             "expected claimed prompts to combine in acceptance order")
+      assert(queued_messages.map { |event| event["content"] } == ["first accepted", "second accepted"],
+             "expected claims to preserve FIFO order without combining authority-bearing work")
     end
   end
 
@@ -250,6 +261,103 @@ module PromptQueueTest
       assert(events.any? { |event| event["type"] == "inquiry_cancelled" } &&
              persisted.run_count == 3 && persisted.queued_prompts.empty?,
              "expected manual retirement to run first and queued work to dispatch afterward")
+    end
+  end
+
+  def assert_authority_is_captured_per_fifo_entry
+    with_queue_store do |registry, workspace|
+      parent_workspace = File.join(workspace, "parent")
+      FileUtils.mkdir_p(parent_workspace)
+      parent = terminal_agent(parent_workspace)
+      parent.instance_variable_set(:@key, "parent-agent")
+      child, pid = running_agent(workspace)
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([parent, child])
+      service = HQ::RemoteService.new(registry:)
+
+      parent_response = service.submit_prompt(
+        child.key, "prompt" => "parent first", "parent_agent_key" => parent.key, "start" => true
+      )
+      user_response = service.submit_prompt(child.key, "prompt" => "user takeover", "start" => true)
+      reclaimed_response = service.submit_prompt(
+        child.key, "prompt" => "parent reclaimed", "parent_agent_key" => parent.key, "start" => true
+      )
+      entries = reclaimed_response.dig(:agent, :prompt_queue, "entries")
+      assert(parent_response.dig(:queue_entry, "authority", "owner") == "parent" &&
+             user_response.dig(:queue_entry, "authority", "owner") == "user" &&
+             entries.map { |entry| entry.dig("authority", "generation") } == [1, 2, 3],
+             "expected parent, Takeover, and reclaim authority generations to be captured at acceptance")
+
+      stop_process(pid)
+      with_stubbed_start do
+        3.times { service.agent(child.key) }
+      end
+      persisted = store.load.find { |agent| agent.key == child.key }
+      stamps = persisted.runs.last(3).map { |run| [run.delegation_owner, run.delegation_generation] }
+      assert(stamps == [["parent", 1], ["user", 2], ["parent", 3]],
+             "expected delayed FIFO entries to run under their captured authority, including stale generations")
+      authors = queued_memory_events(child.key, store).map { |event| event.dig("metadata", "message_author", "agent_key") }
+      assert(authors == [parent.key, nil, parent.key], "expected queued message authorship to survive dispatch")
+    ensure
+      stop_process(pid)
+    end
+  end
+
+  def assert_stop_pauses_and_archive_refuses_pending_work
+    with_queue_store do |registry, workspace|
+      agent, pid = running_agent(workspace)
+      store = HQ::AgentStore.new(registry.projects)
+      agent.enqueue_prompt!(prompt: "keep after stop")
+      store.save([agent])
+
+      stopped = store.stop_agent!(agent.key)
+      Process.wait(pid)
+      pid = nil
+      persisted = store.load.find { |candidate| candidate.key == agent.key }
+      assert(stopped.prompt_queue_dispatch_error && persisted.pending_prompts? && persisted.run_count == 1,
+             "expected Stop to pause rather than dispatch or discard queued work")
+      begin
+        store.archive_agent!(agent.key)
+        raise "expected archive to refuse queued work"
+      rescue ArgumentError => e
+        assert(e.message.include?("queued prompts"), "expected an explicit queued-work archive refusal")
+      end
+      with_stubbed_start { store.retry_prompt_queue!(agent.key) }
+      assert(!store.load.find { |candidate| candidate.key == agent.key }.pending_prompts?,
+             "expected explicit Retry queue to resume paused work")
+    ensure
+      stop_process(pid)
+    end
+  end
+
+  def assert_callback_can_start_a_never_run_parent
+    with_queue_store do |registry, workspace|
+      agent = HQ::ManagedAgent.new(
+        key: "queue-agent", name: "Queue agent", project_key: "web", template_key: "custom",
+        workspace:, prompt: "Work", agent: "codex", log_path: File.join(workspace, "raw.log")
+      )
+      agent.enqueue_prompt!(prompt: "first delegated result", source: "delegation_callback")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+
+      with_stubbed_start { store.load }
+      persisted = store.load.find { |candidate| candidate.key == agent.key }
+      assert(persisted.run_count == 1 && !persisted.pending_prompts?,
+             "expected a first delegated callback to start a parent that has never run")
+    end
+  end
+
+  def assert_legacy_entries_load_without_authority
+    with_queue_store do |_registry, workspace|
+      agent = terminal_agent(workspace)
+      legacy = agent.to_hash.merge("prompt_queue" => [{
+        "id" => "legacy-entry", "prompt" => "legacy work", "attachments" => [],
+        "accepted_at" => Time.now.utc.iso8601(6)
+      }])
+      restored = HQ::ManagedAgent.from_hash(legacy)
+      entry = restored.queued_prompts.first
+      assert(entry["source"].nil? && entry["authority"].nil?,
+             "expected legacy queue state to remain readable without invented authority")
     end
   end
 

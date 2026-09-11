@@ -237,7 +237,8 @@ module HQ
       end
     end
 
-    def update_report!(report_id, delivered_at: :unchanged, resume_state: nil, resumed_at: nil)
+    def update_report!(report_id, delivered_at: :unchanged, resume_state: nil, resumed_at: nil,
+                       parent_authority: :unchanged)
       with_lock do
         payload = data
         report = payload.fetch("reports").find { |item| item["id"] == report_id.to_s }
@@ -246,13 +247,16 @@ module HQ
         next_delivered_at = delivered_at == :unchanged ? report["delivered_at"] : delivered_at&.utc&.iso8601
         next_resume_state = resume_state || report["resume_state"]
         next_resumed_at = resumed_at ? resumed_at.utc.iso8601 : report["resumed_at"]
+        next_parent_authority = parent_authority == :unchanged ? report["parent_authority"] : parent_authority
         return report if report["delivered_at"] == next_delivered_at &&
                          report["resume_state"] == next_resume_state &&
-                         report["resumed_at"] == next_resumed_at
+                         report["resumed_at"] == next_resumed_at &&
+                         report["parent_authority"] == next_parent_authority
 
         report["delivered_at"] = next_delivered_at
         report["resume_state"] = next_resume_state
         report["resumed_at"] = next_resumed_at if next_resumed_at
+        report["parent_authority"] = next_parent_authority if next_parent_authority
         write(payload)
         report
       end

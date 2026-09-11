@@ -254,12 +254,12 @@ module HQ
       class AgentSend < Dry::CLI::Command
         extend CommandMetadata
 
-        desc "Send a message to an agent and re-run it"
+        desc "Send a message; queue it when the agent is already running"
         argument :agent_key, required: true, desc: "Agent key"
         argument :message, required: true, desc: "Message to send"
         option :parent_agent, desc: "Attach the originating parent before this run"
         remote_options
-        usage_template "agent send %{agent_key} %{message} [--server SERVER_KEY] [--json]"
+        usage_template "agent send %{agent_key} %{message} [--parent-agent KEY] [--server SERVER_KEY] [--json]"
 
         def call(agent_key:, message:, **opts)
           exit CLICommand.send_agent_message(agent_key, message, opts, out: out, err: err)
@@ -1538,7 +1538,7 @@ module HQ
 
       agent = persist_agents_with_parent!(store, agents, agent, opts)
       store.accept_prompt_from!(agent, actor: opts.fetch(:actor), agents: agents) if agent.delegation_parent
-      agent = store.start_agent!(agent.key)
+      agent = store.start_agent!(agent.key, prefer_queued: true)
       if agent.running?
         print_started_agent(agent_cli_payload(agent), json: opts[:json], out: out)
       else
@@ -1596,9 +1596,16 @@ module HQ
       agent = agents.find { |a| a.key == agent_key.to_s }
       return archived_agent_failure(agent_key, err:) if !agent && archived_agent?(agent_key)
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
-      return failure("Agent #{agent_key} is already running", err: err) if agent.running?
-
       agent = persist_agents_with_parent!(store, agents, agent, opts)
+      if agent.running?
+        agent, entry = store.enqueue_prompt_from!(
+          agent.key, prompt: message, actor: opts.fetch(:actor), source: opts.fetch(:actor).parent? ? "parent" : "user"
+        )
+        scheduler.resume_after_user_message(agent.key) if opts.fetch(:actor).user? && agent.scheduled?
+        print_queued_agent(agent_cli_payload(agent), entry, json: opts[:json], out: out)
+        return 0
+      end
+
       store.accept_prompt_from!(agent, actor: opts.fetch(:actor), agents: agents)
       agent.add_user_message!(message, metadata: agent.message_author_metadata(opts.fetch(:actor)))
       store.save(agents)
@@ -1901,21 +1908,20 @@ module HQ
 
     def remote_send_agent_message(agent_key, message, opts, out:, err:)
       client = remote_client(opts[:server])
-      current = client.request("GET", remote_resource_path("agents", agent_key)).fetch("agent")
-      return failure("Agent #{agent_key} is already running", err: err) if current["running"]
-
-      payload = client
-        .request(
-          "POST",
-          "#{remote_resource_path("agents", agent_key)}/messages",
-          body: {
-            "prompt" => message.to_s,
-            "start" => true,
-            "parent_agent_key" => opts[:parent_agent].to_s.strip
-          }.reject { |_key, value| value.to_s.empty? }
-        )
-        .fetch("agent")
-      payload = remote_agent_payload(payload)
+      response = client.request(
+        "POST",
+        "#{remote_resource_path("agents", agent_key)}/messages",
+        body: {
+          "prompt" => message.to_s,
+          "start" => true,
+          "parent_agent_key" => opts[:parent_agent].to_s.strip
+        }.reject { |_key, value| value.to_s.empty? }
+      )
+      payload = remote_agent_payload(response.fetch("agent"))
+      if response["queued"]
+        print_queued_agent(payload, response["queue_entry"], position: response["queue_position"], json: opts[:json], out: out)
+        return 0
+      end
       print_sent_agent(payload, json: opts[:json], out: out)
       0
     rescue RemoteCLIClient::Error, KeyError => e
@@ -2040,7 +2046,9 @@ module HQ
         prompt: agent.prompt,
         archived: agent.archived?,
         archive_path: agent.archive_path,
-        delegation: delegation || agent_cli_delegation(agent)
+        delegation: delegation || agent_cli_delegation(agent),
+        prompt_queue_count: agent.queued_prompts.length,
+        prompt_queue_dispatch_error: agent.prompt_queue_dispatch_error
       }
       result[:archived_at] = agent.archived_at&.iso8601 if archive_fields
       result
@@ -2125,6 +2133,23 @@ module HQ
       value = payload.transform_keys(&:to_s)
       out.puts "Message sent and agent started (pid #{value["pid"]})"
       out.puts "Log: #{value["log_path"]}"
+    end
+
+    def print_queued_agent(payload, entry, position: nil, json:, out:)
+      value = payload.transform_keys(&:to_s)
+      queue_entry = entry&.transform_keys(&:to_s) || {}
+      result = {
+        accepted: true,
+        queued: true,
+        started: false,
+        queue_position: position || value["prompt_queue_count"],
+        queue_entry: queue_entry.slice("id", "accepted_at", "source", "authority", "state"),
+        agent: value
+      }
+      return out.puts(JSON.pretty_generate(result)) if json
+
+      out.puts "Message queued for #{value["key"]} (position #{result[:queue_position]})"
+      out.puts "Agent remains on run #{value["run_count"]}; queued work will start serially."
     end
 
     def print_simple_agent_action(action, payload, json:, out:)

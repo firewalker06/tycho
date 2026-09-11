@@ -664,7 +664,7 @@ module RemoteServerTest
 
       store = service.instance_variable_get(:@agent_store)
       start_attempts = 0
-      store.define_singleton_method(:start_agent!) do |_key, run_metadata: nil|
+      store.define_singleton_method(:start_agent!) do |_key, run_metadata: nil, **_options|
         start_attempts += 1
         raise IOError, "simulated lost FRED start acknowledgement"
       end

@@ -27,6 +27,7 @@ module SchedulerTest
       assert_schedule_session_refresh_starts_fresh_agent
       assert_schedule_list_uses_current_agent_run_count
       assert_refresh_stops_running_session
+      assert_refresh_refuses_queued_work
       assert_refresh_failure_keeps_replacement_recoverable
       assert_expired_refresh_preserves_current_session
       assert_schedule_waits_for_human_input
@@ -525,6 +526,32 @@ module SchedulerTest
       recovered = scheduler.resume_and_run_now("weekday")
       assert(recovered.fetch(:agent).key == HQ::ScheduleStore.new.load.fetch("weekday").last_target_key,
              "expected the failed replacement to be recoverable through resume and run")
+    end
+  end
+
+  def assert_refresh_refuses_queued_work
+    with_temp_runtime do |dir|
+      registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: weekday
+            cron: "0 9 * * 1-5"
+            target:
+              type: agent
+              project_key: web
+              name: Weekday maintenance
+              message: "Run maintenance."
+      YAML
+      scheduler = build_scheduler(registry, schedule_path)
+      original = scheduler.run_now("weekday").fetch(:agent)
+      original.enqueue_prompt!(prompt: "preserve queued scheduled work")
+      HQ::AgentStore.new(registry.projects.map { |config| HQ::Project.new(config) }).save([original])
+
+      assert_raises(HQ::Scheduler::RefreshError, "expected refresh to refuse queued work") do
+        scheduler.refresh_session("weekday")
+      end
+      retained = read_agents.fetch(0)
+      assert(retained.key == original.key && retained.pending_prompts?,
+             "expected failed refresh to preserve the scheduled session and its queue")
     end
   end
 

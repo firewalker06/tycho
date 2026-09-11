@@ -24,11 +24,19 @@ module HQ
       raise ArgumentError, "Unknown project: #{project_key}" unless config
 
       project = Project.new(config)
-      agents ||= @agent_store.load
+      agents ||= if @agent_store.respond_to?(:load_with_poll_events)
+                   @agent_store.load_with_poll_events(dispatch_prompt_queues: false).first
+                 else
+                   @agent_store.load
+                 end
       project_agents = agents.select { |agent| agent.project_key == project.key }
       running = project_agents.select(&:running?)
       message = "Project #{project.key} has running agents: #{running.map(&:key).join(", ")}"
       raise ArgumentError, message unless running.empty?
+      pending = project_agents.select(&:pending_prompts?)
+      unless pending.empty?
+        raise ArgumentError, "Project #{project.key} has agents with queued prompts: #{pending.map(&:key).join(", ")}"
+      end
 
       FileTransaction.run(transaction_paths) do |transaction|
         project_archive = project.archive_logs!(now:)
