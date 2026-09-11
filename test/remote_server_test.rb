@@ -5105,8 +5105,9 @@ module RemoteServerTest
       fred = HQ::ManagedAgent.new(
         key: "personal-assistant-test-1", name: "Personal Assistant · today", project_key: "__personal_assistant__",
         template_key: "personal_assistant_daily", workspace: workspace, prompt: "Assist.", role: "personal_assistant_daily",
-        started_at: finished_at, finished_at: finished_at, last_exit_code: 0, summary: "Prepared the release request.", unread: true,
-        runs: [HQ::ManagedAgent::AgentRun.new(started_at: finished_at, finished_at: finished_at, exit_code: 0, status: "succeeded")]
+        started_at: finished_at, finished_at: finished_at, last_exit_code: 0, summary: "Choose the release path.", unread: true,
+        structured_result: { "status" => "input_required", "summary" => "Choose the release path.", "inquiry" => { "message" => "Release now?" } },
+        runs: [HQ::ManagedAgent::AgentRun.new(started_at: finished_at, finished_at: finished_at, exit_code: 0, status: "input_required")]
       )
       historical_fred = HQ::ManagedAgent.new(
         key: "personal-assistant-yesterday-0", name: "Personal Assistant · yesterday", project_key: "__personal_assistant__",
@@ -5126,11 +5127,17 @@ module RemoteServerTest
       result = service.dispatch_agent_push_notifications!
       assert(result[:events] == 1, "expected a protected FRED session to dispatch one notification")
       payload = notifier.payloads.first
-      assert(payload[:title] == "FRED finished" && payload[:url] == "/#personal-assistant",
-             "expected FRED push to use distinct copy and its dedicated route")
+      assert(payload[:title] == "FRED requires response" && payload[:url] == "/#personal-assistant",
+             "expected FRED answer-required push to use distinct copy and its dedicated route")
       assert(payload[:badge_count] == 1 && payload[:body].start_with?("FRED:"),
              "expected FRED push to participate in the shared unread badge")
       assert(service.agents.empty?, "expected FRED to remain outside the generic agent catalog")
+      activity = service.agent_activity
+      assert(activity[:unread_count] == 1 && activity[:agents].empty?,
+             "expected an unread answer-required FRED to count without entering the generic activity catalog")
+      read = service.mark_personal_assistant_read("active_key" => fred.key, "generation" => 1)
+      assert(!read[:unread] && service.agent_activity[:unread_count].zero?,
+             "expected opening FRED to durably dismiss its answer-required unread count")
       service.dispatch_agent_push_notifications!
       assert(notifier.payloads.length == 1, "expected FRED notification deduplication to survive polling")
       HQ::FileStore.write_json(File.join(HQ::PERSONAL_ASSISTANT_DIR, "state.json"), {
