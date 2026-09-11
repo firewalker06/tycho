@@ -5413,9 +5413,9 @@ Saved safely.
         if (value !== draft) throw new Error(`Composer draft was not preserved: ${JSON.stringify(value)}`);
         await assertEditorExcludedFromRefresh("#composer:not(.composer-full-screen)", "Inline conversation form", "#prompt-input");
 
-        // Polling may observe a server snapshot while the user is composing.
-        // The browser must retain the rendered history and scroll position until
-        // the explicit accessible control is activated.
+        // Polling may observe newer conversation metadata while the user is
+        // composing. The browser must not fetch or render the full snapshot
+        // until the explicit accessible control is activated.
         const stagedConversation = await page.evaluate((key) => {
           clearTimeout(state.timer);
           state.timer = null;
@@ -5442,7 +5442,7 @@ Saved safely.
             metadata: { personal_assistant_client_request_id: "fred-manual-load" },
           };
           state.pendingConversationMessages[key] = [pending];
-          receiveConversationSnapshot(key, [...baseline, {
+          const incoming = [...baseline, {
             id: "fred-manual-load-server",
             kind: "message",
             role: "user",
@@ -5455,7 +5455,25 @@ Saved safely.
             role: "assistant",
             content: "Server message staged for manual loading",
             created_at: new Date().toISOString(),
-          }], "manual-load-next");
+          }];
+          receiveConversationMetadata(key, {
+            revision: "manual-load-next",
+            block_count: incoming.length,
+            digest: "manual-load-next-digest",
+          });
+          const originalApiGet = apiGet;
+          apiGet = async (path) => {
+            if (String(path).endsWith(`/agents/${encodeURIComponent(key)}/conversation`)) {
+              apiGet = originalApiGet;
+              return {
+                conversation: incoming,
+                conversation_revision: "manual-load-next",
+                conversation_block_count: incoming.length,
+                conversation_digest: "manual-load-next-digest",
+              };
+            }
+            return originalApiGet(path);
+          };
           render({ preserveLiveEditor: true });
           const button = document.querySelector("[data-load-pending-conversation]");
           const rootRect = root.getBoundingClientRect();
@@ -5476,6 +5494,7 @@ Saved safely.
           throw new Error(`Manual conversation loading changed the visible snapshot before activation: ${JSON.stringify(stagedConversation)}`);
         }
         await page.click("[data-load-pending-conversation]");
+        await page.waitForSelector("[data-load-pending-conversation]", { state: "detached", timeout: 10_000 });
         const loadedConversation = await page.evaluate((key) => ({
           contentLoaded: state.conversations[key]?.blocks?.some((block) => block.content === "Server message staged for manual loading"),
           pendingCleared: !state.pendingConversationUpdates[key],

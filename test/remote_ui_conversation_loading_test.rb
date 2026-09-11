@@ -21,6 +21,8 @@ module RemoteUIConversationLoadingTest
       const conversationBlocksMatch = context.window.TychoRemoteHelpers.conversationBlocksMatch;
       const unseenConversationBlocks = context.window.TychoRemoteHelpers.unseenConversationBlocks;
       const pendingConversationBlockAcknowledged = context.window.TychoRemoteHelpers.pendingConversationBlockAcknowledged;
+      const conversationSnapshotRequestMode = context.window.TychoRemoteHelpers.conversationSnapshotRequestMode;
+      const shouldOpenSucceededAgentSummary = context.window.TychoRemoteHelpers.shouldOpenSucceededAgentSummary;
       const conversations = {
         alpha: { blocks: [], loaded: true, loading: false },
       };
@@ -82,6 +84,35 @@ module RemoteUIConversationLoadingTest
       const legacyAcknowledged = { id: "server-legacy", kind: "message", role: "user", content: "Same legacy prompt", created_at: "2026-09-10T00:00:02Z" };
       if (!pendingConversationBlockAcknowledged(legacyPending, [legacyAcknowledged])) {
         throw new Error("nearby legacy acknowledgement did not suppress a duplicate optimistic message");
+      }
+
+      const loadedConversation = { revision: "old", blocks: rendered, loaded: true, loading: false };
+      if (conversationSnapshotRequestMode(loadedConversation, "new", { force: true }) !== "metadata") {
+        throw new Error("automatic refresh fetched the full conversation snapshot");
+      }
+      if (conversationSnapshotRequestMode(loadedConversation, "new", { manual: true }) !== "snapshot") {
+        throw new Error("manual loading did not fetch the full conversation snapshot");
+      }
+      if (conversationSnapshotRequestMode(undefined, "new") !== "snapshot") {
+        throw new Error("initial conversation loading did not fetch the full snapshot");
+      }
+      if (conversationSnapshotRequestMode({ ...loadedConversation, revision: "new" }, "new") !== "none") {
+        throw new Error("unchanged conversation revision triggered another request");
+      }
+
+      if (shouldOpenSucceededAgentSummary(
+        { key: "loop", status: "running", scheduled: true },
+        { key: "loop", status: "succeeded", scheduled: true },
+        "agent"
+      )) {
+        throw new Error("scheduled loop completion opened Summary and displaced the conversation scroll");
+      }
+      if (!shouldOpenSucceededAgentSummary(
+        { key: "manual", status: "running", scheduled: false },
+        { key: "manual", status: "succeeded", scheduled: false },
+        "agent"
+      )) {
+        throw new Error("ordinary agent completion stopped opening Summary");
       }
     JAVASCRIPT
 
