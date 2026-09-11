@@ -257,9 +257,10 @@ module HQ
 
       payload = service.personal_assistant_bundle
       finished_signature = personal_assistant_snapshot_signature(service)
+      finished_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       @personal_assistant_snapshot_lock.synchronize do
         if @personal_assistant_snapshot_revision == snapshot_revision && signature == finished_signature
-          @personal_assistant_snapshot = { created_at: now, signature: signature, payload: payload }
+          @personal_assistant_snapshot = { created_at: finished_at, signature: signature, payload: payload }
         end
       end
       payload
@@ -2739,7 +2740,7 @@ module HQ
     end
 
     def ingest_personal_assistant_actions!(status)
-      @personal_assistant.finalized_proposals.each do |snapshot|
+      @personal_assistant.finalized_proposals(refresh: false).each do |snapshot|
         next if snapshot["run_id"].to_s == status[:summary_run_id].to_s && !status[:summary_run_id].to_s.empty?
 
         proposals = @personal_assistant_actions.register_finalized!(snapshot["proposals"], active_key: snapshot["active_key"], source_run_id: snapshot["run_id"])

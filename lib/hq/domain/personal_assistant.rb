@@ -140,15 +140,32 @@ module HQ
     end
 
     def status
-      synchronize { |state| snapshot_finalized_proposals!(state); reconcile!(state); payload(state) }
+      synchronize do |state|
+        agents = agents_for_reconcile(state)
+        active = active_agent_from(agents, state)
+        snapshot_finalized_proposals!(state, agent: active)
+        reconcile!(state, agents:)
+        payload(state, active_agent: active_agent_from(agents, state))
+      end
     end
 
     def reconcile
-      synchronize { |state| snapshot_finalized_proposals!(state); reconcile!(state); snapshot_finalized_proposals!(state); advance!(state); payload(state) }
+      synchronize do |state|
+        agents = agents_for_reconcile(state)
+        active = active_agent_from(agents, state)
+        snapshot_finalized_proposals!(state, agent: active)
+        reconcile!(state, agents:)
+        snapshot_finalized_proposals!(state, agent: active_agent_from(agents, state))
+        advance!(state)
+        payload(state, active_agent: active_agent_from(agents, state))
+      end
     end
 
-    def finalized_proposals
-      synchronize { |state| snapshot_finalized_proposals!(state); Array(state["finalized_proposals"]).reject { |snapshot| snapshot["registered"] == true } }
+    def finalized_proposals(refresh: true)
+      synchronize do |state|
+        snapshot_finalized_proposals!(state) if refresh
+        Array(state["finalized_proposals"]).reject { |snapshot| snapshot["registered"] == true }
+      end
     end
 
     def mark_finalized_proposals_registered!(run_id)
@@ -618,7 +635,7 @@ module HQ
       path
     end
 
-    def reconcile!(state, dispatch_prompt_queues: true)
+    def reconcile!(state, dispatch_prompt_queues: true, agents: nil)
       unless @registry.personal_assistant["enabled"] == true
         adopt_orphan!(state)
         return unless controlled_shutdown!(state)
@@ -628,11 +645,7 @@ module HQ
         return
       end
       return unless state["active_key"]
-      agents = if @agent_store.respond_to?(:load_with_poll_events)
-                  @agent_store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues:).first
-                else
-                  @agent_store.load
-                end
+      agents ||= agents_for_reconcile(state, dispatch_prompt_queues:)
       unless agents.any? { |agent| agent.key == state["active_key"] && agent.personal_assistant? }
         state.delete("active_key"); state.delete("active_date"); state.delete("active_timezone"); state.delete("active_personality")
         state["phase"] = "dormant"
@@ -777,12 +790,12 @@ module HQ
       FileStore.write_json(@state_path, state.merge("version" => 1))
     end
 
-    def payload(state)
+    def payload(state, active_agent: nil)
       configured = @registry.personal_assistant
       config = configured.slice("model", "reasoning_effort", "timezone")
       config["personality"] = personality(configured)
       config["external_events_prompt"] = external_events_prompt(configured)
-      active = active_agent(state)
+      active = active_agent || active_agent(state)
       timezone = state["active_timezone"] || config["timezone"]
       {
         state: state["phase"] || (@registry.personal_assistant["enabled"] ? "ready" : "unconfigured"),
@@ -1040,10 +1053,27 @@ module HQ
       state.merge!("active_key" => agent.key, "active_date" => state["active_date"] || @clock.call.strftime("%F"), "active_timezone" => state["active_timezone"] || @registry.personal_assistant["timezone"], "active_personality" => state["active_personality"] || DEFAULT_PERSONALITY, "phase" => "active")
     end
 
-    def snapshot_finalized_proposals!(state)
+    def agents_for_reconcile(state, dispatch_prompt_queues: true)
+      return [] unless state["active_key"]
+
+      if @agent_store.respond_to?(:load_with_poll_events)
+        @agent_store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues:).first
+      else
+        @agent_store.load
+      end
+    end
+
+    def active_agent_from(agents, state)
+      key = state["active_key"].to_s
+      return nil if key.empty?
+
+      agents.find { |candidate| candidate.key == key && candidate.personal_assistant? }
+    end
+
+    def snapshot_finalized_proposals!(state, agent: nil)
       return unless state["active_key"] && %w[active closing].include?(state["phase"])
 
-      agent = @agent_store.load.find { |candidate| candidate.key == state["active_key"] && candidate.personal_assistant? }
+      agent ||= @agent_store.load.find { |candidate| candidate.key == state["active_key"] && candidate.personal_assistant? }
       return unless agent
       snapshots = Array(state["finalized_proposals"])
       agent.runs.each do |run|
