@@ -14,8 +14,11 @@ class PersonalAssistantTest
     def call = @now
   end
 
-  FakeStore = Struct.new(:agents, :starts, :stops, :fail_start, :fail_archive, keyword_init: true) do
-    def load = agents
+  FakeStore = Struct.new(:agents, :starts, :stops, :loads, :fail_start, :fail_archive, keyword_init: true) do
+    def load
+      self.loads = loads.to_i + 1
+      agents
+    end
 
     def mutate
       yield agents, []
@@ -113,6 +116,10 @@ class PersonalAssistantTest
       assert(fred_agent.send(:build_command).fetch(:command).include?("--dangerously-bypass-approvals-and-sandbox"),
              "expected FRED to use the normal Codex launch arguments")
       assert(lifecycle.open![:active_key] == first[:active_key], "expected lazy open to avoid overlap")
+      store.loads = 0
+      lifecycle.reconcile
+      assert(store.loads == 1, "expected active FRED reconciliation to load the agent store once, got #{store.loads}")
+      assert_snapshot_ttl_starts_after_bundle_completion
 
       # Keep the configured timezone on the active session. A setup change cannot
       # force an early rollover for a conversation that already started.
@@ -481,6 +488,22 @@ class PersonalAssistantTest
     config = File.join(dir, "hq.yml"); prompts = File.join(dir, "prompts.yml")
     File.write(config, "---\nprojects: []\n"); File.write(prompts, "---\n")
     HQ::Registry.new(path: config, system_prompts_path: prompts)
+  end
+
+  def self.assert_snapshot_ttl_starts_after_bundle_completion
+    calls = 0
+    service = Object.new
+    service.define_singleton_method(:personal_assistant_bundle) do
+      calls += 1
+      sleep 2.05 if calls == 1
+      { personal_assistant: { state: "active" } }
+    end
+    server = HQ::RemoteServer.new
+    server.define_singleton_method(:personal_assistant_snapshot_signature) { |_service| ["stable"] }
+
+    server.send(:personal_assistant_snapshot, service)
+    server.send(:personal_assistant_snapshot, service)
+    assert(calls == 1, "expected a slow FRED bundle to remain reusable for the full snapshot TTL")
   end
 
   def self.assert(condition, message)
