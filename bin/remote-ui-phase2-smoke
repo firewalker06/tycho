@@ -361,7 +361,6 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
       let preflightFailureRemaining = 0;
       let preflightFailureExpected = false;
       let preflightUnavailableRemaining = 0;
-      let currentWorkMode = "pass";
       let staleConflictExpected = false;
       let unknownConfirmExpected = false;
       let confirmSeenResolve;
@@ -384,11 +383,10 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
         const status = response.status();
         if (status >= 400) {
           const expectedStale = status === 409 && method === "POST" && url.pathname.endsWith("/confirm") && staleConflictExpected;
-          const expectedUnavailable = status === 503 && method === "GET" && url.pathname === "/personal-assistant/current-work" && currentWorkMode === "unavailable";
           const expectedUnknown = status === 503 && method === "POST" && url.pathname.endsWith("/confirm") && unknownConfirmExpected;
           const expectedPreflight = status === 503 && method === "GET" && url.pathname.endsWith("/preflight") && preflightFailureExpected;
           const detail = `${status} ${method} ${url.pathname}`;
-          if (expectedStale || expectedUnavailable || expectedUnknown || expectedPreflight) {
+          if (expectedStale || expectedUnknown || expectedPreflight) {
             expectedRecoveryErrors.push(detail);
             expectedConsoleErrorStatuses[status] = (expectedConsoleErrorStatuses[status] || 0) + 1;
           }
@@ -452,7 +450,6 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
 
       await page.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "domcontentloaded" });
       await waitFor(page, () => Boolean(document.querySelector(".personal-assistant-page")), null, "FRED page");
-      await waitFor(page, () => Boolean(document.querySelector(".pa-current-work")), null, "current work snapshot");
       await assertNoNestedForms(page, "initial render");
       const persistedUnknownId = "pa-persisted-unknown-fixture";
       await waitFor(page, (proposalId) => {
@@ -652,22 +649,6 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
       if (changedAgents.length !== 1 || changedAgents[0].model !== "gpt-5.6-changed") fail(`explicit stale-preview confirmation did not create the changed target: ${JSON.stringify(changedAgents)}`);
       await page.screenshot({ path: path.join(captureDir, "phase2-stale-preview.png"), fullPage: false });
 
-      await page.route("**/personal-assistant/current-work", async (route) => {
-        if (currentWorkMode === "pass") return route.continue();
-        if (currentWorkMode === "empty") {
-          await route.fulfill({ json: { schema_version: 1, revision: "empty", observed_at: new Date().toISOString(), fresh_until: new Date(Date.now() + 2_000).toISOString(), state: "fresh", agents: [], tracked: { agents: [], projects: [], schedules: [] } } });
-        } else {
-          await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "fixture current work unavailable" }) });
-        }
-      });
-      currentWorkMode = "empty";
-      await page.evaluate(() => refreshPersonalAssistant({ force: true }));
-      await waitFor(page, () => document.querySelector(".pa-current-work")?.innerText.includes("No active"), null, "empty current-work state");
-      currentWorkMode = "unavailable";
-      await page.evaluate(() => refreshPersonalAssistant({ force: true }));
-      await waitFor(page, () => document.querySelector(".pa-current-work")?.innerText.includes("could not read current work"), null, "unavailable current-work state");
-      await page.unroute("**/personal-assistant/current-work");
-
       await sendPrompt(page, "Prepare a pending action for rollover history.");
       await waitFor(page, () => document.querySelectorAll(".pa-inline-action[data-proposal-state='awaiting_confirmation']").length === 1, null, "rollover pending action");
       const rolloverPendingId = await pendingActionId(page);
@@ -834,8 +815,6 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
       await page.keyboard.insertText("keyboard draft");
       if ((await mobileInput.inputValue()) !== `${draft}keyboard draft`) fail("mobile keyboard input was not retained");
       if (await page.locator("[aria-live='polite']").count() < 1) fail("mobile FRED state has no live announcement");
-      const workBox = await page.locator(".pa-current-work").boundingBox();
-      if (!workBox || workBox.width > 390) fail(`current-work panel overflows 390px viewport: ${JSON.stringify(workBox)}`);
       await page.screenshot({ path: path.join(captureDir, "phase2-mobile-rollover.png"), fullPage: false });
       await assertNoNestedForms(page, "mobile render");
 

@@ -7512,14 +7512,18 @@ module RemoteServerTest
            "expected first-use FRED flow not to silently submit fixed settings")
     assert(js[:body].include?("personalAssistant ? \"/personal-assistant/messages\""),
            "expected FRED messages to use the dedicated Personal Assistant API")
-    fred_welcome = js[:body].split("function renderPersonalAssistantWelcome", 2).last.split("function personalAssistantHasRealConversation", 2).first
-    assert(fred_welcome.include?('class="pa-suggestions" aria-label="Ways to start with FRED"') &&
-           fred_welcome.include?('<ul class="pa-suggestions"') &&
-           fred_welcome.include?('list="pa-project-options"') &&
-           fred_welcome.include?('data-pa-project-picker') &&
-           fred_welcome.include?('class="pa-capabilities"') &&
-           !fred_welcome.include?('<select data-pa-project-picker>'),
-           "expected first-use FRED actions and capabilities to use accessible lists and project autocomplete")
+    fred_recommendations = js[:body].split("function renderPersonalAssistantRecommendations", 2).last.split("function personalAssistantHasRealConversation", 2).first
+    assert(fred_recommendations.include?('<h2>Recommendations</h2>') &&
+           fred_recommendations.include?('class="pa-suggestions" aria-label="FRED recommendations"') &&
+           fred_recommendations.include?('data-pa-suggestion=') &&
+           !fred_recommendations.include?("What would you like to do?") &&
+           !fred_recommendations.include?("What FRED can do") &&
+           !fred_recommendations.include?("pa-project-starter"),
+           "expected first-use FRED to show only accessible recommendation actions")
+    assert(js[:body].include?('name="external_events_prompt"') &&
+           js[:body].include?('maxlength="4000"') &&
+           setup_handler.include?('external_events_prompt: String(values.get("external_events_prompt") || "")'),
+           "expected Settings to round-trip the bounded external-event recommendation prompt")
     fred_conversation_filter = js[:body][/function personalAssistantVisibleConversationBlocks\(blocks\).*?^}/m]
     assert(fred_conversation_filter&.include?('block?.kind === "message" && ["user", "assistant"].includes(block.role)') &&
            js[:body].include?("? personalAssistantVisibleConversationBlocks(allConversationBlocks)"),

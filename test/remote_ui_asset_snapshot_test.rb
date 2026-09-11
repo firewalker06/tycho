@@ -35,7 +35,7 @@ module RemoteUIAssetSnapshotTest
       'Technical details',
       'data-confirm-pa-proposal=',
       'data-reject-pa-proposal=',
-      'function renderPersonalAssistantWelcome(',
+      'function renderPersonalAssistantRecommendations(item)',
       'pendingPersonalAssistantProposalIds: new Set()',
       'state.pendingPersonalAssistantProposalIds.has(id)',
       'function renderConversationWorkspace({',
@@ -74,12 +74,12 @@ module RemoteUIAssetSnapshotTest
       "function personalAssistantHasRealConversation(blocks)",
       'block?.kind === "message" && ["user", "assistant"].includes(block.role)',
       "const starter = agent && item.state === \"active\" && !personalAssistantHasRealConversation(allBlocks);",
-      "${starter ? renderPersonalAssistantWelcome(",
+      "${starter ? renderPersonalAssistantRecommendations(",
       'querySelector("#composer #prompt-input")',
-      "function personalAssistantProjectForPicker",
-      'list="pa-project-options"',
-      'data-pa-project-picker',
-      'class="pa-capabilities"'
+      '<h2>Recommendations</h2>',
+      'aria-label="FRED recommendations"',
+      'data-recommendation-source=',
+      'name="external_events_prompt"'
     ]
     missing = required_javascript.reject { |fragment| javascript.include?(fragment) }
     raise "missing Personal Assistant first-run starter contract: #{missing.join(", ")}" unless missing.empty?
@@ -91,7 +91,9 @@ module RemoteUIAssetSnapshotTest
     missing = required_css.reject { |fragment| css.include?(fragment) }
     raise "missing Personal Assistant header identity scale: #{missing.join(", ")}" unless missing.empty?
 
-    raise "Personal Assistant project starter must not use a select menu" if javascript.include?("<select data-pa-project-picker>")
+    forbidden = ["What would you like to do?", "What FRED can do", 'id="pa-project-starter-form"', "${currentWork}"]
+    present = forbidden.select { |fragment| javascript.include?(fragment) }
+    raise "Personal Assistant still renders removed starter surfaces: #{present.join(", ")}" unless present.empty?
   end
 
   def assert_personal_assistant_hides_internal_chat_events
