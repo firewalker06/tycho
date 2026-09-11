@@ -7109,12 +7109,18 @@ module RemoteServerTest
            js[:body].include?("data-load-pending-conversation") &&
            js[:body].include?("Conversation catch-up"),
            "expected staged-message and Go to recent controls to share an accessible catch-up group")
+    assert(js[:body].include?("conversationOverlayHtml") &&
+           js[:body].include?("renderConversationCatchUpOverlay(agent)") &&
+           css[:body].include?(".conversation-catchup-overlay") &&
+           css[:body].include?("bottom: calc(var(--agent-dock-height, 220px) + 12px)") &&
+           !js[:body].include?("const catchUp = options.recent"),
+           "expected conversation catch-up controls to overlay the conversation independently from dock actions")
     assert(js[:body].include?("iconSvg(\"chevronDown\")") &&
            css[:body].include?(".load-new-messages-fab") &&
            !css[:body].include?(".new-conversation-messages"),
            "expected bottom catch-up controls to reuse the downward chevron without a top-sticky message control")
-    assert(js[:body].include?('!["summary", "attachment"].includes(detailKind)'),
-           "expected Summary and Attachment views to omit Go to recent")
+    assert(js[:body].include?('["summary", "attachment"].includes(detailKind) ? "" : renderConversationCatchUpOverlay(agent)'),
+           "expected Summary and Attachment views to omit the conversation catch-up overlay")
     assert(js[:body].include?("function updateGoRecentVisibility"),
            "expected Agent detail to hide Go to recent at the bottom")
     assert(js[:body].include?("function scrollConversationToRecent"),
