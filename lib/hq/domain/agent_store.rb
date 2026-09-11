@@ -86,6 +86,11 @@ module HQ
         was_running = running_for_poll_event?(agent)
         agent.poll!
         changed = true if before_hash != agent.to_hash
+        if (completed_claim = agent.dispatched_prompt_queue_claim)
+          mark_claim_reports_resumed!(completed_claim)
+          agent.complete_prompt_queue_claim!
+          changed = true
+        end
         if was_running && !running_for_poll_event?(agent)
           unless agent.no_action_needed?
             agent.mark_unread!
@@ -140,7 +145,7 @@ module HQ
 
     def archive_personal_assistant!(key)
       with_exclusive_lock do
-        agents, = load_with_poll_events_unlocked(process_delegations: false)
+        agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
         target = find_agent_in!(agents, key)
         raise ArgumentError, "Not a Personal Assistant session" unless target.personal_assistant?
         raise ArgumentError, "Personal Assistant is still running" if target.running?
@@ -315,13 +320,18 @@ module HQ
       end
     end
 
-    def start_agent!(key, run_metadata: nil)
+    def start_agent!(key, run_metadata: nil, prefer_queued: false)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
 
         unless target.running?
-          start_target!(target, agents, run_metadata:)
+          if prefer_queued && target.pending_prompts?
+            target.clear_prompt_queue_dispatch_error!
+            dispatch_prompt_queue!(target, agents)
+          else
+            start_target!(target, agents, run_metadata:)
+          end
         end
         target
       end
@@ -356,21 +366,57 @@ module HQ
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
 
-        target.stop! if target.running?
+        if target.running?
+          if target.pending_prompts?
+            target.fail_prompt_queue_dispatch!(
+              "Queued work is paused after Stop. Choose Retry queue to continue without losing it."
+            )
+          end
+          target.stop!
+        end
         target
       end
     end
 
-    def enqueue_prompt!(key, prompt:, attachments: nil, accepted_at: nil, id: nil, client_request_id: nil)
+    def enqueue_prompt!(key, prompt:, attachments: nil, accepted_at: nil, id: nil, client_request_id: nil,
+                        authority: nil, message_metadata: nil, source: nil)
       mutate do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
         raise ArgumentError, "Agent is no longer running" unless target.running?
 
-        attributes = { prompt:, attachments:, accepted_at: accepted_at || Time.now }
+        attributes = { prompt:, attachments:, accepted_at: accepted_at || Time.now, authority:, message_metadata:, source: }
         attributes[:id] = id if id
         attributes[:client_request_id] = client_request_id if client_request_id
         [target, target.enqueue_prompt!(**attributes)]
+      end
+    end
+
+    def enqueue_prompt_from!(key, prompt:, attachments: nil, actor:, accepted_at: nil, id: nil,
+                             client_request_id: nil, message_metadata: nil, source: nil)
+      with_exclusive_lock do
+        agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
+        target = find_agent_in!(agents, key)
+        raise ArgumentError, "Agent is no longer running" unless target.running?
+
+        FileTransaction.run([AGENTS_FILE, DELEGATIONS_FILE, target.memory_path]) do
+          accept_prompt_from!(target, actor:, agents:)
+          metadata = target.message_author_metadata(actor) || {}
+          metadata.merge!(message_metadata) if message_metadata.is_a?(Hash)
+          attributes = {
+            prompt:,
+            attachments:,
+            accepted_at: accepted_at || Time.now,
+            authority: @delegation_coordinator.ownership_stamp(target.key),
+            message_metadata: metadata,
+            source: source || (actor&.parent? ? "parent" : "user")
+          }
+          attributes[:id] = id if id
+          attributes[:client_request_id] = client_request_id if client_request_id
+          entry = target.enqueue_prompt!(**attributes)
+          save_unlocked(agents)
+          [target, entry]
+        end
       end
     end
 
@@ -476,7 +522,7 @@ module HQ
 
     def archive_agents!(keys, root: AGENT_ARCHIVE_DIR)
       with_exclusive_lock do
-        agents, = load_with_poll_events_unlocked(process_delegations: false)
+        agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
         requested = Array(keys).map(&:to_s).uniq
         targets = requested.map do |key|
           agents.find { |agent| agent.key == key } || raise(ArgumentError, "Unknown agent: #{key}")
@@ -485,6 +531,10 @@ module HQ
           raise ArgumentError, "Personal Assistant is managed by its daily lifecycle and cannot be archived manually"
         end
         raise ArgumentError, "Agent is running" if targets.any?(&:running?)
+        pending = targets.select(&:pending_prompts?)
+        unless pending.empty?
+          raise ArgumentError, "Agent has queued prompts: #{pending.map(&:key).join(", ")}"
+        end
 
         source_paths = targets.flat_map { |target| target.log_files.select { |path| File.exist?(path) } }
         transaction = FileTransaction.new([AGENTS_FILE, *source_paths])
@@ -590,6 +640,11 @@ module HQ
     end
 
     def dispatch_prompt_queue!(agent, agents)
+      return false if agents.any? do |candidate|
+        candidate.key != agent.key && canonical_workspace(candidate.workspace) == canonical_workspace(agent.workspace) &&
+          candidate.running?
+      end
+
       claim = agent.claim_pending_prompts!
       return false unless claim
 
@@ -608,8 +663,13 @@ module HQ
       end
       run_metadata["personal_assistant_client_request_ids"] = request_ids unless request_ids.empty?
       accepted = begin
-        stamp = @delegation_coordinator.ownership_stamp(agent.key)
-        stamp ? agent.start!(delegation_stamp: stamp, run_metadata:) : agent.start!(run_metadata:)
+        stamp = Array(claim["entries"]).first&.fetch("authority", nil)
+        options = { run_metadata: }
+        options[:delegation_stamp] = stamp if stamp
+        if agent.method(:start!).parameters.any? { |_kind, name| name == :before_spawn }
+          options[:before_spawn] = ->(_run) { save_unlocked(agents) }
+        end
+        agent.start!(**options)
       rescue StandardError => e
         agent.fail_prompt_queue_dispatch!(dispatch_failure_message(e.message))
         save_unlocked(agents)
@@ -619,6 +679,7 @@ module HQ
       agent.mark_last_run_prompt_queue_claim!(claim["id"]) if agent.run_count > baseline
 
       if accepted && agent.run_count > baseline
+        mark_claim_reports_resumed!(claim)
         agent.complete_prompt_queue_claim!
       else
         detail = agent.last_summary.to_s.strip
@@ -632,6 +693,19 @@ module HQ
       suffix = detail.to_s.strip
       suffix = "The agent run was not accepted." if suffix.empty?
       "Queued work was retained. Fix the start failure, then choose Retry queue. #{suffix}"
+    end
+
+    def mark_claim_reports_resumed!(claim)
+      Array(claim["entries"]).each do |entry|
+        report_id = entry.dig("message_metadata", "delegation_report", "id")
+        @delegation_coordinator.mark_report_resumed!(report_id, now: Time.now) if report_id
+      end
+    end
+
+    def canonical_workspace(path)
+      File.realpath(path.to_s)
+    rescue StandardError
+      File.expand_path(path.to_s)
     end
 
     def with_exclusive_lock

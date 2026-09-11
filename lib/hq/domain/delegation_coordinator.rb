@@ -95,6 +95,12 @@ module HQ
       delegation_store.ownership_stamp(child_key)
     end
 
+    def mark_report_resumed!(report_id, now: Time.now)
+      return nil if report_id.to_s.empty?
+
+      delegation_store.update_report!(report_id, resume_state: "resumed", resumed_at: now)
+    end
+
     def relationships_for(agent_key, index: nil)
       index ||= relationship_index
       {
@@ -128,18 +134,35 @@ module HQ
         return false
       end
 
-      added = AgentMemory.new(parent).append_delegation_report!(
-        report_message(report),
-        report_id: "delegation-report:#{report.fetch("id")}",
-        created_at: now,
-        metadata: {
-          "delegation_report" => report,
-          "agent_reference" => report.fetch("child")
-        }
+      entry_id = "delegation-report:#{report.fetch("id")}"
+      parent_authority = ownership_stamp(parent.key) unless archived
+      metadata = {
+        "message_author" => { "type" => "agent" }.merge(report.fetch("child")),
+        "delegation_callback" => true,
+        "delegation_report" => report,
+        "agent_reference" => report.fetch("child")
+      }
+      if archived
+        added = AgentMemory.new(parent).append_delegation_report!(
+          report_message(report), report_id: entry_id, created_at: now, metadata:
+        )
+        @archive_store.save(archived) if added
+      elsif parent.respond_to?(:queued_prompts) && parent.respond_to?(:enqueue_prompt!) &&
+            parent.queued_prompts.none? { |entry| entry["id"] == entry_id }
+        parent.enqueue_prompt!(
+          prompt: report_message(report), id: entry_id, accepted_at: now,
+          authority: parent_authority, message_metadata: metadata,
+          source: "delegation_callback"
+        )
+      elsif !parent.respond_to?(:queued_prompts)
+        AgentMemory.new(parent).append_delegation_report!(
+          report_message(report), report_id: entry_id, created_at: now, metadata:
+        )
+      end
+      state = archived ? "parent_archived" : (parent.running? ? "parent_running" : "queued")
+      delegation_store.update_report!(
+        report.fetch("id"), delivered_at: now, resume_state: state, parent_authority:
       )
-      @archive_store.save(archived) if archived && added
-      state = archived ? "parent_archived" : "queued"
-      delegation_store.update_report!(report.fetch("id"), delivered_at: now, resume_state: state)
       true
     end
 
@@ -150,6 +173,10 @@ module HQ
         unless parent
           reports.each { |report| delegation_store.update_report!(report.fetch("id"), resume_state: "parent_archived") }
           next
+        end
+
+        if parent.respond_to?(:queued_prompts)
+          reports.each { |report| changed = ensure_report_queued!(parent, report, now:) || changed }
         end
 
         if parent.running?
@@ -164,25 +191,60 @@ module HQ
           next
         end
 
-        parent_workspace = canonical_workspace(parent.workspace)
-        conflicts = agents.any? do |agent|
-          agent.key != parent.key && canonical_workspace(agent.workspace) == parent_workspace && agent.running?
-        end
-        if conflicts
-          reports.each { |report| delegation_store.update_report!(report.fetch("id"), resume_state: "workspace_busy") }
+        unless parent.respond_to?(:pending_prompts?)
+          workspace_busy = agents.any? do |agent|
+            agent.key != parent.key && canonical_workspace(agent.workspace) == canonical_workspace(parent.workspace) && agent.running?
+          end
+          if workspace_busy
+            reports.each { |report| delegation_store.update_report!(report.fetch("id"), resume_state: "workspace_busy") }
+            next
+          end
+
+          stamp = ownership_stamp(parent.key)
+          stamp ? parent.start!(delegation_stamp: stamp) : parent.start!
+          state = parent.running? ? "resumed" : "resume_failed"
+          reports.each do |report|
+            delegation_store.update_report!(
+              report.fetch("id"), resume_state: state, resumed_at: (now if state == "resumed")
+            )
+          end
+          changed = true
           next
         end
 
-        stamp = ownership_stamp(parent.key)
-        stamp ? parent.start!(delegation_stamp: stamp) : parent.start!
-        state = parent.running? ? "resumed" : "resume_failed"
-        reports.each do |report|
-          options = { resume_state: state, resumed_at: (now if state == "resumed") }
-          delegation_store.update_report!(report.fetch("id"), **options)
+        workspace_busy = agents.any? do |agent|
+          agent.key != parent.key && canonical_workspace(agent.workspace) == canonical_workspace(parent.workspace) && agent.running?
         end
-        changed = true
+        state = if parent.running?
+                  "parent_running"
+                elsif workspace_busy
+                  "workspace_busy"
+                else
+                  "queued"
+                end
+        reports.each do |report|
+          delegation_store.update_report!(report.fetch("id"), resume_state: state)
+        end
       end
       changed
+    end
+
+    def ensure_report_queued!(parent, report, now:)
+      entry_id = "delegation-report:#{report.fetch("id")}"
+      return false if parent.queued_prompts.any? { |entry| entry["id"] == entry_id }
+
+      metadata = {
+        "message_author" => { "type" => "agent" }.merge(report.fetch("child")),
+        "delegation_callback" => true,
+        "delegation_report" => report,
+        "agent_reference" => report.fetch("child")
+      }
+      parent.enqueue_prompt!(
+        prompt: report_message(report), id: entry_id, accepted_at: report["delivered_at"] || now,
+        authority: report["parent_authority"] || ownership_stamp(parent.key),
+        message_metadata: metadata, source: "delegation_callback"
+      )
+      true
     end
 
     def resumable_reports

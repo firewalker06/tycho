@@ -59,6 +59,16 @@ module RemoteUIPromptQueueTest
           !claimed.includes('data-delete-queued-prompt="claimed" data-agent-key="queue-agent" disabled')) {
         throw new Error("claimed queue entries must keep edit and delete controls disabled");
       }
+
+      const callback = context.renderPromptQueueEntry(agent, {
+        id: "callback", prompt: "Delegated report", state: "queued", source: "delegation_callback",
+        authority: { owner: "parent", generation: 3 }
+      }, 0);
+      if (!callback.includes("Delegated reply · Queued · parent authority v3") ||
+          !callback.includes('data-edit-queued-prompt="callback" data-agent-key="queue-agent" disabled') ||
+          !callback.includes('data-delete-queued-prompt="callback" data-agent-key="queue-agent" disabled')) {
+        throw new Error("delegated replies must expose captured authority and immutable controls");
+      }
     JAVASCRIPT
 
     output, status = Open3.capture2e("node", "-e", script, APP_PATH)

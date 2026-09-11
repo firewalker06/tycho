@@ -1156,7 +1156,7 @@ def selected_screen_items
       return [self, nil] unless agent
       return [self, nil] if agent.running?
 
-      replacement = @agent_store.start_agent!(agent.key)
+      replacement = @agent_store.start_agent!(agent.key, prefer_queued: true)
       @agents[@agents.index(agent)] = replacement
       agent = replacement
       @agents.sort_by!(&:last_activity_at).reverse!
@@ -2213,6 +2213,30 @@ def selected_screen_items
       return [self, nil] if content.empty?
 
       agent = @agent_chat_form.agent
+      if agent.running? && !@agent_chat_form.inquiry_active?
+        begin
+          agent, = @agent_store.enqueue_prompt_from!(
+            agent.key,
+            prompt: content,
+            actor: HQ::DelegationActor.user_actor,
+            source: "user"
+          )
+        rescue ArgumentError => e
+          agent = @agent_store.load.find { |item| item.key == agent.key } || agent
+          @agent_chat_form.agent = agent if @agent_chat_form.respond_to?(:agent=)
+          sync_agent_chat_workspace!
+          return [self, nil] unless e.message == "Agent is no longer running"
+        else
+          @agent_chat_form.composer.clear
+          index = @agents.index { |item| item.key == agent.key }
+          @agents[index] = agent if index
+          @agent_chat_form.agent = agent if @agent_chat_form.respond_to?(:agent=)
+          Scheduler.new(registry: @registry).resume_after_user_message(agent.key) if agent.scheduled?
+          sync_agent_chat_workspace!(force_bottom: true)
+          return [self, schedule_action_poll]
+        end
+      end
+
       if @agent_chat_form.inquiry_active?
         @agent_store.accept_delegation_prompt!(agent, owner: "user")
         agent.add_user_message!(content)

@@ -954,10 +954,12 @@ module HQ
           lines
         end
 
-        def agent_chip_row(_agent, project)
+        def agent_chip_row(agent, project)
           return "" unless project
 
           parts = []
+          pending = agent.queued_prompts.length
+          parts << warning_style.render("#{pending} queued") if pending.positive?
           if project.pr_number && project.pr_url
             parts << chip(Styles::ICONS[:github], "##{project.pr_number}", url: project.pr_url)
           end
