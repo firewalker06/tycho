@@ -1518,10 +1518,18 @@ select {
   min-width: 0;
 }
 
+.agent-conversation-pane {
+  position: relative;
+}
+
 .agent-conversation-scroll {
   display: grid;
   align-content: start;
   gap: 8px;
+}
+
+.agent-workspace:not(.personal-assistant-page) .agent-conversation-scroll {
+  padding-bottom: 64px;
 }
 
 .agent-workspace.has-detail .agent-conversation-pane {
@@ -5868,6 +5876,25 @@ select {
   gap: 8px;
 }
 
+.conversation-catchup-overlay {
+  position: fixed;
+  bottom: calc(var(--agent-dock-height, 220px) + 12px);
+  left: 50%;
+  z-index: 6;
+  display: flex;
+  justify-content: center;
+  width: fit-content;
+  max-width: calc(100vw - 24px);
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.conversation-catchup-overlay .conversation-catchup-actions {
+  justify-content: center;
+  max-width: 100%;
+  pointer-events: auto;
+}
+
 .agent-floating-pill {
   display: inline-flex;
   align-items: center;
@@ -5925,6 +5952,11 @@ select {
     display: grid;
     min-height: 0;
     overflow: hidden;
+  }
+
+  .agent-workspace .conversation-catchup-overlay {
+    position: absolute;
+    bottom: 12px;
   }
 
   .agent-workspace.conversation-only .agent-conversation-scroll {
