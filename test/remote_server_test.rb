@@ -484,9 +484,11 @@ module RemoteServerTest
                "expected setup mutation to require an exact confirmation")
       end
       configured = server.send(:route, service, "POST", "/personal-assistant/setup", {
-                                 "confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta"
+                                 "confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta", "personality" => "steady"
                                }, nil)
-      assert(configured.dig(:body, :personal_assistant, :configured), "expected confirmed setup to persist")
+      assert(configured.dig(:body, :personal_assistant, :configured) &&
+             configured.dig(:body, :personal_assistant, :config, "personality") == "steady",
+             "expected confirmed setup to persist the validated personality")
       opened = server.send(:route, service, "POST", "/personal-assistant/open", {}, nil)
       key = opened.dig(:body, :personal_assistant, :active_key)
       assert(key && opened.dig(:body, :personal_assistant, :agent, "role") == "personal_assistant_daily",
@@ -7506,8 +7508,11 @@ module RemoteServerTest
     assert(js[:body].include?('class="pa-setup ui-surface"') &&
            js[:body].include?('name="model" required') &&
            js[:body].include?('name="timezone" required') &&
+           js[:body].include?('name="personality"') &&
+           js[:body].include?('class="pa-personality-options"') &&
+           js[:body].include?("Changes FRED’s stable voice and interaction style, not its safety or approval rules.".b) &&
            js[:body].include?('aria-describedby="pa-setup-guidance"'),
-           "expected FRED setup to use shared surface and field contracts with connected guidance")
+           "expected FRED setup to expose accessible personality previews with shared field contracts")
     assert(!js[:body].include?("confirmed: true, model: \"gpt-5.6-sol\""),
            "expected first-use FRED flow not to silently submit fixed settings")
     assert(js[:body].include?("personalAssistant ? \"/personal-assistant/messages\""),
@@ -7522,8 +7527,9 @@ module RemoteServerTest
            "expected first-use FRED to show only accessible recommendation actions")
     assert(js[:body].include?('name="external_events_prompt"') &&
            js[:body].include?('maxlength="4000"') &&
+           setup_handler.include?('personality: String(values.get("personality") || "")') &&
            setup_handler.include?('external_events_prompt: String(values.get("external_events_prompt") || "")'),
-           "expected Settings to round-trip the bounded external-event recommendation prompt")
+           "expected Settings to round-trip personality and the bounded external-event recommendation prompt")
     fred_conversation_filter = js[:body][/function personalAssistantVisibleConversationBlocks\(blocks\).*?^}/m]
     assert(fred_conversation_filter&.include?('block?.kind === "message" && ["user", "assistant"].includes(block.role)') &&
            js[:body].include?("? personalAssistantVisibleConversationBlocks(allConversationBlocks)"),

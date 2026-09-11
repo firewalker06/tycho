@@ -83,6 +83,52 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
       JS
       system("node", script, exception: true)
     end
+    verify_personality = lambda do
+      playwright = ENV.fetch("TYCHO_PLAYWRIGHT_PATH", File.expand_path("node_modules/playwright", ROOT))
+      script = File.join(dir, "verify-personality.js")
+      File.write(script, <<~JS)
+        const { chromium } = require(#{playwright.to_json});
+        (async () => {
+          const browser = await chromium.launch({ headless: true });
+          const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+          await page.goto('http://127.0.0.1:#{PORT}/ui#personal-assistant');
+          const setup = page.locator('#personal-assistant-setup-form');
+          await setup.waitFor({ state: 'visible', timeout: 15000 });
+          const choices = setup.locator('input[name="personality"]');
+          if (await choices.count() !== 4) throw new Error('Expected four FRED personality choices');
+          if (!(await setup.locator('input[value="balanced"]').isChecked())) throw new Error('Balanced personality was not the default');
+          const copy = await setup.innerText();
+          for (const label of ['Balanced', 'Direct', 'Steady', 'Upbeat']) {
+            if (!copy.includes(label)) throw new Error(`Missing ${label} personality preview`);
+          }
+          await setup.locator('input[value="direct"]').check();
+          await setup.locator('input[name="confirmed"]').check();
+          await setup.locator('button[type="submit"]').click();
+          await page.locator('.pa-recommendations').waitFor({ state: 'visible', timeout: 15000 });
+          const opened = await (await page.request.get('http://127.0.0.1:#{PORT}/personal-assistant')).json();
+          if (opened.personal_assistant.config.personality !== 'direct' || opened.personal_assistant.active_settings.personality !== 'direct') throw new Error('Direct personality did not persist into the active session');
+          await page.goto('http://127.0.0.1:#{PORT}/ui#settings');
+          await page.locator('[data-edit-personal-assistant-settings]').click();
+          const form = page.locator('#personal-assistant-settings-form');
+          await form.waitFor({ state: 'visible', timeout: 15000 });
+          if (!(await form.locator('input[value="direct"]').isChecked())) throw new Error('Settings did not retain Direct');
+          await form.locator('input[value="upbeat"]').check();
+          await page.screenshot({ path: #{File.join(OUTPUT, "fred-personality-settings-desktop.png").to_json}, fullPage: false });
+          await page.setViewportSize({ width: 390, height: 844 });
+          await form.locator('.pa-personality-field').scrollIntoViewIfNeeded();
+          const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+          if (overflow) throw new Error('Personality settings overflow the mobile viewport');
+          await page.screenshot({ path: #{File.join(OUTPUT, "fred-personality-settings-mobile.png").to_json}, fullPage: false });
+          await form.locator('input[name="confirmed"]').check();
+          await form.locator('button[type="submit"]').click();
+          await page.waitForFunction(() => !document.querySelector('#personal-assistant-settings-form'), null, { timeout: 15000 });
+          const saved = await (await page.request.get('http://127.0.0.1:#{PORT}/personal-assistant')).json();
+          if (saved.personal_assistant.config.personality !== 'upbeat' || saved.personal_assistant.active_settings.personality !== 'direct') throw new Error('Personality settings did not preserve active-session pinning');
+          await browser.close();
+        })().catch(error => { console.error(error); process.exit(1); });
+      JS
+      system("node", script, exception: true)
+    end
     verify_initiate = lambda do
       playwright = ENV.fetch("TYCHO_PLAYWRIGHT_PATH", File.expand_path("node_modules/playwright", ROOT))
       script = File.join(dir, "verify-initiate.js")
@@ -234,6 +280,12 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
     end
     if ENV["TYCHO_PERSONAL_ASSISTANT_ZERO_PROJECT_ONLY"] == "1"
       verify_zero_project_entry.call
+      exit
+    end
+    if ENV["TYCHO_PERSONAL_ASSISTANT_PERSONALITY_ONLY"] == "1"
+      capture.call("fred-personality-setup-desktop.png", "Desktop Chrome", ".pa-setup", "Personality")
+      capture.call("fred-personality-setup-mobile.png", "iPhone 13", ".pa-setup", "Personality")
+      verify_personality.call
       exit
     end
     unless ENV["TYCHO_PERSONAL_ASSISTANT_VERIFY_ONLY"] == "1"

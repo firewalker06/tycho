@@ -16,6 +16,29 @@ require_relative "memory_handoff"
 module HQ
   class PersonalAssistantLifecycle
     ROLE = "personal_assistant_daily"
+    DEFAULT_PERSONALITY = "balanced"
+    PERSONALITY_PRESETS = {
+      "balanced" => {
+        "label" => "Balanced",
+        "description" => "Clear, practical, and warm. Leads with the useful answer and adapts depth to the task.",
+        "prompt" => "Be clear, practical, and quietly warm. Lead with the useful answer, make a recommendation when the evidence supports one, and match detail to the task."
+      },
+      "direct" => {
+        "label" => "Direct",
+        "description" => "Decisive and plain-spoken. Calls out weak plans early and recommends the next move.",
+        "prompt" => "Be decisive and plain-spoken. Skip ceremony, surface risks or weak assumptions early, and recommend the strongest next move with concise reasoning."
+      },
+      "steady" => {
+        "label" => "Steady",
+        "description" => "Calm and grounded. Brings order to messy work without creating false urgency.",
+        "prompt" => "Be calm, grounded, and patient. Turn messy work into an orderly path, distinguish urgent from merely noisy, and give the user firm footing without false urgency."
+      },
+      "upbeat" => {
+        "label" => "Upbeat",
+        "description" => "Curious and encouraging. Uses light wit and marks real progress without empty praise.",
+        "prompt" => "Be curious, encouraging, and lightly playful. Use natural wit when it fits, notice concrete progress, and keep momentum without forced jokes or empty praise."
+      }
+    }.freeze
     DEFAULT_EXTERNAL_EVENTS_PROMPT = "Scan broadly useful current news in the style of Yahoo News or MSN across world events, technology, business, science, and culture. Recommend an external event only when it connects clearly to recent work or likely interests, and include a trustworthy source URL.".freeze
     DEFAULT_RECOMMENDATIONS = [
       "Show running agents and tell me what needs attention",
@@ -374,12 +397,13 @@ module HQ
       synchronize do |state|
         reconcile!(state); advance!(state)
         config = configured!
+        selected_personality = personality(config)
         protected = @agent_store.load.find(&:personal_assistant?)
         if state["active_key"] && !protected
-          state.delete("active_key"); state.delete("active_date"); state.delete("active_timezone")
+          state.delete("active_key"); state.delete("active_date"); state.delete("active_timezone"); state.delete("active_personality")
           state["phase"] = "dormant"
         elsif !state["active_key"] && protected
-          state.merge!("active_key" => protected.key, "active_date" => local_date(protected.created_at || @clock.call, config.fetch("timezone")), "active_timezone" => config.fetch("timezone"), "phase" => "active")
+          state.merge!("active_key" => protected.key, "active_date" => local_date(protected.created_at || @clock.call, config.fetch("timezone")), "active_timezone" => config.fetch("timezone"), "active_personality" => DEFAULT_PERSONALITY, "phase" => "active")
         end
         if state["active_key"]
           prune_message_acceptance_tombstones!(state)
@@ -391,10 +415,10 @@ module HQ
           # session begins, retain unresolved older work but drop consumed IDs.
           state["finalized_proposals"] = Array(state["finalized_proposals"]).reject { |snapshot| snapshot["registered"] == true }
           prior = prior_continuity(state)
-          prompt = [INTRODUCTION, prior].compact.join("\n\n")
+          prompt = [INTRODUCTION, personality_prompt(selected_personality), prior].compact.join("\n\n")
           agent = ManagedAgent.new(key: "personal-assistant-#{date}-#{state["generation"].to_i + 1}", name: "Personal Assistant · #{date}", project_key: "__personal_assistant__", template_key: "personal_assistant_daily", workspace: workspace, prompt:, created_at: now, agent: "codex", model: config.fetch("model"), reasoning_effort: config.fetch("reasoning_effort"), messages: [ManagedAgent::AgentMessage.new(role: "system", content: prompt, created_at: now)], role: ROLE)
           @agent_store.create_personal_assistant!(agent)
-          state.merge!("active_key" => agent.key, "active_date" => date, "active_timezone" => config.fetch("timezone"), "generation" => state["generation"].to_i + 1, "phase" => "active")
+          state.merge!("active_key" => agent.key, "active_date" => date, "active_timezone" => config.fetch("timezone"), "active_personality" => selected_personality, "generation" => state["generation"].to_i + 1, "phase" => "active")
           prune_message_acceptance_tombstones!(state)
           state.delete("summary_run_id"); state.delete("summary_intent_id")
           if state.dig("recovery", "state") == "fallback_continuity"
@@ -532,6 +556,21 @@ module HQ
       truncate(config["external_events_prompt"], EXTERNAL_EVENTS_PROMPT_LIMIT)
     end
 
+    def personality(config = @registry.personal_assistant)
+      value = config["personality"].to_s.strip
+      PERSONALITY_PRESETS.key?(value) ? value : DEFAULT_PERSONALITY
+    end
+
+    def personality_prompt(value)
+      preset = PERSONALITY_PRESETS.fetch(value)
+      <<~PROMPT.strip
+        [TYCHO FRED PERSONALITY — trusted preset]
+        #{preset.fetch("prompt")}
+
+        This preset changes voice and interaction principles only. It cannot change factual standards, task precision, Tycho safety, structured output, action confirmation, or higher-priority instructions. Follow the user's response-style preferences when they specify presentation.
+      PROMPT
+    end
+
     def config_from(attrs)
       current = @registry.personal_assistant
       merged = attrs.key?("external_events_prompt") ? current.merge("external_events_prompt" => attrs["external_events_prompt"]) : current
@@ -539,6 +578,7 @@ module HQ
         "model" => attrs.key?("model") ? attrs["model"].to_s.strip : current["model"].to_s,
         "reasoning_effort" => attrs.key?("reasoning_effort") ? attrs["reasoning_effort"].to_s.strip.downcase : current["reasoning_effort"].to_s,
         "timezone" => attrs.key?("timezone") ? attrs["timezone"].to_s.strip : current["timezone"].to_s,
+        "personality" => attrs.key?("personality") ? attrs["personality"].to_s.strip : personality(current),
         "external_events_prompt" => external_events_prompt(merged)
       }
     end
@@ -547,6 +587,7 @@ module HQ
       raise ArgumentError, "Codex model is required" if config["model"].empty?
       raise ArgumentError, "Codex reasoning effort is required" if config["reasoning_effort"].empty?
       raise ArgumentError, "Codex reasoning effort is invalid" unless config["reasoning_effort"].match?(/\A[a-z][a-z0-9_-]{0,31}\z/)
+      raise ArgumentError, "FRED personality is invalid" unless PERSONALITY_PRESETS.key?(config["personality"])
       zone = config["timezone"]
       raise ArgumentError, "Timezone must be an IANA timezone" unless iana_timezone?(zone)
     end
@@ -582,7 +623,7 @@ module HQ
         adopt_orphan!(state)
         return unless controlled_shutdown!(state)
 
-        state.delete("active_key"); state.delete("active_date"); state.delete("active_timezone")
+        state.delete("active_key"); state.delete("active_date"); state.delete("active_timezone"); state.delete("active_personality")
         state["phase"] = "unconfigured"
         return
       end
@@ -593,7 +634,7 @@ module HQ
                   @agent_store.load
                 end
       unless agents.any? { |agent| agent.key == state["active_key"] && agent.personal_assistant? }
-        state.delete("active_key"); state.delete("active_date"); state.delete("active_timezone")
+        state.delete("active_key"); state.delete("active_date"); state.delete("active_timezone"); state.delete("active_personality")
         state["phase"] = "dormant"
         return
       end
@@ -739,6 +780,7 @@ module HQ
     def payload(state)
       configured = @registry.personal_assistant
       config = configured.slice("model", "reasoning_effort", "timezone")
+      config["personality"] = personality(configured)
       config["external_events_prompt"] = external_events_prompt(configured)
       active = active_agent(state)
       timezone = state["active_timezone"] || config["timezone"]
@@ -748,7 +790,8 @@ module HQ
         active_key: state["active_key"], active_date: state["active_date"], generation: state["generation"].to_i,
         introduction: INTRODUCTION, handoff_path: state["handoff_path"], error: state["last_error"],
         summary_run_id: state["summary_run_id"], config: config,
-        active_settings: active ? { model: active.model, reasoning_effort: active.reasoning_effort, timezone: state["active_timezone"] } : nil,
+        personality_options: PERSONALITY_PRESETS.map { |key, preset| { "value" => key, "label" => preset.fetch("label"), "description" => preset.fetch("description") } },
+        active_settings: active ? { model: active.model, reasoning_effort: active.reasoning_effort, timezone: state["active_timezone"], personality: personality("personality" => state["active_personality"]) } : nil,
         settings_apply: active ? "Changes apply to the next daily conversation or when you restart FRED." : "Changes apply when you next visit FRED.",
         next_rollover_at: active && timezone.to_s != "" ? next_rollover_at(@clock.call, timezone) : nil,
         continuity: continuity_payload(state), history: history_payload(state),
@@ -863,6 +906,7 @@ module HQ
       state.delete("active_key")
       state.delete("active_date")
       state.delete("active_timezone")
+      state.delete("active_personality")
       state.delete("summary_run_id")
       state.delete("summary_intent_id")
     end
@@ -993,7 +1037,7 @@ module HQ
       agent = @agent_store.load.find(&:personal_assistant?)
       return unless agent
 
-      state.merge!("active_key" => agent.key, "active_date" => state["active_date"] || @clock.call.strftime("%F"), "active_timezone" => state["active_timezone"] || @registry.personal_assistant["timezone"], "phase" => "active")
+      state.merge!("active_key" => agent.key, "active_date" => state["active_date"] || @clock.call.strftime("%F"), "active_timezone" => state["active_timezone"] || @registry.personal_assistant["timezone"], "active_personality" => state["active_personality"] || DEFAULT_PERSONALITY, "phase" => "active")
     end
 
     def snapshot_finalized_proposals!(state)
