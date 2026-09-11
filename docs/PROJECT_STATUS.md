@@ -101,7 +101,11 @@ Key references:
 ## Current Focus
 
 **FRED experience**: Keep the Personal Assistant compact and task-focused.
-An empty daily conversation now shows only dated recommendation buttons. The
+Each daily conversation begins with a dated recommendation message that remains
+visible after chat content loads. Choosing an item submits its exact prompt as a
+normal durable user request, persists the recommendation context on the message,
+and uses the existing acceptance ID for queueing, replay, and interrupted-delivery
+recovery without duplicate messages. The
 existing rollover summary produces one bounded set for the next local date from
 unfinished work, cleanup, daily journals, available Miki changes, Tycho
 capabilities, and an optional server-side external-events prompt. First use and

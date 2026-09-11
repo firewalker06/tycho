@@ -4443,6 +4443,8 @@ module HQ
       metadata = {
         "personal_assistant_client_request_id" => id
       }
+      recommendation = personal_assistant_recommendation_metadata!(attrs, prompt:)
+      metadata["personal_assistant_recommendation"] = recommendation if recommendation
       event_id = "personal-assistant-message:#{id}"
       if kind == "inquiry_answer"
         target = personal_assistant_target_for_context!(context)
@@ -4695,8 +4697,37 @@ module HQ
         "feedback" => feedback.to_s,
         "start" => truthy?(attrs["start"]),
         "pull_request_contexts" => attrs["pull_request_contexts"],
-        "attachments" => personal_assistant_attachment_fingerprints(attrs["attachments"])
+        "attachments" => personal_assistant_attachment_fingerprints(attrs["attachments"]),
+        "recommendation" => personal_assistant_recommendation_metadata!(attrs, prompt:)
       }.delete_if { |_key, value| value.nil? }
+    end
+
+    def personal_assistant_recommendation_metadata!(attrs, prompt:)
+      requested = attrs["recommendation"]
+      return nil if requested.nil?
+      unless requested.is_a?(Hash) && requested["prompt"].to_s.strip == prompt.to_s.strip
+        raise Error.new("FRED recommendation selection does not match the submitted prompt", status: 409,
+                        details: { code: "recommendation_mismatch" })
+      end
+
+      status = @personal_assistant.status
+      recommendations = status[:recommendations] || status["recommendations"] || {}
+      items = Array(recommendations["items"] || recommendations[:items])
+      index = items.index { |item| (item["prompt"] || item[:prompt]).to_s.strip == prompt.to_s.strip }
+      unless index
+        raise Error.new("FRED recommendation changed; refresh and choose it again", status: 409,
+                        details: { code: "recommendation_stale" })
+      end
+
+      entry = items[index]
+      for_date = (recommendations["for_date"] || recommendations[:for_date]).to_s
+      {
+        "id" => "#{for_date.empty? ? "undated" : for_date}:#{index}",
+        "for_date" => for_date[0, 40],
+        "source" => (recommendations["source"] || recommendations[:source]).to_s[0, 40],
+        "title" => (entry["title"] || entry[:title] || prompt).to_s.strip[0, 96],
+        "prompt" => prompt.to_s.strip[0, 240]
+      }
     end
 
     def personal_assistant_attachment_fingerprints(value)

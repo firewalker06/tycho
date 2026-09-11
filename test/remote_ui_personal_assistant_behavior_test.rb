@@ -55,7 +55,8 @@ module RemoteUIPersonalAssistantBehaviorTest
         PERSONAL_ASSISTANT_ANNOUNCEMENT_LIMIT: 128,
         PERSONAL_ASSISTANT_MAX_FAILURE_COUNT: 2,
         PERSONAL_ASSISTANT_POLL_INTERVALS: { activeMs: 1500, idleMs: 12000, hiddenMs: 30000 },
-        document: { hidden: false },
+        document: { hidden: false, documentElement: { dataset: { assetVersion: "test" } } },
+        Event: class Event { constructor(type, options = {}) { this.type = type; this.bubbles = options.bubbles; } },
         state: {
           personalAssistant: { configured: true },
           personalAssistantAnnouncementValues: new Map(),
@@ -83,6 +84,11 @@ module RemoteUIPersonalAssistantBehaviorTest
         "personalAssistantShellRefreshNeeded",
         "personalAssistantConversationEventIdentity",
         "personalAssistantVisibleConversationBlocks",
+        "personalAssistantRecommendationContext",
+        "personalAssistantSelectedRecommendationIds",
+        "submitPersonalAssistantRecommendation",
+        "renderPersonalAssistantRecommendations",
+        "personalAssistantRecoveredSubmissionBlocks",
         "personalAssistantPollDelay",
         "notePersonalAssistantRefreshFailure",
         "personalAssistantStatusRequestIsCurrent",
@@ -119,6 +125,74 @@ module RemoteUIPersonalAssistantBehaviorTest
         { kind: "message", role: "assistant", metadata: { event_id: "event-1" }, content: "Same" },
       ]);
       assert(duplicateEvent.length === 1, "duplicate event IDs were not deduplicated");
+
+      context.escapeHtml = (value) => String(value);
+      context.emptyState = () => "empty";
+      const recommendationItem = {
+        active_date: "2026-09-11",
+        state: "active",
+        recommendations: {
+          for_date: "2026-09-11",
+          source: "daily_handoff",
+          items: [{ title: "Continue review", prompt: "Continue the release review from yesterday." }],
+        },
+      };
+      const initialRecommendations = context.renderPersonalAssistantRecommendations(recommendationItem, []);
+      assert(initialRecommendations.includes('class="message assistant pa-recommendations"') &&
+        initialRecommendations.includes("Continue the release review from yesterday.") &&
+        initialRecommendations.includes('data-pa-recommendation='),
+      "initial recommendations were not rendered as an intelligible FRED conversation block");
+      const selectedBlock = {
+        kind: "message",
+        role: "user",
+        metadata: { personal_assistant_recommendation: { id: "2026-09-11:0" } },
+      };
+      const loadedRecommendations = context.renderPersonalAssistantRecommendations(recommendationItem, [selectedBlock]);
+      assert(loadedRecommendations.includes("Selected") && loadedRecommendations.includes("disabled"),
+             "loaded conversation did not retain and mark its selected recommendation");
+
+      let recommendationSubmits = 0;
+      const submitter = { disabled: false };
+      const form = {
+        dataset: {},
+        querySelector: () => submitter,
+        requestSubmit: (button) => { if (button === submitter) recommendationSubmits += 1; },
+      };
+      const input = {
+        value: "",
+        closest: () => form,
+        dispatchEvent: () => {},
+        focus: () => {},
+      };
+      context.els.view = { querySelector: () => input, querySelectorAll: () => [] };
+      const suggestion = {
+        dataset: {
+          paSuggestion: "Continue the release review from yesterday.",
+          paRecommendation: JSON.stringify(context.personalAssistantRecommendationContext(recommendationItem, recommendationItem.recommendations.items[0], 0)),
+        },
+        disabled: false,
+        setAttribute: () => {},
+      };
+      assert(context.submitPersonalAssistantRecommendation(suggestion) === true && recommendationSubmits === 1 &&
+        input.value === "Continue the release review from yesterday." && form.dataset.personalAssistantRecommendation,
+      "recommendation selection did not enter the normal composer submission path");
+      assert(context.submitPersonalAssistantRecommendation(suggestion) === false && recommendationSubmits === 1,
+             "repeated recommendation activation created a duplicate submission");
+
+      context.personalAssistantSubmissionEntries = () => [{
+        client_request_id: "client-recovered-recommendation",
+        agent_key: "fred",
+        prompt: "Continue the release review from yesterday.",
+        state: "unknown",
+        submitted_at: "2026-09-11T00:00:00Z",
+        recommendation: { id: "2026-09-11:0", prompt: "Continue the release review from yesterday." },
+      }];
+      context.personalAssistantSubmissionNeedsRetention = () => true;
+      context.personalAssistantBlockMatchesSubmission = (_block, record) => record.client_request_id === "already-recorded";
+      const recovered = context.personalAssistantRecoveredSubmissionBlocks({ key: "fred" }, []);
+      assert(recovered.length === 1 && recovered[0].content === "Continue the release review from yesterday." &&
+        recovered[0].metadata.personal_assistant_recommendation.id === "2026-09-11:0",
+      "reload recovery lost the selected recommendation request block");
 
       let mounted = [];
       context.els.view = { querySelectorAll: () => mounted };
