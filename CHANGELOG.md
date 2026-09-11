@@ -4,6 +4,9 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+- Replace FRED's static starting surface with daily recommendation actions based
+  on handoff continuity, recent internal signals, and an optional server-side
+  external-events prompt in Settings.
 - Make FRED setup explicit and chat-first, protect its daily lifecycle from
   ordinary agent mutations, and add deterministic setup/ready UI captures.
 - Keep the Tycho mark visible as an accessible Agents navigation control in

@@ -60,7 +60,6 @@ module RemoteUIPersonalAssistantBehaviorTest
           personalAssistant: { configured: true },
           personalAssistantAnnouncementValues: new Map(),
           personalAssistantProposals: [],
-          personalAssistantCurrentWork: null,
           agentDetails: { fred: { running: true } },
           failureCount: 0,
         },
@@ -86,7 +85,6 @@ module RemoteUIPersonalAssistantBehaviorTest
         "personalAssistantVisibleConversationBlocks",
         "personalAssistantPollDelay",
         "notePersonalAssistantRefreshFailure",
-        "requestPersonalAssistantCurrentWork",
         "personalAssistantStatusRequestIsCurrent",
         "requestPersonalAssistantStatus",
         "receiveConversationSnapshot",
@@ -325,71 +323,6 @@ module RemoteUIPersonalAssistantBehaviorTest
         await context.ensureConversation(idleAgent, false);
         assert(conversationReads === 1,
                "idle FRED lost its revision-cache conversation shortcut");
-
-        let resolveCurrentWork;
-        let rejectCurrentWork;
-        let renderCalls = 0;
-        context.apiGet = () => new Promise((resolve, reject) => {
-          resolveCurrentWork = resolve;
-          rejectCurrentWork = reject;
-        });
-        context.render = () => { renderCalls += 1; };
-        context.state.personalAssistantRequests = {
-          currentWork: {},
-          coordinator: { currentWorkSequence: 0, currentWorkApplied: 0 },
-        };
-        context.state.personalAssistantCurrentWork = { state: "fresh", agents: [] };
-        context.state.personalAssistantCurrentWorkState = "fresh";
-        context.state.personalAssistantCurrentWorkError = "";
-        context.state.renderedViewHtml = "stable-current-work-html";
-        const currentWorkRequest = context.requestPersonalAssistantCurrentWork("#personal-assistant", {
-          server_key: "local",
-          active_key: "fred",
-          generation: 1,
-        });
-        assert(context.state.personalAssistantCurrentWorkState === "fresh",
-               "background current-work polling replaced the visible snapshot with refreshing");
-        assert(context.state.renderedViewHtml === "stable-current-work-html",
-               "background current-work polling invalidated the visible snapshot before its response");
-        await Promise.resolve();
-        resolveCurrentWork({ state: "fresh", agents: [] });
-        await currentWorkRequest;
-        assert(renderCalls === 1, "current-work response did not use the existing render path");
-        assert(context.state.renderedViewHtml === "stable-current-work-html",
-               "unchanged current-work response bypassed the same-HTML render shortcut");
-
-        const changedCurrentWorkRequest = context.requestPersonalAssistantCurrentWork("#personal-assistant", {
-          server_key: "local",
-          active_key: "fred",
-          generation: 1,
-        });
-        assert(context.state.personalAssistantCurrentWorkState === "fresh",
-               "changed current-work polling replaced the visible snapshot with refreshing");
-        await Promise.resolve();
-        resolveCurrentWork({ state: "stale", agents: [{ key: "fred", status: "waiting" }] });
-        await changedCurrentWorkRequest;
-        assert(context.state.personalAssistantCurrentWorkState === "stale",
-               "changed current-work response did not update its visible state");
-        assert(renderCalls === 2, "changed current-work response did not use the existing render path");
-        assert(context.state.renderedViewHtml === "stable-current-work-html",
-               "changed current-work response unnecessarily invalidated the existing view");
-
-        const failedCurrentWorkRequest = context.requestPersonalAssistantCurrentWork("#personal-assistant", {
-          server_key: "local",
-          active_key: "fred",
-          generation: 1,
-        });
-        assert(context.state.personalAssistantCurrentWorkState === "stale",
-               "failed background current-work polling replaced the visible snapshot with refreshing");
-        await Promise.resolve();
-        rejectCurrentWork(new Error("offline"));
-        await failedCurrentWorkRequest.catch(() => {});
-        assert(context.state.personalAssistantCurrentWorkState === "unavailable",
-               "current-work failure did not surface an unavailable state");
-        assert(context.state.personalAssistantCurrentWorkError === "offline",
-               "current-work failure did not retain its error");
-        assert(context.state.renderedViewHtml === "stable-current-work-html",
-               "current-work failure unnecessarily invalidated the existing view");
 
         console.log("remote_ui_personal_assistant_behavior_test: completed");
       })().catch((error) => {

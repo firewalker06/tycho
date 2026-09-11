@@ -99,6 +99,13 @@ Key references:
 ## Current Focus
 
 **FRED experience**: Keep the Personal Assistant compact and task-focused.
+An empty daily conversation now shows only dated recommendation buttons. The
+existing rollover summary produces one bounded set for the next local date from
+unfinished work, cleanup, daily journals, available Miki changes, Tycho
+capabilities, and an optional server-side external-events prompt. First use and
+summary failures degrade to explicit safe starters, while same-day restarts keep
+the current set. The former Current Work panel, fixed starter question, project
+picker, and static capability list no longer occupy FRED's starting surface.
 Setup keeps visible model, effort, timezone, and explicit confirmation, with
 catalog suggestions and FRED access before the first project. Settings edits
 and a non-destructive restart are separate from destructive reset. Readable
@@ -110,9 +117,10 @@ Daily continuity and tracked work remain inspectable across conversations.
 Durable mutations use one server-lifetime bounded worker with frozen previews,
 conservative outcome verification, and read-only archived-action history whose
 `expired_actions` subset contains only unconfirmed approvals; the
-measured fixture optimization coalesces repeated status/actions/current-work
-work and caches timezone boundaries across request services without holding a
-global lock across long effects. Phase3 measurement also confirms that durable
+measured fixture optimization still supports the compatibility current-work
+endpoint, while the focused UI no longer polls or renders it. Timezone boundaries
+remain cached across request services without holding a global lock across long
+effects. Phase3 measurement also confirms that durable
 semantic conversation events appear before final structured output, so focused
 polling remains sufficient without a new stream protocol. Configured FRED
 defers the slow shell/setup discovery on its focused conversation path; actual

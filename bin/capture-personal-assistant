@@ -79,7 +79,7 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
       script = File.join(dir, "capture.js")
       File.write(script, <<~JS)
         const { chromium, devices } = require(#{playwright.to_json});
-        (async () => { const browser = await chromium.launch({headless:true}); const page = await browser.newPage(devices[#{device.to_json}]); if (#{device.to_json} === 'Desktop Chrome') await page.setViewportSize({ width: 1280, height: 900 }); await page.goto('http://127.0.0.1:#{PORT}/ui##{route}'); const target = page.locator(#{selector.to_json}); await target.waitFor({state:'visible',timeout:15000}); await page.waitForFunction(() => { const boot = document.querySelector('#tycho-boot-shell'); return !boot || getComputedStyle(boot).display === 'none' || getComputedStyle(boot).visibility === 'hidden'; }, null, {timeout:15000}); await page.waitForFunction(() => document.body.innerText.includes(#{expected.to_json}), null, {timeout:15000}); if (#{open_menu}) { await page.locator('#personal-assistant-settings-menu > summary').click(); await page.locator('[data-open-settings]').waitFor({state:'visible',timeout:15000}); } if (#{open_switcher}) { await page.locator('[data-agent-switcher]').click(); await page.locator('#unread-agents-panel:not(.hidden)').waitFor({state:'visible',timeout:15000}); } if (#{keyboard_switcher}) { await page.keyboard.press('Meta+k'); await page.locator('#unread-agents-panel:not(.hidden)').waitFor({state:'visible',timeout:15000}); } if (#{reset_fred}) { await page.locator('.pa-danger-zone > summary').click(); await page.locator('[data-reset-personal-assistant]').click(); await page.locator('#confirmation-dialog[open]').waitFor({state:'visible',timeout:15000}); await page.locator('[data-confirmation-accept]').click(); await page.waitForFunction(() => document.body.innerText.includes('Set up FRED'), null, {timeout:15000}); } else { await target.scrollIntoViewIfNeeded(); } await page.screenshot({path:#{File.join(OUTPUT, name).to_json},fullPage:false}); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });
+        (async () => { const browser = await chromium.launch({headless:true}); const page = await browser.newPage(devices[#{device.to_json}]); if (#{device.to_json} === 'Desktop Chrome') await page.setViewportSize({ width: 1280, height: 900 }); await page.goto('http://127.0.0.1:#{PORT}/ui##{route}'); const target = page.locator(#{selector.to_json}); await target.waitFor({state:'visible',timeout:15000}); await page.waitForFunction(() => { const boot = document.querySelector('#tycho-boot-shell'); return !boot || getComputedStyle(boot).display === 'none' || getComputedStyle(boot).visibility === 'hidden'; }, null, {timeout:15000}); await page.waitForFunction(() => document.body.innerText.includes(#{expected.to_json}), null, {timeout:15000}); if (#{open_menu}) { await page.locator('#header-more-button').click(); await page.locator('#header-more-panel:not(.hidden) [data-open-settings]').waitFor({state:'visible',timeout:15000}); } if (#{open_switcher}) { await page.locator('[data-agent-switcher]').click(); await page.locator('#unread-agents-panel:not(.hidden)').waitFor({state:'visible',timeout:15000}); } if (#{keyboard_switcher}) { await page.keyboard.press('Meta+k'); await page.locator('#unread-agents-panel:not(.hidden)').waitFor({state:'visible',timeout:15000}); } if (#{reset_fred}) { await page.locator('.pa-danger-zone > summary').click(); await page.locator('[data-reset-personal-assistant]').click(); await page.locator('#confirmation-dialog[open]').waitFor({state:'visible',timeout:15000}); await page.locator('[data-confirmation-accept]').click(); await page.waitForFunction(() => document.body.innerText.includes('Set up FRED'), null, {timeout:15000}); } else { await target.scrollIntoViewIfNeeded(); } await page.screenshot({path:#{File.join(OUTPUT, name).to_json},fullPage:false}); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });
       JS
       system("node", script, exception: true)
     end
@@ -108,22 +108,45 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
           if (setupCopy.includes('Codex found')) throw new Error('FRED setup retained noisy healthy-Codex copy');
           await page.locator('#personal-assistant-setup-form input[name="confirmed"]').check();
           await page.locator('#personal-assistant-setup-form button[type="submit"]').click();
-          await page.locator('.pa-welcome').waitFor({ state: 'visible', timeout: 15000 });
+          await page.locator('.pa-recommendations').waitFor({ state: 'visible', timeout: 15000 });
           await page.goto('http://127.0.0.1:#{PORT}/ui#settings');
           const goToFred = page.locator('#settings-personal-assistant a[href="#personal-assistant"]');
           if (await goToFred.count() !== 1) throw new Error('FRED settings did not offer a direct FRED link');
           if (await page.locator('[data-open-personal-assistant]').count()) throw new Error('FRED still requires a manual opening control');
           await goToFred.click();
-          await page.locator('.pa-welcome').waitFor({ state: 'visible', timeout: 15000 });
+          await page.locator('.pa-recommendations').waitFor({ state: 'visible', timeout: 15000 });
           if ((await page.locator('.personal-assistant-page').innerText()).includes('Open conversation')) throw new Error('FRED retained opening-conversation ceremony copy');
-          if (await page.locator('.pa-suggestions > li').count() !== 3) throw new Error('FRED starters did not render as a three-item list');
-          if (await page.locator('select[data-pa-project-picker]').count()) throw new Error('FRED project starter still uses a select menu');
-          const projectPicker = page.locator('[data-pa-project-picker]');
-          if (await projectPicker.getAttribute('list') !== 'pa-project-options') throw new Error('FRED project starter is missing autocomplete suggestions');
-          if (await page.locator('.pa-capabilities ul > li').count() !== 5) throw new Error('FRED capabilities did not render as a concise list');
-          await projectPicker.fill('Personal Assistant fixture (fixture)');
-          await page.locator('#pa-project-starter-form button[type="submit"]').click();
-          await page.waitForFunction(() => document.querySelector('#composer #prompt-input')?.value.includes('Personal Assistant fixture (fixture)'), null, { timeout: 15000 });
+          const recommendationButtons = page.locator('.pa-recommendations [data-pa-suggestion]');
+          if (await recommendationButtons.count() < 3) throw new Error('FRED recommendations did not render as action buttons');
+          const firstRecommendation = recommendationButtons.first();
+          const recommendationPrompt = await firstRecommendation.getAttribute('data-pa-suggestion');
+          await firstRecommendation.click();
+          await page.waitForFunction((prompt) => document.querySelector('#composer #prompt-input')?.value === prompt, recommendationPrompt, { timeout: 15000 });
+          if ((await page.locator('.personal-assistant-page').innerText()).includes('What FRED can do')) throw new Error('FRED retained its static capability list');
+          if (await page.locator('.pa-current-work, #pa-project-starter-form').count()) throw new Error('FRED retained a removed starting surface');
+          if (#{(ENV["TYCHO_PERSONAL_ASSISTANT_RECOMMENDATIONS_ONLY"] == "1").to_json}) {
+            await page.locator('#growl.hidden').waitFor({ state: 'attached', timeout: 15000 });
+            await page.setViewportSize({ width: 1280, height: 900 });
+            await page.screenshot({ path: #{File.join(OUTPUT, "fred-recommendations-desktop.png").to_json}, fullPage: false });
+            await page.setViewportSize({ width: 390, height: 844 });
+            const recommendationBox = await page.locator('.pa-recommendations').boundingBox();
+            const composerBox = await page.locator('#composer').boundingBox();
+            if (!recommendationBox || recommendationBox.width > 390) throw new Error(`Recommendations overflow the mobile viewport: ${JSON.stringify(recommendationBox)}`);
+            if (!composerBox || composerBox.y + composerBox.height > 844) throw new Error(`Composer is not pinned inside the mobile viewport: ${JSON.stringify(composerBox)}`);
+            await page.screenshot({ path: #{File.join(OUTPUT, "fred-recommendations-mobile.png").to_json}, fullPage: false });
+            await page.goto('http://127.0.0.1:#{PORT}/ui#settings');
+            await page.locator('[data-edit-personal-assistant-settings]').click();
+            const externalPrompt = page.locator('#personal-assistant-settings-form [name="external_events_prompt"]');
+            if (!(await externalPrompt.inputValue()).includes('Yahoo News or MSN')) throw new Error('Settings did not show the default external-event prompt');
+            await externalPrompt.fill('Recommend technology and science news with primary-source links.');
+            await page.locator('#personal-assistant-settings-form input[name="confirmed"]').check();
+            await page.locator('#personal-assistant-settings-form button[type="submit"]').click();
+            await page.waitForFunction(() => !document.querySelector('#personal-assistant-settings-form'), null, { timeout: 15000 });
+            const saved = await (await page.request.get('http://127.0.0.1:#{PORT}/personal-assistant')).json();
+            if (saved.personal_assistant.config.external_events_prompt !== 'Recommend technology and science news with primary-source links.') throw new Error('External-event prompt was not saved');
+            await browser.close();
+            return;
+          }
           await page.locator('#composer #prompt-input').fill('Create a fixture agent');
           await page.locator('#composer button[type="submit"]').click();
           await page.locator('[data-confirm-pa-proposal]').waitFor({ state: 'visible', timeout: 15000 });
@@ -137,7 +160,7 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
           const resultLink = page.locator('.pa-action-result a[href^="#agent/"]');
           if (await resultLink.count() !== 1) throw new Error('Created-agent receipt link missing');
           if (!(await page.locator('.pa-action-result').innerText()).includes('Prepare start')) throw new Error('Created-agent next action missing');
-          if ((await page.locator('.pa-conversation-scroll').innerText()).includes('Tycho completed create_agent.')) throw new Error('Raw action receipt duplicated the typed result');
+          if ((await page.locator('.agent-conversation-scroll').innerText()).includes('Tycho completed create_agent.')) throw new Error('Raw action receipt duplicated the typed result');
           if (await page.locator('.pa-action-feed').count()) throw new Error('Action receipt was not attached to its source reply');
           if (await page.locator('.message-list .pa-inline-action').count() !== 1) throw new Error('Action receipt was not rendered with its source reply');
           if (await page.locator('.personal-assistant-page .message-group, .personal-assistant-page [data-run-summary-id]').count()) throw new Error('FRED chat exposed internal activity or run-summary blocks');
@@ -150,14 +173,17 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
           await page.locator('[data-edit-personal-assistant-settings]').click();
           if (await page.locator('#personal-assistant-settings-form [name="model"]').inputValue() !== 'gpt-5.6-sol') throw new Error('Settings did not retain model');
           if (await page.locator('#personal-assistant-settings-form [name="timezone"]').inputValue() !== 'Asia/Jakarta') throw new Error('Settings did not retain timezone');
+          if (!(await page.locator('#personal-assistant-settings-form [name="external_events_prompt"]').inputValue()).includes('Yahoo News or MSN')) throw new Error('Settings did not show the default external-event prompt');
           const beforeSettings = await (await page.request.get('http://127.0.0.1:#{PORT}/personal-assistant')).json();
           await page.locator('#personal-assistant-settings-form [name="reasoning_effort"]').fill('high');
+          await page.locator('#personal-assistant-settings-form [name="external_events_prompt"]').fill('Recommend technology and science news with primary-source links.');
           await page.locator('#personal-assistant-settings-form input[name="confirmed"]').check();
           await page.locator('#personal-assistant-settings-form button[type="submit"]').click();
           await page.waitForFunction(() => !document.querySelector('#personal-assistant-settings-form'), null, { timeout: 15000 });
           const afterSettings = await (await page.request.get('http://127.0.0.1:#{PORT}/personal-assistant')).json();
           if (afterSettings.personal_assistant.active_key !== beforeSettings.personal_assistant.active_key) throw new Error('Editing settings replaced the active conversation');
           if (afterSettings.personal_assistant.config.reasoning_effort !== 'high') throw new Error('Settings change was not saved');
+          if (afterSettings.personal_assistant.config.external_events_prompt !== 'Recommend technology and science news with primary-source links.') throw new Error('External-event prompt was not saved');
           await page.goto('http://127.0.0.1:#{PORT}/ui#personal-assistant');
           await page.locator('#composer #prompt-input').fill('Draft survives restart');
           await new Promise((resolve) => setTimeout(resolve, 600));
@@ -221,8 +247,8 @@ Dir.mktmpdir("tycho-pa-capture") do |dir|
     verify_initiate.call
     exit if ENV["TYCHO_PERSONAL_ASSISTANT_VERIFY_ONLY"] == "1"
     verify_zero_project_entry.call
-    capture.call("fred-compact-settings-menu-desktop.png", "Desktop Chrome", ".personal-assistant-page", "What would you like to do?", open_menu: true)
-    capture.call("fred-compact-settings-menu-mobile.png", "iPhone 13", ".personal-assistant-page", "What would you like to do?", open_menu: true)
+    capture.call("fred-compact-settings-menu-desktop.png", "Desktop Chrome", ".personal-assistant-page", "Recommendations", open_menu: true)
+    capture.call("fred-compact-settings-menu-mobile.png", "iPhone 13", ".personal-assistant-page", "Recommendations", open_menu: true)
     capture.call("fred-reset-settings-desktop.png", "Desktop Chrome", "#settings-personal-assistant", "Reset FRED", route: "settings")
     capture.call("fred-reset-settings-mobile.png", "iPhone 13", "#settings-personal-assistant", "Reset FRED", route: "settings")
     capture.call("fred-onboarding-after-reset-desktop.png", "Desktop Chrome", "#settings-personal-assistant", "Reset FRED", route: "settings", reset_fred: true)

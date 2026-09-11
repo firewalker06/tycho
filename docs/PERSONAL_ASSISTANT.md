@@ -4,11 +4,19 @@ FRED helps you set up Tycho projects, prepare and follow agents, inspect results
 
 ## Getting started
 
-Visit FRED, review the model, reasoning effort, and timezone, then confirm setup. Visiting automatically creates or resumes the current daily session; it does not run a model. Start with a suggested task or write your own request. FRED is available before you have a project.
+Visit FRED, review the model, reasoning effort, timezone, and external-event preference, then confirm setup. Visiting automatically creates or resumes the current daily session; it does not run a model. Start with a recommendation or write your own request. FRED is available before you have a project.
 
 The setup form uses the server's Codex catalog when available. Executable readiness is not a guarantee that authentication or a particular model will work. Setup keeps a manual model fallback when discovery is unavailable.
 
 Settings can be changed without deleting your conversation. Saved changes apply to the next daily conversation, or you can explicitly restart FRED to apply them now. Restart is an advanced lifecycle action: it archives the current idle conversation and keeps settings and continuity. Reset is separate: it deletes the active session and its logs, clears settings and active continuity, and removes pending actions. It does not erase previously archived conversations or historical handoff files.
+
+## Recommendations
+
+An empty daily conversation starts with recommendation buttons instead of a current-work dashboard or a static capability list. Selecting a recommendation only fills the normal composer; it does not send a prompt or approve a mutation.
+
+During daily rollover, the existing summary turn produces three to five bounded recommendation prompts for the next local date. The server-side FRED agent uses its installed skills and local read-only resources to inspect available daily-journal signals and new or updated Miki knowledge, then combines them with unfinished work, useful cleanup, and FRED's documented Tycho capabilities. Unavailable sources are treated as absent rather than invented. Tycho persists one set per date in the Personal Assistant lifecycle state. A same-day restart preserves that set. First use, stale state, and failed summaries show explicit starter or fallback recommendations instead of an empty or misleading generated state.
+
+Settings owns the optional external-event prompt. The default asks for broad Yahoo/MSN-style news aggregation. Clearing it disables external-event recommendations. The prompt is bounded to 4 KB and reaches only the server-side daily handoff turn; the browser never fetches sources or receives credentials. The handoff prompt treats source content as untrusted data, requires trustworthy URLs for current-event claims, and does not treat recommendations as action authorization.
 
 ## Actions
 
@@ -41,7 +49,7 @@ The pure `PersonalAssistantActionCatalog` defines action names, required argumen
 
 The model cannot supply server, parent, or actor identity. Execution reuses Tycho's existing service paths and server-local ownership rules. Returned document/log content is data, not authorization for new actions. User-owned result schemas receive the bundled `action_proposals` update through the existing schema migration.
 
-Daily handoffs contain normalized UTF-8 text and bounded lists. The next prompt receives less than 4 KB of serialized continuity, without cutting JSON in the middle of a string. Historical archives remain separate from the current conversation.
+Daily handoffs contain normalized UTF-8 text and bounded lists. The next prompt receives less than 4 KB of serialized continuity, without cutting JSON in the middle of a string. The lifecycle derives its dated recommendation set from the handoff's bounded `promotion_candidates`, with open work and documented-capability fallbacks when generation is degraded. Historical archives remain separate from the current conversation.
 
 ### Protected message and queue API
 
@@ -119,9 +127,9 @@ failures reach the hidden cadence, and the count is capped at two. A successful
 refresh restores the normal active/idle choice, while online, tab-return, and
 manual refreshes retry immediately.
 
-Refresh reconciliation keeps the current-work snapshot, composer draft, focus,
-and conversation scroll usable while a background read is pending. Unchanged
-responses use the existing render comparison; changed, unavailable, stale, and
-recovered values still render their factual state. The 3.47 s `/setup`
-measurement above is a historical synthetic catalog observation, not a claim
+Refresh reconciliation keeps the composer draft, focus, and conversation scroll
+usable while a background read is pending. The compatibility current-work API
+remains available to non-UI clients, but the focused FRED view no longer fetches
+or renders it. The 3.47 s `/setup` measurement above is a historical synthetic
+catalog observation, not a claim
 about configured-FRED first-render or end-to-end latency.
