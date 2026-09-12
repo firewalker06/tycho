@@ -1,0 +1,50 @@
+{
+  "desktop": {
+    "collapsed": {
+      "inputHeight": 44,
+      "toolsVisible": false,
+      "dockBottom": 901,
+      "navTop": 13,
+      "inputOverflow": "hidden",
+      "toolBorders": [
+        "0px",
+        "0px"
+      ]
+    },
+    "expanded": {
+      "inputHeight": 92,
+      "toolsVisible": true,
+      "dockBottom": 901,
+      "navTop": 13,
+      "inputOverflow": "auto",
+      "toolBorders": [
+        "0px",
+        "0px"
+      ]
+    }
+  },
+  "mobile": {
+    "collapsed": {
+      "inputHeight": 44,
+      "toolsVisible": false,
+      "dockBottom": 774,
+      "navTop": 775,
+      "inputOverflow": "hidden",
+      "toolBorders": [
+        "0px",
+        "0px"
+      ]
+    },
+    "expanded": {
+      "inputHeight": 92,
+      "toolsVisible": true,
+      "dockBottom": 774,
+      "navTop": 775,
+      "inputOverflow": "auto",
+      "toolBorders": [
+        "0px",
+        "0px"
+      ]
+    }
+  }
+}

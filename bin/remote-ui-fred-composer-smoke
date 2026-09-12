@@ -1,0 +1,201 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "net/http"
+require "open3"
+require "rbconfig"
+require "socket"
+require "tmpdir"
+require "uri"
+
+ROOT = File.expand_path("..", __dir__)
+CAPTURE_DIR = File.expand_path(ENV.fetch("TYCHO_FRED_COMPOSER_CAPTURE_DIR", File.join(ROOT, "docs", "captures", "fred-composer-196")))
+PLAYWRIGHT_PATH = File.expand_path(ENV.fetch("TYCHO_PLAYWRIGHT_PATH", File.join(ROOT, "node_modules", "playwright")))
+CHROME_PATH = ENV.fetch("TYCHO_CHROME_PATH", ENV.fetch("CHROME_PATH", "")).to_s.strip
+
+def free_port
+  server = TCPServer.new("127.0.0.1", 0)
+  server.addr[1]
+ensure
+  server&.close
+end
+
+def request(base_url, method, path, body = nil)
+  uri = URI("#{base_url}#{path}")
+  request_class = { "GET" => Net::HTTP::Get, "POST" => Net::HTTP::Post }.fetch(method)
+  request = request_class.new(uri)
+  request["Accept"] = "application/json"
+  if body
+    request["Content-Type"] = "application/json"
+    request.body = JSON.generate(body)
+  end
+  response = Net::HTTP.start(uri.hostname, uri.port) { |http| http.request(request) }
+  parsed = JSON.parse(response.body.to_s.empty? ? "{}" : response.body)
+  return parsed if response.is_a?(Net::HTTPSuccess)
+
+  raise "#{method} #{path} failed: #{response.code} #{parsed.inspect}"
+end
+
+def wait_for_server(base_url, log_path, pid)
+  150.times do
+    request(base_url, "GET", "/personal-assistant")
+    return
+  rescue Errno::ECONNREFUSED, Errno::ECONNRESET, EOFError
+    raise "Remote server exited early:\n#{File.read(log_path)}" unless Process.kill(0, pid)
+  ensure
+    sleep 0.1
+  end
+  raise "Remote server did not become reachable:\n#{File.read(log_path)}"
+end
+
+def write_browser_script(path, base_url)
+  File.write(path, <<~JS)
+    const fs = require("fs");
+    const path = require("path");
+    const { chromium } = require(#{PLAYWRIGHT_PATH.to_json});
+    const baseUrl = #{base_url.to_json};
+    const captureDir = #{CAPTURE_DIR.to_json};
+    const chromePath = #{CHROME_PATH.to_json};
+
+    function fail(message) { throw new Error(message); }
+    async function waitFor(page, predicate, label) {
+      await page.waitForFunction(predicate, null, { timeout: 10_000 }).catch((error) => {
+        throw new Error(`${label}: ${error.message}`);
+      });
+    }
+    async function layout(page) {
+      return page.evaluate(() => {
+        const composer = document.querySelector(".personal-assistant-page #composer");
+        const input = composer?.querySelector("#prompt-input");
+        const tools = composer?.querySelector(".send-row");
+        const dock = composer?.closest(".agent-dock");
+        const nav = document.querySelector(".bottom-nav");
+        const inputStyle = input && getComputedStyle(input);
+        const toolButtons = Array.from(composer?.querySelectorAll(".send-tools button, .composer-action-menu > summary") || []);
+        return {
+          inputHeight: input?.getBoundingClientRect().height || 0,
+          toolsVisible: Boolean(tools?.getClientRects().length),
+          dockBottom: dock?.getBoundingClientRect().bottom || 0,
+          navTop: nav?.getBoundingClientRect().top || 0,
+          inputOverflow: inputStyle?.overflowY || "",
+          toolBorders: toolButtons.map((button) => getComputedStyle(button).borderTopWidth),
+        };
+      });
+    }
+    async function verifyViewport(browser, name, viewport) {
+      const context = await browser.newContext({ viewport, isMobile: viewport.width < 700 });
+      const page = await context.newPage();
+      try {
+        await page.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "networkidle" });
+        await waitFor(page, () => Boolean(document.querySelector(".personal-assistant-page #composer #prompt-input")), `${name} composer`);
+        const collapsed = await layout(page);
+        if (collapsed.inputHeight < 40 || collapsed.inputHeight > 48 || collapsed.toolsVisible || collapsed.inputOverflow !== "hidden") {
+          fail(`${name} collapsed composer: ${JSON.stringify(collapsed)}`);
+        }
+        if (collapsed.toolBorders.some((width) => width !== "0px")) fail(`${name} prompt icon borders: ${JSON.stringify(collapsed)}`);
+        if (name === "mobile" && Math.abs(collapsed.navTop - collapsed.dockBottom) > 1) {
+          fail(`${name} dock-to-navigation gap: ${JSON.stringify(collapsed)}`);
+        }
+        await page.screenshot({ path: path.join(captureDir, `fred-composer-${name}-collapsed.png`), fullPage: false });
+        await page.locator("#composer #prompt-input").focus();
+        await waitFor(page, () => {
+          const input = document.querySelector("#composer #prompt-input");
+          const tools = document.querySelector("#composer .send-row");
+          return Boolean(input && tools && input.getBoundingClientRect().height >= 90 && tools.getClientRects().length);
+        }, `${name} expanded composer`);
+        const expanded = await layout(page);
+        if (expanded.inputHeight < 90 || !expanded.toolsVisible || expanded.inputOverflow !== "auto") {
+          fail(`${name} expanded composer: ${JSON.stringify(expanded)}`);
+        }
+        await page.screenshot({ path: path.join(captureDir, `fred-composer-${name}-expanded.png`), fullPage: false });
+        return { collapsed, expanded };
+      } finally {
+        await context.close();
+      }
+    }
+    async function main() {
+      fs.mkdirSync(captureDir, { recursive: true });
+      const launchOptions = { headless: true };
+      if (chromePath) launchOptions.executablePath = chromePath;
+      const browser = await chromium.launch(launchOptions);
+      try {
+        const report = {
+          desktop: await verifyViewport(browser, "desktop", { width: 1440, height: 900 }),
+          mobile: await verifyViewport(browser, "mobile", { width: 390, height: 844 }),
+        };
+        fs.writeFileSync(path.join(captureDir, "fred-composer-smoke.json"), JSON.stringify(report, null, 2));
+        console.log(JSON.stringify(report, null, 2));
+      } finally {
+        await browser.close();
+      }
+    }
+    main().catch((error) => { console.error(error); process.exit(1); });
+  JS
+end
+
+abort "Missing Playwright at #{PLAYWRIGHT_PATH}; run npm ci or set TYCHO_PLAYWRIGHT_PATH" unless File.directory?(PLAYWRIGHT_PATH)
+
+Dir.mktmpdir("tycho-fred-composer-smoke") do |dir|
+  config = File.join(dir, "hq.yml")
+  prompts = File.join(dir, "system_prompts.yml")
+  response_style = File.join(dir, "response_style.md")
+  schedules = File.join(dir, "schedules.yml")
+  logs = File.join(dir, "logs")
+  fake_codex = File.join(dir, "fake-codex")
+  log_path = File.join(dir, "server.log")
+  FileUtils.mkdir_p(File.join(dir, "workspace"))
+  FileUtils.mkdir_p(File.join(dir, "home"))
+  FileUtils.mkdir_p(logs)
+  File.write(config, <<~YAML)
+    ---
+    groups: {}
+    projects:
+      - key: web
+        name: Web fixture
+        path: #{File.join(dir, "workspace").to_json}
+        agent: codex
+        model: gpt-5.6-sol
+        reasoning_effort: medium
+  YAML
+  File.write(prompts, "---\ncustom: Reply with a short structured result.\n")
+  File.write(response_style, "Use concise factual replies.\n")
+  File.write(schedules, "---\nschedules: []\n")
+  File.write(fake_codex, "#!/bin/sh\nexit 0\n")
+  File.chmod(0o755, fake_codex)
+  port = free_port
+  base_url = "http://127.0.0.1:#{port}"
+  env = {
+    "TYCHO_CONFIG_PATH" => config,
+    "TYCHO_SYSTEM_PROMPTS_PATH" => prompts,
+    "TYCHO_RESPONSE_STYLE_PATH" => response_style,
+    "TYCHO_SCHEDULES_PATH" => schedules,
+    "TYCHO_LOGS_ROOT" => logs,
+    "TYCHO_HOME" => File.join(dir, "home"),
+    "HOME" => File.join(dir, "home"),
+    "TYCHO_CODEX_BIN" => fake_codex,
+    "TYCHO_REMOTE_TOKEN" => "",
+    "TYCHO_GITHUB_TOKEN" => nil
+  }
+  pid = Process.spawn(env, RbConfig.ruby, "bin/tycho", "serve", "--host", "127.0.0.1", "--port", port.to_s,
+                      chdir: ROOT, out: [log_path, "w"], err: %i[child out], pgroup: true)
+  begin
+    wait_for_server(base_url, log_path, pid)
+    request(base_url, "POST", "/personal-assistant/setup", { confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "UTC" })
+    request(base_url, "POST", "/personal-assistant/open")
+    script = File.join(dir, "browser.js")
+    write_browser_script(script, base_url)
+    success = system({ "NODE_PATH" => PLAYWRIGHT_PATH }, "node", script, chdir: dir)
+    raise "FRED composer browser smoke failed" unless success
+  rescue Errno::ECHILD
+    nil
+  ensure
+    begin
+      Process.kill("TERM", -pid) if Process.kill(0, pid)
+    rescue Errno::ESRCH
+      nil
+    end
+    Process.wait(pid)
+  end
+end
