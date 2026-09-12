@@ -60,32 +60,70 @@ def write_browser_script(path, base_url)
     const chromePath = #{CHROME_PATH.to_json};
 
     function fail(message) { throw new Error(message); }
-    async function waitFor(page, predicate, label) {
-      await page.waitForFunction(predicate, null, { timeout: 10_000 }).catch((error) => {
+    async function waitFor(page, predicate, label, arg = null) {
+      await page.waitForFunction(predicate, arg, { timeout: 10_000 }).catch((error) => {
         throw new Error(`${label}: ${error.message}`);
       });
     }
     async function layout(page) {
       return page.evaluate(() => {
-        const composer = document.querySelector(".personal-assistant-page #composer");
+        const composer = document.querySelector("#composer");
         const input = composer?.querySelector("#prompt-input");
         const tools = composer?.querySelector(".send-row");
         const dock = composer?.closest(".agent-dock");
         const nav = document.querySelector(".bottom-nav");
         const inputStyle = input && getComputedStyle(input);
-        const toolButtons = Array.from(composer?.querySelectorAll(".send-tools button, .composer-action-menu > summary") || []);
+        const promptIcons = Array.from(composer?.querySelectorAll(".composer-full-screen-button, .composer-close-button, .composer-speech-button, .send-tools button, .composer-action-menu > summary") || []);
         return {
           inputHeight: input?.getBoundingClientRect().height || 0,
           toolsVisible: Boolean(tools?.getClientRects().length),
           dockBottom: dock?.getBoundingClientRect().bottom || 0,
           navTop: nav?.getBoundingClientRect().top || 0,
           inputOverflow: inputStyle?.overflowY || "",
-          toolBorders: toolButtons.map((button) => getComputedStyle(button).borderTopWidth),
+          promptIcons: promptIcons.map((button) => ({
+            label: button.getAttribute("aria-label") || button.getAttribute("title") || "unnamed",
+            border: getComputedStyle(button).borderTopWidth,
+          })),
         };
       });
     }
+    function assertBorderlessIcons(name, state) {
+      if (!state.promptIcons.length || state.promptIcons.some((icon) => icon.border !== "0px")) {
+        fail(`${name} prompt icon borders: ${JSON.stringify(state)}`);
+      }
+    }
+    async function expandByInteraction(page, name) {
+      const input = page.locator("#composer #prompt-input");
+      if (name === "mobile") await input.tap();
+      else await input.click();
+      await waitFor(page, () => {
+        const editor = document.querySelector("#composer #prompt-input");
+        const tools = document.querySelector("#composer .send-row");
+        return Boolean(editor && tools && editor.getBoundingClientRect().height >= 90 && tools.getClientRects().length);
+      }, `${name} click or tap expansion`);
+    }
+    async function verifyFullScreen(page, name, typed) {
+      await page.locator("#composer [data-toggle-composer-full-screen]").click();
+      await waitFor(page, () => Boolean(document.querySelector("#composer.composer-full-screen")), `${name} full-screen entry`);
+      const fullScreen = await layout(page);
+      assertBorderlessIcons(`${name} full-screen`, fullScreen);
+      if (!fullScreen.promptIcons.some((icon) => icon.label === "Close full-screen editor")) fail(`${name} full-screen close control missing`);
+      const preserved = await page.locator("#composer #prompt-input").inputValue();
+      if (preserved !== typed) fail(`${name} full-screen lost typed prompt: ${JSON.stringify({ preserved, typed })}`);
+      await page.locator("#composer [data-toggle-composer-full-screen]").click();
+      await waitFor(page, () => !document.querySelector("#composer.composer-full-screen"), `${name} full-screen exit`);
+      return { fullScreen, preserved };
+    }
+    async function submitPrompt(page, name, typed) {
+      const response = page.waitForResponse((candidate) => candidate.request().method() === "POST" && new URL(candidate.url()).pathname === "/personal-assistant/messages");
+      await page.locator("#composer #prompt-input").press("Control+Enter");
+      const sent = await response;
+      if (!sent.ok()) fail(`${name} keyboard submission failed with ${sent.status()}`);
+      await waitFor(page, (value) => Array.from(document.querySelectorAll(".message.user")).some((message) => message.textContent.includes(value)), `${name} submitted message`, typed);
+      return { status: sent.status(), prompt: typed };
+    }
     async function verifyViewport(browser, name, viewport) {
-      const context = await browser.newContext({ viewport, isMobile: viewport.width < 700 });
+      const context = await browser.newContext({ viewport, isMobile: viewport.width < 700, hasTouch: viewport.width < 700 });
       const page = await context.newPage();
       try {
         await page.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "networkidle" });
@@ -94,23 +132,26 @@ def write_browser_script(path, base_url)
         if (collapsed.inputHeight < 40 || collapsed.inputHeight > 48 || collapsed.toolsVisible || collapsed.inputOverflow !== "hidden") {
           fail(`${name} collapsed composer: ${JSON.stringify(collapsed)}`);
         }
-        if (collapsed.toolBorders.some((width) => width !== "0px")) fail(`${name} prompt icon borders: ${JSON.stringify(collapsed)}`);
+        assertBorderlessIcons(`${name} collapsed`, collapsed);
         if (name === "mobile" && Math.abs(collapsed.navTop - collapsed.dockBottom) > 1) {
           fail(`${name} dock-to-navigation gap: ${JSON.stringify(collapsed)}`);
         }
         await page.screenshot({ path: path.join(captureDir, `fred-composer-${name}-collapsed.png`), fullPage: false });
+        await expandByInteraction(page, name);
         await page.locator("#composer #prompt-input").focus();
-        await waitFor(page, () => {
-          const input = document.querySelector("#composer #prompt-input");
-          const tools = document.querySelector("#composer .send-row");
-          return Boolean(input && tools && input.getBoundingClientRect().height >= 90 && tools.getClientRects().length);
-        }, `${name} expanded composer`);
+        const typed = `${name} keyboard prompt`;
+        await page.keyboard.type(typed);
         const expanded = await layout(page);
         if (expanded.inputHeight < 90 || !expanded.toolsVisible || expanded.inputOverflow !== "auto") {
           fail(`${name} expanded composer: ${JSON.stringify(expanded)}`);
         }
+        assertBorderlessIcons(`${name} expanded`, expanded);
+        const inputValue = await page.locator("#composer #prompt-input").inputValue();
+        if (inputValue !== typed) fail(`${name} keyboard input did not reach the composer: ${JSON.stringify({ inputValue, typed })}`);
         await page.screenshot({ path: path.join(captureDir, `fred-composer-${name}-expanded.png`), fullPage: false });
-        return { collapsed, expanded };
+        const fullScreen = await verifyFullScreen(page, name, typed);
+        const submitted = await submitPrompt(page, name, typed);
+        return { collapsed, expanded, fullScreen, submitted };
       } finally {
         await context.close();
       }
@@ -162,7 +203,24 @@ Dir.mktmpdir("tycho-fred-composer-smoke") do |dir|
   File.write(prompts, "---\ncustom: Reply with a short structured result.\n")
   File.write(response_style, "Use concise factual replies.\n")
   File.write(schedules, "---\nschedules: []\n")
-  File.write(fake_codex, "#!/bin/sh\nexit 0\n")
+  File.write(fake_codex, <<~'RUBY')
+    #!/usr/bin/env ruby
+    require "json"
+
+    payload = {
+      "status" => "success",
+      "summary" => "FRED composer smoke reply.",
+      "summary_sections" => nil,
+      "inquiry" => nil,
+      "attachments" => nil,
+      "action_proposals" => [],
+      "memory_handoff" => nil
+    }
+    output_index = ARGV.index("-o")
+    File.write(ARGV[output_index + 1], JSON.generate(payload)) if output_index
+    puts JSON.generate("type" => "thread.started", "thread_id" => "fred-composer-smoke-#{Process.pid}")
+    puts JSON.generate("type" => "item.completed", "item" => { "type" => "agent_message", "text" => JSON.generate(payload) })
+  RUBY
   File.chmod(0o755, fake_codex)
   port = free_port
   base_url = "http://127.0.0.1:#{port}"
