@@ -96,12 +96,33 @@ module RemoteUIPersonalAssistantBehaviorTest
         "receiveConversationSnapshot",
         "receiveConversationMetadata",
         "ensureConversation",
+        "navigateSwitcherAgent",
+        "switcherAgentForKey",
       ].forEach((name) => vm.runInContext(`${extractFunction(name)}\nthis.${name} = ${name};`, context));
 
       const assert = (condition, message) => {
         if (!condition) throw new Error(message);
       };
       const liveValue = (attributes) => attributes.match(/aria-live="([^"]+)"/)[1];
+
+      const navigations = [];
+      context.navigate = (route) => navigations.push(route);
+      context.navigateSwitcherAgent({ key: "fred-session", personal_assistant: true });
+      context.navigateSwitcherAgent({ key: "ordinary-agent" });
+      assert(JSON.stringify(navigations) === JSON.stringify([
+        { type: "personalAssistant" },
+        { type: "agent", key: "ordinary-agent" },
+      ]), "switcher navigation did not keep FRED separate from ordinary agents");
+
+      const fredQuickEntry = { key: "fred-session", personal_assistant: true };
+      const storedFredAgent = { key: "fred-session", role: "personal_assistant_daily" };
+      const storedOrdinaryAgent = { key: "ordinary-agent" };
+      context.quickSwitchAgents = () => [fredQuickEntry, storedOrdinaryAgent];
+      context.findAgent = (key) => key === "fred-session" ? storedFredAgent : storedOrdinaryAgent;
+      assert(context.switcherAgentForKey("fred-session") === fredQuickEntry,
+             "switcher selected the underlying FRED managed-agent record instead of the FRED quick entry");
+      assert(context.switcherAgentForKey("ordinary-agent") === storedOrdinaryAgent,
+             "switcher no longer preserved ordinary agent navigation");
 
       context.state.personalAssistant = { configured: true };
       assert(context.personalAssistantShellRefreshNeeded() === false,
