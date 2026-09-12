@@ -6142,6 +6142,11 @@ module RemoteServerTest
            "expected each focused view mode to expose its own active trigger icon")
     assert(js[:body].include?('class="focused-composer"') && js[:body].include?("Continue conversation"),
            "expected mobile focused views to collapse the follow-up composer")
+    assert(css[:body].include?(".personal-assistant-page #composer:not(.composer-full-screen):focus-within") &&
+           css[:body].include?("min-height: var(--touch-target)") &&
+           css[:body].include?(".personal-assistant-page .agent-dock") &&
+           css[:body].include?(".composer-action-menu > summary {\n  border: 0;"),
+           "expected FRED to start with a one-line composer, expand on focus, and keep prompt icons borderless")
     assert(js[:body].include?('iconSvg("badgeQuestionMark")'),
            "expected inquiry prompt banners to render a badge question icon")
     assert(js[:body].include?('class="inquiry-mark"'),
