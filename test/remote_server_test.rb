@@ -7106,9 +7106,10 @@ module RemoteServerTest
            "expected detail header to stay visible while the footer is focused")
     assert(js[:body].include?("data-go-recent"), "expected Agent conversation detail to show a Go to recent action")
     assert(js[:body].include?("renderConversationCatchUpActions") &&
+           js[:body].include?("const recent = load ? \"\" :") &&
            js[:body].include?("data-load-pending-conversation") &&
            js[:body].include?("Conversation catch-up"),
-           "expected staged-message and Go to recent controls to share an accessible catch-up group")
+           "expected Load new messages to replace Go to recent while staged messages are pending")
     assert(js[:body].include?("conversationOverlayHtml") &&
            js[:body].include?("renderConversationCatchUpOverlay(agent)") &&
            css[:body].include?(".conversation-catchup-overlay") &&
