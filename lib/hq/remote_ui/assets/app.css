@@ -3422,6 +3422,24 @@ select {
   white-space: nowrap;
 }
 
+.workspace-search {
+  display: grid;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 12px;
+}
+
+.workspace-search input {
+  width: 100%;
+  min-height: 40px;
+}
+
+.workspace-search-status {
+  min-height: 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .workspace-entry-list {
   display: grid;
   min-width: 0;

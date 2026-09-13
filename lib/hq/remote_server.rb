@@ -654,6 +654,9 @@ module HQ
         if method == "GET" && tail == ["workspace"]
           return ok(workspace: service.project_workspace(key, request&.query_params || {}))
         end
+        if method == "GET" && tail == ["workspace", "search"]
+          return ok(workspace: service.search_project_workspace(key, request&.query_params || {}))
+        end
         if method == "GET" && tail == ["workspace", "preview"]
           return ok(preview: service.project_workspace_preview(key, request&.query_params || {}))
         end
@@ -3483,6 +3486,17 @@ module HQ
     def project_workspace_preview(key, params = {})
       project = find_project!(key)
       ProjectWorkspace.new(project.path).preview(path: params["path"].to_s)
+    rescue ProjectWorkspace::Error => e
+      raise Error.new(e.message, status: e.status, details: { code: e.code })
+    end
+
+    def search_project_workspace(key, params = {})
+      project = find_project!(key)
+      ProjectWorkspace.new(project.path).search(
+        query: params["query"],
+        offset: params["offset"],
+        limit: params["limit"]
+      )
     rescue ProjectWorkspace::Error => e
       raise Error.new(e.message, status: e.status, details: { code: e.code })
     end
