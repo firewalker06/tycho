@@ -10,7 +10,10 @@ description: Manages Tycho projects, managed agents, delegation, and schedules. 
 
 | Group | Command | Description |
 |-------|---------|-------------|
-| **project** | `project update <project-key> --pr-url <url>` | Set / clear open PR URL |
+| **project** | `project create <project-key> [options]` | Intentionally create a project |
+| | `project list` | List configured projects |
+| | `project show <project-key>` | Show normalized configuration and Git metadata |
+| | `project update <project-key> --pr-url <url>` | Set / clear open PR URL |
 | **agent** | `agent create <project-key> <prompt>` | Create (and optionally run) a managed agent |
 | | `agent list [<project-key>]` | List agents, optionally filtered by project |
 | | `agent status <agent-key>` | Show full status and metadata |
@@ -26,6 +29,18 @@ description: Manages Tycho projects, managed agents, delegation, and schedules. 
 | | `schedule pause <schedule-key>` | Pause a schedule |
 | | `schedule resume <schedule-key>` | Resume a paused schedule |
 | | `schedule reload` | Validate config for the next daemon tick |
+
+---
+
+## `tycho project create`
+
+Create a project only with the explicit subcommand:
+
+```bash
+tycho project create <project-key> [options]
+```
+
+The bare `tycho project <project-key>` form is unsupported and does not create a project. Use `--path` to override the current directory and `--name` to override the directory name.
 
 ---
 

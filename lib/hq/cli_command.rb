@@ -69,14 +69,14 @@ module HQ
         extend CommandMetadata
 
         desc "Manage project metadata"
-        argument :project_key, required: false, desc: "Project key for quick creation"
-        project_mutation_options(create: true)
-        usage_template "project %{project_key} [options]"
+        usage_template "project <command>"
 
-        def call(project_key: nil, **opts)
-          exit CLICommand.usage("Missing project command or project key", err: err) if project_key.to_s.empty?
+        def call(**opts)
+          if (status = CLICommand.unexpected_project_arguments("project", opts[:args], err: err))
+            exit status
+          end
 
-          exit CLICommand.create_project(project_key, opts, out: out, err: err)
+          exit CLICommand.usage("Missing project command", err: err)
         end
       end
 
@@ -89,6 +89,10 @@ module HQ
         usage_template "project create %{project_key} [options]"
 
         def call(project_key:, **opts)
+          if (status = CLICommand.unexpected_project_arguments("project create", opts.delete(:args), err: err))
+            exit status
+          end
+
           exit CLICommand.create_project(project_key, opts, out: out, err: err)
         end
       end
@@ -102,6 +106,10 @@ module HQ
         usage_template "project show %{project_key} [--server SERVER_KEY] [--json]"
 
         def call(project_key:, **opts)
+          if (status = CLICommand.unexpected_project_arguments("project show", opts.delete(:args), err: err))
+            exit status
+          end
+
           exit CLICommand.show_project(project_key, opts, out: out, err: err)
         end
       end
@@ -114,6 +122,10 @@ module HQ
         usage_template "project list [--server SERVER_KEY] [--json]"
 
         def call(**opts)
+          if (status = CLICommand.unexpected_project_arguments("project list", opts.delete(:args), err: err))
+            exit status
+          end
+
           exit CLICommand.list_projects(opts, out: out, err: err)
         end
       end
@@ -127,6 +139,10 @@ module HQ
         usage_template "project update %{project_key} [options]"
 
         def call(project_key:, **opts)
+          if (status = CLICommand.unexpected_project_arguments("project update", opts.delete(:args), err: err))
+            exit status
+          end
+
           exit CLICommand.update_project(project_key, opts, out: out, err: err)
         end
       end
@@ -140,6 +156,10 @@ module HQ
         usage_template "project archive %{project_key} [--json]"
 
         def call(project_key:, **opts)
+          if (status = CLICommand.unexpected_project_arguments("project archive", opts.delete(:args), err: err))
+            exit status
+          end
+
           exit CLICommand.archive_project(project_key, opts, out: out, err: err)
         end
       end
@@ -736,6 +756,13 @@ module HQ
       require_relative "schedule_daemon_command"
 
       ScheduleDaemonCommand.run(argv)
+    end
+
+    def unexpected_project_arguments(command, arguments, err: $stderr)
+      arguments = Array(arguments)
+      return if arguments.empty?
+
+      failure("Unexpected argument for tycho #{command}: #{arguments.join(" ")}", err: err)
     end
 
     def doctor(argv, out: $stdout, err: $stderr)

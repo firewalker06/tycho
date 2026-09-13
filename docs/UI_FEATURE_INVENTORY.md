@@ -305,7 +305,6 @@ Running `bin/tycho` without a subcommand opens the TUI.
 Command surface:
 
 - `bin/tycho --help`.
-- `bin/tycho project <project-key> [options]`: create a project using the current directory by default.
 - `bin/tycho project create <project-key> [options]`: explicit project creation form.
 - `bin/tycho project show <project-key> [--json]`: inspect normalized project configuration and Git metadata.
 - `bin/tycho project update <project-key> [options]`: update project defaults, metadata, response style, and visibility.

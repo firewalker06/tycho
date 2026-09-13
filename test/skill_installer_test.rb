@@ -11,7 +11,7 @@ module SkillInstallerTest
 
   def run!
     assert_bundled_source_manifest_is_valid
-    assert_bundled_skill_documents_delegation_capabilities
+    assert_bundled_skill_documents_project_creation_and_delegation_capabilities
     assert_supported_harness_paths_and_idempotent_install
     assert_custom_profiles_use_declared_skill_roots
     assert_outdated_skill_updates_without_removing_extra_files
@@ -30,9 +30,11 @@ module SkillInstallerTest
     end
   end
 
-  def assert_bundled_skill_documents_delegation_capabilities
+  def assert_bundled_skill_documents_project_creation_and_delegation_capabilities
     skill = File.read(File.join(HQ::SkillInstaller::DEFAULT_SOURCE_ROOT, "tycho", "SKILL.md"))
     required = [
+      "tycho project create <project-key> [options]",
+      "The bare `tycho project <project-key>` form is unsupported and does not create a project",
       "Tycho does not issue or require a delegation token",
       '"${TYCHO_EXECUTABLE:-tycho}"',
       '--parent-agent "${TYCHO_AGENT_KEY:?Missing TYCHO_AGENT_KEY}"',
@@ -40,7 +42,7 @@ module SkillInstallerTest
       "every terminal delegated run to create one deduplicated report"
     ]
     missing = required.reject { |text| skill.include?(text) }
-    assert(missing.empty?, "expected bundled skill delegation guidance: #{missing.join(", ")}")
+    assert(missing.empty?, "expected bundled project-creation and delegation guidance: #{missing.join(", ")}")
   end
 
   def assert_supported_harness_paths_and_idempotent_install

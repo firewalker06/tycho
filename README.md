@@ -56,7 +56,7 @@ projects:
 You can also create projects from the TUI or the command line:
 
 ```bash
-tycho project my-workspace --path ~/Code/my-workspace --harness codex
+tycho project create my-workspace --path ~/Code/my-workspace --harness codex
 ```
 
 The complete annotated configuration is in
