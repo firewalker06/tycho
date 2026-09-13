@@ -21,6 +21,7 @@ module CLICommandTest
 
   def run!
     assert_project_commands_manage_full_lifecycle
+    assert_project_command_and_help_paths_do_not_create_projects
     assert_remote_server_commands_manage_full_agent_lifecycle
     assert_remote_client_reports_timeout_and_unsupported_operation
     assert_debug_claude_is_listed_in_usage
@@ -322,11 +323,11 @@ module CLICommandTest
         "TYCHO_SCHEDULES_PATH" => schedules_path
       }
 
-      created = run_tycho(env, "project", "demo", "--path", workspace, "--name", "Demo Project",
+      created = run_tycho(env, "project", "create", "demo", "--path", workspace, "--name", "Demo Project",
                           "--group", "Core", "--harness", "codex", "--model", "gpt-test",
                           "--reasoning-effort", "high", "--response-style", "disabled",
                           "--pr-url", "https://github.com/example/demo/pull/7", "--hidden", "true", "--json")
-      assert(created.fetch(:status).success?, "expected shorthand project creation to succeed: #{created.fetch(:stderr)}")
+      assert(created.fetch(:status).success?, "expected explicit project creation to succeed: #{created.fetch(:stderr)}")
       created_payload = JSON.parse(created.fetch(:stdout))
       assert(created_payload["key"] == "demo", "expected created project key")
       assert(created_payload["path"] == workspace, "expected created project path")
@@ -380,6 +381,61 @@ module CLICommandTest
       assert(!missing.fetch(:status).success?, "expected archived project to be absent from project show")
       assert(missing.fetch(:stderr).include?("Unknown project: demo"), "expected clear missing-project error")
     end
+  end
+
+  def assert_project_command_and_help_paths_do_not_create_projects
+    Dir.mktmpdir("hq-cli-project-command-test") do |dir|
+      workspace = File.join(dir, "workspace")
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      FileUtils.mkdir_p(workspace)
+      File.write(config_path, "projects: []\n")
+      File.write(prompts_path, "{}\n")
+      env = {
+        "TYCHO_CONFIG_PATH" => config_path,
+        "TYCHO_SYSTEM_PROMPTS_PATH" => prompts_path,
+        "TYCHO_LOGS_ROOT" => File.join(dir, "logs")
+      }
+
+      root_help = run_tycho(env, "project", "--help")
+      assert(root_help.fetch(:status).success?, "expected project root help to succeed: #{root_help.fetch(:stderr)}")
+      assert_empty_project_registry(config_path, "project --help")
+
+      %w[help create list show update archive].each do |command|
+        result = run_tycho(env, "project", command, "--help")
+        assert(result.fetch(:status).success?, "expected project #{command} help to succeed: #{result.fetch(:stderr)}")
+        assert_empty_project_registry(config_path, "project #{command} --help")
+      end
+
+      %w[list show update archive].each do |command|
+        result = run_tycho(env, "project", command)
+        assert_empty_project_registry(config_path, "project #{command}")
+        next if command == "list"
+
+        assert(!result.fetch(:status).success?, "expected project #{command} without a key to fail")
+      end
+
+      help = run_tycho(env, "project", "help")
+      assert(!help.fetch(:status).success?, "expected project help to reject the unsupported help command")
+      assert_empty_project_registry(config_path, "project help")
+
+      shorthand = run_tycho(env, "project", "demo", "--path", workspace)
+      assert(!shorthand.fetch(:status).success?, "expected shorthand project creation to be rejected")
+      assert_empty_project_registry(config_path, "project demo")
+
+      missing_key = run_tycho(env, "project", "create")
+      assert(!missing_key.fetch(:status).success?, "expected project create without a key to fail")
+      assert_empty_project_registry(config_path, "project create")
+
+      explicit = run_tycho(env, "project", "create", "demo", "--path", workspace, "--json")
+      assert(explicit.fetch(:status).success?, "expected project create to remain intentional and clear: #{explicit.fetch(:stderr)}")
+      assert(JSON.parse(explicit.fetch(:stdout)).fetch("key") == "demo", "expected explicit project create key")
+    end
+  end
+
+  def assert_empty_project_registry(config_path, command)
+    projects = YAML.safe_load_file(config_path, aliases: true).fetch("projects")
+    assert(projects.empty?, "expected #{command} not to mutate the project registry")
   end
 
   def assert_debug_claude_is_listed_in_usage

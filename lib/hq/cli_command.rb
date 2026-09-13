@@ -69,14 +69,10 @@ module HQ
         extend CommandMetadata
 
         desc "Manage project metadata"
-        argument :project_key, required: false, desc: "Project key for quick creation"
-        project_mutation_options(create: true)
-        usage_template "project %{project_key} [options]"
+        usage_template "project <command>"
 
-        def call(project_key: nil, **opts)
-          exit CLICommand.usage("Missing project command or project key", err: err) if project_key.to_s.empty?
-
-          exit CLICommand.create_project(project_key, opts, out: out, err: err)
+        def call(**)
+          exit CLICommand.usage("Missing project command", err: err)
         end
       end
 
