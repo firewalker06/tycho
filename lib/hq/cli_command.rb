@@ -2216,8 +2216,8 @@ module HQ
         previous = []
         previous << "pid=#{daemon[:pid]}" if daemon[:pid]
         previous << "last_tick=#{daemon[:last_tick_finished_at]}" if daemon[:last_tick_finished_at]
-        parts << "previous_record=#{previous.join(" ")} (historical)" if previous.any?
-        parts << "mode=#{daemon[:mode]} (historical)" if daemon[:mode]
+        previous << "mode=#{daemon[:mode]}" if daemon[:mode]
+        parts << "previous=#{previous.join(" ")} (historical)" if previous.any?
       end
       parts.join("  ")
     end

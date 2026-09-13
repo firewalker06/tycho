@@ -214,31 +214,46 @@ module SchedulerTest
   end
 
   def assert_schedule_daemon_banner_labels_metadata_by_state
-    tick = "2026-09-01T07:18:01+07:00"
+    with_temp_runtime do |dir|
+      now = Time.new(2026, 9, 1, 7, 18, 0, "+07:00")
+      tick = (now + 1).iso8601
+      daemon_path = File.join(dir, "banner-daemon.json")
+      store = HQ::ScheduleStore.new(daemon_path: daemon_path, process_detector: -> { nil })
+      store.record_daemon_start!(pid: Process.pid, mode: "daemon", interval: 30, dry_run: false, now: now)
+      store.record_daemon_tick_finished!({}, now: now + 1)
 
-    running = HQ::CLICommand.schedule_daemon_line(
-      status: "running", pid: 12_345, last_tick_finished_at: tick, mode: "daemon"
-    )
-    assert(running == "Daemon: running  pid=12345  last_tick=#{tick}  mode=daemon",
-           "expected running banner to show current daemon metadata")
+      running = HQ::CLICommand.schedule_daemon_line(store.daemon_state(now: now + 2).to_hash)
+      assert(running == "Daemon: running  pid=#{Process.pid}  last_tick=#{tick}  mode=daemon",
+             "expected persisted running state to render current daemon metadata")
 
-    stale = HQ::CLICommand.schedule_daemon_line(
-      status: "stale", pid: 12_345, last_tick_finished_at: tick, mode: "daemon"
-    )
-    assert(stale.include?("Daemon: stale") && stale.include?("pid=12345") &&
-           stale.include?("last_tick=#{tick} (heartbeat overdue)"),
-           "expected stale banner to label the overdue heartbeat")
+      stale = HQ::CLICommand.schedule_daemon_line(store.daemon_state(now: now + 300).to_hash)
+      assert(stale == "Daemon: stale  pid=#{Process.pid}  last_tick=#{tick} (heartbeat overdue)  mode=daemon",
+             "expected persisted stale state to render an explicitly overdue heartbeat")
 
-    stopped = HQ::CLICommand.schedule_daemon_line(
-      status: "stopped", pid: 54_980, last_tick_finished_at: tick, mode: "daemon"
-    )
-    assert(stopped.include?("Daemon: stopped") && stopped.include?("previous_record=pid=54980 last_tick=#{tick} (historical)") &&
-           !stopped.match?(/\A.*\s+pid=54980(?:\s|$)/),
-           "expected stopped banner to keep dead daemon metadata explicitly historical")
+      dead_pid = Process.spawn(RbConfig.ruby, "-e", "exit")
+      Process.wait(dead_pid)
+      stopped_store = HQ::ScheduleStore.new(
+        daemon_path: File.join(dir, "stopped-banner-daemon.json"), process_detector: -> { nil }
+      )
+      stopped_store.record_daemon_start!(pid: dead_pid, mode: "daemon", interval: 30, dry_run: false, now: now)
+      stopped_store.record_daemon_tick_finished!({}, now: now + 1)
+      stopped = HQ::CLICommand.schedule_daemon_line(stopped_store.daemon_state(now: now + 2).to_hash)
+      assert(stopped == "Daemon: stopped  previous=pid=#{dead_pid} last_tick=#{tick} mode=daemon (historical)",
+             "expected a persisted dead process record to render all daemon metadata as historical")
 
-    untracked = HQ::CLICommand.schedule_daemon_line(status: "untracked", pid: 67_890)
-    assert(untracked == "Daemon: untracked  pid=67890 (detected process; no heartbeat state)",
-           "expected untracked banner to identify a running process without claiming tick freshness")
+      untracked_store = HQ::ScheduleStore.new(
+        daemon_path: File.join(dir, "missing-banner-daemon.json"), process_detector: -> { 67_890 }
+      )
+      untracked = HQ::CLICommand.schedule_daemon_line(untracked_store.daemon_state(now: now + 2).to_hash)
+      assert(untracked == "Daemon: untracked  pid=67890 (detected process; no heartbeat state)",
+             "expected detected state without a heartbeat to render unknown tick freshness")
+
+      empty_store = HQ::ScheduleStore.new(
+        daemon_path: File.join(dir, "empty-banner-daemon.json"), process_detector: -> { nil }
+      )
+      empty = HQ::CLICommand.schedule_daemon_line(empty_store.daemon_state(now: now + 2).to_hash)
+      assert(empty == "Daemon: stopped", "expected a missing daemon record to stay compact")
+    end
   end
 
   def assert_scheduler_run_reuses_schedule_agent_session
@@ -706,10 +721,24 @@ module SchedulerTest
         "TYCHO_CONFIG_PATH" => registry.path,
         "TYCHO_SCHEDULES_PATH" => schedule_path,
         "TYCHO_SCHEDULES_STATE_PATH" => File.join(dir, "schedules.json"),
+        "TYCHO_SCHEDULER_DAEMON_PATH" => File.join(dir, "scheduler_daemon.json"),
+        "TYCHO_DISABLE_SCHEDULE_PROCESS_DETECTION" => "1",
         "TYCHO_LOGS_ROOT" => File.join(dir, "logs")
       }
+      dead_pid = Process.spawn(RbConfig.ruby, "-e", "exit")
+      Process.wait(dead_pid)
+      File.write(env.fetch("TYCHO_SCHEDULER_DAEMON_PATH"), JSON.generate(
+        pid: dead_pid,
+        mode: "daemon",
+        started_at: "2026-09-01T07:00:00+07:00",
+        last_tick_finished_at: "2026-09-01T07:18:01+07:00"
+      ))
       out, err, status = Open3.capture3(env, RbConfig.ruby, "bin/schedule", "list", chdir: ROOT)
       assert(status.success?, "expected bin/schedule list to succeed, err: #{err}")
+      expected_banner = "Daemon: stopped  previous=pid=#{dead_pid} " \
+                        "last_tick=2026-09-01T07:18:01+07:00 mode=daemon (historical)"
+      assert(out.lines.first&.chomp == expected_banner,
+             "expected schedule list to render persisted stopped metadata as historical, got #{out.lines.first.inspect}")
       assert(out.include?("weekday"), "expected bin/schedule list output to include schedule key")
       assert(out.include?("web"), "expected bin/schedule list output to include project key")
     end
