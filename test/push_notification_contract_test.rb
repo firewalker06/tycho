@@ -7,7 +7,7 @@ require_relative "../lib/hq/remote_server"
 module PushNotificationContractTest
   module_function
 
-  Agent = Struct.new(:key, :status, :display_name, :last_summary, :personal, keyword_init: true) do
+  Agent = Struct.new(:key, :status, :display_name, :last_summary, :personal, :unread, keyword_init: true) do
     def personal_assistant?
       personal
     end
@@ -19,8 +19,29 @@ module PushNotificationContractTest
     def last_run_from_prompt_queue?
       false
     end
+
+    def unread?
+      unread == true
+    end
+
+    def run_count
+      1
+    end
+
+    def last_run
+      nil
+    end
+
+    def started_at
+      nil
+    end
+
+    def finished_at
+      nil
+    end
   end
 
+  Event = Struct.new(:agent_key, keyword_init: true)
   Schedule = Struct.new(:key, :name, keyword_init: true)
   ScheduleState = Struct.new(:last_target_key, :last_finished_at, :last_error, :next_due_at, :failure_started_at,
                              keyword_init: true)
@@ -72,6 +93,21 @@ module PushNotificationContractTest
              badge_count: 1,
              url: "/#personal-assistant"
            }, "expected FRED notification to retain its identity and route in the concise contract")
+
+    notifier = RecordingNotifier.new
+    service.instance_variable_set(:@push_notification_store, RecordingPushStore.new)
+    service.instance_variable_set(:@web_push_notifier, notifier)
+    agents = [
+      Agent.new(key: "release-input", status: "awaiting-input", display_name: "Release input",
+                last_summary: "Confirm the rollout.", personal: false, unread: true),
+      Agent.new(key: "release-done", status: "succeeded", display_name: "Release done",
+                last_summary: "Rollout confirmed.", personal: false, unread: true)
+    ]
+    service.send(:dispatch_agent_push_events, agents.map { |agent| Event.new(agent_key: agent.key) }, agents:)
+    assert(notifier.payloads.map(&:last) == [
+             { urgency: "high", ttl: 3600 },
+             { urgency: "normal", ttl: 900 }
+           ], "expected input-required and finished agents to retain their delivery urgency and TTL")
   end
 
   def assert_schedule_payload_contract
@@ -118,6 +154,10 @@ module PushNotificationContractTest
   end
 
   class RecordingPushStore
+    def recorded?(_id)
+      false
+    end
+
     def record!(*, **)
       true
     end
@@ -132,6 +172,7 @@ module PushNotificationContractTest
 
     def send_payload!(payload, **options)
       @payloads << [payload, options]
+      { sent: 1, failed: 0, attempted: 1 }
     end
   end
 
