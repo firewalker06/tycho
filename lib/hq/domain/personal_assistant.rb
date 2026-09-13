@@ -934,13 +934,19 @@ module HQ
     def unique_recommendations(items)
       seen = {}
       items.filter do |item|
-        key = item["prompt"].downcase.gsub(/\s+/, " ")
+        key = recommendation_copy_key(item["prompt"])
         !seen[key] && (seen[key] = true)
       end
     end
 
     def same_recommendation_copy?(left, right)
-      left.to_s.downcase.gsub(/[^a-z0-9]+/, " ").strip == right.to_s.downcase.gsub(/[^a-z0-9]+/, " ").strip
+      recommendation_copy_key(left) == recommendation_copy_key(right)
+    end
+
+    def recommendation_copy_key(value)
+      text = value.to_s.downcase
+      words = text.gsub(/[^\p{Alnum}]+/u, " ").strip
+      words.empty? ? text.gsub(/\s+/, " ").strip : words
     end
 
     def recommendation_title(prompt)

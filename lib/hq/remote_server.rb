@@ -4727,6 +4727,7 @@ module HQ
         "for_date" => for_date[0, 40],
         "source" => (recommendations["source"] || recommendations[:source]).to_s[0, 40],
         "title" => (entry["title"] || entry[:title] || prompt).to_s.strip[0, 96],
+        "description" => (entry["description"] || entry[:description] || prompt).to_s.strip[0, 120],
         "prompt" => prompt.to_s.strip[0, 240]
       }
     end

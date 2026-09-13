@@ -675,8 +675,9 @@ module RemoteServerTest
       recorded_recommendation = recommendation_events.first&.dig("metadata", "personal_assistant_recommendation")
       assert(recommendation_events.length == 1 &&
              recorded_recommendation&.fetch("prompt") == recommendation.fetch("prompt") &&
+             recorded_recommendation&.fetch("description") == recommendation.fetch("description") &&
              recorded_recommendation&.fetch("id") == "#{session.dig(:recommendations, "for_date")}:0",
-             "expected one replayable user message with authoritative recommendation context")
+             "expected one replayable user message with authoritative title, description, and request context")
 
       begin
         post_message.call(recommendation_request.merge(

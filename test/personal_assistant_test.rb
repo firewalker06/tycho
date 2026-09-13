@@ -472,19 +472,25 @@ class PersonalAssistantTest
     lifecycle.send(:record_daily_recommendations!, formatted_state, {
       "promotion_candidates" => [
         "Title: Review release risks\nWhy now: A deployment note changed after yesterday's handoff.\nRequest: Review the new deployment note and identify release risks.",
-        "Title: Duplicate request\nWhy now: This must not survive deduplication.\nRequest: Review the new deployment note and identify release risks."
+        "Title: Duplicate request\nWhy now: This must not survive deduplication.\nRequest:  review the new deployment note and identify release risks "
       ],
       "open_items" => ["Resume the deployment review"]
     }, reason: "daily_rollover")
     formatted = formatted_state.dig("recommendations", "items")
+    unicode = lifecycle.send(:recommendation_item, {
+      "title" => "リリース確認",
+      "description" => "昨日の変更を確認するため。",
+      "prompt" => "最新のリリース状況を確認してください。"
+    })
     assert(formatted.first == {
       "title" => "Review release risks",
       "description" => "A deployment note changed after yesterday's handoff.",
       "prompt" => "Review the new deployment note and identify release risks."
     } && formatted.count { |item| item["prompt"] == "Review the new deployment note and identify release risks." } == 1 &&
            formatted.any? { |item| item["prompt"] == "Resume the deployment review" } &&
+           unicode["title"] == "リリース確認" && unicode["description"] == "昨日の変更を確認するため。" &&
            formatted.none? { |item| item["title"] == item["description"] || item["description"] == item["prompt"] },
-           "expected the predefined recommendation format to persist distinct card fields and deduplicate requests")
+           "expected the predefined recommendation format to preserve Unicode fields and deduplicate equivalent requests")
 
     lifecycle.setup!("confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "UTC", "external_events_prompt" => "")
     assert(lifecycle.send(:daily_handoff_prompt, state).include?("External-event recommendations are disabled.") &&
