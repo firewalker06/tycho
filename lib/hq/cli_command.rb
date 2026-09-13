@@ -2203,10 +2203,29 @@ module HQ
     def schedule_daemon_line(daemon)
       status = daemon[:status].to_s.empty? ? "unknown" : daemon[:status]
       parts = ["Daemon: #{status}"]
+      case status
+      when "running"
+        append_current_daemon_metadata(parts, daemon)
+      when "stale"
+        parts << "pid=#{daemon[:pid]}" if daemon[:pid]
+        parts << "last_tick=#{daemon[:last_tick_finished_at]} (heartbeat overdue)" if daemon[:last_tick_finished_at]
+        parts << "mode=#{daemon[:mode]}" if daemon[:mode]
+      when "untracked"
+        parts << "pid=#{daemon[:pid]} (detected process; no heartbeat state)" if daemon[:pid]
+      else
+        previous = []
+        previous << "pid=#{daemon[:pid]}" if daemon[:pid]
+        previous << "last_tick=#{daemon[:last_tick_finished_at]}" if daemon[:last_tick_finished_at]
+        parts << "previous_record=#{previous.join(" ")} (historical)" if previous.any?
+        parts << "mode=#{daemon[:mode]} (historical)" if daemon[:mode]
+      end
+      parts.join("  ")
+    end
+
+    def append_current_daemon_metadata(parts, daemon)
       parts << "pid=#{daemon[:pid]}" if daemon[:pid]
       parts << "last_tick=#{daemon[:last_tick_finished_at]}" if daemon[:last_tick_finished_at]
       parts << "mode=#{daemon[:mode]}" if daemon[:mode]
-      parts.join("  ")
     end
 
     def run_schedule(schedule_key, out: $stdout, err: $stderr)

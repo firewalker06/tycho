@@ -7,6 +7,7 @@ require "rbconfig"
 require "time"
 require "tmpdir"
 
+require_relative "../lib/hq/cli_command"
 require_relative "../lib/hq/domain/schedule_daemon_supervisor"
 require_relative "../lib/hq/domain/scheduler"
 
@@ -20,6 +21,7 @@ module SchedulerTest
       assert_schedule_registry_validates_scope_and_prompt_paths
       assert_schedule_execution_overrides_round_trip_and_apply
       assert_schedule_store_tracks_daemon_state
+      assert_schedule_daemon_banner_labels_metadata_by_state
       assert_scheduler_run_reuses_schedule_agent_session
       assert_scheduler_adopts_existing_session_and_expires_loop
       assert_archived_schedule_session_promotes_prompt_to_schedule
@@ -209,6 +211,34 @@ module SchedulerTest
       assert(state.status == "untracked", "expected running process without heartbeat to be untracked")
       assert(state.pid == 1234, "expected detected daemon pid")
     end
+  end
+
+  def assert_schedule_daemon_banner_labels_metadata_by_state
+    tick = "2026-09-01T07:18:01+07:00"
+
+    running = HQ::CLICommand.schedule_daemon_line(
+      status: "running", pid: 12_345, last_tick_finished_at: tick, mode: "daemon"
+    )
+    assert(running == "Daemon: running  pid=12345  last_tick=#{tick}  mode=daemon",
+           "expected running banner to show current daemon metadata")
+
+    stale = HQ::CLICommand.schedule_daemon_line(
+      status: "stale", pid: 12_345, last_tick_finished_at: tick, mode: "daemon"
+    )
+    assert(stale.include?("Daemon: stale") && stale.include?("pid=12345") &&
+           stale.include?("last_tick=#{tick} (heartbeat overdue)"),
+           "expected stale banner to label the overdue heartbeat")
+
+    stopped = HQ::CLICommand.schedule_daemon_line(
+      status: "stopped", pid: 54_980, last_tick_finished_at: tick, mode: "daemon"
+    )
+    assert(stopped.include?("Daemon: stopped") && stopped.include?("previous_record=pid=54980 last_tick=#{tick} (historical)") &&
+           !stopped.match?(/\A.*\s+pid=54980(?:\s|$)/),
+           "expected stopped banner to keep dead daemon metadata explicitly historical")
+
+    untracked = HQ::CLICommand.schedule_daemon_line(status: "untracked", pid: 67_890)
+    assert(untracked == "Daemon: untracked  pid=67890 (detected process; no heartbeat state)",
+           "expected untracked banner to identify a running process without claiming tick freshness")
   end
 
   def assert_scheduler_run_reuses_schedule_agent_session

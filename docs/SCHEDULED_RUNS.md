@@ -39,6 +39,35 @@ Each schedule has two editable prompt fields: a system message for the schedule-
 - Removal behavior: deleting a schedule detaches its active agent in the same persisted operation. The agent, transcript, attachments, and native session stay available as an ordinary conversation while future automatic runs stop.
 - Success notifications: notify only on first success and first success after failure, including the next scheduled run time.
 
+## Daemon status and unexpected runs
+
+`tycho schedule list` reports the state of the dedicated scheduler process recorded in
+`scheduler_daemon.json`; it does not assert that no schedule can be started by any
+other path. Its states mean:
+
+- `running`: the recorded process is alive and its heartbeat is fresh.
+- `stale`: the recorded process is alive but its heartbeat is overdue; its displayed
+  last tick is not current.
+- `stopped`: no tracked scheduler process is alive. Any recorded PID, mode, or tick
+  is printed only as a historical previous record.
+- `untracked`: Tycho detected a scheduler command process but it has no usable
+  heartbeat state, so its tick freshness is unknown.
+
+Automatic due-time evaluation belongs only to `tycho schedule daemon`, whose loop
+calls `Scheduler#tick`. The TUI and `tycho serve` do not tick schedules. Operators
+can still start a schedule without that daemon through `tycho schedule run KEY`, the
+Remote API/UI manual-run path, or another local process that invokes Tycho's scheduler
+domain code. Those manual paths use `Scheduler#run_now`: they start the schedule and
+advance its next due time, but do not write a daemon heartbeat. The persisted schedule
+state records the result, not which caller started it, so a past run cannot be
+attributed from that state alone.
+
+When a schedule appears to run while the banner is `stopped`, check the schedule's
+`last_due_at`, `last_started_at`, run count, and managed-agent log; inspect
+`~/.tycho/logs/scheduler_daemon.log` and `scheduler_daemon.json`; then audit manual
+CLI/Remote API use and any external service, cron job, wrapper, or custom integration
+that can invoke `tycho schedule daemon`, `tycho schedule run`, or `Scheduler#tick`.
+
 ## Current Design
 
 ### Architecture To Reuse
