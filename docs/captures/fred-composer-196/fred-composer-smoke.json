@@ -1,0 +1,170 @@
+{
+  "desktop": {
+    "collapsed": {
+      "inputHeight": 44,
+      "toolsVisible": false,
+      "dockBottom": 901,
+      "navTop": 13,
+      "inputOverflow": "hidden",
+      "promptIcons": [
+        {
+          "label": "Open full-screen editor",
+          "border": "0px"
+        },
+        {
+          "label": "Start speech recognition (Cmd+Shift+.)",
+          "border": "0px"
+        },
+        {
+          "label": "Upload file",
+          "border": "0px"
+        },
+        {
+          "label": "Insert skill",
+          "border": "0px"
+        }
+      ]
+    },
+    "expanded": {
+      "inputHeight": 92,
+      "toolsVisible": true,
+      "dockBottom": 901,
+      "navTop": 13,
+      "inputOverflow": "auto",
+      "promptIcons": [
+        {
+          "label": "Open full-screen editor",
+          "border": "0px"
+        },
+        {
+          "label": "Start speech recognition (Cmd+Shift+.)",
+          "border": "0px"
+        },
+        {
+          "label": "Upload file",
+          "border": "0px"
+        },
+        {
+          "label": "Insert skill",
+          "border": "0px"
+        }
+      ]
+    },
+    "fullScreen": {
+      "fullScreen": {
+        "inputHeight": 816,
+        "toolsVisible": true,
+        "dockBottom": 0,
+        "navTop": 13,
+        "inputOverflow": "auto",
+        "promptIcons": [
+          {
+            "label": "Close full-screen editor",
+            "border": "0px"
+          },
+          {
+            "label": "Start speech recognition (Cmd+Shift+.)",
+            "border": "0px"
+          },
+          {
+            "label": "Upload file",
+            "border": "0px"
+          },
+          {
+            "label": "Insert skill",
+            "border": "0px"
+          }
+        ]
+      },
+      "preserved": "desktop keyboard prompt"
+    },
+    "submitted": {
+      "status": 200,
+      "prompt": "desktop keyboard prompt"
+    }
+  },
+  "mobile": {
+    "collapsed": {
+      "inputHeight": 44,
+      "toolsVisible": false,
+      "dockBottom": 774,
+      "navTop": 775,
+      "inputOverflow": "hidden",
+      "promptIcons": [
+        {
+          "label": "Open full-screen editor",
+          "border": "0px"
+        },
+        {
+          "label": "Start speech recognition (Cmd+Shift+.)",
+          "border": "0px"
+        },
+        {
+          "label": "Upload file",
+          "border": "0px"
+        },
+        {
+          "label": "Insert skill",
+          "border": "0px"
+        }
+      ]
+    },
+    "expanded": {
+      "inputHeight": 92,
+      "toolsVisible": true,
+      "dockBottom": 774,
+      "navTop": 775,
+      "inputOverflow": "auto",
+      "promptIcons": [
+        {
+          "label": "Open full-screen editor",
+          "border": "0px"
+        },
+        {
+          "label": "Start speech recognition (Cmd+Shift+.)",
+          "border": "0px"
+        },
+        {
+          "label": "Upload file",
+          "border": "0px"
+        },
+        {
+          "label": "Insert skill",
+          "border": "0px"
+        }
+      ]
+    },
+    "fullScreen": {
+      "fullScreen": {
+        "inputHeight": 772,
+        "toolsVisible": true,
+        "dockBottom": 0,
+        "navTop": 775,
+        "inputOverflow": "auto",
+        "promptIcons": [
+          {
+            "label": "Close full-screen editor",
+            "border": "0px"
+          },
+          {
+            "label": "Start speech recognition (Cmd+Shift+.)",
+            "border": "0px"
+          },
+          {
+            "label": "Upload file",
+            "border": "0px"
+          },
+          {
+            "label": "Insert skill",
+            "border": "0px"
+          }
+        ]
+      },
+      "preserved": "mobile keyboard prompt"
+    },
+    "submitted": {
+      "status": 200,
+      "prompt": "mobile keyboard prompt"
+    }
+  }
+}

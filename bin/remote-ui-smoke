@@ -900,8 +900,34 @@ def write_smoke_script(path)
                 Math.abs(mobileFred.composerForm.left - mobileOrdinary.composerForm.left) > 1 || Math.abs(mobileFred.composerForm.right - mobileOrdinary.composerForm.right) > 1 ||
                 mobileFred.settings.left < 0 || mobileFred.settings.right > mobileFred.viewport.width ||
                 mobileFred.settings.top < 0 || mobileFred.settings.bottom > mobileFred.header.height + 1 ||
-                mobileFred.composer.bottom > mobileFred.nav.top || mobileFred.nav.top - mobileFred.composer.bottom > 8) {
-              throw new Error(`FRED mobile shell overflowed or lost its intentional composer-to-nav gap: ${JSON.stringify({ mobileOrdinary, mobileFred })}`);
+                mobileFred.composer.bottom > mobileFred.nav.top || Math.abs(mobileFred.nav.top - mobileFred.composer.bottom) > 1) {
+              throw new Error(`FRED mobile shell overflowed or left a composer-to-nav gap: ${JSON.stringify({ mobileOrdinary, mobileFred })}`);
+            }
+            const fredComposer = await mobileFredPage.evaluate(() => {
+              const composer = document.querySelector(".personal-assistant-page #composer");
+              const input = composer?.querySelector("#prompt-input");
+              const dock = composer?.closest(".agent-dock");
+              const nav = document.querySelector(".bottom-nav");
+              const controls = composer?.querySelector(".send-row");
+              const compact = {
+                inputHeight: input?.getBoundingClientRect().height || 0,
+                controlsVisible: Boolean(controls?.getClientRects().length),
+                dockBottom: dock?.getBoundingClientRect().bottom || 0,
+                navTop: nav?.getBoundingClientRect().top || 0,
+              };
+              input?.focus();
+              return new Promise((resolve) => requestAnimationFrame(() => resolve({
+                compact,
+                expanded: {
+                  inputHeight: input?.getBoundingClientRect().height || 0,
+                  controlsVisible: Boolean(controls?.getClientRects().length),
+                },
+              })));
+            });
+            if (fredComposer.compact.inputHeight < 40 || fredComposer.compact.inputHeight > 48 || fredComposer.compact.controlsVisible ||
+                Math.abs(fredComposer.compact.navTop - fredComposer.compact.dockBottom) > 1 ||
+                fredComposer.expanded.inputHeight < 90 || !fredComposer.expanded.controlsVisible) {
+              throw new Error(`FRED compact composer did not expand from a one-line prompt: ${JSON.stringify(fredComposer)}`);
             }
             await assertFredHeaderActions(mobileFredPage);
             await assertFredNonUserBlocks(mobileFredPage, "mobile", {

@@ -5754,6 +5754,40 @@ select {
 .personal-assistant-page .agent-conversation-scroll { padding: 20px 4px 28px 0; }
 .personal-assistant-page .agent-conversation-scroll .message-list { display: grid; gap: 12px; }
 .personal-assistant-header-title { gap: 8px; }
+.personal-assistant-page .agent-dock {
+  gap: 0;
+  padding: 6px 12px calc(6px + env(safe-area-inset-bottom, 0px));
+}
+.personal-assistant-page #composer:not(.composer-full-screen),
+.personal-assistant-page #composer:not(.composer-full-screen) .composer-content {
+  gap: 0;
+}
+.personal-assistant-page #composer:not(.composer-full-screen) .composer-editor-shell #prompt-input {
+  min-height: var(--touch-target);
+  max-height: var(--touch-target);
+  overflow: hidden;
+  padding: 10px 50px 10px 14px;
+}
+.personal-assistant-page #composer:not(.composer-full-screen) .send-row,
+.personal-assistant-page #composer:not(.composer-full-screen) :is(.pending-attachments, .pending-pr-contexts) {
+  display: none;
+}
+.personal-assistant-page #composer:not(.composer-full-screen):focus-within,
+.personal-assistant-page #composer:not(.composer-full-screen):focus-within .composer-content {
+  gap: 8px;
+}
+.personal-assistant-page #composer:not(.composer-full-screen):focus-within .composer-editor-shell #prompt-input {
+  min-height: 92px;
+  max-height: calc(6lh + 20px);
+  overflow-y: auto;
+  padding: 10px 54px 10px 12px;
+}
+.personal-assistant-page #composer:not(.composer-full-screen):focus-within .send-row {
+  display: flex;
+}
+.personal-assistant-page #composer:not(.composer-full-screen):focus-within :is(.pending-attachments, .pending-pr-contexts) {
+  display: grid;
+}
 .fred-avatar { display: inline-block; flex: 0 0 auto; width: 32px; height: 32px; border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--border)); border-radius: 50%; object-fit: cover; object-position: center; background: var(--panel-soft); }
 .message-role .fred-avatar { width: 22px; height: 22px; }
 .pa-status-dot { width: 9px; height: 9px; border-radius: 999px; background: var(--success); }
@@ -5836,6 +5870,7 @@ select {
     max-width: none;
     margin: 0;
     transform: none;
+    padding: 6px 12px;
   }
 }
 @media (min-width: 900px) and (max-width: 1099px) {
@@ -7108,12 +7143,21 @@ body:has(.inquiry-form-full-screen) {
 .attachment-upload-button {
   position: relative;
   display: inline-grid;
-  min-width: 42px;
-  width: 42px;
+  min-width: 36px;
+  width: 36px;
+  min-height: 36px;
   place-items: center;
+  border: 0;
+  background: transparent;
   padding: 0;
   color: var(--accent);
   line-height: 1;
+}
+
+.composer-action-menu > summary {
+  border: 0;
+  background: transparent;
+  padding: 0;
 }
 
 .composer:not(.composer-full-screen) .composer-editor-shell #prompt-input {
