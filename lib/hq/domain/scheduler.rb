@@ -611,8 +611,8 @@ module HQ
         state.last_finished_at&.iso8601 || now.iso8601
       ].join(":")
       payload = {
-        title: "Schedule failed",
-        body: "#{schedule.name}: #{error || agent&.last_summary || state.last_error || "failed"}. Schedule stopped.",
+        title: "Failed",
+        body: stopped_schedule_body(schedule, error || agent&.last_summary || state.last_error || "failed"),
         tag: "hq:schedule:#{schedule.key}:failure",
         url: agent ? "/#agent/#{agent.key}" : "/#setup"
       }
@@ -628,8 +628,8 @@ module HQ
         state.last_finished_at&.iso8601 || now.iso8601
       ].join(":")
       payload = {
-        title: "Schedule needs input",
-        body: "#{schedule.name}: #{agent.last_summary || state.last_error || "waiting for operator input"}. Schedule stopped.",
+        title: "Input needed",
+        body: stopped_schedule_body(schedule, agent.last_summary || state.last_error || "waiting for operator input"),
         tag: "hq:schedule:#{schedule.key}:input-required",
         url: "/#agent/#{agent.key}"
       }
@@ -639,7 +639,7 @@ module HQ
     def notify_schedule_first_success(schedule, state, agent, now:)
       id = ["schedule", schedule.key, "first-success"].join(":")
       payload = {
-        title: "Schedule succeeded",
+        title: "Done",
         body: "#{schedule.name}: first run succeeded. Next run: #{format_time(state.next_due_at)}.",
         tag: "hq:schedule:#{schedule.key}:first-success",
         url: "/#agent/#{agent.key}"
@@ -650,7 +650,7 @@ module HQ
     def notify_schedule_recovery(schedule, state, agent, now:)
       id = ["schedule", schedule.key, "recovery", state.failure_started_at&.iso8601 || now.iso8601].join(":")
       payload = {
-        title: "Schedule succeeded after failure",
+        title: "Recovered",
         body: "#{schedule.name}: succeeded after failure. Next run: #{format_time(state.next_due_at)}.",
         tag: "hq:schedule:#{schedule.key}:recovery",
         url: "/#agent/#{agent.key}"
@@ -669,6 +669,12 @@ module HQ
 
     def format_time(value)
       value ? value.strftime("%Y-%m-%d %H:%M") : "unknown"
+    end
+
+    def stopped_schedule_body(schedule, detail)
+      summary = detail.to_s.strip
+      punctuation = summary.end_with?(".", "!", "?") ? "" : "."
+      "#{schedule.name}: #{summary}#{punctuation} Schedule stopped."
     end
 
     def publish(event, schedule, state, attrs = {})

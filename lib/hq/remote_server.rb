@@ -5285,11 +5285,15 @@ module HQ
       status = agent.status
       if status == "awaiting-input"
         event = "input_required"
-        title = agent.personal_assistant? ? "FRED requires response" : "Agent requires response"
+        title = "Input needed"
       elsif %w[succeeded failed stopped blocked].include?(status)
         event = "finished"
-        prefix = agent.personal_assistant? ? "FRED finished" : "Agent finished"
-        title = status == "succeeded" ? prefix : "#{prefix}: #{status}"
+        title = {
+          "succeeded" => "Done",
+          "failed" => "Failed",
+          "stopped" => "Stopped",
+          "blocked" => "Blocked"
+        }.fetch(status)
       else
         return nil
       end
