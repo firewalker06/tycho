@@ -30,6 +30,12 @@ adapter intentionally share the same installed skill.
 
 Install and update require a confirmation in the Remote UI and `{"confirmed":true}` through the Remote API. Updates build a staged copy, preserve extra files in the Tycho-owned directory, atomically replace managed files, and roll back the directory swap if replacement fails. Other skill directories are never changed.
 
+## After a Tycho upgrade
+
+When the bundled skill version changes, open **Settings → Skills** and run the confirmed **Update** action for each installed harness. Tycho updates its marked copies at `~/.agents/skills/tycho` (Codex), `~/.claude/skills/tycho` (Claude Code), `~/.config/opencode/skills/tycho` (OpenCode), and `~/.pi/agent/skills/tycho` (Pi). Restart a harness if it does not detect the updated skill.
+
+Tycho never overwrites an unmarked copy, including a separately installed `~/.codex/skills/tycho`. Preserve or reconcile any local changes in that copy yourself, then rename or remove it if it shadows the supported Codex installation and use **Settings → Skills** to install or update the managed copy under `~/.agents/skills/tycho`.
+
 ## Verify an installation
 
 1. Open **Settings → Skills** and confirm the harness reads **Installed** with the expected source version.

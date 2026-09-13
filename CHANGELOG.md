@@ -4,6 +4,9 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+- Require `tycho project create <key>` for intentional project creation, reject
+  bare or malformed project commands without changing the registry, and ship
+  the matching versioned Tycho skill update for every supported harness.
 - Keep FRED's dated recommendations visible in the conversation and submit a
   selected recommendation as a durable, replay-safe user request with its
   recommendation context preserved.
