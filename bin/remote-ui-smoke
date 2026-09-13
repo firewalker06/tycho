@@ -756,24 +756,23 @@ def write_smoke_script(path)
             const dockRect = dock?.getBoundingClientRect();
             const overlayRect = overlay?.getBoundingClientRect();
             const loadRect = load?.getBoundingClientRect();
-            const recentRect = recent?.getBoundingClientRect();
             return {
-              labels: [load?.textContent.trim(), recent?.textContent.trim()],
+              labels: [load?.textContent.trim()],
               group: load?.parentElement?.getAttribute("aria-label"),
-              inConversation: [load, recent].every((button) => button?.closest("[data-agent-conversation-pane]") === pane),
-              outsideDockActions: [load, recent].every((button) => !dockActions?.contains(button)),
-              overlayed: Boolean(overlayRect && paneRect && dockRect && loadRect && recentRect &&
+              noRecent: !recent,
+              inConversation: load?.closest("[data-agent-conversation-pane]") === pane,
+              outsideDockActions: !dockActions?.contains(load),
+              overlayed: Boolean(overlayRect && paneRect && dockRect && loadRect &&
                 loadRect.left >= paneRect.left && loadRect.right <= paneRect.right &&
-                recentRect.left >= paneRect.left && recentRect.right <= paneRect.right &&
                 Math.abs(overlayRect.left + overlayRect.width / 2 - (paneRect.left + paneRect.width / 2)) <= 2 &&
-                loadRect.bottom <= dockRect.top - 8 && recentRect.bottom <= dockRect.top - 8),
-              visible: [loadRect, recentRect].every((rect) => rect && rect.top >= 0 && rect.bottom <= innerHeight),
+                loadRect.bottom <= dockRect.top - 8),
+              visible: Boolean(loadRect && loadRect.top >= 0 && loadRect.bottom <= innerHeight),
               arrow: load?.querySelector(".ui-icon path")?.getAttribute("d"),
               stagedVisible: document.body.textContent.includes("Desktop staged message"),
               scrollTop: root.scrollTop,
             };
           }, agentKey);
-          if (desktopCatchUp.labels.join(",") !== "Load 1 new message,Go to recent" || desktopCatchUp.group !== "Conversation catch-up" ||
+          if (desktopCatchUp.labels.join(",") !== "Load 1 new message" || desktopCatchUp.group !== "Conversation catch-up" || !desktopCatchUp.noRecent ||
               !desktopCatchUp.inConversation || !desktopCatchUp.outsideDockActions || !desktopCatchUp.overlayed || !desktopCatchUp.visible || desktopCatchUp.arrow !== "m6 9 6 6 6-6" || desktopCatchUp.stagedVisible || desktopCatchUp.scrollTop > 8) {
             throw new Error(`Desktop conversation catch-up controls lost their floating-overlay behavior: ${JSON.stringify(desktopCatchUp)}`);
           }
@@ -783,8 +782,9 @@ def write_smoke_script(path)
           const desktopCatchUpLoaded = await ordinaryPage.evaluate((key) => ({
             loaded: state.conversations[key]?.blocks?.some((block) => block.content === "Desktop staged message"),
             pendingCleared: !state.pendingConversationUpdates[key],
+            recentAvailable: Boolean(document.querySelector("[data-go-recent]")),
           }), agentKey);
-          if (!desktopCatchUpLoaded.loaded || !desktopCatchUpLoaded.pendingCleared) {
+          if (!desktopCatchUpLoaded.loaded || !desktopCatchUpLoaded.pendingCleared || !desktopCatchUpLoaded.recentAvailable) {
             throw new Error(`Desktop catch-up activation did not fetch and apply staged messages: ${JSON.stringify(desktopCatchUpLoaded)}`);
           }
           await ordinaryPage.evaluate((key) => {
@@ -866,25 +866,23 @@ def write_smoke_script(path)
               const paneRect = pane?.getBoundingClientRect();
               const overlayRect = overlay?.getBoundingClientRect();
               const loadRect = load?.getBoundingClientRect();
-              const recentRect = recent?.getBoundingClientRect();
               return {
-                labels: [load?.textContent.trim(), recent?.textContent.trim()],
+                labels: [load?.textContent.trim()],
                 group: load?.parentElement?.getAttribute("aria-label"),
-                inConversation: [load, recent].every((button) => button?.closest("[data-agent-conversation-pane]") === pane),
-                outsideDockActions: [load, recent].every((button) => !dockActions?.contains(button)),
-                overlayed: Boolean(overlayRect && paneRect && dockRect && loadRect && recentRect &&
+                noRecent: !recent,
+                inConversation: load?.closest("[data-agent-conversation-pane]") === pane,
+                outsideDockActions: !dockActions?.contains(load),
+                overlayed: Boolean(overlayRect && paneRect && dockRect && loadRect &&
                   loadRect.left >= paneRect.left && loadRect.right <= paneRect.right &&
-                  recentRect.left >= paneRect.left && recentRect.right <= paneRect.right &&
                   Math.abs(overlayRect.left + overlayRect.width / 2 - (paneRect.left + paneRect.width / 2)) <= 2 &&
-                  loadRect.bottom <= dockRect.top - 8 && recentRect.bottom <= dockRect.top - 8),
-                visible: [loadRect, recentRect].every((rect) => rect && rect.top >= 0 && rect.bottom <= innerHeight),
-                targetHeights: [loadRect, recentRect].every((rect) => rect?.height >= 38),
-                noOverlap: Boolean(loadRect && recentRect && !(loadRect.right < recentRect.left || recentRect.right < loadRect.left || loadRect.bottom < recentRect.top || recentRect.bottom < loadRect.top)),
+                  loadRect.bottom <= dockRect.top - 8),
+                visible: Boolean(loadRect && loadRect.top >= 0 && loadRect.bottom <= innerHeight),
+                targetHeight: loadRect?.height >= 38,
                 dockTop: dockRect?.top,
               };
             }, agentKey);
-            if (mobileCatchUp.labels.join(",") !== "Load 2 new messages,Go to recent" || mobileCatchUp.group !== "Conversation catch-up" ||
-                !mobileCatchUp.inConversation || !mobileCatchUp.outsideDockActions || !mobileCatchUp.overlayed || !mobileCatchUp.visible || !mobileCatchUp.targetHeights || mobileCatchUp.noOverlap) {
+            if (mobileCatchUp.labels.join(",") !== "Load 2 new messages" || mobileCatchUp.group !== "Conversation catch-up" || !mobileCatchUp.noRecent ||
+                !mobileCatchUp.inConversation || !mobileCatchUp.outsideDockActions || !mobileCatchUp.overlayed || !mobileCatchUp.visible || !mobileCatchUp.targetHeight) {
               throw new Error(`Mobile conversation catch-up controls lost their floating-overlay behavior: ${JSON.stringify(mobileCatchUp)}`);
             }
             if (captureDir) await mobileOrdinaryPage.screenshot({ path: path.join(captureDir, "ordinary-catchup-overlay-mobile.png"), fullPage: false });
