@@ -21,6 +21,7 @@ All notable changes to Tycho will be documented in this file.
 - Add `tycho restart` and Homebrew-only `tycho update`, with equivalent
   confirmed local Remote UI controls. The update path restarts local services
   through their stable launcher.
+- Add `tycho --version` and `tycho -v` for direct installed-version checks.
 - Improve delegated work: child terminal outcomes batch into deterministic
   parent callbacks, reports preserve structured reply content, and completion
   alerts do not notify the operator for delegated callback runs.
@@ -30,6 +31,12 @@ All notable changes to Tycho will be documented in this file.
 - Keep conversations usable while agents run: queue follow-up prompts, load
   new messages on demand, preserve focused conversation state through polling,
   and place catch-up controls in the conversation dock.
+- Add schedule create/update commands and per-schedule harness, model, and
+  reasoning-effort overrides, with project defaults preserved when omitted.
+- Render rich summary prose as Markdown without duplicate or width-limited
+  output, and fix scrolling for Summary attachments.
+- Start new Remote UI agents with a free-text Custom prompt while retaining
+  template selection for edit and clone compatibility.
 - Refine the Remote UI with relevant agent ordering, Lucide filter/sort icons,
   schedule-aware agent icons, on-demand Mermaid previews, clearer Settings,
   simplified push-notification titles, and improved mobile layouts.
@@ -52,6 +59,9 @@ All notable changes to Tycho will be documented in this file.
 - FRED is disabled until explicitly configured in Remote UI. Its protected
   daily sessions are intentionally unavailable through ordinary agent,
   delegation, inquiry, and queue lifecycle endpoints.
+- Remove the unfinished Tycho GitHub App login and review-posting workflow,
+  including `tycho github login|status|logout`. Agent-scoped pull-request diffs
+  remain read-only and use an authenticated local `gh` CLI.
 
 ## 0.10.2 - 2026-08-30
 

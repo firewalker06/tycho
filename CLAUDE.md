@@ -38,6 +38,7 @@ Runtime artifacts are written to `~/.tycho/logs/`, including `hq.log` (applicati
 ```bash
 bundle install
 bin/tycho
+bin/tycho --version
 bundle exec bin/tycho
 bundle exec bin/tycho project create <key> [options]
 bundle exec bin/tycho metrics query [filters] [--json]

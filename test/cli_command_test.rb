@@ -10,6 +10,7 @@ require "tmpdir"
 require "yaml"
 
 require_relative "../lib/hq/cli_command"
+require_relative "../lib/hq/version"
 require_relative "../lib/hq/domain/managed_agent"
 require_relative "../lib/hq/domain/remote_cli_client"
 
@@ -20,6 +21,7 @@ module CLICommandTest
   module_function
 
   def run!
+    assert_version_output
     assert_project_commands_manage_full_lifecycle
     assert_project_command_and_help_paths_do_not_create_projects
     assert_remote_server_commands_manage_full_agent_lifecycle
@@ -28,6 +30,14 @@ module CLICommandTest
     assert_metrics_commands_are_listed_in_usage
     assert_debug_claude_run_agent_uses_claude_defaults
     puts "cli_command_test: ok"
+  end
+
+  def assert_version_output
+    %w[--version -v].each do |flag|
+      result = run_tycho({}, flag)
+      assert(result.fetch(:status).success? && result.fetch(:stdout) == "Tycho #{HQ::VERSION}\n" &&
+             result.fetch(:stderr).empty?, "expected #{flag} to print the Tycho version")
+    end
   end
 
   def assert_remote_server_commands_manage_full_agent_lifecycle
