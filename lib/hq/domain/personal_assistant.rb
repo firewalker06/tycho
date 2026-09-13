@@ -850,7 +850,11 @@ module HQ
         [TYCHO INTERNAL SUMMARY ONLY]
         Summarize this daily session into the normal structured result. Do not propose or execute actions. Include summary, decisions, open items, references, and outstanding child agents.
 
-        Also generate 3–5 concise, distinct prompts for FRED to recommend on #{target_date}. Put only those prompts in memory_handoff.promotion_candidates. Before responding, use available installed skills and local read-only resources to inspect recent daily journals and new or updated Miki knowledge; treat unavailable sources as absent and do not invent them. Combine useful source signals with this conversation's unfinished work, cleanup opportunities, and one task worth starting. Prefer recommendations that FRED can carry out with its documented Tycho capabilities. Each item must stand alone as a user request and stay under 240 characters.
+        Also generate 3–5 concise, distinct recommendations for FRED to show on #{target_date}. Put only these strings in memory_handoff.promotion_candidates, one per item, using this exact three-line format:
+        Title: <2–7-word action label>
+        Why now: <specific context that adds information not in the title or request, 120 characters maximum>
+        Request: <stand-alone user request, 240 characters maximum>
+        Do not repeat a title, context, or request across items. Prefer recommendations that FRED can carry out with its documented Tycho capabilities. Before responding, use available installed skills and local read-only resources to inspect recent daily journals and new or updated Miki knowledge; treat unavailable sources as absent and do not invent them. Combine useful source signals with this conversation's unfinished work, cleanup opportunities, and one task worth starting.
 
         #{external_guidance}
       PROMPT
@@ -861,14 +865,14 @@ module HQ
       target_date = local_date(@clock.call, timezone)
       return if state.dig("recommendations", "for_date") == target_date
 
-      generated = Array(handoff["promotion_candidates"]).filter_map { |item| recommendation_text(item) }
-      fallback = Array(handoff["open_items"]).filter_map { |item| recommendation_text(item) }
-      items = (generated + fallback + default_recommendations).uniq.first(RECOMMENDATION_LIMIT)
+      generated = Array(handoff["promotion_candidates"]).filter_map { |item| recommendation_item(item) }
+      fallback = Array(handoff["open_items"]).filter_map { |item| recommendation_item(item) }
+      items = unique_recommendations(generated + fallback + default_recommendations.map { |item| recommendation_item(item) }).first(RECOMMENDATION_LIMIT)
       state["recommendations"] = {
         "for_date" => target_date,
         "generated_at" => @clock.call.utc.iso8601,
         "source" => reason == "daily_rollover" && generated.any? ? "daily_handoff" : "fallback",
-        "items" => items.map { |prompt| { "title" => recommendation_title(prompt), "prompt" => prompt } }
+        "items" => items
       }
     end
 
@@ -877,13 +881,15 @@ module HQ
       timezone = state["active_timezone"] || @registry.personal_assistant["timezone"]
       expected_date = state["active_date"].to_s
       expected_date = local_date(@clock.call, timezone) if expected_date.empty?
-      return deep_copy(saved) if saved.is_a?(Hash) && saved["for_date"] == expected_date && Array(saved["items"]).any?
+      if saved.is_a?(Hash) && saved["for_date"] == expected_date && Array(saved["items"]).any?
+        return deep_copy(saved).merge("items" => unique_recommendations(Array(saved["items"]).filter_map { |item| recommendation_item(item) }))
+      end
 
       {
         "for_date" => expected_date,
         "generated_at" => nil,
         "source" => saved.is_a?(Hash) ? "stale" : "starter",
-        "items" => default_recommendations.map { |prompt| { "title" => recommendation_title(prompt), "prompt" => prompt } }
+        "items" => default_recommendations.filter_map { |item| recommendation_item(item) }
       }
     end
 
@@ -898,14 +904,65 @@ module HQ
       recommendations
     end
 
-    def recommendation_text(value)
-      text = truncate(value, 240)
-      text.empty? ? nil : text
+    def recommendation_item(value)
+      return normalized_recommendation_item(value) if value.is_a?(Hash)
+
+      text = truncate(value, 600)
+      return nil if text.empty?
+
+      match = text.match(/\ATitle:\s*(?<title>.+?)\s*\nWhy now:\s*(?<description>.+?)\s*\nRequest:\s*(?<prompt>.+)\z/im)
+      return legacy_recommendation_item(text) unless match
+
+      normalized_recommendation_item(match.named_captures)
+    end
+
+    def normalized_recommendation_item(value)
+      prompt = truncate(value["prompt"] || value[:prompt], 240)
+      return nil if prompt.empty?
+
+      title = truncate(value["title"] || value[:title], 64)
+      description = truncate(value["description"] || value[:description], 120)
+      title = recommendation_title(prompt) if title.empty? || same_recommendation_copy?(title, prompt)
+      description = recommendation_description(prompt) if description.empty? || same_recommendation_copy?(description, title) || same_recommendation_copy?(description, prompt)
+      { "title" => title, "description" => description, "prompt" => prompt }
+    end
+
+    def legacy_recommendation_item(prompt)
+      normalized_recommendation_item("prompt" => truncate(prompt, 240))
+    end
+
+    def unique_recommendations(items)
+      seen = {}
+      items.filter do |item|
+        key = item["prompt"].downcase.gsub(/\s+/, " ")
+        !seen[key] && (seen[key] = true)
+      end
+    end
+
+    def same_recommendation_copy?(left, right)
+      left.to_s.downcase.gsub(/[^a-z0-9]+/, " ").strip == right.to_s.downcase.gsub(/[^a-z0-9]+/, " ").strip
     end
 
     def recommendation_title(prompt)
-      title = prompt.to_s.sub(/\A(?:please\s+)?/i, "").sub(/[.!?]+\z/, "")
-      truncate(title, 96)
+      case prompt.to_s.downcase
+      when /\Acontinue|\Aresume/ then "Continue work"
+      when /\Areview|\Acheck|\Ainspect/ then "Review recent work"
+      when /\Ashow|\Alist/ then "Check Tycho status"
+      when /\Aexplain|\Alearn/ then "Explore Tycho"
+      when /\Aprepare|\Acreate/ then "Prepare next work"
+      else "Suggested next step"
+      end
+    end
+
+    def recommendation_description(prompt)
+      case prompt.to_s.downcase
+      when /\Acontinue|\Aresume/ then "Carries unfinished work from the prior handoff."
+      when /\Areview|\Acheck|\Ainspect/ then "Uses recent work to surface risks or cleanup."
+      when /\Ashow|\Alist/ then "Gives you a current operational snapshot."
+      when /\Aexplain|\Alearn/ then "Builds familiarity with an available capability."
+      when /\Aprepare|\Acreate/ then "Turns the next task into a ready-to-review plan."
+      else "Uses available Tycho context to choose the next step."
+      end
     end
 
     def active_agent(state)
