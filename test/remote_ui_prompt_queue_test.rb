@@ -41,11 +41,15 @@ module RemoteUIPromptQueueTest
 
       const context = {
         escapeAttr: (value) => String(value),
-        escapeHtml: (value) => String(value),
+        escapeHtml: (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"),
         personalAssistantControlError: () => null,
+        renderMarkdown: (value) => `<markdown>${value}</markdown>`,
+        statusBadge: (label) => `<badge>${label}</badge>`,
+        titleFromKey: (value) => String(value),
+        URL,
       };
       vm.createContext(context);
-      vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\nthis.renderPromptQueueEntry = renderPromptQueueEntry;`, context);
+      vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\n${extractFunction("parseDelegatedAgentReply")}\n${extractFunction("delegatedAgentReportPayload")}\n${extractFunction("renderDelegatedAgentReply")}\n${extractFunction("renderDelegatedAgentReport")}\n${extractFunction("renderDelegatedAgentReportInquiry")}\n${extractFunction("renderDelegatedAgentReportInquiryField")}\n${extractFunction("delegatedAgentReportStatusLabel")}\n${extractFunction("delegatedAgentReportAttachments")}\n${extractFunction("renderDelegatedAgentReportAttachment")}\nthis.renderPromptQueueEntry = renderPromptQueueEntry;\nthis.parseDelegatedAgentReply = parseDelegatedAgentReply;`, context);
 
       const agent = { key: "queue-agent" };
       const legacy = context.renderPromptQueueEntry(agent, { id: "legacy", prompt: "Queued before state" }, 0);
@@ -65,9 +69,53 @@ module RemoteUIPromptQueueTest
         authority: { owner: "parent", generation: 3 }
       }, 0);
       if (!callback.includes("Delegated reply · Queued · parent authority v3") ||
-          !callback.includes('data-edit-queued-prompt="callback" data-agent-key="queue-agent" disabled') ||
-          !callback.includes('data-delete-queued-prompt="callback" data-agent-key="queue-agent" disabled')) {
-        throw new Error("delegated replies must expose captured authority and immutable controls");
+          callback.includes("Edit") || callback.includes("Delete")) {
+        throw new Error("delegated replies must expose captured authority without edit or delete controls");
+      }
+
+      const delegatedPayload = `Delegated agent reports:\n${JSON.stringify({ type: "delegated_agent_reports", reports: [
+        { agent: { name: "Success child" }, status: "success", summary: "## Finished\n\n[Build](https://example.test/build)", attachments: [{ type: "file", title: "Build", url: "https://example.test/build", description: "Verified output", mime_type: "text/html" }] },
+        { agent: { agent_key: "needs-input" }, status: "input_required", summary: "Waiting.", inquiry: { message: "Choose a release target.", fields: [{ key: "target", label: "Target <script>", description: "Where to deploy", input_type: "select", options: ["Staging", "<Production>"] }] }, attachments: [{ title: "Unsafe", url: "javascript:alert(1)" }, { title: "Credentials", url: "https://user:secret@example.test/private" }] },
+        { agent: { name: "Partial child" }, status: "partial", summary: "Partial result." },
+        { agent: { name: "Failed child" }, status: "failed", summary: "Failed result." },
+        { agent: { name: "Blocked child" }, status: "blocked", summary: "Blocked result." },
+        { agent: { name: "Stopped child" }, status: "stopped", summary: "Stopped result." },
+        { agent: { name: "Quiet child" }, status: "no_action_needed", summary: "No action." },
+      ] })}`;
+      const renderedDelegated = context.renderPromptQueueEntry(agent, {
+        id: "delegated", prompt: delegatedPayload, state: "queued", source: "delegation_callback"
+      }, 0);
+      if (!renderedDelegated.includes("Success child") || !renderedDelegated.includes("Input required") ||
+          !renderedDelegated.includes("Choose a release target.") || !renderedDelegated.includes("Partial") ||
+          !renderedDelegated.includes("Failed") || !renderedDelegated.includes("Blocked") ||
+          !renderedDelegated.includes("Stopped") || !renderedDelegated.includes("No action needed") ||
+          !renderedDelegated.includes("Target &lt;script&gt;") || !renderedDelegated.includes("&lt;Production&gt;") ||
+          !renderedDelegated.includes("File · text/html") || !renderedDelegated.includes("Verified output") ||
+          renderedDelegated.includes("javascript:alert") || renderedDelegated.includes("user:secret") ||
+          renderedDelegated.includes("Edit") || renderedDelegated.includes("Delete")) {
+        throw new Error("delegated report payload was not safely rendered as readable content");
+      }
+
+      const legacyPayload = `Delegated agent report:\n${JSON.stringify({ type: "delegated_agent_report", agent: { name: "Legacy child" }, status: "succeeded", summary: "Legacy result." })}`;
+      if (!context.renderPromptQueueEntry(agent, { id: "legacy-report", prompt: legacyPayload, source: "delegation_callback" }, 0).includes("Legacy child")) {
+        throw new Error("legacy delegated report shape was not parsed");
+      }
+      const malformed = context.renderPromptQueueEntry(agent, { id: "malformed", prompt: "{not json", source: "delegation_callback" }, 0);
+      if (!malformed.includes("{not json") || malformed.includes("<markdown>")) {
+        throw new Error("malformed delegated payload did not retain the safe raw fallback");
+      }
+      const unrecognizedPrompt = JSON.stringify({ type: "other_callback", reports: [{ status: "success", summary: "Do not parse" }] });
+      const unrecognized = context.renderPromptQueueEntry(agent, { id: "unknown", prompt: unrecognizedPrompt, source: "delegation_callback" }, 0);
+      if (!unrecognized.includes("other_callback") || unrecognized.includes("<markdown>")) {
+        throw new Error("unrecognized delegated payload did not retain the safe raw fallback");
+      }
+      const malformedReportPrompt = JSON.stringify({ type: "delegated_agent_reports", reports: [{ summary: "Missing status" }] });
+      if (context.parseDelegatedAgentReply({ prompt: malformedReportPrompt, source: "delegation_callback" }) !== null) {
+        throw new Error("malformed recognized reports must use the raw fallback");
+      }
+      const ordinary = context.renderPromptQueueEntry(agent, { id: "ordinary", prompt: delegatedPayload, source: "user" }, 0);
+      if (!ordinary.includes("Delegated agent reports:") || ordinary.includes("Success child</strong><badge>")) {
+        throw new Error("ordinary messages must not be interpreted as delegated reports");
       }
 
       const requestContext = {
@@ -94,7 +142,7 @@ module RemoteUIPromptQueueTest
         }],
       };
       vm.createContext(queueContext);
-      vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\n${extractFunction("renderPromptQueue")}\nthis.renderPromptQueue = renderPromptQueue;`, queueContext);
+      vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\n${extractFunction("parseDelegatedAgentReply")}\n${extractFunction("delegatedAgentReportPayload")}\n${extractFunction("renderPromptQueue")}\nthis.renderPromptQueue = renderPromptQueue;`, queueContext);
       const queueHtml = queueContext.renderPromptQueue({
         key: "queue-agent",
         prompt_queue: { entries: [{

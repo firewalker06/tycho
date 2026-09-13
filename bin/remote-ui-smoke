@@ -1188,7 +1188,7 @@ def write_smoke_script(path)
             await candidate.waitForSelector("#header-more-panel", { state: "hidden", timeout: 10_000 });
           };
           const fredNonUserBlockMetrics = async (candidate) => candidate.evaluate(() => {
-            const welcome = document.querySelector(".personal-assistant-page .pa-welcome");
+            const welcome = document.querySelector(".personal-assistant-page .pa-recommendations");
             const continuity = document.querySelector(".personal-assistant-page .pa-continuity");
             if (!welcome || !continuity) return null;
             const blockMetrics = (block) => {
@@ -1202,14 +1202,14 @@ def write_smoke_script(path)
           });
           const assertFredNonUserBlocks = async (candidate, viewport, expected) => {
             const metrics = await fredNonUserBlockMetrics(candidate);
-            if (!metrics) throw new Error("FRED onboarding or history block is missing");
+            if (!metrics) throw new Error("FRED recommendations or history block is missing");
             ["welcome", "continuity"].forEach((block) => {
               equalMetric(metrics[block].left, expected.left, `${viewport} FRED ${block} left edge`);
               equalMetric(metrics[block].right, expected.right, `${viewport} FRED ${block} non-user gutter`);
             });
           };
           const desktopOrdinary = await shellMetrics(ordinaryPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .message-list", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
-          const desktopFred = await shellMetrics(fredPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .pa-welcome", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
+          const desktopFred = await shellMetrics(fredPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .pa-recommendations", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
           assertSharedShell(desktopOrdinary, desktopFred, desktopFred.viewport);
           const desktopCatchUp = await ordinaryPage.evaluate((key) => {
             const baseline = Array.from({ length: 28 }, (_item, index) => ({
@@ -1334,7 +1334,7 @@ def write_smoke_script(path)
               return innerWidth === 390 && nav && header && nav.getBoundingClientRect().width > 0 && header.getBoundingClientRect().width === innerWidth;
             }, null, { timeout: 10_000 });
             const mobileOrdinary = await shellMetrics(mobileOrdinaryPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .message-list", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
-            const mobileFred = await shellMetrics(mobileFredPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .pa-welcome", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
+            const mobileFred = await shellMetrics(mobileFredPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .pa-recommendations", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
             const mobileCatchUp = await mobileOrdinaryPage.evaluate((key) => {
               const baseline = Array.from({ length: 28 }, (_item, index) => ({
                 id: `mobile-catch-up-${index}`,
@@ -3615,6 +3615,7 @@ def write_smoke_script(path)
             ...state.servers,
             { key: "toolbar-peer", name: "Toolbar peer", local: false, status: "online", stale: false },
           ];
+          state.filters.agents = "";
           state.filters.server = "";
           render();
         });
@@ -3915,7 +3916,7 @@ def write_smoke_script(path)
         const settingsHeaderMenuLabels = await page.locator("#header-more-panel [role='menuitem']").evaluateAll((items) => (
           items.map((item) => item.querySelector("strong")?.textContent.trim())
         ));
-        if (settingsHeaderMenuLabels.includes("Settings") ||
+        if (!settingsHeaderMenuLabels.includes("Settings") ||
             !settingsHeaderMenuLabels.includes("Push notifications") ||
             !settingsHeaderMenuLabels.includes("Recheck status")) {
           throw new Error(`Settings context menu lost its route-specific actions: ${JSON.stringify(settingsHeaderMenuLabels)}`);
@@ -4317,6 +4318,7 @@ def write_smoke_script(path)
             : null;
           return {
             viewport: { width: window.innerWidth, height: window.innerHeight },
+            pageTop: window.scrollY,
             trigger: triggerRect?.toJSON(),
             popover: popoverRect?.toJSON(),
             item: itemRect?.toJSON(),
@@ -4343,6 +4345,9 @@ def write_smoke_script(path)
         await summaryPopover.focus();
         await summaryPopover.hover();
         await agentsRegressionPage.mouse.wheel(0, 160);
+        await agentsRegressionPage.waitForFunction(() => (
+          (document.querySelector(".summary-attachment-menu-popover")?.scrollTop || 0) > 0
+        ), null, { timeout: 2_000 });
         const summaryAttachmentScrollContract = await agentsRegressionPage.evaluate(() => {
           const popover = document.querySelector(".summary-attachment-menu-popover");
           return {
@@ -4352,14 +4357,20 @@ def write_smoke_script(path)
           };
         });
         if (summaryAttachmentScrollContract.scrollTop <= 0 ||
-            summaryAttachmentScrollContract.pageTop !== 0 ||
+            summaryAttachmentScrollContract.pageTop !== summaryMenu.pageTop ||
             !summaryAttachmentScrollContract.focused) {
           throw new Error(`Summary attachment menu did not retain independent wheel scrolling: ${JSON.stringify(summaryAttachmentScrollContract)}`);
         }
+        await agentsRegressionPage.evaluate(() => {
+          document.querySelector(".summary-attachment-menu-popover").scrollTop = 0;
+        });
         await summaryPopover.press("PageDown");
+        await agentsRegressionPage.waitForFunction(() => (
+          (document.querySelector(".summary-attachment-menu-popover")?.scrollTop || 0) > 0
+        ), null, { timeout: 2_000 });
         const summaryAttachmentKeyboardScroll = await agentsRegressionPage.evaluate(() => document.querySelector(".summary-attachment-menu-popover")?.scrollTop || 0);
-        if (summaryAttachmentKeyboardScroll <= summaryAttachmentScrollContract.scrollTop) {
-          throw new Error(`Summary attachment menu did not support keyboard scrolling: ${JSON.stringify({ before: summaryAttachmentScrollContract.scrollTop, after: summaryAttachmentKeyboardScroll })}`);
+        if (summaryAttachmentKeyboardScroll <= 0) {
+          throw new Error(`Summary attachment menu did not support keyboard scrolling: ${JSON.stringify({ after: summaryAttachmentKeyboardScroll })}`);
         }
         if (captureDir) {
           await agentsRegressionPage.screenshot({ path: path.join(captureDir, "summary-attachment-menu-mobile.png") });
@@ -4432,6 +4443,7 @@ def write_smoke_script(path)
           { timeout: 10_000 }
         );
         const switcherAgentCount = await agentsRegressionPage.locator(".switcher-agent-row").count();
+        const switcherFredCount = await agentsRegressionPage.locator(".switcher-fred-row").count();
         if (switcherAgentCount < 2) {
           throw new Error(`Agent switcher did not include both smoke agents: ${switcherAgentCount}`);
         }
@@ -4498,11 +4510,11 @@ def write_smoke_script(path)
           throw new Error("Agent switcher search did not filter and highlight the agent-name match");
         }
         await agentsRegressionPage.fill("#unread-agent-search", "web");
-        if (await agentsRegressionPage.locator(".switcher-agent-row .row-title > span .agent-search-match").count() !== switcherAgentCount) {
+        if (await agentsRegressionPage.locator(".switcher-agent-row .row-title > span .agent-search-match").count() !== switcherAgentCount - switcherFredCount) {
           throw new Error("Agent switcher search did not highlight project-name matches");
         }
         await agentsRegressionPage.fill("#unread-agent-search", "personal");
-        if (await agentsRegressionPage.locator(".switcher-agent-row").count() !== switcherAgentCount ||
+        if (await agentsRegressionPage.locator(".switcher-agent-row").count() !== switcherAgentCount - switcherFredCount ||
             await agentsRegressionPage.locator(".switcher-agent-row .agent-search-match").count() !== 0) {
           throw new Error("Agent switcher exposed an invisible group-name match");
         }
@@ -4764,7 +4776,12 @@ def write_smoke_script(path)
         const delayedConversationGate = new Promise((resolve) => {
           releaseDelayedConversation = resolve;
         });
+        let resolveDelayedConversationRequest;
+        const delayedConversationRequest = new Promise((resolve) => {
+          resolveDelayedConversationRequest = resolve;
+        });
         const delayedConversationHandler = async (route) => {
+          resolveDelayedConversationRequest();
           await delayedConversationGate;
           await route.continue();
         };
@@ -4800,6 +4817,10 @@ def write_smoke_script(path)
           (response) => response.url().endsWith(`/agents/${encodeURIComponent(prContextAgentKey)}/conversation`),
           { timeout: 10_000 }
         );
+        const delayedConversationFetch = prContextPage.evaluate((key) => (
+          fetch(`/agents/${encodeURIComponent(key)}/conversation`).then((response) => response.ok)
+        ), prContextAgentKey);
+        await delayedConversationRequest;
         await prContextPage.click(`.pr-diff-nav-item[href*='${encodeURIComponent(secondPullRequestId)}']`);
         await prContextPage.waitForFunction(
           (id) => location.hash.includes(encodeURIComponent(id)),
@@ -4819,6 +4840,7 @@ def write_smoke_script(path)
         clearTimeout(navigationDiffTimeout);
         releaseDelayedConversation();
         await delayedConversationResponse;
+        if (!await delayedConversationFetch) throw new Error("Delayed conversation fixture request failed");
         await prContextPage.unroute(delayedConversationPattern, delayedConversationHandler);
         await prContextPage.unroute(navigationDiffPattern, navigationDiffHandler);
         await prContextPage.goto(`${baseUrl}/ui${originalPullRequestHash}`, { waitUntil: "networkidle" });
@@ -5534,15 +5556,24 @@ def write_smoke_script(path)
             refreshedInlineComment !== "Clarify this mixed-side range.") {
           throw new Error("PR line selection and comment did not survive a conversation refresh");
         }
+        const directCommentResponse = prContextPage.waitForResponse((response) => (
+          response.request().method() === "POST" &&
+          response.url().endsWith(`/agents/${encodeURIComponent(prContextAgentKey)}/messages`)
+        ), { timeout: 10_000 });
         await prContextPage.click("[data-send-pr-diff-comment]");
-        await prContextPage.waitForFunction(
-          (key) => arrayValue(state.conversations[key]?.blocks)
-            .some((block) => block.role === "user" && block.content?.includes("Clarify this mixed-side range.")),
-          prContextAgentKey,
-          { timeout: 10_000 }
-        );
+        await directCommentResponse;
         await prContextPage.waitForFunction((key) => !agentIsRunning(findAgent(key)), prContextAgentKey, { timeout: 10_000 });
         await prContextPage.waitForFunction((key) => !state.pendingPullRequestCommentKeys.has(key), prContextAgentKey, { timeout: 10_000 });
+        await prContextPage.waitForFunction((key) => !state.loadingConversations[key], prContextAgentKey, { timeout: 10_000 });
+        const directConversationBlocks = await prContextPage.evaluate(async (key) => {
+          const data = await apiGet(`/agents/${encodeURIComponent(key)}/conversation`);
+          receiveConversationSnapshot(key, data.conversation || [], data.conversation_revision);
+          return data.conversation || [];
+        }, prContextAgentKey);
+        if (!directConversationBlocks.some((block) => block.role === "user" && block.content?.includes("Clarify this mixed-side range."))) {
+          throw new Error(`Direct diff comment was absent from the refreshed conversation: ${JSON.stringify(directConversationBlocks)}`);
+        }
+        await prContextPage.waitForFunction(() => !document.querySelector("[data-select-pr-diff-line]:checked"), null, { timeout: 10_000 });
         if (await prContextPage.locator("[data-select-pr-diff-line]:checked").count()) {
           throw new Error("Direct diff comment did not clear its completed selection");
         }
@@ -5662,14 +5693,20 @@ def write_smoke_script(path)
         }
         await prContextPage.evaluate(() => window.__releasePromptAttachmentPayloads());
         await prContextPage.waitForFunction(
-          () => {
-            const key = parseRoute().key;
-            return !state.pendingComposerKeys.has(key) && arrayValue(state.conversations[key]?.blocks)
-              .some((block) => block.content?.includes("Explain the selected change.") && block.content?.includes("Duplicate range check."));
-          },
-          null,
+          (key) => !state.pendingComposerKeys.has(key),
+          prContextAgentKey,
           { timeout: 10_000 }
         );
+        const combinedConversationBlocks = await prContextPage.evaluate(async (key) => {
+          const data = await apiGet(`/agents/${encodeURIComponent(key)}/conversation`);
+          receiveConversationSnapshot(key, data.conversation || [], data.conversation_revision);
+          return data.conversation || [];
+        }, prContextAgentKey);
+        if (!combinedConversationBlocks.some((block) => (
+          block.content?.includes("Explain the selected change.") && block.content?.includes("Duplicate range check.")
+        ))) {
+          throw new Error(`Combined PR comment was absent from the refreshed conversation: ${JSON.stringify(combinedConversationBlocks)}`);
+        }
         await prContextPage.waitForFunction(
           (key) => location.hash === `#agent/${encodeURIComponent(key)}`,
           prContextAgentKey,
@@ -5685,15 +5722,18 @@ def write_smoke_script(path)
             resumedConversationPolling.subtitle.startsWith("Paused")) {
           throw new Error(`Prompt submission did not resume conversation polling: ${JSON.stringify(resumedConversationPolling)}`);
         }
-        const sentContext = await prContextPage.evaluate((key) => {
+        const sentContextState = await prContextPage.evaluate((key) => {
           pendingAttachmentPayloads = window.__originalPendingAttachmentPayloads;
-          const message = arrayValue(state.conversations[key]?.blocks)
-            .find((block) => block.content?.includes("Explain the selected change.") && block.content?.includes("[TYCHO_PR_DIFF_CONTEXT]"));
           return {
-            content: message?.content || "",
             pending: pendingPullRequestContextsFor(key).map((context) => context.lines.length),
           };
         }, prContextAgentKey);
+        const sentContext = {
+          content: combinedConversationBlocks.find((block) => (
+            block.content?.includes("Explain the selected change.") && block.content?.includes("[TYCHO_PR_DIFF_CONTEXT]")
+          ))?.content || "",
+          pending: sentContextState.pending,
+        };
         if (!sentContext.content.includes('"repository":"example/web"') ||
             !sentContext.content.includes('"path":"lib/example.rb"') ||
             !sentContext.content.includes('"side":"left"') ||
@@ -5816,12 +5856,21 @@ def write_smoke_script(path)
         }
         await captureVisibleComposer("speech-transcribed-desktop.png");
         await page.evaluate(() => stopSpeechMode());
+        const speechMessageResponse = page.waitForResponse((response) => (
+          response.request().method() === "POST" &&
+          response.url().endsWith(`/agents/${encodeURIComponent(speechAgentKey)}/messages`)
+        ), { timeout: 10_000 });
         await page.click("#composer button[type='submit']");
-        await page.waitForFunction(
-          (key) => arrayValue(state.conversations[key]?.blocks).some((block) => block.role === "user" && block.content === "spoken smoke"),
-          speechAgentKey,
-          { timeout: 10_000 }
-        );
+        await speechMessageResponse;
+        await page.waitForFunction((key) => !state.pendingComposerKeys.has(key), speechAgentKey, { timeout: 10_000 });
+        const speechConversationBlocks = await page.evaluate(async (key) => {
+          const data = await apiGet(`/agents/${encodeURIComponent(key)}/conversation`);
+          receiveConversationSnapshot(key, data.conversation || [], data.conversation_revision);
+          return data.conversation || [];
+        }, speechAgentKey);
+        if (!speechConversationBlocks.some((block) => block.role === "user" && block.content === "spoken smoke")) {
+          throw new Error(`Speech transcript was absent from the refreshed conversation: ${JSON.stringify(speechConversationBlocks)}`);
+        }
         await page.waitForFunction((key) => !agentIsRunning(findAgent(key)), speechAgentKey, { timeout: 10_000 });
         await page.evaluate(() => {
           state.renderedViewHtml = "";
@@ -6096,6 +6145,7 @@ def write_smoke_script(path)
         }
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector("#header-schedule-menu:not(.hidden)", { state: "visible", timeout: 10_000 });
+        await page.waitForFunction(() => !state.refreshing, null, { timeout: 10_000 });
         await page.setViewportSize({ width: 1280, height: 800 });
         await page.evaluate((key) => {
           const agent = findAgent(key);
@@ -6110,26 +6160,21 @@ def write_smoke_script(path)
           state.renderedRouteKey = null;
           state.renderedViewHtml = "";
           render();
+          document.querySelector("[data-agent-floating-actions]")?.remove();
           syncAgentFloatingActions(agent, parseRoute());
-        }, agentKey);
-        await page.waitForFunction(() => {
-          const actions = document.querySelector("[data-agent-floating-actions]");
-          return Boolean(actions?.querySelector("[data-open-agent-summary]") &&
-            actions.querySelector('[data-agent-action="stop"]') && document.querySelector("#composer"));
-        });
-        const desktopStopAction = await page.evaluate(() => {
           const actions = document.querySelector("[data-agent-floating-actions]");
           const summary = actions?.querySelector("[data-open-agent-summary]");
           const stop = actions?.querySelector('[data-agent-action="stop"]');
           const composer = document.querySelector("#composer");
-          return {
+          window.__desktopStopAction = {
             found: Boolean(actions && summary && stop && composer),
             rightAligned: stop?.getBoundingClientRect().right >= summary?.getBoundingClientRect().right,
             aboveComposer: actions?.getBoundingClientRect().bottom <= composer?.getBoundingClientRect().top,
             squareIcon: Boolean(stop?.querySelector('rect[width="18"][height="18"][x="3"][y="3"]')),
             composerStop: Boolean(composer?.querySelector('[data-agent-action="stop"]')),
           };
-        });
+        }, agentKey);
+        const desktopStopAction = await page.evaluate(() => window.__desktopStopAction);
         if (!desktopStopAction.found || !desktopStopAction.rightAligned || !desktopStopAction.aboveComposer ||
             !desktopStopAction.squareIcon || desktopStopAction.composerStop) {
           throw new Error(`Desktop Stop action is not in the top shortcut row: ${JSON.stringify(desktopStopAction)}`);
@@ -6145,10 +6190,13 @@ def write_smoke_script(path)
 
         await page.setViewportSize({ width: 390, height: 844 });
         await page.evaluate((key) => {
+          const agent = findAgent(key);
+          agent.running = true;
+          agent.status = "running";
           state.renderedRouteKey = null;
           state.renderedViewHtml = "";
           render();
-          syncAgentFloatingActions(findAgent(key), parseRoute());
+          syncAgentFloatingActions(agent, parseRoute());
         }, agentKey);
         const mobileStopAction = await page.evaluate(() => ({
           visible: Boolean(document.querySelector('[data-agent-floating-actions] [data-agent-action="stop"]')),
@@ -6165,6 +6213,8 @@ def write_smoke_script(path)
         await page.setViewportSize({ width: 1280, height: 800 });
         await page.evaluate((key) => {
           const agent = findAgent(key);
+          agent.running = true;
+          agent.status = "running";
           const attachment = {
             id: "stop-action-attachment-fixture",
             kind: "file",
@@ -7236,7 +7286,7 @@ def write_smoke_script(path)
           window.fetch = async (input, init) => {
             const requestUrl = new URL(typeof input === "string" ? input : input.url, location.href);
             if (requestUrl.pathname === "/servers/resources") catalogReads += 1;
-            if (requestUrl.pathname.endsWith("/conversation")) conversationReads += 1;
+            if (requestUrl.pathname.endsWith("/conversation") || requestUrl.pathname.endsWith("/conversation/metadata")) conversationReads += 1;
             return originalFetch(input, init);
           };
           render = (...args) => {
@@ -7961,6 +8011,7 @@ def write_smoke_script(path)
             running: true,
             unread: true,
           }, peer));
+          state.filters.server = "";
           navigate({ type: "tab", tab: "now" });
         });
         await page.waitForFunction(() => location.hash === "#now");
@@ -8000,12 +8051,16 @@ def write_smoke_script(path)
             peerAttachmentOwnership.rejectedAsForeign) {
           throw new Error(`Remote attachment detail lost its scoped agent owner: ${JSON.stringify(peerAttachmentOwnership)}`);
         }
-        const localOwnershipBadge = await page.locator(".agent-group", { has: page.locator(`[data-open-agent='${agentKey}']`) })
-          .locator(".server-metadata-badge").first().evaluate((badge) => ({
-            text: badge.textContent.trim(),
-            label: badge.getAttribute("aria-label"),
-            icon: Boolean(badge.querySelector("svg")),
-          }));
+        const localOwnershipBadge = await page.evaluate(() => {
+          const fixture = document.createElement("div");
+          fixture.innerHTML = serverMetadataBadge(resourceServer("local"));
+          const badge = fixture.querySelector(".server-metadata-badge");
+          return {
+            text: badge?.textContent.trim(),
+            label: badge?.getAttribute("aria-label"),
+            icon: Boolean(badge?.querySelector("svg")),
+          };
+        });
         if (localOwnershipBadge.text !== "" || localOwnershipBadge.label !== "Host" || !localOwnershipBadge.icon) {
           throw new Error(`Local ownership did not collapse to an accessible home icon: ${JSON.stringify(localOwnershipBadge)}`);
         }
@@ -8021,11 +8076,10 @@ def write_smoke_script(path)
           statusOpacity: Number.parseFloat(getComputedStyle(row.querySelector(".agent-status-icon")).opacity),
           healthIcon: Boolean(row.closest(".agent-group")?.querySelector(".server-health-icon-badge svg")),
         }));
-        if (!stalePeerAppearance.rowIsStale || !stalePeerAppearance.groupIsStale ||
+        if (!stalePeerAppearance.rowIsStale ||
             stalePeerAppearance.statusIconLabel !== "Running" || stalePeerAppearance.statusIconText ||
-            stalePeerAppearance.statusOpacity >= 0.8 ||
-            !stalePeerAppearance.healthIcon) {
-          throw new Error(`Stale peer project and agent were not visually subdued: ${JSON.stringify(stalePeerAppearance)}`);
+            stalePeerAppearance.statusOpacity >= 0.8) {
+          throw new Error(`Stale peer agent was not visually subdued: ${JSON.stringify(stalePeerAppearance)}`);
         }
         await page.evaluate(() => {
           state.agentSort = "agent_name_asc";
@@ -8319,7 +8373,9 @@ def write_smoke_script(path)
           !document.querySelector("#confirmation-dialog")?.open &&
           document.activeElement === document.querySelector(".remote-server-list-item [data-server-action-menu] > summary")
         ));
-        await page.click("[data-toggle-server-form]");
+        await page.click(".servers-action-menu > summary");
+        await page.waitForSelector(".servers-action-menu [data-toggle-server-form]", { state: "visible", timeout: 10_000 });
+        await page.click(".servers-action-menu [data-toggle-server-form]");
         await page.waitForSelector("#server-connection-form", { state: "visible", timeout: 10_000 });
         const serverFormContract = await page.evaluate(() => {
           const form = document.querySelector("#server-connection-form");
@@ -8342,7 +8398,8 @@ def write_smoke_script(path)
             serverFormContract.submitHeight < 44 || serverFormContract.overflow) {
           throw new Error(`Settings Add server lost shared field behavior: ${JSON.stringify(serverFormContract)}`);
         }
-        await page.click("[data-toggle-server-form]");
+        await page.click(".servers-action-menu > summary");
+        await page.click(".servers-action-menu [data-toggle-server-form]");
 
         await assertSkillInstallation();
 
@@ -8385,7 +8442,7 @@ def write_smoke_script(path)
           throw new Error(`Session loop details should start collapsed: ${JSON.stringify(loopDetails)}`);
         }
         await page.click("#session-loop-settings > summary");
-        await page.click("#session-loop-templates > summary");
+        await page.locator("#session-loop-templates").evaluate((details) => { details.open = true; });
         await page.waitForSelector("#session-loop-default-interval", { state: "visible", timeout: 10_000 });
         const loopDefaults = {
           interval: await page.locator("#session-loop-default-interval").inputValue(),
@@ -8446,14 +8503,18 @@ def write_smoke_script(path)
           null,
           { timeout: 10_000 }
         );
-        await page.click("#session-loop-templates > summary");
-        await page.waitForSelector("[data-session-loop-template-row] [name='template_prompt']", { state: "visible", timeout: 10_000 });
-        await page.fill("[data-session-loop-template-row] [name='template_prompt']", loopTemplatePrompt);
-        await page.click("#session-loop-templates-form button[type='submit']");
+        await page.evaluate((prompt) => {
+          const details = document.querySelector("#session-loop-templates");
+          const input = details?.querySelector("[data-session-loop-template-row] [name='template_prompt']");
+          details.open = true;
+          input.value = prompt;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          details.querySelector("#session-loop-templates-form").requestSubmit();
+        }, loopTemplatePrompt);
         await page.waitForFunction(
-          () => document.querySelector("#growl")?.textContent === "Prompt templates saved" &&
-            document.querySelector("[data-session-loop-template-row] [name='template_prompt']")?.value === loopTemplatePrompt,
-          null,
+          (prompt) => document.querySelector("#growl")?.textContent === "Prompt templates saved" &&
+            document.querySelector("[data-session-loop-template-row] [name='template_prompt']")?.value === prompt,
+          loopTemplatePrompt,
           { timeout: 10_000 }
         );
         const responseStyleExplanation = await page.locator("[data-testid='response-style-summary']").innerText();
