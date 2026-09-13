@@ -916,16 +916,27 @@ h3 {
   box-shadow: none;
 }
 
+.switcher-agent-row {
+  --switcher-avatar-size: 34px;
+  grid-template-columns: var(--switcher-avatar-size) minmax(0, 1fr) auto;
+  border-left-width: 3px;
+}
+
 .switcher-fred-row {
   border-left: 3px solid var(--accent);
 }
 
 .fred-switcher-avatar {
-  width: 2rem;
-  height: 2rem;
+  width: var(--switcher-avatar-size);
+  height: var(--switcher-avatar-size);
   border-radius: 50%;
   object-fit: cover;
   flex: 0 0 auto;
+}
+
+.switcher-agent-row > .agent-status-icon {
+  width: var(--switcher-avatar-size);
+  height: var(--switcher-avatar-size);
 }
 
 .unread-agents-panel .switcher-agent-row.selected {
