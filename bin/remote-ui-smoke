@@ -95,6 +95,9 @@ def write_fixture(dir)
   FileUtils.mkdir_p(File.join(workspace, "src"))
   FileUtils.mkdir_p(File.join(workspace, "node_modules", "fixture"))
   File.write(File.join(workspace, "docs", "guide.md"), "# Workspace guide\n\nEditable Markdown preview.\n")
+  File.write(File.join(workspace, "README.md"), "# Workspace fixture\n")
+  File.write(File.join(workspace, "docs", "readme-notes.md"), "Ranked prefix match.\n")
+  File.write(File.join(workspace, "docs", "relevant-and-message.md"), "Ranked fuzzy match.\n")
   File.write(File.join(workspace, "fast", "fast.txt"), "fast\n")
   File.write(File.join(workspace, "slow", "slow.txt"), "slow\n")
   File.write(File.join(workspace, "src", "app.rb"), "puts \"fixture\"\n")
@@ -479,6 +482,7 @@ def write_smoke_script(path)
       const captureDir = process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "";
       const beforeCapture = process.env.TYCHO_REMOTE_UI_BEFORE_CAPTURE || "";
       const skillsOnly = process.env.TYCHO_REMOTE_UI_SKILLS_ONLY === "1";
+      const workspaceOnly = process.env.TYCHO_REMOTE_UI_WORKSPACE_ONLY === "1";
       const titleCopyOnly = process.env.TYCHO_REMOTE_UI_TITLE_COPY_ONLY === "1";
       const summaryAttachmentsOnly = process.env.TYCHO_REMOTE_UI_SUMMARY_ATTACHMENTS_ONLY === "1";
       const draft = "Remote UI smoke draft " + Date.now();
@@ -1168,7 +1172,7 @@ def write_smoke_script(path)
         }
       }
 
-      await assertPersonalAssistantConversationShell();
+      if (!workspaceOnly) await assertPersonalAssistantConversationShell();
 
       async function assertPersonalAssistantPhase1() {
         const fredBackendUrl = process.env.TYCHO_REMOTE_UI_FRED_PHASE1_BACKEND_URL;
@@ -2065,10 +2069,105 @@ def write_smoke_script(path)
         await page.setViewportSize({ width: 1440, height: 900 });
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-browser-desktop.png"), fullPage: true });
 
-        const docsButton = page.locator("[data-workspace-directory='docs']");
-        await docsButton.focus();
-        await page.keyboard.press("Enter");
+        const workspaceSearchPattern = "**/projects/web/workspace/search?*";
+        const workspaceSearchRequests = [];
+        await page.route(workspaceSearchPattern, async (route) => {
+          const requestUrl = new URL(route.request().url());
+          const query = requestUrl.searchParams.get("query");
+          workspaceSearchRequests.push({ query, at: Date.now() });
+          if (query === "readme") await new Promise((resolve) => setTimeout(resolve, 150));
+          if (query === "guide") await new Promise((resolve) => setTimeout(resolve, 850));
+          if (query === "forced-error") {
+            await route.fulfill({
+              status: 500,
+              contentType: "application/json",
+              body: JSON.stringify({ error: "Forced workspace search failure", details: { code: "offline" } }),
+            });
+            return;
+          }
+          await route.continue();
+        });
+
+        const searchInput = page.locator("#workspace-search-input");
+        await searchInput.focus();
+        const rapidTypingStartedAt = Date.now();
+        await searchInput.type("readme", { delay: 60 });
+        await page.waitForTimeout(520);
+        if (!(await page.locator(".workspace-search-status").innerText()).includes("Searching")) {
+          throw new Error("Workspace search loading state was not visible");
+        }
+        await page.waitForSelector("[data-workspace-file='README.md']", { state: "visible", timeout: 10_000 });
+        const rankedSearchContract = await page.evaluate(() => ({
+          labels: Array.from(document.querySelectorAll(".workspace-entry-name strong"), (node) => node.textContent),
+          paths: Array.from(document.querySelectorAll(".workspace-entry-name small"), (node) => node.textContent),
+          listLabel: document.querySelector(".workspace-entry-list")?.getAttribute("aria-label"),
+          status: document.querySelector(".workspace-search-status")?.textContent,
+        }));
+        const readmeRequests = workspaceSearchRequests.filter((request) => request.query === "readme");
+        if (readmeRequests.length !== 1 || readmeRequests[0].at - rapidTypingStartedAt < 750 ||
+            rankedSearchContract.paths[0] !== "README.md" ||
+            rankedSearchContract.paths[1] !== "docs/readme-notes.md" ||
+            !rankedSearchContract.listLabel?.includes("Search results for readme") ||
+            !rankedSearchContract.status?.includes("matches")) {
+          throw new Error(`Workspace ranked/debounced search failed: ${JSON.stringify({ readmeRequests, rapidTypingStartedAt, rankedSearchContract })}`);
+        }
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-search-desktop.png"), fullPage: true });
+
+        await searchInput.fill("no-such-workspace-file");
+        await page.waitForFunction(() => document.querySelector(".workspace-list-pane")?.textContent.includes("No matching files"));
+        await searchInput.fill("forced-error");
+        await page.waitForFunction(() => document.querySelector(".workspace-list-pane")?.textContent.includes("Workspace offline"));
+        const errorSearchContract = await page.evaluate(() => ({
+          status: document.querySelector(".workspace-search-status")?.textContent,
+          error: document.querySelector(".workspace-list-pane")?.textContent,
+        }));
+        if (errorSearchContract.status !== "Search failed" || !errorSearchContract.error?.includes("Workspace offline")) {
+          throw new Error(`Workspace search error state failed: ${JSON.stringify(errorSearchContract)}`);
+        }
+
+        await searchInput.fill("guide");
+        await page.waitForTimeout(550);
+        await searchInput.fill("app");
+        await page.waitForSelector("[data-workspace-file='src/app.rb']", { state: "visible", timeout: 10_000 });
+        await page.waitForTimeout(900);
+        const staleSearchContract = await page.evaluate(() => ({
+          value: document.querySelector("#workspace-search-input")?.value,
+          appVisible: Boolean(document.querySelector("[data-workspace-file='src/app.rb']")),
+          guideVisible: Boolean(document.querySelector("[data-workspace-file='docs/guide.md']")),
+        }));
+        if (staleSearchContract.value !== "app" || !staleSearchContract.appVisible || staleSearchContract.guideVisible) {
+          throw new Error(`Stale workspace search response replaced current results: ${JSON.stringify(staleSearchContract)}`);
+        }
+
+        await searchInput.fill("guide");
+        await page.waitForTimeout(550);
+        await searchInput.fill("");
+        await page.waitForSelector("[data-workspace-directory='docs']", { state: "visible", timeout: 10_000 });
+        await page.waitForTimeout(900);
+        const clearedSearchContract = await page.evaluate(() => ({
+          value: document.querySelector("#workspace-search-input")?.value,
+          docsVisible: Boolean(document.querySelector("[data-workspace-directory='docs']")),
+          guideVisible: Boolean(document.querySelector("[data-workspace-file='docs/guide.md']")),
+          status: document.querySelector(".workspace-search-status")?.textContent,
+        }));
+        if (clearedSearchContract.value || !clearedSearchContract.docsVisible || clearedSearchContract.guideVisible || clearedSearchContract.status) {
+          throw new Error(`Clearing workspace search did not restore the directory: ${JSON.stringify(clearedSearchContract)}`);
+        }
+
+        await searchInput.fill("docs");
+        await page.waitForSelector("[data-workspace-directory='docs']", { state: "visible", timeout: 10_000 });
+        await page.click("[data-workspace-directory='docs']");
         await page.waitForSelector("[data-workspace-file='docs/guide.md']", { state: "visible", timeout: 10_000 });
+        const directorySearchContract = await page.evaluate(() => ({
+          route: parseRoute(),
+          value: document.querySelector("#workspace-search-input")?.value,
+          guideVisible: Boolean(document.querySelector("[data-workspace-file='docs/guide.md']")),
+        }));
+        if (directorySearchContract.route.path !== "docs" || directorySearchContract.value || !directorySearchContract.guideVisible) {
+          throw new Error(`Directory navigation did not clear workspace search: ${JSON.stringify(directorySearchContract)}`);
+        }
+        await page.unroute(workspaceSearchPattern);
+
         await page.click("[data-workspace-file='docs/guide.md']");
         await page.waitForSelector(".markdown-viewer", { state: "visible", timeout: 10_000 });
         const previewContract = await page.evaluate(() => ({
@@ -2106,7 +2205,27 @@ Saved safely.
         }
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-browser-mobile.png"), fullPage: true });
 
+        await page.click("[data-close-workspace-preview]");
         await page.click("[data-workspace-directory='']");
+        await page.waitForSelector("[data-workspace-file='README.md']", { state: "visible", timeout: 10_000 });
+        await page.fill("#workspace-search-input", "readme");
+        await page.waitForFunction(() =>
+          document.querySelector(".workspace-entry-list")?.getAttribute("aria-label") === "Search results for readme" &&
+          document.querySelector(".workspace-search-status")?.textContent.includes("matches"));
+        const mobileSearchContract = await page.evaluate(() => ({
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          listWidth: document.querySelector(".workspace-entry-list")?.getBoundingClientRect().width,
+          viewportWidth: document.documentElement.clientWidth,
+          firstPath: document.querySelector(".workspace-entry-name small")?.textContent,
+        }));
+        if (mobileSearchContract.overflow || mobileSearchContract.listWidth > mobileSearchContract.viewportWidth ||
+            mobileSearchContract.firstPath !== "README.md") {
+          throw new Error(`Workspace mobile search layout failed: ${JSON.stringify(mobileSearchContract)}`);
+        }
+        await page.waitForSelector(".growl", { state: "hidden", timeout: 10_000 });
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-search-mobile.png"), fullPage: true });
+
+        await page.fill("#workspace-search-input", "");
         await page.waitForSelector("[data-workspace-file='diagram.png']", { state: "visible", timeout: 10_000 });
         await page.click("[data-workspace-file='diagram.png']");
         await page.waitForSelector(".workspace-image-preview .attachment-image-viewer", { state: "visible", timeout: 10_000 });
@@ -2152,13 +2271,19 @@ Saved safely.
           throw new Error(`Workspace race-safe navigation failed: ${JSON.stringify(raceContract)}`);
         }
         const unexpectedErrors = errors.slice(consoleErrorStart).filter((message) =>
-          !message.includes("status of 415") && !message.includes("status of 413"));
+          !message.includes("status of 415") && !message.includes("status of 413") && !message.includes("status of 500"));
         errors.splice(consoleErrorStart, errors.length - consoleErrorStart, ...unexpectedErrors);
       }
 
       try {
         await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
         await assertNowStatusIcons();
+        if (workspaceOnly) {
+          await assertProjectWorkspaceBrowser();
+          if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
+          console.log("remote-ui-workspace-smoke: ok");
+          return;
+        }
         if (skillsOnly) {
           await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
           await page.waitForSelector("#settings-skills", { state: "visible", timeout: 10_000 });
@@ -8359,6 +8484,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     end
     if ENV["TYCHO_REMOTE_UI_SKILLS_ONLY"].to_s == "1"
       smoke_env["TYCHO_REMOTE_UI_SKILLS_ONLY"] = "1"
+    end
+    if ENV["TYCHO_REMOTE_UI_WORKSPACE_ONLY"].to_s == "1"
+      smoke_env["TYCHO_REMOTE_UI_WORKSPACE_ONLY"] = "1"
     end
     capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
     unless capture_dir.empty?
