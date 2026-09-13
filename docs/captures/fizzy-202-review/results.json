@@ -1,0 +1,86 @@
+{
+  "desktop": {
+    "viewport": "desktop",
+    "input": "wheel",
+    "initial": {
+      "overflow": true,
+      "scrollHeight": 916,
+      "clientHeight": 358,
+      "scrollTop": 0,
+      "parent": "summary-attachment-overlay-root",
+      "role": "region",
+      "label": "Summary attachments",
+      "touchAction": "pan-y",
+      "top": 98.78125,
+      "left": 281.671875,
+      "above": true,
+      "anchored": true
+    },
+    "afterPointer": {
+      "scrollTop": 180,
+      "parent": "summary-attachment-overlay-root",
+      "focused": true,
+      "top": 98.78125,
+      "left": 281.671875
+    },
+    "afterKeyboard": 498,
+    "afterRefresh": {
+      "open": "true",
+      "scrollTop": 498,
+      "parent": "summary-attachment-overlay-root",
+      "top": 98.78125,
+      "left": 281.671875
+    },
+    "ancestorScroll": {
+      "pageScrolled": true,
+      "moved": false,
+      "anchored": false,
+      "parent": "summary-attachment-overlay-root"
+    },
+    "finalPosition": {
+      "anchored": true
+    }
+  },
+  "mobile": {
+    "viewport": "mobile",
+    "input": "touch",
+    "initial": {
+      "overflow": true,
+      "scrollHeight": 966,
+      "clientHeight": 358,
+      "scrollTop": 0,
+      "parent": "summary-attachment-overlay-root",
+      "role": "region",
+      "label": "Summary attachments",
+      "touchAction": "pan-y",
+      "top": 130.78125,
+      "left": 36,
+      "above": true,
+      "anchored": true
+    },
+    "afterPointer": {
+      "scrollTop": 182,
+      "parent": "summary-attachment-overlay-root",
+      "focused": true,
+      "top": 130.78125,
+      "left": 36
+    },
+    "afterKeyboard": 500,
+    "afterRefresh": {
+      "open": "true",
+      "scrollTop": 500,
+      "parent": "summary-attachment-overlay-root",
+      "top": 130.78125,
+      "left": 36
+    },
+    "ancestorScroll": {
+      "pageScrolled": true,
+      "moved": false,
+      "anchored": false,
+      "parent": "summary-attachment-overlay-root"
+    },
+    "finalPosition": {
+      "anchored": true
+    }
+  }
+}

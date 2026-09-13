@@ -7454,16 +7454,19 @@ module RemoteServerTest
     assert(js[:body].include?("Choose summary attachment"),
            "expected Conversation summary attachment menus to be accessible")
     assert(js[:body].include?("data-preserve-scroll data-state-key=\"summary-attachment-menu-list:") &&
-           js[:body].include?("tabindex=\"0\" aria-label=\"Summary attachments\""),
+           js[:body].include?("role=\"region\" tabindex=\"0\" aria-label=\"Summary attachments\""),
            "expected Summary attachment menus to retain scroll position and accept keyboard focus")
+    assert(js[:body].include?("summaryAttachmentScroll: {}") &&
+           js[:body].scan("[data-summary-attachment-menu-popover][data-state-key]").length >= 2,
+           "expected refresh state capture to preserve portaled Summary attachment scroll")
     assert(js[:body].include?('data-state-key="summary-attachment-menu:${escapeAttr(summaryId)}"'),
            "expected Conversation summary attachment menus to preserve open state across polling")
     assert(js[:body].include?("function repositionOpenSummaryAttachmentMenus"),
            "expected restored summary attachment menus to recompute viewport-safe popover coordinates")
     assert(js[:body].include?("function repositionSummaryAttachmentMenusOnViewportScroll") &&
-           js[:body].include?("if (event.target !== document && event.target !== document.documentElement) return;") &&
+           js[:body].include?("event.target.closest(\"[data-summary-attachment-menu-popover]\")") &&
            js[:body].include?("if (popover.parentElement !== els.summaryAttachmentOverlay)"),
-           "expected Summary attachment scrolling to avoid reparenting or repositioning the popover")
+           "expected Summary attachment scrolling to avoid repositioning itself while retaining ancestor-scroll positioning")
     assert(js[:body].include?("closeSummaryAttachmentMenus();"),
            "expected Summary attachment menus to close on outside clicks")
     assert(js[:body].include?("renderSummaryAttachmentList"),
