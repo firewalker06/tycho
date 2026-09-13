@@ -5636,6 +5636,8 @@ module RemoteServerTest
     assert(css[:body].include?(".summary-attachment-menu"), "expected Conversation summaries to style attachment menus")
     assert(css[:body].include?(".summary-attachment-menu-popover"),
            "expected Conversation summary attachments to open as a menu")
+    assert(css[:body].include?("touch-action: pan-y;"),
+           "expected Summary attachment menus to allow native vertical touch scrolling")
     assert(css[:body].include?(".summary-attachment-overlay-root") &&
            css[:body].include?("position: fixed") &&
            css[:body].include?("z-index: var(--ds-z-dropdown)"),
@@ -7451,10 +7453,17 @@ module RemoteServerTest
            "expected Conversation summary attachments to use a menu trigger")
     assert(js[:body].include?("Choose summary attachment"),
            "expected Conversation summary attachment menus to be accessible")
+    assert(js[:body].include?("data-preserve-scroll data-state-key=\"summary-attachment-menu-list:") &&
+           js[:body].include?("tabindex=\"0\" aria-label=\"Summary attachments\""),
+           "expected Summary attachment menus to retain scroll position and accept keyboard focus")
     assert(js[:body].include?('data-state-key="summary-attachment-menu:${escapeAttr(summaryId)}"'),
            "expected Conversation summary attachment menus to preserve open state across polling")
     assert(js[:body].include?("function repositionOpenSummaryAttachmentMenus"),
            "expected restored summary attachment menus to recompute viewport-safe popover coordinates")
+    assert(js[:body].include?("function repositionSummaryAttachmentMenusOnViewportScroll") &&
+           js[:body].include?("if (event.target !== document && event.target !== document.documentElement) return;") &&
+           js[:body].include?("if (popover.parentElement !== els.summaryAttachmentOverlay)"),
+           "expected Summary attachment scrolling to avoid reparenting or repositioning the popover")
     assert(js[:body].include?("closeSummaryAttachmentMenus();"),
            "expected Summary attachment menus to close on outside clicks")
     assert(js[:body].include?("renderSummaryAttachmentList"),

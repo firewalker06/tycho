@@ -3592,17 +3592,17 @@ Saved safely.
         await agentsRegressionPage.setViewportSize({ width: 390, height: 844 });
         await agentsRegressionPage.evaluate((key) => {
           const agent = findAgent(key);
-          const attachment = {
-            id: "summary-menu-layout-fixture",
+          const attachments = Array.from({ length: 12 }, (_, index) => ({
+            id: `summary-menu-layout-fixture-${index + 1}`,
             kind: "file",
             type: "file",
-            title: "2026-08-16 journal draft",
-            path: "/tmp/2026-08-16-Mixed-IDSW_Submission_Chart_And_Tycho_Event_Journal.md",
-            blob_path: "/attachments/summary-menu-layout-fixture/blob",
+            title: `2026-08-${String(index + 1).padStart(2, "0")} journal draft`,
+            path: `/tmp/2026-08-${String(index + 1).padStart(2, "0")}-Mixed-IDSW_Submission_Chart_And_Tycho_Event_Journal.md`,
+            blob_path: `/attachments/summary-menu-layout-fixture-${index + 1}/blob`,
             size: 3072,
-          };
-          agent.attachments = [...(agent.attachments || []).filter((item) => item.id !== attachment.id), attachment];
-          state.attachmentDetails[attachment.id] = attachment;
+          }));
+          agent.attachments = [...(agent.attachments || []).filter((item) => !item.id.startsWith("summary-menu-layout-fixture-")), ...attachments];
+          attachments.forEach((attachment) => { state.attachmentDetails[attachment.id] = attachment; });
           state.conversations[key] = {
             revision: agent.revision,
             loaded: true,
@@ -3615,7 +3615,7 @@ Saved safely.
                 summary_id: "summary-menu-layout",
                 run_number: 20,
                 status: "input_required",
-                attachments: [attachment],
+                attachments,
               },
             }],
           };
@@ -3646,16 +3646,41 @@ Saved safely.
             headerZIndex: Number.parseInt(getComputedStyle(document.querySelector(".app-header")).zIndex, 10),
             dockZIndex: Number.parseInt(getComputedStyle(document.querySelector(".agent-dock")).zIndex, 10),
             topmost: pointElement?.closest(".summary-attachment-menu-popover") === popover,
+            scrollHeight: popover?.scrollHeight,
+            clientHeight: popover?.clientHeight,
+            touchAction: getComputedStyle(popover).touchAction,
           };
         });
         const summaryMenu = summaryAttachmentMenuContract;
         if (!summaryMenu.trigger || !summaryMenu.popover || !summaryMenu.item || !summaryMenu.above ||
             summaryMenu.popover.left < 12 || summaryMenu.popover.right > summaryMenu.viewport.width - 12 ||
             summaryMenu.popover.bottom > summaryMenu.trigger.top - 7 || summaryMenu.popover.top < 0 ||
-            summaryMenu.popover.height > summaryMenu.item.height + 16 ||
+            summaryMenu.popover.height >= summaryMenu.scrollHeight ||
             summaryMenu.zIndex <= summaryMenu.headerZIndex || summaryMenu.zIndex <= summaryMenu.dockZIndex ||
-            !summaryMenu.topmost) {
+            !summaryMenu.topmost || summaryMenu.touchAction !== "pan-y") {
           throw new Error(`Mobile summary attachment menu lost content sizing, viewport placement, or overlay stacking: ${JSON.stringify(summaryMenu)}`);
+        }
+        const summaryPopover = agentsRegressionPage.locator(".summary-attachment-menu-popover");
+        await summaryPopover.focus();
+        await summaryPopover.hover();
+        await agentsRegressionPage.mouse.wheel(0, 160);
+        const summaryAttachmentScrollContract = await agentsRegressionPage.evaluate(() => {
+          const popover = document.querySelector(".summary-attachment-menu-popover");
+          return {
+            scrollTop: popover?.scrollTop || 0,
+            pageTop: window.scrollY,
+            focused: document.activeElement === popover,
+          };
+        });
+        if (summaryAttachmentScrollContract.scrollTop <= 0 ||
+            summaryAttachmentScrollContract.pageTop !== 0 ||
+            !summaryAttachmentScrollContract.focused) {
+          throw new Error(`Summary attachment menu did not retain independent wheel scrolling: ${JSON.stringify(summaryAttachmentScrollContract)}`);
+        }
+        await summaryPopover.press("PageDown");
+        const summaryAttachmentKeyboardScroll = await agentsRegressionPage.evaluate(() => document.querySelector(".summary-attachment-menu-popover")?.scrollTop || 0);
+        if (summaryAttachmentKeyboardScroll <= summaryAttachmentScrollContract.scrollTop) {
+          throw new Error(`Summary attachment menu did not support keyboard scrolling: ${JSON.stringify({ before: summaryAttachmentScrollContract.scrollTop, after: summaryAttachmentKeyboardScroll })}`);
         }
         if (captureDir) {
           await agentsRegressionPage.screenshot({ path: path.join(captureDir, "summary-attachment-menu-mobile.png") });
