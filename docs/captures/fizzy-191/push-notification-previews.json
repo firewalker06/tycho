@@ -1,0 +1,72 @@
+{
+  "captured_at": "2026-09-13T12:00:00Z",
+  "source": "test/push_notification_contract_test.rb",
+  "previews": [
+    {
+      "variant": "agent_input_required",
+      "title": "Input needed",
+      "body": "Release check: Confirm the rollout. (2 unread agents)",
+      "url": "/#agent/release-check"
+    },
+    {
+      "variant": "agent_succeeded",
+      "title": "Done",
+      "body": "Release check: Confirm the rollout. (2 unread agents)",
+      "url": "/#agent/release-check"
+    },
+    {
+      "variant": "agent_failed",
+      "title": "Failed",
+      "body": "Release check: Confirm the rollout. (2 unread agents)",
+      "url": "/#agent/release-check"
+    },
+    {
+      "variant": "agent_stopped",
+      "title": "Stopped",
+      "body": "Release check: Confirm the rollout. (2 unread agents)",
+      "url": "/#agent/release-check"
+    },
+    {
+      "variant": "agent_blocked",
+      "title": "Blocked",
+      "body": "Release check: Confirm the rollout. (2 unread agents)",
+      "url": "/#agent/release-check"
+    },
+    {
+      "variant": "fred_input_required",
+      "title": "Input needed",
+      "body": "FRED: Choose a release path.",
+      "url": "/#personal-assistant"
+    },
+    {
+      "variant": "schedule_failed",
+      "title": "Failed",
+      "body": "Daily Memory: Confirm archive retention. Schedule stopped.",
+      "url": "/#agent/memory-agent"
+    },
+    {
+      "variant": "schedule_input_required",
+      "title": "Input needed",
+      "body": "Daily Memory: Confirm archive retention. Schedule stopped.",
+      "url": "/#agent/memory-agent"
+    },
+    {
+      "variant": "schedule_first_success",
+      "title": "Done",
+      "body": "Daily Memory: first run succeeded. Next run: 2026-09-14 09:30.",
+      "url": "/#agent/memory-agent"
+    },
+    {
+      "variant": "schedule_recovery",
+      "title": "Recovered",
+      "body": "Daily Memory: succeeded after failure. Next run: 2026-09-14 09:30.",
+      "url": "/#agent/memory-agent"
+    },
+    {
+      "variant": "push_test",
+      "title": "Test notification",
+      "body": "Push notifications are working.",
+      "url": "/#setup"
+    }
+  ]
+}
