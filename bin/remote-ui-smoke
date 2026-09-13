@@ -3277,6 +3277,35 @@ def write_smoke_script(path)
           const control = document.querySelector(`.message-list > .agent-relationships [data-set-delegation-connection='${CSS.escape(key)}']`);
           return control?.getAttribute("aria-label") === "Disconnect delegation reports" && !document.body.innerText.includes("Reports disconnected");
         }, delegatedAgentKey, { timeout: 10_000 });
+        await page.evaluate((key) => {
+          state.conversations[key] = {
+            blocks: [{
+              kind: "run_summary",
+              content: "Delegated child completed without operator interruption.",
+              created_at: "2026-09-13T06:00:00Z",
+              metadata: {
+                summary_id: "delegated-suppression-summary",
+                run_number: 1,
+                status: "success",
+                notification_suppressed: true,
+                unread_suppressed: true,
+              },
+            }],
+          };
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+        }, delegatedAgentKey);
+        const delegatedSummarySuppression = await page.locator(".summary-suppression-indicator").evaluate((indicator) => ({
+          count: document.querySelectorAll(".summary-suppression-indicator").length,
+          label: indicator.getAttribute("aria-label"),
+          icon: Boolean(indicator.querySelector("svg.ui-icon path[d='m2 2 20 20']")),
+        }));
+        if (delegatedSummarySuppression.count !== 1 ||
+            delegatedSummarySuppression.label !== "Operator notifications and unread count suppressed" ||
+            !delegatedSummarySuppression.icon) {
+          throw new Error(`Delegated summary suppression indicator is not accessible or visually distinct: ${JSON.stringify(delegatedSummarySuppression)}`);
+        }
         if (captureDir) {
           await page.screenshot({ path: path.join(captureDir, "orchestration-child-desktop.png"), fullPage: false });
         }

@@ -1449,6 +1449,7 @@ def selected_screen_items
 
     def mark_agent_unread_if_needed(agent)
       return if agent.respond_to?(:no_action_needed?) && agent.no_action_needed?
+      return if agent.respond_to?(:suppresses_operator_attention?) && agent.suppresses_operator_attention?
 
       if agent_chat_visible_for?(agent)
         agent.mark_read!

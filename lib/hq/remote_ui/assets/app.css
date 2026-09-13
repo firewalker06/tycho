@@ -4705,6 +4705,18 @@ select {
   margin: 0;
 }
 
+.summary-suppression-indicator {
+  display: inline-flex;
+  vertical-align: text-bottom;
+  margin-left: 6px;
+  color: var(--text-muted);
+}
+
+.summary-suppression-indicator .ui-icon {
+  width: 15px;
+  height: 15px;
+}
+
 .summary-sections {
   display: grid;
   gap: 10px;

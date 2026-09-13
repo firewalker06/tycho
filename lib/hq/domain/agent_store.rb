@@ -92,7 +92,7 @@ module HQ
           changed = true
         end
         if was_running && !running_for_poll_event?(agent)
-          unless agent.no_action_needed?
+          unless agent.no_action_needed? || agent.suppresses_operator_attention?
             agent.mark_unread!
             changed = true
             events << PollEvent.new(

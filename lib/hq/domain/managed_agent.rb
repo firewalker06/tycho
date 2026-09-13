@@ -1218,6 +1218,14 @@ module HQ
       effective_status == "no_action_needed"
     end
 
+    # A parent-owned turn reports through the delegation coordinator. Its
+    # completion is not an operator-facing event, even if the child remains
+    # delegated after the turn ends. Use the per-run stamp rather than the
+    # relationship so a later user takeover still receives normal attention.
+    def suppresses_operator_attention?
+      last_run&.delegation_owner == "parent"
+    end
+
     def last_activity_at
       @finished_at || @started_at || @created_at
     end
@@ -2420,7 +2428,7 @@ module HQ
         summary: @summary,
         status: effective_status,
         created_at: run.finished_at || @finished_at || Time.now,
-        metadata: run_summary_metadata.merge("run_id" => durable_run_id(run)),
+        metadata: run_summary_metadata(run).merge("run_id" => durable_run_id(run)),
         event_id: "#{durable_run_id(run)}:run-summary"
       )
       HQ.hooks.publish("agent.memory.captured",
@@ -2457,11 +2465,15 @@ module HQ
       Digest::SHA256.hexdigest(seed)[0, 24]
     end
 
-    def run_summary_metadata
+    def run_summary_metadata(run)
       metadata = @structured_result.is_a?(Hash) ? @structured_result.dup : {}
       metadata["run_number"] = run_count
       metadata["_stream_sequence"] = current_run_log_lines.length + 1
       metadata["cost_snapshot"] = @cost_snapshot if @cost_snapshot.is_a?(Hash) && !@cost_snapshot.empty?
+      if run&.delegation_owner == "parent"
+        metadata["notification_suppressed"] = true
+        metadata["unread_suppressed"] = true
+      end
       metadata
     end
 

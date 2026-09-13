@@ -5295,6 +5295,7 @@ module HQ
 
     def agent_push_payload(agent, unread_count:)
       return nil if agent.respond_to?(:no_action_needed?) && agent.no_action_needed?
+      return nil if agent.respond_to?(:suppresses_operator_attention?) && agent.suppresses_operator_attention?
       return nil if agent.last_run_from_prompt_queue?
 
       status = agent.status
