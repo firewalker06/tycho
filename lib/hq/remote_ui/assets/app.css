@@ -4642,8 +4642,8 @@ select {
 
 .summary-suppression-indicator {
   display: inline-flex;
-  vertical-align: text-bottom;
-  margin-left: 6px;
+  flex: 0 0 auto;
+  align-items: center;
   color: var(--text-muted);
 }
 
