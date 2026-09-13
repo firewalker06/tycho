@@ -1855,9 +1855,11 @@ def write_smoke_script(path)
           route: parseRoute(),
           content: document.querySelector(".markdown-viewer")?.textContent,
           editVisible: Boolean(document.querySelector("[data-edit-workspace-file='docs/guide.md']")),
+          padding: getComputedStyle(document.querySelector(".workspace-preview-pane > .markdown-viewer")).padding,
         }));
         if (previewContract.route.path !== "docs" || previewContract.route.file !== "docs/guide.md" ||
-            !previewContract.content?.includes("Editable Markdown preview") || !previewContract.editVisible) {
+            !previewContract.content?.includes("Editable Markdown preview") || !previewContract.editVisible ||
+            previewContract.padding !== "14px") {
           throw new Error(`Workspace Markdown preview contract failed: ${JSON.stringify(previewContract)}`);
         }
         await page.click("[data-edit-workspace-file='docs/guide.md']");

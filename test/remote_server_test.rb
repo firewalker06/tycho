@@ -6768,8 +6768,10 @@ module RemoteServerTest
            js[:body].include?('apiPut(`/projects/${encodeURIComponent(projectKey)}/workspace/file`, { path, content, version })'),
            "expected workspace previews to reuse Markdown and image renderers and offer guarded plain-text editing")
     assert(css[:body].include?(".workspace-browser-grid") &&
+           css[:body].include?(".workspace-preview-pane > .markdown-viewer") &&
+           css[:body].include?("overflow: auto;\n  padding: 14px;") &&
            css[:body].include?("@media (max-width: 760px)"),
-           "expected workspace browsing to use responsive desktop and mobile layouts")
+           "expected workspace browsing to keep padded, scrollable Markdown previews responsive")
     assert(helpers_js[:body].include?('type: "projectWorkspace"') &&
            helpers_js[:body].include?('params.set("file", route.file)') &&
            helpers_js[:body].include?('project-workspace:${route.key}:${route.path || ""}:${route.file || ""}'),

@@ -3514,6 +3514,13 @@ select {
   white-space: pre;
 }
 
+.workspace-preview-pane > .markdown-viewer {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+}
+
 .workspace-preview-actions {
   display: flex;
   align-items: center;
