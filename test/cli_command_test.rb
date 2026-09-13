@@ -101,8 +101,9 @@ module CLICommandTest
         assert(inline_auth.fetch(:status).success? &&
                !inline_auth.fetch(:stdout).include?(token) && !inline_auth.fetch(:stderr).include?(token),
                "expected inline token auth without credential output")
-        assert(inline_auth.fetch(:stderr).include?("removed in v0.11.0"),
-               "expected the inline fallback to warn about its removal")
+        assert(inline_auth.fetch(:stderr).include?("inline token") &&
+               inline_auth.fetch(:stderr).include?("tycho server migrate peer-inline"),
+               "expected the inline fallback to warn with its migration command")
 
         migrated = run_tycho(local_env, "server", "migrate", "peer-inline")
         credential_path = File.join(local_dir, "remote_credentials.json")

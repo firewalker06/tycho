@@ -214,7 +214,7 @@ module HQ
       inline = config.respond_to?(:token) ? config.token.to_s : ""
       unless inline.empty?
         @warning.call("Warning: remote server #{config.key} uses inline token from hq.yml; " \
-                      "run `tycho server migrate #{config.key}`. Inline token support will be removed in v0.11.0.")
+                      "run `tycho server migrate #{config.key}` to move it into the credential store.")
         return Credential.new(
           server_key: config.key,
           token: inline,
