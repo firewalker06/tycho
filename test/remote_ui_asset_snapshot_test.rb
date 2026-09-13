@@ -14,7 +14,7 @@ module RemoteUIAssetSnapshotTest
     assert_initial_loading_shell_contract
     assert_loaded_daemon_keeps_one_asset_build
     assert_delegation_ui_uses_typed_safe_references
-    assert_delegation_callbacks_are_chronological_events
+    assert_delegation_callbacks_render_as_complete_delegated_agent_messages
     assert_archived_agents_are_reference_only_and_read_only
     assert_personal_assistant_is_chat_first
     assert_personal_assistant_first_run_uses_starters
@@ -279,30 +279,33 @@ module RemoteUIAssetSnapshotTest
     raise "Relevancy must not use the sparkles icon" if javascript.include?('{ value: "relevancy", label: "Relevancy", icon: "sparkles"')
   end
 
-  def assert_delegation_callbacks_are_chronological_events
+  def assert_delegation_callbacks_render_as_complete_delegated_agent_messages
     javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
     css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
     required = [
       "block?.metadata?.delegation_callback === true",
       "renderDelegationCallbackBlock(block, index, options)",
       "block?.metadata?.delegation_reports",
-      "delegated runs completed",
-      'class="message delegation-callback-event"',
-      "Number(report.child_run_number)",
-      'success: "succeeded"',
+      'class="message user delegation-callback-event"',
+      "function delegatedAgentReportName(report, reference = null)",
+      'reference?.name || report?.child?.name || reference?.agent_key || report?.child?.agent_key || "Delegated agent"',
+      "DELEGATED AGENT",
       "renderDelegationReferenceLink(reference)",
       'iconSvg("squareArrowOutUpRight")',
-      'class="delegation-callback-excerpt"',
-      'aria-label="Copy report details"',
-      "Report details"
+      'viewerClassName: "markdown-viewer message-markdown-viewer"',
+      "menuScope: `${stateKey}:result`"
     ]
     missing = required.reject { |fragment| javascript.include?(fragment) }
-    raise "missing chronological callback presentation: #{missing.join(", ")}" unless missing.empty?
+    raise "missing delegated callback presentation: #{missing.join(", ")}" unless missing.empty?
     raise "missing callback event styling" unless css.include?(".delegation-callback-event")
-    raise "missing three-line callback excerpt" unless css.include?("-webkit-line-clamp: 3")
+    raise "delegated callback must share user-message direction" unless css.include?(".message.user")
     callback_source = javascript[/function renderDelegationCallbackBlock.*?^}/m]
     raise "missing callback renderer" unless callback_source
     raise "callback must not repeat the full agent card" if callback_source.include?("renderAgentReference(reference)")
+    forbidden = ["Run #${runNumber}", "Report details", "delegation-callback-excerpt", "delegation-report-code", "delegation-report-copy"]
+    present = forbidden.select { |fragment| callback_source.include?(fragment) || css.include?(fragment) }
+    raise "delegated callback still hides result content: #{present.join(", ")}" unless present.empty?
+    raise "delegated callback result must not clamp lines" if css[/\.delegation-callback-result\s*\{.*?^}/m].to_s.include?("line-clamp")
   end
 
   def assert_archived_agents_are_reference_only_and_read_only

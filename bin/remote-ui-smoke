@@ -68,7 +68,7 @@ def write_fixture(dir)
     output = output_index ? ARGV[output_index + 1] : nil
     payload = {
       "status" => "success",
-      "summary" => "Completed the focused review and returned concise findings.",
+      "summary" => "## Completed the focused review\n\n- Returned the complete delegated result.\n- Preserved safe Markdown rendering.",
       "summary_sections" => [{ "type" => "text", "text" => "Rendered semantic run summary details.", "url" => nil, "attachment" => nil }],
       "inquiry" => nil,
       "attachments" => nil
@@ -2967,40 +2967,48 @@ def write_smoke_script(path)
         }
         await page.keyboard.press("Escape");
         await page.waitForFunction(() => document.body.innerText.includes("Completed the focused review"), null, { timeout: 10_000 });
+        await page.setViewportSize({ width: 1440, height: 900 });
         const delegationEventContract = await page.evaluate(() => {
           const callback = document.querySelector(".delegation-callback-event");
-          const excerpt = callback?.querySelector(".delegation-callback-excerpt");
           const started = document.querySelector(".delegation-event-header");
+          const callbackRect = callback?.getBoundingClientRect();
+          const messageListRect = document.querySelector(".message-list")?.getBoundingClientRect();
           return {
             callbackAgentCards: callback?.querySelectorAll(".agent-reference").length,
             callbackLink: Boolean(callback?.querySelector(".delegation-agent-link[href]")),
-            excerptClamp: excerpt ? getComputedStyle(excerpt).webkitLineClamp : "",
+            callbackClasses: callback?.className || "",
+            callbackLabel: callback?.querySelector(".delegation-event-brand")?.textContent || "",
+            callbackAgentName: callback?.querySelector(".delegation-callback-header strong")?.textContent || "",
+            callbackResult: callback?.querySelector(".delegation-callback-result")?.innerText || "",
+            callbackHasDetails: Boolean(callback?.querySelector("details")),
+            callbackRight: callbackRect?.right || 0,
+            messageListRight: messageListRect?.right || 0,
             startedHeader: started?.innerText || "",
           };
         });
         if (delegationEventContract.callbackAgentCards !== 0 ||
             !delegationEventContract.callbackLink ||
-            delegationEventContract.excerptClamp !== "3" ||
+            !delegationEventContract.callbackClasses.includes("message user") ||
+            delegationEventContract.callbackLabel !== "DELEGATED AGENT" ||
+            delegationEventContract.callbackAgentName !== "API contract review" ||
+            !delegationEventContract.callbackResult.includes("Completed the focused review") ||
+            !delegationEventContract.callbackResult.includes("Preserved safe Markdown rendering.") ||
+            delegationEventContract.callbackHasDetails ||
+            Math.abs(delegationEventContract.callbackRight - delegationEventContract.messageListRight) > 1 ||
             !delegationEventContract.startedHeader.includes("TYCHO") ||
             !delegationEventContract.startedHeader.includes("Started agent")) {
-          throw new Error(`Delegation event presentation is not compact: ${JSON.stringify(delegationEventContract)}`);
+          throw new Error(`Delegation callback presentation is incorrect: ${JSON.stringify(delegationEventContract)}`);
         }
-        await page.evaluate(() => {
-          navigator.clipboard.writeText = async (value) => {
-            window.__smokeCopiedDelegationReport = value;
-          };
+        await page.setViewportSize({ width: 390, height: 844 });
+        const mobileDelegationCallback = await page.evaluate(() => {
+          const callback = document.querySelector(".delegation-callback-event");
+          const rect = callback?.getBoundingClientRect();
+          return { left: rect?.left || 0, right: rect?.right || 0, width: rect?.width || 0, viewportWidth: window.innerWidth };
         });
-        await page.click(".delegation-callback-details > summary");
-        await page.click(".delegation-report-copy");
-        const copiedDelegationReport = await page.evaluate(() => window.__smokeCopiedDelegationReport);
-        const expectedDelegationReport = await page.locator(".delegation-report-copy").getAttribute("data-copy");
-        if (!copiedDelegationReport || copiedDelegationReport !== expectedDelegationReport) {
-          throw new Error("Delegation report code block did not copy its complete source");
+        if (mobileDelegationCallback.left <= 0 || mobileDelegationCallback.right > mobileDelegationCallback.viewportWidth ||
+            mobileDelegationCallback.width >= mobileDelegationCallback.viewportWidth) {
+          throw new Error(`Delegation callback does not preserve user-message direction on mobile: ${JSON.stringify(mobileDelegationCallback)}`);
         }
-        if (captureDir) {
-          await page.locator(".delegation-callback-event").screenshot({ path: path.join(captureDir, "orchestration-callback-report.png") });
-        }
-        await page.click(".delegation-callback-details > summary");
         if (captureDir) {
           await page.locator(".agent-relationships").scrollIntoViewIfNeeded();
           await page.locator(".agent-relationships").screenshot({ path: path.join(captureDir, "orchestration-graph-desktop.png") });
