@@ -140,6 +140,8 @@ module DelegationRunnerTest
       end
       raise "expected one deduplicated child report" unless reports.length == 1
       raise "expected automatic resume record" unless reports.first["resume_state"] == "resumed"
+
+      wait_for_agent(agents_path, parent_key, minimum_runs: 2)
     end
     puts "delegation_runner_test: ok"
   end
