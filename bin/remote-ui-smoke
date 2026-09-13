@@ -94,7 +94,11 @@ def write_fixture(dir)
   FileUtils.mkdir_p(File.join(workspace, "slow"))
   FileUtils.mkdir_p(File.join(workspace, "src"))
   FileUtils.mkdir_p(File.join(workspace, "node_modules", "fixture"))
-  File.write(File.join(workspace, "docs", "guide.md"), "# Workspace guide\n\nEditable Markdown preview.\n")
+  File.write(
+    File.join(workspace, "docs", "guide.md"),
+    "# Workspace guide\n\nEditable Markdown preview.\n\n" +
+      80.times.map { |index| "Preview line #{index + 1} keeps the document long enough to exercise internal scrolling." }.join("\n\n") + "\n"
+  )
   File.write(File.join(workspace, "README.md"), "# Workspace fixture\n")
   File.write(File.join(workspace, "docs", "readme-notes.md"), "Ranked prefix match.\n")
   File.write(File.join(workspace, "docs", "relevant-and-message.md"), "Ranked fuzzy match.\n")
@@ -541,7 +545,7 @@ def write_smoke_script(path)
         }
       }
 
-      if (process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY !== "1") await assertInitialLoadingShell();
+      if (!workspaceOnly && process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY !== "1") await assertInitialLoadingShell();
 
       async function assertPersonalAssistantConversationShell() {
         const ordinaryPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -1950,24 +1954,34 @@ def write_smoke_script(path)
 
         await page.click("[data-workspace-file='docs/guide.md']");
         await page.waitForSelector(".markdown-viewer", { state: "visible", timeout: 10_000 });
-        const previewContract = await page.evaluate(() => ({
-          route: parseRoute(),
-          content: document.querySelector(".markdown-viewer")?.textContent,
-          editVisible: Boolean(document.querySelector("[data-edit-workspace-file='docs/guide.md']")),
-        }));
+        const previewContract = await page.evaluate(() => {
+          const preview = document.querySelector(".workspace-preview-pane > .markdown-viewer");
+          const style = getComputedStyle(preview);
+          preview.scrollTop = preview.scrollHeight;
+          const internallyScrollable = preview.scrollHeight > preview.clientHeight && preview.scrollTop > 0;
+          preview.scrollTop = 0;
+          return {
+            route: parseRoute(),
+            content: preview?.textContent,
+            editVisible: Boolean(document.querySelector("[data-edit-workspace-file='docs/guide.md']")),
+            padding: [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft],
+            overflowY: style.overflowY,
+            internallyScrollable,
+          };
+        });
         if (previewContract.route.path !== "docs" || previewContract.route.file !== "docs/guide.md" ||
-            !previewContract.content?.includes("Editable Markdown preview") || !previewContract.editVisible) {
+            !previewContract.content?.includes("Editable Markdown preview") || !previewContract.editVisible ||
+            previewContract.padding.some((value) => value !== "14px") || previewContract.overflowY !== "auto" ||
+            !previewContract.internallyScrollable) {
           throw new Error(`Workspace Markdown preview contract failed: ${JSON.stringify(previewContract)}`);
         }
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-preview-desktop.png"), fullPage: false });
         await page.click("[data-edit-workspace-file='docs/guide.md']");
         await page.waitForSelector("#workspace-file-editor", { state: "visible", timeout: 10_000 });
-        await page.fill("#workspace-file-content", `# Updated guide
-
-Saved safely.
-`);
+        const updatedGuide = `# Updated guide\n\nSaved safely.\n\n${Array.from({ length: 80 }, (_, index) => `Saved line ${index + 1} verifies the preview scrollbar.`).join("\\n\\n")}\n`;
+        await page.fill("#workspace-file-content", updatedGuide);
         await page.click("#workspace-file-editor button[type='submit']");
         await page.waitForFunction(() => document.querySelector(".markdown-viewer")?.textContent.includes("Saved safely."));
-        if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-preview-desktop.png"), fullPage: true });
 
         await page.goBack();
         await page.waitForSelector(".workspace-preview-empty", { state: "visible", timeout: 10_000 });
@@ -1975,15 +1989,27 @@ Saved safely.
         await page.waitForSelector(".markdown-viewer", { state: "visible", timeout: 10_000 });
 
         await page.setViewportSize({ width: 390, height: 844 });
-        const mobileContract = await page.evaluate(() => ({
-          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-          columns: getComputedStyle(document.querySelector(".workspace-browser-grid")).gridTemplateColumns,
-          previewVisible: Boolean(document.querySelector(".markdown-viewer")),
-        }));
-        if (mobileContract.overflow || !mobileContract.previewVisible || mobileContract.columns.split(" ").length !== 1) {
+        const mobileContract = await page.evaluate(() => {
+          const preview = document.querySelector(".workspace-preview-pane > .markdown-viewer");
+          const style = getComputedStyle(preview);
+          preview.scrollTop = preview.scrollHeight;
+          const internallyScrollable = preview.scrollHeight > preview.clientHeight && preview.scrollTop > 0;
+          preview.scrollTop = 0;
+          return {
+            overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+            columns: getComputedStyle(document.querySelector(".workspace-browser-grid")).gridTemplateColumns,
+            previewVisible: Boolean(preview),
+            padding: [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft],
+            overflowY: style.overflowY,
+            internallyScrollable,
+          };
+        });
+        if (mobileContract.overflow || !mobileContract.previewVisible || mobileContract.columns.split(" ").length !== 1 ||
+            mobileContract.padding.some((value) => value !== "14px") || mobileContract.overflowY !== "auto" ||
+            !mobileContract.internallyScrollable) {
           throw new Error(`Workspace mobile layout failed: ${JSON.stringify(mobileContract)}`);
         }
-        if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-browser-mobile.png"), fullPage: true });
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-preview-mobile.png"), fullPage: false });
 
         await page.click("[data-close-workspace-preview]");
         await page.click("[data-workspace-directory='']");
@@ -2056,14 +2082,14 @@ Saved safely.
       }
 
       try {
-        await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
-        await assertNowStatusIcons();
         if (workspaceOnly) {
           await assertProjectWorkspaceBrowser();
           if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
           console.log("remote-ui-workspace-smoke: ok");
           return;
         }
+        await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
+        await assertNowStatusIcons();
         if (skillsOnly) {
           await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
           await page.waitForSelector("#settings-skills", { state: "visible", timeout: 10_000 });

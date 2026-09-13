@@ -3379,6 +3379,7 @@ select {
 .workspace-browser-grid {
   display: grid;
   grid-template-columns: minmax(250px, 0.7fr) minmax(0, 1.3fr);
+  height: min(68dvh, 760px);
   min-height: min(68dvh, 760px);
   overflow: hidden;
   border: 1px solid var(--border);
@@ -3532,6 +3533,13 @@ select {
   white-space: pre;
 }
 
+.workspace-preview-pane > .markdown-viewer {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+}
+
 .workspace-preview-actions {
   display: flex;
   align-items: center;
@@ -3570,6 +3578,7 @@ select {
 @media (max-width: 760px) {
   .workspace-browser-grid {
     grid-template-columns: minmax(0, 1fr);
+    height: auto;
     min-height: 0;
     overflow: visible;
   }
@@ -3590,6 +3599,10 @@ select {
   }
 
   .workspace-text-preview {
+    max-height: 52dvh;
+  }
+
+  .workspace-preview-pane > .markdown-viewer {
     max-height: 52dvh;
   }
 }
