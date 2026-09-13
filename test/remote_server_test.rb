@@ -3130,6 +3130,17 @@ module RemoteServerTest
              "expected workspace routes to return relative paths")
       assert(!listing[:body].inspect.include?(workspace), "expected workspace API responses to hide host paths")
 
+      search_request = HQ::RemoteServer::Request.new(
+        method: "GET",
+        path: "/projects/web/workspace/search",
+        query: "query=guide",
+        headers: {},
+        body: ""
+      )
+      search = server.send(:route, service, "GET", search_request.path, {}, search_request)
+      assert(search[:body].dig(:workspace, :query) == "guide", "expected workspace search route to preserve the query contract")
+      assert(search[:body].dig(:workspace, :entries, 0, :path) == "docs/guide.md", "expected workspace search to return project-relative fuzzy matches")
+
       preview_request = HQ::RemoteServer::Request.new(
         method: "GET",
         path: "/projects/web/workspace/preview",
@@ -6757,6 +6768,11 @@ module RemoteServerTest
     assert(js[:body].include?("function performProjectWorkspaceRequest") &&
            js[:body].include?("requests[key] !== requestId"),
            "expected workspace navigation responses to be race-safe")
+    assert(js[:body].include?("function ensureProjectWorkspaceSearch") &&
+           js[:body].include?("/workspace/search?") &&
+           js[:body].include?("function queueProjectWorkspaceSearch") &&
+           js[:body].include?("}, 500);"),
+           "expected workspace search to use its scoped API contract with a 500 ms debounce")
     assert(js[:body].include?('aria-label="Project workspace file browser"') &&
            js[:body].include?('aria-label="Workspace path"') &&
            js[:body].include?('class="workspace-text-preview" tabindex="0"'),

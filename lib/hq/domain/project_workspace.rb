@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "digest"
+require "set"
 require "tempfile"
 
 module HQ
@@ -8,6 +9,7 @@ module HQ
     DEFAULT_PAGE_SIZE = 100
     MAX_PAGE_SIZE = 200
     MAX_DIRECTORY_ENTRIES = 5_000
+    MAX_SEARCH_ENTRIES = 10_000
     MAX_NAME_BYTES = 1_024
     MAX_PREVIEW_BYTES = 256 * 1024
     IMAGE_MIME_TYPES = {
@@ -76,6 +78,33 @@ module HQ
         limit: page_limit,
         total: entries.length,
         next_offset: page_offset + page.length < entries.length ? page_offset + page.length : nil,
+        truncated: false
+      }
+    rescue Errno::EACCES, Errno::EPERM
+      raise Error.new("permission_denied", "Workspace directory is not readable", status: 403)
+    rescue Errno::ENOENT, Errno::ENOTDIR
+      raise Error.new("not_found", "Workspace path is no longer available", status: 404)
+    end
+
+    def search(query:, offset: 0, limit: DEFAULT_PAGE_SIZE)
+      root = canonical_root!
+      needle = normalized_search_query(query)
+      page_offset = bounded_offset(offset)
+      page_limit = bounded_limit(limit)
+      matches = searchable_entries(root).filter_map do |entry|
+        score = fuzzy_score(needle, entry.fetch(:path))
+        entry.merge(score:) if score
+      end
+      matches.sort_by! { |entry| [-entry.fetch(:score), sort_name(entry.fetch(:path)), entry.fetch(:path).b] }
+      page = matches.slice(page_offset, page_limit) || []
+
+      {
+        query: query.to_s.strip,
+        entries: page,
+        offset: page_offset,
+        limit: page_limit,
+        total: matches.length,
+        next_offset: page_offset + page.length < matches.length ? page_offset + page.length : nil,
         truncated: false
       }
     rescue Errno::EACCES, Errno::EPERM
@@ -229,6 +258,59 @@ module HQ
         entry_payload(root, directory, child_relative, name)
       end
       entries.sort_by { |entry| [entry[:kind] == "directory" ? 0 : 1, sort_name(entry[:name]), entry[:name].b] }
+    end
+
+    def searchable_entries(root)
+      entries = []
+      stack = [[root, ""]]
+      visited = Set.new
+
+      until stack.empty?
+        directory, relative = stack.pop
+        resolved_directory = File.realpath(directory)
+        next unless visited.add?(resolved_directory)
+
+        directory_entries(root, directory, relative).each do |entry|
+          entries << entry
+          raise Error.new("search_too_large", "Workspace has too many files to search", status: 413) if entries.length > MAX_SEARCH_ENTRIES
+
+          next unless entry[:kind] == "directory"
+
+          stack << [File.join(directory, entry.fetch(:name)), entry.fetch(:path)]
+        end
+      end
+      entries
+    end
+
+    def normalized_search_query(query)
+      normalized = sort_name(query.to_s.strip)
+      raise Error.new("invalid_search", "Workspace search query is required", status: 400) if normalized.empty?
+      raise Error.new("invalid_search", "Workspace search query is too long", status: 400) if normalized.length > 200
+
+      normalized
+    end
+
+    def fuzzy_score(needle, path)
+      target = sort_name(path)
+      positions = []
+      cursor = 0
+      needle.each_char do |character|
+        index = target.index(character, cursor)
+        return nil unless index
+
+        positions << index
+        cursor = index + 1
+      end
+
+      name = sort_name(File.basename(path))
+      name_stem = sort_name(File.basename(path, ".*"))
+      score = 1_000 - positions.first - (positions.last - positions.first)
+      score += 6_000 if name == needle || name_stem == needle
+      score += 4_000 if name.start_with?(needle)
+      score += 2_000 if target.start_with?(needle)
+      positions.each_cons(2) { |left, right| score += 120 if right == left + 1 }
+      positions.each { |position| score += 60 if position.zero? || target[position - 1].match?(%r{[\/_\-.\s]}) }
+      score
     end
 
     def entry_payload(root, directory, relative, name)

@@ -162,7 +162,7 @@ module TychoUpdaterTest
 
     Dir.mktmpdir("tycho-remote-control-absent") do |dir|
       absent = HQ::RemoteServerControl.new(
-        record_path: File.join(dir, "remote_control.json"),
+        record_path: File.join(dir, "missing.json"),
         requester: ->(_url, _token) { { status: 503, body: {} } }
       )
       absent_result = absent.restart!

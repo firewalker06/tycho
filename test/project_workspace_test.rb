@@ -11,6 +11,7 @@ module ProjectWorkspaceTest
   def run!
     assert_lists_nested_content_with_deterministic_sorting
     assert_paginates_and_bounds_directory_payloads
+    assert_searches_fuzzy_paths_with_strongest_matches_first
     assert_rejects_directories_above_the_deterministic_scan_cap
     assert_previews_unicode_and_scrubs_invalid_utf8
     assert_classifies_markdown_and_images
@@ -57,6 +58,25 @@ module ProjectWorkspaceTest
              "expected bounded paginated directory listings")
       assert(last[:next_offset].nil? && last[:total] == 205, "expected pagination metadata")
       assert_error("invalid_pagination") { browser.list(limit: 201) }
+    end
+  end
+
+  def assert_searches_fuzzy_paths_with_strongest_matches_first
+    with_workspace do |root|
+      FileUtils.mkdir_p(File.join(root, "docs", "archive"))
+      File.write(File.join(root, "README.md"), "root")
+      File.write(File.join(root, "readme-notes.md"), "notes")
+      File.write(File.join(root, "docs", "archive", "release-notes.md"), "release")
+      File.write(File.join(root, "docs", "archive", "relevant-and-message.md"), "weak")
+      FileUtils.mkdir_p(File.join(root, "node_modules"))
+      File.write(File.join(root, "node_modules", "README.md"), "ignored")
+      browser = HQ::ProjectWorkspace.new(root)
+
+      matches = browser.search(query: "readme")
+      assert(matches[:entries].map { |entry| entry[:path] } == ["README.md", "readme-notes.md", "docs/archive/relevant-and-message.md"],
+             "expected exact and prefix fuzzy matches to rank ahead of weaker path matches")
+      assert(matches[:entries].all? { |entry| entry[:score].is_a?(Integer) }, "expected search results to expose deterministic ranking scores")
+      assert_error("invalid_search") { browser.search(query: " ") }
     end
   end
 
