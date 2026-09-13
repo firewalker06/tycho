@@ -82,6 +82,26 @@ class DelegationTest
     end
   end
 
+  class FakeQueuedAgent < FakeAgent
+    attr_reader :queued_prompts
+
+    def initialize(**)
+      super
+      @queued_prompts = []
+    end
+
+    def enqueue_prompt!(prompt:, id:, accepted_at:, authority:, message_metadata:, source:)
+      @queued_prompts << {
+        "prompt" => prompt,
+        "id" => id,
+        "accepted_at" => accepted_at,
+        "authority" => authority,
+        "message_metadata" => message_metadata,
+        "source" => source
+      }
+    end
+  end
+
   def self.run!
     Dir.mktmpdir("tycho-delegation") do |dir|
       identity = { "id" => "server-1", "name" => "Test host" }
@@ -294,6 +314,31 @@ class DelegationTest
       quiet_events = File.readlines(quiet_parent.memory_path).map { |line| JSON.parse(line) }
       assert(quiet_events.count { |event| event.dig("metadata", "delegation_callback") } == 1,
              "expected later child runs to report after reconnect")
+
+      batch_parent = FakeQueuedAgent.new(key: "batch-parent", root: dir,
+                                         workspace: File.join(dir, "batch-parent-workspace"))
+      batch_zeta = FakeAgent.new(key: "batch-zeta", root: dir,
+                                 summary: "Zeta finished", workspace: File.join(dir, "batch-zeta-workspace"))
+      batch_alpha = FakeAgent.new(key: "batch-alpha", root: dir,
+                                  summary: "Alpha finished", workspace: File.join(dir, "batch-alpha-workspace"))
+      batch_agents = [batch_parent, batch_zeta, batch_alpha]
+      coordinator.attach!(agents: batch_agents, child: batch_zeta, parent_key: batch_parent.key)
+      coordinator.attach!(agents: batch_agents, child: batch_alpha, parent_key: batch_parent.key)
+      coordinator.process!(batch_agents, now: Time.utc(2026, 9, 13, 1, 2, 3))
+      assert(batch_parent.queued_prompts.length == 1,
+             "expected simultaneous child completions to queue one parent callback")
+      batch_entry = batch_parent.queued_prompts.first
+      batch_reports = batch_entry.dig("message_metadata", "delegation_reports")
+      assert(batch_entry["source"] == "delegation_callback" && batch_entry["prompt"].include?("delegated_agent_reports"),
+             "expected the parent callback to carry one bulk report payload")
+      assert(batch_reports.map { |report| report.dig("child", "agent_key") } == %w[batch-alpha batch-zeta],
+             "expected bulk report ordering to be deterministic independent of child polling order")
+      batch_ledger = store.reports.select { |report| report["parent_agent_key"] == batch_parent.key }
+      assert(batch_ledger.length == 2 && batch_ledger.all? { |report| report["delivered_at"] },
+             "expected every child report in a bulk callback to retain its delivery ledger entry")
+      coordinator.process!(batch_agents, now: Time.utc(2026, 9, 13, 1, 2, 4))
+      assert(batch_parent.queued_prompts.length == 1,
+             "expected replayed polling to deliver a bulk callback exactly once")
 
       %w[failed blocked input_required].each do |status|
         terminal = FakeAgent.new(key: "child-#{status}", root: dir, status: status, workspace: File.join(dir, status))

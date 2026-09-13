@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "digest"
 
 require_relative "agent_archive_store"
 require_relative "agent_memory"
@@ -52,11 +53,11 @@ module HQ
         changed ||= created
       end
 
-      pending = delegation_store.reports.select do |report|
+      pending_reports = delegation_store.reports.select do |report|
         report["delivered_at"].to_s.empty? && report["suppressed_at"].to_s.empty?
       end
-      pending.each do |report|
-        changed = deliver_report!(report, agents, now:) || changed
+      pending_reports.group_by { |report| report.fetch("parent_agent_key") }.each_value do |reports|
+        changed = deliver_reports!(reports, agents, now:) || changed
       end
 
       resume_parents!(agents, now:) || changed
@@ -121,8 +122,9 @@ module HQ
 
     private
 
-    def deliver_report!(report, agents, now:)
-      parent_key = report.fetch("parent_agent_key")
+    def deliver_reports!(reports, agents, now:)
+      reports = ordered_reports(reports)
+      parent_key = reports.first.fetch("parent_agent_key")
       parent = agents.find { |agent| agent.key == parent_key }
       archived = nil
       unless parent
@@ -130,39 +132,42 @@ module HQ
         parent = archived&.agent
       end
       unless parent
-        delegation_store.update_report!(report.fetch("id"), resume_state: "parent_missing")
+        reports.each { |report| delegation_store.update_report!(report.fetch("id"), resume_state: "parent_missing") }
         return false
       end
 
-      entry_id = "delegation-report:#{report.fetch("id")}"
+      entry_id = "delegation-report-batch:#{batch_id(reports)}"
       parent_authority = ownership_stamp(parent.key) unless archived
       metadata = {
-        "message_author" => { "type" => "agent" }.merge(report.fetch("child")),
+        "message_author" => { "type" => "agent", "name" => "Delegated agents" },
         "delegation_callback" => true,
-        "delegation_report" => report,
-        "agent_reference" => report.fetch("child")
+        "delegation_reports" => reports
       }
+      metadata["delegation_report"] = reports.first if reports.length == 1
+      metadata["agent_reference"] = reports.first.fetch("child") if reports.length == 1
       if archived
         added = AgentMemory.new(parent).append_delegation_report!(
-          report_message(report), report_id: entry_id, created_at: now, metadata:
+          reports_message(reports), report_id: entry_id, created_at: now, metadata:
         )
         @archive_store.save(archived) if added
       elsif parent.respond_to?(:queued_prompts) && parent.respond_to?(:enqueue_prompt!) &&
             parent.queued_prompts.none? { |entry| entry["id"] == entry_id }
         parent.enqueue_prompt!(
-          prompt: report_message(report), id: entry_id, accepted_at: now,
+          prompt: reports_message(reports), id: entry_id, accepted_at: now,
           authority: parent_authority, message_metadata: metadata,
           source: "delegation_callback"
         )
       elsif !parent.respond_to?(:queued_prompts)
         AgentMemory.new(parent).append_delegation_report!(
-          report_message(report), report_id: entry_id, created_at: now, metadata:
+          reports_message(reports), report_id: entry_id, created_at: now, metadata:
         )
       end
       state = archived ? "parent_archived" : (parent.running? ? "parent_running" : "queued")
-      delegation_store.update_report!(
-        report.fetch("id"), delivered_at: now, resume_state: state, parent_authority:
-      )
+      reports.each do |report|
+        delegation_store.update_report!(
+          report.fetch("id"), delivered_at: now, resume_state: state, parent_authority:
+        )
+      end
       true
     end
 
@@ -173,10 +178,6 @@ module HQ
         unless parent
           reports.each { |report| delegation_store.update_report!(report.fetch("id"), resume_state: "parent_archived") }
           next
-        end
-
-        if parent.respond_to?(:queued_prompts)
-          reports.each { |report| changed = ensure_report_queued!(parent, report, now:) || changed }
         end
 
         if parent.running?
@@ -229,24 +230,6 @@ module HQ
       changed
     end
 
-    def ensure_report_queued!(parent, report, now:)
-      entry_id = "delegation-report:#{report.fetch("id")}"
-      return false if parent.queued_prompts.any? { |entry| entry["id"] == entry_id }
-
-      metadata = {
-        "message_author" => { "type" => "agent" }.merge(report.fetch("child")),
-        "delegation_callback" => true,
-        "delegation_report" => report,
-        "agent_reference" => report.fetch("child")
-      }
-      parent.enqueue_prompt!(
-        prompt: report_message(report), id: entry_id, accepted_at: report["delivered_at"] || now,
-        authority: report["parent_authority"] || ownership_stamp(parent.key),
-        message_metadata: metadata, source: "delegation_callback"
-      )
-      true
-    end
-
     def resumable_reports
       delegation_store.reports.select do |report|
         !report["delivered_at"].to_s.empty? &&
@@ -254,9 +237,16 @@ module HQ
       end
     end
 
-    def report_message(report)
+    def reports_message(reports)
       payload = {
-        "type" => "delegated_agent_report",
+        "type" => "delegated_agent_reports",
+        "reports" => ordered_reports(reports).map { |report| report_payload(report) }
+      }
+      "Delegated agent reports:\n#{JSON.pretty_generate(payload)}"
+    end
+
+    def report_payload(report)
+      {
         "report_id" => report.fetch("id"),
         "agent" => report.fetch("child"),
         "run_id" => report["child_run_id"],
@@ -268,7 +258,17 @@ module HQ
         "inquiry" => report["inquiry"],
         "attachments" => report["attachments"]
       }.compact
-      "Delegated agent report:\n#{JSON.pretty_generate(payload)}"
+    end
+
+    def ordered_reports(reports)
+      reports.sort_by do |report|
+        [report["created_at"].to_s, report.dig("child", "agent_key").to_s,
+         report["child_run_number"].to_i, report["id"].to_s]
+      end
+    end
+
+    def batch_id(reports)
+      Digest::SHA256.hexdigest("delegation-report-batch-v1\0#{reports.map { |report| report.fetch("id") }.join("\0")}")
     end
 
     def canonical_workspace(path)
