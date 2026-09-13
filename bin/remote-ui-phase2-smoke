@@ -450,6 +450,13 @@ def write_browser_script(path, base_url, capture_dir, executor_barrier_path)
 
       await page.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "domcontentloaded" });
       await waitFor(page, () => Boolean(document.querySelector(".personal-assistant-page")), null, "FRED page");
+      const agentSwitcher = page.locator("#header-mark");
+      if (await agentSwitcher.count() !== 1) fail("expected one agent switcher trigger");
+      await agentSwitcher.click();
+      const fredSwitcherEntry = page.locator(".switcher-fred-row");
+      if (await fredSwitcherEntry.count() !== 1) fail("expected one FRED quick-switch entry");
+      await fredSwitcherEntry.click();
+      await waitFor(page, () => window.location.hash === "#personal-assistant", null, "FRED quick-switch route");
       await assertNoNestedForms(page, "initial render");
       const persistedUnknownId = "pa-persisted-unknown-fixture";
       await waitFor(page, (proposalId) => {
