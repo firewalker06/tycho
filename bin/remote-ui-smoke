@@ -3705,6 +3705,59 @@ Saved safely.
         if (switcherAgentCount < 2) {
           throw new Error(`Agent switcher did not include both smoke agents: ${switcherAgentCount}`);
         }
+        const assertSwitcherAvatarAlignment = async (viewport) => {
+          const alignment = await agentsRegressionPage.evaluate(() => {
+            const rows = Array.from(document.querySelectorAll(".switcher-agent-row"));
+            const measure = (row) => {
+              const avatar = row.querySelector(":scope > .fred-switcher-avatar, :scope > .status-mark, :scope > .agent-status-icon");
+              const title = row.querySelector(":scope > .row-title");
+              const avatarRect = avatar?.getBoundingClientRect();
+              const titleRect = title?.getBoundingClientRect();
+              return avatarRect && titleRect ? {
+                avatarLeft: avatarRect.left,
+                avatarWidth: avatarRect.width,
+                avatarHeight: avatarRect.height,
+                titleLeft: titleRect.left,
+                gap: titleRect.left - avatarRect.right,
+              } : null;
+            };
+            const fred = rows.find((row) => row.classList.contains("switcher-fred-row"));
+            const ordinary = rows.filter((row) => !row.classList.contains("switcher-fred-row"));
+            return {
+              fred: fred ? measure(fred) : null,
+              ordinary: ordinary.map(measure),
+              overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+            };
+          });
+          const fred = alignment.fred;
+          const aligned = fred && alignment.ordinary.length && alignment.ordinary.every((ordinary) => ordinary &&
+            Math.abs(ordinary.avatarLeft - fred.avatarLeft) <= 1 &&
+            Math.abs(ordinary.avatarWidth - fred.avatarWidth) <= 1 &&
+            Math.abs(ordinary.avatarHeight - fred.avatarHeight) <= 1 &&
+            Math.abs(ordinary.titleLeft - fred.titleLeft) <= 1 &&
+            Math.abs(ordinary.gap - fred.gap) <= 1);
+          if (!aligned || alignment.overflow) {
+            throw new Error(`Agent switcher avatar/text columns drifted at ${viewport}: ${JSON.stringify(alignment)}`);
+          }
+        };
+        await assertSwitcherAvatarAlignment("mobile");
+        if (captureDir) {
+          await agentsRegressionPage.screenshot({
+            path: path.join(captureDir, "agent-switcher-avatar-alignment-mobile.png"),
+            fullPage: false,
+          });
+        }
+        await agentsRegressionPage.setViewportSize({ width: 1440, height: 900 });
+        await agentsRegressionPage.waitForTimeout(100);
+        await assertSwitcherAvatarAlignment("desktop");
+        if (captureDir) {
+          await agentsRegressionPage.screenshot({
+            path: path.join(captureDir, "agent-switcher-avatar-alignment-desktop.png"),
+            fullPage: false,
+          });
+        }
+        await agentsRegressionPage.setViewportSize({ width: 390, height: 844 });
+        await agentsRegressionPage.waitForTimeout(100);
         await agentsRegressionPage.locator("#unread-agent-search").evaluate((input) => { input.__tychoSearchNodeProbe = true; });
         await agentsRegressionPage.fill("#unread-agent-search", "unscheduled");
         const switcherSearchNodeStable = await agentsRegressionPage.locator("#unread-agent-search").evaluate((input) => input.__tychoSearchNodeProbe === true);
