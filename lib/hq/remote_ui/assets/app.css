@@ -4739,6 +4739,7 @@ select {
   max-height: min(48dvh, 360px);
   overflow-y: auto;
   overscroll-behavior: contain;
+  touch-action: pan-y;
   padding: 6px;
   border: 1px solid color-mix(in srgb, var(--info) 46%, var(--border));
   border-radius: 8px;

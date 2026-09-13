@@ -488,6 +488,7 @@ def write_smoke_script(path)
       const skillsOnly = process.env.TYCHO_REMOTE_UI_SKILLS_ONLY === "1";
       const workspaceOnly = process.env.TYCHO_REMOTE_UI_WORKSPACE_ONLY === "1";
       const titleCopyOnly = process.env.TYCHO_REMOTE_UI_TITLE_COPY_ONLY === "1";
+      const summaryAttachmentsOnly = process.env.TYCHO_REMOTE_UI_SUMMARY_ATTACHMENTS_ONLY === "1";
       const draft = "Remote UI smoke draft " + Date.now();
       const errors = [];
 
@@ -546,6 +547,225 @@ def write_smoke_script(path)
       }
 
       if (!workspaceOnly && process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY !== "1") await assertInitialLoadingShell();
+
+      async function assertSummaryAttachmentScrolling(candidate, viewport, input) {
+        await candidate.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
+        await candidate.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+        await candidate.evaluate((key) => {
+          document.body.classList.add("summary-scroll-review-fixture");
+          const fixtureStyle = document.createElement("style");
+          fixtureStyle.textContent = ".summary-scroll-review-fixture [data-run-summary-id='summary-scroll-review'] { margin-top: 1000px; }";
+          document.head.appendChild(fixtureStyle);
+          const agent = findAgent(key);
+          const attachments = Array.from({ length: 14 }, (_, index) => ({
+            id: `summary-scroll-fixture-${index + 1}`,
+            kind: index % 3 === 0 ? "link" : "file",
+            type: index % 3 === 0 ? "link" : "file",
+            title: `Review evidence attachment ${String(index + 1).padStart(2, "0")}`,
+            path: `/tmp/review-evidence-${index + 1}.md`,
+            url: index % 3 === 0 ? `https://example.test/evidence-${index + 1}` : undefined,
+            blob_path: `/attachments/summary-scroll-fixture-${index + 1}/blob`,
+            size: 3072,
+          }));
+          agent.attachments = [...(agent.attachments || []).filter((item) => !item.id.startsWith("summary-scroll-fixture-")), ...attachments];
+          attachments.forEach((attachment) => { state.attachmentDetails[attachment.id] = attachment; });
+          state.conversations[key] = {
+            revision: agent.revision,
+            loaded: true,
+            loading: false,
+            blocks: [{
+              kind: "run_summary",
+              content: "Overflow scrolling review fixture with fourteen attachments.",
+              created_at: "2026-09-13T05:00:00Z",
+              metadata: {
+                summary_id: "summary-scroll-review",
+                run_number: 20,
+                status: "success",
+                attachments,
+              },
+            }],
+          };
+          state.renderedViewHtml = "";
+          render();
+          const conversation = document.querySelector("[data-agent-conversation-scroll]");
+          if (conversation) conversation.scrollTop = 0;
+          window.scrollTo(0, 0);
+        }, agentKey);
+        await candidate.locator("[data-toggle-summary-attachment-menu]").scrollIntoViewIfNeeded();
+        await candidate.click("[data-toggle-summary-attachment-menu]");
+
+        const popover = candidate.locator(".summary-attachment-menu-popover");
+        const initial = await candidate.evaluate(() => {
+          const trigger = document.querySelector("[data-toggle-summary-attachment-menu]");
+          const menu = document.querySelector("[data-summary-attachment-menu]");
+          const surface = document.querySelector(".summary-attachment-menu-popover");
+          const triggerRect = trigger?.getBoundingClientRect();
+          const rect = surface?.getBoundingClientRect();
+          return {
+            overflow: surface?.scrollHeight > surface?.clientHeight,
+            scrollHeight: surface?.scrollHeight || 0,
+            clientHeight: surface?.clientHeight || 0,
+            scrollTop: surface?.scrollTop || 0,
+            parent: surface?.parentElement?.id,
+            role: surface?.getAttribute("role"),
+            label: surface?.getAttribute("aria-label"),
+            touchAction: surface ? getComputedStyle(surface).touchAction : "",
+            top: rect?.top,
+            left: rect?.left,
+            above: menu?.classList.contains("summary-attachment-menu-open-above"),
+            anchored: Boolean(rect && triggerRect && (menu?.classList.contains("summary-attachment-menu-open-above")
+              ? Math.abs(rect.bottom - triggerRect.top + 8) <= 1
+              : Math.abs(rect.top - triggerRect.bottom - 8) <= 1)),
+          };
+        });
+        if (!initial.overflow || initial.parent !== "summary-attachment-overlay-root" ||
+            initial.role !== "region" || initial.label !== "Summary attachments" ||
+            initial.touchAction !== "pan-y" || !initial.anchored) {
+          throw new Error(`${viewport} Summary attachment overflow contract failed: ${JSON.stringify(initial)}`);
+        }
+
+        await popover.focus();
+        if (input === "wheel") {
+          await popover.hover();
+          await candidate.mouse.wheel(0, 180);
+        } else {
+          const box = await popover.boundingBox();
+          if (!box) throw new Error(`${viewport} Summary attachment popover has no touch target`);
+          const session = await candidate.context().newCDPSession(candidate);
+          await session.send("Input.synthesizeScrollGesture", {
+            x: Math.round(box.x + (box.width / 2)),
+            y: Math.round(box.y + (box.height / 2)),
+            yDistance: -180,
+            speed: 800,
+            gestureSourceType: "touch",
+          });
+          await session.detach();
+        }
+        await candidate.waitForTimeout(100);
+        const afterPointer = await candidate.evaluate(() => {
+          const surface = document.querySelector(".summary-attachment-menu-popover");
+          const rect = surface?.getBoundingClientRect();
+          return {
+            scrollTop: surface?.scrollTop || 0,
+            parent: surface?.parentElement?.id,
+            focused: document.activeElement === surface,
+            top: rect?.top,
+            left: rect?.left,
+          };
+        });
+        if (afterPointer.scrollTop <= 0 || afterPointer.parent !== initial.parent ||
+            Math.abs(afterPointer.top - initial.top) > 1 || Math.abs(afterPointer.left - initial.left) > 1) {
+          throw new Error(`${viewport} Summary attachment ${input} scroll reparented or repositioned the popover: ${JSON.stringify({ initial, afterPointer })}`);
+        }
+
+        await popover.press("PageDown");
+        await candidate.waitForTimeout(500);
+        const afterKeyboard = await candidate.evaluate(() => document.querySelector(".summary-attachment-menu-popover")?.scrollTop || 0);
+        if (afterKeyboard <= afterPointer.scrollTop) {
+          throw new Error(`${viewport} Summary attachment keyboard scrolling failed: ${JSON.stringify({ afterPointer, afterKeyboard })}`);
+        }
+
+        const beforeRefresh = await candidate.evaluate(() => {
+          const surface = document.querySelector(".summary-attachment-menu-popover");
+          const rect = surface?.getBoundingClientRect();
+          return {
+            scrollTop: surface?.scrollTop || 0,
+            top: rect?.top,
+            left: rect?.left,
+            captured: captureViewState().summaryAttachmentScroll["summary-attachment-menu-list:summary-scroll-review"],
+          };
+        });
+        await candidate.evaluate(async () => { await refresh({ force: true }); });
+        const afterRefresh = await candidate.evaluate(() => {
+          const trigger = document.querySelector("[data-toggle-summary-attachment-menu]");
+          const surface = document.querySelector(".summary-attachment-menu-popover");
+          const rect = surface?.getBoundingClientRect();
+          return {
+            open: trigger?.getAttribute("aria-expanded"),
+            scrollTop: surface?.scrollTop || 0,
+            parent: surface?.parentElement?.id,
+            top: rect?.top,
+            left: rect?.left,
+          };
+        });
+        if (afterRefresh.open !== "true" || afterRefresh.parent !== initial.parent ||
+            Math.abs(afterRefresh.scrollTop - beforeRefresh.scrollTop) > 1 ||
+            Math.abs(afterRefresh.top - beforeRefresh.top) > 1 || Math.abs(afterRefresh.left - beforeRefresh.left) > 1) {
+          throw new Error(`${viewport} Summary attachment refresh lost open state, position, or scroll: ${JSON.stringify({ beforeRefresh, afterRefresh })}`);
+        }
+
+        const ancestorScroll = await candidate.evaluate(() => {
+          const root = conversationScrollRoot();
+          const trigger = document.querySelector("[data-toggle-summary-attachment-menu]");
+          const surface = document.querySelector(".summary-attachment-menu-popover");
+          const before = surface?.getBoundingClientRect();
+          const documentRoot = root === document.scrollingElement || root === document.documentElement;
+          const beforeTop = documentRoot ? window.scrollY : root?.scrollTop || 0;
+          const maxTop = documentRoot
+            ? Math.max(0, document.documentElement.scrollHeight - window.innerHeight)
+            : Math.max(0, (root?.scrollHeight || 0) - (root?.clientHeight || 0));
+          const nextTop = beforeTop + 80 <= maxTop ? beforeTop + 80 : Math.max(0, beforeTop - 80);
+          if (documentRoot) window.scrollTo(0, nextTop);
+          else if (root) root.scrollTop = nextTop;
+          const after = surface?.getBoundingClientRect();
+          const triggerRect = trigger?.getBoundingClientRect();
+          const menu = document.querySelector("[data-summary-attachment-menu]");
+          return {
+            pageScrolled: Math.abs((documentRoot ? window.scrollY : root?.scrollTop || 0) - beforeTop) > 1,
+            moved: Boolean(before && after && Math.abs(after.top - before.top) > 1),
+            anchored: Boolean(after && triggerRect && (menu?.classList.contains("summary-attachment-menu-open-above")
+              ? Math.abs(after.bottom - triggerRect.top + 8) <= 1
+              : Math.abs(after.top - triggerRect.bottom - 8) <= 1)),
+            parent: surface?.parentElement?.id,
+          };
+        });
+        await candidate.waitForTimeout(100);
+        const finalPosition = await candidate.evaluate(() => {
+          const trigger = document.querySelector("[data-toggle-summary-attachment-menu]")?.getBoundingClientRect();
+          const surface = document.querySelector(".summary-attachment-menu-popover")?.getBoundingClientRect();
+          const menu = document.querySelector("[data-summary-attachment-menu]");
+          return { anchored: Boolean(trigger && surface && (menu?.classList.contains("summary-attachment-menu-open-above")
+            ? Math.abs(surface.bottom - trigger.top + 8) <= 1
+            : Math.abs(surface.top - trigger.bottom - 8) <= 1)) };
+        });
+        if (!ancestorScroll.pageScrolled || !finalPosition.anchored || ancestorScroll.parent !== initial.parent) {
+          throw new Error(`${viewport} Summary attachment popover did not follow ancestor page scrolling: ${JSON.stringify({ ancestorScroll, finalPosition })}`);
+        }
+
+        await candidate.evaluate(() => {
+          window.__summaryAttachmentActivated = false;
+          document.querySelector(".summary-attachment-menu-popover")?.addEventListener("click", (event) => {
+            if (!event.target.closest(".summary-attachment-row")) return;
+            event.preventDefault();
+            event.stopPropagation();
+            window.__summaryAttachmentActivated = true;
+          }, { capture: true, once: true });
+        });
+        const rows = candidate.locator(".summary-attachment-row");
+        const rowCount = await rows.count();
+        await rows.nth(rowCount - 1).click();
+        if (!await candidate.evaluate(() => window.__summaryAttachmentActivated)) {
+          throw new Error(`${viewport} Summary attachment interaction failed after scrolling`);
+        }
+
+        await candidate.evaluate(() => document.querySelectorAll(".growl").forEach((growl) => growl.remove()));
+        if (captureDir) await candidate.screenshot({ path: path.join(captureDir, `summary-attachment-menu-${viewport}.png`), fullPage: false });
+        return { viewport, input, initial, afterPointer, afterKeyboard, afterRefresh, ancestorScroll, finalPosition };
+      }
+
+      if (summaryAttachmentsOnly) {
+        await page.setViewportSize({ width: 1200, height: 800 });
+        const desktop = await assertSummaryAttachmentScrolling(page, "desktop", "wheel");
+        const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+        const mobilePage = await mobileContext.newPage();
+        const mobile = await assertSummaryAttachmentScrolling(mobilePage, "mobile", "touch");
+        if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
+        if (captureDir) fs.writeFileSync(path.join(captureDir, "summary-attachment-results.json"), JSON.stringify({ desktop, mobile }, null, 2));
+        console.log(`remote-ui-summary-attachment-smoke: ${JSON.stringify({ desktop, mobile })}`);
+        await mobileContext.close();
+        await browser.close();
+        return;
+      }
 
       async function assertPersonalAssistantConversationShell() {
         const ordinaryPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -3751,17 +3971,17 @@ def write_smoke_script(path)
         await agentsRegressionPage.setViewportSize({ width: 390, height: 844 });
         await agentsRegressionPage.evaluate((key) => {
           const agent = findAgent(key);
-          const attachment = {
-            id: "summary-menu-layout-fixture",
+          const attachments = Array.from({ length: 12 }, (_, index) => ({
+            id: `summary-menu-layout-fixture-${index + 1}`,
             kind: "file",
             type: "file",
-            title: "2026-08-16 journal draft",
-            path: "/tmp/2026-08-16-Mixed-IDSW_Submission_Chart_And_Tycho_Event_Journal.md",
-            blob_path: "/attachments/summary-menu-layout-fixture/blob",
+            title: `2026-08-${String(index + 1).padStart(2, "0")} journal draft`,
+            path: `/tmp/2026-08-${String(index + 1).padStart(2, "0")}-Mixed-IDSW_Submission_Chart_And_Tycho_Event_Journal.md`,
+            blob_path: `/attachments/summary-menu-layout-fixture-${index + 1}/blob`,
             size: 3072,
-          };
-          agent.attachments = [...(agent.attachments || []).filter((item) => item.id !== attachment.id), attachment];
-          state.attachmentDetails[attachment.id] = attachment;
+          }));
+          agent.attachments = [...(agent.attachments || []).filter((item) => !item.id.startsWith("summary-menu-layout-fixture-")), ...attachments];
+          attachments.forEach((attachment) => { state.attachmentDetails[attachment.id] = attachment; });
           state.conversations[key] = {
             revision: agent.revision,
             loaded: true,
@@ -3774,7 +3994,7 @@ def write_smoke_script(path)
                 summary_id: "summary-menu-layout",
                 run_number: 20,
                 status: "input_required",
-                attachments: [attachment],
+                attachments,
               },
             }],
           };
@@ -3805,16 +4025,41 @@ def write_smoke_script(path)
             headerZIndex: Number.parseInt(getComputedStyle(document.querySelector(".app-header")).zIndex, 10),
             dockZIndex: Number.parseInt(getComputedStyle(document.querySelector(".agent-dock")).zIndex, 10),
             topmost: pointElement?.closest(".summary-attachment-menu-popover") === popover,
+            scrollHeight: popover?.scrollHeight,
+            clientHeight: popover?.clientHeight,
+            touchAction: getComputedStyle(popover).touchAction,
           };
         });
         const summaryMenu = summaryAttachmentMenuContract;
         if (!summaryMenu.trigger || !summaryMenu.popover || !summaryMenu.item || !summaryMenu.above ||
             summaryMenu.popover.left < 12 || summaryMenu.popover.right > summaryMenu.viewport.width - 12 ||
             summaryMenu.popover.bottom > summaryMenu.trigger.top - 7 || summaryMenu.popover.top < 0 ||
-            summaryMenu.popover.height > summaryMenu.item.height + 16 ||
+            summaryMenu.popover.height >= summaryMenu.scrollHeight ||
             summaryMenu.zIndex <= summaryMenu.headerZIndex || summaryMenu.zIndex <= summaryMenu.dockZIndex ||
-            !summaryMenu.topmost) {
+            !summaryMenu.topmost || summaryMenu.touchAction !== "pan-y") {
           throw new Error(`Mobile summary attachment menu lost content sizing, viewport placement, or overlay stacking: ${JSON.stringify(summaryMenu)}`);
+        }
+        const summaryPopover = agentsRegressionPage.locator(".summary-attachment-menu-popover");
+        await summaryPopover.focus();
+        await summaryPopover.hover();
+        await agentsRegressionPage.mouse.wheel(0, 160);
+        const summaryAttachmentScrollContract = await agentsRegressionPage.evaluate(() => {
+          const popover = document.querySelector(".summary-attachment-menu-popover");
+          return {
+            scrollTop: popover?.scrollTop || 0,
+            pageTop: window.scrollY,
+            focused: document.activeElement === popover,
+          };
+        });
+        if (summaryAttachmentScrollContract.scrollTop <= 0 ||
+            summaryAttachmentScrollContract.pageTop !== 0 ||
+            !summaryAttachmentScrollContract.focused) {
+          throw new Error(`Summary attachment menu did not retain independent wheel scrolling: ${JSON.stringify(summaryAttachmentScrollContract)}`);
+        }
+        await summaryPopover.press("PageDown");
+        const summaryAttachmentKeyboardScroll = await agentsRegressionPage.evaluate(() => document.querySelector(".summary-attachment-menu-popover")?.scrollTop || 0);
+        if (summaryAttachmentKeyboardScroll <= summaryAttachmentScrollContract.scrollTop) {
+          throw new Error(`Summary attachment menu did not support keyboard scrolling: ${JSON.stringify({ before: summaryAttachmentScrollContract.scrollTop, after: summaryAttachmentKeyboardScroll })}`);
         }
         if (captureDir) {
           await agentsRegressionPage.screenshot({ path: path.join(captureDir, "summary-attachment-menu-mobile.png") });
@@ -8267,6 +8512,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     end
     if ENV["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"].to_s == "1"
       smoke_env["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"] = "1"
+    end
+    if ENV["TYCHO_REMOTE_UI_SUMMARY_ATTACHMENTS_ONLY"].to_s == "1"
+      smoke_env["TYCHO_REMOTE_UI_SUMMARY_ATTACHMENTS_ONLY"] = "1"
     end
     if ENV["TYCHO_REMOTE_UI_SKILLS_ONLY"].to_s == "1"
       smoke_env["TYCHO_REMOTE_UI_SKILLS_ONLY"] = "1"
