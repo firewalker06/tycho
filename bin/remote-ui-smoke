@@ -2556,6 +2556,21 @@ Saved safely.
             !mobileAgentToolbar.labels.includes("Select agents")) {
           throw new Error(`Mobile Agents toolbar is not sticky and compact: ${JSON.stringify(mobileAgentToolbar)}`);
         }
+        const mobileAgentIconContract = await page.evaluate(() => {
+          const menu = document.querySelector("[data-agent-mobile-toolbar-menu]");
+          const itemIcon = (label) => Array.from(menu?.querySelectorAll("[role='menuitem']") || [])
+            .find((item) => item.querySelector("strong")?.textContent.trim() === label)
+            ?.querySelector("svg")?.outerHTML || "";
+          return {
+            allServers: itemIcon("All servers"),
+            relevancy: itemIcon("Relevancy"),
+          };
+        });
+        if (!mobileAgentIconContract.allServers.includes('<circle cx="12" cy="12" r="10">') ||
+            !mobileAgentIconContract.relevancy.includes('M11 12h2a2 2 0 1 0 0-4h-3')) {
+          throw new Error(`Mobile Agents filter/sort icons are missing or incorrect: ${JSON.stringify(mobileAgentIconContract)}`);
+        }
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "agent-filter-sort-icons-mobile.png"), fullPage: false });
         await page.setViewportSize({ width: 1024, height: 768 });
         const desktopAgentToolbar = await page.evaluate(async () => {
           window.scrollTo(0, document.documentElement.scrollHeight);
@@ -2581,6 +2596,17 @@ Saved safely.
             desktopAgentToolbar.visibleControlCount !== 3) {
           throw new Error(`Desktop Agents toolbar is not sticky with visible controls: ${JSON.stringify(desktopAgentToolbar)}`);
         }
+        await page.evaluate(() => {
+          state.agentSort = "relevancy";
+          render();
+        });
+        const desktopAgentIconContract = await page.evaluate(() => ({
+          trigger: document.querySelector(".agent-sort-trigger svg")?.outerHTML || "",
+        }));
+        if (!desktopAgentIconContract.trigger.includes('M11 12h2a2 2 0 1 0 0-4h-3')) {
+          throw new Error(`Desktop Agents sort icon is missing or incorrect: ${JSON.stringify(desktopAgentIconContract)}`);
+        }
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "agent-filter-sort-icons-desktop.png"), fullPage: false });
         await page.evaluate(() => {
           state.projects = state.projects.filter((project) => !project.key.startsWith("toolbar-empty-"));
           state.filters.server = "local";

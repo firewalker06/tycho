@@ -21,6 +21,7 @@ module RemoteUIAssetSnapshotTest
     assert_personal_assistant_visits_without_opening_ceremony
     assert_personal_assistant_hides_internal_chat_events
     assert_agent_status_icons_use_lucide_without_badges
+    assert_agent_filter_and_sort_use_requested_lucide_icons
     puts "remote_ui_asset_snapshot_test: ok"
   end
 
@@ -255,6 +256,27 @@ module RemoteUIAssetSnapshotTest
     forbidden_styles = %w[background border padding border-radius]
     styled = forbidden_styles.select { |property| icon_styles.include?(property) }
     raise "status icon styles must not create a badge: #{styled.join(", ")}" unless styled.empty?
+  end
+
+  def assert_agent_filter_and_sort_use_requested_lucide_icons
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+
+    required = [
+      '{ value: "relevancy", label: "Relevancy", icon: "handHelping", scope: "agents" }',
+      "globe:",
+      "handHelping:",
+      '<circle cx="12" cy="12" r="10"></circle>',
+      '<path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path>',
+      '<path d="M11 12h2a2 2 0 1 0 0-4h-3c-.6 0-1.1.2-1.4.6L3 14"></path>',
+      '<path d="m7 18 1.6-1.4c.3-.4.8-.6 1.4-.6h4c1.1 0 2.1-.4 2.8-1.2l4.6-4.4a2 2 0 0 0-2.75-2.91l-4.2 3.9"></path>',
+      'label: "All servers",',
+      'icon: "globe",',
+      'aria-label="Sort agents: ${escapeAttr(current.label)}"'
+    ]
+    missing = required.reject { |fragment| javascript.include?(fragment) }
+    raise "missing Agents filter/sort Lucide icon contract: #{missing.join(", ")}" unless missing.empty?
+
+    raise "Relevancy must not use the sparkles icon" if javascript.include?('{ value: "relevancy", label: "Relevancy", icon: "sparkles"')
   end
 
   def assert_delegation_callbacks_are_chronological_events
