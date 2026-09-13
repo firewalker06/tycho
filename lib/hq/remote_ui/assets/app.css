@@ -4168,19 +4168,13 @@ select {
 }
 
 .delegation-callback-event {
-  gap: 8px;
   border-color: color-mix(in srgb, var(--success) 48%, var(--border));
   background: color-mix(in srgb, var(--success) 4%, var(--panel));
 }
 
-.delegation-callback-header {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
+.message-role.delegation-callback-header {
   min-width: 0;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
+  text-transform: none;
 }
 
 .delegation-agent-link {
@@ -4206,65 +4200,6 @@ select {
 }
 
 .delegation-agent-link .ui-icon {
-  width: 15px;
-  height: 15px;
-}
-
-.delegation-callback-excerpt {
-  display: -webkit-box;
-  overflow: hidden;
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.55;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-
-.delegation-callback-details > summary {
-  width: max-content;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.delegation-report-code {
-  position: relative;
-  min-width: 0;
-  margin-top: 8px;
-}
-
-.delegation-report-code pre {
-  overflow-x: auto;
-  margin: 0;
-  border: 1px solid color-mix(in srgb, var(--border) 78%, var(--panel-soft));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--bg) 82%, black);
-  padding: 12px 42px 12px 12px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-}
-
-.delegation-report-copy {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  z-index: 1;
-  width: 26px;
-  height: 26px;
-  min-height: 26px;
-  border: 1px solid color-mix(in srgb, var(--border) 82%, var(--panel-soft));
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--panel) 92%, transparent);
-  color: var(--muted);
-}
-
-.delegation-report-copy:hover,
-.delegation-report-copy:focus-visible {
-  background: var(--panel-soft);
-  color: var(--text);
-}
-
-.delegation-report-copy .ui-icon {
   width: 15px;
   height: 15px;
 }
