@@ -155,14 +155,15 @@ module RemoteUIPersonalAssistantBehaviorTest
         recommendations: {
           for_date: "2026-09-11",
           source: "daily_handoff",
-          items: [{ title: "Continue review", prompt: "Continue the release review from yesterday." }],
+          items: [{ title: "Continue review", description: "Pick up the unfinished release decision.", prompt: "Continue the release review from yesterday." }],
         },
       };
       const initialRecommendations = context.renderPersonalAssistantRecommendations(recommendationItem, []);
       assert(initialRecommendations.includes('class="message assistant pa-recommendations"') &&
-        initialRecommendations.includes("Continue the release review from yesterday.") &&
+        initialRecommendations.includes("Pick up the unfinished release decision.") &&
+        !initialRecommendations.includes("><span>Continue the release review from yesterday.</span>") &&
         initialRecommendations.includes('data-pa-recommendation='),
-      "initial recommendations were not rendered as an intelligible FRED conversation block");
+      "initial recommendations did not render concise, nonduplicative FRED card copy");
       const selectedBlock = {
         kind: "message",
         role: "user",
