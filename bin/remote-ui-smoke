@@ -71,7 +71,9 @@ def write_fixture(dir)
       "summary" => "## Completed the focused review\n\n- Returned the complete delegated result.\n- Preserved safe Markdown rendering.",
       "summary_sections" => [{ "type" => "text", "text" => "Rendered semantic run summary details.", "url" => nil, "attachment" => nil }],
       "inquiry" => nil,
-      "attachments" => nil
+      "attachments" => nil,
+      "memory_handoff" => nil,
+      "action_proposals" => nil
     }
     File.write(output, JSON.generate(payload)) if output
     puts JSON.generate("type" => "thread.started", "thread_id" => "smoke-#{Process.pid}")
@@ -487,6 +489,7 @@ def write_smoke_script(path)
       const beforeCapture = process.env.TYCHO_REMOTE_UI_BEFORE_CAPTURE || "";
       const skillsOnly = process.env.TYCHO_REMOTE_UI_SKILLS_ONLY === "1";
       const workspaceOnly = process.env.TYCHO_REMOTE_UI_WORKSPACE_ONLY === "1";
+      const delegationOnly = process.env.TYCHO_REMOTE_UI_DELEGATION_ONLY === "1";
       const titleCopyOnly = process.env.TYCHO_REMOTE_UI_TITLE_COPY_ONLY === "1";
       const summaryAttachmentsOnly = process.env.TYCHO_REMOTE_UI_SUMMARY_ATTACHMENTS_ONLY === "1";
       const draft = "Remote UI smoke draft " + Date.now();
@@ -501,6 +504,168 @@ def write_smoke_script(path)
         if (message.type() === "error") errors.push(message.text());
       });
       page.on("pageerror", (error) => errors.push(error.message));
+
+      async function assertDelegationCallbackMessages() {
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(orchestratorAgentKey)}`, { waitUntil: "networkidle" });
+        await page.waitForSelector(".delegation-callback-event", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector(".delegation-callback-result .markdown-viewer", { state: "visible", timeout: 10_000 });
+
+        const liveContract = await page.evaluate(() => {
+          const list = document.querySelector(".message-list");
+          const callback = list?.querySelector(".delegation-callback-event");
+          const started = list?.querySelector(".delegation-event");
+          const children = Array.from(list?.children || []);
+          const callbackRect = callback?.getBoundingClientRect();
+          const listRect = list?.getBoundingClientRect();
+          return {
+            callbackIndex: children.indexOf(callback),
+            startedIndex: children.indexOf(started),
+            classes: callback?.className || "",
+            label: callback?.querySelector(".delegation-event-brand")?.textContent || "",
+            agentName: callback?.querySelector(".delegation-callback-header strong")?.textContent || "",
+            agentNameTransform: callback ? getComputedStyle(callback.querySelector(".delegation-callback-header")).textTransform : "",
+            result: callback?.querySelector(".delegation-callback-result")?.innerText || "",
+            details: callback?.querySelectorAll("details").length || 0,
+            rightDelta: callbackRect && listRect ? Math.abs(callbackRect.right - listRect.right) : null,
+          };
+        });
+        if (!liveContract.classes.includes("message user") || liveContract.label !== "DELEGATED AGENT" ||
+            liveContract.agentName !== "API contract review" || liveContract.agentNameTransform !== "none" || liveContract.details !== 0 ||
+            liveContract.rightDelta === null || liveContract.rightDelta > 1 ||
+            liveContract.startedIndex < 0 || liveContract.callbackIndex <= liveContract.startedIndex ||
+            !liveContract.result.includes("Completed the focused review") ||
+            !liveContract.result.includes("Preserved safe Markdown rendering.")) {
+          throw new Error(`Live delegation callback contract failed: ${JSON.stringify(liveContract)}`);
+        }
+        if (captureDir) {
+          await page.locator(".message-list > .delegation-callback-event").screenshot({ path: path.join(captureDir, "delegated-report-live-desktop.png") });
+        }
+        await page.setViewportSize({ width: 390, height: 844 });
+        const liveMobileContract = await page.evaluate(() => {
+          const callback = document.querySelector(".message-list > .delegation-callback-event");
+          const pane = document.querySelector("[data-agent-conversation-scroll]");
+          callback?.scrollIntoView({ block: "start" });
+          if (pane) pane.scrollTop = Math.max(0, pane.scrollTop - 12);
+          const rect = callback?.getBoundingClientRect();
+          const header = document.querySelector(".app-header")?.getBoundingClientRect();
+          const dock = document.querySelector("[data-agent-dock]")?.getBoundingClientRect();
+          return {
+            left: rect?.left || 0,
+            right: rect?.right || 0,
+            top: rect?.top || 0,
+            bottom: rect?.bottom || 0,
+            viewportWidth: innerWidth,
+            headerBottom: header?.bottom || 0,
+            dockTop: dock?.top || innerHeight,
+          };
+        });
+        if (liveMobileContract.left <= 0 || liveMobileContract.right > liveMobileContract.viewportWidth ||
+            liveMobileContract.top < liveMobileContract.headerBottom || liveMobileContract.bottom > liveMobileContract.dockTop) {
+          throw new Error(`Live delegation callback is obscured on mobile: ${JSON.stringify(liveMobileContract)}`);
+        }
+        if (captureDir) {
+          await page.screenshot({ path: path.join(captureDir, "delegated-report-live-mobile.png"), fullPage: false });
+        }
+        await page.setViewportSize({ width: 1440, height: 900 });
+
+        const longMarkdown = [
+          "# Complete delegated result",
+          "",
+          "- first item",
+          "- second item",
+          "",
+          "```ruby",
+          "puts 'safe'",
+          "```",
+          "",
+          "[safe link](https://example.com/review)",
+          "[unsafe link](javascript:alert(1))",
+          '<img src="x" onerror="document.body.dataset.injected = 1">',
+          "",
+          ...Array.from({ length: 80 }, (_item, index) => `Long result line ${index + 1}`),
+          "END-OF-DELEGATED-RESULT",
+        ].join("\\n");
+        await page.evaluate(({ markdown }) => {
+          const host = document.createElement("section");
+          host.id = "delegation-callback-smoke-fixtures";
+          host.setAttribute("aria-label", "Delegated callback smoke fixtures");
+          const block = (id, status, summary, child) => ({
+            id,
+            kind: "message",
+            role: "user",
+            content: summary,
+            created_at: "2026-09-13T06:00:00Z",
+            metadata: {
+              delegation_callback: true,
+              delegation_report: { status, summary, child },
+              agent_reference: child,
+            },
+          });
+          const cases = [
+            block("success", "success", markdown, { name: '<Review & "Safety">', agent_key: "unusual-agent", state: "missing" }),
+            block("failed", "failed", "Failure result remains visible.", { agent_key: "failure-agent", state: "missing" }),
+            block("input", "input_required", "Input-required result remains visible.", {}),
+          ];
+          host.innerHTML = cases.map((item, index) => renderDelegationCallbackBlock(item, index, {})).join("");
+          document.querySelector("#view")?.appendChild(host);
+        }, { markdown: longMarkdown });
+
+        const fixtureContract = await page.evaluate(() => {
+          const host = document.querySelector("#delegation-callback-smoke-fixtures");
+          const callbacks = Array.from(host?.querySelectorAll(".delegation-callback-event") || []);
+          const longResult = callbacks[0]?.querySelector(".delegation-callback-result");
+          const safeLink = longResult?.querySelector('a[href="https://example.com/review"]');
+          const unsafeLink = Array.from(longResult?.querySelectorAll("a") || [])
+            .find((link) => String(link.getAttribute("href") || "").startsWith("javascript:"));
+          return {
+            count: callbacks.length,
+            names: callbacks.map((callback) => callback.querySelector(".delegation-callback-header strong")?.textContent || ""),
+            nameTransforms: callbacks.map((callback) => getComputedStyle(callback.querySelector(".delegation-callback-header")).textTransform),
+            labels: callbacks.map((callback) => callback.querySelector(".delegation-event-brand")?.textContent || ""),
+            contents: callbacks.map((callback) => callback.querySelector(".delegation-callback-result")?.innerText || ""),
+            details: callbacks.reduce((count, callback) => count + callback.querySelectorAll("details").length, 0),
+            heading: longResult?.querySelector("h1")?.textContent || "",
+            listItems: longResult?.querySelectorAll("li").length || 0,
+            code: longResult?.querySelector("pre code")?.textContent || "",
+            safeLink: safeLink?.getAttribute("href") || "",
+            unsafeLink: Boolean(unsafeLink),
+            forbiddenNodes: longResult?.querySelectorAll("img, script, iframe, object, embed").length || 0,
+            injected: document.body.dataset.injected || "",
+            fullResult: longResult?.innerText.endsWith("END-OF-DELEGATED-RESULT") || false,
+          };
+        });
+        if (fixtureContract.count !== 3 || fixtureContract.names[0] !== '<Review & "Safety">' ||
+            fixtureContract.names[1] !== "failure-agent" || fixtureContract.names[2] !== "Delegated agent" ||
+            fixtureContract.nameTransforms.some((transform) => transform !== "none") ||
+            fixtureContract.labels.some((label) => label !== "DELEGATED AGENT") || fixtureContract.details !== 0 ||
+            fixtureContract.heading !== "Complete delegated result" || fixtureContract.listItems !== 2 ||
+            !fixtureContract.code.includes("puts 'safe'") || fixtureContract.safeLink !== "https://example.com/review" ||
+            fixtureContract.unsafeLink || fixtureContract.forbiddenNodes !== 0 || fixtureContract.injected ||
+            !fixtureContract.fullResult || !fixtureContract.contents[1].includes("Failure result remains visible.") ||
+            !fixtureContract.contents[2].includes("Input-required result remains visible.")) {
+          throw new Error(`Delegation callback variants failed: ${JSON.stringify(fixtureContract)}`);
+        }
+
+        if (captureDir) {
+          await page.locator("#delegation-callback-smoke-fixtures").screenshot({ path: path.join(captureDir, "delegated-report-desktop.png") });
+        }
+        await page.setViewportSize({ width: 390, height: 844 });
+        const mobileContract = await page.evaluate(() => {
+          const callbacks = Array.from(document.querySelectorAll("#delegation-callback-smoke-fixtures .delegation-callback-event"));
+          return callbacks.map((callback) => {
+            const rect = callback.getBoundingClientRect();
+            return { left: rect.left, right: rect.right, width: rect.width, viewportWidth: innerWidth };
+          });
+        });
+        if (mobileContract.length !== 3 || mobileContract.some((rect) =>
+          rect.left <= 0 || rect.right > rect.viewportWidth || rect.width >= rect.viewportWidth)) {
+          throw new Error(`Delegation callbacks overflow mobile: ${JSON.stringify(mobileContract)}`);
+        }
+        if (captureDir) {
+          await page.locator("#delegation-callback-smoke-fixtures").screenshot({ path: path.join(captureDir, "delegated-report-mobile.png") });
+        }
+      }
 
       async function assertInitialLoadingShell() {
         const desktopPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -546,7 +711,7 @@ def write_smoke_script(path)
         }
       }
 
-      if (!workspaceOnly && process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY !== "1") await assertInitialLoadingShell();
+      if (!workspaceOnly && !delegationOnly && process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY !== "1") await assertInitialLoadingShell();
 
       async function assertSummaryAttachmentScrolling(candidate, viewport, input) {
         await candidate.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
@@ -1176,7 +1341,7 @@ def write_smoke_script(path)
         }
       }
 
-      if (!workspaceOnly) await assertPersonalAssistantConversationShell();
+      if (!workspaceOnly && !delegationOnly) await assertPersonalAssistantConversationShell();
 
       async function assertPersonalAssistantPhase1() {
         const fredBackendUrl = process.env.TYCHO_REMOTE_UI_FRED_PHASE1_BACKEND_URL;
@@ -2302,6 +2467,12 @@ def write_smoke_script(path)
       }
 
       try {
+        if (delegationOnly) {
+          await assertDelegationCallbackMessages();
+          if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
+          console.log("remote-ui-delegation-smoke: ok");
+          return;
+        }
         if (workspaceOnly) {
           await assertProjectWorkspaceBrowser();
           if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
@@ -8521,6 +8692,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     end
     if ENV["TYCHO_REMOTE_UI_WORKSPACE_ONLY"].to_s == "1"
       smoke_env["TYCHO_REMOTE_UI_WORKSPACE_ONLY"] = "1"
+    end
+    if ENV["TYCHO_REMOTE_UI_DELEGATION_ONLY"].to_s == "1"
+      smoke_env["TYCHO_REMOTE_UI_DELEGATION_ONLY"] = "1"
     end
     capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
     unless capture_dir.empty?

@@ -4172,7 +4172,7 @@ select {
   background: color-mix(in srgb, var(--success) 4%, var(--panel));
 }
 
-.delegation-callback-header {
+.message-role.delegation-callback-header {
   min-width: 0;
   text-transform: none;
 }

@@ -299,6 +299,7 @@ module RemoteUIAssetSnapshotTest
     raise "missing delegated callback presentation: #{missing.join(", ")}" unless missing.empty?
     raise "missing callback event styling" unless css.include?(".delegation-callback-event")
     raise "delegated callback must share user-message direction" unless css.include?(".message.user")
+    raise "delegated callback must preserve the agent name's case" unless css.include?(".message-role.delegation-callback-header")
     callback_source = javascript[/function renderDelegationCallbackBlock.*?^}/m]
     raise "missing callback renderer" unless callback_source
     raise "callback must not repeat the full agent card" if callback_source.include?("renderAgentReference(reference)")
