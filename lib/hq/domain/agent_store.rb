@@ -697,8 +697,12 @@ module HQ
 
     def mark_claim_reports_resumed!(claim)
       Array(claim["entries"]).each do |entry|
-        report_id = entry.dig("message_metadata", "delegation_report", "id")
-        @delegation_coordinator.mark_report_resumed!(report_id, now: Time.now) if report_id
+        reports = Array(entry.dig("message_metadata", "delegation_reports"))
+        reports = [entry.dig("message_metadata", "delegation_report")] if reports.empty?
+        reports.each do |report|
+          report_id = report&.fetch("id", nil)
+          @delegation_coordinator.mark_report_resumed!(report_id, now: Time.now) if report_id
+        end
       end
     end
 

@@ -65,7 +65,7 @@ tycho agent create global-web "Review the auth boundary" --parent-agent global-w
 
 ### Delegating from a managed Tycho agent
 
-Pass this managed agent's key explicitly. Tycho treats `--parent-agent` as the trusted declaration that the prompt came from the parent, links the child, and returns each terminal delegated run to that parent:
+Pass this managed agent's key explicitly. Tycho treats `--parent-agent` as the trusted declaration that the prompt came from the parent, links the child, and returns terminal delegated runs to that parent:
 
 ```bash
 "${TYCHO_EXECUTABLE:-tycho}" agent create global-web "Review the auth boundary" \
@@ -91,7 +91,7 @@ The declaration is not cryptographic authentication. Use it only with the actual
 - Treat a direct user prompt to a delegated child as Takeover. It changes the edge owner to `user`, advances its ownership generation, suppresses pending reports, and cancels queued parent resumes.
 - Let only a prompt declared with the recorded parent key restore Delegation. Parent reclaim advances the generation and cancels any unresolved child inquiry before storing the prompt.
 - Expect every terminal delegated run to create one deduplicated report when callbacks are connected. Tycho stamps ownership at launch and rejects stale generations.
-- Let Tycho deliver eligible terminal reports and resume the parent. It waits while the parent or another agent in the same workspace is running.
+- Let Tycho accumulate eligible terminal reports for the same parent into one deterministic callback and resume. It waits while the parent or another agent in the same workspace is running.
 - Treat callback disconnect as suppression, not deletion. Disconnected runs are not replayed after reconnect, and archived parents receive history without being resumed.
 - Read the UI conservatively: Tycho shows `Takeover` only while a delegated edge is user-owned. It does not show a normal `Delegation` badge.
 
