@@ -665,6 +665,106 @@ def write_smoke_script(path)
         if (captureDir) {
           await page.locator("#delegation-callback-smoke-fixtures").screenshot({ path: path.join(captureDir, "delegated-report-mobile.png") });
         }
+
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(delegatedAgentKey)}`, { waitUntil: "networkidle" });
+        await page.waitForSelector(".message-list", { state: "visible", timeout: 10_000 });
+        const installSummaryAttentionFixture = async () => page.evaluate((key) => {
+          state.conversations[key] = {
+            blocks: [
+              {
+                kind: "run_summary",
+                content: "Delegated child completed without operator interruption.",
+                created_at: "2026-09-13T06:00:00Z",
+                metadata: {
+                  summary_id: "delegated-attention-suppressed",
+                  run_number: 1,
+                  status: "success",
+                  notification_suppressed: true,
+                  unread_suppressed: true,
+                },
+              },
+              {
+                kind: "run_summary",
+                content: "Operator-started summary retains normal attention.",
+                created_at: "2026-09-13T06:01:00Z",
+                metadata: {
+                  summary_id: "operator-attention-normal",
+                  run_number: 2,
+                  status: "success",
+                },
+              },
+            ],
+          };
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+        }, delegatedAgentKey);
+        await installSummaryAttentionFixture();
+        const summaryAttentionContract = async () => page.evaluate(() => {
+          const suppressed = document.querySelector("[data-run-summary-id='delegated-attention-suppressed']");
+          const ordinary = document.querySelector("[data-run-summary-id='operator-attention-normal']");
+          const role = suppressed?.querySelector(".message-role");
+          const time = role?.querySelector(".message-time");
+          const indicator = role?.querySelector(".summary-suppression-indicator");
+          const timeRect = time?.getBoundingClientRect();
+          const indicatorRect = indicator?.getBoundingClientRect();
+          return {
+            count: document.querySelectorAll(".summary-suppression-indicator").length,
+            headerCount: suppressed?.querySelectorAll(".message-header .summary-suppression-indicator").length || 0,
+            contentCount: suppressed?.querySelectorAll(".summary-message-content .summary-suppression-indicator").length || 0,
+            ordinaryCount: ordinary?.querySelectorAll(".summary-suppression-indicator").length || 0,
+            previousIsTime: indicator?.previousElementSibling === time,
+            parentIsRole: indicator?.parentElement === role,
+            label: indicator?.getAttribute("aria-label") || "",
+            role: indicator?.getAttribute("role") || "",
+            icon: Boolean(indicator?.querySelector("svg.ui-icon path[d='m2 2 20 20']")),
+            gap: timeRect && indicatorRect ? indicatorRect.left - timeRect.right : null,
+            centerDelta: timeRect && indicatorRect
+              ? Math.abs((timeRect.top + timeRect.height / 2) - (indicatorRect.top + indicatorRect.height / 2))
+              : null,
+            overflow: suppressed ? suppressed.scrollWidth > suppressed.clientWidth : true,
+          };
+        });
+        const assertSummaryAttentionContract = (contract, viewport) => {
+          if (contract.count !== 1 || contract.headerCount !== 1 || contract.contentCount !== 0 ||
+              contract.ordinaryCount !== 0 || !contract.previousIsTime || !contract.parentIsRole ||
+              contract.label !== "Operator notifications and unread count suppressed" || contract.role !== "img" ||
+              !contract.icon || contract.gap === null || contract.gap < 5 || contract.gap > 7 ||
+              contract.centerDelta === null || contract.centerDelta > 1 || contract.overflow) {
+            throw new Error(`${viewport} delegated Summary header attention contract failed: ${JSON.stringify(contract)}`);
+          }
+        };
+        assertSummaryAttentionContract(await summaryAttentionContract(), "Desktop");
+        if (captureDir) {
+          await page.screenshot({ path: path.join(captureDir, "delegated-attention-header-desktop.png"), fullPage: false });
+        }
+        await page.setViewportSize({ width: 390, height: 844 });
+        await installSummaryAttentionFixture();
+        assertSummaryAttentionContract(await summaryAttentionContract(), "Mobile");
+        if (captureDir) {
+          await page.screenshot({ path: path.join(captureDir, "delegated-attention-header-mobile.png"), fullPage: false });
+        }
+        await page.evaluate((key) => {
+          state.conversations[key].blocks[0].metadata.unread_suppressed = false;
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+        }, delegatedAgentKey);
+        if (await page.locator(".summary-suppression-indicator").count() !== 0) {
+          throw new Error("Summary attention icon rendered without unread suppression");
+        }
+        await page.evaluate((key) => {
+          const metadata = state.conversations[key].blocks[0].metadata;
+          metadata.unread_suppressed = true;
+          metadata.notification_suppressed = false;
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+        }, delegatedAgentKey);
+        if (await page.locator(".summary-suppression-indicator").count() !== 0) {
+          throw new Error("Summary attention icon rendered without notification suppression");
+        }
       }
 
       async function assertInitialLoadingShell() {
@@ -3456,6 +3556,35 @@ def write_smoke_script(path)
           const control = document.querySelector(`.message-list > .agent-relationships [data-set-delegation-connection='${CSS.escape(key)}']`);
           return control?.getAttribute("aria-label") === "Disconnect delegation reports" && !document.body.innerText.includes("Reports disconnected");
         }, delegatedAgentKey, { timeout: 10_000 });
+        await page.evaluate((key) => {
+          state.conversations[key] = {
+            blocks: [{
+              kind: "run_summary",
+              content: "Delegated child completed without operator interruption.",
+              created_at: "2026-09-13T06:00:00Z",
+              metadata: {
+                summary_id: "delegated-suppression-summary",
+                run_number: 1,
+                status: "success",
+                notification_suppressed: true,
+                unread_suppressed: true,
+              },
+            }],
+          };
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+        }, delegatedAgentKey);
+        const delegatedSummarySuppression = await page.locator(".summary-suppression-indicator").evaluate((indicator) => ({
+          count: document.querySelectorAll(".summary-suppression-indicator").length,
+          label: indicator.getAttribute("aria-label"),
+          icon: Boolean(indicator.querySelector("svg.ui-icon path[d='m2 2 20 20']")),
+        }));
+        if (delegatedSummarySuppression.count !== 1 ||
+            delegatedSummarySuppression.label !== "Operator notifications and unread count suppressed" ||
+            !delegatedSummarySuppression.icon) {
+          throw new Error(`Delegated summary suppression indicator is not accessible or visually distinct: ${JSON.stringify(delegatedSummarySuppression)}`);
+        }
         if (captureDir) {
           await page.screenshot({ path: path.join(captureDir, "orchestration-child-desktop.png"), fullPage: false });
         }

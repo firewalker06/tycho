@@ -1449,6 +1449,11 @@ def selected_screen_items
 
     def mark_agent_unread_if_needed(agent)
       return if agent.respond_to?(:no_action_needed?) && agent.no_action_needed?
+      delegation_stamp = @agent_store.delegation_coordinator.ownership_stamp(agent.key)
+      if agent.respond_to?(:suppresses_operator_attention?) &&
+         agent.suppresses_operator_attention?(delegation_stamp:)
+        return
+      end
 
       if agent_chat_visible_for?(agent)
         agent.mark_read!

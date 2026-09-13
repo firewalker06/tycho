@@ -4640,6 +4640,18 @@ select {
   margin: 0;
 }
 
+.summary-suppression-indicator {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.summary-suppression-indicator .ui-icon {
+  width: 15px;
+  height: 15px;
+}
+
 .summary-sections {
   display: grid;
   gap: 10px;

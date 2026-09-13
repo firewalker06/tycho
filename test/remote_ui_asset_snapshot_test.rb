@@ -15,6 +15,7 @@ module RemoteUIAssetSnapshotTest
     assert_loaded_daemon_keeps_one_asset_build
     assert_delegation_ui_uses_typed_safe_references
     assert_delegation_callbacks_render_as_complete_delegated_agent_messages
+    assert_delegated_summary_attention_icon_is_in_header
     assert_archived_agents_are_reference_only_and_read_only
     assert_personal_assistant_is_chat_first
     assert_personal_assistant_first_run_uses_starters
@@ -23,6 +24,26 @@ module RemoteUIAssetSnapshotTest
     assert_agent_status_icons_use_lucide_without_badges
     assert_agent_filter_and_sort_use_requested_lucide_icons
     puts "remote_ui_asset_snapshot_test: ok"
+  end
+
+  def assert_delegated_summary_attention_icon_is_in_header
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
+    message_renderer = javascript[/function renderMessage\(block, options = \{\}\).*?^}/m].to_s
+    summary_renderer = javascript[/function renderRunSummaryMessageContent.*?^}/m].to_s
+
+    required = [
+      'const summaryAttentionHtml = block.kind === "run_summary" ? summarySuppressionIndicator(block.metadata) : "";',
+      "${timeHtml}${summaryAttentionHtml}</div>",
+      'metadata?.notification_suppressed !== true || metadata?.unread_suppressed !== true',
+      'role="img" aria-label="Operator notifications and unread count suppressed"',
+      'iconSvg("bellOff")'
+    ]
+    missing = required.reject { |fragment| javascript.include?(fragment) }
+    raise "missing delegated Summary header attention contract: #{missing.join(", ")}" unless missing.empty?
+    raise "Summary content still contains the suppression icon" if summary_renderer.include?("summarySuppressionIndicator")
+    raise "Summary header must place the suppression icon directly after relative time" unless message_renderer.include?("${timeHtml}${summaryAttentionHtml}")
+    raise "missing aligned Summary header icon styling" unless css.include?("flex: 0 0 auto;") && css.include?("align-items: center;")
   end
 
   def assert_personal_assistant_is_chat_first

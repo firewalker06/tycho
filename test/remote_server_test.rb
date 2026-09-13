@@ -5017,12 +5017,52 @@ module RemoteServerTest
           "summary" => "Checked pull requests. Nothing needs action."
         }
       )
-      HQ::AgentStore.new([]).save([input_agent, finished_agent, no_action_agent])
-      [input_agent, finished_agent, no_action_agent].each do |agent|
+      delegated_agents = %w[success partial failed blocked input_required no_action_needed].map do |status|
+        stale_running_agent(
+          key: "delegated-#{status}",
+          name: "Delegated #{status}",
+          workspace: workspace,
+          started_at: started_at,
+          structured_result: {
+            "status" => status,
+            "summary" => "Delegated #{status} outcome."
+          },
+          delegation_owner: "parent",
+          delegation_generation: 1
+        )
+      end
+      delegation_parent = HQ::ManagedAgent.new(
+        key: "delegation-parent",
+        name: "Delegation parent",
+        project_key: "web",
+        template_key: "default",
+        workspace: workspace,
+        prompt: "Coordinate delegated work",
+        agent: "codex"
+      )
+      HQ::AgentMemory.new(delegation_parent).append_inquiry_request!(
+        { "message" => "Hold callbacks", "fields" => [] },
+        inquiry_id: "parent-hold"
+      )
+      all_agents = [delegation_parent, input_agent, finished_agent, no_action_agent, *delegated_agents]
+      store = HQ::AgentStore.new([])
+      delegated_agents.each do |agent|
+        store.delegation_coordinator.attach!(
+          agents: all_agents,
+          child: agent,
+          parent_key: delegation_parent.key
+        )
+      end
+      store.delegation_coordinator.set_connected!(
+        child_key: "delegated-no_action_needed",
+        connected: false
+      )
+      store.save(all_agents)
+      all_agents.each do |agent|
         File.write(File.join(HQ::AGENT_LOGS_DIR, "#{agent.key}.status"), "0")
       end
 
-      refreshed_agents = HQ::AgentStore.new([]).load
+      refreshed_agents = store.load
       refreshed_input_agent = refreshed_agents.find { |agent| agent.key == "web-agent-1" }
       assert(refreshed_input_agent.status == "awaiting-input",
              "expected a normal agent refresh to observe the completed inquiry run")
@@ -5057,6 +5097,28 @@ module RemoteServerTest
       no_action_payload = agents.find { |agent| agent[:key] == "web-agent-3" }
       assert(no_action_payload[:last_result] == "no action", "expected no-action agent to expose no-action label")
       assert(!no_action_payload[:unread], "expected no-action agent to stay read")
+      delegated_payloads = agents.select { |agent| agent[:key].start_with?("delegated-") }
+      assert(delegated_payloads.length == 6 && delegated_payloads.none? { |agent| agent[:unread] },
+             "expected every parent-owned terminal outcome to suppress operator unread state")
+      delegated_agents.each do |agent|
+        summary = File.readlines(agent.memory_path).map { |line| JSON.parse(line) }
+                                              .find { |event| event["type"] == "run_summary" }
+        assert(summary&.dig("metadata", "notification_suppressed") && summary.dig("metadata", "unread_suppressed"),
+               "expected #{agent.key} summary to record both operator-attention suppressions")
+      end
+      reports = store.delegation_coordinator.delegation_store.reports.select do |report|
+        report["parent_agent_key"] == delegation_parent.key
+      end
+      assert(reports.length == 5 && reports.all? { |report| !report["delivered_at"].to_s.empty? },
+             "expected every connected delegated outcome to retain a delivered callback report")
+      parent_payload = refreshed_agents.find { |agent| agent.key == delegation_parent.key }
+      callback = parent_payload.queued_prompts.find { |entry| entry["source"] == "delegation_callback" }
+      assert(callback&.dig("message_metadata", "delegation_reports")&.length == 5,
+             "expected connected delegated outcomes to batch into one parent callback")
+      assert(reports.none? { |report| report.dig("child", "agent_key") == "delegated-no_action_needed" },
+             "expected a disconnected delegated completion to stay out of the callback ledger")
+      assert(notifier.payloads.length == 2,
+             "expected delegated terminal outcomes to suppress completion pushes while root turns still notify")
       forged_no_action_event = HQ::AgentStore::PollEvent.new(
         agent_key: "web-agent-3",
         from_status: "running",
@@ -5899,6 +5961,11 @@ module RemoteServerTest
            !helpers_js[:body].include?("⏸️".b) &&
            !helpers_js[:body].include?("🚫".b),
            "expected agent status surfaces to use exact accessible Lucide icons without emoji")
+    assert(js[:body].include?("bellOff:") &&
+           js[:body].include?("function summarySuppressionIndicator") &&
+           js[:body].include?("Operator notifications and unread count suppressed") &&
+           js[:body].include?("summary-suppression-indicator"),
+           "expected delegated summaries to expose an accessible bell-off suppression indicator")
     assert(js[:body].scan("statusBadge(").length >= 25 &&
            js[:body].scan("statusMarkAttributes(").length >= 15,
            "expected representative agent, schedule, setup, project, and diff states to use the semantic status contract")
@@ -8032,7 +8099,8 @@ module RemoteServerTest
     end
   end
 
-  def stale_running_agent(key:, name:, workspace:, started_at:, structured_result: nil)
+  def stale_running_agent(key:, name:, workspace:, started_at:, structured_result: nil,
+                          delegation_owner: nil, delegation_generation: nil)
     log_path = File.join(HQ::AGENT_LOGS_DIR, "#{key}.raw.log")
     File.write(log_path, stale_agent_log(started_at, structured_result))
     HQ::ManagedAgent.new(
@@ -8049,7 +8117,9 @@ module RemoteServerTest
         HQ::ManagedAgent::AgentRun.new(
           started_at: started_at,
           status: "running",
-          log_path: log_path
+          log_path: log_path,
+          delegation_owner: delegation_owner,
+          delegation_generation: delegation_generation
         )
       ]
     )

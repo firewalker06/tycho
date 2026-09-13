@@ -92,7 +92,8 @@ module HQ
           changed = true
         end
         if was_running && !running_for_poll_event?(agent)
-          unless agent.no_action_needed?
+          delegation_stamp = @delegation_coordinator.ownership_stamp(agent.key)
+          unless agent.no_action_needed? || agent.suppresses_operator_attention?(delegation_stamp:)
             agent.mark_unread!
             changed = true
             events << PollEvent.new(

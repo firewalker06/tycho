@@ -18,6 +18,7 @@ module ManagedAgentTest
     assert_never_run_agent_keeps_empty_summary
     assert_completed_status_finalizes_live_pid
     assert_structured_result_status_overrides_transport_exit
+    assert_operator_attention_suppression_requires_current_parent_ownership
     assert_start_finalizes_unpolled_previous_run
     assert_cli_status_finalizes_unpolled_dead_pid
     assert_start_reconciles_session_after_restart
@@ -217,6 +218,41 @@ module ManagedAgentTest
     agent.instance_variable_set(:@last_exit_code, 143)
     assert(agent.status == "stopped",
            "expected an explicit stop exit to remain a lifecycle state despite a structured result")
+  end
+
+  def assert_operator_attention_suppression_requires_current_parent_ownership
+    run = HQ::ManagedAgent::AgentRun.new(
+      status: "success",
+      delegation_owner: "parent",
+      delegation_generation: 3
+    )
+    agent = HQ::ManagedAgent.new(
+      key: "delegated-attention-agent",
+      name: "Delegated attention",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "Prompt",
+      runs: [run]
+    )
+
+    assert(agent.suppresses_operator_attention?(
+             delegation_stamp: { "owner" => "parent", "generation" => 3 }
+           ), "expected the current parent-owned generation to suppress operator attention")
+    assert(!agent.suppresses_operator_attention?(
+             delegation_stamp: { "owner" => "user", "generation" => 4 }
+           ), "expected a takeover to restore operator attention for a stale parent-owned run")
+    assert(!agent.suppresses_operator_attention?(
+             delegation_stamp: { "owner" => "parent", "generation" => 5 }
+           ), "expected a reclaimed generation not to suppress an older parent-owned run")
+    assert(!agent.suppresses_operator_attention?(delegation_stamp: nil),
+           "expected a detached or legacy parent stamp to fail open to operator attention")
+
+    run.delegation_owner = "user"
+    run.delegation_generation = 4
+    assert(!agent.suppresses_operator_attention?(
+             delegation_stamp: { "owner" => "user", "generation" => 4 }
+           ), "expected a user-owned takeover run to retain operator attention")
   end
 
   def assert_completed_run_persists_cost_snapshot
