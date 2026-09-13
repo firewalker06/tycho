@@ -6320,6 +6320,39 @@ select {
   overflow-wrap: anywhere;
 }
 
+.delegated-agent-report-inquiry {
+  display: grid;
+  gap: 4px;
+  border-left: 3px solid var(--warning);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+  padding: 8px 10px;
+}
+
+.delegated-agent-report-inquiry p,
+.delegated-agent-report-inquiry ul {
+  margin: 0;
+}
+
+.delegated-agent-report-inquiry ul {
+  display: grid;
+  gap: 4px;
+  padding-left: 18px;
+}
+
+.delegated-agent-report-inquiry li,
+.delegated-agent-report-attachments li {
+  min-width: 0;
+}
+
+.delegated-agent-report-inquiry span,
+.delegated-agent-report-inquiry small,
+.delegated-agent-report-attachments small {
+  display: block;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .prompt-queue-entry-copy small,
 .prompt-queue-blocked {
   color: var(--muted);
