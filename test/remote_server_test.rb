@@ -5031,13 +5031,38 @@ module RemoteServerTest
           delegation_generation: 1
         )
       end
-      all_agents = [input_agent, finished_agent, no_action_agent, *delegated_agents]
-      HQ::AgentStore.new([]).save(all_agents)
+      delegation_parent = HQ::ManagedAgent.new(
+        key: "delegation-parent",
+        name: "Delegation parent",
+        project_key: "web",
+        template_key: "default",
+        workspace: workspace,
+        prompt: "Coordinate delegated work",
+        agent: "codex"
+      )
+      HQ::AgentMemory.new(delegation_parent).append_inquiry_request!(
+        { "message" => "Hold callbacks", "fields" => [] },
+        inquiry_id: "parent-hold"
+      )
+      all_agents = [delegation_parent, input_agent, finished_agent, no_action_agent, *delegated_agents]
+      store = HQ::AgentStore.new([])
+      delegated_agents.each do |agent|
+        store.delegation_coordinator.attach!(
+          agents: all_agents,
+          child: agent,
+          parent_key: delegation_parent.key
+        )
+      end
+      store.delegation_coordinator.set_connected!(
+        child_key: "delegated-no_action_needed",
+        connected: false
+      )
+      store.save(all_agents)
       all_agents.each do |agent|
         File.write(File.join(HQ::AGENT_LOGS_DIR, "#{agent.key}.status"), "0")
       end
 
-      refreshed_agents = HQ::AgentStore.new([]).load
+      refreshed_agents = store.load
       refreshed_input_agent = refreshed_agents.find { |agent| agent.key == "web-agent-1" }
       assert(refreshed_input_agent.status == "awaiting-input",
              "expected a normal agent refresh to observe the completed inquiry run")
@@ -5081,6 +5106,17 @@ module RemoteServerTest
         assert(summary&.dig("metadata", "notification_suppressed") && summary.dig("metadata", "unread_suppressed"),
                "expected #{agent.key} summary to record both operator-attention suppressions")
       end
+      reports = store.delegation_coordinator.delegation_store.reports.select do |report|
+        report["parent_agent_key"] == delegation_parent.key
+      end
+      assert(reports.length == 5 && reports.all? { |report| !report["delivered_at"].to_s.empty? },
+             "expected every connected delegated outcome to retain a delivered callback report")
+      parent_payload = refreshed_agents.find { |agent| agent.key == delegation_parent.key }
+      callback = parent_payload.queued_prompts.find { |entry| entry["source"] == "delegation_callback" }
+      assert(callback&.dig("message_metadata", "delegation_reports")&.length == 5,
+             "expected connected delegated outcomes to batch into one parent callback")
+      assert(reports.none? { |report| report.dig("child", "agent_key") == "delegated-no_action_needed" },
+             "expected a disconnected delegated completion to stay out of the callback ledger")
       assert(notifier.payloads.length == 2,
              "expected delegated terminal outcomes to suppress completion pushes while root turns still notify")
       forged_no_action_event = HQ::AgentStore::PollEvent.new(

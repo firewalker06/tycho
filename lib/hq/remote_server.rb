@@ -5295,7 +5295,11 @@ module HQ
 
     def agent_push_payload(agent, unread_count:)
       return nil if agent.respond_to?(:no_action_needed?) && agent.no_action_needed?
-      return nil if agent.respond_to?(:suppresses_operator_attention?) && agent.suppresses_operator_attention?
+      delegation_stamp = @agent_store&.delegation_coordinator&.ownership_stamp(agent.key)
+      if agent.respond_to?(:suppresses_operator_attention?) &&
+         agent.suppresses_operator_attention?(delegation_stamp:)
+        return nil
+      end
       return nil if agent.last_run_from_prompt_queue?
 
       status = agent.status

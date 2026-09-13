@@ -1220,10 +1220,17 @@ module HQ
 
     # A parent-owned turn reports through the delegation coordinator. Its
     # completion is not an operator-facing event, even if the child remains
-    # delegated after the turn ends. Use the per-run stamp rather than the
-    # relationship so a later user takeover still receives normal attention.
-    def suppresses_operator_attention?
-      last_run&.delegation_owner == "parent"
+    # delegated after the turn ends. Match the per-run stamp to the current
+    # relationship so a stale run cannot lose both its callback and operator
+    # attention after a takeover.
+    def suppresses_operator_attention?(delegation_stamp: nil)
+      run = last_run
+      return false unless run&.delegation_owner == "parent"
+      return false unless delegation_stamp.is_a?(Hash)
+
+      delegation_stamp["owner"] == "parent" &&
+        run.delegation_generation.is_a?(Integer) &&
+        run.delegation_generation == delegation_stamp["generation"]
     end
 
     def last_activity_at
