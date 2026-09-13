@@ -45,6 +45,7 @@ bundle exec bin/tycho metrics backfill [--timezone ZONE]
 bin/test
 TYCHO_REMOTE_UI_WORKSPACE_ONLY=1 bin/remote-ui-smoke
 TYCHO_REMOTE_UI_WORKSPACE_ONLY=1 TYCHO_REMOTE_UI_CAPTURE_DIR=/tmp/tycho-workspace-captures bin/remote-ui-smoke
+TYCHO_REMOTE_UI_DELEGATION_ONLY=1 bin/remote-ui-smoke
 TYCHO_REMOTE_UI_SUMMARY_ATTACHMENTS_ONLY=1 bin/remote-ui-smoke
 bin/capture-personal-assistant
 bundle exec ruby -c bin/tycho
