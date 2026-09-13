@@ -5023,9 +5023,9 @@ module RemoteServerTest
       assert(input_activity[:awaiting_input] && input_activity[:unread],
              "expected notification reconciliation to publish finalized inquiry activity")
       assert(notifier.payloads.length == 2, "expected two push payloads")
-      assert(notifier.payloads.any? { |payload| payload[:title] == "Agent requires response" },
+      assert(notifier.payloads.any? { |payload| payload[:title] == "Input needed" },
              "expected requires-response notification")
-      assert(notifier.payloads.any? { |payload| payload[:title] == "Agent finished" },
+      assert(notifier.payloads.any? { |payload| payload[:title] == "Done" },
              "expected finished notification")
       assert(notifier.payloads.all? { |payload| payload[:url].start_with?("/#agent/") },
              "expected notification click URLs to target agent detail")
@@ -5127,7 +5127,7 @@ module RemoteServerTest
       result = service.dispatch_agent_push_notifications!
       assert(result[:events] == 1, "expected a protected FRED session to dispatch one notification")
       payload = notifier.payloads.first
-      assert(payload[:title] == "FRED requires response" && payload[:url] == "/#personal-assistant",
+      assert(payload[:title] == "Input needed" && payload[:url] == "/#personal-assistant",
              "expected FRED answer-required push to use distinct copy and its dedicated route")
       assert(payload[:badge_count] == 1 && payload[:body].start_with?("FRED:"),
              "expected FRED push to participate in the shared unread badge")

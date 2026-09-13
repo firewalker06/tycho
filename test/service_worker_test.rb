@@ -59,7 +59,7 @@ module ServiceWorkerTest
       (async () => {
         await dispatch("push", {
           data: { json: () => ({
-            title: "Agent finished",
+            title: "Done",
             body: "Windows check",
             tag: "hq:agents",
             renotify: true,
@@ -70,7 +70,7 @@ module ServiceWorkerTest
         });
         assert.deepStrictEqual(badges, [2]);
         assert.strictEqual(notifications.length, 1);
-        assert.strictEqual(notifications[0].title, "Agent finished");
+        assert.strictEqual(notifications[0].title, "Done");
         assert.strictEqual(notifications[0].options.body, "Windows check");
         assert.strictEqual(notifications[0].options.tag, "hq:agents");
         assert.strictEqual(notifications[0].options.renotify, true);

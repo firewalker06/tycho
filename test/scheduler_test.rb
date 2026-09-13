@@ -867,7 +867,7 @@ module SchedulerTest
 
       assert(state.stopped?, "expected failed scheduled agent to stop the schedule")
       assert(state.last_status == "failed", "expected schedule state to record failed status")
-      assert(notifier.payloads.any? { |payload| payload[:title] == "Schedule failed" },
+      assert(notifier.payloads.any? { |payload| payload[:title] == "Failed" },
              "expected failure to send a web push payload")
     end
   end

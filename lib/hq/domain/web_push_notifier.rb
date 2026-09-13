@@ -35,8 +35,8 @@ module HQ
           "configured=#{push_config.fetch(:configured)} subscriptions=#{push_config.fetch(:subscription_count)}"
       end
       payload = {
-        title: "Tycho",
-        body: "Test notification from Tycho.",
+        title: "Test notification",
+        body: "Push notifications are working.",
         tag: "hq:test",
         url: "/#setup"
       }
