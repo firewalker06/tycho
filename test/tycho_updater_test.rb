@@ -160,10 +160,15 @@ module TychoUpdaterTest
     assert(control.calls == 1, "expected update command to request a running Remote server restart")
     assert(out.string.include?("Remote server restart requested"), "expected CLI update to report remote restart state")
 
-    absent = HQ::RemoteServerControl.new(requester: ->(_url, _token) { { status: 503, body: {} } })
-    absent_result = absent.restart!
-    assert(!absent_result[:restarted] && absent_result[:detail].include?("No local Remote server control record"),
-           "expected absent local Remote server to be a safe no-op")
+    Dir.mktmpdir("tycho-remote-control-absent") do |dir|
+      absent = HQ::RemoteServerControl.new(
+        record_path: File.join(dir, "missing.json"),
+        requester: ->(_url, _token) { { status: 503, body: {} } }
+      )
+      absent_result = absent.restart!
+      assert(!absent_result[:restarted] && absent_result[:detail].include?("No local Remote server control record"),
+             "expected absent local Remote server to be a safe no-op")
+    end
   end
 
   def instance_double(success)
