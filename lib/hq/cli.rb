@@ -2,11 +2,15 @@
 
 require "rbconfig"
 
+require_relative "version"
+
 module HQ
   module CLI
     module_function
 
     def run(argv = ARGV, executable: default_executable)
+      return version if %w[--version -v].include?(argv.first.to_s)
+
       if command_mode?(argv)
         require_relative "cli_command"
         exit CLICommand.run(argv, executable: executable)
@@ -29,6 +33,11 @@ module HQ
 
     def default_executable
       File.expand_path("../../bin/tycho", __dir__)
+    end
+
+    def version
+      puts "Tycho #{HQ::VERSION}"
+      0
     end
 
     def command_mode?(argv)

@@ -229,7 +229,7 @@ selected for that exact entry:
 2. Otherwise, Tycho uses the server key's entry from
    `~/.tycho/config/remote_credentials.json`.
 3. Otherwise, an inline `token` is accepted temporarily with a migration
-   warning. This fallback will be removed in v0.11.0.
+   warning. Move it into the credential store with `tycho server migrate`.
 
 The credential file is local to each Tycho installation, written atomically,
 and mode `0600`. It stores one bearer token per server key plus verification

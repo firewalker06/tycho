@@ -13,7 +13,7 @@ module RemoteCredentialStoreTest
     assert_store_is_private_and_metadata_is_redacted
     assert_external_precedence_and_origin_binding
     assert_rejection_requires_explicit_recovery
-    assert_inline_fallback_warns_about_v011_removal
+    assert_inline_fallback_warns_with_migration_command
     puts "remote_credential_store_test: ok"
   end
 
@@ -98,7 +98,7 @@ module RemoteCredentialStoreTest
     end
   end
 
-  def assert_inline_fallback_warns_about_v011_removal
+  def assert_inline_fallback_warns_with_migration_command
     warnings = []
     config = config_for(token: "inline-secret")
     Dir.mktmpdir("tycho-remote-credentials") do |dir|
@@ -107,9 +107,9 @@ module RemoteCredentialStoreTest
         warning: ->(message) { warnings << message }
       )
       assert(resolver.resolve(config).source == "inline", "expected the temporary inline-token fallback")
-      assert(warnings.one? && warnings.first.include?("removed in v0.11.0") &&
+      assert(warnings.one? && warnings.first.include?("inline token") &&
              warnings.first.include?("tycho server migrate vps"),
-             "expected a migration warning with the removal release")
+             "expected a migration warning with the migration command")
     end
   end
 

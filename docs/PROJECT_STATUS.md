@@ -142,6 +142,12 @@ measurement, not a final UI latency claim.
 Preserve the protected daily role, server-local identity, exact confirmation
 for each mutation, and no blind retry after an uncertain execution outcome.
 
+**v0.11.0 release preparation**: adds the protected FRED Personal Assistant,
+native-adapter custom harness profiles, safer editable/searchable workspace
+files, lifecycle update controls, explicit project creation, and batched,
+operator-quiet delegated callbacks. Upgrade guidance records the intentional
+project-command break and bundled-skill update.
+
 **v0.10.2 release**: successful managed runs can now persist validated Second
 Brain memory handoffs and expose them through local or remote CLI and API
 feeds. Pi is a first-class managed harness with native session resume,

@@ -14,6 +14,7 @@ Runtime artifacts are written to `~/.tycho/logs/`, including app state files suc
 - `bundle install`: install Ruby gems declared for Ruby 3.2+.
 - `bin/tycho`: start the TUI locally.
 - `bundle exec bin/tycho`: run through Bundler when debugging gem resolution issues.
+- `bin/tycho --version`: print the Tycho version from the current checkout or installation.
 - `bundle exec bin/tycho serve [--host 127.0.0.1] [--port 7373]`: start the local Remote Sessions JSON API and web UI for managed-agent control.
 - `bundle exec bin/tycho project create <key> [options]` and `project list|show|update|archive`: manage project configuration from the CLI.
 - `bundle exec bin/tycho schedule [list|daemon --once|daemon --dry-run]`: list schedules, run the scheduled-agent daemon, or run a single scheduler tick.

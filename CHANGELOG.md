@@ -4,23 +4,64 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
-- Require `tycho project create <key>` for intentional project creation, reject
-  bare or malformed project commands without changing the registry, and ship
-  the matching versioned Tycho skill update for every supported harness.
-- Keep FRED's dated recommendations visible in the conversation and submit a
-  selected recommendation as a durable, replay-safe user request with its
-  recommendation context preserved.
-- Add validated Balanced, Direct, Steady, and Upbeat FRED personalities with
-  accessible Settings previews and stable per-conversation prompt composition.
-- Replace FRED's static starting surface with daily recommendation actions based
-  on handoff continuity, recent internal signals, and an optional server-side
-  external-events prompt in Settings.
-- Make FRED setup explicit and chat-first, protect its daily lifecycle from
-  ordinary agent mutations, and add deterministic setup/ready UI captures.
-- Keep the Tycho mark visible as an accessible Agents navigation control in
-  FRED while retaining FRED identity and the three-item primary navigation.
-- Exclude protected FRED daily sessions from generic agent catalogs and scope
-  Personal Assistant action receipts to the active daily session.
+## 0.11.0 - 2026-09-13
+
+### Highlights
+
+- Add FRED, an opt-in protected daily Personal Assistant in Remote UI. It has
+  explicit setup, personality and timezone settings, durable/replay-safe
+  message acceptance, daily continuity, recommendations, action previews, and
+  per-action confirmation receipts.
+- Add compatible custom harness profiles for Codex, Claude Code, OpenCode, and
+  Pi. Profiles retain their native command, session, parsing, skill, metrics,
+  and readiness behavior.
+- Extend the project workspace browser with safe Markdown and image previews,
+  guarded plain-text editing, and file search. Existing containment, secret,
+  binary, size, VCS, and symlink protections remain in force.
+- Add `tycho restart` and Homebrew-only `tycho update`, with equivalent
+  confirmed local Remote UI controls. The update path restarts local services
+  through their stable launcher.
+- Add `tycho --version` and `tycho -v` for direct installed-version checks.
+- Improve delegated work: child terminal outcomes batch into deterministic
+  parent callbacks, reports preserve structured reply content, and completion
+  alerts do not notify the operator for delegated callback runs.
+
+### Other changes
+
+- Keep conversations usable while agents run: queue follow-up prompts, load
+  new messages on demand, preserve focused conversation state through polling,
+  and place catch-up controls in the conversation dock.
+- Add schedule create/update commands and per-schedule harness, model, and
+  reasoning-effort overrides, with project defaults preserved when omitted.
+- Render rich summary prose as Markdown without duplicate or width-limited
+  output, and fix scrolling for Summary attachments.
+- Start new Remote UI agents with a free-text Custom prompt while retaining
+  template selection for edit and clone compatibility.
+- Refine the Remote UI with relevant agent ordering, Lucide filter/sort icons,
+  schedule-aware agent icons, on-demand Mermaid previews, clearer Settings,
+  simplified push-notification titles, and improved mobile layouts.
+- Improve schedule session refresh and status reporting, including automatic
+  resume after a user reply and documented daemon-state semantics.
+- Add GPT-6 Astra pricing and refresh the operator quickstart, harness,
+  workspace, scheduling, delegation, and Personal Assistant documentation.
+
+### Compatibility and upgrade notes
+
+- `tycho project <key>` no longer creates a project. Use
+  `tycho project create <key> [options]`; malformed or bare project commands
+  now fail without changing the registry.
+- Existing Claude-compatible custom harness configurations remain valid.
+  New custom profiles must declare one supported native adapter: `codex`,
+  `claude`, `opencode`, or `pi`.
+- After upgrading, update each installed Tycho-owned skill in
+  **Settings → Skills** and restart a harness if it does not discover the new
+  version. See [Upgrading to 0.11](docs/UPGRADING.md#0110).
+- FRED is disabled until explicitly configured in Remote UI. Its protected
+  daily sessions are intentionally unavailable through ordinary agent,
+  delegation, inquiry, and queue lifecycle endpoints.
+- Remove the unfinished Tycho GitHub App login and review-posting workflow,
+  including `tycho github login|status|logout`. Agent-scoped pull-request diffs
+  remain read-only and use an authenticated local `gh` CLI.
 
 ## 0.10.2 - 2026-08-30
 
