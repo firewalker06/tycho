@@ -1658,12 +1658,22 @@ module HQ
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
       return failure("Agent #{agent_key} is running — stop it first", err: err) if agent.running?
 
+      archived_callback_count = agent.queued_prompts.count { |entry| entry["source"] == "delegation_callback" }
       archive_path = agent_store_for_all.archive_agent!(agent.key)
-      result = { archived: true, agent_key: agent.key, archive_path: archive_path }.compact
+      result = {
+        archived: true,
+        agent_key: agent.key,
+        archive_path: archive_path,
+        archived_delegation_callback_count: archived_callback_count
+      }.compact
       if opts[:json]
         out.puts JSON.pretty_generate(result)
       else
         out.puts "Archived #{agent.key}"
+        if archived_callback_count.positive?
+          out.puts "Preserved #{archived_callback_count} unrun delegation " \
+                   "#{archived_callback_count == 1 ? "callback" : "callbacks"} in archived history"
+        end
         out.puts "Archive: #{archive_path}" if archive_path
       end
       0
@@ -1961,12 +1971,18 @@ module HQ
       payload = {
         "archived" => payload["archived"],
         "agent_key" => payload["agent_key"],
-        "archive_path" => payload["archive_path"]
+        "archive_path" => payload["archive_path"],
+        "archived_delegation_callback_count" => payload["archived_delegation_callback_count"]
       }.compact
       if opts[:json]
         out.puts JSON.pretty_generate(payload)
       else
         out.puts "Archived #{payload["agent_key"] || agent_key}"
+        callback_count = payload["archived_delegation_callback_count"].to_i
+        if callback_count.positive?
+          out.puts "Preserved #{callback_count} unrun delegation " \
+                   "#{callback_count == 1 ? "callback" : "callbacks"} in archived history"
+        end
         out.puts "Archive: #{payload["archive_path"]}" unless payload["archive_path"].to_s.empty?
       end
       0

@@ -190,13 +190,13 @@ Errors if the agent is already running. Prints pid and log path on success.
 
 ## `tycho agent archive`
 
-Archive a stopped agent — moves all its log files to the archive directory and removes it from the active agents list.
+Archive a stopped agent — moves all its log files to the archive directory and removes it from the active agents list. Ordinary queued prompts and mixed queues block archive. If every queued item is a protected delegation callback, Tycho archives without running the callbacks and preserves their complete messages in read-only history.
 
 ```bash
 tycho agent archive my-project-agent-3
 ```
 
-Errors if the agent is currently running.
+Errors if the agent is currently running or has any ordinary queued work. Successful callback-only archives report how many unrun delegation callbacks were preserved.
 
 ---
 

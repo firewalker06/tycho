@@ -571,6 +571,35 @@ module HQ
       !@prompt_queue.empty? || !@prompt_queue_claim.nil?
     end
 
+    def delegation_callback_prompts_only?
+      entries = queued_prompts
+      !entries.empty? && entries.all? { |entry| entry["source"] == "delegation_callback" }
+    end
+
+    def archive_delegation_callback_prompts!(archived_at: Time.now)
+      return [] unless delegation_callback_prompts_only?
+
+      entries = queued_prompts
+      claimed_already_in_history = @prompt_queue_claim&.fetch("message_appended", false)
+      entries.each do |entry|
+        next if claimed_already_in_history && entry["state"] != "queued"
+
+        metadata = entry["message_metadata"].is_a?(Hash) ? entry["message_metadata"].dup : {}
+        metadata["archived_without_run"] = true
+        metadata["queued_at"] = entry["accepted_at"] unless entry["accepted_at"].to_s.empty?
+        AgentMemory.new(self).append_delegation_report!(
+          entry.fetch("prompt"),
+          report_id: "archived-queue:#{entry.fetch("id")}",
+          created_at: archived_at,
+          metadata:
+        )
+      end
+      @prompt_queue = []
+      @prompt_queue_claim = nil
+      @prompt_queue_dispatch_error = nil
+      entries
+    end
+
     def unread?
       @unread
     end

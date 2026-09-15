@@ -4198,6 +4198,7 @@ module HQ
       reject_personal_assistant_control!(target)
       raise Error.new("Agent is running", status: 409) if target.running?
 
+      archived_callback_count = target.queued_prompts.count { |entry| entry["source"] == "delegation_callback" }
       archive_path = @agent_store.archive_agent!(target.key)
       @agent_activity_snapshot.remove!(target.key)
       schedule_reconciled = reconcile_archived_schedule_agent(target)
@@ -4205,8 +4206,11 @@ module HQ
         archived: true,
         agent_key: target.key,
         archive_path: archive_path,
+        archived_delegation_callback_count: archived_callback_count,
         schedule_reconciled: schedule_reconciled
       }
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
     end
 
     def archive_agents(attrs)
@@ -4239,11 +4243,13 @@ module HQ
           next
         end
 
+        archived_callback_count = target.queued_prompts.count { |entry| entry["source"] == "delegation_callback" }
         archive_path = @agent_store.archive_agent!(target.key)
         @agent_activity_snapshot.remove!(target.key)
         archived << {
           agent_key: target.key,
           archive_path: archive_path,
+          archived_delegation_callback_count: archived_callback_count,
           schedule_reconciled: reconcile_archived_schedule_agent(target)
         }
       rescue StandardError => e
@@ -5861,6 +5867,9 @@ module HQ
         last_result: agent.last_result_label,
         summary: agent.last_summary,
         prompt_queue_count: agent.queued_prompts.length,
+        prompt_queue_delegation_callback_count: agent.queued_prompts.count do |entry|
+          entry["source"] == "delegation_callback"
+        end,
         prompt_queue_dispatch_error: agent.prompt_queue_dispatch_error,
         revision: agent_revision(agent),
         archived: agent.archived?,
