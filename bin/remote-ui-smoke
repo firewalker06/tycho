@@ -3310,31 +3310,13 @@ def write_smoke_script(path)
           await page.setViewportSize({ width: 1024, height: 768 });
         }
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(orchestratorAgentKey)}`, { waitUntil: "networkidle" });
-        await page.waitForSelector(".agent-reference", { state: "visible", timeout: 10_000 });
-        const orchestrationContract = await page.locator("body").innerText();
-        const delegatedReferenceCount = await page.locator(".message-list > .agent-relationships .agent-relationship-list .agent-reference").count();
-        if (!orchestrationContract.toLowerCase().includes("delegated agents") || delegatedReferenceCount !== 3) {
-          throw new Error("Orchestrator detail does not expose its delegated agents");
+        await page.waitForSelector("#composer", { state: "visible", timeout: 10_000 });
+        if (await page.locator(".message-list > .agent-relationships").count() !== 0) {
+          throw new Error("Orchestrator detail still renders the redundant top-level delegated-agent list");
         }
         const orchestratorHeaderRole = page.locator("#screen-title [data-agent-role='orchestrator']");
-        const delegatedConversationReference = page.locator(`.message-list > .agent-relationships [data-open-agent='${delegatedAgentKey}']`);
-        const takeoverConversationReference = page.locator(`.message-list > .agent-relationships [data-open-agent='${takeoverAgentKey}']`);
-        if (await orchestratorHeaderRole.count() !== 1 ||
-            await delegatedConversationReference.locator("[data-agent-role='subagent']").count() !== 1 ||
-            await takeoverConversationReference.locator("[data-agent-role='takeover']").count() !== 1) {
-          throw new Error("Conversation header and connected-agent list do not expose delegation role icons");
-        }
-        const conversationRoleColors = await page.evaluate(({ delegatedKey, takeoverKey }) => {
-          const color = (selector) => getComputedStyle(document.querySelector(selector)).color;
-          return {
-            orchestrator: color("#screen-title [data-agent-role='orchestrator']"),
-            subagent: color(`.message-list > .agent-relationships [data-open-agent='${delegatedKey}'] [data-agent-role='subagent']`),
-            takeover: color(`.message-list > .agent-relationships [data-open-agent='${takeoverKey}'] [data-agent-role='takeover']`),
-          };
-        }, { delegatedKey: delegatedAgentKey, takeoverKey: takeoverAgentKey });
-        if (conversationRoleColors.orchestrator !== conversationRoleColors.subagent ||
-            conversationRoleColors.orchestrator === conversationRoleColors.takeover) {
-          throw new Error(`Agent and human role colors are not distinct: ${JSON.stringify(conversationRoleColors)}`);
+        if (await orchestratorHeaderRole.count() !== 1) {
+          throw new Error("Orchestrator header does not expose its delegation role icon");
         }
         const linkedAgentsToggle = page.locator(".send-tools [data-toggle-linked-agents]");
         if (await linkedAgentsToggle.count() !== 1 || await linkedAgentsToggle.getAttribute("aria-expanded") !== "false") {
@@ -3349,6 +3331,18 @@ def write_smoke_script(path)
         if (await page.locator(`[data-linked-agents-flyout] [data-open-agent='${delegatedAgentKey}'] [data-agent-role='subagent']`).count() !== 1 ||
             await page.locator(`[data-linked-agents-flyout] [data-open-agent='${takeoverAgentKey}'] [data-agent-role='takeover']`).count() !== 1) {
           throw new Error("Connected-agent flyout does not expose delegation role icons");
+        }
+        const flyoutRoleColors = await page.evaluate(({ delegatedKey, takeoverKey }) => {
+          const color = (selector) => getComputedStyle(document.querySelector(selector)).color;
+          return {
+            orchestrator: color("#screen-title [data-agent-role='orchestrator']"),
+            subagent: color(`[data-linked-agents-flyout] [data-open-agent='${delegatedKey}'] [data-agent-role='subagent']`),
+            takeover: color(`[data-linked-agents-flyout] [data-open-agent='${takeoverKey}'] [data-agent-role='takeover']`),
+          };
+        }, { delegatedKey: delegatedAgentKey, takeoverKey: takeoverAgentKey });
+        if (flyoutRoleColors.orchestrator !== flyoutRoleColors.subagent ||
+            flyoutRoleColors.orchestrator === flyoutRoleColors.takeover) {
+          throw new Error(`Agent and human role colors are not distinct in the linked-agent flyout: ${JSON.stringify(flyoutRoleColors)}`);
         }
         if (captureDir) await page.locator("[data-linked-agents-flyout]").screenshot({ path: path.join(captureDir, "linked-agents-flyout-desktop.png") });
         await page.keyboard.press("Escape");
@@ -3530,13 +3524,9 @@ def write_smoke_script(path)
           throw new Error(`Delegation callback does not preserve user-message direction on mobile: ${JSON.stringify(mobileDelegationCallback)}`);
         }
         if (captureDir) {
-          await page.locator(".agent-relationships").scrollIntoViewIfNeeded();
-          await page.locator(".agent-relationships").screenshot({ path: path.join(captureDir, "orchestration-graph-desktop.png") });
           await page.locator(".delegation-callback-event").screenshot({ path: path.join(captureDir, "orchestration-callback-card.png") });
           await page.screenshot({ path: path.join(captureDir, "orchestration-parent-desktop.png"), fullPage: false });
           await page.setViewportSize({ width: 390, height: 844 });
-          await page.locator(".agent-relationships").scrollIntoViewIfNeeded();
-          await page.locator(".agent-relationships").screenshot({ path: path.join(captureDir, "orchestration-graph-mobile.png") });
           await page.screenshot({ path: path.join(captureDir, "orchestration-parent-mobile.png"), fullPage: false });
           await page.setViewportSize({ width: 1024, height: 768 });
           await page.evaluate(() => {
@@ -3546,13 +3536,12 @@ def write_smoke_script(path)
           await page.screenshot({ path: path.join(captureDir, "orchestration-callback-desktop.png"), fullPage: false });
         }
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(delegatedAgentKey)}`, { waitUntil: "networkidle" });
-        await page.waitForSelector(".agent-reference", { state: "visible", timeout: 10_000 });
-        if (!(await page.locator("body").innerText()).toLowerCase().includes("started by")) {
-          throw new Error("Delegated agent detail does not link to its orchestrator");
-        }
+        await page.waitForSelector("#composer", { state: "visible", timeout: 10_000 });
+        await page.click("[data-toggle-linked-agents]");
+        await page.waitForSelector("[data-linked-agents-flyout]:not(.hidden)", { state: "visible", timeout: 10_000 });
         if (await page.locator("#screen-title [data-agent-role='subagent']").count() !== 1 ||
-            await page.locator(`.message-list > .agent-relationships [data-open-agent='${orchestratorAgentKey}'] [data-agent-role='orchestrator']`).count() !== 1) {
-          throw new Error("Delegated conversation does not identify its subagent header and orchestrator reference");
+            await page.locator(`[data-linked-agents-flyout] [data-open-agent='${orchestratorAgentKey}'] [data-agent-role='orchestrator']`).count() !== 1) {
+          throw new Error("Linked-agent flyout does not identify a delegated agent's orchestrator");
         }
         const parentSignedMessage = page.locator(".message.user.parent-agent-message");
         const parentSignedContract = await parentSignedMessage.evaluate((message) => ({
@@ -3569,7 +3558,7 @@ def write_smoke_script(path)
         if (await page.locator(".agent-ownership-badge").count() !== 0) {
           throw new Error("Normal delegated ownership should not display a badge");
         }
-        const delegationConnection = page.locator(`.message-list > .agent-relationships [data-set-delegation-connection='${delegatedAgentKey}']`);
+        const delegationConnection = page.locator(`[data-linked-agents-flyout] [data-set-delegation-connection='${delegatedAgentKey}']`);
         if (await delegationConnection.count() !== 1 || await delegationConnection.getAttribute("aria-label") !== "Disconnect delegation reports") {
           throw new Error("Delegated agent detail does not expose its disconnect control");
         }
@@ -3577,12 +3566,12 @@ def write_smoke_script(path)
         await page.waitForSelector("[data-confirmation-accept]", { state: "visible", timeout: 10_000 });
         await page.click("[data-confirmation-accept]");
         await page.waitForFunction((key) => {
-          const control = document.querySelector(`.message-list > .agent-relationships [data-set-delegation-connection='${CSS.escape(key)}']`);
+          const control = document.querySelector(`[data-linked-agents-flyout] [data-set-delegation-connection='${CSS.escape(key)}']`);
           return control?.getAttribute("aria-label") === "Reconnect delegation reports" && document.body.innerText.includes("Reports disconnected");
         }, delegatedAgentKey, { timeout: 10_000 });
-        await page.click(`.message-list > .agent-relationships [data-set-delegation-connection='${delegatedAgentKey}']`);
+        await page.click(`[data-linked-agents-flyout] [data-set-delegation-connection='${delegatedAgentKey}']`);
         await page.waitForFunction((key) => {
-          const control = document.querySelector(`.message-list > .agent-relationships [data-set-delegation-connection='${CSS.escape(key)}']`);
+          const control = document.querySelector(`[data-linked-agents-flyout] [data-set-delegation-connection='${CSS.escape(key)}']`);
           return control?.getAttribute("aria-label") === "Disconnect delegation reports" && !document.body.innerText.includes("Reports disconnected");
         }, delegatedAgentKey, { timeout: 10_000 });
         await page.evaluate((key) => {
