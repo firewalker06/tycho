@@ -532,17 +532,33 @@ module HQ
           raise ArgumentError, "Personal Assistant is managed by its daily lifecycle and cannot be archived manually"
         end
         raise ArgumentError, "Agent is running" if targets.any?(&:running?)
-        pending = targets.select(&:pending_prompts?)
-        unless pending.empty?
-          raise ArgumentError, "Agent has queued prompts: #{pending.map(&:key).join(", ")}"
+        blocked = targets.select { |target| target.pending_prompts? && !target.delegation_callback_prompts_only? }
+        unless blocked.empty?
+          descriptions = blocked.map do |target|
+            entries = target.queued_prompts
+            ordinary = entries.count { |entry| entry["source"] != "delegation_callback" }
+            callbacks = entries.length - ordinary
+            queue = if callbacks.positive?
+                      "mixed queue (#{ordinary} ordinary, #{callbacks} delegation callbacks)"
+                    else
+                      noun = ordinary == 1 ? "prompt" : "prompts"
+                      "#{ordinary} ordinary queued #{noun}"
+                    end
+            "#{target.key}: #{queue}"
+          end
+          raise ArgumentError,
+                "Archive blocked to protect queued user work (#{descriptions.join("; ")}). " \
+                "Run or delete the ordinary queued prompts before archiving."
         end
 
-        source_paths = targets.flat_map { |target| target.log_files.select { |path| File.exist?(path) } }
-        transaction = FileTransaction.new([AGENTS_FILE, *source_paths])
+        source_paths = targets.flat_map(&:log_files)
+        transaction = FileTransaction.new([AGENTS_FILE, DELEGATIONS_FILE, *source_paths])
         destinations = targets.to_h do |target|
+          callbacks = target.archive_delegation_callback_prompts!
           target.mark_archived_visibility!(!HQ::Visibility.agent_visible?(target, @projects))
           destination = target.archive_logs!(root)
           transaction.on_rollback { remove_failed_archive(destination) }
+          reconcile_archived_callbacks(callbacks)
           [target.key, destination]
         end
         save_unlocked(agents.reject { |agent| requested.include?(agent.key) })
@@ -550,6 +566,18 @@ module HQ
       rescue StandardError
         transaction&.rollback
         raise
+      end
+    end
+
+    def reconcile_archived_callbacks(entries)
+      report_ids = Array(entries).flat_map do |entry|
+        metadata = entry["message_metadata"] || {}
+        reports = Array(metadata["delegation_reports"])
+        reports << metadata["delegation_report"] if reports.empty? && metadata["delegation_report"].is_a?(Hash)
+        reports.filter_map { |report| report["id"] }
+      end
+      report_ids.each do |report_id|
+        @delegation_coordinator.delegation_store.update_report!(report_id, resume_state: "parent_archived")
       end
     end
 

@@ -704,7 +704,7 @@ curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/stop
 
 ### `DELETE /agents/{key}`
 
-Archives an idle agent by moving its log artifacts to `~/.tycho/logs/agents/archive/` and removing it from `~/.tycho/logs/managed_agents.json`. Running agents return `409`.
+Archives an idle agent by moving its log artifacts to `~/.tycho/logs/agents/archive/` and removing it from `~/.tycho/logs/managed_agents.json`. A callback-only queue is archived without execution and preserved in read-only conversation history. Ordinary queued prompts and mixed queues return HTTP `409` with instructions to run or delete the ordinary work; running agents also return `409`.
 
 ```bash
 curl -X DELETE http://127.0.0.1:7373/agents/web-charlie-agent-8
@@ -716,7 +716,8 @@ Response:
 {
   "archived": true,
   "agent_key": "web-charlie-agent-8",
-  "archive_path": "/Users/example/Code/hq/~/.tycho/logs/agents/archive/20260508-001431-web-charlie-agent-8"
+  "archive_path": "/Users/example/Code/hq/~/.tycho/logs/agents/archive/20260508-001431-web-charlie-agent-8",
+  "archived_delegation_callback_count": 2
 }
 ```
 
@@ -734,7 +735,7 @@ The response contains `agents` plus `pagination.page`, `per_page`, `total`, `tot
 
 ### `POST /agents/archive`
 
-Archives multiple idle agents from a `keys` array. Running agents are skipped and missing keys are reported without blocking idle agents in the same request.
+Archives multiple idle agents from a `keys` array. Callback-only queues use the same archive-with-history behavior. Running agents are skipped; missing keys and ordinary or mixed pending queues are reported per agent without blocking safe archives in the same request. Peer-server proxy requests preserve these payload and conflict semantics.
 
 ```bash
 curl -X POST http://127.0.0.1:7373/agents/archive \
