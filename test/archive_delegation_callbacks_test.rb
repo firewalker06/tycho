@@ -52,6 +52,7 @@ module ArchiveDelegationCallbacksTest
       )
     end
     agent.claim_pending_prompts!
+    agent.prepare_prompt_queue_claim!
     agent.fail_prompt_queue_dispatch!("Queued work is paused after Stop. Choose Retry queue to continue without losing it.")
     store.save([agent])
 

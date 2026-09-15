@@ -581,6 +581,14 @@ module HQ
 
       entries = queued_prompts
       claimed_already_in_history = @prompt_queue_claim&.fetch("message_appended", false)
+      if claimed_already_in_history
+        claimed_entry = entries.find { |entry| entry["state"] != "queued" }
+        marked = AgentMemory.new(self).mark_user_message_archived_without_run!(
+          { "prompt_queue_claim_id" => @prompt_queue_claim.fetch("id") },
+          queued_at: claimed_entry&.fetch("accepted_at", nil)
+        )
+        raise IOError, "Prepared delegation callback is missing from durable history" unless marked
+      end
       entries.each do |entry|
         next if claimed_already_in_history && entry["state"] != "queued"
 

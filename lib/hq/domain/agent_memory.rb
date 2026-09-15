@@ -227,6 +227,19 @@ module HQ
       nil
     end
 
+    def mark_user_message_archived_without_run!(expected, queued_at: nil)
+      events = journal.events!
+      event = events.reverse_each.find do |candidate|
+        candidate["type"] == "user_message" && metadata_matches?(candidate["metadata"], expected)
+      end
+      return false unless event
+
+      event["metadata"] = event.fetch("metadata", {}).merge("archived_without_run" => true)
+      event["metadata"]["queued_at"] = queued_at unless queued_at.to_s.empty?
+      journal.replace(events)
+      true
+    end
+
     def personal_assistant_message_event(client_request_id)
       id = client_request_id.to_s.strip
       return nil if id.empty?
