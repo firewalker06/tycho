@@ -107,6 +107,9 @@ def write_fixture(dir)
   File.write(File.join(workspace, "fast", "fast.txt"), "fast\n")
   File.write(File.join(workspace, "slow", "slow.txt"), "slow\n")
   File.write(File.join(workspace, "src", "app.rb"), "puts \"fixture\"\n")
+  40.times do |index|
+    File.write(File.join(workspace, format("workspace-entry-%02d.txt", index + 1)), "Scrollable workspace entry #{index + 1}\n")
+  end
   File.binwrite(File.join(workspace, "binary.dat"), "fixture\0binary")
   File.binwrite(File.join(workspace, "diagram.png"), Base64.decode64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL7NwAAAABJRU5ErkJggg=="))
   File.binwrite(File.join(workspace, "large.txt"), "x" * ((256 * 1024) + 1))
@@ -2336,6 +2339,19 @@ def write_smoke_script(path)
         }
 
         await page.setViewportSize({ width: 1440, height: 900 });
+        const desktopListScrollContract = await page.evaluate(() => {
+          const list = document.querySelector(".workspace-entry-list");
+          list.scrollTop = list.scrollHeight;
+          const internallyScrollable = list.scrollHeight > list.clientHeight && list.scrollTop > 0;
+          list.scrollTop = 0;
+          return {
+            internallyScrollable,
+            overflowY: getComputedStyle(list).overflowY,
+          };
+        });
+        if (!desktopListScrollContract.internallyScrollable || desktopListScrollContract.overflowY !== "auto") {
+          throw new Error(`Workspace desktop directory scrolling failed: ${JSON.stringify(desktopListScrollContract)}`);
+        }
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-browser-desktop.png"), fullPage: true });
 
         const workspaceSearchPattern = "**/projects/web/workspace/search?*";
@@ -2499,6 +2515,19 @@ def write_smoke_script(path)
         await page.click("[data-close-workspace-preview]");
         await page.click("[data-workspace-directory='']");
         await page.waitForSelector("[data-workspace-file='README.md']", { state: "visible", timeout: 10_000 });
+        const mobileListScrollContract = await page.evaluate(() => {
+          const list = document.querySelector(".workspace-entry-list");
+          list.scrollTop = list.scrollHeight;
+          const internallyScrollable = list.scrollHeight > list.clientHeight && list.scrollTop > 0;
+          list.scrollTop = 0;
+          return {
+            internallyScrollable,
+            overflowY: getComputedStyle(list).overflowY,
+          };
+        });
+        if (!mobileListScrollContract.internallyScrollable || mobileListScrollContract.overflowY !== "auto") {
+          throw new Error(`Workspace mobile directory scrolling failed: ${JSON.stringify(mobileListScrollContract)}`);
+        }
         await page.fill("#workspace-search-input", "readme");
         await page.waitForFunction(() =>
           document.querySelector(".workspace-entry-list")?.getAttribute("aria-label") === "Search results for readme" &&
