@@ -71,15 +71,23 @@ module HQ
   end
 
   # Keep existing user-owned schemas valid as the structured result contract
-  # grows. This changes only owned properties and root fields.
+  # grows. This changes only fields Tycho owns.
   def self.migrate_agent_result_schema!(path)
     source = File.join(BUNDLED_CONFIG_DIR, "schemas", "agent_result.json")
+    migrate_result_schema!(path, source:, owned_properties: %w[memory_handoff summary_sections], remove_properties: %w[action_proposals])
+  end
+
+  def self.migrate_personal_assistant_result_schema!(path)
+    source = File.join(BUNDLED_CONFIG_DIR, "schemas", "personal_assistant_result.json")
+    migrate_result_schema!(path, source:, owned_properties: %w[memory_handoff summary_sections action_proposals])
+  end
+
+  def self.migrate_result_schema!(path, source:, owned_properties:, remove_properties: [])
     current = JSON.parse(File.read(path))
     bundled = JSON.parse(File.read(source))
     properties = current["properties"]
     return path unless properties.is_a?(Hash)
 
-    owned_properties = %w[memory_handoff summary_sections action_proposals]
     changed = false
     owned_properties.each do |key|
       value = bundled.dig("properties", key)
@@ -88,13 +96,15 @@ module HQ
       changed ||= properties[key] != value
       properties[key] = value
     end
-    required = Array(current["required"])
-    required_properties = %w[memory_handoff summary_sections action_proposals]
-    missing_required = required_properties.reject { |key| required.include?(key) }
-    if missing_required.any?
-      current["required"] = required + missing_required
-      changed = true
+    remove_properties.each do |key|
+      removed = properties.delete(key)
+      changed ||= !removed.nil?
     end
+    required = Array(current["required"])
+    required -= remove_properties
+    required_properties = owned_properties.reject { |key| required.include?(key) }
+    changed ||= required != Array(current["required"])
+    current["required"] = required + required_properties if changed
     File.write(path, "#{JSON.pretty_generate(current)}\n") if changed
     path
   rescue JSON::ParserError, SystemCallError
@@ -121,6 +131,9 @@ module HQ
   AGENT_ARCHIVE_DIR = File.join(AGENT_LOGS_DIR, "archive")
   AGENT_RESULT_SCHEMA = migrate_agent_result_schema!(
     ensure_user_config_file(File.join("schemas", "agent_result.json"), File.join("schemas", "agent_result.json"))
+  )
+  PERSONAL_ASSISTANT_RESULT_SCHEMA = migrate_personal_assistant_result_schema!(
+    ensure_user_config_file(File.join("schemas", "personal_assistant_result.json"), File.join("schemas", "personal_assistant_result.json"))
   )
   LOG_FILE = File.join(LOGS_DIR, "hq.log")
   HOOKS_LOG_FILE = File.join(LOGS_DIR, "hooks.log")

@@ -44,6 +44,7 @@ module ManagedAgentTest
     assert_native_resume_includes_action_receipt_once
     assert_response_style_can_be_disabled_and_run_session_is_recorded
     assert_agent_result_schema_describes_summary
+    assert_personal_assistant_uses_dedicated_result_schema
     assert_harness_structured_output_contracts
     assert_no_action_status_conflicts_are_normalized
     assert_agent_updates_replace_the_prior_base_prompt
@@ -1681,6 +1682,29 @@ module ManagedAgentTest
            "Claude should receive the same canonical result schema as Codex")
   ensure
     replace_constant(HQ, :AGENT_RESULT_SCHEMA, old_schema_path) if old_schema_path
+  end
+
+  def assert_personal_assistant_uses_dedicated_result_schema
+    ordinary = HQ::ManagedAgent.new(
+      key: "ordinary-schema", name: "Ordinary schema", project_key: "demo", template_key: "custom",
+      workspace: Dir.tmpdir, prompt: "Prompt", agent: "codex"
+    )
+    fred = HQ::ManagedAgent.new(
+      key: "fred-schema", name: "FRED schema", project_key: "__personal_assistant__",
+      template_key: "personal_assistant_daily", workspace: Dir.tmpdir, prompt: "Prompt", agent: "codex",
+      role: "personal_assistant_daily"
+    )
+
+    ordinary_command = ordinary.send(:build_command).fetch(:command)
+    fred_command = fred.send(:build_command).fetch(:command)
+    assert(argument_after(ordinary_command, "--output-schema") == HQ::AGENT_RESULT_SCHEMA,
+           "expected ordinary agents to use the general result schema")
+    assert(argument_after(fred_command, "--output-schema") == HQ::PERSONAL_ASSISTANT_RESULT_SCHEMA,
+           "expected FRED to use its dedicated result schema")
+    assert(!JSON.parse(ordinary.send(:canonical_result_schema_json)).fetch("properties").key?("action_proposals"),
+           "expected ordinary prompt-only schema guidance to omit FRED proposals")
+    assert(JSON.parse(fred.send(:canonical_result_schema_json)).fetch("properties").key?("action_proposals"),
+           "expected FRED prompt-only schema guidance to retain proposals")
   end
 
   def assert_harness_structured_output_contracts

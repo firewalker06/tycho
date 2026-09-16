@@ -50,7 +50,7 @@ module MemoryHandoffTest
   def assert_schema_rejects_incomplete_handoff
     schema = JSON.parse(File.read(SCHEMA_PATH))
     payload = {
-      "status" => "success", "summary" => "Done", "summary_sections" => nil, "inquiry" => nil, "attachments" => nil, "action_proposals" => nil,
+      "status" => "success", "summary" => "Done", "summary_sections" => nil, "inquiry" => nil, "attachments" => nil,
       "memory_handoff" => { "outcome" => "", "decisions" => [] }
     }
     result = HQ::AgentStructuredOutputValidator.new(schema:).validate(payload)
@@ -72,7 +72,7 @@ module MemoryHandoffTest
       assert(handoff.dig("properties", field, "type") == %w[array null], "expected nullable #{field}")
     end
     valid = {
-      "status" => "success", "summary" => "Done", "summary_sections" => nil, "inquiry" => nil, "attachments" => nil, "action_proposals" => nil,
+      "status" => "success", "summary" => "Done", "summary_sections" => nil, "inquiry" => nil, "attachments" => nil,
       "memory_handoff" => nil
     }
     assert(HQ::AgentStructuredOutputValidator.new(schema:).validate(valid).valid?,
@@ -96,6 +96,21 @@ module MemoryHandoffTest
       assert(migrated.dig("properties", "memory_handoff", "required") ==
              %w[outcome decisions continuing_context references lessons promotion_candidates],
              "expected strict handoff schema migration")
+
+      legacy_path = File.join(dir, "legacy_agent_result.json")
+      File.write(legacy_path, JSON.generate("type" => "object", "properties" => { "action_proposals" => { "type" => "array" } }, "required" => ["action_proposals"]))
+      HQ.migrate_agent_result_schema!(legacy_path)
+      legacy = JSON.parse(File.read(legacy_path))
+      assert(!legacy.fetch("properties").key?("action_proposals") && !legacy.fetch("required").include?("action_proposals"),
+             "expected ordinary user schemas to shed the FRED-only proposal field")
+
+      fred_path = File.join(dir, "personal_assistant_result.json")
+      File.write(fred_path, JSON.generate("type" => "object", "properties" => {}))
+      HQ.migrate_personal_assistant_result_schema!(fred_path)
+      fred = JSON.parse(File.read(fred_path))
+      assert(fred.dig("properties", "action_proposals", "items", "anyOf").is_a?(Array) &&
+             fred.fetch("required").include?("action_proposals"),
+             "expected the dedicated FRED schema migration to retain the proposal catalog")
     end
   end
 

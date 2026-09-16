@@ -264,7 +264,8 @@ Tycho persists a validated handoff only when a run finalizes with structured
 status `success`. Older runs and successful runs without a handoff remain
 readable and are simply absent from the feed. Existing user copies of
 `schemas/agent_result.json` receive the additive `memory_handoff` definition
-when Tycho starts; no other schema fields are changed.
+when Tycho starts. FRED's separate `schemas/personal_assistant_result.json`
+receives the same handoff definition plus its FRED-only action-proposal catalog.
 
 Use `bin/tycho memory handoffs --json` locally, or add `--server SERVER_KEY`
 for a configured remote Tycho. Remote Sessions also exposes the same

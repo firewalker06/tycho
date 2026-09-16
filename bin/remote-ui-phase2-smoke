@@ -153,6 +153,7 @@ def prepare_server_root(dir, backend_root: BETA_ROOT, ui_root: ROOT)
     config/schedules.yml.example
     config/hooks.example.yml
     config/schemas/agent_result.json
+    config/schemas/personal_assistant_result.json
   ]
   bundled_config_files.each do |relative_path|
     source = File.join(backend_root, relative_path)

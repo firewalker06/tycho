@@ -42,9 +42,9 @@ module HQ
 
       result = payload.dup
       errors = []
-      # Older native sessions predate optional PA proposals. Preserve their
-      # structured results while requiring Codex to emit the nullable field.
-      result["action_proposals"] = nil unless result.key?("action_proposals")
+      # Older FRED sessions predate action proposals. Preserve their structured
+      # results while keeping the FRED-only field out of ordinary agent output.
+      result["action_proposals"] = nil if action_proposals_supported? && !result.key?("action_proposals")
       decode_compatibility_field(result, "inquiry_json", "inquiry", errors)
       decode_compatibility_field(result, "attachments_json", "attachments", errors)
       decode_compatibility_field(result, "summary_sections_json", "summary_sections", errors)
@@ -144,6 +144,8 @@ module HQ
     end
 
     def validate_action_proposals(payload)
+      return [] unless action_proposals_supported?
+
       proposals = payload.is_a?(Hash) ? payload["action_proposals"] : nil
       return [] unless proposals.is_a?(Array)
 
@@ -155,6 +157,10 @@ module HQ
 
         error("invalid_action_arguments", "$.action_proposals[#{index}].arguments", "Arguments must match action type #{type}")
       end
+    end
+
+    def action_proposals_supported?
+      @schema.dig("properties", "action_proposals").is_a?(Hash)
     end
 
     def nonempty_summary_field_errors(block, field, path)

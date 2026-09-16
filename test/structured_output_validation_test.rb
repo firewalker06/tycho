@@ -12,6 +12,7 @@ module StructuredOutputValidationTest
 
   FIXTURE_ROOT = File.expand_path("fixtures/structured_output", __dir__)
   SCHEMA_PATH = File.expand_path("../config/schemas/agent_result.json", __dir__)
+  PERSONAL_ASSISTANT_SCHEMA_PATH = File.expand_path("../config/schemas/personal_assistant_result.json", __dir__)
 
   def run!
     assert_runner_uses_null_child_stdin
@@ -87,7 +88,14 @@ module StructuredOutputValidationTest
   end
 
   def assert_personal_assistant_action_contract
-    schema = JSON.parse(File.read(SCHEMA_PATH))
+    ordinary_schema = JSON.parse(File.read(SCHEMA_PATH))
+    assert(!ordinary_schema.fetch("properties").key?("action_proposals") &&
+           !ordinary_schema.fetch("required").include?("action_proposals"),
+           "expected ordinary agent schema to exclude FRED action proposals")
+    ordinary_payload = JSON.parse(File.read(fixture("valid.json"))).merge("action_proposals" => nil)
+    assert(!validator.validate(ordinary_payload).valid?,
+           "expected ordinary agent output to reject FRED action proposals")
+    schema = JSON.parse(File.read(PERSONAL_ASSISTANT_SCHEMA_PATH))
     alternatives = schema.dig("properties", "action_proposals", "items", "anyOf")
     catalog = HQ::PersonalAssistantActionCatalog
     schema_types = alternatives.flat_map { |entry| entry.dig("properties", "type", "enum") }
@@ -108,18 +116,18 @@ module StructuredOutputValidationTest
         arguments = keys.to_h { |key| [key, nullable.include?(key) ? nil : "example"] }
         proposal = { "type" => type, "description" => "Review this action", "arguments" => arguments }
         payload = JSON.parse(File.read(fixture("valid.json"))).merge("action_proposals" => [proposal])
-        assert(validator.validate(payload).valid?, "expected #{type} proposal to pass the model contract")
+        assert(personal_assistant_validator.validate(payload).valid?, "expected #{type} proposal to pass the model contract")
 
         %w[server parent_agent_key actor command].each do |forbidden|
           injected = payload.merge("action_proposals" => [proposal.merge("arguments" => arguments.merge(forbidden => "untrusted"))])
-          assert(!validator.validate(injected).valid?, "expected #{type} to reject injected #{forbidden}")
+          assert(!personal_assistant_validator.validate(injected).valid?, "expected #{type} to reject injected #{forbidden}")
         end
         next if keys.empty?
 
         missing = payload.merge("action_proposals" => [proposal.merge("arguments" => arguments.reject { |key, _| key == keys.first })])
-        assert(!validator.validate(missing).valid?, "expected #{type} to reject omitted arguments")
+        assert(!personal_assistant_validator.validate(missing).valid?, "expected #{type} to reject omitted arguments")
         wrong_type = payload.merge("action_proposals" => [proposal.merge("arguments" => arguments.merge(keys.first => true))])
-        assert(!validator.validate(wrong_type).valid?, "expected #{type} to reject a non-string argument")
+        assert(!personal_assistant_validator.validate(wrong_type).valid?, "expected #{type} to reject a non-string argument")
       end
     end
   end
@@ -273,6 +281,11 @@ module StructuredOutputValidationTest
 
   def validator
     schema = JSON.parse(File.read(SCHEMA_PATH))
+    HQ::AgentStructuredOutputValidator.new(schema:)
+  end
+
+  def personal_assistant_validator
+    schema = JSON.parse(File.read(PERSONAL_ASSISTANT_SCHEMA_PATH))
     HQ::AgentStructuredOutputValidator.new(schema:)
   end
 

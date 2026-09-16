@@ -132,6 +132,11 @@ logs.
 | Attachments | Generic normalized links/files persisted into memory and attachments file | Generic | Reuse unchanged | Reuse unchanged; later pass initial local files with `opencode run --file` |
 | Final-output checklist | Appended to every execution prompt | Same | Reuse, but make Cursor prompt explicitly ask for a single JSON object because there is no schema enforcement | Reuse; cold OpenCode prompts also receive the exact canonical schema in a hidden execution-only block |
 
+The canonical schema is `schemas/agent_result.json` for ordinary agents. FRED
+uses the dedicated `schemas/personal_assistant_result.json`, which adds its
+action-proposal contract; proposal definitions are never passed to ordinary
+agent harnesses.
+
 ## Catalog, Readiness, And Model UX
 
 | Function | Codex | Claude | Cursor adaptation | OpenCode adaptation |
