@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-09-11
+2026-09-16
 
 ## Strategic Direction
 
@@ -21,19 +21,14 @@ Key references:
 
 - [CLAUDE.md](../CLAUDE.md) — architecture, file layout, runtime behavior, coding style.
 - [GOTCHAS.md](./GOTCHAS.md) — known operational pitfalls.
-- [SYSTEM_PROMPT_AUDIT.md](./SYSTEM_PROMPT_AUDIT.md) — inventory of system prompts and automatically injected managed-agent context, including lifecycle timing and known contract gaps.
 - [research/charm-ruby.md](./research/charm-ruby.md) — Bubbletea/Lipgloss/Bubbles Ruby usage notes.
-- [research/spinel-single-file-distribution.md](./research/spinel-single-file-distribution.md) — decision and experiment showing why Spinel cannot package Tycho's current CRuby/native-gem runtime.
 - [research/logging-architecture.md](./research/logging-architecture.md) — `HQ.logger` design.
 - [research/claude-json-schema-research.md](./research/claude-json-schema-research.md) and [research/codex-json-schema-research.md](./research/codex-json-schema-research.md) — agent stream formats.
-- [research/a2a-protocol-research.md](./research/a2a-protocol-research.md), [research/agent-communication-protocol-research.md](./research/agent-communication-protocol-research.md), [research/hq-a2a-vs-acp-recommendation.md](./research/hq-a2a-vs-acp-recommendation.md) — agent protocol exploration.
 - [REMOTE_SERVER.md](./REMOTE_SERVER.md) — Remote Sessions server architecture, runtime behavior, and API endpoint reference.
-- [MULTISERVER_RESOURCES_PLAN.md](./MULTISERVER_RESOURCES_PLAN.md) — planned
-  combined Agents and Projects catalog, peer health, explicit ownership, and
-  bounded refresh model.
-- [WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.md) — planned browser push notifications for Remote UI, including the hard HTTPS-over-Tailscale requirement.
-- [SCHEDULED_RUNS.md](./SCHEDULED_RUNS.md) — planned cron-like scheduled runs, `tycho schedule daemon`, command targets, and prompt/message tradeoffs.
-- [MODEL_ARGUMENTS_PLAN.md](./MODEL_ARGUMENTS_PLAN.md) — planned managed-agent `model` and `reasoning_effort` configuration, command mapping, and TUI/Remote UI display.
+- [HARNESS_INVENTORY.md](./HARNESS_INVENTORY.md) and [CUSTOM_HARNESSES.md](./CUSTOM_HARNESSES.md) — native harness behavior, compatibility, and custom profile contracts.
+- [design-system/DESIGN_SYSTEM.md](./design-system/DESIGN_SYSTEM.md) — Remote UI design tokens, components, accessibility, and migration rules.
+- [WEB_PUSH_BEHAVIOR.md](./WEB_PUSH_BEHAVIOR.md) — current browser push grouping, silent-notification, and PWA badge behavior.
+- [SCHEDULED_RUNS.md](./SCHEDULED_RUNS.md) — scheduled-run configuration, daemon behavior, command targets, and runtime semantics.
 - [USAGE_METRICS.md](./USAGE_METRICS.md) — normalized run/native-session schema, provider cost semantics, query/backfill operations, archive behavior, and recovery.
 
 ## Key Decisions
@@ -298,7 +293,6 @@ and queued-run push notification behavior. Schedule-management work remains on
 
 ### Model And Effort Arguments
 
-- [x] Add planning doc for managed-agent model and reasoning effort fields in `docs/MODEL_ARGUMENTS_PLAN.md`
 - [x] Add Codex catalog-driven model and effort suggestions from `codex debug models`
 - [x] Add Claude alias/help-derived suggestions without hard validation
 - [x] Add config inheritance and persisted `ManagedAgent` fields for `model` and `reasoning_effort`
@@ -346,11 +340,9 @@ and queued-run push notification behavior. Schedule-management work remains on
 - [x] Ability to switch Chat to Interactive Mode (resume in agent harness, e.g. codex, claude) via `ctrl+t` agent terminal shortcut
 - [x] Validate structured output and request bounded same-session corrections across Codex and Claude-compatible harnesses
 
-### Agent Protocol
+### Managed-agent communication
 
-- [ ] Evaluate A2A vs ACP for managed-agent transport (see `docs/research/hq-a2a-vs-acp-recommendation.md`)
-- [ ] Prototype protocol adapter behind `ManagedAgent`
-- [ ] Decide whether to keep direct CLI invocation or move to a protocol-mediated runtime
+- [x] Use direct CLI invocation and explicit same-server parent delegation; see [AGENT_DELEGATION.md](./AGENT_DELEGATION.md) for the maintained contract.
 
 ### Observability
 
@@ -407,7 +399,7 @@ and queued-run push notification behavior. Schedule-management work remains on
 - [x] Remote Settings editor for the global `response_style.md` policy with atomic persistence and backup
 - [x] Client-side Remote UI filtering across agents and projects
 - [x] Remote UI skill discovery for chat insertion
-- [x] Browser push subscription/test-notification foundation, with HTTPS MagicDNS support and HTTP MagicDNS warnings ([WEB_PUSH_PLAN.md](./WEB_PUSH_PLAN.md))
+- [x] Browser push subscription/test-notification foundation, with HTTPS MagicDNS support and HTTP MagicDNS warnings
 - [x] Automatic browser push notifications when agents require response or finish
 - [x] Dedicated mobile structured inquiry submission UI
 - [x] Full-screen inquiry editor with trailing unstructured Leave feedback field
