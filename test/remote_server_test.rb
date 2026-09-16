@@ -7740,6 +7740,11 @@ module RemoteServerTest
     assert(js[:body].include?("function agentReferenceNameHtml") &&
            js[:body].include?("renderAgentReference(reference, { embedded: true, relationshipRole })"),
            "expected connected-agent references to render delegation role icons")
+    assert(!js[:body].include?("function renderAgentRelationshipContext") &&
+           !js[:body].include?("${renderAgentRelationshipContext(agent)}") &&
+           js[:body].include?("function renderLinkedAgentsFlyout") &&
+           js[:body].include?("renderAgentRelationshipRow(agent, reference, reference.key)"),
+           "expected linked agents to stay in the composer flyout without a redundant conversation-top list")
     assert(js[:body].include?("function parentAgentMessageAuthor") &&
            js[:body].include?('parentAgentMessage(block) ? "parent-agent-message"') &&
            js[:body].include?('if (parentAgentMessage(block)) return iconSvg("hardHat")'),

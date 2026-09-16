@@ -3996,17 +3996,6 @@ select {
   align-content: start;
 }
 
-.agent-relationships {
-  display: grid;
-  gap: 10px;
-  width: calc(100% - 28px);
-  margin: 0 28px 4px 0;
-  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 4%, var(--panel));
-  padding: 10px;
-}
-
 .agent-relationship-section,
 .agent-relationship-list {
   display: grid;
@@ -4214,7 +4203,6 @@ select {
     margin-left: min(calc(var(--delegation-depth) * 14px), 42px);
   }
 
-  .agent-relationships,
   .delegation-event {
     width: 100%;
     margin-right: 0;
