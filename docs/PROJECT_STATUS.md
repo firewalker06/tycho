@@ -24,7 +24,6 @@ Key references:
 - [research/charm-ruby.md](./research/charm-ruby.md) — Bubbletea/Lipgloss/Bubbles Ruby usage notes.
 - [research/logging-architecture.md](./research/logging-architecture.md) — `HQ.logger` design.
 - [research/claude-json-schema-research.md](./research/claude-json-schema-research.md) and [research/codex-json-schema-research.md](./research/codex-json-schema-research.md) — agent stream formats.
-- [research/a2a-protocol-research.md](./research/a2a-protocol-research.md), [research/agent-communication-protocol-research.md](./research/agent-communication-protocol-research.md), [research/hq-a2a-vs-acp-recommendation.md](./research/hq-a2a-vs-acp-recommendation.md) — agent protocol exploration.
 - [REMOTE_SERVER.md](./REMOTE_SERVER.md) — Remote Sessions server architecture, runtime behavior, and API endpoint reference.
 - [HARNESS_INVENTORY.md](./HARNESS_INVENTORY.md) and [CUSTOM_HARNESSES.md](./CUSTOM_HARNESSES.md) — native harness behavior, compatibility, and custom profile contracts.
 - [design-system/DESIGN_SYSTEM.md](./design-system/DESIGN_SYSTEM.md) — Remote UI design tokens, components, accessibility, and migration rules.
@@ -341,11 +340,9 @@ and queued-run push notification behavior. Schedule-management work remains on
 - [x] Ability to switch Chat to Interactive Mode (resume in agent harness, e.g. codex, claude) via `ctrl+t` agent terminal shortcut
 - [x] Validate structured output and request bounded same-session corrections across Codex and Claude-compatible harnesses
 
-### Agent Protocol
+### Managed-agent communication
 
-- [ ] Evaluate A2A vs ACP for managed-agent transport (see `docs/research/hq-a2a-vs-acp-recommendation.md`)
-- [ ] Prototype protocol adapter behind `ManagedAgent`
-- [ ] Decide whether to keep direct CLI invocation or move to a protocol-mediated runtime
+- [x] Use direct CLI invocation and explicit same-server parent delegation; see [AGENT_DELEGATION.md](./AGENT_DELEGATION.md) for the maintained contract.
 
 ### Observability
 
