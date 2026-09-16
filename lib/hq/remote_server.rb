@@ -1694,8 +1694,7 @@ module HQ
     end
 
     def update(key, request)
-      config = find_config!(key)
-      raise RemoteServer::Error.new("Cannot update the UI-serving server through the peer broker", status: 400) if local_key?(config.key)
+      config = configured_remote!(key)
 
       response = RemoteClient.new(
         config,
@@ -1747,6 +1746,13 @@ module HQ
       return loopback_config(value) if loopback_key?(value)
 
       raise RemoteServer::Error.new("Unknown remote server: #{key}", status: 404)
+    end
+
+    def configured_remote!(key)
+      config = remote_configs.find { |candidate| candidate.key == key.to_s }
+      return config if config
+
+      raise RemoteServer::Error.new("Unknown configured remote server: #{key}", status: 404)
     end
 
     def local_key?(key)

@@ -4586,6 +4586,17 @@ module RemoteServerTest
         assert(requests.last[:method] == "POST" && requests.last[:path] == "/update",
                "expected the peer update route to invoke the existing remote update API")
 
+        request_count = requests.length
+        begin
+          server.send(:route, service, "POST", "/servers/loopback-7374/update", {}, nil)
+          raise "expected an ad-hoc loopback alias to reject peer updates"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 404 && e.message.include?("configured remote"),
+                 "expected updates to require an explicitly configured remote server")
+          assert(requests.length == request_count,
+                 "expected an ad-hoc loopback update alias not to make a remote request")
+        end
+
         update_fails = true
         begin
           server.send(:route, service, "POST", "/servers/homebrew-peer/update", {}, nil)

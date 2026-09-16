@@ -6,12 +6,30 @@ All notable changes to Tycho will be documented in this file.
 
 ## 0.11.1 - 2026-09-16
 
-### Fixes
+### Highlights
+
+- Add server-aware CLI controls. `--server SERVER_KEY` now targets configured,
+  authenticated peers for supported restart, update, doctor, metrics, project,
+  agent, and schedule operations, with consistent JSON output and failures.
+- Preserve Tycho-managed agent identity in the agent system context and Remote
+  UI so managed sessions and installed Tycho skills retain their trusted
+  server, agent, and delegation context.
+- Archive protected delegation callback history safely when a parent is
+  archived, retaining provenance instead of leaving callback-only queues
+  blocking lifecycle cleanup.
+
+### Fixes and improvements
+
+- Fix Project Browser scrolling so focused workspace content remains reachable.
+- Remove the redundant delegated-agent list from the Remote UI.
+- Remove obsolete planning, protocol-research, and stale capture documentation
+  that no longer describes supported Tycho behavior.
 
 - Let Settings update a configured Remote server only after that peer reports a
   Homebrew Tycho installation. The explicit action calls the existing
   server-aware update API, waits for the peer restart, refreshes its catalog,
-  and reports actionable failures without leaving the menu in progress.
+  and reports actionable failures without leaving the menu in progress. The
+  dedicated broker route accepts configured remotes only.
 
 - Deprecate Intel macOS Homebrew support. Existing Intel Homebrew installations
   remain updateable for now and receive a migration warning; Apple Silicon
