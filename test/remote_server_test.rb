@@ -70,6 +70,7 @@ module RemoteServerTest
     assert_remote_server_restart_route_schedules_restart
     assert_remote_broker_lists_configured_servers
     assert_remote_resource_catalog_combines_and_retains_peer_resources
+    assert_remote_broker_updates_homebrew_peer
     assert_remote_broker_proxies_configured_server_requests
     assert_remote_broker_logs_recoverable_activity_5xx
     assert_remote_broker_proxies_loopback_peer_requests
@@ -4309,6 +4310,7 @@ module RemoteServerTest
     peer_payload = {
       schema_version: 1,
       build: { version: "0.9.0-peer" },
+      server: { update: { available: true, detail: "Homebrew update ready" } },
       agents: [{ key: "peer-agent", name: "Peer Agent", project_key: "peer-project" }],
       projects: [{ key: "peer-project", name: "Peer Project" }]
     }
@@ -4405,6 +4407,8 @@ module RemoteServerTest
         listed_peer = listed.dig(:body, :servers).find { |entry| entry[:key] == "peer" }
         assert(listed_peer[:version] == "0.9.0-peer",
                "expected Settings server list to retain the peer version from the resource catalog")
+        assert(listed_peer.dig(:update, :available) == true,
+               "expected Settings server list to expose only the peer-reported Homebrew update capability")
         assert(File.exist?(snapshot_path), "expected a successful peer refresh to persist its snapshot")
         assert((File.stat(snapshot_path).mode & 0o777) == 0o600,
                "expected persisted peer snapshots to be private")
@@ -4535,6 +4539,72 @@ module RemoteServerTest
         persisted = JSON.parse(File.read(snapshot_path))
         assert(persisted.fetch("servers").empty?,
                "expected removing a peer to forget its persisted resource snapshot")
+      end
+    end
+  end
+
+  def assert_remote_broker_updates_homebrew_peer
+    update_fails = false
+    requests = []
+    handler = lambda do |request|
+      requests << request
+      if request[:method] == "POST" && request[:path] == "/update"
+        if update_fails
+          { status: 409, content_type: "application/json", body: JSON.generate(error: "Updates are available only for Homebrew-installed Tycho.") }
+        else
+          { status: 202, content_type: "application/json", body: JSON.generate(update: { updated: true }, restarting: true) }
+        end
+      else
+        { status: 404, content_type: "application/json", body: JSON.generate(error: "missing") }
+      end
+    end
+
+    with_fixture_http_server(handler) do |target_url|
+      with_remote_temp_store do |dir|
+        workspace = File.join(dir, "workspace")
+        write_project_workspace(workspace)
+        config_path = File.join(dir, "hq.yml")
+        prompts_path = File.join(dir, "system_prompts.yml")
+        File.write(config_path, <<~YAML)
+          remote_servers:
+            - key: homebrew-peer
+              name: Homebrew peer
+              url: #{target_url}
+          projects:
+            - key: web
+              name: Web
+              path: #{workspace}
+        YAML
+        File.write(prompts_path, "custom: Default prompt.\n")
+        registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
+        service = HQ::RemoteService.new(registry: registry)
+        server = HQ::RemoteServer.new
+
+        result = server.send(:route, service, "POST", "/servers/homebrew-peer/update", {}, nil)
+        assert(result[:status] == 202 && result.dig(:body, "restarting"),
+               "expected the dedicated peer update route to return the remote restart acknowledgement")
+        assert(requests.last[:method] == "POST" && requests.last[:path] == "/update",
+               "expected the peer update route to invoke the existing remote update API")
+
+        request_count = requests.length
+        begin
+          server.send(:route, service, "POST", "/servers/loopback-7374/update", {}, nil)
+          raise "expected an ad-hoc loopback alias to reject peer updates"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 404 && e.message.include?("configured remote"),
+                 "expected updates to require an explicitly configured remote server")
+          assert(requests.length == request_count,
+                 "expected an ad-hoc loopback update alias not to make a remote request")
+        end
+
+        update_fails = true
+        begin
+          server.send(:route, service, "POST", "/servers/homebrew-peer/update", {}, nil)
+          raise "expected a source-installed peer update to fail"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 409 && e.message.include?("Homebrew-installed"),
+                 "expected peer update failures to retain the actionable remote installation error")
+        end
       end
     end
   end

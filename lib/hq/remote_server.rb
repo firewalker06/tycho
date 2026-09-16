@@ -449,6 +449,9 @@ module HQ
           @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
           return ok(result)
         end
+        if method == "POST" && parts.length == 3 && parts[2] == "update"
+          return accepted(broker.update(parts[1], request))
+        end
         if parts.length >= 3 && RemoteBroker::RESOURCE_ROOTS.include?(parts[2])
           resource_path = "/#{parts.drop(2).join("/")}"
           return broker.proxy(parts[1], method, resource_path, body, request)
@@ -721,12 +724,15 @@ module HQ
     end
 
     def enrich_servers(servers)
-      catalog_versions = @resource_catalog.snapshot.fetch(:servers, []).to_h do |server|
-        [server[:key], server[:version]]
+      catalog_metadata = @resource_catalog.snapshot.fetch(:servers, []).to_h do |server|
+        [server[:key], { version: server[:version], update: server[:update] }]
       end
       servers.map do |server|
-        version = catalog_versions[server[:key]]
-        version.to_s.empty? ? server : server.merge(version: version)
+        metadata = catalog_metadata[server[:key]]
+        next server unless metadata
+
+        enriched = metadata[:version].to_s.empty? ? server : server.merge(version: metadata[:version])
+        metadata[:update] ? enriched.merge(update: metadata[:update]) : enriched
       end
     end
 
@@ -1233,6 +1239,7 @@ module HQ
       {
         success: true,
         version: resource_version(payload),
+        update: update_capability(payload),
         agents: agents,
         projects: projects,
         resource_mode: mode
@@ -1272,6 +1279,7 @@ module HQ
           retry_after_ms: REFRESH_INTERVAL_SECONDS * 1000,
           resource_mode: result[:resource_mode],
           version: result[:version],
+          update: result[:update],
           agents: decorate_resources(result[:agents], entry, kind: "agent"),
           projects: decorate_resources(result[:projects], entry, kind: "project")
         )
@@ -1337,6 +1345,7 @@ module HQ
         next_refresh_at: nil,
         retry_after_ms: 0,
         resource_mode: nil,
+        update: nil,
         agents: [],
         projects: []
       )
@@ -1440,6 +1449,14 @@ module HQ
       server = value_for(payload, "server")
       version = value_for(server, "version").to_s if version.empty? && server.is_a?(Hash)
       version.empty? ? nil : version
+    end
+
+    def update_capability(payload)
+      server = value_for(payload, "server")
+      update = value_for(server, "update")
+      return nil unless update.is_a?(Hash) && value_for(update, "available") == true
+
+      { available: true, detail: value_for(update, "detail").to_s }
     end
 
     def config_for(key, registry:, server_url:)
@@ -1676,6 +1693,22 @@ module HQ
       response
     end
 
+    def update(key, request)
+      config = configured_remote!(key)
+
+      response = RemoteClient.new(
+        config,
+        timeout: @timeout,
+        token_override: remote_server_token(request),
+        credential_resolver: @credential_resolver
+      ).request("POST", "/update", body: {})
+      return response[:body] if response[:status].to_i.between?(200, 299)
+
+      detail = response[:body].is_a?(Hash) ? response[:body][:error] || response[:body]["error"] : nil
+      raise RemoteServer::Error.new(detail.to_s.empty? ? "Remote server #{config.key} did not accept an update" : detail,
+                                    status: response[:status].to_i)
+    end
+
     private
 
     def log_recoverable_activity_failure(peer_key, method, path, response)
@@ -1713,6 +1746,13 @@ module HQ
       return loopback_config(value) if loopback_key?(value)
 
       raise RemoteServer::Error.new("Unknown remote server: #{key}", status: 404)
+    end
+
+    def configured_remote!(key)
+      config = remote_configs.find { |candidate| candidate.key == key.to_s }
+      return config if config
+
+      raise RemoteServer::Error.new("Unknown configured remote server: #{key}", status: 404)
     end
 
     def local_key?(key)
@@ -2032,6 +2072,9 @@ module HQ
         generated_at: Time.now.iso8601,
         build: {
           version: HQ::VERSION
+        },
+        server: {
+          update: @tycho_updater.status
         },
         agents: agents.map { |agent| agent_list_payload(agent, reference_context:, relationship_context:) },
         projects: visible_projects.map do |project|

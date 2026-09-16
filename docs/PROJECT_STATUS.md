@@ -71,6 +71,7 @@ Key references:
 | Tycho skill installation | Keep a checksummed bundled source manifest behind `SkillInstaller`; install to `~/.agents/skills` (Codex), `~/.claude/skills` (Claude Code), `~/.config/opencode/skills` (OpenCode), or `~/.pi/agent/skills` (Pi), and update only files proven Tycho-owned | One deep module owns current path conventions, status comparison, staged/atomic replacement, exact change reporting, and collision/error safety for Remote API/UI callers |
 | Remote Sessions | Local JSON API and web UI via `tycho serve`; Tailscale auto-bind; terminal QR startup URL | Remote clients can inspect and control managed agents through the same `AgentStore` / `ManagedAgent` paths as the TUI |
 | Homebrew update lifecycle | A successful Homebrew update resolves the stable `.../bin/tycho` launcher, restarts any running scheduler with that launcher, and asks a running local Remote server to self-replace through its authenticated restart endpoint; absent local services are reported as no-ops | Homebrew Cellar paths are versioned and may disappear during upgrade, so replacement server and daemon processes must never inherit the old Cellar executable; server lifecycle remains local rather than broker-proxied |
+| Peer Homebrew updates | Publish a peer's Homebrew-only update capability in its compact resource snapshot and expose one dedicated, explicitly confirmed broker update action | The generic multiserver proxy remains limited to agent/project/attachment resources; unsupported, offline, and source-installed peers never receive an enabled update control |
 | Distribution compiler | Keep bottled Homebrew releases; do not port Tycho to Spinel | Spinel cannot load Tycho's CRuby/Go native extensions or ordinary Bundler graph, and the feasibility compile produced no Tycho artifact; a direct-download path must preserve CRuby behavior and prove the full platform/runtime matrix |
 | Remote UI responsive shell | Mobile keeps bottom navigation; wide desktop uses a wider content frame with side navigation; creation actions live in the header and focused detail/form routes remove unrelated global actions | Prevent fixed controls from obscuring content, use desktop space effectively, and keep page actions contextual across mobile, tablet, and desktop |
 | Remote UI control sizing | Shared 44 px control and touch-target tokens, 16 px mobile form text, visible focus states, and explicit validation/status text | Avoid mobile auto-zoom, undersized targets, color-only state, and inconsistent action geometry |
@@ -137,6 +138,11 @@ historical synthetic `/setup` observation of 3.47 s remains a catalog
 measurement, not a final UI latency claim.
 Preserve the protected daily role, server-local identity, exact confirmation
 for each mutation, and no blind retry after an uncertain execution outcome.
+
+**v0.11.1 release preparation**: adds a capability-gated, explicitly confirmed
+Remote UI update action for configured Homebrew peers. The action waits for the
+peer restart, refreshes its resources, restores polling after failure, and
+does not expose source-installed or unknown peers as updateable.
 
 **v0.11.0 release preparation**: adds the protected FRED Personal Assistant,
 native-adapter custom harness profiles, safer editable/searchable workspace

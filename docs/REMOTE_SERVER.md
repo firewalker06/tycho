@@ -127,7 +127,14 @@ The restart flow is intentionally ordered so the browser gets a clean acknowledg
 
 If a `RemoteServer` is constructed without a restart command, `POST /server/restart` returns `409 Conflict`. That keeps test and embedded server instances from accidentally attempting to replace their process.
 
-Homebrew installs can update Tycho with `tycho update` or **Settings → More → Update Tycho**. After a successful upgrade, each path resolves the stable Homebrew executable, restarts the local scheduler through the existing supervisor, and asks the local Remote server to replace itself. The CLI reports safe no-ops when the local Remote server or scheduler daemon is absent. The web action applies only to the UI-serving host: it responds with `202 Accepted`, then the Remote server replaces itself after the response flushes. The broker intentionally keeps server lifecycle operations local and only forwards agent, project, and attachment requests to peers.
+Homebrew installs can update Tycho with `tycho update` or **Settings → More → Update Tycho**. After a successful upgrade, each path resolves the stable Homebrew executable, restarts the local scheduler through the existing supervisor, and asks the local Remote server to replace itself. The CLI reports safe no-ops when the local Remote server or scheduler daemon is absent. The web action applies only to the UI-serving host: it responds with `202 Accepted`, then the Remote server replaces itself after the response flushes.
+
+For a configured peer, `tycho update --server SERVER_KEY` calls that peer's
+`POST /update` API. Settings also shows **Update Tycho** in a peer's overflow
+menu only after its current resource snapshot positively reports the
+Homebrew-only update capability. The broker has one dedicated peer-update path;
+it does not expose general server lifecycle proxying. Source-installed,
+offline, or older peers do not show an enabled update action.
 
 The CLI discovers that local server through a host-local control record written by `tycho serve`; the record contains only its loopback or Tailscale bind host and port, never a bearer token. It does not read `TYCHO_REMOTE_URL`, so an update cannot target a connected peer.
 
@@ -425,6 +432,7 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `DELETE` | `/servers/:server_key/resources` | Forget one peer's persisted agents and projects without changing the peer configuration or remote data. |
 | `POST` | `/servers/resources/refresh` | Queue bounded background refreshes for all configured servers. |
 | `POST` | `/servers/{key}/resources/refresh` | Queue one background catalog refresh. |
+| `POST` | `/servers/{key}/update` | Invoke the configured peer's Homebrew-only update API after its explicit UI confirmation. |
 | `POST` | `/servers` | Add or update one loopback or Tailscale MagicDNS Remote server in `remote_servers` inside `hq.yml`. |
 | `PATCH` | `/servers/{key}` | Update one peer server's display name and `server` or `computer` icon. |
 | `DELETE` | `/servers/{key}` | Remove one non-local Remote server from `remote_servers` inside `hq.yml`. |
