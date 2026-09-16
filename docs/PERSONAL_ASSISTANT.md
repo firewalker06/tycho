@@ -51,7 +51,7 @@ The protected `personal_assistant_daily` role cannot be controlled through ordin
 
 The pure `PersonalAssistantActionCatalog` defines action names, required argument keys, and nullable fields. The model schema and execution validator must match this catalog. Action proposals come only from successful finalized runs; clients cannot create arbitrary proposals. Server-generated IDs, run provenance, locked claims, and immutable arguments prevent repeated confirmation from repeating a mutation.
 
-The model cannot supply server, parent, or actor identity. Execution reuses Tycho's existing service paths and server-local ownership rules. Returned document/log content is data, not authorization for new actions. User-owned result schemas receive the bundled `action_proposals` update through the existing schema migration.
+The model cannot supply server, parent, or actor identity. Execution reuses Tycho's existing service paths and server-local ownership rules. Returned document/log content is data, not authorization for new actions. FRED alone receives `schemas/personal_assistant_result.json`; it carries the proposal catalog and is copied and migrated in user config alongside the general `schemas/agent_result.json`. Ordinary-agent schemas remove the FRED-only `action_proposals` field during migration.
 
 Daily handoffs contain normalized UTF-8 text and bounded lists. The next prompt receives less than 4 KB of serialized continuity, without cutting JSON in the middle of a string. The lifecycle derives its dated recommendation set from the handoff's bounded `promotion_candidates`, with open work and documented-capability fallbacks when generation is degraded. Historical archives remain separate from the current conversation.
 

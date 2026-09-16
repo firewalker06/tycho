@@ -345,7 +345,8 @@ Configuration:
 - Active projects: `~/.tycho/config/hq.yml`.
 - Archived projects: `~/.tycho/config/hq.archived.yml`.
 - Agent prompt templates: `~/.tycho/config/system_prompts.yml`.
-- Agent structured result schema: `~/.tycho/config/schemas/agent_result.json`.
+- Ordinary agent structured result schema: `~/.tycho/config/schemas/agent_result.json`.
+- FRED structured result schema: `~/.tycho/config/schemas/personal_assistant_result.json` (the only schema with `action_proposals`).
 - Optional hooks: `~/.tycho/config/hooks.yml`.
 
 Runtime state:

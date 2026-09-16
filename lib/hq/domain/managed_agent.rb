@@ -1332,7 +1332,7 @@ module HQ
         harness_command_prefix: execution.fetch(:command),
         harness_command_environment: execution.fetch(:env),
         last_message_file_path: last_message_file_path,
-        result_schema_path: AGENT_RESULT_SCHEMA,
+        result_schema_path: result_schema_path,
         claude_result_schema: canonical_result_schema_json
       )
     end
@@ -1353,7 +1353,7 @@ module HQ
         "initial_command" => command,
         "correction_command" => correction.fetch(:command),
         "harness_adapter" => harness_adapter,
-        "schema_path" => AGENT_RESULT_SCHEMA,
+        "schema_path" => result_schema_path,
         "last_message_path" => last_message_file_path,
         "invalid_response_path" => invalid_structured_output_file_path,
         "session_id" => @session_id.to_s,
@@ -1372,7 +1372,7 @@ module HQ
     end
 
     def structured_output_correction_supported?
-      File.file?(AGENT_RESULT_SCHEMA) && %w[codex claude pi].include?(harness_adapter)
+      File.file?(result_schema_path) && %w[codex claude pi].include?(harness_adapter)
     end
 
     def structured_output_correction_limit
@@ -2410,10 +2410,14 @@ module HQ
       ExecutableResolver.command_for_tool("pi")
     end
 
-    def canonical_result_schema_json
-      return nil unless File.exist?(AGENT_RESULT_SCHEMA)
+    def result_schema_path
+      personal_assistant? ? PERSONAL_ASSISTANT_RESULT_SCHEMA : AGENT_RESULT_SCHEMA
+    end
 
-      JSON.generate(JSON.parse(File.read(AGENT_RESULT_SCHEMA)))
+    def canonical_result_schema_json
+      return nil unless File.exist?(result_schema_path)
+
+      JSON.generate(JSON.parse(File.read(result_schema_path)))
     rescue StandardError
       nil
     end
