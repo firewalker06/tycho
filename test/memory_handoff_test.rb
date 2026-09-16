@@ -97,6 +97,15 @@ module MemoryHandoffTest
              %w[outcome decisions continuing_context references lessons promotion_candidates],
              "expected strict handoff schema migration")
 
+      required_only_path = File.join(dir, "required_only_agent_result.json")
+      bundled = JSON.parse(File.read(SCHEMA_PATH))
+      bundled["required"] -= %w[memory_handoff summary_sections]
+      File.write(required_only_path, JSON.generate(bundled))
+      HQ.migrate_agent_result_schema!(required_only_path)
+      required_only = JSON.parse(File.read(required_only_path))
+      assert((%w[memory_handoff summary_sections] - required_only.fetch("required")).empty?,
+             "expected missing owned required fields to persist even when definitions already match")
+
       legacy_path = File.join(dir, "legacy_agent_result.json")
       File.write(legacy_path, JSON.generate("type" => "object", "properties" => { "action_proposals" => { "type" => "array" } }, "required" => ["action_proposals"]))
       HQ.migrate_agent_result_schema!(legacy_path)

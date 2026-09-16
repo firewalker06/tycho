@@ -18,9 +18,17 @@ module GemPackageTest
       unpacked = File.join(dir, "unpacked")
       FileUtils.mkdir_p(unpacked)
       Gem::Package.new(gem_path).extract_files(unpacked)
+      verify_packaged_schemas!(unpacked)
       verify_packaged_installer!(unpacked, File.join(dir, "home"))
     end
     puts "gem_package_test: ok"
+  end
+
+  def verify_packaged_schemas!(unpacked)
+    %w[agent_result.json personal_assistant_result.json].each do |name|
+      path = File.join(unpacked, "config", "schemas", name)
+      raise "packaged gem is missing #{name}" unless File.file?(path)
+    end
   end
 
   def build_gem!(gem_path)
@@ -56,8 +64,17 @@ module GemPackageTest
       raise "packaged install is not current" unless result.dig(:harness, :status) == "installed"
       expected_target = File.join(ENV.fetch("TYCHO_PACKAGE_TEST_HOME"), ".agents", "skills", "tycho")
       raise "packaged install used the wrong target" unless result.dig(:harness, :skills, 0, :path) == expected_target
+
+      require "hq/domain/constants"
+      schemas_dir = File.join(ENV.fetch("TYCHO_PACKAGE_TEST_HOME"), ".tycho", "config", "schemas")
+      ordinary = File.join(schemas_dir, "agent_result.json")
+      fred = File.join(schemas_dir, "personal_assistant_result.json")
+      raise "ordinary schema bootstrap failed" unless HQ::AGENT_RESULT_SCHEMA == ordinary && File.file?(ordinary)
+      raise "FRED schema bootstrap failed" unless HQ::PERSONAL_ASSISTANT_RESULT_SCHEMA == fred && File.file?(fred)
+      raise "ordinary schema includes FRED proposals" if JSON.parse(File.read(ordinary)).dig("properties", "action_proposals")
+      raise "FRED schema lacks proposals" unless JSON.parse(File.read(fred)).dig("properties", "action_proposals")
     RUBY
-    env = { "TYCHO_PACKAGE_TEST_HOME" => home }
+    env = { "TYCHO_PACKAGE_TEST_HOME" => home, "TYCHO_HOME" => File.join(home, ".tycho") }
     stdout, stderr, status = Open3.capture3(
       env,
       RbConfig.ruby, "-I", File.join(unpacked, "lib"), "-e", script,

@@ -3912,7 +3912,11 @@ module RemoteServerTest
              "expected Claude readiness to expose only current Anthropic model aliases")
       assert(setup[:tools].map { |item| item[:name] }.sort == %w[tailscale],
              "expected optional tool readiness entries")
-      assert(setup.dig(:schema, :valid) == true, "expected valid result schema")
+      assert(setup.dig(:schema, :valid) == true, "expected valid result schemas")
+      assert(setup.dig(:schema, :schemas, :ordinary) == { valid: true, path: HQ::AGENT_RESULT_SCHEMA },
+             "expected setup to report ordinary result-schema readiness")
+      assert(setup.dig(:schema, :schemas, :personal_assistant) == { valid: true, path: HQ::PERSONAL_ASSISTANT_RESULT_SCHEMA },
+             "expected setup to report FRED result-schema readiness")
       assert(setup.dig(:config, :prompt_template_count) == 1, "expected prompt template count")
       schedule_prompt_template = setup.dig(:config, :schedule_system_message_template).to_s
       assert(schedule_prompt_template.include?("%{title}"),

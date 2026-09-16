@@ -5586,10 +5586,18 @@ module HQ
     end
 
     def schema_readiness
-      JSON.parse(File.read(AGENT_RESULT_SCHEMA))
-      { valid: true, path: AGENT_RESULT_SCHEMA }
+      schemas = {
+        ordinary: schema_file_readiness(AGENT_RESULT_SCHEMA),
+        personal_assistant: schema_file_readiness(PERSONAL_ASSISTANT_RESULT_SCHEMA)
+      }
+      { valid: schemas.values.all? { |schema| schema[:valid] }, path: AGENT_RESULT_SCHEMA, schemas: }
+    end
+
+    def schema_file_readiness(path)
+      JSON.parse(File.read(path))
+      { valid: true, path: }
     rescue StandardError => e
-      { valid: false, path: AGENT_RESULT_SCHEMA, error: e.message }
+      { valid: false, path:, error: e.message }
     end
 
     def config_readiness

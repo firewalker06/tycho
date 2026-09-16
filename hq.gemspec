@@ -37,6 +37,7 @@ Gem::Specification.new do |spec|
                  config/response_style.md.example
                  config/schedules.yml.example
                  config/schemas/agent_result.json
+                 config/schemas/personal_assistant_result.json
                  config/system_prompts.yml.example
                ]
 

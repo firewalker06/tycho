@@ -101,10 +101,11 @@ module HQ
       changed ||= !removed.nil?
     end
     required = Array(current["required"])
-    required -= remove_properties
-    required_properties = owned_properties.reject { |key| required.include?(key) }
-    changed ||= required != Array(current["required"])
-    current["required"] = required + required_properties if changed
+    updated_required = required - remove_properties
+    missing_required = owned_properties.reject { |key| updated_required.include?(key) }
+    updated_required += missing_required
+    changed ||= updated_required != required
+    current["required"] = updated_required if changed
     File.write(path, "#{JSON.pretty_generate(current)}\n") if changed
     path
   rescue JSON::ParserError, SystemCallError
