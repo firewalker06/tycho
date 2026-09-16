@@ -1059,7 +1059,7 @@ module HQ
     end
 
     def debug_claude(opts = {}, out: $stdout, err: $stderr)
-      return debug_claude_agent(out: out, err: err) if opts[:run_agent]
+      return debug_claude_agent(opts, out: out, err: err) if opts[:run_agent]
 
       require_relative "domain/executable_resolver"
       require_relative "domain/managed_agent"
@@ -1111,17 +1111,17 @@ module HQ
       out.puts "Exit status: #{status.exitstatus}"
       status.success? ? 0 : status.exitstatus.to_i
     rescue StandardError => e
-      failure("Failed to run Claude auth diagnostic: #{e.class}: #{e.message}", err: err)
+      command_failure("Failed to run Claude auth diagnostic: #{e.class}: #{e.message}", opts, out:, err:)
     end
 
-    def debug_claude_agent(out: $stdout, err: $stderr)
+    def debug_claude_agent(opts = {}, out: $stdout, err: $stderr)
       require_relative "registry"
       require_relative "harness_registry"
 
       registry = Registry.new
       project = debug_project(registry)
-      return failure("No project available for Claude debug agent.", err: err) unless project
-      return failure("Claude harness is not available in this Tycho configuration.", err: err) unless HQ.supported_harness?("claude")
+      return command_failure("No project available for Claude debug agent.", opts, out:, err:) unless project
+      return command_failure("Claude harness is not available in this Tycho configuration.", opts, out:, err:) unless HQ.supported_harness?("claude")
 
       agent_store = AgentStore.new(registry.projects)
       agent = agent_store.create_from_template(project, "custom")
@@ -1143,29 +1143,38 @@ module HQ
       agent = agent_store.start_agent!(agent.key)
       started = agent.running? || agent.last_run
 
-      out.puts "Tycho Claude managed-agent diagnostic"
-      out.puts "Agent: #{agent.key}"
-      out.puts "Project: #{agent.project_key}"
-      out.puts "Harness: #{agent.agent}"
-      out.puts "Model: #{agent.model || "(claude default)"}"
-      out.puts "Reasoning effort: #{agent.reasoning_effort || "(claude default)"}"
-      out.puts "Log: #{agent.raw_log_path}"
-
-      unless started && agent.pid
-        out.puts "Status: start failed"
-        return 1
+      unless opts[:json]
+        out.puts "Tycho Claude managed-agent diagnostic"
+        out.puts "Agent: #{agent.key}"
+        out.puts "Project: #{agent.project_key}"
+        out.puts "Harness: #{agent.agent}"
+        out.puts "Model: #{agent.model || "(claude default)"}"
+        out.puts "Reasoning effort: #{agent.reasoning_effort || "(claude default)"}"
+        out.puts "Log: #{agent.raw_log_path}"
       end
 
-      out.puts "Started: pid #{agent.pid}"
+      unless started && agent.pid
+        return command_failure("Claude managed-agent diagnostic failed to start", opts, out:, err:)
+      end
+
+      out.puts "Started: pid #{agent.pid}" unless opts[:json]
       wait_for_debug_agent(agent)
       save_agent_in_store(agent)
 
-      out.puts "Final status: #{agent.status}"
-      out.puts "Exit code: #{agent.last_exit_code.nil? ? "n/a" : agent.last_exit_code}"
-      out.puts "Summary: #{agent.last_summary}"
+      if opts[:json]
+        out.puts JSON.generate(
+          ok: agent.status == "succeeded",
+          claude: { agent_key: agent.key, project_key: agent.project_key, status: agent.status,
+                    exit_code: agent.last_exit_code, summary: agent.last_summary, log_path: agent.raw_log_path }
+        )
+      else
+        out.puts "Final status: #{agent.status}"
+        out.puts "Exit code: #{agent.last_exit_code.nil? ? "n/a" : agent.last_exit_code}"
+        out.puts "Summary: #{agent.last_summary}"
+      end
       agent.status == "succeeded" ? 0 : 1
     rescue StandardError => e
-      failure("Failed to run Claude managed-agent diagnostic: #{e.class}: #{e.message}", err: err)
+      command_failure("Failed to run Claude managed-agent diagnostic: #{e.class}: #{e.message}", opts, out:, err:)
     end
 
     def registry_projects
