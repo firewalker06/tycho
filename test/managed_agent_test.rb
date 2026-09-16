@@ -1519,10 +1519,29 @@ module ManagedAgentTest
           workspace: dir, prompt: "Prompt", agent: harness, log_path: File.join(dir, "#{harness}.log")
         )
         agent.define_singleton_method(:tycho_skill_installed?) { false }
+        agent.ensure_agent_system_context_prompt!
         prompt = agent.send(:prompt_for_execution, response_style: "", include_hidden_guidance: false)
         assert(prompt.include?("Your agent key: #{harness}-agent"),
                "expected #{harness} cold launch prompt to include its agent context")
       end
+
+      previous_harnesses = HQ.custom_harnesses
+      HQ.custom_harnesses = %w[codex claude opencode pi].map do |adapter|
+        HQ::HarnessConfig.new(key: "#{adapter}-context-wrapper", adapter:, execution_command: "#{adapter}-wrapper")
+      end
+      HQ.custom_harnesses.values.each do |profile|
+        agent = HQ::ManagedAgent.new(
+          key: "#{profile.key}-agent", name: profile.key, project_key: "demo", template_key: "custom",
+          workspace: dir, prompt: "Prompt", agent: profile.key, log_path: File.join(dir, "#{profile.key}.log")
+        )
+        agent.define_singleton_method(:tycho_skill_installed?) { false }
+        agent.ensure_agent_system_context_prompt!
+        assert(agent.send(:prompt_for_execution, response_style: "", include_hidden_guidance: false)
+                    .include?("Your agent key: #{profile.key}-agent"),
+               "expected custom #{profile.adapter} adapter to reuse persisted agent context")
+      end
+    ensure
+      HQ.custom_harnesses = previous_harnesses if defined?(previous_harnesses)
     end
   end
 
@@ -1553,6 +1572,7 @@ module ManagedAgentTest
         delegation_parent: { "server_id" => "local", "agent_key" => "launched-root" }
       )
       [root, child].each { |agent| agent.define_singleton_method(:tycho_skill_installed?) { false } }
+      [root, child].each(&:ensure_agent_system_context_prompt!)
       root.start!
       child.start!
       deadline = Time.now + 5

@@ -31,6 +31,7 @@ module RegistryTest
     assert_agent_store_prepends_project_tool_system_prompt
     assert_agent_store_timestamp_keys_avoid_exact_collisions
     assert_agent_store_backfills_project_tool_system_prompt
+    assert_agent_store_persists_agent_system_context_for_remote_conversations
     puts "registry_test: ok"
   end
 
@@ -621,6 +622,48 @@ module RegistryTest
       memory_events = File.readlines(memory_path, chomp: true).map { |line| JSON.parse(line) }
       assert(memory_events.first["content"].include?("Project:"),
              "expected existing memory file to be prepended with project context")
+    ensure
+      replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+    end
+  end
+
+  def assert_agent_store_persists_agent_system_context_for_remote_conversations
+    Dir.mktmpdir("hq-agent-system-context-persistence-test") do |dir|
+      config_path = File.join(dir, "hq.yml")
+      old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "agents.json"))
+      File.write(config_path, <<~YAML)
+        projects:
+          - key: web
+            name: Web
+            path: #{File.join(dir, "web")}
+      YAML
+      registry = HQ::Registry.new(path: config_path)
+      store = HQ::AgentStore.new(registry.projects)
+      root = store.create_from_template_and_persist!(registry.projects.first, "custom")
+      child = store.create_from_template_and_persist!(registry.projects.first, "custom", delegation: {
+        parent_key: root.key
+      })
+
+      [root.key, child.key].each do |key|
+        agent = store.load.find { |candidate| candidate.key == key }
+        events = HQ::AgentMemory.new(agent).events.select { |event| event["type"] == "system_prompt" }
+        context = events.select { |event| event.dig("metadata", "prompt_role") == "agent_context" }
+        assert(context.length == 1, "expected #{key} to persist one Tycho system-context event")
+        assert(context.first["content"].include?("Tycho managed-agent context"),
+               "expected #{key} context to identify Tycho management")
+        assert(context.first["content"].include?("Your agent key: #{key}"),
+               "expected #{key} context to identify the current agent")
+        expected_parent = key == root.key ? "No parent agent is recorded" : "parent agent key: #{root.key}"
+        assert(context.first["content"].include?(expected_parent),
+               "expected #{key} context to preserve the correct root or delegated state")
+        prompt = agent.send(:prompt_for_execution, response_style: "", include_hidden_guidance: false)
+        assert(prompt.scan("Tycho managed-agent context (trusted):").length == 1,
+               "expected #{key} launch prompt to reuse, not duplicate, persisted context")
+        assert(store.load.find { |candidate| candidate.key == key }, "expected #{key} to survive reload")
+        reloaded_events = HQ::AgentMemory.new(store.load.find { |candidate| candidate.key == key }).events
+        assert(reloaded_events.count { |event| event.dig("metadata", "prompt_role") == "agent_context" } == 1,
+               "expected repeated loads to keep one #{key} context event")
+      end
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
     end
