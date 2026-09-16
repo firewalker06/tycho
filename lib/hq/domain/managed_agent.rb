@@ -11,7 +11,9 @@ require_relative "agent_result_normalizer"
 require_relative "memory_handoff"
 require_relative "agent_structured_result"
 require_relative "agent_correction_runner"
+require_relative "agent_system_context"
 require_relative "response_style_policy"
+require_relative "skill_installer"
 require_relative "executable_resolver"
 require_relative "../harness_registry"
 require_relative "../log_file_reader"
@@ -2175,6 +2177,7 @@ module HQ
       if messages.empty? && !@prompt.to_s.empty?
         messages << { role: "system", content: @prompt.to_s }
       end
+      messages.insert(1, role: "system", content: current_agent_system_context)
       messages.map do |message|
         "#{message[:role].to_s.upcase}:\n#{prompt_message_content(message)}"
       end.join("\n\n")
@@ -2225,6 +2228,20 @@ module HQ
                     end
       base_prompt = ["[TYCHO ACTION RESULTS — server verified]", feedback.join("\n\n"), base_prompt].join("\n\n") if feedback.any?
       with_execution_guidance(base_prompt, response_style:, include_hidden_guidance:)
+    end
+
+    def current_agent_system_context
+      AgentSystemContext.render(
+        agent_key: @key,
+        parent: @delegation_parent,
+        tycho_skill_installed: tycho_skill_installed?
+      )
+    end
+
+    def tycho_skill_installed?
+      SkillInstaller.new.status(harness_adapter).fetch(:status, nil) == "installed"
+    rescue StandardError
+      false
     end
 
     def with_execution_guidance(prompt, response_style: resolved_response_style, include_hidden_guidance: true)
