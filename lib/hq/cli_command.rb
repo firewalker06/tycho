@@ -1954,7 +1954,8 @@ module HQ
         out.puts JSON.pretty_generate(payload)
         return 0
       end
-      out.puts schedule_daemon_line(payload.fetch("daemon", {}))
+      daemon = payload.fetch("daemon", {}).transform_keys(&:to_sym)
+      out.puts schedule_daemon_line(daemon)
       rows = payload.fetch("schedules", [])
       normalized_rows = rows.map { |row| row.transform_keys(&:to_sym) }
       out.puts(normalized_rows.empty? ? "No schedules configured." : schedule_list_table(normalized_rows))
@@ -1965,6 +1966,12 @@ module HQ
 
     def remote_schedule_action(method, path, body, opts, out:, err:, success_message:)
       result = remote_client(opts[:server]).request(method, path, body: body)
+      if opts[:deprecated_alias]
+        result = result.merge(
+          "deprecated_alias" => true,
+          "deprecation" => "tycho schedule reload is deprecated; use tycho schedule restart"
+        )
+      end
       opts[:json] ? out.puts(JSON.generate(result)) : out.puts(success_message)
       0
     rescue RemoteCLIClient::Error => e

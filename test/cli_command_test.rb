@@ -161,8 +161,9 @@ module CLICommandTest
         assert(schedule.fetch(:status).success? && JSON.parse(schedule.fetch(:stdout)).dig("schedule", "key") == "daily",
                "expected remote schedule create JSON")
         schedules = run_tycho(local_env, "schedule", "list", "--server", "peer")
-        assert(schedules.fetch(:status).success? && schedules.fetch(:stdout).include?("daily"),
-               "expected remote schedule list to render populated schedules")
+        assert(schedules.fetch(:status).success? && schedules.fetch(:stdout).include?("daily") &&
+               schedules.fetch(:stdout).include?("Daemon: stopped"),
+               "expected remote schedule list to render populated schedules and daemon status")
         paused_schedule = run_tycho(local_env, "schedule", "pause", "daily", "--server", "peer")
         assert(paused_schedule.fetch(:status).success? && paused_schedule.fetch(:stdout) == "Paused daily.\n",
                "expected remote schedule pause human output")
