@@ -2412,7 +2412,10 @@ module HQ
       end
 
       agent = result[:agent]
-      return out.puts(JSON.generate(schedule: schedule, agent: agent && agent_cli_payload(agent))) if opts[:json]
+      if opts[:json]
+        out.puts JSON.generate(schedule: schedule, agent: agent && agent_cli_payload(agent))
+        return 0
+      end
       out.puts "Started schedule #{schedule.fetch(:key)}."
       out.puts "Agent: #{agent.key}" if agent
       out.puts "Next: #{schedule[:next_due_at] || "n/a"}"
@@ -2424,7 +2427,10 @@ module HQ
     def pause_schedule(schedule_key, opts = {}, out: $stdout, err: $stderr)
       return remote_schedule_action("POST", remote_resource_path("schedules", schedule_key) + "/pause", {}, opts, out:, err:) if remote_requested?(opts)
       schedule = scheduler.pause(schedule_key)
-      return out.puts(JSON.generate(schedule: schedule)) if opts[:json]
+      if opts[:json]
+        out.puts JSON.generate(schedule: schedule)
+        return 0
+      end
       out.puts "Paused #{schedule.fetch(:key)}."
       0
     rescue ScheduleRegistry::Error => e
@@ -2440,7 +2446,10 @@ module HQ
       end
 
       schedule = result.fetch(:schedule)
-      return out.puts(JSON.generate(schedule: schedule, agent: result[:agent] && agent_cli_payload(result[:agent]))) if opts[:json]
+      if opts[:json]
+        out.puts JSON.generate(schedule: schedule, agent: result[:agent] && agent_cli_payload(result[:agent]))
+        return 0
+      end
       out.puts "Resumed #{schedule.fetch(:key)}."
       out.puts "Agent: #{result[:agent].key}" if result[:agent]
       out.puts "Next: #{schedule[:next_due_at] || "n/a"}"
@@ -2470,7 +2479,10 @@ module HQ
       return remote_schedule_action("POST", "/schedules", schedule_attrs(opts).merge("key" => key), opts, out:, err:) if remote_requested?(opts)
       attrs = schedule_attrs(opts).merge("key" => key)
       schedule = schedule_registry.create(attrs)
-      return out.puts(JSON.generate(schedule: schedule.to_h)) if opts[:json]
+      if opts[:json]
+        out.puts JSON.generate(schedule: schedule.to_h)
+        return 0
+      end
       out.puts "Created schedule #{schedule.key}."
       0
     rescue ScheduleRegistry::Error => e
@@ -2480,7 +2492,10 @@ module HQ
     def update_schedule(key, opts, out: $stdout, err: $stderr)
       return remote_schedule_action("PATCH", remote_resource_path("schedules", key), schedule_attrs(opts), opts, out:, err:) if remote_requested?(opts)
       schedule = schedule_registry.update(key, schedule_attrs(opts))
-      return out.puts(JSON.generate(schedule: schedule.to_h)) if opts[:json]
+      if opts[:json]
+        out.puts JSON.generate(schedule: schedule.to_h)
+        return 0
+      end
       out.puts "Updated schedule #{schedule.key}."
       0
     rescue ScheduleRegistry::Error => e

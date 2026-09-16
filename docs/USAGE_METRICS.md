@@ -56,13 +56,13 @@ tycho metrics query --server vps --from 2026-07-06 --to 2026-08-07 --timezone UT
 
 The Remote API equivalents are `GET /metrics` with the same query parameters and `POST /metrics/backfill`.
 
-Backfill is best effort and idempotent:
+Metrics are maintained during managed runs. Query the current normalized records with:
 
 ```bash
 tycho metrics query --timezone Asia/Jakarta --json
 ```
 
-Backfill reads active and archived manifests first. Legacy raw telemetry is an optional fallback and requires an explicit timezone for offset-free historical headers. It preserves exact emitted IDs/models/prices, labels fields inferred from deterministic filenames or event shapes, assigns a stable anonymous identity when no agent manifest exists, and never guesses a model, price, or session ID. Repeating the command should report every prior record as unchanged.
+`metrics backfill` is deprecated and intentionally does not mutate records. Historical repair is no longer part of the supported CLI contract.
 
 ## Archive and recovery
 
