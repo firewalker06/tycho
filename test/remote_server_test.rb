@@ -6520,6 +6520,7 @@ module RemoteServerTest
     assert(js[:body].include?("Update Tycho") &&
            js[:body].include?("data-update-tycho") &&
            js[:body].include?('apiPost("/update"') &&
+           js[:body].include?("update.detail || \"Homebrew update ready.\"") &&
            js[:body].include?("restart its running Remote server and scheduler daemon automatically") &&
            !js[:body].include?("scheduler daemon afterward using their existing controls"),
            "expected Settings More menu to offer Homebrew Tycho updates through the local API")
