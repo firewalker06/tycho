@@ -18,7 +18,7 @@ Runtime artifacts are written to `~/.tycho/logs/`, including app state files suc
 - `bundle exec bin/tycho serve [--host 127.0.0.1] [--port 7373]`: start the local Remote Sessions JSON API and web UI for managed-agent control.
 - `bundle exec bin/tycho project create <key> [options]` and `project list|show|update|archive`: manage project configuration from the CLI.
 - `bundle exec bin/tycho schedule [list|daemon --once|daemon --dry-run]`: list schedules, run the scheduled-agent daemon, or run a single scheduler tick.
-- `bundle exec bin/tycho metrics query [filters] [--json]` and `metrics backfill [--timezone ZONE]`: query or idempotently rebuild normalized run/native-session usage metrics.
+- `bundle exec bin/tycho metrics query [filters] [--json]`: query normalized run/native-session usage metrics. `metrics backfill` is deprecated and no longer mutates data.
 - `bin/test`: run the public CI-equivalent Ruby syntax and regression suite.
 - `bin/remote-ui-smoke`: start a throwaway Remote UI server with temp config/log roots, create fixture agents, and run Chrome/Playwright smoke checks; set `TYCHO_REMOTE_UI_WORKSPACE_ONLY=1` for the focused workspace flow, `TYCHO_REMOTE_UI_DELEGATION_ONLY=1` for delegated-report rendering, or `TYCHO_REMOTE_UI_SUMMARY_ATTACHMENTS_ONLY=1` for Summary attachment behavior, and optionally set `TYCHO_REMOTE_UI_CAPTURE_DIR=/tmp/tycho-remote-ui-captures` to save evidence outside the repository.
 - `bin/remote-ui-fred-composer-smoke`: run an isolated Chrome/Playwright check for FRED’s collapsed and expanded composer states; it writes desktop/mobile evidence to `docs/captures/fred-composer-196/` by default.

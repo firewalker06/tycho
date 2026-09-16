@@ -57,6 +57,7 @@ module CLICommandTest
 
       target_config = File.join(target_dir, "hq.yml")
       target_prompts = File.join(target_dir, "system_prompts.yml")
+      target_schedules = File.join(target_dir, "schedules.yml")
       File.write(target_config, <<~YAML)
         projects:
           - key: demo
@@ -65,6 +66,7 @@ module CLICommandTest
             agent: codex
       YAML
       File.write(target_prompts, "{}\n")
+      File.write(target_schedules, "schedules: []\n")
 
       local_config = File.join(local_dir, "hq.yml")
       local_prompts = File.join(local_dir, "system_prompts.yml")
@@ -85,6 +87,7 @@ module CLICommandTest
       server_env = {
         "TYCHO_CONFIG_PATH" => target_config,
         "TYCHO_SYSTEM_PROMPTS_PATH" => target_prompts,
+        "TYCHO_SCHEDULES_PATH" => target_schedules,
         "TYCHO_LOGS_ROOT" => File.join(target_dir, "logs"),
         "TYCHO_REMOTE_TOKEN" => token,
         "TYCHO_CODEX_BIN" => fake_codex
@@ -139,6 +142,31 @@ module CLICommandTest
         assert(project.fetch(:status).success?, "expected remote project show: #{project.fetch(:stderr)}")
         assert(JSON.parse(project.fetch(:stdout)).fetch("name") == "Remote Demo",
                "expected normalized remote project detail")
+
+        updated_project = run_tycho(local_env, "project", "update", "demo", "--name", "Renamed Remote Demo",
+                                    "--server", "peer", "--json")
+        assert(updated_project.fetch(:status).success? &&
+               JSON.parse(updated_project.fetch(:stdout)).fetch("name") == "Renamed Remote Demo",
+               "expected remote project update to use PATCH")
+        rejected_project_create = run_tycho(local_env, "project", "create", "not-local", "--server", "peer", "--json")
+        assert(!rejected_project_create.fetch(:status).success? && rejected_project_create.fetch(:stderr).empty? &&
+               JSON.parse(rejected_project_create.fetch(:stdout)).fetch("ok") == false,
+               "expected remote project create to fail as JSON without changing the local registry")
+
+        doctor = run_tycho(local_env, "doctor", "--server", "peer")
+        assert(doctor.fetch(:status).success? && doctor.fetch(:stdout).include?("Remote Tycho server peer: reachable"),
+               "expected remote doctor human output to describe connectivity")
+        schedule = run_tycho(local_env, "schedule", "create", "daily", "--name", "Daily", "--cron", "0 1 * * *",
+                             "--timezone", "UTC", "--project-key", "demo", "--message", "Run", "--server", "peer", "--json")
+        assert(schedule.fetch(:status).success? && JSON.parse(schedule.fetch(:stdout)).dig("schedule", "key") == "daily",
+               "expected remote schedule create JSON")
+        schedules = run_tycho(local_env, "schedule", "list", "--server", "peer")
+        assert(schedules.fetch(:status).success? && schedules.fetch(:stdout).include?("daily") &&
+               schedules.fetch(:stdout).include?("Daemon: stopped"),
+               "expected remote schedule list to render populated schedules and daemon status")
+        paused_schedule = run_tycho(local_env, "schedule", "pause", "daily", "--server", "peer")
+        assert(paused_schedule.fetch(:status).success? && paused_schedule.fetch(:stdout) == "Paused daily.\n",
+               "expected remote schedule pause human output")
 
         created = run_tycho(local_env, "agent", "create", "demo", "Remote CLI lifecycle test",
                             "--name", "Remote CLI test", "--server", "peer", "--json")
@@ -352,6 +380,11 @@ module CLICommandTest
       assert(shown_payload["model"] == "gpt-test", "expected project show to expose model")
       assert(shown_payload["pr_url"].end_with?("/pull/7"), "expected project show to expose PR URL")
 
+      no_update = run_tycho(env, "project", "update", "demo", "--json")
+      assert(!no_update.fetch(:status).success? && no_update.fetch(:stderr).empty? &&
+             JSON.parse(no_update.fetch(:stdout)).fetch("error") == "No fields to update",
+             "expected project update JSON failures to remain machine-readable")
+
       updated = run_tycho(env, "project", "update", "demo", "--name", "Demo Updated", "--group=",
                           "--model=", "--reasoning-effort", "low", "--response-style", "default",
                           "--pr-url=", "--hidden", "inherit", "--json")
@@ -390,7 +423,8 @@ module CLICommandTest
 
       missing = run_tycho(env, "project", "show", "demo", "--json")
       assert(!missing.fetch(:status).success?, "expected archived project to be absent from project show")
-      assert(missing.fetch(:stderr).include?("Unknown project: demo"), "expected clear missing-project error")
+      assert(missing.fetch(:stderr).empty? && JSON.parse(missing.fetch(:stdout)).fetch("error") == "Unknown project: demo",
+             "expected clear JSON missing-project error")
     end
   end
 

@@ -1,12 +1,12 @@
 {
   "source": "https://github.com/firewalker06/tycho/tree/main/lib/hq/skill_assets",
-  "version": "2026.09.13.2",
+  "version": "2026.09.16.2",
   "verification": "Open the harness skill picker and invoke tycho: $tycho in Codex/OpenCode, /tycho in Claude Code, or /skill:tycho in Pi.",
   "skills": [
     {
       "name": "tycho",
       "files": {
-        "SKILL.md": "c2dc26f7afe91a4e464753b2ce542639a3a37fe39fbc6f5220f34c0eed68ae2c"
+        "SKILL.md": "62d2d09b031a8a5e7bcc9c714340e51e1d636d39863d582e8a5d91e7d351ee4b"
       }
     }
   ]

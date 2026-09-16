@@ -254,7 +254,7 @@ tycho schedule list
 tycho schedule run weekday-maintenance
 tycho schedule pause weekday-maintenance
 tycho schedule resume weekday-maintenance
-tycho schedule reload
+tycho schedule restart
 ```
 
 Daemon:

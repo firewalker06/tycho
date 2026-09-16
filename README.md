@@ -84,7 +84,7 @@ Open the TUI:
 tycho
 ```
 
-Restart the terminal UI with `tycho restart`.
+Restart a controlled Remote server with `tycho serve restart`; `tycho restart` is retained as a deprecated compatibility alias. Add `--server SERVER_KEY` to ask a configured authenticated remote host to restart itself, and add `--json` for machine-readable output.
 
 For a Homebrew installation, `tycho update` upgrades Tycho and restarts any
 running local Remote server and scheduler daemon with the stable launcher. It

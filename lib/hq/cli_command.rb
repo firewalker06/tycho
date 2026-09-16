@@ -3,6 +3,7 @@
 require "json"
 require "io/console"
 require "open3"
+require "optparse"
 require "rbconfig"
 require "time"
 require "uri"
@@ -86,6 +87,7 @@ module HQ
         desc "Create a project"
         argument :project_key, required: true, desc: "Project key"
         project_mutation_options(create: true)
+        option :server, desc: "Remote server key from hq.yml"
         usage_template "project create %{project_key} [options]"
 
         def call(project_key:, **opts)
@@ -136,7 +138,8 @@ module HQ
         desc "Update project configuration"
         argument :project_key, required: true, desc: "Project key"
         project_mutation_options(create: false)
-        usage_template "project update %{project_key} [options]"
+        option :server, desc: "Remote server key from hq.yml"
+        usage_template "project update %{project_key} [options] [--server SERVER_KEY]"
 
         def call(project_key:, **opts)
           if (status = CLICommand.unexpected_project_arguments("project update", opts.delete(:args), err: err))
@@ -152,8 +155,8 @@ module HQ
 
         desc "Archive a project and its managed agents"
         argument :project_key, required: true, desc: "Project key"
-        option :json, type: :boolean, default: false, desc: "Print JSON"
-        usage_template "project archive %{project_key} [--json]"
+        remote_options
+        usage_template "project archive %{project_key} [--server SERVER_KEY] [--json]"
 
         def call(project_key:, **opts)
           if (status = CLICommand.unexpected_project_arguments("project archive", opts.delete(:args), err: err))
@@ -459,6 +462,8 @@ module HQ
           option :system_message, desc: "Stable system context"
           option :message, desc: "Run message"
           option :ends_at, desc: "Optional ISO 8601 end timestamp"
+          option :server, desc: "Remote server key from hq.yml"
+          option :json, type: :boolean, default: false, desc: "Print JSON"
         end
       end
 
@@ -492,10 +497,11 @@ module HQ
         extend CommandMetadata
 
         desc "Validate schedule configuration"
-        usage_template "schedule validate"
+        remote_options
+        usage_template "schedule validate [--server SERVER_KEY] [--json]"
 
-        def call(**)
-          exit CLICommand.validate_schedules(out: out, err: err)
+        def call(**opts)
+          exit CLICommand.validate_schedules(opts, out: out, err: err)
         end
       end
 
@@ -503,10 +509,11 @@ module HQ
         extend CommandMetadata
 
         desc "List schedules"
-        usage_template "schedule list"
+        remote_options
+        usage_template "schedule list [--server SERVER_KEY] [--json]"
 
-        def call(**)
-          exit CLICommand.list_schedules(out: out, err: err)
+        def call(**opts)
+          exit CLICommand.list_schedules(opts, out: out, err: err)
         end
       end
 
@@ -515,10 +522,11 @@ module HQ
 
         desc "Run a schedule now"
         argument :schedule_key, required: true, desc: "Schedule key"
-        usage_template "schedule run %{schedule_key}"
+        remote_options
+        usage_template "schedule run %{schedule_key} [--server SERVER_KEY] [--json]"
 
-        def call(schedule_key:, **)
-          exit CLICommand.run_schedule(schedule_key, out: out, err: err)
+        def call(schedule_key:, **opts)
+          exit CLICommand.run_schedule(schedule_key, opts, out: out, err: err)
         end
       end
 
@@ -527,10 +535,11 @@ module HQ
 
         desc "Pause a schedule"
         argument :schedule_key, required: true, desc: "Schedule key"
-        usage_template "schedule pause %{schedule_key}"
+        remote_options
+        usage_template "schedule pause %{schedule_key} [--server SERVER_KEY] [--json]"
 
-        def call(schedule_key:, **)
-          exit CLICommand.pause_schedule(schedule_key, out: out, err: err)
+        def call(schedule_key:, **opts)
+          exit CLICommand.pause_schedule(schedule_key, opts, out: out, err: err)
         end
       end
 
@@ -539,21 +548,35 @@ module HQ
 
         desc "Resume a schedule"
         argument :schedule_key, required: true, desc: "Schedule key"
-        usage_template "schedule resume %{schedule_key}"
+        remote_options
+        usage_template "schedule resume %{schedule_key} [--server SERVER_KEY] [--json]"
 
-        def call(schedule_key:, **)
-          exit CLICommand.resume_schedule(schedule_key, out: out, err: err)
+        def call(schedule_key:, **opts)
+          exit CLICommand.resume_schedule(schedule_key, opts, out: out, err: err)
         end
       end
 
       class ScheduleReload < Dry::CLI::Command
         extend CommandMetadata
 
-        desc "Validate schedules for the next daemon tick"
-        usage_template "schedule reload"
+        desc "Deprecated alias for schedule restart"
+        remote_options
+        usage_template "schedule reload [--server SERVER_KEY] [--json]"
 
-        def call(**)
-          exit CLICommand.reload_schedules(out: out, err: err)
+        def call(**opts)
+          err.puts "tycho schedule reload is deprecated; use `tycho schedule restart`." unless opts[:json]
+          exit CLICommand.schedule_restart(opts.merge(deprecated_alias: true), out: out, err: err)
+        end
+      end
+
+      class ScheduleRestart < Dry::CLI::Command
+        extend CommandMetadata
+        desc "Restart the scheduler daemon"
+        remote_options
+        usage_template "schedule restart [--server SERVER_KEY] [--json]"
+
+        def call(**opts)
+          exit CLICommand.schedule_restart(opts, out: out, err: err)
         end
       end
 
@@ -566,6 +589,7 @@ module HQ
         prefix.register "pause", SchedulePause
         prefix.register "resume", ScheduleResume
         prefix.register "reload", ScheduleReload
+        prefix.register "restart", ScheduleRestart
       end
 
       class Debug < Dry::CLI::Command
@@ -579,11 +603,12 @@ module HQ
       class DebugClaude < Dry::CLI::Command
         extend CommandMetadata
 
-        desc "Run Claude diagnostics through Tycho's harness process path"
+        desc "Deprecated alias; use doctor --claude"
         option :run_agent, type: :boolean, default: false, desc: "Create and run a disposable Claude managed agent"
         usage_template "debug claude [--run-agent]"
 
         def call(**opts)
+          err.puts "tycho debug claude is deprecated; use `tycho doctor --claude`."
           exit CLICommand.debug_claude(opts, out: out, err: err)
         end
       end
@@ -624,14 +649,14 @@ module HQ
       class MetricsBackfill < Dry::CLI::Command
         extend CommandMetadata
 
-        desc "Idempotently backfill normalized usage metrics"
+        desc "Deprecated; normalized metrics are maintained during runs"
         option :timezone, desc: "IANA timezone for legacy offset-free run headers"
         option :durable_only, type: :boolean, default: false, desc: "Do not inspect legacy raw telemetry"
         remote_options
         usage_template "metrics backfill [--timezone ZONE] [--durable-only] [--json]"
 
         def call(**opts)
-          exit CLICommand.backfill_metrics(opts, out: out, err: err)
+          exit CLICommand.deprecated_metrics_backfill(opts, out: out, err: err)
         end
       end
 
@@ -666,7 +691,8 @@ module HQ
       Commands::ScheduleRun,
       Commands::SchedulePause,
       Commands::ScheduleResume,
-      Commands::ScheduleReload
+      Commands::ScheduleReload,
+      Commands::ScheduleRestart
     ].freeze
     SERVER_COMMANDS = [
       Commands::ServerLogin,
@@ -685,10 +711,11 @@ module HQ
     COMMAND_NAME = "tycho"
     RUNTIME_COMMANDS = [
       "  #{COMMAND_NAME} serve [daemon] [--host 127.0.0.1] [--port 7373]",
+      "  #{COMMAND_NAME} serve restart [--server SERVER_KEY] [--json]",
       "  #{COMMAND_NAME} schedule daemon [--once] [--dry-run] [--interval SECONDS]",
       "  #{COMMAND_NAME} restart",
-      "  #{COMMAND_NAME} update",
-      "  #{COMMAND_NAME} doctor"
+      "  #{COMMAND_NAME} update [--server SERVER_KEY] [--json]",
+      "  #{COMMAND_NAME} doctor [--server SERVER_KEY] [--json]"
     ].freeze
     USAGE = [
       "Usage:",
@@ -712,6 +739,7 @@ module HQ
     def run(argv, executable: nil)
       argv = Array(argv)
       return usage if argv.empty? || %w[--help -h].include?(argv.first)
+      return serve_restart(argv.drop(2)) if argv[0] == "serve" && argv[1] == "restart"
       return serve(argv.drop(1), executable:) if argv.first == "serve"
       return restart(argv.drop(1), executable:) if argv.first == "restart"
       return update(argv.drop(1), executable:) if argv.first == "update"
@@ -732,24 +760,52 @@ module HQ
     def restart(argv, executable: nil, restarter: nil)
       return usage("Unexpected restart arguments: #{argv.join(" ")}") unless Array(argv).empty?
 
-      (restarter || HQ::CLI.method(:restart!)).call([], executable || File.expand_path("../../bin/tycho", __dir__))
+      $stderr.puts "tycho restart is deprecated; use `tycho serve restart`."
+      if restarter
+        restarter.call([], executable || File.expand_path("../../bin/tycho", __dir__))
+        return 0
+      end
+      serve_restart([], restarter:)
+    end
+
+    def serve_restart(argv, out: $stdout, err: $stderr, restarter: nil)
+      options = { json: false, server: nil }
+      OptionParser.new do |parser|
+        parser.on("--server KEY") { |value| options[:server] = value }
+        parser.on("--json") { options[:json] = true }
+      end.parse!(argv)
+      return command_failure("Unexpected serve restart arguments: #{argv.join(" ")}", options, out:, err:) unless argv.empty?
+
+      result = if remote_requested?(options)
+                 remote_client(options[:server]).request("POST", "/server/restart")
+               else
+                 (restarter || RemoteServerControl.new).restart!
+               end
+      success = result[:restarted] || result["restarting"] || result["restarted"]
+      return command_failure(result[:detail] || result["detail"] || "Remote server did not accept restart", options, out:, err:) unless success
+
+      command_result(result, options, out:)
       0
+    rescue OptionParser::ParseError, RemoteCLIClient::Error => e
+      command_failure(e.message, options, out:, err:)
     end
 
     def update(argv, executable: nil, out: $stdout, err: $stderr, updater: nil, schedule_daemon_supervisor: nil,
                remote_server_control: nil)
-      return usage("Unexpected update arguments: #{argv.join(" ")}", err:) unless Array(argv).empty?
+      options = command_options(argv, out:, err:)
+      return 64 unless options
+      return remote_update(options, out:, err:) if remote_requested?(options)
 
       result = (updater || TychoUpdater.new(executable: executable || $PROGRAM_NAME)).update!
       schedule_daemon_supervisor ||= ScheduleDaemonSupervisor.new
       scheduler = schedule_daemon_supervisor.restart_if_running!(command: [result.fetch(:executable), "schedule", "daemon"])
       remote = (remote_server_control || RemoteServerControl.new).restart!
-      out.puts result.fetch(:detail)
-      out.puts scheduler.fetch(:detail)
-      out.puts remote.fetch(:detail)
+      combined = { updated: true, update: result, scheduler: scheduler, server: remote,
+                   detail: [result[:detail], scheduler[:detail], remote[:detail]].compact.join("\n") }
+      command_result(combined, options, out:)
       0
     rescue TychoUpdater::Error => e
-      failure(e.message, err:)
+      command_failure(e.message, options, out:, err:)
     end
 
     def schedule_daemon(argv)
@@ -766,7 +822,10 @@ module HQ
     end
 
     def doctor(argv, out: $stdout, err: $stderr)
-      return usage("Unexpected doctor arguments: #{argv.join(" ")}", err:) unless Array(argv).empty?
+      options = command_options(argv, out:, err:)
+      return 64 unless options
+      return remote_doctor(options, out:, err:) if remote_requested?(options)
+      return debug_claude(options, out:, err:) if options[:claude]
 
       require "bubbletea"
       require "bubbles"
@@ -783,6 +842,8 @@ module HQ
         return 1
       end
 
+      return command_result({ ok: true, doctor: "Tycho doctor", lipgloss_backend: backend,
+                              native_lipgloss_loaded: !native_lipgloss.empty? }, options, out:) if options[:json]
       out.puts "Tycho doctor: ok"
       out.puts "Lipgloss backend: #{backend}"
       out.puts "Native Lipgloss loaded: #{native_lipgloss.empty? ? "no" : "yes"}"
@@ -817,6 +878,11 @@ module HQ
       0
     rescue ArgumentError, ConfigError => e
       failure(e.message, err:)
+    end
+
+    def deprecated_metrics_backfill(opts = {}, out: $stdout, err: $stderr)
+      message = "tycho metrics backfill is deprecated and no longer runs; metrics are maintained during managed runs. Use `tycho metrics query`."
+      command_failure(message, opts, out:, err:)
     end
 
     def server_login(server_key, opts = {}, input: $stdin, out: $stdout, err: $stderr)
@@ -993,14 +1059,14 @@ module HQ
     end
 
     def debug_claude(opts = {}, out: $stdout, err: $stderr)
-      return debug_claude_agent(out: out, err: err) if opts[:run_agent]
+      return debug_claude_agent(opts, out: out, err: err) if opts[:run_agent]
 
       require_relative "domain/executable_resolver"
       require_relative "domain/managed_agent"
 
       resolution = ExecutableResolver.resolve_tool("claude")
       unless resolution.available?
-        return failure("Claude executable not found. Set TYCHO_CLAUDE_BIN or install claude.", err: err)
+        return command_failure("Claude executable not found. Set TYCHO_CLAUDE_BIN or install claude.", opts, out:, err:)
       end
 
       command = [resolution.command, "auth", "status"]
@@ -1009,6 +1075,14 @@ module HQ
         RbConfig.ruby, "-e", diagnostic_runner_script, *command,
         chdir: Dir.pwd
       )
+
+      if opts[:json]
+        out.puts JSON.generate(
+          ok: status.success?, claude: { executable: resolution.command, source: resolution.source,
+                                         stdout: stdout, stderr: stderr, exit_status: status.exitstatus }
+        )
+        return status.success? ? 0 : status.exitstatus.to_i
+      end
 
       out.puts "Tycho Claude auth diagnostic"
       out.puts "Claude executable: #{resolution.command} (#{resolution.source})"
@@ -1037,17 +1111,17 @@ module HQ
       out.puts "Exit status: #{status.exitstatus}"
       status.success? ? 0 : status.exitstatus.to_i
     rescue StandardError => e
-      failure("Failed to run Claude auth diagnostic: #{e.class}: #{e.message}", err: err)
+      command_failure("Failed to run Claude auth diagnostic: #{e.class}: #{e.message}", opts, out:, err:)
     end
 
-    def debug_claude_agent(out: $stdout, err: $stderr)
+    def debug_claude_agent(opts = {}, out: $stdout, err: $stderr)
       require_relative "registry"
       require_relative "harness_registry"
 
       registry = Registry.new
       project = debug_project(registry)
-      return failure("No project available for Claude debug agent.", err: err) unless project
-      return failure("Claude harness is not available in this Tycho configuration.", err: err) unless HQ.supported_harness?("claude")
+      return command_failure("No project available for Claude debug agent.", opts, out:, err:) unless project
+      return command_failure("Claude harness is not available in this Tycho configuration.", opts, out:, err:) unless HQ.supported_harness?("claude")
 
       agent_store = AgentStore.new(registry.projects)
       agent = agent_store.create_from_template(project, "custom")
@@ -1069,29 +1143,38 @@ module HQ
       agent = agent_store.start_agent!(agent.key)
       started = agent.running? || agent.last_run
 
-      out.puts "Tycho Claude managed-agent diagnostic"
-      out.puts "Agent: #{agent.key}"
-      out.puts "Project: #{agent.project_key}"
-      out.puts "Harness: #{agent.agent}"
-      out.puts "Model: #{agent.model || "(claude default)"}"
-      out.puts "Reasoning effort: #{agent.reasoning_effort || "(claude default)"}"
-      out.puts "Log: #{agent.raw_log_path}"
-
-      unless started && agent.pid
-        out.puts "Status: start failed"
-        return 1
+      unless opts[:json]
+        out.puts "Tycho Claude managed-agent diagnostic"
+        out.puts "Agent: #{agent.key}"
+        out.puts "Project: #{agent.project_key}"
+        out.puts "Harness: #{agent.agent}"
+        out.puts "Model: #{agent.model || "(claude default)"}"
+        out.puts "Reasoning effort: #{agent.reasoning_effort || "(claude default)"}"
+        out.puts "Log: #{agent.raw_log_path}"
       end
 
-      out.puts "Started: pid #{agent.pid}"
+      unless started && agent.pid
+        return command_failure("Claude managed-agent diagnostic failed to start", opts, out:, err:)
+      end
+
+      out.puts "Started: pid #{agent.pid}" unless opts[:json]
       wait_for_debug_agent(agent)
       save_agent_in_store(agent)
 
-      out.puts "Final status: #{agent.status}"
-      out.puts "Exit code: #{agent.last_exit_code.nil? ? "n/a" : agent.last_exit_code}"
-      out.puts "Summary: #{agent.last_summary}"
+      if opts[:json]
+        out.puts JSON.generate(
+          ok: agent.status == "succeeded",
+          claude: { agent_key: agent.key, project_key: agent.project_key, status: agent.status,
+                    exit_code: agent.last_exit_code, summary: agent.last_summary, log_path: agent.raw_log_path }
+        )
+      else
+        out.puts "Final status: #{agent.status}"
+        out.puts "Exit code: #{agent.last_exit_code.nil? ? "n/a" : agent.last_exit_code}"
+        out.puts "Summary: #{agent.last_summary}"
+      end
       agent.status == "succeeded" ? 0 : 1
     rescue StandardError => e
-      failure("Failed to run Claude managed-agent diagnostic: #{e.class}: #{e.message}", err: err)
+      command_failure("Failed to run Claude managed-agent diagnostic: #{e.class}: #{e.message}", opts, out:, err:)
     end
 
     def registry_projects
@@ -1173,16 +1256,18 @@ module HQ
     end
 
     def create_project(project_key, opts, out: $stdout, err: $stderr)
+      return command_failure("Project creation is not supported by remote Tycho servers", opts, out:, err:) if remote_requested?(opts)
+
       require_relative "registry"
       require_relative "harness_registry"
 
       key = project_key.to_s.strip
-      return failure("Project key is required", err: err) if key.empty?
+      return command_failure("Project key is required", opts, out:, err:) if key.empty?
 
       path = opts[:path].to_s.strip
       path = Dir.pwd if path.empty?
       path = File.expand_path(path)
-      return failure("Project path does not exist: #{path}", err: err) unless File.directory?(path)
+      return command_failure("Project path does not exist: #{path}", opts, out:, err:) unless File.directory?(path)
 
       name = opts[:name].to_s.strip
       name = File.basename(path) if name.empty?
@@ -1208,7 +1293,7 @@ module HQ
       print_project_result(payload, json: opts[:json], out: out, action: "Created")
       0
     rescue StandardError => e
-      failure("Failed to create #{project_key}: #{e.message}", err: err)
+      command_failure("Failed to create #{project_key}: #{e.message}", opts, out:, err:)
     end
 
     def show_project(project_key, opts = {}, out: $stdout, err: $stderr)
@@ -1218,12 +1303,12 @@ module HQ
 
       registry = Registry.new
       config = registry.projects.find { |project| project.key == project_key.to_s }
-      return failure("Unknown project: #{project_key}", err: err) unless config
+      return command_failure("Unknown project: #{project_key}", opts, out:, err:) unless config
 
       print_project_result(project_config_payload(config), json: opts[:json], out: out)
       0
     rescue StandardError => e
-      failure("Failed to show #{project_key}: #{e.message}", err: err)
+      command_failure("Failed to show #{project_key}: #{e.message}", opts, out:, err:)
     end
 
     def list_projects(opts = {}, out: $stdout, err: $stderr)
@@ -1242,7 +1327,7 @@ module HQ
       print_project_list(payload, json: opts[:json], out: out)
       0
     rescue StandardError => e
-      failure("Failed to list projects: #{e.message}", err: err)
+      command_failure("Failed to list projects: #{e.message}", opts, out:, err:)
     end
 
     def update_project(project_key, opts, out: $stdout, err: $stderr)
@@ -1254,25 +1339,27 @@ module HQ
       attrs[:agent] = project_harness_option(opts) if opts.key?(:harness) || opts.key?(:agent)
       attrs[:response_style] = project_response_style_option(opts[:response_style]) if opts.key?(:response_style)
       attrs[:hidden] = project_hidden_option(opts[:hidden]) if opts.key?(:hidden)
-      return failure("No fields to update", err: err) if attrs.empty?
+      return command_failure("No fields to update", opts, out:, err:) if attrs.empty?
+      return remote_update_project(project_key, attrs, opts, out:, err:) if remote_requested?(opts)
 
       registry = Registry.new
       updated = registry.update_project!(project_key, attrs)
-      return failure("Unknown project: #{project_key}", err: err) unless updated
+      return command_failure("Unknown project: #{project_key}", opts, out:, err:) unless updated
 
       config = registry.projects.find { |project| project.key == project_key.to_s }
       print_project_result(project_config_payload(config), json: opts[:json], out: out, action: "Updated")
       0
     rescue StandardError => e
-      failure("Failed to update #{project_key}: #{e.message}", err: err)
+      command_failure("Failed to update #{project_key}: #{e.message}", opts, out:, err:)
     end
 
     def archive_project(project_key, opts = {}, out: $stdout, err: $stderr)
+      return remote_archive_project(project_key, opts, out:, err:) if remote_requested?(opts)
       require_relative "registry"
 
       registry = Registry.new
       config = registry.projects.find { |candidate| candidate.key == project_key.to_s }
-      return failure("Unknown project: #{project_key}", err: err) unless config
+      return command_failure("Unknown project: #{project_key}", opts, out:, err:) unless config
 
       payload = project_config_payload(config)
       archived = ProjectArchiver.new(registry:).archive(project_key)
@@ -1294,7 +1381,7 @@ module HQ
       end
       0
     rescue StandardError => e
-      failure("Failed to archive #{project_key}: #{e.message}", err: err)
+      command_failure("Failed to archive #{project_key}: #{e.message}", opts, out:, err:)
     end
 
     def copy_project_option!(attrs, opts, field)
@@ -1824,12 +1911,79 @@ module HQ
       RemoteCLIClient.from_registry(server_key, registry: Registry.new)
     end
 
+    def remote_update(options, out:, err:)
+      result = remote_client(options[:server]).request("POST", "/update")
+      if options[:json]
+        out.puts JSON.generate(result)
+      else
+        out.puts(result["detail"] || result[:detail] || "Updated remote Tycho server.")
+      end
+      0
+    rescue RemoteCLIClient::Error => e
+      command_failure(e.message, options, out:, err:)
+    end
+
+    def remote_doctor(options, out:, err:)
+      setup = remote_client(options[:server]).request("GET", "/setup")
+      result = { ok: true, doctor: "remote connectivity", server: options[:server], setup: setup }
+      if options[:json]
+        out.puts JSON.generate(result)
+      else
+        out.puts "Remote Tycho server #{options[:server]}: reachable"
+      end
+      0
+    rescue RemoteCLIClient::Error => e
+      command_failure(e.message, options, out:, err:)
+    end
+
+    def remote_update_project(project_key, attrs, opts, out:, err:)
+      payload = remote_client(opts[:server]).request("PATCH", remote_resource_path("projects", project_key), body: attrs).fetch("project")
+      print_project_result(remote_project_detail(payload), json: opts[:json], out: out, action: "Updated")
+      0
+    rescue RemoteCLIClient::Error, KeyError => e
+      command_failure(e.message, opts, out:, err: err)
+    end
+
+    def remote_archive_project(project_key, opts, out:, err:)
+      command_failure("Project archive is not supported by remote Tycho servers", opts, out:, err: err)
+    end
+
+    def remote_list_schedules(opts, out:, err:)
+      payload = remote_client(opts[:server]).request("GET", "/schedules")
+      if opts[:json]
+        out.puts JSON.pretty_generate(payload)
+        return 0
+      end
+      daemon = payload.fetch("daemon", {}).transform_keys(&:to_sym)
+      out.puts schedule_daemon_line(daemon)
+      rows = payload.fetch("schedules", [])
+      normalized_rows = rows.map { |row| row.transform_keys(&:to_sym) }
+      out.puts(normalized_rows.empty? ? "No schedules configured." : schedule_list_table(normalized_rows))
+      0
+    rescue RemoteCLIClient::Error, KeyError => e
+      command_failure(e.message, opts, out:, err: err)
+    end
+
+    def remote_schedule_action(method, path, body, opts, out:, err:, success_message:)
+      result = remote_client(opts[:server]).request(method, path, body: body)
+      if opts[:deprecated_alias]
+        result = result.merge(
+          "deprecated_alias" => true,
+          "deprecation" => "tycho schedule reload is deprecated; use tycho schedule restart"
+        )
+      end
+      opts[:json] ? out.puts(JSON.generate(result)) : out.puts(success_message)
+      0
+    rescue RemoteCLIClient::Error => e
+      command_failure(e.message, opts, out:, err:)
+    end
+
     def remote_show_project(project_key, opts, out:, err:)
       payload = remote_client(opts[:server]).request("GET", remote_resource_path("projects", project_key)).fetch("project")
       print_project_result(remote_project_detail(payload), json: opts[:json], out: out)
       0
     rescue RemoteCLIClient::Error, KeyError => e
-      failure(e.message, err: err)
+      command_failure(e.message, opts, out:, err:)
     end
 
     def remote_list_projects(opts, out:, err:)
@@ -1839,7 +1993,7 @@ module HQ
       print_project_list(payload, json: opts[:json], out: out)
       0
     rescue RemoteCLIClient::Error, KeyError => e
-      failure(e.message, err: err)
+      command_failure(e.message, opts, out:, err:)
     end
 
     def remote_create_agent(project_key, prompt, opts, out:, err:)
@@ -2220,18 +2374,24 @@ module HQ
         .render
     end
 
-    def validate_schedules(out: $stdout, err: $stderr)
+    def validate_schedules(opts = {}, out: $stdout, err: $stderr)
+      return remote_schedule_action("POST", "/schedules/reload", {}, opts, out:, err:, success_message: "Schedules valid.") if remote_requested?(opts)
       scheduler.validate!
-      out.puts "Schedules valid."
+      opts[:json] ? out.puts(JSON.generate(ok: true)) : out.puts("Schedules valid.")
       0
-    rescue ScheduleRegistry::Error => e
-      failure(e.message, err:)
+    rescue ScheduleRegistry::Error, ConfigError => e
+      command_failure(e.message, opts, out:, err:)
     end
 
-    def list_schedules(out: $stdout, err: $stderr)
+    def list_schedules(opts = {}, out: $stdout, err: $stderr)
+      return remote_list_schedules(opts, out:, err:) if remote_requested?(opts)
       current_scheduler = scheduler
       rows = current_scheduler.list
       daemon = current_scheduler.daemon_state.to_hash
+      if opts[:json]
+        out.puts JSON.pretty_generate(schedules: rows, daemon: daemon)
+        return 0
+      end
       out.puts schedule_daemon_line(daemon)
       if rows.empty?
         out.puts "No schedules configured."
@@ -2239,8 +2399,8 @@ module HQ
         out.puts schedule_list_table(rows)
       end
       0
-    rescue ScheduleRegistry::Error => e
-      failure(e.message, err:)
+    rescue ScheduleRegistry::Error, ConfigError => e
+      command_failure(e.message, opts, out:, err:)
     end
 
     def schedule_daemon_line(daemon)
@@ -2271,72 +2431,106 @@ module HQ
       parts << "mode=#{daemon[:mode]}" if daemon[:mode]
     end
 
-    def run_schedule(schedule_key, out: $stdout, err: $stderr)
+    def run_schedule(schedule_key, opts = {}, out: $stdout, err: $stderr)
+      return remote_schedule_action("POST", remote_resource_path("schedules", schedule_key) + "/run", {}, opts, out:, err:, success_message: "Started schedule #{schedule_key}.") if remote_requested?(opts)
       result = scheduler.run_now(schedule_key)
       schedule = result.fetch(:schedule)
       if result.fetch(:status) == :failed
-        return failure("Schedule #{schedule.fetch(:key)} failed: #{result.fetch(:error)}", err:)
+        return command_failure("Schedule #{schedule.fetch(:key)} failed: #{result.fetch(:error)}", opts, out:, err:)
       end
       unless result.fetch(:status) == :started
-        return failure("Schedule #{schedule.fetch(:key)} did not start: #{result.fetch(:status)}", err:)
+        return command_failure("Schedule #{schedule.fetch(:key)} did not start: #{result.fetch(:status)}", opts, out:, err:)
       end
 
       agent = result[:agent]
+      if opts[:json]
+        out.puts JSON.generate(schedule: schedule, agent: agent && agent_cli_payload(agent))
+        return 0
+      end
       out.puts "Started schedule #{schedule.fetch(:key)}."
       out.puts "Agent: #{agent.key}" if agent
       out.puts "Next: #{schedule[:next_due_at] || "n/a"}"
       0
     rescue ScheduleRegistry::Error => e
-      failure(e.message, err:)
+      command_failure(e.message, opts, out:, err:)
     end
 
-    def pause_schedule(schedule_key, out: $stdout, err: $stderr)
+    def pause_schedule(schedule_key, opts = {}, out: $stdout, err: $stderr)
+      return remote_schedule_action("POST", remote_resource_path("schedules", schedule_key) + "/pause", {}, opts, out:, err:, success_message: "Paused #{schedule_key}.") if remote_requested?(opts)
       schedule = scheduler.pause(schedule_key)
+      if opts[:json]
+        out.puts JSON.generate(schedule: schedule)
+        return 0
+      end
       out.puts "Paused #{schedule.fetch(:key)}."
       0
     rescue ScheduleRegistry::Error => e
-      failure(e.message, err:)
+      command_failure(e.message, opts, out:, err:)
     end
 
-    def resume_schedule(schedule_key, out: $stdout, err: $stderr)
+    def resume_schedule(schedule_key, opts = {}, out: $stdout, err: $stderr)
+      return remote_schedule_action("POST", remote_resource_path("schedules", schedule_key) + "/resume", {}, opts, out:, err:, success_message: "Resumed #{schedule_key}.") if remote_requested?(opts)
       result = scheduler.resume(schedule_key)
       if result.fetch(:status) == :failed
         schedule = result.fetch(:schedule)
-        return failure("Schedule #{schedule.fetch(:key)} failed: #{result.fetch(:error)}", err:)
+        return command_failure("Schedule #{schedule.fetch(:key)} failed: #{result.fetch(:error)}", opts, out:, err:)
       end
 
       schedule = result.fetch(:schedule)
+      if opts[:json]
+        out.puts JSON.generate(schedule: schedule, agent: result[:agent] && agent_cli_payload(result[:agent]))
+        return 0
+      end
       out.puts "Resumed #{schedule.fetch(:key)}."
       out.puts "Agent: #{result[:agent].key}" if result[:agent]
       out.puts "Next: #{schedule[:next_due_at] || "n/a"}"
       0
     rescue ScheduleRegistry::Error => e
-      failure(e.message, err:)
+      command_failure(e.message, opts, out:, err:)
+    end
+
+    def schedule_restart(opts = {}, out: $stdout, err: $stderr)
+      if remote_requested?(opts)
+        return remote_schedule_action("POST", "/schedules/daemon/restart", {}, opts, out:, err:, success_message: "Restarted schedule daemon.")
+      end
+      result = ScheduleDaemonSupervisor.new.restart!
+      result[:deprecated_alias] = true if opts[:deprecated_alias]
+      result[:deprecation] = "tycho schedule reload is deprecated; use tycho schedule restart" if opts[:deprecated_alias]
+      command_result(result, opts, out:)
+      0
+    rescue ScheduleDaemonSupervisor::Error, ScheduleRegistry::Error => e
+      command_failure(e.message, opts, out:, err:)
     end
 
     def reload_schedules(out: $stdout, err: $stderr)
-      scheduler.validate!
-      out.puts "Schedules valid. The scheduler daemon reloads config on its next process start or tick."
-      0
-    rescue ScheduleRegistry::Error => e
-      failure(e.message, err:)
+      schedule_restart({ deprecated_alias: true }, out:, err:)
     end
 
     def create_schedule(key, opts, out: $stdout, err: $stderr)
+      return remote_schedule_action("POST", "/schedules", schedule_attrs(opts).merge("key" => key), opts, out:, err:, success_message: "Created schedule #{key}.") if remote_requested?(opts)
       attrs = schedule_attrs(opts).merge("key" => key)
       schedule = schedule_registry.create(attrs)
+      if opts[:json]
+        out.puts JSON.generate(schedule: schedule.to_h)
+        return 0
+      end
       out.puts "Created schedule #{schedule.key}."
       0
     rescue ScheduleRegistry::Error => e
-      failure(e.message, err:)
+      command_failure(e.message, opts, out:, err:)
     end
 
     def update_schedule(key, opts, out: $stdout, err: $stderr)
+      return remote_schedule_action("PATCH", remote_resource_path("schedules", key), schedule_attrs(opts), opts, out:, err:, success_message: "Updated schedule #{key}.") if remote_requested?(opts)
       schedule = schedule_registry.update(key, schedule_attrs(opts))
+      if opts[:json]
+        out.puts JSON.generate(schedule: schedule.to_h)
+        return 0
+      end
       out.puts "Updated schedule #{schedule.key}."
       0
     rescue ScheduleRegistry::Error => e
-      failure(e.message, err:)
+      command_failure(e.message, opts, out:, err:)
     end
 
     def schedule_list_table(rows)
@@ -2379,7 +2573,7 @@ module HQ
 
     def schedule_attrs(opts)
       opts.each_with_object({}) do |(key, value), attrs|
-        next if value.nil?
+        next if value.nil? || %i[server json deprecated_alias].include?(key)
 
         attrs[key.to_s] = value
       end
@@ -2501,6 +2695,40 @@ module HQ
 
     def failure(message, err: $stderr)
       err.puts message
+      1
+    end
+
+    def command_options(argv, out:, err:)
+      options = { json: false, server: nil, claude: false, run_agent: false }
+      OptionParser.new do |parser|
+        parser.on("--server KEY") { |value| options[:server] = value }
+        parser.on("--json") { options[:json] = true }
+        parser.on("--claude") { options[:claude] = true }
+        parser.on("--run-agent") { options[:run_agent] = true }
+      end.parse!(argv)
+      return options if argv.empty?
+
+      command_failure("Unexpected arguments: #{argv.join(" ")}", options, out:, err:)
+      nil
+    rescue OptionParser::ParseError => e
+      command_failure(e.message, options, out:, err:)
+      nil
+    end
+
+    def command_result(result, options, out:)
+      if options[:json]
+        out.puts JSON.generate(result)
+      elsif result[:detail]
+        out.puts result[:detail]
+      elsif result["detail"]
+        out.puts result["detail"]
+      else
+        out.puts "Restart requested."
+      end
+    end
+
+    def command_failure(message, options, out:, err:)
+      options[:json] ? out.puts(JSON.generate(ok: false, error: message)) : err.puts(message)
       1
     end
   end
