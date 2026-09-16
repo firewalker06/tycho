@@ -44,8 +44,9 @@ module HQ
       end
     end
 
-    def initialize(home: Dir.home, source_root: DEFAULT_SOURCE_ROOT, manifest_path: DEFAULT_MANIFEST_PATH)
-      @home = File.expand_path(home)
+    def initialize(home: nil, source_root: DEFAULT_SOURCE_ROOT, manifest_path: DEFAULT_MANIFEST_PATH)
+      home = ENV["TYCHO_SKILLS_HOME"] if home.nil?
+      @home = File.expand_path(home.to_s.empty? ? Dir.home : home)
       @source_root = File.expand_path(source_root)
       @manifest_path = File.expand_path(manifest_path)
     end

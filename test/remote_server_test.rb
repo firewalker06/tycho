@@ -18,6 +18,7 @@ module RemoteServerTest
     assert_remote_agent_lifecycle
     assert_remote_agent_delegation_lifecycle
     assert_remote_conversation_persists_agent_system_context_once
+    assert_remote_conversation_persists_installed_tycho_skill_context
     assert_remote_user_message_auto_resumes_awaiting_schedule
     assert_remote_agent_response_style_selection_is_independent
     assert_remote_archive_reconciles_scheduled_agent_state
@@ -306,6 +307,40 @@ module RemoteServerTest
           block[:role] == "system" && block[:content].include?("Tycho managed-agent context (trusted):")
         end
         assert(reloaded == 1, "expected repeated Remote UI loads to avoid duplicating #{key} context")
+      end
+    end
+  end
+
+  def assert_remote_conversation_persists_installed_tycho_skill_context
+    with_remote_temp_store do |dir|
+      home = File.join(dir, "skills-home")
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(home)
+      write_project_workspace(workspace)
+      server = HQ::RemoteServer.new
+      previous_skills_home = ENV["TYCHO_SKILLS_HOME"]
+      ENV["TYCHO_SKILLS_HOME"] = home
+      begin
+        service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
+        server.send(:route, service, "POST", "/skills/codex/install", { "confirmed" => true }, nil)
+        root = service.create_agent(
+          "project_key" => "web", "name" => "Installed root", "prompt" => "Coordinate", "agent" => "codex"
+        )
+        child = service.create_agent(
+          "project_key" => "web", "name" => "Installed child", "prompt" => "Work", "agent" => "codex",
+          "parent_agent_key" => root[:key]
+        )
+
+        [root, child].each do |agent|
+          contexts = service.conversation(agent[:key]).select do |block|
+            block[:role] == "system" && block[:content].include?("Tycho managed-agent context (trusted):")
+          end
+          assert(contexts.length == 1, "expected one installed-skill identity event for #{agent[:key]}")
+          assert(contexts.first[:content].scan("The Tycho skill is installed and usable").length == 1,
+                 "expected installed Tycho skill to be visible in #{agent[:key]} Remote UI context")
+        end
+      ensure
+        ENV["TYCHO_SKILLS_HOME"] = previous_skills_home
       end
     end
   end
