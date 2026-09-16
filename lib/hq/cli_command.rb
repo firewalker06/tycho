@@ -1924,11 +1924,11 @@ module HQ
       print_project_result(remote_project_detail(payload), json: opts[:json], out: out, action: "Updated")
       0
     rescue RemoteCLIClient::Error, KeyError => e
-      failure(e.message, err: err)
+      command_failure(e.message, opts, out:, err: err)
     end
 
     def remote_archive_project(project_key, opts, out:, err:)
-      failure("Project archive is not supported by remote Tycho servers", err: err)
+      command_failure("Project archive is not supported by remote Tycho servers", opts, out:, err: err)
     end
 
     def remote_list_schedules(opts, out:, err:)
@@ -1939,7 +1939,7 @@ module HQ
       out.puts(rows.empty? ? "No schedules configured." : schedule_list_table(rows.map(&:transform_keys)))
       0
     rescue RemoteCLIClient::Error, KeyError => e
-      failure(e.message, err: err)
+      command_failure(e.message, opts, out:, err: err)
     end
 
     def remote_schedule_action(method, path, body, opts, out:, err:)
@@ -2405,10 +2405,10 @@ module HQ
       result = scheduler.run_now(schedule_key)
       schedule = result.fetch(:schedule)
       if result.fetch(:status) == :failed
-        return failure("Schedule #{schedule.fetch(:key)} failed: #{result.fetch(:error)}", err:)
+        return command_failure("Schedule #{schedule.fetch(:key)} failed: #{result.fetch(:error)}", opts, out:, err:)
       end
       unless result.fetch(:status) == :started
-        return failure("Schedule #{schedule.fetch(:key)} did not start: #{result.fetch(:status)}", err:)
+        return command_failure("Schedule #{schedule.fetch(:key)} did not start: #{result.fetch(:status)}", opts, out:, err:)
       end
 
       agent = result[:agent]
@@ -2418,7 +2418,7 @@ module HQ
       out.puts "Next: #{schedule[:next_due_at] || "n/a"}"
       0
     rescue ScheduleRegistry::Error => e
-      failure(e.message, err:)
+      command_failure(e.message, opts, out:, err:)
     end
 
     def pause_schedule(schedule_key, opts = {}, out: $stdout, err: $stderr)
@@ -2428,7 +2428,7 @@ module HQ
       out.puts "Paused #{schedule.fetch(:key)}."
       0
     rescue ScheduleRegistry::Error => e
-      failure(e.message, err:)
+      command_failure(e.message, opts, out:, err:)
     end
 
     def resume_schedule(schedule_key, opts = {}, out: $stdout, err: $stderr)
@@ -2436,7 +2436,7 @@ module HQ
       result = scheduler.resume(schedule_key)
       if result.fetch(:status) == :failed
         schedule = result.fetch(:schedule)
-        return failure("Schedule #{schedule.fetch(:key)} failed: #{result.fetch(:error)}", err:)
+        return command_failure("Schedule #{schedule.fetch(:key)} failed: #{result.fetch(:error)}", opts, out:, err:)
       end
 
       schedule = result.fetch(:schedule)
@@ -2446,7 +2446,7 @@ module HQ
       out.puts "Next: #{schedule[:next_due_at] || "n/a"}"
       0
     rescue ScheduleRegistry::Error => e
-      failure(e.message, err:)
+      command_failure(e.message, opts, out:, err:)
     end
 
     def schedule_restart(opts = {}, out: $stdout, err: $stderr)
@@ -2474,7 +2474,7 @@ module HQ
       out.puts "Created schedule #{schedule.key}."
       0
     rescue ScheduleRegistry::Error => e
-      failure(e.message, err:)
+      command_failure(e.message, opts, out:, err:)
     end
 
     def update_schedule(key, opts, out: $stdout, err: $stderr)
@@ -2484,7 +2484,7 @@ module HQ
       out.puts "Updated schedule #{schedule.key}."
       0
     rescue ScheduleRegistry::Error => e
-      failure(e.message, err:)
+      command_failure(e.message, opts, out:, err:)
     end
 
     def schedule_list_table(rows)
