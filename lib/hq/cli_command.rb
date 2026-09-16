@@ -2379,8 +2379,8 @@ module HQ
       scheduler.validate!
       opts[:json] ? out.puts(JSON.generate(ok: true)) : out.puts("Schedules valid.")
       0
-    rescue ScheduleRegistry::Error => e
-      failure(e.message, err:)
+    rescue ScheduleRegistry::Error, ConfigError => e
+      command_failure(e.message, opts, out:, err:)
     end
 
     def list_schedules(opts = {}, out: $stdout, err: $stderr)
@@ -2388,7 +2388,10 @@ module HQ
       current_scheduler = scheduler
       rows = current_scheduler.list
       daemon = current_scheduler.daemon_state.to_hash
-      return out.puts(JSON.pretty_generate(schedules: rows, daemon: daemon)) if opts[:json]
+      if opts[:json]
+        out.puts JSON.pretty_generate(schedules: rows, daemon: daemon)
+        return 0
+      end
       out.puts schedule_daemon_line(daemon)
       if rows.empty?
         out.puts "No schedules configured."
@@ -2396,8 +2399,8 @@ module HQ
         out.puts schedule_list_table(rows)
       end
       0
-    rescue ScheduleRegistry::Error => e
-      failure(e.message, err:)
+    rescue ScheduleRegistry::Error, ConfigError => e
+      command_failure(e.message, opts, out:, err:)
     end
 
     def schedule_daemon_line(daemon)
