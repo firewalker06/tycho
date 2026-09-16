@@ -105,6 +105,7 @@ module HQ
           end
         end
         changed = backfill_project_context_prompt!(agent) || changed
+        changed = backfill_agent_system_context_prompt!(agent) || changed
         agent
       end
       changed = backfill_color_indexes!(agents) || changed
@@ -853,6 +854,12 @@ module HQ
       return false unless project
 
       ensure_project_context_prompt!(agent, project)
+    end
+
+    # The identity context is a launch-time snapshot of trusted local agent data.
+    # It deliberately records only the immutable parent key, never mutable parent details.
+    def backfill_agent_system_context_prompt!(agent)
+      agent.ensure_agent_system_context_prompt!(created_at: agent.created_at || Time.now)
     end
 
     def seed_memory_system_prompts!(agent, project, prompt)

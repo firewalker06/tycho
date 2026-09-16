@@ -17,6 +17,7 @@ module RemoteServerTest
   def run!
     assert_remote_agent_lifecycle
     assert_remote_agent_delegation_lifecycle
+    assert_remote_conversation_persists_agent_system_context_once
     assert_remote_user_message_auto_resumes_awaiting_schedule
     assert_remote_agent_response_style_selection_is_independent
     assert_remote_archive_reconciles_scheduled_agent_state
@@ -268,6 +269,44 @@ module RemoteServerTest
              second_page.dig(:pagination, :next_page).nil? &&
              first_page.dig(:agents, 0, :key) != second_page.dig(:agents, 0, :key),
              "expected stable multi-page archive ordering")
+    end
+  end
+
+  def assert_remote_conversation_persists_agent_system_context_once
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
+      root = service.create_agent(
+        "project_key" => "web", "name" => "Context root", "prompt" => "Coordinate", "agent" => "codex"
+      )
+      child = service.create_agent(
+        "project_key" => "web", "name" => "Context child", "prompt" => "Work", "agent" => "codex",
+        "parent_agent_key" => root[:key]
+      )
+
+      { root[:key] => "No parent agent is recorded", child[:key] => "parent agent key: #{root[:key]}" }.each do |key, parent_state|
+        conversation = service.conversation(key)
+        contexts = conversation.select do |block|
+          block[:kind] == "message" && block[:role] == "system" &&
+            block[:content].include?("Tycho managed-agent context (trusted):")
+        end
+        assert(contexts.length == 1, "expected Remote UI conversation for #{key} to render one Tycho system-context event")
+        content = contexts.first[:content]
+        assert(content.include?("Tycho managed-agent context (trusted):") &&
+               content.include?("Your agent key: #{key}") && content.include?(parent_state),
+               "expected Remote UI system context for #{key} to match trusted launch identity")
+
+        agent = service.send(:load_all_agents).find { |candidate| candidate.key == key }
+        prompt = agent.send(:prompt_for_execution, response_style: "", include_hidden_guidance: false)
+        assert(prompt.scan("Tycho managed-agent context (trusted):").length == 1,
+               "expected #{key} harness prompt to use the same single persisted context")
+        service.conversation(key)
+        reloaded = service.conversation(key).count do |block|
+          block[:role] == "system" && block[:content].include?("Tycho managed-agent context (trusted):")
+        end
+        assert(reloaded == 1, "expected repeated Remote UI loads to avoid duplicating #{key} context")
+      end
     end
   end
 

@@ -358,6 +358,31 @@ module HQ
       false
     end
 
+    def insert_system_prompt_once!(content, created_at: Time.now, prompt_role:, before_prompt_role: nil)
+      text = content.to_s
+      return false if text.empty?
+
+      events = read_events
+      return false if events.any? do |event|
+        event["type"] == "system_prompt" &&
+          (event.dig("metadata", "prompt_role") == prompt_role.to_s || event["content"].to_s == text)
+      end
+
+      event = {
+        "type" => "system_prompt",
+        "content" => text,
+        "created_at" => created_at.iso8601,
+        "pinned" => true,
+        "metadata" => { "prompt_role" => prompt_role.to_s }
+      }
+      index = events.index { |candidate| candidate.dig("metadata", "prompt_role") == before_prompt_role.to_s }
+      events.insert(index || events.length, event)
+      write_events!(events)
+      true
+    rescue StandardError
+      false
+    end
+
     def append_user_message!(content, created_at: Time.now, attachments: nil, metadata: nil, event_id: nil)
       text = content.to_s.strip
       return if text.empty?

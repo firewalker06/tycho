@@ -232,6 +232,15 @@ module HQ
       true
     end
 
+    def ensure_agent_system_context_prompt!(created_at: @created_at || Time.now)
+      memory_store.insert_system_prompt_once!(
+        current_agent_system_context,
+        created_at:,
+        prompt_role: "agent_context",
+        before_prompt_role: "base"
+      )
+    end
+
     def ensure_schedule_context_prompt!(content, created_at: Time.now)
       text = content.to_s.strip
       return false if text.empty?
@@ -2177,7 +2186,6 @@ module HQ
       if messages.empty? && !@prompt.to_s.empty?
         messages << { role: "system", content: @prompt.to_s }
       end
-      messages.insert(1, role: "system", content: current_agent_system_context)
       messages.map do |message|
         "#{message[:role].to_s.upcase}:\n#{prompt_message_content(message)}"
       end.join("\n\n")
