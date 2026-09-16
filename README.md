@@ -89,7 +89,8 @@ Restart a controlled Remote server with `tycho serve restart`; `tycho restart` i
 For a Homebrew installation, `tycho update` upgrades Tycho and restarts any
 running local Remote server and scheduler daemon with the stable launcher. It
 reports a no-op when either service is absent; source checkouts update through
-Git instead.
+Git instead. Add `--server SERVER_KEY` to update a configured authenticated
+Homebrew peer; a source-installed peer rejects the command without changing it.
 
 To run your first agent:
 

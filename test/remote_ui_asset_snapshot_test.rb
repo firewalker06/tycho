@@ -23,7 +23,23 @@ module RemoteUIAssetSnapshotTest
     assert_personal_assistant_hides_internal_chat_events
     assert_agent_status_icons_use_lucide_without_badges
     assert_agent_filter_and_sort_use_requested_lucide_icons
+    assert_peer_update_ui_is_homebrew_gated
     puts "remote_ui_asset_snapshot_test: ok"
+  end
+
+  def assert_peer_update_ui_is_homebrew_gated
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    required = [
+      'server.status === "online" && server.update?.available === true',
+      'data-update-server=',
+      'async function updateRemoteServer(serverKey)',
+      'await brokerPostWithHeaders(`/servers/${encodeURIComponent(key)}/update`',
+      'await waitForPeerRestart(key)',
+      'state.serverUpdateKey = ""',
+      'Update failed for ${serverDisplayName(server)}'
+    ]
+    missing = required.reject { |fragment| javascript.include?(fragment) }
+    raise "missing Homebrew-gated peer update UI contract: #{missing.join(", ")}" unless missing.empty?
   end
 
   def assert_delegated_summary_attention_icon_is_in_header

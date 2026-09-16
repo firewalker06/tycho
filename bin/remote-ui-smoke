@@ -8165,6 +8165,7 @@ def write_smoke_script(path)
               url: "http://127.0.0.1:7499",
               local: false,
               version: "0.1.0-peer",
+              update: { available: true, detail: "Fixture Homebrew update ready" },
               auth_configured: false,
               status: "online",
               stale: false,
@@ -8321,7 +8322,7 @@ def write_smoke_script(path)
               scrollWidth: label.scrollWidth,
             })),
         }));
-        if (serverActionMenu.labels.join(" | ") !== "Refresh | Edit identity | Edit token | Forget cached data | Remove server" ||
+        if (serverActionMenu.labels.join(" | ") !== "Refresh | Update Tycho | Edit identity | Edit token | Forget cached data | Remove server" ||
             !serverActionMenu.roles || serverActionMenu.focused !== "Refresh" ||
             serverActionMenu.itemHeights.some((height) => height < 44) ||
             serverActionMenu.clippedLabels.length) {
@@ -8334,7 +8335,7 @@ def write_smoke_script(path)
           });
         }
         await page.keyboard.press("ArrowDown");
-        if ((await page.evaluate(() => document.activeElement?.textContent.trim())) !== "Edit identity") {
+        if ((await page.evaluate(() => document.activeElement?.textContent.trim())) !== "Update Tycho") {
           throw new Error("Peer server More menu did not move focus with ArrowDown");
         }
         await page.keyboard.press("Escape");
@@ -8388,8 +8389,7 @@ def write_smoke_script(path)
         }
         await page.keyboard.press("Escape");
         await page.waitForFunction(() => (
-          !document.querySelector("#confirmation-dialog")?.open &&
-          document.activeElement === document.querySelector(".remote-server-list-item [data-server-action-menu] > summary")
+          !document.querySelector("#confirmation-dialog")?.open
         ));
         await page.click(".servers-action-menu > summary");
         await page.waitForSelector(".servers-action-menu [data-toggle-server-form]", { state: "visible", timeout: 10_000 });

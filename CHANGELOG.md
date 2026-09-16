@@ -4,6 +4,15 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.11.1 - 2026-09-16
+
+### Fixes
+
+- Let Settings update a configured Remote server only after that peer reports a
+  Homebrew Tycho installation. The explicit action calls the existing
+  server-aware update API, waits for the peer restart, refreshes its catalog,
+  and reports actionable failures without leaving the menu in progress.
+
 - Deprecate Intel macOS Homebrew support. Existing Intel Homebrew installations
   remain updateable for now and receive a migration warning; Apple Silicon
   Homebrew, source checkouts, and non-macOS environments are unchanged.

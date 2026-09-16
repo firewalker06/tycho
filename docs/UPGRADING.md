@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.11.1
+
+Configured Remote servers now report whether their own Tycho installation can
+be updated through Homebrew. In **Settings → Servers**, the overflow menu shows
+**Update Tycho** only for an online peer that reports this capability. The
+action confirms the restart, keeps the browser on the UI-serving server while
+the peer returns, then refreshes its catalog. Source installs and peers that do
+not report support remain unchanged; use Git and `bin/setup` there.
+
 ### Intel macOS Homebrew deprecation
 
 Intel macOS Homebrew support is deprecated and will be removed in a future
