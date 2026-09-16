@@ -36,6 +36,7 @@ Key references:
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | TUI framework | Bubbletea + Lipgloss-compatible styling + Bubbles (Charm Ruby) | Elm Architecture fits the dashboard's event-driven model; Tycho uses native Lipgloss except on Intel macOS, where a Ruby compatibility backend avoids Go cgo callback crashes from multiple Charm native runtimes |
+| Homebrew bottle platforms | Apple Silicon macOS and Linux; no Intel macOS bottle from v0.11.1 onward | v0.11.0 is the final Intel bottle. Intel users retain the source-install path, while the bottle workflow and release checks must not publish Intel artifacts or checksums |
 | Default data root | `~/.tycho` for config, schedule prompts, runtime state, and logs | Source and packaged installs should never write runtime data into the repository or Homebrew Cellar by default |
 | Config split | `~/.tycho/config/hq.yml` (active) + `~/.tycho/config/hq.archived.yml` (archived) | Archive without losing history; logs move to `~/.tycho/logs/projects/archived/` |
 | Project lifecycle CLI | Explicit `tycho project create KEY`, plus list/show/update/archive commands with normalized human or JSON output | An explicit mutation verb prevents help text, command names, and typos from registering projects while keeping lifecycle automation clear |
