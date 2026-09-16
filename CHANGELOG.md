@@ -4,6 +4,10 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+- Deprecate Intel macOS Homebrew support. Existing Intel Homebrew installations
+  remain updateable for now and receive a migration warning; Apple Silicon
+  Homebrew, source checkouts, and non-macOS environments are unchanged.
+
 ## 0.11.0 - 2026-09-13
 
 ### Highlights
