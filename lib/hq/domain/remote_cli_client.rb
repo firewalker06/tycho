@@ -75,6 +75,7 @@ module HQ
       request_class = {
         "GET" => Net::HTTP::Get,
         "POST" => Net::HTTP::Post,
+        "PATCH" => Net::HTTP::Patch,
         "DELETE" => Net::HTTP::Delete
       }.fetch(method.to_s.upcase) do
         raise Error.new("Unsupported remote operation: #{method}", kind: :unsupported)

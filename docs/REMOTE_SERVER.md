@@ -113,7 +113,7 @@ The server handles `INT` and `TERM` by closing the listener and unwinding cleanl
 
 The Remote UI can restart the Remote server process through `POST /server/restart`. This restarts the `tycho serve` process; it does not restart a separate TUI process.
 
-Run `tycho restart` to replace a terminal Tycho session with a fresh instance.
+Run `tycho serve restart` to request a restart of a controlled Remote server. `tycho restart` remains a deprecated compatibility alias.
 
 The restart flow is intentionally ordered so the browser gets a clean acknowledgement before the process image is replaced:
 

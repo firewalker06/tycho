@@ -59,8 +59,7 @@ The Remote API equivalents are `GET /metrics` with the same query parameters and
 Backfill is best effort and idempotent:
 
 ```bash
-tycho metrics backfill --timezone Asia/Jakarta --json
-tycho metrics backfill --durable-only --json
+tycho metrics query --timezone Asia/Jakarta --json
 ```
 
 Backfill reads active and archived manifests first. Legacy raw telemetry is an optional fallback and requires an explicit timezone for offset-free historical headers. It preserves exact emitted IDs/models/prices, labels fields inferred from deterministic filenames or event shapes, assigns a stable anonymous identity when no agent manifest exists, and never guesses a model, price, or session ID. Repeating the command should report every prior record as unchanged.
@@ -69,4 +68,4 @@ Backfill reads active and archived manifests first. Legacy raw telemetry is an o
 
 Agent and project archive operations keep global metrics in place and mark matching records `archived: true`, so active and archived runs use one query path and totals do not move. Each agent archive also receives `agent_manifest.json` and a v1 `usage_metrics.json` snapshot beside its logs. The manifest preserves the exact harness/model/run attribution present at archive time.
 
-If a write is interrupted, rerun the query and inspect the top-level `recovery` object. A backup-recovery warning means the last atomic primary was invalid; rerun `metrics backfill` to restore any missing finalized records. For an unsupported schema version, preserve the primary and backup, upgrade Tycho, and do not hand-edit unknown monetary or model fields into place.
+Metrics are maintained during managed runs. If a query exposes recovery information, preserve the primary and backup, upgrade Tycho, and do not hand-edit unknown monetary or model fields into place. `metrics backfill` is deprecated and intentionally does not modify data.
