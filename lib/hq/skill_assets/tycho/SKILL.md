@@ -29,6 +29,7 @@ description: Manages Tycho projects, managed agents, delegation, and schedules. 
 | | `schedule pause <schedule-key>` | Pause a schedule |
 | | `schedule resume <schedule-key>` | Resume a paused schedule |
 | | `schedule reload` | Validate config for the next daemon tick |
+| | `schedule restart [--server KEY] [--json]` | Restart the scheduler daemon |
 
 ---
 
@@ -219,7 +220,7 @@ tycho schedule validate
 tycho schedule run weekly-review
 tycho schedule pause weekly-review
 tycho schedule resume weekly-review
-tycho schedule reload
+tycho schedule restart
 ```
 
 ---
@@ -230,6 +231,12 @@ tycho schedule reload
 tycho project update my-project --pr-url https://github.com/org/repo/pull/123
 tycho project update my-project --pr-url ""   # clear
 ```
+
+## Server-aware commands and compatibility
+
+Use `--server SERVER_KEY` to route supported project, schedule, update, doctor, and restart commands through Tycho's configured authenticated Remote API. Add `--json` for machine output; errors also stay JSON on stdout.
+
+`tycho serve restart [--server SERVER_KEY] [--json]` restarts a local controlled server or asks the configured remote server to restart itself. `tycho restart` and `tycho schedule reload` remain compatibility aliases and print deprecation guidance. `tycho metrics backfill` is retired; use `tycho metrics query`. `tycho debug claude` remains temporarily compatible; use `tycho doctor` for runtime diagnostics.
 
 ---
 
