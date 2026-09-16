@@ -805,7 +805,7 @@ module HQ
       command_result(combined, options, out:)
       0
     rescue TychoUpdater::Error => e
-      failure(e.message, err:)
+      command_failure(e.message, options, out:, err:)
     end
 
     def schedule_daemon(argv)
@@ -1253,12 +1253,12 @@ module HQ
       require_relative "harness_registry"
 
       key = project_key.to_s.strip
-      return failure("Project key is required", err: err) if key.empty?
+      return command_failure("Project key is required", opts, out:, err:) if key.empty?
 
       path = opts[:path].to_s.strip
       path = Dir.pwd if path.empty?
       path = File.expand_path(path)
-      return failure("Project path does not exist: #{path}", err: err) unless File.directory?(path)
+      return command_failure("Project path does not exist: #{path}", opts, out:, err:) unless File.directory?(path)
 
       name = opts[:name].to_s.strip
       name = File.basename(path) if name.empty?
@@ -1284,7 +1284,7 @@ module HQ
       print_project_result(payload, json: opts[:json], out: out, action: "Created")
       0
     rescue StandardError => e
-      failure("Failed to create #{project_key}: #{e.message}", err: err)
+      command_failure("Failed to create #{project_key}: #{e.message}", opts, out:, err:)
     end
 
     def show_project(project_key, opts = {}, out: $stdout, err: $stderr)
@@ -1294,12 +1294,12 @@ module HQ
 
       registry = Registry.new
       config = registry.projects.find { |project| project.key == project_key.to_s }
-      return failure("Unknown project: #{project_key}", err: err) unless config
+      return command_failure("Unknown project: #{project_key}", opts, out:, err:) unless config
 
       print_project_result(project_config_payload(config), json: opts[:json], out: out)
       0
     rescue StandardError => e
-      failure("Failed to show #{project_key}: #{e.message}", err: err)
+      command_failure("Failed to show #{project_key}: #{e.message}", opts, out:, err:)
     end
 
     def list_projects(opts = {}, out: $stdout, err: $stderr)
@@ -1318,7 +1318,7 @@ module HQ
       print_project_list(payload, json: opts[:json], out: out)
       0
     rescue StandardError => e
-      failure("Failed to list projects: #{e.message}", err: err)
+      command_failure("Failed to list projects: #{e.message}", opts, out:, err:)
     end
 
     def update_project(project_key, opts, out: $stdout, err: $stderr)
@@ -1330,18 +1330,18 @@ module HQ
       attrs[:agent] = project_harness_option(opts) if opts.key?(:harness) || opts.key?(:agent)
       attrs[:response_style] = project_response_style_option(opts[:response_style]) if opts.key?(:response_style)
       attrs[:hidden] = project_hidden_option(opts[:hidden]) if opts.key?(:hidden)
-      return failure("No fields to update", err: err) if attrs.empty?
+      return command_failure("No fields to update", opts, out:, err:) if attrs.empty?
       return remote_update_project(project_key, attrs, opts, out:, err:) if remote_requested?(opts)
 
       registry = Registry.new
       updated = registry.update_project!(project_key, attrs)
-      return failure("Unknown project: #{project_key}", err: err) unless updated
+      return command_failure("Unknown project: #{project_key}", opts, out:, err:) unless updated
 
       config = registry.projects.find { |project| project.key == project_key.to_s }
       print_project_result(project_config_payload(config), json: opts[:json], out: out, action: "Updated")
       0
     rescue StandardError => e
-      failure("Failed to update #{project_key}: #{e.message}", err: err)
+      command_failure("Failed to update #{project_key}: #{e.message}", opts, out:, err:)
     end
 
     def archive_project(project_key, opts = {}, out: $stdout, err: $stderr)
@@ -1350,7 +1350,7 @@ module HQ
 
       registry = Registry.new
       config = registry.projects.find { |candidate| candidate.key == project_key.to_s }
-      return failure("Unknown project: #{project_key}", err: err) unless config
+      return command_failure("Unknown project: #{project_key}", opts, out:, err:) unless config
 
       payload = project_config_payload(config)
       archived = ProjectArchiver.new(registry:).archive(project_key)
@@ -1372,7 +1372,7 @@ module HQ
       end
       0
     rescue StandardError => e
-      failure("Failed to archive #{project_key}: #{e.message}", err: err)
+      command_failure("Failed to archive #{project_key}: #{e.message}", opts, out:, err:)
     end
 
     def copy_project_option!(attrs, opts, field)
@@ -1904,7 +1904,11 @@ module HQ
 
     def remote_update(options, out:, err:)
       result = remote_client(options[:server]).request("POST", "/update")
-      command_result(result, options, out:)
+      if options[:json]
+        out.puts JSON.generate(result)
+      else
+        out.puts(result["detail"] || result[:detail] || "Updated remote Tycho server.")
+      end
       0
     rescue RemoteCLIClient::Error => e
       command_failure(e.message, options, out:, err:)
@@ -1913,7 +1917,11 @@ module HQ
     def remote_doctor(options, out:, err:)
       setup = remote_client(options[:server]).request("GET", "/setup")
       result = { ok: true, doctor: "remote connectivity", server: options[:server], setup: setup }
-      command_result(result, options, out:)
+      if options[:json]
+        out.puts JSON.generate(result)
+      else
+        out.puts "Remote Tycho server #{options[:server]}: reachable"
+      end
       0
     rescue RemoteCLIClient::Error => e
       command_failure(e.message, options, out:, err:)
@@ -1933,18 +1941,22 @@ module HQ
 
     def remote_list_schedules(opts, out:, err:)
       payload = remote_client(opts[:server]).request("GET", "/schedules")
-      return out.puts(JSON.pretty_generate(payload)) || 0 if opts[:json]
+      if opts[:json]
+        out.puts JSON.pretty_generate(payload)
+        return 0
+      end
       out.puts schedule_daemon_line(payload.fetch("daemon", {}))
       rows = payload.fetch("schedules", [])
-      out.puts(rows.empty? ? "No schedules configured." : schedule_list_table(rows.map(&:transform_keys)))
+      normalized_rows = rows.map { |row| row.transform_keys(&:to_sym) }
+      out.puts(normalized_rows.empty? ? "No schedules configured." : schedule_list_table(normalized_rows))
       0
     rescue RemoteCLIClient::Error, KeyError => e
       command_failure(e.message, opts, out:, err: err)
     end
 
-    def remote_schedule_action(method, path, body, opts, out:, err:)
+    def remote_schedule_action(method, path, body, opts, out:, err:, success_message:)
       result = remote_client(opts[:server]).request(method, path, body: body)
-      command_result(result, opts, out:)
+      opts[:json] ? out.puts(JSON.generate(result)) : out.puts(success_message)
       0
     rescue RemoteCLIClient::Error => e
       command_failure(e.message, opts, out:, err:)
@@ -1955,7 +1967,7 @@ module HQ
       print_project_result(remote_project_detail(payload), json: opts[:json], out: out)
       0
     rescue RemoteCLIClient::Error, KeyError => e
-      failure(e.message, err: err)
+      command_failure(e.message, opts, out:, err:)
     end
 
     def remote_list_projects(opts, out:, err:)
@@ -1965,7 +1977,7 @@ module HQ
       print_project_list(payload, json: opts[:json], out: out)
       0
     rescue RemoteCLIClient::Error, KeyError => e
-      failure(e.message, err: err)
+      command_failure(e.message, opts, out:, err:)
     end
 
     def remote_create_agent(project_key, prompt, opts, out:, err:)
@@ -2347,7 +2359,7 @@ module HQ
     end
 
     def validate_schedules(opts = {}, out: $stdout, err: $stderr)
-      return remote_schedule_action("POST", "/schedules/reload", {}, opts, out:, err:) if remote_requested?(opts)
+      return remote_schedule_action("POST", "/schedules/reload", {}, opts, out:, err:, success_message: "Schedules valid.") if remote_requested?(opts)
       scheduler.validate!
       opts[:json] ? out.puts(JSON.generate(ok: true)) : out.puts("Schedules valid.")
       0
@@ -2401,7 +2413,7 @@ module HQ
     end
 
     def run_schedule(schedule_key, opts = {}, out: $stdout, err: $stderr)
-      return remote_schedule_action("POST", remote_resource_path("schedules", schedule_key) + "/run", {}, opts, out:, err:) if remote_requested?(opts)
+      return remote_schedule_action("POST", remote_resource_path("schedules", schedule_key) + "/run", {}, opts, out:, err:, success_message: "Started schedule #{schedule_key}.") if remote_requested?(opts)
       result = scheduler.run_now(schedule_key)
       schedule = result.fetch(:schedule)
       if result.fetch(:status) == :failed
@@ -2425,7 +2437,7 @@ module HQ
     end
 
     def pause_schedule(schedule_key, opts = {}, out: $stdout, err: $stderr)
-      return remote_schedule_action("POST", remote_resource_path("schedules", schedule_key) + "/pause", {}, opts, out:, err:) if remote_requested?(opts)
+      return remote_schedule_action("POST", remote_resource_path("schedules", schedule_key) + "/pause", {}, opts, out:, err:, success_message: "Paused #{schedule_key}.") if remote_requested?(opts)
       schedule = scheduler.pause(schedule_key)
       if opts[:json]
         out.puts JSON.generate(schedule: schedule)
@@ -2438,7 +2450,7 @@ module HQ
     end
 
     def resume_schedule(schedule_key, opts = {}, out: $stdout, err: $stderr)
-      return remote_schedule_action("POST", remote_resource_path("schedules", schedule_key) + "/resume", {}, opts, out:, err:) if remote_requested?(opts)
+      return remote_schedule_action("POST", remote_resource_path("schedules", schedule_key) + "/resume", {}, opts, out:, err:, success_message: "Resumed #{schedule_key}.") if remote_requested?(opts)
       result = scheduler.resume(schedule_key)
       if result.fetch(:status) == :failed
         schedule = result.fetch(:schedule)
@@ -2460,7 +2472,7 @@ module HQ
 
     def schedule_restart(opts = {}, out: $stdout, err: $stderr)
       if remote_requested?(opts)
-        return remote_schedule_action("POST", "/schedules/daemon/restart", {}, opts, out:, err:)
+        return remote_schedule_action("POST", "/schedules/daemon/restart", {}, opts, out:, err:, success_message: "Restarted schedule daemon.")
       end
       result = ScheduleDaemonSupervisor.new.restart!
       result[:deprecated_alias] = true if opts[:deprecated_alias]
@@ -2476,7 +2488,7 @@ module HQ
     end
 
     def create_schedule(key, opts, out: $stdout, err: $stderr)
-      return remote_schedule_action("POST", "/schedules", schedule_attrs(opts).merge("key" => key), opts, out:, err:) if remote_requested?(opts)
+      return remote_schedule_action("POST", "/schedules", schedule_attrs(opts).merge("key" => key), opts, out:, err:, success_message: "Created schedule #{key}.") if remote_requested?(opts)
       attrs = schedule_attrs(opts).merge("key" => key)
       schedule = schedule_registry.create(attrs)
       if opts[:json]
@@ -2490,7 +2502,7 @@ module HQ
     end
 
     def update_schedule(key, opts, out: $stdout, err: $stderr)
-      return remote_schedule_action("PATCH", remote_resource_path("schedules", key), schedule_attrs(opts), opts, out:, err:) if remote_requested?(opts)
+      return remote_schedule_action("PATCH", remote_resource_path("schedules", key), schedule_attrs(opts), opts, out:, err:, success_message: "Updated schedule #{key}.") if remote_requested?(opts)
       schedule = schedule_registry.update(key, schedule_attrs(opts))
       if opts[:json]
         out.puts JSON.generate(schedule: schedule.to_h)
