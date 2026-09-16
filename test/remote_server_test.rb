@@ -5880,8 +5880,11 @@ module RemoteServerTest
            "expected Agent detail to replace the conversation with an attachment viewer")
     assert(!css[:body].include?(".agent-view-switch"),
            "expected Agent detail attachment view to omit the old conversation header")
-    assert(css[:body].include?(".agent-view-toggle-button"),
-           "expected Agent detail attachment view to expose icon-only conversation switching")
+    assert(response[:body].include?('id="header-detail-close"') &&
+           response[:body].include?('aria-label="Close detail view"') &&
+           css[:body].include?(".header-detail-close {\n  border: 0;") &&
+           css[:body].include?("@media (max-width: 899px) {\n  .header-detail-close"),
+           "expected focused Summary, PR diff, and Attachment views to close from the desktop header")
     assert(css[:body].include?(".markdown-viewer"), "expected Attachment detail to style rendered markdown")
     assert(css[:body].include?(".markdown-viewer {\n  min-width: 0;\n  max-width: 100%;"),
            "expected markdown attachments to use the available viewer width")
@@ -7540,10 +7543,11 @@ module RemoteServerTest
            "expected attachment views to use the Tycho loading state before preview data loads")
     assert(!js[:body].include?("Preview unavailable for this file."),
            "expected unsupported attachment formats to render download actions instead of preview messaging")
-    assert(js[:body].include?("function renderAgentViewToggle"),
-           "expected Agent detail attachment view to expose icon-only conversation switching")
-    assert(js[:body].include?("data-open-agent"),
-           "expected icon-only conversation switching to use Agent navigation")
+    assert(!js[:body].include?("function renderAgentViewToggle") &&
+           js[:body].include?("panelRightClose:") &&
+           js[:body].include?('"agentSummary", "agentAttachment", "agentPullRequests"') &&
+           js[:body].include?('if (agentKey) navigate({ type: "agent", key: agentKey });'),
+           "expected focused Summary, PR diff, and Attachment views to close from their desktop header")
     assert(!js[:body].include?("function renderAgentAttachmentToggle"),
            "expected attachment views to omit the old Conversation header")
     assert(js[:body].include?("function ensureAttachmentImage"),
