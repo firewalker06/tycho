@@ -89,6 +89,14 @@ The tap uses `brew test-bot` to build bottle artifacts and the `pr-pull`
 pull-request label to publish them. Do not merge the formula PR manually before
 the publish workflow runs.
 
+### Intel macOS Homebrew deprecation
+
+The next release deprecates Intel macOS Homebrew support. Keep the formula and
+existing Intel installations updateable during the deprecation period, publish
+the migration warning in the release notes, and retain the Intel bottle job
+until a later removal release explicitly changes that contract. Apple Silicon
+macOS and Linux packaging remain unchanged.
+
 After the GitHub release exists:
 
 1. Confirm the upstream tag is visible:

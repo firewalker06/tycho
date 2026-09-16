@@ -13,6 +13,8 @@ module TychoUpdaterTest
 
   def run!
     assert_homebrew_updater_runs_upgrade
+    assert_intel_macos_homebrew_warns_without_blocking_updates
+    assert_apple_silicon_homebrew_does_not_warn
     assert_removed_homebrew_keg_resolves_stable_launcher
     assert_source_checkout_is_not_updatable
     assert_remote_server_control_uses_only_local_record
@@ -50,8 +52,46 @@ module TychoUpdaterTest
   end
 
   def assert_source_checkout_is_not_updatable
-    updater = HQ::TychoUpdater.new(executable: __FILE__)
+    updater = HQ::TychoUpdater.new(executable: __FILE__, host_os: "darwin24", host_cpu: "x86_64")
     assert(!updater.status[:available], "expected source checkout update to be unavailable")
+    assert(!updater.status[:detail].include?(HQ::TychoUpdater::INTEL_MACOS_DEPRECATION),
+           "expected non-Homebrew Intel macOS status not to show the Homebrew warning")
+  end
+
+  def assert_intel_macos_homebrew_warns_without_blocking_updates
+    with_homebrew_executable do |executable|
+      updater = HQ::TychoUpdater.new(
+        executable: executable,
+        host_os: "darwin24",
+        host_cpu: "x86_64",
+        command_runner: ->(*) { ["", "", instance_double(true)] }
+      )
+
+      status = updater.status
+      assert(status[:available], "expected Intel Homebrew update to remain available during deprecation")
+      assert(status[:detail].include?(HQ::TychoUpdater::INTEL_MACOS_DEPRECATION),
+             "expected Intel Homebrew update status to include the migration warning")
+      assert(updater.update![:detail].include?(HQ::TychoUpdater::INTEL_MACOS_DEPRECATION),
+             "expected Intel Homebrew update result to repeat the migration warning")
+    end
+  end
+
+  def assert_apple_silicon_homebrew_does_not_warn
+    with_homebrew_executable do |executable|
+      updater = HQ::TychoUpdater.new(executable: executable, host_os: "darwin24", host_cpu: "arm64")
+      assert(updater.status[:available], "expected Apple Silicon Homebrew update to remain available")
+      assert(!updater.status[:detail].include?(HQ::TychoUpdater::INTEL_MACOS_DEPRECATION),
+             "expected Apple Silicon Homebrew update status not to show the Intel warning")
+    end
+  end
+
+  def with_homebrew_executable
+    Dir.mktmpdir("tycho-homebrew") do |dir|
+      executable = File.join(dir, "Cellar", "tycho", "0.10.2", "bin", "tycho")
+      FileUtils.mkdir_p(File.dirname(executable))
+      File.write(executable, "#!/bin/sh\n")
+      yield executable
+    end
   end
 
   def assert_removed_homebrew_keg_resolves_stable_launcher
