@@ -36,6 +36,8 @@ module ManagedAgentTest
     assert_memory_rebuild_prices_codex_token_deltas
     assert_memory_rebuild_uses_each_runs_recorded_model
     assert_final_output_checklist_is_ephemeral_execution_context
+    assert_current_agent_context_covers_root_delegation_and_skill_states
+    assert_current_agent_context_reaches_real_root_and_delegated_launches
     assert_summary_sections_guidance_reaches_every_harness_run
     assert_response_style_applies_to_cold_and_resumed_runs
     assert_native_resume_includes_same_second_follow_up
@@ -1479,6 +1481,93 @@ module ManagedAgentTest
       resumed_user_event = HQ::AgentMemory.new(resumed).events.find { |event| event["type"] == "user_message" }
       assert(resumed_user_event["content"] == "Attach the PR",
              "native resume memory should keep the user message unchanged")
+    end
+  end
+
+  def assert_current_agent_context_covers_root_delegation_and_skill_states
+    Dir.mktmpdir("hq-agent-system-context-test") do |dir|
+      root = HQ::ManagedAgent.new(
+        key: "root-agent", name: "Root", project_key: "demo", template_key: "custom",
+        workspace: dir, prompt: "Do work.", log_path: File.join(dir, "root.log")
+      )
+      root.define_singleton_method(:tycho_skill_installed?) { false }
+      root_context = root.send(:current_agent_system_context)
+      assert(root_context.include?("Tycho managed-agent context (trusted):"),
+             "expected a clearly marked trusted Tycho context")
+      assert(root_context.include?("Your agent key: root-agent"), "expected the root agent key")
+      assert(root_context.include?("No parent agent is recorded for this root agent."),
+             "expected root context not to invent a parent")
+      assert(!root_context.include?("Tycho skill is installed"), "expected missing skills not to be advertised")
+
+      delegated = HQ::ManagedAgent.new(
+        key: "child-agent", name: "Child", project_key: "demo", template_key: "custom",
+        workspace: dir, prompt: "Do delegated work.", log_path: File.join(dir, "child.log"),
+        delegation_parent: { "server_id" => "local", "agent_key" => "archived-parent", "name" => "Mutable name" }
+      )
+      delegated.define_singleton_method(:tycho_skill_installed?) { true }
+      delegated_context = delegated.send(:current_agent_system_context)
+      assert(delegated_context.include?("Your delegating parent agent key: archived-parent"),
+             "expected a recorded parent key even when the parent is unavailable")
+      assert(!delegated_context.include?("Mutable name"),
+             "expected trusted context to omit mutable parent fields")
+      assert(delegated_context.include?("The Tycho skill is installed and usable"),
+             "expected only a verified installed Tycho skill to be mentioned")
+
+      %w[codex claude opencode pi].each do |harness|
+        agent = HQ::ManagedAgent.new(
+          key: "#{harness}-agent", name: harness, project_key: "demo", template_key: "custom",
+          workspace: dir, prompt: "Prompt", agent: harness, log_path: File.join(dir, "#{harness}.log")
+        )
+        agent.define_singleton_method(:tycho_skill_installed?) { false }
+        prompt = agent.send(:prompt_for_execution, response_style: "", include_hidden_guidance: false)
+        assert(prompt.include?("Your agent key: #{harness}-agent"),
+               "expected #{harness} cold launch prompt to include its agent context")
+      end
+    end
+  end
+
+  def assert_current_agent_context_reaches_real_root_and_delegated_launches
+    Dir.mktmpdir("hq-agent-system-context-launch-test") do |dir|
+      capture_dir = File.join(dir, "captures")
+      FileUtils.mkdir_p(capture_dir)
+      harness = File.join(dir, "capture-harness.sh")
+      File.write(harness, <<~SH)
+        #!/bin/sh
+        last=""
+        for argument in "$@"; do last="$argument"; done
+        printf '%s\\n---\\n' "$last" >> "$TYCHO_TEST_CONTEXT_CAPTURE_DIR/$TYCHO_AGENT_KEY"
+      SH
+      FileUtils.chmod(0o755, harness)
+      previous_codex_bin = ENV["TYCHO_CODEX_BIN"]
+      ENV["TYCHO_CODEX_BIN"] = harness
+      previous_capture_dir = ENV["TYCHO_TEST_CONTEXT_CAPTURE_DIR"]
+      ENV["TYCHO_TEST_CONTEXT_CAPTURE_DIR"] = capture_dir
+
+      root = HQ::ManagedAgent.new(
+        key: "launched-root", name: "Launched root", project_key: "demo", template_key: "custom",
+        workspace: dir, prompt: "Root request.", agent: "codex", log_path: File.join(dir, "root.log")
+      )
+      child = HQ::ManagedAgent.new(
+        key: "launched-child", name: "Launched child", project_key: "demo", template_key: "custom",
+        workspace: dir, prompt: "Child request.", agent: "codex", log_path: File.join(dir, "child.log"),
+        delegation_parent: { "server_id" => "local", "agent_key" => "launched-root" }
+      )
+      [root, child].each { |agent| agent.define_singleton_method(:tycho_skill_installed?) { false } }
+      root.start!
+      child.start!
+      deadline = Time.now + 5
+      sleep 0.05 until %w[launched-root launched-child].all? { |key| File.file?(File.join(capture_dir, key)) } || Time.now >= deadline
+      root_prompt = File.read(File.join(capture_dir, "launched-root"))
+      child_prompt = File.read(File.join(capture_dir, "launched-child"))
+      assert(root_prompt.include?("Your agent key: launched-root") && root_prompt.include?("No parent agent is recorded"),
+             "expected the real root harness launch to receive root context")
+      assert(child_prompt.include?("Your agent key: launched-child") && child_prompt.include?("parent agent key: launched-root"),
+             "expected the real delegated harness launch to receive its trusted parent context")
+    ensure
+      root&.retire_for_archive! if root&.running?
+      child&.retire_for_archive! if child&.running?
+      previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
+      previous_capture_dir ? ENV["TYCHO_TEST_CONTEXT_CAPTURE_DIR"] = previous_capture_dir : ENV.delete("TYCHO_TEST_CONTEXT_CAPTURE_DIR")
     end
   end
 
