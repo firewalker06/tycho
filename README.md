@@ -25,6 +25,10 @@ brew install tycho
 tycho
 ```
 
+Intel macOS Homebrew support is deprecated and will be removed in a future
+Tycho release. Use an Apple Silicon Mac for new Homebrew installations; Intel
+users should plan their migration before the removal release.
+
 To run from source, install Ruby 3.2+, Bundler, Go, and native build tools,
 then run:
 

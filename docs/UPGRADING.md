@@ -7,6 +7,15 @@ with Git and rerun `bin/setup` when its dependency check requests it. Existing
 projects, schedules, managed-agent logs, delegation ledgers, and Remote UI
 settings do not require manual data migration.
 
+### Intel macOS Homebrew deprecation
+
+Intel macOS Homebrew support is deprecated and will be removed in a future
+Tycho release. Existing Intel Homebrew installations can continue to run
+`tycho update` during this deprecation period, but the command and Remote UI
+now show a migration warning. Move the installation and its `~/.tycho` data to
+an Apple Silicon Mac before support is removed. This does not change source
+checkout support or non-macOS environments.
+
 ### Command change
 
 The implicit project-creation shortcut has been removed. Replace every use of:

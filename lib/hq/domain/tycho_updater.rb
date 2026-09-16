@@ -1,19 +1,24 @@
 # frozen_string_literal: true
 
 require "open3"
+require "rbconfig"
 
 module HQ
   class TychoUpdater
     FORMULA = "tycho"
+    INTEL_MACOS_DEPRECATION = "Intel macOS Homebrew support is deprecated and will be removed in a future Tycho release. Migrate this installation to an Apple Silicon Mac before then."
 
-    def initialize(executable: $PROGRAM_NAME, command_runner: Open3.method(:capture3))
+    def initialize(executable: $PROGRAM_NAME, command_runner: Open3.method(:capture3), host_os: RbConfig::CONFIG["host_os"],
+                   host_cpu: RbConfig::CONFIG["host_cpu"])
       @executable = executable.to_s
       @command_runner = command_runner
+      @host_os = host_os.to_s
+      @host_cpu = host_cpu.to_s
     end
 
     def status
       if homebrew_install?
-        { available: true, detail: "Update this Homebrew installation; running local Remote and scheduler services restart automatically." }
+        { available: true, detail: homebrew_status_detail }
       else
         { available: false, detail: "Updates are available only for Homebrew-installed Tycho." }
       end
@@ -28,7 +33,8 @@ module HQ
 
       {
         updated: true,
-        detail: output.empty? ? "Homebrew updated Tycho." : output,
+        detail: [intel_macos_homebrew? ? INTEL_MACOS_DEPRECATION : nil,
+                 output.empty? ? "Homebrew updated Tycho." : output].compact.join("\n"),
         executable: self.class.stable_executable_for(@executable)
       }
     rescue Errno::ENOENT
@@ -66,6 +72,17 @@ module HQ
       File.realpath(@executable).match?(%r{/Cellar/tycho/})
     rescue Errno::ENOENT
       false
+    end
+
+    def intel_macos_homebrew?
+      @host_os.downcase.include?("darwin") && @host_cpu.downcase.match?(/\A(?:x86_64|amd64)\z/)
+    end
+
+    def homebrew_status_detail
+      detail = "Update this Homebrew installation; running local Remote and scheduler services restart automatically."
+      return detail unless intel_macos_homebrew?
+
+      "#{INTEL_MACOS_DEPRECATION} #{detail}"
     end
 
     class Error < StandardError; end
