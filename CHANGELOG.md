@@ -4,6 +4,11 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+### Distribution correction
+
+- Correct the v0.11.1 Homebrew contract: v0.11.0 is the last Intel macOS
+  bottle, and v0.11.1 ships Apple Silicon macOS and Linux bottles only.
+
 ## 0.11.1 - 2026-09-16
 
 ### Highlights
@@ -31,9 +36,9 @@ All notable changes to Tycho will be documented in this file.
   and reports actionable failures without leaving the menu in progress. The
   dedicated broker route accepts configured remotes only.
 
-- Deprecate Intel macOS Homebrew support. Existing Intel Homebrew installations
-  remain updateable for now and receive a migration warning; Apple Silicon
-  Homebrew, source checkouts, and non-macOS environments are unchanged.
+- End Intel macOS Homebrew bottles. v0.11.0 is the last Intel bottle; v0.11.1
+  ships Apple Silicon macOS and Linux bottles only. Source checkouts and
+  non-macOS environments are unchanged.
 
 ## 0.11.0 - 2026-09-13
 

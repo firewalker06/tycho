@@ -89,13 +89,12 @@ The tap uses `brew test-bot` to build bottle artifacts and the `pr-pull`
 pull-request label to publish them. Do not merge the formula PR manually before
 the publish workflow runs.
 
-### Intel macOS Homebrew deprecation
+### Intel macOS Homebrew bottles
 
-The next release deprecates Intel macOS Homebrew support. Keep the formula and
-existing Intel installations updateable during the deprecation period, publish
-the migration warning in the release notes, and retain the Intel bottle job
-until a later removal release explicitly changes that contract. Apple Silicon
-macOS and Linux packaging remain unchanged.
+v0.11.0 is the last Tycho Intel macOS bottle. Starting with v0.11.1, publish
+Apple Silicon macOS and Linux bottles only. Do not add an Intel job, artifact,
+or checksum to the tap workflow or formula. Intel users can run Tycho from
+source.
 
 After the GitHub release exists:
 
@@ -134,15 +133,12 @@ After the GitHub release exists:
    brew uninstall firewalker06/tycho/tycho
    ```
 
-   The formula test should include `tycho doctor`. On Intel macOS bottles this
-   confirms the Ruby Lipgloss compatibility backend is selected and the native
-   Lipgloss extension is not loaded into the Bubbletea process.
+   The formula test should include `tycho doctor`.
 
 5. Push the branch, open a pull request in `firewalker06/homebrew-tycho`, and
    wait for every `brew test-bot` job to pass. The standard matrix builds Apple
-   Silicon macOS and Linux bottles. The separate `macos-15-intel` job builds the
-   Intel macOS bottle; confirm its `bottles_macos-15-intel` artifact contains a
-   `sequoia` bottle before publishing.
+   Silicon macOS and Linux bottles only. Confirm no Intel job or artifact is
+   present before publishing.
 
 6. After all bottle jobs pass, have a trusted maintainer add the `pr-pull`
    label to the formula pull request. The tap's `pull_request_target` workflow

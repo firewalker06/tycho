@@ -25,9 +25,10 @@ brew install tycho
 tycho
 ```
 
-Intel macOS Homebrew support is deprecated and will be removed in a future
-Tycho release. Use an Apple Silicon Mac for new Homebrew installations; Intel
-users should plan their migration before the removal release.
+Homebrew bottles support Apple Silicon macOS and Linux. v0.11.0 is the last
+Tycho Intel macOS bottle; v0.11.1 ships no Intel macOS bottle. Intel users can
+run Tycho from source and should migrate Homebrew installations to Apple
+Silicon.
 
 To run from source, install Ruby 3.2+, Bundler, Go, and native build tools,
 then run:

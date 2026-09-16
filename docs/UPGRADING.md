@@ -11,14 +11,12 @@ action confirms the restart, keeps the browser on the UI-serving server while
 the peer returns, then refreshes its catalog. Source installs and peers that do
 not report support remain unchanged; use Git and `bin/setup` there.
 
-### Intel macOS Homebrew deprecation
+### Intel macOS Homebrew bottles
 
-Intel macOS Homebrew support is deprecated and will be removed in a future
-Tycho release. Existing Intel Homebrew installations can continue to run
-`tycho update` during this deprecation period, but the command and Remote UI
-now show a migration warning. Move the installation and its `~/.tycho` data to
-an Apple Silicon Mac before support is removed. This does not change source
-checkout support or non-macOS environments.
+v0.11.0 is the last Tycho Intel macOS Homebrew bottle. v0.11.1 ships no Intel
+macOS bottle; Apple Silicon macOS and Linux bottles remain available. Move the
+installation and its `~/.tycho` data to an Apple Silicon Mac, or run Tycho from
+source. This does not change source checkout support or non-macOS environments.
 
 ## 0.11.0
 
