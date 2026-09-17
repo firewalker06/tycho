@@ -16,6 +16,7 @@ module RemoteUIAssetSnapshotTest
     assert_delegation_ui_uses_typed_safe_references
     assert_delegation_callbacks_render_as_complete_delegated_agent_messages
     assert_delegated_summary_attention_icon_is_in_header
+    assert_focused_detail_close_control
     assert_archived_agents_are_reference_only_and_read_only
     assert_personal_assistant_is_chat_first
     assert_personal_assistant_first_run_uses_starters
@@ -60,6 +61,32 @@ module RemoteUIAssetSnapshotTest
     raise "Summary content still contains the suppression icon" if summary_renderer.include?("summarySuppressionIndicator")
     raise "Summary header must place the suppression icon directly after relative time" unless message_renderer.include?("${timeHtml}${summaryAttentionHtml}")
     raise "missing aligned Summary header icon styling" unless css.include?("flex: 0 0 auto;") && css.include?("align-items: center;")
+  end
+
+  def assert_focused_detail_close_control
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
+    template = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "templates", "index.html.erb"))
+
+    required_javascript = [
+      "panelRightClose:",
+      '"agentSummary", "agentAttachment", "agentPullRequests"',
+      "dataset.closeAgentDetail",
+      'els.headerDetailClose.addEventListener("click", () => {',
+      'if (agentKey) navigate({ type: "agent", key: agentKey });',
+    ]
+    missing = required_javascript.reject { |fragment| javascript.include?(fragment) }
+    raise "missing focused detail close behavior: #{missing.join(", ")}" unless missing.empty?
+    raise "Conversation button remains in the composer" if javascript.include?("renderAgentViewToggle")
+    raise "missing focused detail close button" unless template.include?('id="header-detail-close"')
+
+    required_css = [
+      ".header-detail-close {\n  border: 0;",
+      ".header-row:has(#header-detail-close:not(.hidden)) > #back-button",
+      "@media (max-width: 899px) {\n  .header-detail-close",
+    ]
+    missing_css = required_css.reject { |fragment| css.include?(fragment) }
+    raise "focused detail close control must stay borderless and desktop-only: #{missing_css.join(", ")}" unless missing_css.empty?
   end
 
   def assert_personal_assistant_is_chat_first
