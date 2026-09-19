@@ -24,6 +24,7 @@ module CLICommandTest
     assert_version_output
     assert_project_commands_manage_full_lifecycle
     assert_project_command_and_help_paths_do_not_create_projects
+    assert_agent_queue_notice_and_read_outputs
     assert_remote_server_commands_manage_full_agent_lifecycle
     assert_remote_client_reports_timeout_and_unsupported_operation
     assert_debug_claude_is_listed_in_usage
@@ -189,6 +190,17 @@ module CLICommandTest
         started = run_tycho(local_env, "agent", "run", agent_key, "--server", "peer", "--json")
         assert(started.fetch(:status).success? && JSON.parse(started.fetch(:stdout)).fetch("running"),
                "expected remote agent run to start the target")
+        queued_remote = run_tycho(local_env, "agent", "send", agent_key, "Queued remote input",
+                                  "--server", "peer", "--json")
+        assert(queued_remote.fetch(:status).success? && JSON.parse(queued_remote.fetch(:stdout)).fetch("queued"),
+               "expected remote CLI send to queue while the target is running")
+        read_remote = run_tycho(local_env, "queue", agent_key, "--server", "peer", "--json")
+        assert(read_remote.fetch(:status).success?,
+               "expected remote queue read to succeed: #{read_remote.fetch(:stderr)}")
+        read_remote_payload = JSON.parse(read_remote.fetch(:stdout))
+        assert(read_remote_payload.fetch("consumed_count") == 1 &&
+               read_remote_payload.fetch("content") == "Queued remote input",
+               "expected remote CLI queue read to consume and return one consolidated batch")
         stopped = run_tycho(local_env, "agent", "stop", agent_key, "--server", "peer", "--json")
         assert(stopped.fetch(:status).success? && !JSON.parse(stopped.fetch(:stdout)).fetch("running"),
                "expected remote agent stop to stop the target")
@@ -425,6 +437,83 @@ module CLICommandTest
       assert(!missing.fetch(:status).success?, "expected archived project to be absent from project show")
       assert(missing.fetch(:stderr).empty? && JSON.parse(missing.fetch(:stdout)).fetch("error") == "Unknown project: demo",
              "expected clear JSON missing-project error")
+    end
+  end
+
+  def assert_agent_queue_notice_and_read_outputs
+    Dir.mktmpdir("hq-cli-queue-test") do |dir|
+      workspace = File.join(dir, "workspace")
+      logs_root = File.join(dir, "logs")
+      agent_logs = File.join(logs_root, "agents")
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      FileUtils.mkdir_p([workspace, agent_logs])
+      File.write(config_path, <<~YAML)
+        projects:
+          - key: demo
+            name: Demo
+            path: #{workspace}
+            agent: codex
+      YAML
+      File.write(prompts_path, "{}\n")
+      pid = Process.spawn(RbConfig.ruby, "-e", "sleep 60", pgroup: true, out: File::NULL, err: File::NULL)
+      now = Time.now
+      agent = HQ::ManagedAgent.new(
+        key: "queue-cli-agent", name: "Queue CLI", project_key: "demo", template_key: "custom",
+        workspace:, prompt: "Work", agent: "codex", pid:, started_at: now,
+        runs: [HQ::ManagedAgent::AgentRun.new(started_at: now, status: "running",
+                                              log_path: File.join(agent_logs, "queue-cli.raw.log"))],
+        log_path: File.join(agent_logs, "queue-cli.raw.log")
+      )
+      agent.enqueue_prompt!(prompt: "Delegated CLI result", source: "delegation_callback")
+      agent.enqueue_prompt!(prompt: "User CLI follow-up", source: "user")
+      File.write(File.join(logs_root, "managed_agents.json"), JSON.pretty_generate([agent.to_hash]))
+      env = {
+        "TYCHO_CONFIG_PATH" => config_path,
+        "TYCHO_SYSTEM_PROMPTS_PATH" => prompts_path,
+        "TYCHO_LOGS_ROOT" => logs_root,
+        "TYCHO_AGENT_KEY" => agent.key
+      }
+
+      json_status = run_tycho(env, "agent", "status", agent.key, "--json")
+      notice = JSON.parse(json_status.fetch(:stdout)).fetch("queue_notice")
+      assert(notice == {
+               "agent_key" => agent.key,
+               "pending_count" => 2,
+               "delegated_reply_count" => 1,
+               "user_prompt_count" => 1,
+               "read_command" => "tycho queue #{agent.key}"
+             }, "expected additive structured queue notice counts")
+
+      human_status = run_tycho(env, "agent", "status", agent.key)
+      assert(human_status.fetch(:stdout).include?("Pending queue for #{agent.key}: 2 entries (1 delegated, 1 user).") &&
+             human_status.fetch(:stdout).include?("Run `tycho queue #{agent.key}` to read and consume the batch."),
+             "expected compatible human queue notice output")
+
+      read = run_tycho(env, "queue", agent.key, "--json")
+      payload = JSON.parse(read.fetch(:stdout))
+      assert(read.fetch(:status).success? && payload.fetch("consumed_count") == 2 &&
+             payload.fetch("delegated_reply_count") == 1 && payload.fetch("user_prompt_count") == 1 &&
+             payload.fetch("content") == "Delegated CLI result\n\n---\n\nUser CLI follow-up",
+             "expected structured queue read output to return one mixed batch")
+
+      requeued = run_tycho(env, "agent", "send", agent.key, "Human queue read")
+      assert(requeued.fetch(:status).success? && requeued.fetch(:stdout).include?("Pending queue for #{agent.key}: 1 entry"),
+             "expected a relevant human agent response to surface a newly queued prompt")
+      human_read = run_tycho(env, "queue", agent.key)
+      assert(human_read.fetch(:status).success? &&
+             human_read.fetch(:stdout).include?("Read queue for #{agent.key}: 1 entry (0 delegated, 1 user)") &&
+             human_read.fetch(:stdout).end_with?("Human queue read\n"),
+             "expected compatible human queue read output")
+
+      empty = run_tycho(env, "queue", agent.key)
+      assert(!empty.fetch(:status).success? && empty.fetch(:stderr).include?("No pending queue entries"),
+             "expected repeated reads not to consume or invent work")
+    ensure
+      if pid
+        Process.kill("TERM", -pid)
+        Process.wait(pid)
+      end
     end
   end
 

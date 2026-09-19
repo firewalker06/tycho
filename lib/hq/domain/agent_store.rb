@@ -453,6 +453,40 @@ module HQ
       end
     end
 
+    def read_prompt_queue!(key, read_at: Time.now)
+      with_exclusive_lock do
+        agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
+        target = find_agent_in!(agents, key)
+        paths = [AGENTS_FILE, DELEGATIONS_FILE, target.memory_path, target.attachments_path]
+        result = nil
+        FileTransaction.run(paths) do
+          entries = target.prompt_queue.dup
+          raise ArgumentError, "Queued work is already claimed for dispatch" if target.prompt_queue_claim
+          raise ArgumentError, "No pending queue entries for #{target.key}" if entries.empty?
+
+          content = target.consolidated_prompt_queue_content(entries)
+          attachments = target.consolidated_prompt_queue_attachments(entries)
+          metadata = target.consolidated_prompt_queue_metadata(entries).merge(
+            "queue_read" => true,
+            "read_label" => "Read queue"
+          )
+          read_id = "queue-read:#{SecureRandom.uuid}"
+          AgentMemory.new(target).append_queue_read!(
+            content,
+            read_id:,
+            created_at: read_at,
+            attachments:,
+            metadata:
+          )
+          consumed = target.consume_prompt_queue_for_read!
+          mark_claim_reports_resumed!("entries" => consumed)
+          save_unlocked(agents)
+          result = { agent: target, entries: consumed, content:, read_id: }
+        end
+        result
+      end
+    end
+
     def suspend_inquiry!(key, inquiry_id)
       mutate do |agents, _events|
         target = find_agent_in!(agents, key)
@@ -693,7 +727,7 @@ module HQ
       end
       run_metadata["personal_assistant_client_request_ids"] = request_ids unless request_ids.empty?
       accepted = begin
-        stamp = Array(claim["entries"]).first&.fetch("authority", nil)
+        stamp = Array(claim["entries"]).last&.fetch("authority", nil)
         options = { run_metadata: }
         options[:delegation_stamp] = stamp if stamp
         if agent.method(:start!).parameters.any? { |_kind, name| name == :before_spawn }

@@ -224,6 +224,7 @@ tycho agent status <agent-key> --server office-mac [--json]
 tycho agent create <project-key> <prompt> --server office-mac [--run] [--json]
 tycho agent run <agent-key> --server office-mac [--json]
 tycho agent send <agent-key> <message> --server office-mac [--json]
+tycho queue <agent-key> --server office-mac [--json]
 tycho agent stop <agent-key> --server office-mac [--json]
 tycho agent archive <agent-key> --server office-mac [--json]
 ```
@@ -692,6 +693,14 @@ Simple curl:
 curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/messages \
   -H "Content-Type: application/json" \
   -d '{"prompt":"Please continue with the next failing test.","start":true}'
+```
+
+### `POST /agents/{key}/prompt-queue/read`
+
+Reads every currently pending delegated reply and user prompt as one FIFO-preserving batch. The server records one Conversation block labeled **Read queue** and consumes the batch transactionally. A concurrent entry accepted after the read lock remains queued.
+
+```bash
+curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/prompt-queue/read
 ```
 
 ### `POST /agents/{key}/start`

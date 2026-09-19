@@ -63,8 +63,8 @@ module ArchiveDelegationCallbacksTest
     assert(archived && archived.queued_prompts.empty?, "expected callbacks to leave the executable queue")
     events = File.readlines(archived.memory_path, chomp: true).reject(&:empty?).map { |line| JSON.parse(line) }
     preserved = events.select { |event| event.dig("metadata", "archived_without_run") == true }
-    assert(preserved.map { |event| event["content"] } == ["Delegated callback 1", "Delegated callback 2"],
-           "expected full callback messages in read-only archived history")
+    assert(preserved.map { |event| event["content"] } == ["Delegated callback 1\n\n---\n\nDelegated callback 2"],
+           "expected the full consolidated callback batch in read-only archived history")
     assert(File.directory?(archive_path), "expected archive artifacts to be durable")
   end
 

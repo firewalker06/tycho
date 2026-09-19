@@ -13,6 +13,9 @@ module PromptQueueTest
   def run!
     assert_queue_persists_and_reconciles_across_clients
     assert_claim_race_drains_fifo_without_overlap
+    assert_explicit_read_consumes_one_mixed_batch_and_records_conversation
+    assert_explicit_read_failure_retains_queue
+    assert_explicit_read_keeps_concurrent_arrivals
     assert_dispatch_failure_retains_one_prepared_batch_for_retry
     assert_entries_accepted_after_claim_form_a_consecutive_batch
     assert_authority_is_captured_per_fifo_entry
@@ -81,8 +84,8 @@ module PromptQueueTest
     with_queue_store do |registry, workspace|
       agent, pid = running_agent(workspace)
       store = HQ::AgentStore.new(registry.projects)
-      agent.enqueue_prompt!(prompt: "first accepted")
-      agent.enqueue_prompt!(prompt: "second accepted")
+      agent.enqueue_prompt!(prompt: "first accepted", source: "delegation_callback")
+      agent.enqueue_prompt!(prompt: "second accepted", source: "user")
       store.save([agent])
       stop_process(pid)
 
@@ -92,15 +95,19 @@ module PromptQueueTest
       end
 
       persisted = store.load.find { |candidate| candidate.key == agent.key }
-      assert(persisted.run_count == 3, "expected two FIFO entries to start one serial follow-up run each")
+      assert(persisted.run_count == 2, "expected all pending FIFO entries to start one consolidated follow-up run")
       assert(persisted.queued_prompts.empty?, "expected an accepted claim to be removed")
       assert(persisted.last_run_from_prompt_queue?,
              "expected a queue-dispatched run to retain its queue provenance")
       queued_messages = HQ::AgentMemory.new(persisted).events.select do |event|
         event.dig("metadata", "prompt_queue_claim_id")
       end
-      assert(queued_messages.map { |event| event["content"] } == ["first accepted", "second accepted"],
-             "expected claims to preserve FIFO order without combining authority-bearing work")
+      assert(queued_messages.length == 1 &&
+             queued_messages.first["content"] == "first accepted\n\n---\n\nsecond accepted",
+             "expected one FIFO-preserving receiver-owned queue batch")
+      assert(queued_messages.first.dig("metadata", "prompt_queue_sources") == {
+               "delegation_callback" => 1, "user" => 1
+             }, "expected automatic dispatch to preserve mixed queue source counts in one native input")
     end
   end
 
@@ -289,15 +296,16 @@ module PromptQueueTest
              "expected parent, Takeover, and reclaim authority generations to be captured at acceptance")
 
       stop_process(pid)
-      with_stubbed_start do
-        3.times { service.agent(child.key) }
-      end
+      with_stubbed_start { service.agent(child.key) }
       persisted = store.load.find { |agent| agent.key == child.key }
-      stamps = persisted.runs.last(3).map { |run| [run.delegation_owner, run.delegation_generation] }
-      assert(stamps == [["parent", 1], ["user", 2], ["parent", 3]],
-             "expected delayed FIFO entries to run under their captured authority, including stale generations")
-      authors = queued_memory_events(child.key, store).map { |event| event.dig("metadata", "message_author", "agent_key") }
-      assert(authors == [parent.key, nil, parent.key], "expected queued message authorship to survive dispatch")
+      stamp = persisted.runs.last.then { |run| [run.delegation_owner, run.delegation_generation] }
+      assert(stamp == ["parent", 3],
+             "expected the newest entry ownership stamp to describe the consolidated receiver-owned batch")
+      message = queued_memory_events(child.key, store).last
+      assert(message["content"] == "parent first\n\n---\n\nuser takeover\n\n---\n\nparent reclaimed" &&
+             message.dig("metadata", "message_author", "agent_key") == parent.key &&
+             message.dig("metadata", "prompt_queue_entry_count") == 3,
+             "expected takeover and reclaim entries to become one ordered native input owned by the receiver")
     ensure
       stop_process(pid)
     end
@@ -326,6 +334,99 @@ module PromptQueueTest
       assert(!store.load.find { |candidate| candidate.key == agent.key }.pending_prompts?,
              "expected explicit Retry queue to resume paused work")
     ensure
+      stop_process(pid)
+    end
+  end
+
+  def assert_explicit_read_consumes_one_mixed_batch_and_records_conversation
+    with_queue_store do |registry, workspace|
+      agent, pid = running_agent(workspace)
+      agent.enqueue_prompt!(prompt: "delegated result", source: "delegation_callback")
+      agent.enqueue_prompt!(prompt: "user follow-up", source: "user")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+
+      result = store.read_prompt_queue!(agent.key, read_at: Time.utc(2026, 9, 19, 1, 2, 3))
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+                       .find { |candidate| candidate.key == agent.key }
+      events = HQ::AgentMemory.new(persisted).events.select { |event| event.dig("metadata", "queue_read") }
+      assert(result[:entries].length == 2 && result[:content] == "delegated result\n\n---\n\nuser follow-up",
+             "expected explicit reads to return one ordered mixed queue batch")
+      assert(persisted.queued_prompts.empty? && events.length == 1,
+             "expected a successful explicit read to consume the batch and record one conversation event")
+      assert(events.first.dig("metadata", "read_label") == "Read queue" &&
+             events.first.dig("metadata", "prompt_queue_sources") == {
+               "delegation_callback" => 1, "user" => 1
+             }, "expected the queue read event to retain its label and mixed source counts")
+      conversation = HQ::RemoteService.new(registry:).conversation(agent.key)
+      read_block = conversation.find { |block| block.dig(:metadata, "queue_read") == true }
+      assert(read_block && read_block[:content] == result[:content] &&
+             read_block.dig(:metadata, "read_label") == "Read queue",
+             "expected Remote Conversation to expose one labeled queue read block")
+    ensure
+      stop_process(pid)
+    end
+  end
+
+  def assert_explicit_read_failure_retains_queue
+    with_queue_store do |registry, workspace|
+      agent, pid = running_agent(workspace)
+      agent.enqueue_prompt!(prompt: "retain after read failure", source: "user")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+
+      original = HQ::AgentMemory.instance_method(:append_queue_read!)
+      HQ::AgentMemory.define_method(:append_queue_read!) { |*| raise IOError, "simulated queue read failure" }
+      begin
+        store.read_prompt_queue!(agent.key)
+        raise "expected queue read failure"
+      rescue IOError => e
+        assert(e.message.include?("simulated queue read failure"), "expected the injected durable read failure")
+      ensure
+        HQ::AgentMemory.define_method(:append_queue_read!, original)
+      end
+
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+                       .find { |candidate| candidate.key == agent.key }
+      assert(persisted.queued_prompts.map { |entry| entry["prompt"] } == ["retain after read failure"],
+             "expected a failed explicit read to leave every queue entry durable")
+    ensure
+      HQ::AgentMemory.define_method(:append_queue_read!, original) if defined?(original) && original
+      stop_process(pid)
+    end
+  end
+
+  def assert_explicit_read_keeps_concurrent_arrivals
+    with_queue_store do |registry, workspace|
+      agent, pid = running_agent(workspace)
+      agent.enqueue_prompt!(prompt: "read this batch", source: "user")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+      entered = Queue.new
+      release = Queue.new
+      original = HQ::AgentMemory.instance_method(:append_queue_read!)
+      HQ::AgentMemory.define_method(:append_queue_read!) do |*args, **kwargs|
+        entered << true
+        release.pop
+        original.bind_call(self, *args, **kwargs)
+      end
+
+      read_thread = Thread.new { store.read_prompt_queue!(agent.key) }
+      entered.pop
+      arrival_thread = Thread.new do
+        HQ::AgentStore.new(registry.projects).enqueue_prompt!(agent.key, prompt: "arrived during read", source: "user")
+      end
+      release << true
+      read_result = read_thread.value
+      arrival_thread.value
+
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+                       .find { |candidate| candidate.key == agent.key }
+      assert(read_result[:entries].map { |entry| entry["prompt"] } == ["read this batch"] &&
+             persisted.queued_prompts.map { |entry| entry["prompt"] } == ["arrived during read"],
+             "expected arrivals after the read snapshot to remain queued for the next batch")
+    ensure
+      HQ::AgentMemory.define_method(:append_queue_read!, original) if defined?(original) && original
       stop_process(pid)
     end
   end

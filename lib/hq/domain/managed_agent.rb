@@ -487,11 +487,7 @@ module HQ
       return @prompt_queue_claim if @prompt_queue_claim
       return nil if @prompt_queue.empty?
 
-      entries = if !@prompt_queue.first["client_request_id"].to_s.empty?
-                  @prompt_queue.shift(@prompt_queue.length)
-                else
-                  [@prompt_queue.shift]
-                end
+      entries = @prompt_queue.shift(@prompt_queue.length)
       @prompt_queue_claim = {
         "id" => SecureRandom.uuid,
         "entries" => entries,
@@ -511,11 +507,12 @@ module HQ
       return false if claim["message_appended"]
 
       entries = Array(claim["entries"])
-      entry = entries.first || {}
-      prompt = entries.map { |candidate| candidate["prompt"].to_s.strip }.reject(&:empty?).join("\n\n---\n\n")
-      attachments = entries.flat_map { |candidate| Array(candidate["attachments"]) }
-      metadata = { "prompt_queue_claim_id" => claim["id"] }
-      metadata.merge!(entry["message_metadata"]) if entry["message_metadata"].is_a?(Hash)
+      newest_entry = entries.last || {}
+      prompt = consolidated_prompt_queue_content(entries)
+      attachments = consolidated_prompt_queue_attachments(entries)
+      metadata = newest_entry["message_metadata"].is_a?(Hash) ? newest_entry["message_metadata"].dup : {}
+      metadata.merge!(consolidated_prompt_queue_metadata(entries))
+      metadata["prompt_queue_claim_id"] = claim["id"]
       request_ids = Array(claim["personal_assistant_client_request_ids"]).filter_map do |id|
         value = id.to_s.strip
         value.empty? ? nil : value
@@ -524,6 +521,35 @@ module HQ
       add_user_message!(prompt, attachments:, metadata:)
       claim["message_appended"] = true
       true
+    end
+
+    def consume_prompt_queue_for_read!
+      raise ArgumentError, "Queued work is already claimed for dispatch" if @prompt_queue_claim
+      raise ArgumentError, "No pending queue entries" if @prompt_queue.empty?
+
+      entries = @prompt_queue.dup
+      @prompt_queue.clear
+      @prompt_queue_dispatch_error = nil
+      entries
+    end
+
+    def consolidated_prompt_queue_content(entries)
+      Array(entries).map { |entry| entry["prompt"].to_s.strip }.reject(&:empty?).join("\n\n---\n\n")
+    end
+
+    def consolidated_prompt_queue_attachments(entries)
+      Array(entries).flat_map { |entry| Array(entry["attachments"]) }
+    end
+
+    def consolidated_prompt_queue_metadata(entries)
+      entries = Array(entries)
+      sources = entries.map { |entry| entry["source"].to_s.empty? ? "user" : entry["source"].to_s }
+      {
+        "prompt_queue_batch" => true,
+        "prompt_queue_entry_ids" => entries.map { |entry| entry["id"].to_s },
+        "prompt_queue_entry_count" => entries.length,
+        "prompt_queue_sources" => sources.tally
+      }
     end
 
     def complete_prompt_queue_claim!

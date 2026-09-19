@@ -23,6 +23,7 @@ description: Manages Tycho projects, managed agents, delegation, and schedules. 
 | | `agent send <agent-key> <message>` | Append a message and re-run the agent |
 | | `agent archive <agent-key>` | Archive an agent and move its logs |
 | | `agent clone <agent-key>` | Clone an existing agent |
+| **queue** | `queue <agent-key>` | Read and consume the agent's pending queue as one batch |
 | **schedule** | `schedule list` | List all schedules and daemon status |
 | | `schedule validate` | Validate schedule config |
 | | `schedule run <schedule-key>` | Trigger a schedule immediately |
@@ -106,6 +107,7 @@ The declaration is not cryptographic authentication. Use it only with the actual
 - Keep delegation server-local. Self-parenting, cycles, unknown parents, conflicting re-parenting, and ancestor prompting are invalid.
 - Treat a direct user prompt to a delegated child as Takeover. It changes the edge owner to `user`, advances its ownership generation, suppresses pending reports, and cancels queued parent resumes.
 - Let only a prompt declared with the recorded parent key restore Delegation. Parent reclaim advances the generation and cancels any unresolved child inquiry before storing the prompt.
+- Once queued work reaches an agent, let that receiver process the complete pending queue as one native input. The newest entry supplies the batch owner and generation; earlier per-entry stamps do not split the batch.
 - Expect every terminal delegated run to create one deduplicated report when callbacks are connected. Tycho stamps ownership at launch and rejects stale generations.
 - Let Tycho accumulate eligible terminal reports for the same parent into one deterministic callback and resume. It waits while the parent or another agent in the same workspace is running.
 - Treat callback disconnect as suppression, not deletion. Disconnected runs are not replayed after reconnect, and archived parents receive history without being resumed.
@@ -186,6 +188,19 @@ tycho agent send my-project-agent-3 "Continue the delegated task" --parent-agent
 ```
 
 Errors if the agent is already running. Prints pid and log path on success.
+
+---
+
+## `tycho queue`
+
+Read every currently pending delegated reply and user prompt for one agent as a single FIFO-preserving batch:
+
+```bash
+tycho queue my-project-agent-3
+tycho queue my-project-agent-3 --server peer --json
+```
+
+A successful read records one Conversation block labeled **Read queue** and consumes that batch. Entries arriving after the locked read remain queued. Relevant agent command responses include a non-destructive queue notice for the current managed agent when `TYCHO_AGENT_KEY` has pending work.
 
 ---
 

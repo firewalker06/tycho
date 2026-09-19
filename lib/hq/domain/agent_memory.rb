@@ -400,6 +400,24 @@ module HQ
       event_id.to_s.strip.empty? ? append_event!(event) : append_unique_event!(event_id, event)
     end
 
+    def append_queue_read!(content, read_id:, created_at: Time.now, attachments: nil, metadata: nil)
+      text = content.to_s.strip
+      raise ArgumentError, "Queue read content is required" if text.empty?
+
+      normalized_attachments = normalize_attachments(attachments)
+      event_metadata = metadata.is_a?(Hash) ? metadata.dup : {}
+      event_metadata.merge!(attachment_metadata(normalized_attachments) || {})
+      event_metadata["queue_read"] = true
+      event_metadata["read_label"] = "Read queue"
+      append_unique_event!(
+        read_id,
+        "type" => "user_message",
+        "content" => text,
+        "created_at" => created_at.iso8601,
+        "metadata" => event_metadata
+      )
+    end
+
     def append_assistant_message!(content, created_at: Time.now, metadata: nil)
       text = content.to_s.strip
       return if text.empty?

@@ -621,6 +621,7 @@ module HQ
           return ok(service.edit_queued_prompt(key, tail[1], body)) if %w[PATCH PUT].include?(method)
           return ok(service.delete_queued_prompt(key, tail[1])) if method == "DELETE"
         end
+        return ok(service.read_prompt_queue(key)) if method == "POST" && tail == ["prompt-queue", "read"]
         return ok(service.retry_prompt_queue(key)) if method == "POST" && tail == ["prompt-queue", "retry"]
         if method == "POST" && [%w[messages], %w[prompt]].include?(tail)
           result = service.submit_prompt(key, body, actor:)
@@ -4053,6 +4054,25 @@ module HQ
       { agent: agent_payload(target), conversation: conversation(target.key) }
     rescue ArgumentError => e
       raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
+    end
+
+    def read_prompt_queue(key)
+      reject_personal_assistant_control!(find_agent!(key))
+      result = @agent_store.read_prompt_queue!(key)
+      entries = Array(result.fetch(:entries))
+      delegated = entries.count { |entry| entry["source"] == "delegation_callback" }
+      {
+        read: true,
+        agent_key: key.to_s,
+        consumed_count: entries.length,
+        delegated_reply_count: delegated,
+        user_prompt_count: entries.length - delegated,
+        content: result.fetch(:content),
+        read_id: result.fetch(:read_id)
+      }
+    rescue ArgumentError => e
+      status = e.message.start_with?("Unknown agent") ? 404 : 409
+      raise Error.new(e.message, status:)
     end
 
     def answer_inquiry(key, inquiry_id, attrs = {}, actor: DelegationActor.user_actor, **attribute_keywords)

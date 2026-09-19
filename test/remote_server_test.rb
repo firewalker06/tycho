@@ -7508,6 +7508,8 @@ module RemoteServerTest
            "expected Remote UI parsed reply keys to render as all-caps")
     assert(js[:body].include?('return inquiryResponseBlock(block) ? "user answers" : blockLabel(block);'),
            "expected Remote UI inquiry responses to use the user answers label")
+    assert(js[:body].include?('if (block?.metadata?.queue_read === true) return block.metadata.read_label || "Read queue";'),
+           "expected explicit queue reads to render as one labeled Conversation block")
     assert(js[:body].include?('class="parsed-json-key"'),
            "expected Remote UI parsed replies to style key labels")
     assert(js[:body].include?('class="parsed-json-value"'),
