@@ -3452,6 +3452,7 @@ select {
 
 .workspace-entry-list {
   display: grid;
+  align-content: start;
   flex: 1;
   min-width: 0;
   min-height: 0;
