@@ -23,6 +23,8 @@ description: Manages Tycho projects, managed agents, delegation, and schedules. 
 | | `agent send <agent-key> <message>` | Append a message and re-run the agent |
 | | `agent archive <agent-key>` | Archive an agent and move its logs |
 | | `agent clone <agent-key>` | Clone an existing agent |
+| **queue** | `queue <agent-key>` | Open or inspect the agent's durable queue-work batch |
+| **queue-work** | `queue-work complete <agent-key> <batch-id> --dispositions-json JSON` | Record one outcome per queue-work entry |
 | **schedule** | `schedule list` | List all schedules and daemon status |
 | | `schedule validate` | Validate schedule config |
 | | `schedule run <schedule-key>` | Trigger a schedule immediately |
@@ -106,6 +108,7 @@ The declaration is not cryptographic authentication. Use it only with the actual
 - Keep delegation server-local. Self-parenting, cycles, unknown parents, conflicting re-parenting, and ancestor prompting are invalid.
 - Treat a direct user prompt to a delegated child as Takeover. It changes the edge owner to `user`, advances its ownership generation, suppresses pending reports, and cancels queued parent resumes.
 - Let only a prompt declared with the recorded parent key restore Delegation. Parent reclaim advances the generation and cancels any unresolved child inquiry before storing the prompt.
+- Once queued work reaches an agent, let that receiver process the complete pending queue as one native input. The newest entry supplies the batch owner and generation; earlier per-entry stamps do not split the batch.
 - Expect every terminal delegated run to create one deduplicated report when callbacks are connected. Tycho stamps ownership at launch and rejects stale generations.
 - Let Tycho accumulate eligible terminal reports for the same parent into one deterministic callback and resume. It waits while the parent or another agent in the same workspace is running.
 - Treat callback disconnect as suppression, not deletion. Disconnected runs are not replayed after reconnect, and archived parents receive history without being resumed.
@@ -186,6 +189,28 @@ tycho agent send my-project-agent-3 "Continue the delegated task" --parent-agent
 ```
 
 Errors if the agent is already running. Prints pid and log path on success.
+
+---
+
+## `tycho queue`
+
+Open every currently pending delegated reply and user prompt for one agent as a single FIFO-preserving durable batch, or inspect the same batch again idempotently:
+
+```bash
+tycho queue my-project-agent-3
+tycho queue my-project-agent-3 --server peer --json
+```
+
+A successful first read records one Conversation block labeled **Read queue** and moves the entries into an open queue-work batch; it does not mark them complete. The response leads with required user instructions while retaining the canonical FIFO entries and structured delegated reports. Entries arriving after the locked read remain queued for the next batch. Relevant agent command responses include a non-destructive queue notice for the current managed agent when `TYCHO_AGENT_KEY` has pending or open work.
+
+Before returning a successful agent result, record exactly one source-appropriate outcome for every stable entry ID:
+
+```bash
+tycho queue-work complete my-project-agent-3 BATCH_ID \
+  --dispositions-json '[{"entry_id":"USER_ID","outcome":"completed"},{"entry_id":"REPORT_ID","outcome":"incorporated"}]'
+```
+
+User outcomes are `completed`, `needs_input`, or `declined_with_reason`; delegated callback outcomes are `incorporated` or `superseded_with_reason`. The two `*_with_reason` outcomes require a non-empty `reason`. Missing, duplicate, unknown, conflicting, or invalid outcomes leave the batch open. An identical completion is idempotent. Tycho gates a false success and resumes the same native session once with the unresolved checklist; a second incomplete attempt stays open without looping.
 
 ---
 

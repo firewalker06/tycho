@@ -1,0 +1,144 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "rbconfig"
+require "socket"
+require "tmpdir"
+require "time"
+
+$stdout.sync = true
+
+ROOT = File.expand_path("..", __dir__)
+FIXTURE_ROOT = File.expand_path(ENV.fetch("TYCHO_QUEUE_READ_FIXTURE_ROOT", Dir.mktmpdir("tycho-queue-read")))
+PORT = Integer(ENV.fetch("TYCHO_QUEUE_READ_FIXTURE_PORT", "0"), 10)
+
+def free_port
+  server = TCPServer.new("127.0.0.1", 0)
+  server.addr[1]
+ensure
+  server&.close
+end
+
+port = PORT.zero? ? free_port : PORT
+config_dir = File.join(FIXTURE_ROOT, "config")
+logs_root = File.join(FIXTURE_ROOT, "logs")
+workspace = File.join(FIXTURE_ROOT, "workspace")
+FileUtils.mkdir_p([config_dir, logs_root, workspace, File.join(logs_root, "agents")])
+
+config_path = File.join(config_dir, "hq.yml")
+prompts_path = File.join(config_dir, "system_prompts.yml")
+schedules_path = File.join(config_dir, "schedules.yml")
+File.write(config_path, <<~YAML)
+  projects:
+    - key: queue-demo
+      name: Queue read acceptance
+      path: #{workspace.inspect}
+      agent: codex
+YAML
+File.write(prompts_path, "custom: Coordinate queued work.\n")
+File.write(schedules_path, "---\nschedules: []\n")
+
+ENV["TYCHO_CONFIG_PATH"] = config_path
+ENV["TYCHO_SYSTEM_PROMPTS_PATH"] = prompts_path
+ENV["TYCHO_SCHEDULES_PATH"] = schedules_path
+ENV["TYCHO_LOGS_ROOT"] = logs_root
+ENV["TYCHO_DISABLE_SCHEDULE_PROCESS_DETECTION"] = "1"
+ENV["TYCHO_REMOTE_TOKEN"] = ""
+
+require_relative "../lib/hq/registry"
+require_relative "../lib/hq/domain/agent_memory"
+require_relative "../lib/hq/domain/agent_store"
+require_relative "../lib/hq/domain/managed_agent"
+
+now = Time.now
+sleeper_pid = Process.spawn(RbConfig.ruby, "-e", "sleep 3600", pgroup: true, out: File::NULL, err: File::NULL)
+raw_log = File.join(logs_root, "agents", "queue-demo-orchestrator.raw.log")
+agent = HQ::ManagedAgent.new(
+  key: "queue-demo-orchestrator",
+  name: "Queue workflow orchestrator",
+  project_key: "queue-demo",
+  template_key: "custom",
+  workspace:,
+  prompt: "Monitor delegated work and process pending queue entries.",
+  agent: "codex",
+  pid: sleeper_pid,
+  started_at: now,
+  runs: [HQ::ManagedAgent::AgentRun.new(started_at: now, status: "running", log_path: raw_log)],
+  log_path: raw_log
+)
+
+delegated_payload = {
+  "type" => "delegated_agent_reports",
+  "reports" => [{
+    "agent" => { "name" => "API review agent", "agent_key" => "queue-demo-child" },
+    "status" => "success",
+    "summary" => "## Delegated result\n\nThe API contract is sound; add the visible queue-read acceptance state."
+  }]
+}
+agent.enqueue_prompt!(
+  prompt: "Update the acceptance notes after incorporating the delegated review.",
+  source: "user",
+  authority: { "owner" => "user", "generation" => 2 }
+)
+agent.enqueue_prompt!(
+  prompt: "Delegated agent reports:\n#{JSON.generate(delegated_payload)}",
+  source: "delegation_callback",
+  authority: { "owner" => "parent", "generation" => 3 }
+)
+
+registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
+HQ::AgentStore.new(registry.projects).save([agent])
+memory = HQ::AgentMemory.new(agent)
+memory.append_user_message!("Check for pending delegated and user work before continuing.", created_at: now - 4)
+memory.append_tool_summary!(
+  "$ tycho agent status queue-demo-orchestrator --json\n" \
+  '"queue_notice":{"pending_count":2,"delegated_reply_count":1,"user_prompt_count":1}',
+  tool_name: "exec_command",
+  created_at: now - 3
+)
+memory.append_assistant_message!(
+  "The status response includes `queue_notice`: two pending entries, one user prompt and one delegated reply.",
+  created_at: now - 2
+)
+memory.append_assistant_message!(
+  "I recognize the pending work and will invoke `tycho queue queue-demo-orchestrator` once to read the consolidated batch.",
+  created_at: now - 1
+)
+memory.append_tool_summary!(
+  "$ tycho queue queue-demo-orchestrator --json",
+  tool_name: "exec_command",
+  created_at: now
+)
+
+server_pid = Process.spawn(
+  RbConfig.ruby,
+  File.join(ROOT, "bin", "tycho"),
+  "serve", "--host", "127.0.0.1", "--port", port.to_s,
+  out: $stdout,
+  err: $stderr
+)
+
+read_command = [
+  "TYCHO_CONFIG_PATH=#{config_path}",
+  "TYCHO_SYSTEM_PROMPTS_PATH=#{prompts_path}",
+  "TYCHO_LOGS_ROOT=#{logs_root}",
+  "bundle exec bin/tycho queue queue-demo-orchestrator --json"
+].join(" ")
+
+puts "Queue-read fixture: http://127.0.0.1:#{port}/ui#agent/queue-demo-orchestrator"
+puts "Pending stage: expand ‘2 queued’ to show the user prompt and delegated reply."
+puts "Read stage command: #{read_command}"
+puts "After the command, refresh Conversation and click ‘Read queue, 2 entries read’."
+puts "Fixture root: #{FIXTURE_ROOT}"
+
+cleanup = lambda do
+  Process.kill("TERM", server_pid) if server_pid
+  Process.kill("TERM", -sleeper_pid) if sleeper_pid
+rescue Errno::ESRCH
+  nil
+end
+%w[INT TERM].each { |signal| Signal.trap(signal) { cleanup.call; exit } }
+at_exit { cleanup.call }
+Process.wait(server_pid)

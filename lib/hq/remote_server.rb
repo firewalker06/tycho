@@ -621,7 +621,12 @@ module HQ
           return ok(service.edit_queued_prompt(key, tail[1], body)) if %w[PATCH PUT].include?(method)
           return ok(service.delete_queued_prompt(key, tail[1])) if method == "DELETE"
         end
+        return ok(service.prompt_queue_notice(key)) if method == "GET" && tail == ["prompt-queue", "notice"]
+        return ok(service.read_prompt_queue(key)) if method == "POST" && tail == ["prompt-queue", "read"]
         return ok(service.retry_prompt_queue(key)) if method == "POST" && tail == ["prompt-queue", "retry"]
+        if method == "POST" && tail.length == 3 && tail.first == "queue-work" && tail[2] == "complete"
+          return ok(service.complete_queue_work(key, tail[1], body))
+        end
         if method == "POST" && [%w[messages], %w[prompt]].include?(tail)
           result = service.submit_prompt(key, body, actor:)
           return result[:queued] ? accepted(result) : ok(result)
@@ -3910,6 +3915,20 @@ module HQ
       reference_context = target.personal_assistant? ? delegation_reference_context([target]) : delegation_reference_context
       blocks.map do |block|
         content, metadata = sanitized_delegation_block(block.content.to_s, block.metadata, reference_context:)
+        if metadata.is_a?(Hash) && metadata["queue_read"] == true
+          batch = target.queue_work_batch(metadata["queue_work_batch_id"])
+          if batch
+            queue_payload = QueueWork.payload(batch)
+            metadata = metadata.merge(
+              "queue_work_state" => queue_payload["state"],
+              "queue_work_projection" => queue_payload.slice(
+                "batch_id", "state", "user_instruction_count", "report_count", "required_actions",
+                "contextual_reports", "entry_ids", "unresolved_entry_ids"
+              ),
+              "queue_work_dispositions" => queue_payload["dispositions"]
+            )
+          end
+        end
         {
           kind: block.kind.to_s,
           role: block.role,
@@ -4053,6 +4072,61 @@ module HQ
       { agent: agent_payload(target), conversation: conversation(target.key) }
     rescue ArgumentError => e
       raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
+    end
+
+    def read_prompt_queue(key)
+      reject_personal_assistant_control!(find_agent!(key))
+      result = @agent_store.read_prompt_queue!(key)
+      entries = Array(result.fetch(:entries))
+      delegated = entries.count { |entry| entry["source"] == "delegation_callback" }
+      {
+        read: true,
+        agent_key: key.to_s,
+        consumed_count: entries.length,
+        delegated_reply_count: delegated,
+        user_prompt_count: entries.length - delegated,
+        content: result.fetch(:content),
+        entries: result.fetch(:read_entries),
+        attachments: Array(result.fetch(:attachments)),
+        read_id: result.fetch(:read_id),
+        batch: result.fetch(:batch),
+        idempotent: result.fetch(:idempotent)
+      }
+    rescue ArgumentError => e
+      status = e.message.start_with?("Unknown agent") ? 404 : 409
+      raise Error.new(e.message, status:)
+    end
+
+    def complete_queue_work(key, batch_id, attrs = {})
+      reject_personal_assistant_control!(find_agent!(key))
+      dispositions = attrs["dispositions"]
+      raise Error.new("Dispositions must be an array", status: 400) unless dispositions.is_a?(Array)
+
+      result = @agent_store.complete_queue_work!(key, batch_id:, dispositions:)
+      @agent_activity_snapshot.upsert!(result.fetch("agent"))
+      result.reject { |name, _value| name.to_s == "agent" }
+    rescue ArgumentError => e
+      missing = e.message.start_with?("Unknown agent") || e.message.start_with?("Unknown queue-work batch")
+      raise Error.new(e.message, status: missing ? 404 : 409)
+    end
+
+    def prompt_queue_notice(key)
+      agents, = @agent_store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false)
+      target = agents.find { |agent| agent.key == key.to_s }
+      raise Error.new("Unknown agent: #{key}", status: 404) unless target
+
+      entries = target.queued_prompts
+      return { queue_notice: nil } if entries.empty?
+
+      delegated = entries.count { |entry| entry["source"] == "delegation_callback" }
+      {
+        queue_notice: {
+          agent_key: target.key,
+          pending_count: entries.length,
+          delegated_reply_count: delegated,
+          user_prompt_count: entries.length - delegated
+        }
+      }
     end
 
     def answer_inquiry(key, inquiry_id, attrs = {}, actor: DelegationActor.user_actor, **attribute_keywords)
@@ -6349,6 +6423,7 @@ module HQ
           prompt_queue_entry_payload(agent, entry).merge("position" => index + 1)
         end,
         "pending_count" => entries.length,
+        "queue_work" => agent.queue_work_payload,
         "dispatch_error" => agent.prompt_queue_dispatch_error,
         "blocked_by_inquiry" => agent.inquiry_blocking_prompt_queue?
       }

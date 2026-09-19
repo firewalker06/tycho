@@ -39,6 +39,7 @@ module ManagedAgentTest
     assert_current_agent_context_covers_root_delegation_and_skill_states
     assert_current_agent_context_reaches_real_root_and_delegated_launches
     assert_summary_sections_guidance_reaches_every_harness_run
+    assert_queue_work_contract_reaches_every_harness
     assert_response_style_applies_to_cold_and_resumed_runs
     assert_native_resume_includes_same_second_follow_up
     assert_native_resume_includes_action_receipt_once
@@ -1626,6 +1627,28 @@ module ManagedAgentTest
       )
       resumed.add_user_message!("Continue the substantive review.")
       assert_summary_sections_guidance(resumed.send(:build_command).fetch(:command).last, harness, "resumed")
+    end
+  end
+
+  def assert_queue_work_contract_reaches_every_harness
+    Dir.mktmpdir("hq-queue-work-harness-test") do |dir|
+      %w[codex claude opencode pi].each do |harness|
+        agent = HQ::ManagedAgent.new(
+          key: "#{harness}-queue-work", name: "#{harness} QueueWork", project_key: "web",
+          template_key: "custom", workspace: dir, prompt: "Coordinate work", agent: harness,
+          log_path: File.join(dir, "#{harness}.raw.log")
+        )
+        agent.enqueue_prompt!(prompt: "Delegated agent reports:\n{\"type\":\"delegated_agent_reports\",\"reports\":[]}",
+                              source: "delegation_callback", id: "#{harness}-report")
+        agent.enqueue_prompt!(prompt: "Apply the required user instruction", source: "user", id: "#{harness}-user")
+        batch = agent.open_queue_work_batch!
+        prompt = agent.send(:prompt_for_execution, response_style: "", include_hidden_guidance: false)
+        assert(prompt.start_with?("[TYCHO QUEUE WORK CONTRACT — REQUIRED]") &&
+               prompt.include?(%Q{"batch_id":"#{batch['id']}"}) &&
+               prompt.include?(%Q{"entry_ids":["#{harness}-report","#{harness}-user"]}) &&
+               prompt.index("Apply the required user instruction") < prompt.index("Delegated agent reports:"),
+               "expected #{harness} to receive the same instructions-first canonical QueueWork contract")
+      end
     end
   end
 

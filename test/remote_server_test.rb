@@ -38,6 +38,7 @@ module RemoteServerTest
     assert_concurrent_pull_request_diff_refreshes_are_coalesced
     assert_remote_prompt_accepts_pull_request_context
     assert_remote_prompt_accepts_uploaded_attachments
+    assert_remote_queue_read_preserves_canonical_attachments
     assert_remote_prompt_start_accepts_dash_prefixed_message
     assert_remote_agent_conversation_includes_run_summary
     assert_remote_agent_debug_endpoints
@@ -91,6 +92,83 @@ module RemoteServerTest
     assert_server_daemonizes_after_startup_to_log
     assert_server_prints_request_logs
     puts "remote_server_test: ok"
+  end
+
+  def assert_remote_queue_read_preserves_canonical_attachments
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      attachment_path = File.join(workspace, "shared.txt")
+      File.write(attachment_path, "shared attachment")
+      registry = registry_for_project(dir, workspace)
+      now = Time.now
+      pid = Process.spawn(RbConfig.ruby, "-e", "sleep 60", pgroup: true, out: File::NULL, err: File::NULL)
+      agent = HQ::ManagedAgent.new(
+        key: "remote-queue-attachments", name: "Remote queue attachments", project_key: "web",
+        template_key: "custom", workspace:, prompt: "Work", agent: "codex", pid:, started_at: now,
+        runs: [HQ::ManagedAgent::AgentRun.new(started_at: now, status: "running",
+                                              log_path: File.join(HQ::AGENT_LOGS_DIR, "remote-queue.raw.log"))],
+        log_path: File.join(HQ::AGENT_LOGS_DIR, "remote-queue.raw.log")
+      )
+      first_link = {
+        "type" => "link", "title" => "Shared URL", "url" => "https://example.test/shared",
+        "description" => "Delegated link", "source" => "delegate"
+      }
+      second_link = first_link.merge("description" => "User link", "source" => "user")
+      first_file = {
+        "type" => "file", "title" => "Shared file", "path" => attachment_path,
+        "description" => "Delegated file", "source" => "delegate"
+      }
+      second_file = first_file.merge("description" => "User file", "source" => "user")
+      agent.enqueue_prompt!(
+        prompt: "Delegated input", source: "delegation_callback",
+        attachments: [first_link, first_link.dup, first_file, first_file.dup]
+      )
+      agent.enqueue_prompt!(
+        prompt: "User input", source: "user",
+        attachments: [second_link, second_link.dup, second_file, second_file.dup]
+      )
+      HQ::AgentStore.new(registry.projects).save([agent])
+
+      service = HQ::RemoteService.new(registry:)
+      response = HQ::RemoteServer.new.send(
+        :route, service, "POST", "/agents/#{agent.key}/prompt-queue/read", {}, nil
+      ).fetch(:body)
+      attachments = response.fetch(:attachments)
+      entries = response.fetch(:entries)
+      assert(entries.map { |entry| entry.values_at("source", "state") } ==
+             [["delegation_callback", "in_progress"], ["user", "in_progress"]],
+             "expected Remote HTTP queue reads to return structured FIFO entries")
+      assert(attachments.map { |attachment| attachment["description"] } ==
+             ["Delegated link", "Delegated file", "User link", "User file"],
+             "expected Remote HTTP queue reads to preserve distinct metadata and dedupe exact records")
+      read_block = service.conversation(agent.key).find { |block| block.dig(:metadata, "queue_read") == true }
+      assert(read_block && read_block.dig(:metadata, "attachments") == attachments &&
+             read_block.dig(:metadata, "prompt_queue_entries") == entries,
+             "expected Remote HTTP output and the Read queue Conversation block to share canonical details")
+
+      incomplete = HQ::RemoteServer.new.send(
+        :route, service, "POST", "/agents/#{agent.key}/queue-work/#{response.dig(:batch, "batch_id")}/complete",
+        { "dispositions" => [{ "entry_id" => entries.fetch(1).fetch("id"), "outcome" => "completed" }] }, nil
+      ).fetch(:body)
+      assert(incomplete.fetch("unresolved_entry_ids") == [entries.fetch(0).fetch("id")] &&
+             incomplete.dig("batch", "state") == "in_progress",
+             "expected incomplete Remote dispositions to leave the batch open")
+      completed = HQ::RemoteServer.new.send(
+        :route, service, "POST", "/agents/#{agent.key}/queue-work/#{response.dig(:batch, "batch_id")}/complete",
+        { "dispositions" => [{ "entry_id" => entries.fetch(0).fetch("id"), "outcome" => "incorporated" }] }, nil
+      ).fetch(:body)
+      resolved_block = service.conversation(agent.key).find { |block| block.dig(:metadata, "queue_read") == true }
+      assert(completed.fetch("accepted") && completed.dig("batch", "state") == "resolved" &&
+             resolved_block.dig(:metadata, "queue_work_state") == "resolved" &&
+             resolved_block.dig(:metadata, "queue_work_dispositions") == completed.dig("batch", "dispositions"),
+             "expected Remote completion and Conversation to project the same resolved batch")
+    ensure
+      if pid
+        Process.kill("TERM", -pid)
+        Process.wait(pid)
+      end
+    end
   end
 
   def assert_remote_user_message_auto_resumes_awaiting_schedule
@@ -7508,6 +7586,11 @@ module RemoteServerTest
            "expected Remote UI parsed reply keys to render as all-caps")
     assert(js[:body].include?('return inquiryResponseBlock(block) ? "user answers" : blockLabel(block);'),
            "expected Remote UI inquiry responses to use the user answers label")
+    assert(js[:body].include?("function renderQueueReadConversationBlock") &&
+           js[:body].include?('data-queue-read-block') &&
+           js[:body].include?('renderPromptQueueEntry(options.agent || {}, entry, entryIndex, {') &&
+           js[:body].include?('requiredInstruction: requiredActionIds.has(String(entry?.id || ""))'),
+           "expected explicit queue reads to render as one expandable structured Conversation block")
     assert(js[:body].include?('class="parsed-json-key"'),
            "expected Remote UI parsed replies to style key labels")
     assert(js[:body].include?('class="parsed-json-value"'),

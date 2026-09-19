@@ -24,6 +24,7 @@ module CLICommandTest
     assert_version_output
     assert_project_commands_manage_full_lifecycle
     assert_project_command_and_help_paths_do_not_create_projects
+    assert_agent_queue_notice_and_read_outputs
     assert_remote_server_commands_manage_full_agent_lifecycle
     assert_remote_client_reports_timeout_and_unsupported_operation
     assert_debug_claude_is_listed_in_usage
@@ -189,6 +190,116 @@ module CLICommandTest
         started = run_tycho(local_env, "agent", "run", agent_key, "--server", "peer", "--json")
         assert(started.fetch(:status).success? && JSON.parse(started.fetch(:stdout)).fetch("running"),
                "expected remote agent run to start the target")
+        queued_remote = run_tycho(local_env, "agent", "send", agent_key, "Queued remote input",
+                                  "--server", "peer", "--json")
+        assert(queued_remote.fetch(:status).success? && JSON.parse(queued_remote.fetch(:stdout)).fetch("queued"),
+               "expected remote CLI send to queue while the target is running")
+        remote_agent_env = local_env.merge("TYCHO_AGENT_KEY" => agent_key)
+        remote_list = JSON.parse(run_tycho(remote_agent_env, "agent", "list", "--server", "peer", "--json")
+                                 .fetch(:stdout))
+        assert(remote_list.fetch("agents").any? { |item| item["key"] == agent_key } &&
+               remote_list.dig("queue_notice", "pending_count") == 1,
+               "expected remote structured list output to include the remote queue notice")
+        remote_human_list = run_tycho(remote_agent_env, "agent", "list", "--server", "peer")
+        assert(remote_human_list.fetch(:stdout).include?("Pending queue for #{agent_key}: 1 entry"),
+               "expected remote human list output to include the remote queue notice")
+        remote_status = JSON.parse(run_tycho(remote_agent_env, "agent", "status", agent_key,
+                                             "--server", "peer", "--json").fetch(:stdout))
+        assert(remote_status.dig("queue_notice", "pending_count") == 1,
+               "expected remote structured status output to include the remote queue notice")
+        remote_human_status = run_tycho(remote_agent_env, "agent", "status", agent_key, "--server", "peer")
+        assert(remote_human_status.fetch(:stdout).include?("Pending queue for #{agent_key}: 1 entry"),
+               "expected remote human status output to include the remote queue notice")
+        remote_json_send = JSON.parse(run_tycho(remote_agent_env, "agent", "send", agent_key,
+                                                "Remote JSON notice", "--server", "peer", "--json").fetch(:stdout))
+        assert(remote_json_send.dig("queue_notice", "pending_count") == 2,
+               "expected remote structured send output to include the remote queue notice")
+        remote_human_send = run_tycho(remote_agent_env, "agent", "send", agent_key,
+                                      "Remote human notice", "--server", "peer")
+        assert(remote_human_send.fetch(:stdout).include?("Pending queue for #{agent_key}: 3 entries"),
+               "expected remote human send output to include the remote queue notice")
+
+        read_remote = run_tycho(remote_agent_env, "queue", agent_key, "--server", "peer", "--json")
+        assert(read_remote.fetch(:status).success?,
+               "expected remote queue read to succeed: #{read_remote.fetch(:stderr)}")
+        read_remote_payload = JSON.parse(read_remote.fetch(:stdout))
+        assert(read_remote_payload.fetch("consumed_count") == 3 &&
+               read_remote_payload.fetch("content").include?("TYCHO QUEUE WORK CONTRACT") &&
+               read_remote_payload.dig("batch", "entries").map { |entry| entry["prompt"] } ==
+               ["Queued remote input", "Remote JSON notice", "Remote human notice"],
+               "expected remote CLI queue read to open and return one canonical batch")
+        remote_dispositions = read_remote_payload.dig("batch", "entries").map do |entry|
+          { "entry_id" => entry.fetch("id"), "outcome" => "completed" }
+        end
+        remote_complete = run_tycho(
+          remote_agent_env, "queue-work", "complete", agent_key,
+          read_remote_payload.dig("batch", "batch_id"), "--dispositions-json", JSON.generate(remote_dispositions),
+          "--server", "peer", "--json"
+        )
+        assert(remote_complete.fetch(:status).success? &&
+               JSON.parse(remote_complete.fetch(:stdout)).dig("batch", "state") == "resolved",
+               "expected Remote queue-work completion parity")
+
+        remote_config = HQ::RemoteServerConfig.new(
+          key: "peer", name: "Test Peer", url: "http://127.0.0.1:#{port}", token:, token_env: ""
+        )
+        remote_client = HQ::RemoteCLIClient.new(remote_config)
+        remote_client.request(
+          "POST", "/agents/#{agent_key}/messages",
+          body: {
+            "prompt" => "Remote attachment JSON",
+            "start" => true,
+            "attachments" => [{
+              "filename" => "remote-json.txt", "mime_type" => "text/plain",
+              "content_base64" => ["remote JSON attachment"].pack("m0")
+            }]
+          }
+        )
+        attachment_read = JSON.parse(run_tycho(remote_agent_env, "queue", agent_key,
+                                               "--server", "peer", "--json").fetch(:stdout))
+        remote_attachment = attachment_read.fetch("attachments").fetch(0)
+        assert(remote_attachment.fetch("path").end_with?("/original.txt") &&
+               remote_attachment.fetch("title") == "remote-json.txt" &&
+               remote_attachment.fetch("mime_type") == "text/plain" &&
+               remote_attachment.fetch("source") == "remote_upload",
+               "expected remote structured reads to return attachment targets and metadata")
+        remote_conversation = remote_client.request("GET", "/agents/#{agent_key}/conversation").fetch("conversation")
+        remote_read_event = remote_conversation.find do |event|
+          event.dig("metadata", "queue_read") == true &&
+            event.dig("metadata", "attachments") == attachment_read.fetch("attachments")
+        end
+        assert(remote_read_event,
+               "expected the Remote read response attachments to match the single Read queue event")
+        attachment_dispositions = attachment_read.dig("batch", "entries").map do |entry|
+          { "entry_id" => entry.fetch("id"), "outcome" => "completed" }
+        end
+        run_tycho(remote_agent_env, "queue-work", "complete", agent_key,
+                  attachment_read.dig("batch", "batch_id"), "--dispositions-json",
+                  JSON.generate(attachment_dispositions), "--server", "peer", "--json")
+
+        remote_client.request(
+          "POST", "/agents/#{agent_key}/messages",
+          body: {
+            "prompt" => "Remote attachment human",
+            "start" => true,
+            "attachments" => [{
+              "filename" => "remote-human.txt", "mime_type" => "text/plain",
+              "content_base64" => ["remote human attachment"].pack("m0")
+            }]
+          }
+        )
+        human_attachment_read = run_tycho(remote_agent_env, "queue", agent_key, "--server", "peer")
+        assert(human_attachment_read.fetch(:stdout).include?("Attachments:") &&
+               human_attachment_read.fetch(:stdout).include?("remote-human.txt") &&
+               human_attachment_read.fetch(:stdout).include?("\"source\":\"remote_upload\""),
+               "expected remote human reads to return attachment targets and metadata")
+        human_open = JSON.parse(run_tycho(remote_agent_env, "queue", agent_key, "--server", "peer", "--json").fetch(:stdout))
+        human_dispositions = human_open.dig("batch", "entries").map do |entry|
+          { "entry_id" => entry.fetch("id"), "outcome" => "completed" }
+        end
+        run_tycho(remote_agent_env, "queue-work", "complete", agent_key,
+                  human_open.dig("batch", "batch_id"), "--dispositions-json", JSON.generate(human_dispositions),
+                  "--server", "peer", "--json")
         stopped = run_tycho(local_env, "agent", "stop", agent_key, "--server", "peer", "--json")
         assert(stopped.fetch(:status).success? && !JSON.parse(stopped.fetch(:stdout)).fetch("running"),
                "expected remote agent stop to stop the target")
@@ -425,6 +536,155 @@ module CLICommandTest
       assert(!missing.fetch(:status).success?, "expected archived project to be absent from project show")
       assert(missing.fetch(:stderr).empty? && JSON.parse(missing.fetch(:stdout)).fetch("error") == "Unknown project: demo",
              "expected clear JSON missing-project error")
+    end
+  end
+
+  def assert_agent_queue_notice_and_read_outputs
+    Dir.mktmpdir("hq-cli-queue-test") do |dir|
+      workspace = File.join(dir, "workspace")
+      logs_root = File.join(dir, "logs")
+      agent_logs = File.join(logs_root, "agents")
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      FileUtils.mkdir_p([workspace, agent_logs])
+      File.write(config_path, <<~YAML)
+        projects:
+          - key: demo
+            name: Demo
+            path: #{workspace}
+            agent: codex
+      YAML
+      File.write(prompts_path, "{}\n")
+      pid = Process.spawn(RbConfig.ruby, "-e", "sleep 60", pgroup: true, out: File::NULL, err: File::NULL)
+      now = Time.now
+      agent = HQ::ManagedAgent.new(
+        key: "queue-cli-agent", name: "Queue CLI", project_key: "demo", template_key: "custom",
+        workspace:, prompt: "Work", agent: "codex", pid:, started_at: now,
+        runs: [HQ::ManagedAgent::AgentRun.new(started_at: now, status: "running",
+                                              log_path: File.join(agent_logs, "queue-cli.raw.log"))],
+        log_path: File.join(agent_logs, "queue-cli.raw.log")
+      )
+      attachment_path = File.join(workspace, "queue-cli.txt")
+      File.write(attachment_path, "CLI attachment")
+      expected_attachments = [
+        { "type" => "link", "title" => "Review", "url" => "https://example.test/cli-review",
+          "description" => "Delegated CLI target", "source" => "delegate" },
+        { "type" => "file", "title" => "CLI note", "path" => attachment_path,
+          "mime_type" => "text/plain", "description" => "Delegated CLI file", "source" => "delegate" },
+        { "type" => "link", "title" => "Review", "url" => "https://example.test/cli-review",
+          "description" => "User CLI target", "source" => "user" },
+        { "type" => "file", "title" => "CLI note", "path" => attachment_path,
+          "mime_type" => "text/plain", "description" => "User CLI context", "source" => "user" }
+      ]
+      agent.enqueue_prompt!(prompt: "Delegated CLI result", source: "delegation_callback",
+                            attachments: [expected_attachments.fetch(0), expected_attachments.fetch(0).dup,
+                                          expected_attachments.fetch(1), expected_attachments.fetch(1).dup])
+      agent.enqueue_prompt!(prompt: "User CLI follow-up", source: "user",
+                            attachments: [expected_attachments.fetch(2), expected_attachments.fetch(2).dup,
+                                          expected_attachments.fetch(3), expected_attachments.fetch(3).dup])
+      File.write(File.join(logs_root, "managed_agents.json"), JSON.pretty_generate([agent.to_hash]))
+      env = {
+        "TYCHO_CONFIG_PATH" => config_path,
+        "TYCHO_SYSTEM_PROMPTS_PATH" => prompts_path,
+        "TYCHO_LOGS_ROOT" => logs_root,
+        "TYCHO_AGENT_KEY" => agent.key
+      }
+
+      json_status = run_tycho(env, "agent", "status", agent.key, "--json")
+      notice = JSON.parse(json_status.fetch(:stdout)).fetch("queue_notice")
+      assert(notice == {
+               "agent_key" => agent.key,
+               "pending_count" => 2,
+               "delegated_reply_count" => 1,
+               "user_prompt_count" => 1,
+               "read_command" => "tycho queue #{agent.key}"
+             }, "expected additive structured queue notice counts")
+
+      json_list = run_tycho(env, "agent", "list", "--json")
+      list_payload = JSON.parse(json_list.fetch(:stdout))
+      assert(list_payload.fetch("agents").any? { |item| item["key"] == agent.key } &&
+             list_payload.fetch("queue_notice") == notice,
+             "expected local structured agent list output to include the queue notice envelope")
+
+      human_list = run_tycho(env, "agent", "list")
+      assert(human_list.fetch(:stdout).include?(agent.key) &&
+             human_list.fetch(:stdout).include?("Pending queue for #{agent.key}: 2 entries"),
+             "expected local human agent list output to include the queue notice")
+
+      human_status = run_tycho(env, "agent", "status", agent.key)
+      assert(human_status.fetch(:stdout).include?("Pending queue for #{agent.key}: 2 entries (1 delegated, 1 user).") &&
+             human_status.fetch(:stdout).include?("Run `tycho queue #{agent.key}` to open or inspect the durable batch."),
+             "expected compatible human queue notice output")
+
+      read = run_tycho(env, "queue", agent.key, "--json")
+      payload = JSON.parse(read.fetch(:stdout))
+      assert(read.fetch(:status).success? && payload.fetch("consumed_count") == 2 &&
+             payload.fetch("delegated_reply_count") == 1 && payload.fetch("user_prompt_count") == 1 &&
+             payload.fetch("content").include?("TYCHO QUEUE WORK CONTRACT") &&
+             payload.dig("batch", "entries").map { |entry| entry["prompt"] } ==
+             ["Delegated CLI result", "User CLI follow-up"] &&
+             payload.dig("batch", "required_actions", 0, "prompt") == "User CLI follow-up" &&
+             payload.fetch("entries").map { |entry| entry.values_at("source", "state") } ==
+             [["delegation_callback", "in_progress"], ["user", "in_progress"]] &&
+             payload.fetch("attachments").map { |attachment| attachment["description"] } ==
+             ["Delegated CLI target", "Delegated CLI file", "User CLI target", "User CLI context"],
+             "expected structured queue read output to return one mixed batch with complete attachments")
+
+      completion_json = JSON.generate([
+        { "entry_id" => payload.dig("batch", "entries", 0, "id"), "outcome" => "incorporated" },
+        { "entry_id" => payload.dig("batch", "entries", 1, "id"), "outcome" => "completed" }
+      ])
+      completed = run_tycho(env, "queue-work", "complete", agent.key, payload.dig("batch", "batch_id"),
+                            "--dispositions-json", completion_json, "--json")
+      assert(completed.fetch(:status).success? && JSON.parse(completed.fetch(:stdout)).dig("batch", "state") == "resolved",
+             "expected local queue-work completion to resolve the canonical batch")
+
+      json_send = run_tycho(env, "agent", "send", agent.key, "JSON queued prompt", "--json")
+      assert(JSON.parse(json_send.fetch(:stdout)).dig("queue_notice", "pending_count") == 1,
+             "expected local structured send output to include the queue notice")
+      requeued = run_tycho(env, "agent", "send", agent.key, "Human queue read")
+      assert(requeued.fetch(:status).success? && requeued.fetch(:stdout).include?("Pending queue for #{agent.key}: 2 entries"),
+             "expected local human send output to surface the queue notice")
+      human_read = run_tycho(env, "queue", agent.key)
+      assert(human_read.fetch(:status).success? &&
+             human_read.fetch(:stdout).include?("Read queue for #{agent.key}: 2 entries (0 delegated, 2 user)") &&
+             human_read.fetch(:stdout).include?("REQUIRED") &&
+             human_read.fetch(:stdout).include?("Human queue read"),
+             "expected compatible human queue read output")
+
+      second_payload = JSON.parse(run_tycho(env, "queue", agent.key, "--json").fetch(:stdout))
+      second_dispositions = second_payload.dig("batch", "entries").map do |entry|
+        { "entry_id" => entry.fetch("id"), "outcome" => "completed" }
+      end
+      run_tycho(env, "queue-work", "complete", agent.key, second_payload.dig("batch", "batch_id"),
+                "--dispositions-json", JSON.generate(second_dispositions), "--json")
+
+      persisted_path = File.join(logs_root, "managed_agents.json")
+      persisted = JSON.parse(File.read(persisted_path)).map { |attrs| HQ::ManagedAgent.from_hash(attrs) }
+      persisted_agent = persisted.find { |candidate| candidate.key == agent.key }
+      persisted_agent.enqueue_prompt!(
+        prompt: "Human attachment read", source: "user",
+        attachments: [{ "type" => "link", "title" => "Human target",
+                        "url" => "https://example.test/human", "description" => "Human metadata" }]
+      )
+      File.write(persisted_path, JSON.pretty_generate(persisted.map(&:to_hash)))
+      human_attachment_read = run_tycho(env, "queue", agent.key)
+      assert(human_attachment_read.fetch(:status).success? &&
+             human_attachment_read.fetch(:stdout).include?("Attachments:") &&
+             human_attachment_read.fetch(:stdout).include?("https://example.test/human") &&
+             human_attachment_read.fetch(:stdout).include?("\"description\":\"Human metadata\""),
+             "expected local human queue reads to return attachment targets and metadata")
+
+      repeated = run_tycho(env, "queue", agent.key, "--json")
+      repeated_payload = JSON.parse(repeated.fetch(:stdout))
+      assert(repeated.fetch(:status).success? && repeated_payload["idempotent"] == true &&
+             repeated_payload.dig("batch", "state") == "in_progress",
+             "expected repeated reads to return the same open batch without consuming it")
+    ensure
+      if pid
+        Process.kill("TERM", -pid)
+        Process.wait(pid)
+      end
     end
   end
 

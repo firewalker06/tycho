@@ -46,22 +46,27 @@ module RemoteUIPromptQueueTest
         renderMarkdown: (value) => `<markdown>${value}</markdown>`,
         statusBadge: (label) => `<badge>${label}</badge>`,
         titleFromKey: (value) => String(value),
+        iconSvg: (name) => `<svg data-icon="${name}"></svg>`,
         URL,
       };
       vm.createContext(context);
-      vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\n${extractFunction("parseDelegatedAgentReply")}\n${extractFunction("delegatedAgentReportPayload")}\n${extractFunction("renderDelegatedAgentReply")}\n${extractFunction("renderDelegatedAgentReport")}\n${extractFunction("renderDelegatedAgentReportInquiry")}\n${extractFunction("renderDelegatedAgentReportInquiryField")}\n${extractFunction("delegatedAgentReportStatusLabel")}\n${extractFunction("delegatedAgentReportAttachments")}\n${extractFunction("renderDelegatedAgentReportAttachment")}\nthis.renderPromptQueueEntry = renderPromptQueueEntry;\nthis.parseDelegatedAgentReply = parseDelegatedAgentReply;`, context);
+      vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\n${extractFunction("parseDelegatedAgentReply")}\n${extractFunction("delegatedAgentReportPayload")}\n${extractFunction("renderDelegatedAgentReply")}\n${extractFunction("renderDelegatedAgentReport")}\n${extractFunction("renderDelegatedAgentReportInquiry")}\n${extractFunction("renderDelegatedAgentReportInquiryField")}\n${extractFunction("delegatedAgentReportStatusLabel")}\n${extractFunction("delegatedAgentReportAttachments")}\n${extractFunction("renderDelegatedAgentReportAttachment")}\n${extractFunction("blockStateToken")}\n${extractFunction("queueReadConversationBlock")}\n${extractFunction("renderQueueReadConversationBlock")}\nthis.renderPromptQueueEntry = renderPromptQueueEntry;\nthis.parseDelegatedAgentReply = parseDelegatedAgentReply;\nthis.renderQueueReadConversationBlock = renderQueueReadConversationBlock;`, context);
 
       const agent = { key: "queue-agent" };
       const legacy = context.renderPromptQueueEntry(agent, { id: "legacy", prompt: "Queued before state" }, 0);
-      if (!legacy.includes("Queued</small>") || legacy.includes('data-edit-queued-prompt="legacy" data-agent-key="queue-agent" disabled') ||
+      if (!legacy.includes("Message · Queued</span>") || legacy.includes('data-edit-queued-prompt="legacy" data-agent-key="queue-agent" disabled') ||
           legacy.includes('data-delete-queued-prompt="legacy" data-agent-key="queue-agent" disabled')) {
         throw new Error("state-less queued entries must keep enabled edit and delete controls");
       }
 
       const claimed = context.renderPromptQueueEntry(agent, { id: "claimed", prompt: "Already claimed", state: "dispatching" }, 0);
-      if (!claimed.includes("Dispatching</small>") || !claimed.includes('data-edit-queued-prompt="claimed" data-agent-key="queue-agent" disabled') ||
+      if (!claimed.includes("Message · Dispatching</span>") || !claimed.includes('data-edit-queued-prompt="claimed" data-agent-key="queue-agent" disabled') ||
           !claimed.includes('data-delete-queued-prompt="claimed" data-agent-key="queue-agent" disabled')) {
         throw new Error("claimed queue entries must keep edit and delete controls disabled");
+      }
+      const inProgress = context.renderPromptQueueEntry(agent, { id: "open-work", prompt: "Open work", state: "in_progress" }, 0);
+      if (!inProgress.includes("Message · In progress</span>")) {
+        throw new Error("open queue work must remain visibly in progress after delivery");
       }
 
       const callback = context.renderPromptQueueEntry(agent, {
@@ -116,6 +121,45 @@ module RemoteUIPromptQueueTest
       const ordinary = context.renderPromptQueueEntry(agent, { id: "ordinary", prompt: delegatedPayload, source: "user" }, 0);
       if (!ordinary.includes("Delegated agent reports:") || ordinary.includes("Success child</strong><badge>")) {
         throw new Error("ordinary messages must not be interpreted as delegated reports");
+      }
+
+      const readQueueHtml = context.renderQueueReadConversationBlock({
+        id: "queue-read-1", kind: "message", role: "user", content: `Review the failing test\n\n---\n\n${delegatedPayload}`,
+        metadata: {
+          queue_read: true, read_label: "Read queue", prompt_queue_entry_count: 2,
+          queue_work_state: "in_progress",
+          queue_work_projection: {
+            state: "in_progress",
+            required_actions: [{ id: "user-entry", prompt: "Review the failing test" }],
+          },
+          prompt_queue_entries: [
+            { id: "user-entry", prompt: "Review the failing test", source: "user", state: "in_progress", attachments: [] },
+            { id: "delegated-entry", prompt: delegatedPayload, source: "delegation_callback", state: "in_progress", attachments: [] },
+          ],
+        },
+      }, 0, { agent });
+      const userReadEntry = readQueueHtml.match(/<li class="prompt-queue-entry" data-prompt-queue-entry="user-entry">([\s\S]*?)<\/li>/)?.[1] || "";
+      const delegatedReadEntry = readQueueHtml.match(/<li class="prompt-queue-entry" data-prompt-queue-entry="delegated-entry">([\s\S]*?)<\/li>/)?.[1] || "";
+      if (!readQueueHtml.includes("data-queue-read-block") ||
+          !readQueueHtml.includes('aria-label="Read queue, 2 entries read"') ||
+          !readQueueHtml.includes('data-icon="eye"') || readQueueHtml.includes("queue-read-brand") ||
+          readQueueHtml.includes("queue-work-required-actions") || readQueueHtml.includes("Required user instructions") ||
+          (readQueueHtml.match(/data-queue-work-required/g) || []).length !== 1 ||
+          !userReadEntry.includes("data-queue-work-required") || delegatedReadEntry.includes("data-queue-work-required") ||
+          !readQueueHtml.includes("in_progress") ||
+          (readQueueHtml.match(/data-prompt-queue-entry=/g) || []).length !== 2 ||
+          !readQueueHtml.includes("Review the failing test") || !readQueueHtml.includes("Success child") ||
+          readQueueHtml.includes("---") || readQueueHtml.includes("Edit") || readQueueHtml.includes("Delete")) {
+        throw new Error("Read queue must render as a concise expandable block with structured read-only entries");
+      }
+      const legacyReadHtml = context.renderQueueReadConversationBlock({
+        id: "legacy-read", kind: "message", role: "user", content: "legacy first\n\n---\n\nlegacy second",
+        metadata: { queue_read: true, read_label: "Read queue", prompt_queue_entry_count: 2 },
+      }, 1, { agent });
+      if (!legacyReadHtml.includes('data-icon="eye"') ||
+          !legacyReadHtml.includes("legacy first") || !legacyReadHtml.includes("---") ||
+          legacyReadHtml.includes("Required user instructions") || legacyReadHtml.includes("data-queue-work-required")) {
+        throw new Error("legacy Read queue events must retain the safe raw fallback and current visual contract");
       }
 
       const requestContext = {

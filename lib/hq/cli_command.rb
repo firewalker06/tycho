@@ -337,6 +337,48 @@ module HQ
         prefix.register "clone", AgentClone
       end
 
+      class QueueRead < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Read and consume an agent's pending prompt queue"
+        argument :agent_key, required: true, desc: "Agent key"
+        remote_options
+        usage_template "queue %{agent_key} [--server SERVER_KEY] [--json]"
+
+        def call(agent_key:, **opts)
+          exit CLICommand.read_agent_queue(agent_key, opts, out: out, err: err)
+        end
+      end
+
+      register "queue", QueueRead
+
+      class QueueWorkCommand < Dry::CLI::Command
+        desc "Manage durable queue-work batches"
+
+        def call(**)
+          exit CLICommand.usage("Missing queue-work command", err: err)
+        end
+      end
+
+      class QueueWorkComplete < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Record outcomes for a queue-work batch"
+        argument :agent_key, required: true, desc: "Agent key"
+        argument :batch_id, required: true, desc: "Queue-work batch ID"
+        option :dispositions_json, required: true, desc: "JSON array of entry outcomes"
+        remote_options
+        usage_template "queue-work complete %{agent_key} %{batch_id} --dispositions-json JSON [--server SERVER_KEY] [--json]"
+
+        def call(agent_key:, batch_id:, **opts)
+          exit CLICommand.complete_agent_queue_work(agent_key, batch_id, opts, out: out, err: err)
+        end
+      end
+
+      register "queue-work", QueueWorkCommand do |prefix|
+        prefix.register "complete", QueueWorkComplete
+      end
+
       class Memory < Dry::CLI::Command
         desc "Retrieve memory handoffs"
 
@@ -684,6 +726,7 @@ module HQ
       Commands::AgentSend,
       Commands::AgentArchive,
       Commands::AgentClone,
+      Commands::QueueRead,
     ].freeze
     SCHEDULE_COMMANDS = [
       Commands::ScheduleValidate,
@@ -1574,12 +1617,14 @@ module HQ
           archive_fields: archive_fields
         )
       end
+      notice = current_agent_queue_notice
       if opts[:json]
-        out.puts JSON.pretty_generate(payload)
+        out.puts JSON.pretty_generate(agent_list_output_payload(payload, notice))
         return 0
       end
       if agents.empty?
         out.puts project_key ? "No agents for project: #{project_key}" : "No agents found."
+        print_queue_notice(notice, out:)
         return 0
       end
       headers = archive_fields ? %w[Key Project Name Parent Harness State Status Runs] : %w[Key Project Name Parent Harness Status Runs]
@@ -1589,6 +1634,7 @@ module HQ
         row + [a.status, a.run_count.to_s]
       end
       out.puts agent_table(headers, rows)
+      print_queue_notice(notice, out:)
       0
     rescue StandardError => e
       failure("Failed to list agents: #{e.message}", err: err)
@@ -1736,6 +1782,30 @@ module HQ
       failure("Failed to send message: #{e.message}", err: err)
     end
 
+    def read_agent_queue(agent_key, opts = {}, out: $stdout, err: $stderr)
+      return remote_read_agent_queue(agent_key, opts, out:, err:) if remote_requested?(opts)
+
+      result = agent_store_for_all.read_prompt_queue!(agent_key)
+      print_queue_read(queue_read_payload(agent_key, result), json: opts[:json], out:)
+      0
+    rescue StandardError => e
+      failure("Failed to read queue: #{e.message}", err:)
+    end
+
+    def complete_agent_queue_work(agent_key, batch_id, opts = {}, out: $stdout, err: $stderr)
+      dispositions = JSON.parse(opts[:dispositions_json].to_s)
+      raise ArgumentError, "Dispositions must be a JSON array" unless dispositions.is_a?(Array)
+      return remote_complete_agent_queue_work(agent_key, batch_id, dispositions, opts, out:, err:) if remote_requested?(opts)
+
+      result = agent_store_for_all.complete_queue_work!(agent_key, batch_id:, dispositions:)
+      print_queue_work_completion(queue_work_completion_payload(result), json: opts[:json], out:)
+      result.fetch("accepted") ? 0 : 1
+    rescue JSON::ParserError => e
+      failure("Invalid dispositions JSON: #{e.message}", err:)
+    rescue StandardError => e
+      failure("Failed to complete queue work: #{e.message}", err:)
+    end
+
     def archive_agent(agent_key, opts = {}, out: $stdout, err: $stderr)
       return remote_archive_agent(agent_key, opts, out:, err:) if remote_requested?(opts)
 
@@ -1753,6 +1823,8 @@ module HQ
         archive_path: archive_path,
         archived_delegation_callback_count: archived_callback_count
       }.compact
+      notice = current_agent_queue_notice
+      result[:queue_notice] = notice if notice
       if opts[:json]
         out.puts JSON.pretty_generate(result)
       else
@@ -1762,6 +1834,7 @@ module HQ
                    "#{archived_callback_count == 1 ? "callback" : "callbacks"} in archived history"
         end
         out.puts "Archive: #{archive_path}" if archive_path
+        print_queue_notice(notice, out:)
       end
       0
     rescue StandardError => e
@@ -1817,6 +1890,7 @@ module HQ
           return 1
         end
       end
+      print_queue_notice(current_agent_queue_notice, out:)
       0
     rescue StandardError => e
       failure("Failed to clone agent: #{e.message}", err: err)
@@ -2035,8 +2109,9 @@ module HQ
       agents = agents.select { |agent| agent["project_key"] == project_key.to_s } if project_key
       archive_fields = opts[:archived] || opts[:include_archived]
       agents = agents.map { |agent| remote_agent_payload(agent, archive_fields: archive_fields) }
+      notice = remote_current_agent_queue_notice(client)
       if opts[:json]
-        out.puts JSON.pretty_generate(agents)
+        out.puts JSON.pretty_generate(agent_list_output_payload(agents, notice))
       elsif agents.empty?
         out.puts project_key ? "No agents for project: #{project_key}" : "No agents found."
       else
@@ -2049,15 +2124,17 @@ module HQ
         headers = archive_fields ? %w[Key Project Name Parent Harness State Status Runs] : %w[Key Project Name Parent Harness Status Runs]
         out.puts agent_table(headers, rows)
       end
+      print_queue_notice(notice, out:) unless opts[:json]
       0
     rescue RemoteCLIClient::Error, KeyError => e
       failure(e.message, err: err)
     end
 
     def remote_agent_status(agent_key, opts, out:, err:)
-      payload = remote_client(opts[:server]).request("GET", remote_resource_path("agents", agent_key)).fetch("agent")
+      client = remote_client(opts[:server])
+      payload = client.request("GET", remote_resource_path("agents", agent_key)).fetch("agent")
       payload = remote_agent_payload(payload, archive_fields: payload["archived"] == true)
-      print_agent_status(payload, json: opts[:json], out: out)
+      print_agent_status(payload, json: opts[:json], out: out, notice: remote_current_agent_queue_notice(client))
       0
     rescue RemoteCLIClient::Error, KeyError => e
       failure(e.message, err: err)
@@ -2109,12 +2186,37 @@ module HQ
         }.reject { |_key, value| value.to_s.empty? }
       )
       payload = remote_agent_payload(response.fetch("agent"))
+      notice = remote_current_agent_queue_notice(client)
       if response["queued"]
-        print_queued_agent(payload, response["queue_entry"], position: response["queue_position"], json: opts[:json], out: out)
+        print_queued_agent(payload, response["queue_entry"], position: response["queue_position"],
+                           json: opts[:json], out: out, notice:)
         return 0
       end
-      print_sent_agent(payload, json: opts[:json], out: out)
+      print_sent_agent(payload, json: opts[:json], out: out, notice:)
       0
+    rescue RemoteCLIClient::Error, KeyError => e
+      failure(e.message, err: err)
+    end
+
+    def remote_read_agent_queue(agent_key, opts, out:, err:)
+      payload = remote_client(opts[:server]).request(
+        "POST",
+        "#{remote_resource_path("agents", agent_key)}/prompt-queue/read"
+      )
+      print_queue_read(payload, json: opts[:json], out:)
+      0
+    rescue RemoteCLIClient::Error, KeyError => e
+      failure(e.message, err:)
+    end
+
+    def remote_complete_agent_queue_work(agent_key, batch_id, dispositions, opts, out:, err:)
+      payload = remote_client(opts[:server]).request(
+        "POST",
+        "#{remote_resource_path('agents', agent_key)}/queue-work/#{URI.encode_www_form_component(batch_id)}/complete",
+        body: { "dispositions" => dispositions }
+      )
+      print_queue_work_completion(payload, json: opts[:json], out:)
+      payload["accepted"] ? 0 : 1
     rescue RemoteCLIClient::Error, KeyError => e
       failure(e.message, err: err)
     end
@@ -2128,6 +2230,8 @@ module HQ
         "archive_path" => payload["archive_path"],
         "archived_delegation_callback_count" => payload["archived_delegation_callback_count"]
       }.compact
+      notice = current_agent_queue_notice
+      payload["queue_notice"] = notice if notice
       if opts[:json]
         out.puts JSON.pretty_generate(payload)
       else
@@ -2138,6 +2242,7 @@ module HQ
                    "#{callback_count == 1 ? "callback" : "callbacks"} in archived history"
         end
         out.puts "Archive: #{payload["archive_path"]}" unless payload["archive_path"].to_s.empty?
+        print_queue_notice(notice, out:)
       end
       0
     rescue RemoteCLIClient::Error => e
@@ -2252,7 +2357,8 @@ module HQ
     end
 
     def print_created_agent(payload, json:, out:)
-      return out.puts(JSON.pretty_generate(payload)) if json
+      notice = current_agent_queue_notice
+      return out.puts(JSON.pretty_generate(payload_with_queue_notice(payload, notice))) if json
 
       value = payload.transform_keys(&:to_s)
       out.puts "Created agent #{value["key"]}"
@@ -2266,10 +2372,11 @@ module HQ
         out.puts "  Status:  running (pid #{value["pid"]})"
         out.puts "  Log:     #{value["log_path"]}"
       end
+      print_queue_notice(notice, out:)
     end
 
-    def print_agent_status(payload, json:, out:)
-      return out.puts(JSON.pretty_generate(payload)) if json
+    def print_agent_status(payload, json:, out:, notice: current_agent_queue_notice)
+      return out.puts(JSON.pretty_generate(payload_with_queue_notice(payload, notice))) if json
 
       value = payload.transform_keys(&:to_s)
       rows = [
@@ -2297,6 +2404,7 @@ module HQ
       ]
       rows.insert(5, ["Archived at", display_timestamp(value["archived_at"])]) if value["archived"]
       out.puts detail_table(rows)
+      print_queue_notice(notice, out:)
     end
 
     def print_memory_handoffs(payload, json:, out:)
@@ -2317,22 +2425,25 @@ module HQ
     end
 
     def print_started_agent(payload, json:, out:)
-      return out.puts(JSON.pretty_generate(payload)) if json
+      notice = current_agent_queue_notice
+      return out.puts(JSON.pretty_generate(payload_with_queue_notice(payload, notice))) if json
 
       value = payload.transform_keys(&:to_s)
       out.puts "Started #{value["key"]} (pid #{value["pid"]})"
       out.puts "Log: #{value["log_path"]}"
+      print_queue_notice(notice, out:)
     end
 
-    def print_sent_agent(payload, json:, out:)
-      return out.puts(JSON.pretty_generate(payload)) if json
+    def print_sent_agent(payload, json:, out:, notice: current_agent_queue_notice)
+      return out.puts(JSON.pretty_generate(payload_with_queue_notice(payload, notice))) if json
 
       value = payload.transform_keys(&:to_s)
       out.puts "Message sent and agent started (pid #{value["pid"]})"
       out.puts "Log: #{value["log_path"]}"
+      print_queue_notice(notice, out:)
     end
 
-    def print_queued_agent(payload, entry, position: nil, json:, out:)
+    def print_queued_agent(payload, entry, position: nil, json:, out:, notice: current_agent_queue_notice)
       value = payload.transform_keys(&:to_s)
       queue_entry = entry&.transform_keys(&:to_s) || {}
       result = {
@@ -2343,17 +2454,143 @@ module HQ
         queue_entry: queue_entry.slice("id", "accepted_at", "source", "authority", "state"),
         agent: value
       }
+      result[:queue_notice] = notice if notice
       return out.puts(JSON.pretty_generate(result)) if json
 
       out.puts "Message queued for #{value["key"]} (position #{result[:queue_position]})"
-      out.puts "Agent remains on run #{value["run_count"]}; queued work will start serially."
+      out.puts "Agent remains on run #{value["run_count"]}; pending work will start as one consolidated batch."
+      print_queue_notice(notice, out:)
+    end
+
+    def queue_read_payload(agent_key, result)
+      entries = Array(result.fetch(:entries))
+      delegated = entries.count { |entry| entry["source"] == "delegation_callback" }
+      {
+        "read" => true,
+        "agent_key" => agent_key.to_s,
+        "consumed_count" => entries.length,
+        "delegated_reply_count" => delegated,
+        "user_prompt_count" => entries.length - delegated,
+        "content" => result.fetch(:content),
+        "entries" => result.fetch(:read_entries),
+        "attachments" => Array(result.fetch(:attachments)),
+        "read_id" => result.fetch(:read_id),
+        "batch" => result.fetch(:batch),
+        "idempotent" => result.fetch(:idempotent)
+      }
+    end
+
+    def print_queue_read(payload, json:, out:)
+      value = payload.transform_keys(&:to_s)
+      return out.puts(JSON.pretty_generate(value)) if json
+
+      out.puts "Read queue for #{value["agent_key"]}: #{value["consumed_count"]} " \
+               "#{value["consumed_count"].to_i == 1 ? "entry" : "entries"} " \
+               "(#{value["delegated_reply_count"]} delegated, #{value["user_prompt_count"]} user)"
+      out.puts
+      batch = value["batch"] || {}
+      out.puts "Queue-work batch: #{batch["batch_id"]} (#{batch["state"]})"
+      Array(batch["required_actions"]).each do |entry|
+        out.puts "REQUIRED [#{entry["id"]}]: #{entry["prompt"]}"
+      end
+      out.puts
+      out.puts value["content"]
+      attachments = Array(value["attachments"])
+      return if attachments.empty?
+
+      out.puts
+      out.puts "Attachments:"
+      attachments.each { |attachment| out.puts "- #{JSON.generate(attachment)}" }
+    end
+
+    def queue_work_completion_payload(result)
+      result.reject { |key, _value| key.to_s == "agent" }
+    end
+
+    def print_queue_work_completion(payload, json:, out:)
+      value = payload.transform_keys(&:to_s)
+      return out.puts(JSON.pretty_generate(value)) if json
+
+      batch = value.fetch("batch")
+      out.puts "Queue-work batch #{batch.fetch('batch_id')}: #{batch.fetch('state')}"
+      unresolved = Array(value["unresolved_entry_ids"])
+      out.puts "Unresolved entries: #{unresolved.join(', ')}" unless unresolved.empty?
+      Array(value["errors"]).each do |error|
+        out.puts "- #{error["entry_id"]}: #{error["message"]}"
+      end
     end
 
     def print_simple_agent_action(action, payload, json:, out:)
-      return out.puts(JSON.pretty_generate(payload)) if json
+      notice = current_agent_queue_notice
+      return out.puts(JSON.pretty_generate(payload_with_queue_notice(payload, notice))) if json
 
       value = payload.transform_keys(&:to_s)
       out.puts "#{action} #{value["key"]}"
+      print_queue_notice(notice, out:)
+    end
+
+    def current_agent_queue_notice
+      key = ENV["TYCHO_AGENT_KEY"].to_s.strip
+      return nil if key.empty?
+
+      store = agent_store_for_all
+      agents, = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false)
+      agent = agents.find { |candidate| candidate.key == key }
+      return nil unless agent
+
+      entries = agent.queued_prompts
+      queue_notice(key, entries)
+    rescue StandardError
+      nil
+    end
+
+    def remote_current_agent_queue_notice(client)
+      key = ENV["TYCHO_AGENT_KEY"].to_s.strip
+      return nil if key.empty?
+
+      notice = client.request(
+        "GET", "#{remote_resource_path("agents", key)}/prompt-queue/notice"
+      )["queue_notice"]
+      return nil unless notice
+
+      notice.merge("read_command" => "tycho queue #{key} --server #{client.server_key}")
+    rescue RemoteCLIClient::Error, KeyError
+      nil
+    end
+
+    def queue_notice(key, entries, read_command: nil)
+      return nil if entries.empty?
+
+      delegated = entries.count { |entry| entry["source"] == "delegation_callback" }
+      {
+        "agent_key" => key,
+        "pending_count" => entries.length,
+        "delegated_reply_count" => delegated,
+        "user_prompt_count" => entries.length - delegated,
+        "read_command" => read_command || "tycho queue #{key}"
+      }
+    end
+
+    def agent_list_output_payload(agents, notice)
+      return agents unless notice
+
+      { "agents" => agents, "queue_notice" => notice }
+    end
+
+    def payload_with_queue_notice(payload, notice)
+      return payload unless notice
+
+      payload.merge(queue_notice: notice)
+    end
+
+    def print_queue_notice(notice, out:)
+      return unless notice
+
+      count = notice.fetch("pending_count").to_i
+      out.puts
+      out.puts "Pending queue for #{notice.fetch("agent_key")}: #{count} #{count == 1 ? "entry" : "entries"} " \
+               "(#{notice.fetch("delegated_reply_count")} delegated, #{notice.fetch("user_prompt_count")} user)."
+      out.puts "Run `#{notice.fetch("read_command")}` to open or inspect the durable batch."
     end
 
     def display_timestamp(value)

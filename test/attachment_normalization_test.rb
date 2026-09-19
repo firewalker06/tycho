@@ -11,8 +11,8 @@ module AttachmentNormalizationTest
 
   def run!
     assert_file_and_link_attachments_are_normalized
-    assert_duplicate_attachment_targets_are_deduped
-    assert_new_attachment_records_are_prepended
+    assert_only_identical_attachment_records_are_deduped
+    assert_new_attachment_records_preserve_distinct_metadata
     assert_legacy_kind_attachments_remain_supported
     assert_invalid_attachments_are_dropped
     puts "attachment_normalization_test: ok"
@@ -67,7 +67,7 @@ module AttachmentNormalizationTest
     end
   end
 
-  def assert_duplicate_attachment_targets_are_deduped
+  def assert_only_identical_attachment_records_are_deduped
     Dir.mktmpdir("hq-attachment-normalization-test") do |dir|
       FileUtils.mkdir_p(File.join(dir, "docs"))
       notes_path = File.join(dir, "docs/project-notes.md")
@@ -93,8 +93,19 @@ module AttachmentNormalizationTest
           },
           {
             "type" => "file",
-            "title" => "Renamed project notes",
+            "title" => "Project notes",
             "path" => notes_path
+          },
+          {
+            "type" => "file",
+            "title" => "Renamed project notes",
+            "path" => notes_path,
+            "description" => "A distinct file record"
+          },
+          {
+            "type" => "link",
+            "title" => "Implementation PR",
+            "url" => "https://github.com/example/web/pull/123"
           },
           {
             "type" => "link",
@@ -104,17 +115,19 @@ module AttachmentNormalizationTest
           {
             "type" => "link",
             "title" => "Renamed implementation PR",
-            "url" => "https://github.com/example/web/pull/123"
+            "url" => "https://github.com/example/web/pull/123",
+            "description" => "A distinct link record"
           }
         ]
       )
 
-      assert(attachments.map { |item| item["title"] } == ["Project notes", "Implementation PR"],
-             "expected identical file paths and URLs to dedupe regardless of title")
+      assert(attachments.map { |item| item["title"] } ==
+             ["Project notes", "Renamed project notes", "Implementation PR", "Renamed implementation PR"],
+             "expected only identical normalized records to dedupe while target-sharing metadata survives")
     end
   end
 
-  def assert_new_attachment_records_are_prepended
+  def assert_new_attachment_records_preserve_distinct_metadata
     Dir.mktmpdir("hq-attachment-normalization-test") do |dir|
       FileUtils.mkdir_p(File.join(dir, "docs"))
       older_path = File.join(dir, "docs/older.md")
@@ -162,8 +175,9 @@ module AttachmentNormalizationTest
         created_at: Time.parse("2026-05-01 12:00:00")
       )
 
-      assert(agent.attachments.map { |item| item["title"] } == ["Renamed older notes", "Newer notes"],
-             "expected duplicate targets to be replaced at the front")
+      assert(agent.attachments.map { |item| item["title"] } ==
+             ["Renamed older notes", "Newer notes", "Older notes"],
+             "expected target-sharing records with distinct metadata to remain in newest-first order")
     end
   end
 
