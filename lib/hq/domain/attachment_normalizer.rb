@@ -272,19 +272,9 @@ module HQ
       end
 
       def dedupe(attachments)
-        seen = {}
-        deduped = []
-        attachments.each do |attachment|
-          key = [
-            attachment["type"],
-            attachment["type"] == "link" ? attachment["url"] : attachment["path"]
-          ]
-          next if seen[key]
-
-          seen[key] = true
-          deduped << attachment
-        end
-        deduped
+        # Preserve FIFO order and every semantically distinct normalized record.
+        # A shared target alone is not a duplicate: retained metadata must also match.
+        attachments.uniq
       end
     end
   end

@@ -349,11 +349,20 @@ module PromptQueueTest
       }
       file_attachment = {
         "type" => "file", "title" => "Queue note", "path" => attachment_path,
-        "mime_type" => "text/plain", "description" => "User-supplied context", "source" => "user"
+        "mime_type" => "text/plain", "description" => "Delegated file context", "source" => "delegate"
       }
+      user_link_attachment = link_attachment.merge(
+        "description" => "User review target", "source" => "user"
+      )
+      user_file_attachment = file_attachment.merge(
+        "description" => "User-supplied context", "source" => "user"
+      )
       agent.enqueue_prompt!(prompt: "delegated result", source: "delegation_callback",
-                            attachments: [link_attachment])
-      agent.enqueue_prompt!(prompt: "user follow-up", source: "user", attachments: [file_attachment])
+                            attachments: [link_attachment, link_attachment.dup,
+                                          file_attachment, file_attachment.dup])
+      agent.enqueue_prompt!(prompt: "user follow-up", source: "user",
+                            attachments: [user_link_attachment, user_link_attachment.dup,
+                                          user_file_attachment, user_file_attachment.dup])
       store = HQ::AgentStore.new(registry.projects)
       store.save([agent])
 
@@ -364,10 +373,12 @@ module PromptQueueTest
       assert(result[:entries].length == 2 && result[:content] == "delegated result\n\n---\n\nuser follow-up",
              "expected explicit reads to return one ordered mixed queue batch")
       assert(result[:attachments].map { |attachment| HQ::AttachmentNormalizer.attachment_target(attachment) } ==
-             ["https://example.test/review", attachment_path] &&
+             ["https://example.test/review", attachment_path,
+              "https://example.test/review", attachment_path] &&
              result[:attachments].map { |attachment| attachment["description"] } ==
-             ["Delegated review target", "User-supplied context"],
-             "expected explicit reads to return every consolidated attachment target and its metadata")
+             ["Delegated review target", "Delegated file context",
+              "User review target", "User-supplied context"],
+             "expected explicit reads to retain target-sharing metadata and remove only exact duplicates")
       assert(persisted.queued_prompts.empty? && events.length == 1,
              "expected a successful explicit read to consume the batch and record one conversation event")
       assert(events.first.dig("metadata", "read_label") == "Read queue" &&

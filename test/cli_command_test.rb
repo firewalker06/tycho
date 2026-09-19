@@ -545,12 +545,18 @@ module CLICommandTest
         { "type" => "link", "title" => "Review", "url" => "https://example.test/cli-review",
           "description" => "Delegated CLI target", "source" => "delegate" },
         { "type" => "file", "title" => "CLI note", "path" => attachment_path,
+          "mime_type" => "text/plain", "description" => "Delegated CLI file", "source" => "delegate" },
+        { "type" => "link", "title" => "Review", "url" => "https://example.test/cli-review",
+          "description" => "User CLI target", "source" => "user" },
+        { "type" => "file", "title" => "CLI note", "path" => attachment_path,
           "mime_type" => "text/plain", "description" => "User CLI context", "source" => "user" }
       ]
       agent.enqueue_prompt!(prompt: "Delegated CLI result", source: "delegation_callback",
-                            attachments: [expected_attachments.fetch(0)])
+                            attachments: [expected_attachments.fetch(0), expected_attachments.fetch(0).dup,
+                                          expected_attachments.fetch(1), expected_attachments.fetch(1).dup])
       agent.enqueue_prompt!(prompt: "User CLI follow-up", source: "user",
-                            attachments: [expected_attachments.fetch(1)])
+                            attachments: [expected_attachments.fetch(2), expected_attachments.fetch(2).dup,
+                                          expected_attachments.fetch(3), expected_attachments.fetch(3).dup])
       File.write(File.join(logs_root, "managed_agents.json"), JSON.pretty_generate([agent.to_hash]))
       env = {
         "TYCHO_CONFIG_PATH" => config_path,
@@ -591,7 +597,7 @@ module CLICommandTest
              payload.fetch("delegated_reply_count") == 1 && payload.fetch("user_prompt_count") == 1 &&
              payload.fetch("content") == "Delegated CLI result\n\n---\n\nUser CLI follow-up" &&
              payload.fetch("attachments").map { |attachment| attachment["description"] } ==
-             ["Delegated CLI target", "User CLI context"],
+             ["Delegated CLI target", "Delegated CLI file", "User CLI target", "User CLI context"],
              "expected structured queue read output to return one mixed batch with complete attachments")
 
       json_send = run_tycho(env, "agent", "send", agent.key, "JSON queued prompt", "--json")

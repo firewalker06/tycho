@@ -538,7 +538,7 @@ module HQ
     end
 
     def consolidated_prompt_queue_attachments(entries)
-      Array(entries).flat_map { |entry| Array(entry["attachments"]) }
+      normalize_attachments(Array(entries).flat_map { |entry| Array(entry["attachments"]) }) || []
     end
 
     def consolidated_prompt_queue_metadata(entries)
@@ -1985,7 +1985,13 @@ module HQ
     end
 
     def current_structured_attachments
-      normalize_attachments(@structured_result&.dig("attachments")) || []
+      attachments = normalize_attachments(@structured_result&.dig("attachments")) || []
+      created_at = last_run&.finished_at || @finished_at
+      return attachments unless created_at
+
+      attachments.map do |attachment|
+        attachment.merge("created_at" => attachment["created_at"] || created_at.iso8601)
+      end
     end
 
     def delete_structured_attachment!(attachment)
@@ -2566,6 +2572,8 @@ module HQ
 
     def run_summary_metadata(run)
       metadata = @structured_result.is_a?(Hash) ? @structured_result.dup : {}
+      attachments = current_structured_attachments
+      attachments.empty? ? metadata.delete("attachments") : metadata["attachments"] = attachments
       metadata["run_number"] = run_count
       metadata["_stream_sequence"] = current_run_log_lines.length + 1
       metadata["cost_snapshot"] = @cost_snapshot if @cost_snapshot.is_a?(Hash) && !@cost_snapshot.empty?

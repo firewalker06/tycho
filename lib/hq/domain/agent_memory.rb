@@ -387,7 +387,9 @@ module HQ
       text = content.to_s.strip
       return if text.empty?
 
-      normalized_attachments = normalize_attachments(attachments)
+      normalized_attachments = normalize_attachments(attachments).map do |attachment|
+        attachment.merge("created_at" => attachment["created_at"] || created_at.iso8601)
+      end
       event_metadata = metadata.is_a?(Hash) ? metadata.dup : {}
       event_metadata.merge!(attachment_metadata(normalized_attachments) || {})
       append_attachment_records!(normalized_attachments, created_at:) if normalized_attachments.any?
