@@ -7005,11 +7005,13 @@ module RemoteServerTest
            js[:body].include?('apiPut(`/projects/${encodeURIComponent(projectKey)}/workspace/file`, { path, content, version })'),
            "expected workspace previews to reuse Markdown and image renderers and offer guarded plain-text editing")
     assert(css[:body].include?("height: min(68dvh, 760px);") &&
-           css[:body].include?(".workspace-entry-list {\n  display: grid;\n  flex: 1;\n  min-width: 0;\n  min-height: 0;\n  margin: 0;\n  overflow-y: auto;\n  overscroll-behavior: contain;") &&
+           css[:body].include?(".workspace-entry-list {\n  display: grid;\n  align-content: start;\n  flex: 1;\n  min-width: 0;\n  min-height: 0;\n  margin: 0;\n  overflow-y: auto;\n  overscroll-behavior: contain;") &&
            css[:body].include?(".workspace-preview-pane > .markdown-viewer {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 14px;\n}") &&
            css[:body].include?(".workspace-preview-pane > .markdown-viewer {\n    max-height: 52dvh;\n  }") &&
            css[:body].include?("@media (max-width: 760px)"),
            "expected workspace browsing to keep directory and Markdown preview scrolling responsive")
+    assert(css[:body].include?(".workspace-entry-list {\n  display: grid;\n  align-content: start;"),
+           "expected workspace file rows to stay packed at the top instead of stretching vertically")
     assert(helpers_js[:body].include?('type: "projectWorkspace"') &&
            helpers_js[:body].include?('params.set("file", route.file)') &&
            helpers_js[:body].include?('project-workspace:${route.key}:${route.path || ""}:${route.file || ""}'),
