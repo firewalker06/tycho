@@ -49,7 +49,7 @@ module RemoteUIPromptQueueTest
         URL,
       };
       vm.createContext(context);
-      vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\n${extractFunction("parseDelegatedAgentReply")}\n${extractFunction("delegatedAgentReportPayload")}\n${extractFunction("renderDelegatedAgentReply")}\n${extractFunction("renderDelegatedAgentReport")}\n${extractFunction("renderDelegatedAgentReportInquiry")}\n${extractFunction("renderDelegatedAgentReportInquiryField")}\n${extractFunction("delegatedAgentReportStatusLabel")}\n${extractFunction("delegatedAgentReportAttachments")}\n${extractFunction("renderDelegatedAgentReportAttachment")}\nthis.renderPromptQueueEntry = renderPromptQueueEntry;\nthis.parseDelegatedAgentReply = parseDelegatedAgentReply;`, context);
+      vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\n${extractFunction("parseDelegatedAgentReply")}\n${extractFunction("delegatedAgentReportPayload")}\n${extractFunction("renderDelegatedAgentReply")}\n${extractFunction("renderDelegatedAgentReport")}\n${extractFunction("renderDelegatedAgentReportInquiry")}\n${extractFunction("renderDelegatedAgentReportInquiryField")}\n${extractFunction("delegatedAgentReportStatusLabel")}\n${extractFunction("delegatedAgentReportAttachments")}\n${extractFunction("renderDelegatedAgentReportAttachment")}\n${extractFunction("blockStateToken")}\n${extractFunction("queueReadConversationBlock")}\n${extractFunction("renderQueueReadConversationBlock")}\nthis.renderPromptQueueEntry = renderPromptQueueEntry;\nthis.parseDelegatedAgentReply = parseDelegatedAgentReply;\nthis.renderQueueReadConversationBlock = renderQueueReadConversationBlock;`, context);
 
       const agent = { key: "queue-agent" };
       const legacy = context.renderPromptQueueEntry(agent, { id: "legacy", prompt: "Queued before state" }, 0);
@@ -116,6 +116,24 @@ module RemoteUIPromptQueueTest
       const ordinary = context.renderPromptQueueEntry(agent, { id: "ordinary", prompt: delegatedPayload, source: "user" }, 0);
       if (!ordinary.includes("Delegated agent reports:") || ordinary.includes("Success child</strong><badge>")) {
         throw new Error("ordinary messages must not be interpreted as delegated reports");
+      }
+
+      const readQueueHtml = context.renderQueueReadConversationBlock({
+        id: "queue-read-1", kind: "message", role: "user", content: `Review the failing test\n\n---\n\n${delegatedPayload}`,
+        metadata: {
+          queue_read: true, read_label: "Read queue", prompt_queue_entry_count: 2,
+          prompt_queue_entries: [
+            { id: "user-entry", prompt: "Review the failing test", source: "user", state: "read", attachments: [] },
+            { id: "delegated-entry", prompt: delegatedPayload, source: "delegation_callback", state: "read", attachments: [] },
+          ],
+        },
+      }, 0, { agent });
+      if (!readQueueHtml.includes("data-queue-read-block") ||
+          !readQueueHtml.includes('aria-label="Read queue, 2 entries read"') ||
+          (readQueueHtml.match(/data-prompt-queue-entry=/g) || []).length !== 2 ||
+          !readQueueHtml.includes("Review the failing test") || !readQueueHtml.includes("Success child") ||
+          readQueueHtml.includes("---") || readQueueHtml.includes("Edit") || readQueueHtml.includes("Delete")) {
+        throw new Error("Read queue must render as a concise expandable block with structured read-only entries");
       }
 
       const requestContext = {

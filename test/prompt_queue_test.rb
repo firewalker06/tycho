@@ -372,6 +372,10 @@ module PromptQueueTest
       events = HQ::AgentMemory.new(persisted).events.select { |event| event.dig("metadata", "queue_read") }
       assert(result[:entries].length == 2 && result[:content] == "delegated result\n\n---\n\nuser follow-up",
              "expected explicit reads to return one ordered mixed queue batch")
+      assert(result[:read_entries].map { |entry| [entry["prompt"], entry["source"], entry["state"]] } == [
+               ["delegated result", "delegation_callback", "read"],
+               ["user follow-up", "user", "read"]
+             ], "expected queue reads to retain structured FIFO entries for Conversation rendering")
       assert(result[:attachments].map { |attachment| HQ::AttachmentNormalizer.attachment_target(attachment) } ==
              ["https://example.test/review", attachment_path,
               "https://example.test/review", attachment_path] &&
@@ -387,6 +391,8 @@ module PromptQueueTest
              }, "expected the queue read event to retain its label and mixed source counts")
       assert(events.first.dig("metadata", "attachments") == result[:attachments],
              "expected the single queue read event to preserve the returned attachments")
+      assert(events.first.dig("metadata", "prompt_queue_entries") == result[:read_entries],
+             "expected the single queue read event to preserve the returned structured entries")
       conversation = HQ::RemoteService.new(registry:).conversation(agent.key)
       read_block = conversation.find { |block| block.dig(:metadata, "queue_read") == true }
       assert(read_block && read_block[:content] == result[:content] &&

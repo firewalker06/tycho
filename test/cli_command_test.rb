@@ -596,6 +596,8 @@ module CLICommandTest
       assert(read.fetch(:status).success? && payload.fetch("consumed_count") == 2 &&
              payload.fetch("delegated_reply_count") == 1 && payload.fetch("user_prompt_count") == 1 &&
              payload.fetch("content") == "Delegated CLI result\n\n---\n\nUser CLI follow-up" &&
+             payload.fetch("entries").map { |entry| entry.values_at("source", "state") } ==
+             [["delegation_callback", "read"], ["user", "read"]] &&
              payload.fetch("attachments").map { |attachment| attachment["description"] } ==
              ["Delegated CLI target", "Delegated CLI file", "User CLI target", "User CLI context"],
              "expected structured queue read output to return one mixed batch with complete attachments")

@@ -4069,6 +4069,7 @@ module HQ
         delegated_reply_count: delegated,
         user_prompt_count: entries.length - delegated,
         content: result.fetch(:content),
+        entries: result.fetch(:read_entries),
         attachments: Array(result.fetch(:attachments)),
         read_id: result.fetch(:read_id)
       }

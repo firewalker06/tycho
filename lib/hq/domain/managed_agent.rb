@@ -541,6 +541,20 @@ module HQ
       normalize_attachments(Array(entries).flat_map { |entry| Array(entry["attachments"]) }) || []
     end
 
+    def consolidated_prompt_queue_entries(entries)
+      Array(entries).map do |entry|
+        {
+          "id" => entry["id"].to_s,
+          "prompt" => entry["prompt"].to_s,
+          "attachments" => normalize_attachments(entry["attachments"]) || [],
+          "accepted_at" => entry["accepted_at"],
+          "source" => entry["source"].to_s.empty? ? "user" : entry["source"].to_s,
+          "authority" => entry["authority"]&.slice("owner", "generation"),
+          "state" => "read"
+        }.compact
+      end
+    end
+
     def consolidated_prompt_queue_metadata(entries)
       entries = Array(entries)
       sources = entries.map { |entry| entry["source"].to_s.empty? ? "user" : entry["source"].to_s }

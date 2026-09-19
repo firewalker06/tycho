@@ -135,12 +135,17 @@ module RemoteServerTest
         :route, service, "POST", "/agents/#{agent.key}/prompt-queue/read", {}, nil
       ).fetch(:body)
       attachments = response.fetch(:attachments)
+      entries = response.fetch(:entries)
+      assert(entries.map { |entry| entry.values_at("source", "state") } ==
+             [["delegation_callback", "read"], ["user", "read"]],
+             "expected Remote HTTP queue reads to return structured FIFO entries")
       assert(attachments.map { |attachment| attachment["description"] } ==
              ["Delegated link", "Delegated file", "User link", "User file"],
              "expected Remote HTTP queue reads to preserve distinct metadata and dedupe exact records")
       read_block = service.conversation(agent.key).find { |block| block.dig(:metadata, "queue_read") == true }
-      assert(read_block && read_block.dig(:metadata, "attachments") == attachments,
-             "expected Remote HTTP output and the Read queue Conversation block to share canonical attachments")
+      assert(read_block && read_block.dig(:metadata, "attachments") == attachments &&
+             read_block.dig(:metadata, "prompt_queue_entries") == entries,
+             "expected Remote HTTP output and the Read queue Conversation block to share canonical details")
     ensure
       if pid
         Process.kill("TERM", -pid)
@@ -7564,8 +7569,10 @@ module RemoteServerTest
            "expected Remote UI parsed reply keys to render as all-caps")
     assert(js[:body].include?('return inquiryResponseBlock(block) ? "user answers" : blockLabel(block);'),
            "expected Remote UI inquiry responses to use the user answers label")
-    assert(js[:body].include?('if (block?.metadata?.queue_read === true) return block.metadata.read_label || "Read queue";'),
-           "expected explicit queue reads to render as one labeled Conversation block")
+    assert(js[:body].include?("function renderQueueReadConversationBlock") &&
+           js[:body].include?('data-queue-read-block') &&
+           js[:body].include?('renderPromptQueueEntry(options.agent || {}, entry, entryIndex, { readOnly: true })'),
+           "expected explicit queue reads to render as one expandable structured Conversation block")
     assert(js[:body].include?('class="parsed-json-key"'),
            "expected Remote UI parsed replies to style key labels")
     assert(js[:body].include?('class="parsed-json-value"'),

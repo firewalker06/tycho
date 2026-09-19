@@ -466,9 +466,11 @@ module HQ
 
           content = target.consolidated_prompt_queue_content(entries)
           attachments = target.consolidated_prompt_queue_attachments(entries)
+          read_entries = target.consolidated_prompt_queue_entries(entries)
           metadata = target.consolidated_prompt_queue_metadata(entries).merge(
             "queue_read" => true,
-            "read_label" => "Read queue"
+            "read_label" => "Read queue",
+            "prompt_queue_entries" => read_entries
           )
           read_id = "queue-read:#{SecureRandom.uuid}"
           AgentMemory.new(target).append_queue_read!(
@@ -481,7 +483,7 @@ module HQ
           consumed = target.consume_prompt_queue_for_read!
           mark_claim_reports_resumed!("entries" => consumed)
           save_unlocked(agents)
-          result = { agent: target, entries: consumed, content:, attachments:, read_id: }
+          result = { agent: target, entries: consumed, read_entries:, content:, attachments:, read_id: }
         end
         result
       end

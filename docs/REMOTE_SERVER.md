@@ -699,6 +699,8 @@ curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/messages \
 
 Reads every currently pending delegated reply and user prompt as one FIFO-preserving batch. The server records one Conversation block labeled **Read queue** and consumes the batch transactionally. A concurrent entry accepted after the read lock remains queued.
 
+The response and Conversation event share the same structured `entries` representation, including normalized attachments. In the Remote UI, the event appears as a concise expandable **Read queue** block with the number of entries read; its detail view reuses the prompt-queue renderer for each user prompt and delegated reply instead of showing the consolidated native prompt as raw text.
+
 ```bash
 curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/prompt-queue/read
 ```

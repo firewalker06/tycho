@@ -4345,6 +4345,35 @@ select {
   padding: 0;
 }
 
+.queue-read-block {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
+}
+
+.queue-read-brand {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--border));
+  border-radius: 5px;
+  color: var(--accent);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.queue-read-body {
+  padding: 10px 12px 12px;
+}
+
+.queue-read-list {
+  max-height: none;
+}
+
+.queue-read-legacy-content {
+  white-space: pre-wrap;
+}
+
 .message-group .message {
   width: 100%;
   margin: 0;
