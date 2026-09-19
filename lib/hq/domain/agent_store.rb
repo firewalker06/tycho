@@ -481,7 +481,7 @@ module HQ
           consumed = target.consume_prompt_queue_for_read!
           mark_claim_reports_resumed!("entries" => consumed)
           save_unlocked(agents)
-          result = { agent: target, entries: consumed, content:, read_id: }
+          result = { agent: target, entries: consumed, content:, attachments:, read_id: }
         end
         result
       end

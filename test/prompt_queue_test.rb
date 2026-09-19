@@ -341,8 +341,19 @@ module PromptQueueTest
   def assert_explicit_read_consumes_one_mixed_batch_and_records_conversation
     with_queue_store do |registry, workspace|
       agent, pid = running_agent(workspace)
-      agent.enqueue_prompt!(prompt: "delegated result", source: "delegation_callback")
-      agent.enqueue_prompt!(prompt: "user follow-up", source: "user")
+      attachment_path = File.join(workspace, "queue-note.txt")
+      File.write(attachment_path, "queued attachment")
+      link_attachment = {
+        "type" => "link", "title" => "Review", "url" => "https://example.test/review",
+        "description" => "Delegated review target", "source" => "delegate"
+      }
+      file_attachment = {
+        "type" => "file", "title" => "Queue note", "path" => attachment_path,
+        "mime_type" => "text/plain", "description" => "User-supplied context", "source" => "user"
+      }
+      agent.enqueue_prompt!(prompt: "delegated result", source: "delegation_callback",
+                            attachments: [link_attachment])
+      agent.enqueue_prompt!(prompt: "user follow-up", source: "user", attachments: [file_attachment])
       store = HQ::AgentStore.new(registry.projects)
       store.save([agent])
 
@@ -352,12 +363,19 @@ module PromptQueueTest
       events = HQ::AgentMemory.new(persisted).events.select { |event| event.dig("metadata", "queue_read") }
       assert(result[:entries].length == 2 && result[:content] == "delegated result\n\n---\n\nuser follow-up",
              "expected explicit reads to return one ordered mixed queue batch")
+      assert(result[:attachments].map { |attachment| HQ::AttachmentNormalizer.attachment_target(attachment) } ==
+             ["https://example.test/review", attachment_path] &&
+             result[:attachments].map { |attachment| attachment["description"] } ==
+             ["Delegated review target", "User-supplied context"],
+             "expected explicit reads to return every consolidated attachment target and its metadata")
       assert(persisted.queued_prompts.empty? && events.length == 1,
              "expected a successful explicit read to consume the batch and record one conversation event")
       assert(events.first.dig("metadata", "read_label") == "Read queue" &&
              events.first.dig("metadata", "prompt_queue_sources") == {
                "delegation_callback" => 1, "user" => 1
              }, "expected the queue read event to retain its label and mixed source counts")
+      assert(events.first.dig("metadata", "attachments") == result[:attachments],
+             "expected the single queue read event to preserve the returned attachments")
       conversation = HQ::RemoteService.new(registry:).conversation(agent.key)
       read_block = conversation.find { |block| block.dig(:metadata, "queue_read") == true }
       assert(read_block && read_block[:content] == result[:content] &&

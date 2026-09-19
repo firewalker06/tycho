@@ -621,6 +621,7 @@ module HQ
           return ok(service.edit_queued_prompt(key, tail[1], body)) if %w[PATCH PUT].include?(method)
           return ok(service.delete_queued_prompt(key, tail[1])) if method == "DELETE"
         end
+        return ok(service.prompt_queue_notice(key)) if method == "GET" && tail == ["prompt-queue", "notice"]
         return ok(service.read_prompt_queue(key)) if method == "POST" && tail == ["prompt-queue", "read"]
         return ok(service.retry_prompt_queue(key)) if method == "POST" && tail == ["prompt-queue", "retry"]
         if method == "POST" && [%w[messages], %w[prompt]].include?(tail)
@@ -4068,11 +4069,31 @@ module HQ
         delegated_reply_count: delegated,
         user_prompt_count: entries.length - delegated,
         content: result.fetch(:content),
+        attachments: Array(result.fetch(:attachments)),
         read_id: result.fetch(:read_id)
       }
     rescue ArgumentError => e
       status = e.message.start_with?("Unknown agent") ? 404 : 409
       raise Error.new(e.message, status:)
+    end
+
+    def prompt_queue_notice(key)
+      agents, = @agent_store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false)
+      target = agents.find { |agent| agent.key == key.to_s }
+      raise Error.new("Unknown agent: #{key}", status: 404) unless target
+
+      entries = target.queued_prompts
+      return { queue_notice: nil } if entries.empty?
+
+      delegated = entries.count { |entry| entry["source"] == "delegation_callback" }
+      {
+        queue_notice: {
+          agent_key: target.key,
+          pending_count: entries.length,
+          delegated_reply_count: delegated,
+          user_prompt_count: entries.length - delegated
+        }
+      }
     end
 
     def answer_inquiry(key, inquiry_id, attrs = {}, actor: DelegationActor.user_actor, **attribute_keywords)

@@ -1590,12 +1590,14 @@ module HQ
           archive_fields: archive_fields
         )
       end
+      notice = current_agent_queue_notice
       if opts[:json]
-        out.puts JSON.pretty_generate(payload)
+        out.puts JSON.pretty_generate(agent_list_output_payload(payload, notice))
         return 0
       end
       if agents.empty?
         out.puts project_key ? "No agents for project: #{project_key}" : "No agents found."
+        print_queue_notice(notice, out:)
         return 0
       end
       headers = archive_fields ? %w[Key Project Name Parent Harness State Status Runs] : %w[Key Project Name Parent Harness Status Runs]
@@ -1605,6 +1607,7 @@ module HQ
         row + [a.status, a.run_count.to_s]
       end
       out.puts agent_table(headers, rows)
+      print_queue_notice(notice, out:)
       0
     rescue StandardError => e
       failure("Failed to list agents: #{e.message}", err: err)
@@ -2065,8 +2068,9 @@ module HQ
       agents = agents.select { |agent| agent["project_key"] == project_key.to_s } if project_key
       archive_fields = opts[:archived] || opts[:include_archived]
       agents = agents.map { |agent| remote_agent_payload(agent, archive_fields: archive_fields) }
+      notice = remote_current_agent_queue_notice(client)
       if opts[:json]
-        out.puts JSON.pretty_generate(agents)
+        out.puts JSON.pretty_generate(agent_list_output_payload(agents, notice))
       elsif agents.empty?
         out.puts project_key ? "No agents for project: #{project_key}" : "No agents found."
       else
@@ -2079,15 +2083,17 @@ module HQ
         headers = archive_fields ? %w[Key Project Name Parent Harness State Status Runs] : %w[Key Project Name Parent Harness Status Runs]
         out.puts agent_table(headers, rows)
       end
+      print_queue_notice(notice, out:) unless opts[:json]
       0
     rescue RemoteCLIClient::Error, KeyError => e
       failure(e.message, err: err)
     end
 
     def remote_agent_status(agent_key, opts, out:, err:)
-      payload = remote_client(opts[:server]).request("GET", remote_resource_path("agents", agent_key)).fetch("agent")
+      client = remote_client(opts[:server])
+      payload = client.request("GET", remote_resource_path("agents", agent_key)).fetch("agent")
       payload = remote_agent_payload(payload, archive_fields: payload["archived"] == true)
-      print_agent_status(payload, json: opts[:json], out: out)
+      print_agent_status(payload, json: opts[:json], out: out, notice: remote_current_agent_queue_notice(client))
       0
     rescue RemoteCLIClient::Error, KeyError => e
       failure(e.message, err: err)
@@ -2139,11 +2145,13 @@ module HQ
         }.reject { |_key, value| value.to_s.empty? }
       )
       payload = remote_agent_payload(response.fetch("agent"))
+      notice = remote_current_agent_queue_notice(client)
       if response["queued"]
-        print_queued_agent(payload, response["queue_entry"], position: response["queue_position"], json: opts[:json], out: out)
+        print_queued_agent(payload, response["queue_entry"], position: response["queue_position"],
+                           json: opts[:json], out: out, notice:)
         return 0
       end
-      print_sent_agent(payload, json: opts[:json], out: out)
+      print_sent_agent(payload, json: opts[:json], out: out, notice:)
       0
     rescue RemoteCLIClient::Error, KeyError => e
       failure(e.message, err: err)
@@ -2314,8 +2322,7 @@ module HQ
       print_queue_notice(notice, out:)
     end
 
-    def print_agent_status(payload, json:, out:)
-      notice = current_agent_queue_notice
+    def print_agent_status(payload, json:, out:, notice: current_agent_queue_notice)
       return out.puts(JSON.pretty_generate(payload_with_queue_notice(payload, notice))) if json
 
       value = payload.transform_keys(&:to_s)
@@ -2374,8 +2381,7 @@ module HQ
       print_queue_notice(notice, out:)
     end
 
-    def print_sent_agent(payload, json:, out:)
-      notice = current_agent_queue_notice
+    def print_sent_agent(payload, json:, out:, notice: current_agent_queue_notice)
       return out.puts(JSON.pretty_generate(payload_with_queue_notice(payload, notice))) if json
 
       value = payload.transform_keys(&:to_s)
@@ -2384,7 +2390,7 @@ module HQ
       print_queue_notice(notice, out:)
     end
 
-    def print_queued_agent(payload, entry, position: nil, json:, out:)
+    def print_queued_agent(payload, entry, position: nil, json:, out:, notice: current_agent_queue_notice)
       value = payload.transform_keys(&:to_s)
       queue_entry = entry&.transform_keys(&:to_s) || {}
       result = {
@@ -2395,7 +2401,6 @@ module HQ
         queue_entry: queue_entry.slice("id", "accepted_at", "source", "authority", "state"),
         agent: value
       }
-      notice = current_agent_queue_notice
       result[:queue_notice] = notice if notice
       return out.puts(JSON.pretty_generate(result)) if json
 
@@ -2414,6 +2419,7 @@ module HQ
         "delegated_reply_count" => delegated,
         "user_prompt_count" => entries.length - delegated,
         "content" => result.fetch(:content),
+        "attachments" => Array(result.fetch(:attachments)),
         "read_id" => result.fetch(:read_id)
       }
     end
@@ -2427,6 +2433,12 @@ module HQ
                "(#{value["delegated_reply_count"]} delegated, #{value["user_prompt_count"]} user)"
       out.puts
       out.puts value["content"]
+      attachments = Array(value["attachments"])
+      return if attachments.empty?
+
+      out.puts
+      out.puts "Attachments:"
+      attachments.each { |attachment| out.puts "- #{JSON.generate(attachment)}" }
     end
 
     def print_simple_agent_action(action, payload, json:, out:)
@@ -2448,6 +2460,26 @@ module HQ
       return nil unless agent
 
       entries = agent.queued_prompts
+      queue_notice(key, entries)
+    rescue StandardError
+      nil
+    end
+
+    def remote_current_agent_queue_notice(client)
+      key = ENV["TYCHO_AGENT_KEY"].to_s.strip
+      return nil if key.empty?
+
+      notice = client.request(
+        "GET", "#{remote_resource_path("agents", key)}/prompt-queue/notice"
+      )["queue_notice"]
+      return nil unless notice
+
+      notice.merge("read_command" => "tycho queue #{key} --server #{client.server_key}")
+    rescue RemoteCLIClient::Error, KeyError
+      nil
+    end
+
+    def queue_notice(key, entries, read_command: nil)
       return nil if entries.empty?
 
       delegated = entries.count { |entry| entry["source"] == "delegation_callback" }
@@ -2456,10 +2488,14 @@ module HQ
         "pending_count" => entries.length,
         "delegated_reply_count" => delegated,
         "user_prompt_count" => entries.length - delegated,
-        "read_command" => "tycho queue #{key}"
+        "read_command" => read_command || "tycho queue #{key}"
       }
-    rescue StandardError
-      nil
+    end
+
+    def agent_list_output_payload(agents, notice)
+      return agents unless notice
+
+      { "agents" => agents, "queue_notice" => notice }
     end
 
     def payload_with_queue_notice(payload, notice)
