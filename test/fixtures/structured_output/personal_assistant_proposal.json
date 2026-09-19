@@ -1,0 +1,15 @@
+{
+  "status": "success",
+  "summary": "Prepared one FRED action proposal for confirmation.",
+  "summary_sections": null,
+  "inquiry": null,
+  "attachments": null,
+  "action_proposals": [
+    {
+      "type": "inspect_agents",
+      "description": "Inspect the current managed agents.",
+      "arguments": {}
+    }
+  ],
+  "memory_handoff": null
+}
