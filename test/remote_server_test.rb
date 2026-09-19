@@ -137,7 +137,7 @@ module RemoteServerTest
       attachments = response.fetch(:attachments)
       entries = response.fetch(:entries)
       assert(entries.map { |entry| entry.values_at("source", "state") } ==
-             [["delegation_callback", "read"], ["user", "read"]],
+             [["delegation_callback", "in_progress"], ["user", "in_progress"]],
              "expected Remote HTTP queue reads to return structured FIFO entries")
       assert(attachments.map { |attachment| attachment["description"] } ==
              ["Delegated link", "Delegated file", "User link", "User file"],
@@ -146,6 +146,23 @@ module RemoteServerTest
       assert(read_block && read_block.dig(:metadata, "attachments") == attachments &&
              read_block.dig(:metadata, "prompt_queue_entries") == entries,
              "expected Remote HTTP output and the Read queue Conversation block to share canonical details")
+
+      incomplete = HQ::RemoteServer.new.send(
+        :route, service, "POST", "/agents/#{agent.key}/queue-work/#{response.dig(:batch, "batch_id")}/complete",
+        { "dispositions" => [{ "entry_id" => entries.fetch(1).fetch("id"), "outcome" => "completed" }] }, nil
+      ).fetch(:body)
+      assert(incomplete.fetch("unresolved_entry_ids") == [entries.fetch(0).fetch("id")] &&
+             incomplete.dig("batch", "state") == "in_progress",
+             "expected incomplete Remote dispositions to leave the batch open")
+      completed = HQ::RemoteServer.new.send(
+        :route, service, "POST", "/agents/#{agent.key}/queue-work/#{response.dig(:batch, "batch_id")}/complete",
+        { "dispositions" => [{ "entry_id" => entries.fetch(0).fetch("id"), "outcome" => "incorporated" }] }, nil
+      ).fetch(:body)
+      resolved_block = service.conversation(agent.key).find { |block| block.dig(:metadata, "queue_read") == true }
+      assert(completed.fetch("accepted") && completed.dig("batch", "state") == "resolved" &&
+             resolved_block.dig(:metadata, "queue_work_state") == "resolved" &&
+             resolved_block.dig(:metadata, "queue_work_dispositions") == completed.dig("batch", "dispositions"),
+             "expected Remote completion and Conversation to project the same resolved batch")
     ensure
       if pid
         Process.kill("TERM", -pid)

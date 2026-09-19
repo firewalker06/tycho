@@ -352,6 +352,33 @@ module HQ
 
       register "queue", QueueRead
 
+      class QueueWorkCommand < Dry::CLI::Command
+        desc "Manage durable queue-work batches"
+
+        def call(**)
+          exit CLICommand.usage("Missing queue-work command", err: err)
+        end
+      end
+
+      class QueueWorkComplete < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Record outcomes for a queue-work batch"
+        argument :agent_key, required: true, desc: "Agent key"
+        argument :batch_id, required: true, desc: "Queue-work batch ID"
+        option :dispositions_json, required: true, desc: "JSON array of entry outcomes"
+        remote_options
+        usage_template "queue-work complete %{agent_key} %{batch_id} --dispositions-json JSON [--server SERVER_KEY] [--json]"
+
+        def call(agent_key:, batch_id:, **opts)
+          exit CLICommand.complete_agent_queue_work(agent_key, batch_id, opts, out: out, err: err)
+        end
+      end
+
+      register "queue-work", QueueWorkCommand do |prefix|
+        prefix.register "complete", QueueWorkComplete
+      end
+
       class Memory < Dry::CLI::Command
         desc "Retrieve memory handoffs"
 
@@ -1765,6 +1792,20 @@ module HQ
       failure("Failed to read queue: #{e.message}", err:)
     end
 
+    def complete_agent_queue_work(agent_key, batch_id, opts = {}, out: $stdout, err: $stderr)
+      dispositions = JSON.parse(opts[:dispositions_json].to_s)
+      raise ArgumentError, "Dispositions must be a JSON array" unless dispositions.is_a?(Array)
+      return remote_complete_agent_queue_work(agent_key, batch_id, dispositions, opts, out:, err:) if remote_requested?(opts)
+
+      result = agent_store_for_all.complete_queue_work!(agent_key, batch_id:, dispositions:)
+      print_queue_work_completion(queue_work_completion_payload(result), json: opts[:json], out:)
+      result.fetch("accepted") ? 0 : 1
+    rescue JSON::ParserError => e
+      failure("Invalid dispositions JSON: #{e.message}", err:)
+    rescue StandardError => e
+      failure("Failed to complete queue work: #{e.message}", err:)
+    end
+
     def archive_agent(agent_key, opts = {}, out: $stdout, err: $stderr)
       return remote_archive_agent(agent_key, opts, out:, err:) if remote_requested?(opts)
 
@@ -2168,6 +2209,18 @@ module HQ
       failure(e.message, err:)
     end
 
+    def remote_complete_agent_queue_work(agent_key, batch_id, dispositions, opts, out:, err:)
+      payload = remote_client(opts[:server]).request(
+        "POST",
+        "#{remote_resource_path('agents', agent_key)}/queue-work/#{URI.encode_www_form_component(batch_id)}/complete",
+        body: { "dispositions" => dispositions }
+      )
+      print_queue_work_completion(payload, json: opts[:json], out:)
+      payload["accepted"] ? 0 : 1
+    rescue RemoteCLIClient::Error, KeyError => e
+      failure(e.message, err: err)
+    end
+
     def remote_archive_agent(agent_key, opts, out:, err:)
       payload = remote_client(opts[:server])
         .request("POST", "#{remote_resource_path("agents", agent_key)}/archive")
@@ -2421,7 +2474,9 @@ module HQ
         "content" => result.fetch(:content),
         "entries" => result.fetch(:read_entries),
         "attachments" => Array(result.fetch(:attachments)),
-        "read_id" => result.fetch(:read_id)
+        "read_id" => result.fetch(:read_id),
+        "batch" => result.fetch(:batch),
+        "idempotent" => result.fetch(:idempotent)
       }
     end
 
@@ -2433,6 +2488,12 @@ module HQ
                "#{value["consumed_count"].to_i == 1 ? "entry" : "entries"} " \
                "(#{value["delegated_reply_count"]} delegated, #{value["user_prompt_count"]} user)"
       out.puts
+      batch = value["batch"] || {}
+      out.puts "Queue-work batch: #{batch["batch_id"]} (#{batch["state"]})"
+      Array(batch["required_actions"]).each do |entry|
+        out.puts "REQUIRED [#{entry["id"]}]: #{entry["prompt"]}"
+      end
+      out.puts
       out.puts value["content"]
       attachments = Array(value["attachments"])
       return if attachments.empty?
@@ -2440,6 +2501,23 @@ module HQ
       out.puts
       out.puts "Attachments:"
       attachments.each { |attachment| out.puts "- #{JSON.generate(attachment)}" }
+    end
+
+    def queue_work_completion_payload(result)
+      result.reject { |key, _value| key.to_s == "agent" }
+    end
+
+    def print_queue_work_completion(payload, json:, out:)
+      value = payload.transform_keys(&:to_s)
+      return out.puts(JSON.pretty_generate(value)) if json
+
+      batch = value.fetch("batch")
+      out.puts "Queue-work batch #{batch.fetch('batch_id')}: #{batch.fetch('state')}"
+      unresolved = Array(value["unresolved_entry_ids"])
+      out.puts "Unresolved entries: #{unresolved.join(', ')}" unless unresolved.empty?
+      Array(value["errors"]).each do |error|
+        out.puts "- #{error["entry_id"]}: #{error["message"]}"
+      end
     end
 
     def print_simple_agent_action(action, payload, json:, out:)
@@ -2512,7 +2590,7 @@ module HQ
       out.puts
       out.puts "Pending queue for #{notice.fetch("agent_key")}: #{count} #{count == 1 ? "entry" : "entries"} " \
                "(#{notice.fetch("delegated_reply_count")} delegated, #{notice.fetch("user_prompt_count")} user)."
-      out.puts "Run `#{notice.fetch("read_command")}` to read and consume the batch."
+      out.puts "Run `#{notice.fetch("read_command")}` to open or inspect the durable batch."
     end
 
     def display_timestamp(value)

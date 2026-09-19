@@ -19,6 +19,7 @@ Runtime artifacts are written to `~/.tycho/logs/`, including app state files suc
 - `bundle exec bin/tycho project create <key> [options]` and `project list|show|update|archive`: manage project configuration from the CLI.
 - `bundle exec bin/tycho schedule [list|daemon --once|daemon --dry-run]`: list schedules, run the scheduled-agent daemon, or run a single scheduler tick.
 - `bundle exec bin/tycho metrics query [filters] [--json]`: query normalized run/native-session usage metrics. `metrics backfill` is deprecated and no longer mutates data.
+- `bundle exec bin/tycho queue-work complete <agent-key> <batch-id> --dispositions-json JSON`: record durable source-appropriate outcomes for an open queue-work batch.
 - `bin/test`: run the public CI-equivalent Ruby syntax and regression suite.
 - `bin/remote-ui-smoke`: start a throwaway Remote UI server with temp config/log roots, create fixture agents, and run Chrome/Playwright smoke checks; set `TYCHO_REMOTE_UI_WORKSPACE_ONLY=1` for the focused workspace flow, `TYCHO_REMOTE_UI_DELEGATION_ONLY=1` for delegated-report rendering, or `TYCHO_REMOTE_UI_SUMMARY_ATTACHMENTS_ONLY=1` for Summary attachment behavior, and optionally set `TYCHO_REMOTE_UI_CAPTURE_DIR=/tmp/tycho-remote-ui-captures` to save evidence outside the repository.
 - `bin/remote-ui-queue-read-fixture`: start an isolated Remote UI acceptance fixture with one queued user prompt and one delegated reply; run the printed queue command to transition from visible pending state to the expandable **Read queue** Conversation block.

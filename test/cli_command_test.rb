@@ -224,9 +224,21 @@ module CLICommandTest
                "expected remote queue read to succeed: #{read_remote.fetch(:stderr)}")
         read_remote_payload = JSON.parse(read_remote.fetch(:stdout))
         assert(read_remote_payload.fetch("consumed_count") == 3 &&
-               read_remote_payload.fetch("content") ==
-               "Queued remote input\n\n---\n\nRemote JSON notice\n\n---\n\nRemote human notice",
-               "expected remote CLI queue read to consume and return one consolidated batch")
+               read_remote_payload.fetch("content").include?("TYCHO QUEUE WORK CONTRACT") &&
+               read_remote_payload.dig("batch", "entries").map { |entry| entry["prompt"] } ==
+               ["Queued remote input", "Remote JSON notice", "Remote human notice"],
+               "expected remote CLI queue read to open and return one canonical batch")
+        remote_dispositions = read_remote_payload.dig("batch", "entries").map do |entry|
+          { "entry_id" => entry.fetch("id"), "outcome" => "completed" }
+        end
+        remote_complete = run_tycho(
+          remote_agent_env, "queue-work", "complete", agent_key,
+          read_remote_payload.dig("batch", "batch_id"), "--dispositions-json", JSON.generate(remote_dispositions),
+          "--server", "peer", "--json"
+        )
+        assert(remote_complete.fetch(:status).success? &&
+               JSON.parse(remote_complete.fetch(:stdout)).dig("batch", "state") == "resolved",
+               "expected Remote queue-work completion parity")
 
         remote_config = HQ::RemoteServerConfig.new(
           key: "peer", name: "Test Peer", url: "http://127.0.0.1:#{port}", token:, token_env: ""
@@ -258,6 +270,12 @@ module CLICommandTest
         end
         assert(remote_read_event,
                "expected the Remote read response attachments to match the single Read queue event")
+        attachment_dispositions = attachment_read.dig("batch", "entries").map do |entry|
+          { "entry_id" => entry.fetch("id"), "outcome" => "completed" }
+        end
+        run_tycho(remote_agent_env, "queue-work", "complete", agent_key,
+                  attachment_read.dig("batch", "batch_id"), "--dispositions-json",
+                  JSON.generate(attachment_dispositions), "--server", "peer", "--json")
 
         remote_client.request(
           "POST", "/agents/#{agent_key}/messages",
@@ -275,6 +293,13 @@ module CLICommandTest
                human_attachment_read.fetch(:stdout).include?("remote-human.txt") &&
                human_attachment_read.fetch(:stdout).include?("\"source\":\"remote_upload\""),
                "expected remote human reads to return attachment targets and metadata")
+        human_open = JSON.parse(run_tycho(remote_agent_env, "queue", agent_key, "--server", "peer", "--json").fetch(:stdout))
+        human_dispositions = human_open.dig("batch", "entries").map do |entry|
+          { "entry_id" => entry.fetch("id"), "outcome" => "completed" }
+        end
+        run_tycho(remote_agent_env, "queue-work", "complete", agent_key,
+                  human_open.dig("batch", "batch_id"), "--dispositions-json", JSON.generate(human_dispositions),
+                  "--server", "peer", "--json")
         stopped = run_tycho(local_env, "agent", "stop", agent_key, "--server", "peer", "--json")
         assert(stopped.fetch(:status).success? && !JSON.parse(stopped.fetch(:stdout)).fetch("running"),
                "expected remote agent stop to stop the target")
@@ -588,19 +613,31 @@ module CLICommandTest
 
       human_status = run_tycho(env, "agent", "status", agent.key)
       assert(human_status.fetch(:stdout).include?("Pending queue for #{agent.key}: 2 entries (1 delegated, 1 user).") &&
-             human_status.fetch(:stdout).include?("Run `tycho queue #{agent.key}` to read and consume the batch."),
+             human_status.fetch(:stdout).include?("Run `tycho queue #{agent.key}` to open or inspect the durable batch."),
              "expected compatible human queue notice output")
 
       read = run_tycho(env, "queue", agent.key, "--json")
       payload = JSON.parse(read.fetch(:stdout))
       assert(read.fetch(:status).success? && payload.fetch("consumed_count") == 2 &&
              payload.fetch("delegated_reply_count") == 1 && payload.fetch("user_prompt_count") == 1 &&
-             payload.fetch("content") == "Delegated CLI result\n\n---\n\nUser CLI follow-up" &&
+             payload.fetch("content").include?("TYCHO QUEUE WORK CONTRACT") &&
+             payload.dig("batch", "entries").map { |entry| entry["prompt"] } ==
+             ["Delegated CLI result", "User CLI follow-up"] &&
+             payload.dig("batch", "required_actions", 0, "prompt") == "User CLI follow-up" &&
              payload.fetch("entries").map { |entry| entry.values_at("source", "state") } ==
-             [["delegation_callback", "read"], ["user", "read"]] &&
+             [["delegation_callback", "in_progress"], ["user", "in_progress"]] &&
              payload.fetch("attachments").map { |attachment| attachment["description"] } ==
              ["Delegated CLI target", "Delegated CLI file", "User CLI target", "User CLI context"],
              "expected structured queue read output to return one mixed batch with complete attachments")
+
+      completion_json = JSON.generate([
+        { "entry_id" => payload.dig("batch", "entries", 0, "id"), "outcome" => "incorporated" },
+        { "entry_id" => payload.dig("batch", "entries", 1, "id"), "outcome" => "completed" }
+      ])
+      completed = run_tycho(env, "queue-work", "complete", agent.key, payload.dig("batch", "batch_id"),
+                            "--dispositions-json", completion_json, "--json")
+      assert(completed.fetch(:status).success? && JSON.parse(completed.fetch(:stdout)).dig("batch", "state") == "resolved",
+             "expected local queue-work completion to resolve the canonical batch")
 
       json_send = run_tycho(env, "agent", "send", agent.key, "JSON queued prompt", "--json")
       assert(JSON.parse(json_send.fetch(:stdout)).dig("queue_notice", "pending_count") == 1,
@@ -611,8 +648,16 @@ module CLICommandTest
       human_read = run_tycho(env, "queue", agent.key)
       assert(human_read.fetch(:status).success? &&
              human_read.fetch(:stdout).include?("Read queue for #{agent.key}: 2 entries (0 delegated, 2 user)") &&
-             human_read.fetch(:stdout).end_with?("Human queue read\n"),
+             human_read.fetch(:stdout).include?("REQUIRED") &&
+             human_read.fetch(:stdout).include?("Human queue read"),
              "expected compatible human queue read output")
+
+      second_payload = JSON.parse(run_tycho(env, "queue", agent.key, "--json").fetch(:stdout))
+      second_dispositions = second_payload.dig("batch", "entries").map do |entry|
+        { "entry_id" => entry.fetch("id"), "outcome" => "completed" }
+      end
+      run_tycho(env, "queue-work", "complete", agent.key, second_payload.dig("batch", "batch_id"),
+                "--dispositions-json", JSON.generate(second_dispositions), "--json")
 
       persisted_path = File.join(logs_root, "managed_agents.json")
       persisted = JSON.parse(File.read(persisted_path)).map { |attrs| HQ::ManagedAgent.from_hash(attrs) }
@@ -630,9 +675,11 @@ module CLICommandTest
              human_attachment_read.fetch(:stdout).include?("\"description\":\"Human metadata\""),
              "expected local human queue reads to return attachment targets and metadata")
 
-      empty = run_tycho(env, "queue", agent.key)
-      assert(!empty.fetch(:status).success? && empty.fetch(:stderr).include?("No pending queue entries"),
-             "expected repeated reads not to consume or invent work")
+      repeated = run_tycho(env, "queue", agent.key, "--json")
+      repeated_payload = JSON.parse(repeated.fetch(:stdout))
+      assert(repeated.fetch(:status).success? && repeated_payload["idempotent"] == true &&
+             repeated_payload.dig("batch", "state") == "in_progress",
+             "expected repeated reads to return the same open batch without consuming it")
     ensure
       if pid
         Process.kill("TERM", -pid)

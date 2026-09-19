@@ -91,7 +91,7 @@ module HQ
           agent.complete_prompt_queue_claim!
           changed = true
         end
-        if was_running && !running_for_poll_event?(agent)
+        if was_running && !running_for_poll_event?(agent) && !agent.active_queue_work&.fetch("resume_pending", false)
           delegation_stamp = @delegation_coordinator.ownership_stamp(agent.key)
           unless agent.no_action_needed? || agent.suppresses_operator_attention?(delegation_stamp:)
             agent.mark_unread!
@@ -448,6 +448,7 @@ module HQ
         raise ArgumentError, "An inquiry must be resolved before retrying queued work" if target.inquiry_blocking_prompt_queue?
 
         target.clear_prompt_queue_dispatch_error!
+        target.active_queue_work["resume_pending"] = true if target.active_queue_work && !target.prompt_queue_claim
         dispatch_prompt_queue!(target, agents)
         target
       end
@@ -460,32 +461,60 @@ module HQ
         paths = [AGENTS_FILE, DELEGATIONS_FILE, target.memory_path, target.attachments_path]
         result = nil
         FileTransaction.run(paths) do
-          entries = target.prompt_queue.dup
           raise ArgumentError, "Queued work is already claimed for dispatch" if target.prompt_queue_claim
-          raise ArgumentError, "No pending queue entries for #{target.key}" if entries.empty?
+          batch = target.active_queue_work || target.open_queue_work_batch!(opened_at: read_at)
+          raise ArgumentError, "No pending queue entries for #{target.key}" unless batch
 
-          content = target.consolidated_prompt_queue_content(entries)
+          read_id = batch["read_id"].to_s
+          first_read = read_id.empty?
+          read_id = "queue-read:#{SecureRandom.uuid}" if first_read
+          target.mark_queue_work_read!(batch, read_id:)
+          entries = Array(batch["entries"])
+          content = QueueWork.contract(batch, agent_key: target.key)
           attachments = target.consolidated_prompt_queue_attachments(entries)
-          read_entries = target.consolidated_prompt_queue_entries(entries)
+          read_entries = target.consolidated_prompt_queue_entries(entries, state: batch["state"])
+          projection = QueueWork.projection(batch)
           metadata = target.consolidated_prompt_queue_metadata(entries).merge(
             "queue_read" => true,
             "read_label" => "Read queue",
-            "prompt_queue_entries" => read_entries
+            "prompt_queue_entries" => read_entries,
+            "queue_work_batch_id" => batch["id"],
+            "queue_work_state" => batch["state"],
+            "queue_work_projection" => projection
           )
-          read_id = "queue-read:#{SecureRandom.uuid}"
-          AgentMemory.new(target).append_queue_read!(
-            content,
-            read_id:,
-            created_at: read_at,
-            attachments:,
-            metadata:
-          )
-          consumed = target.consume_prompt_queue_for_read!
-          mark_claim_reports_resumed!("entries" => consumed)
+          if first_read
+            AgentMemory.new(target).append_queue_read!(
+              content,
+              read_id:,
+              created_at: read_at,
+              attachments:,
+              metadata:
+            )
+            mark_claim_reports_resumed!("entries" => entries)
+          end
           save_unlocked(agents)
-          result = { agent: target, entries: consumed, read_entries:, content:, attachments:, read_id: }
+          result = {
+            agent: target,
+            entries:,
+            read_entries:,
+            content:,
+            attachments:,
+            read_id:,
+            batch: QueueWork.payload(batch),
+            idempotent: !first_read
+          }
         end
         result
+      end
+    end
+
+    def complete_queue_work!(key, batch_id:, dispositions:, completed_at: Time.now)
+      with_exclusive_lock do
+        agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
+        target = find_agent_in!(agents, key)
+        result = target.complete_queue_work!(batch_id, dispositions, completed_at:)
+        save_unlocked(agents)
+        result.merge("agent" => target)
       end
     end
 

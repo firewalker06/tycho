@@ -697,12 +697,22 @@ curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/messages \
 
 ### `POST /agents/{key}/prompt-queue/read`
 
-Reads every currently pending delegated reply and user prompt as one FIFO-preserving batch. The server records one Conversation block labeled **Read queue** and consumes the batch transactionally. A concurrent entry accepted after the read lock remains queued.
+Moves every currently pending delegated reply and user prompt into one FIFO-preserving durable QueueWork batch. The server records one Conversation block labeled **Read queue** on the first read; repeated reads return the same open batch idempotently. Reading does not complete the work. A concurrent entry accepted after the read lock remains queued for the next batch.
 
-The response and Conversation event share the same structured `entries` representation, including normalized attachments. In the Remote UI, the event appears as a concise expandable **Read queue** block with the number of entries read; its detail view reuses the prompt-queue renderer for each user prompt and delegated reply instead of showing the consolidated native prompt as raw text.
+The response and Conversation event share the same structured `entries` representation, including normalized attachments, status, dispositions, and an instructions-first required-actions projection. In the Remote UI, the event appears as a warning-colored expandable **Read queue** block with an eye icon, open/resolved state, required user instructions, and the full FIFO detail rendered through the existing prompt-queue renderer.
 
 ```bash
 curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/prompt-queue/read
+```
+
+### `POST /agents/{key}/queue-work/{batch-id}/complete`
+
+Records source-appropriate entry dispositions without changing the general agent result schema. Valid progress is durable, identical completion is idempotent, and the response lists unresolved IDs until every entry has one outcome.
+
+```bash
+curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/queue-work/BATCH_ID/complete \
+  -H "Content-Type: application/json" \
+  -d '{"dispositions":[{"entry_id":"ENTRY_ID","outcome":"completed"}]}'
 ```
 
 ### `POST /agents/{key}/start`

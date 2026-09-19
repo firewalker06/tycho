@@ -46,6 +46,7 @@ module RemoteUIPromptQueueTest
         renderMarkdown: (value) => `<markdown>${value}</markdown>`,
         statusBadge: (label) => `<badge>${label}</badge>`,
         titleFromKey: (value) => String(value),
+        iconSvg: (name) => `<svg data-icon="${name}"></svg>`,
         URL,
       };
       vm.createContext(context);
@@ -62,6 +63,10 @@ module RemoteUIPromptQueueTest
       if (!claimed.includes("Dispatching</small>") || !claimed.includes('data-edit-queued-prompt="claimed" data-agent-key="queue-agent" disabled') ||
           !claimed.includes('data-delete-queued-prompt="claimed" data-agent-key="queue-agent" disabled')) {
         throw new Error("claimed queue entries must keep edit and delete controls disabled");
+      }
+      const inProgress = context.renderPromptQueueEntry(agent, { id: "open-work", prompt: "Open work", state: "in_progress" }, 0);
+      if (!inProgress.includes("In progress</small>")) {
+        throw new Error("open queue work must remain visibly in progress after delivery");
       }
 
       const callback = context.renderPromptQueueEntry(agent, {
@@ -122,18 +127,34 @@ module RemoteUIPromptQueueTest
         id: "queue-read-1", kind: "message", role: "user", content: `Review the failing test\n\n---\n\n${delegatedPayload}`,
         metadata: {
           queue_read: true, read_label: "Read queue", prompt_queue_entry_count: 2,
+          queue_work_state: "in_progress",
+          queue_work_projection: {
+            state: "in_progress",
+            required_actions: [{ id: "user-entry", prompt: "Review the failing test" }],
+          },
           prompt_queue_entries: [
-            { id: "user-entry", prompt: "Review the failing test", source: "user", state: "read", attachments: [] },
-            { id: "delegated-entry", prompt: delegatedPayload, source: "delegation_callback", state: "read", attachments: [] },
+            { id: "user-entry", prompt: "Review the failing test", source: "user", state: "in_progress", attachments: [] },
+            { id: "delegated-entry", prompt: delegatedPayload, source: "delegation_callback", state: "in_progress", attachments: [] },
           ],
         },
       }, 0, { agent });
       if (!readQueueHtml.includes("data-queue-read-block") ||
           !readQueueHtml.includes('aria-label="Read queue, 2 entries read"') ||
+          !readQueueHtml.includes('data-icon="eye"') || readQueueHtml.includes("queue-read-brand") ||
+          !readQueueHtml.includes("Required user instructions") || !readQueueHtml.includes("in_progress") ||
           (readQueueHtml.match(/data-prompt-queue-entry=/g) || []).length !== 2 ||
           !readQueueHtml.includes("Review the failing test") || !readQueueHtml.includes("Success child") ||
           readQueueHtml.includes("---") || readQueueHtml.includes("Edit") || readQueueHtml.includes("Delete")) {
         throw new Error("Read queue must render as a concise expandable block with structured read-only entries");
+      }
+      const legacyReadHtml = context.renderQueueReadConversationBlock({
+        id: "legacy-read", kind: "message", role: "user", content: "legacy first\n\n---\n\nlegacy second",
+        metadata: { queue_read: true, read_label: "Read queue", prompt_queue_entry_count: 2 },
+      }, 1, { agent });
+      if (!legacyReadHtml.includes('data-icon="eye"') ||
+          !legacyReadHtml.includes("legacy first") || !legacyReadHtml.includes("---") ||
+          legacyReadHtml.includes("Required user instructions")) {
+        throw new Error("legacy Read queue events must retain the safe raw fallback and current visual contract");
       }
 
       const requestContext = {

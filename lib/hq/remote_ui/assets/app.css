@@ -4346,20 +4346,29 @@ select {
 }
 
 .queue-read-block {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
-  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
+  border-color: color-mix(in srgb, var(--warning) 34%, var(--border));
+  background: color-mix(in srgb, var(--warning) 6%, var(--panel));
 }
 
-.queue-read-brand {
+.queue-read-icon {
   display: inline-flex;
   align-items: center;
-  min-height: 20px;
-  padding: 2px 6px;
-  border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--border));
-  border-radius: 5px;
-  color: var(--accent);
-  font-size: 10px;
-  letter-spacing: 0.08em;
+  color: var(--warning);
+}
+
+.queue-read-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.queue-read-summary-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.queue-work-state {
+  color: color-mix(in srgb, var(--warning) 84%, var(--text));
 }
 
 .queue-read-body {
@@ -4368,6 +4377,32 @@ select {
 
 .queue-read-list {
   max-height: none;
+}
+
+.queue-work-required-actions {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 52%, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+
+.queue-work-required-actions > strong {
+  color: var(--warning);
+}
+
+.queue-work-required-actions ol {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 22px;
+}
+
+.queue-work-required-actions li {
+  display: grid;
+  gap: 3px;
 }
 
 .queue-read-legacy-content {

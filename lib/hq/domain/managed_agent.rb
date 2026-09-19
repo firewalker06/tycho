@@ -3,6 +3,7 @@
 require_relative "constants"
 require_relative "log_paths"
 require_relative "attachment_normalizer"
+require_relative "queue_work"
 require_relative "agent_command_builder"
 require_relative "harness_execution"
 require_relative "agent_memory"
@@ -154,7 +155,7 @@ module HQ
                 :finished_at, :pid, :last_exit_code, :log_path, :runs, :sandbox_mode, :agent, :messages, :skills,
                 :model, :reasoning_effort, :response_style, :session_id, :session_bootstrapped, :color_index, :summary,
                 :structured_result, :schedule_key, :cost_snapshot, :project_group, :delegation_parent, :archive_path,
-                :archived_at, :project_hidden_at_archive, :prompt_queue, :prompt_queue_claim,
+                :archived_at, :project_hidden_at_archive, :prompt_queue, :prompt_queue_claim, :queue_work,
                 :prompt_queue_dispatch_error
     attr_writer :summary, :structured_result, :cost_snapshot
 
@@ -169,7 +170,7 @@ module HQ
                    session_bootstrapped: nil, color_index: nil, summary: nil, structured_result: nil, schedule_key: nil,
                    cost_snapshot: nil, total_run_count: nil, project_group: nil, delegation_parent: nil,
                    archived: false, archive_path: nil, archived_at: nil, project_hidden_at_archive: nil,
-                   prompt_queue: nil, prompt_queue_claim: nil, prompt_queue_dispatch_error: nil, role: nil)
+                   prompt_queue: nil, prompt_queue_claim: nil, prompt_queue_dispatch_error: nil, queue_work: nil, role: nil)
       @key = key
       @name = name
       @project_key = project_key
@@ -210,6 +211,11 @@ module HQ
       @project_hidden_at_archive = project_hidden_at_archive unless project_hidden_at_archive.nil?
       @prompt_queue = normalize_prompt_queue(prompt_queue)
       @prompt_queue_claim = normalize_prompt_queue_claim(prompt_queue_claim)
+      @queue_work = QueueWork.normalize(
+        queue_work,
+        legacy_claim: @prompt_queue_claim,
+        entry_normalizer: method(:normalize_prompt_queue_entry)
+      )
       @prompt_queue_dispatch_error = normalize_prompt_queue_dispatch_error(prompt_queue_dispatch_error)
     end
 
@@ -306,6 +312,7 @@ module HQ
         prompt_queue: hash["prompt_queue"],
         prompt_queue_claim: hash["prompt_queue_claim"],
         prompt_queue_dispatch_error: hash["prompt_queue_dispatch_error"],
+        queue_work: hash["queue_work"],
         role: hash["role"]
       )
     end
@@ -440,6 +447,7 @@ module HQ
       result["prompt_queue"] = @prompt_queue unless @prompt_queue.empty?
       result["prompt_queue_claim"] = @prompt_queue_claim if @prompt_queue_claim
       result["prompt_queue_dispatch_error"] = @prompt_queue_dispatch_error if @prompt_queue_dispatch_error
+      result["queue_work"] = @queue_work if Array(@queue_work["batches"]).any?
       result
     end
 
@@ -485,15 +493,24 @@ module HQ
 
     def claim_pending_prompts!(claimed_at: Time.now)
       return @prompt_queue_claim if @prompt_queue_claim
-      return nil if @prompt_queue.empty?
+      batch = active_queue_work
+      resuming_batch = batch && batch.fetch("delivery_count", 0).to_i.positive?
+      if batch
+        return nil unless batch["resume_pending"] == true
 
-      entries = @prompt_queue.shift(@prompt_queue.length)
+        QueueWork.consume_resume_request!(batch)
+      else
+        return nil if @prompt_queue.empty?
+
+        batch = open_queue_work_batch!(opened_at: claimed_at)
+      end
+      entries = Array(batch["entries"])
       @prompt_queue_claim = {
-        "id" => SecureRandom.uuid,
+        "id" => batch["id"],
         "entries" => entries,
         "claimed_at" => claimed_at.utc.iso8601(6),
         "baseline_run_count" => run_count,
-        "message_appended" => false
+        "message_appended" => resuming_batch
       }
       client_request_ids = entries.map { |entry| entry["client_request_id"].to_s.strip }.reject(&:empty?)
       @prompt_queue_claim["personal_assistant_client_request_ids"] = client_request_ids unless client_request_ids.empty?
@@ -508,11 +525,13 @@ module HQ
 
       entries = Array(claim["entries"])
       newest_entry = entries.last || {}
-      prompt = consolidated_prompt_queue_content(entries)
+      batch = QueueWork.find(@queue_work, claim["id"])
+      prompt = batch ? QueueWork.contract(batch, agent_key: @key) : consolidated_prompt_queue_content(entries)
       attachments = consolidated_prompt_queue_attachments(entries)
       metadata = newest_entry["message_metadata"].is_a?(Hash) ? newest_entry["message_metadata"].dup : {}
       metadata.merge!(consolidated_prompt_queue_metadata(entries))
       metadata["prompt_queue_claim_id"] = claim["id"]
+      metadata["queue_work_batch_id"] = batch["id"] if batch
       request_ids = Array(claim["personal_assistant_client_request_ids"]).filter_map do |id|
         value = id.to_s.strip
         value.empty? ? nil : value
@@ -520,17 +539,56 @@ module HQ
       metadata["personal_assistant_client_request_ids"] = request_ids unless request_ids.empty?
       add_user_message!(prompt, attachments:, metadata:)
       claim["message_appended"] = true
+      QueueWork.mark_delivered!(batch) if batch
       true
     end
 
     def consume_prompt_queue_for_read!
       raise ArgumentError, "Queued work is already claimed for dispatch" if @prompt_queue_claim
-      raise ArgumentError, "No pending queue entries" if @prompt_queue.empty?
+      batch = active_queue_work || open_queue_work_batch!
+      raise ArgumentError, "No pending queue entries" unless batch
 
-      entries = @prompt_queue.dup
-      @prompt_queue.clear
       @prompt_queue_dispatch_error = nil
-      entries
+      Array(batch["entries"])
+    end
+
+    def active_queue_work
+      QueueWork.active(@queue_work)
+    end
+
+    def queue_work_batch(batch_id = nil)
+      return QueueWork.find(@queue_work, batch_id) unless batch_id.to_s.empty?
+
+      active_queue_work || Array(@queue_work["batches"]).last
+    end
+
+    def queue_work_payload(batch_id = nil)
+      batch = queue_work_batch(batch_id)
+      QueueWork.payload(batch) if batch
+    end
+
+    def open_queue_work_batch!(opened_at: Time.now)
+      return active_queue_work if active_queue_work
+      return nil if @prompt_queue.empty?
+
+      entries = @prompt_queue.shift(@prompt_queue.length)
+      batch = QueueWork.build_batch(entries, opened_at:)
+      @queue_work["batches"] << batch
+      @queue_work["active_batch_id"] = batch["id"]
+      batch
+    end
+
+    def mark_queue_work_read!(batch, read_id:)
+      QueueWork.mark_delivered!(batch, read_id:)
+    end
+
+    def complete_queue_work!(batch_id, dispositions, completed_at: Time.now)
+      batch = QueueWork.find(@queue_work, batch_id)
+      raise ArgumentError, "Unknown queue-work batch: #{batch_id}" unless batch
+
+      result = QueueWork.apply_dispositions!(batch, dispositions, completed_at:)
+      @queue_work.delete("active_batch_id") if QueueWork.terminal?(batch)
+      result
     end
 
     def consolidated_prompt_queue_content(entries)
@@ -541,7 +599,7 @@ module HQ
       normalize_attachments(Array(entries).flat_map { |entry| Array(entry["attachments"]) }) || []
     end
 
-    def consolidated_prompt_queue_entries(entries)
+    def consolidated_prompt_queue_entries(entries, state: "read")
       Array(entries).map do |entry|
         {
           "id" => entry["id"].to_s,
@@ -549,8 +607,9 @@ module HQ
           "attachments" => normalize_attachments(entry["attachments"]) || [],
           "accepted_at" => entry["accepted_at"],
           "source" => entry["source"].to_s.empty? ? "user" : entry["source"].to_s,
+          "kind" => QueueWork.entry_kind(entry),
           "authority" => entry["authority"]&.slice("owner", "generation"),
-          "state" => "read"
+          "state" => state
         }.compact
       end
     end
@@ -606,8 +665,10 @@ module HQ
     end
 
     def queued_prompts
-      claimed = Array(@prompt_queue_claim&.fetch("entries", nil)).map do |entry|
-        entry.merge("state" => @prompt_queue_dispatch_error ? "failed" : "dispatching")
+      batch = active_queue_work
+      claimed = Array(batch&.fetch("entries", nil)).map do |entry|
+        state = @prompt_queue_dispatch_error ? "failed" : batch.fetch("state", "in_progress")
+        entry.merge("state" => state, "queue_work_batch_id" => batch["id"])
       end
       claimed + @prompt_queue.map { |entry| entry.merge("state" => "queued") }
     end
@@ -615,11 +676,13 @@ module HQ
     def prompt_queue_dispatchable?
       has_run_context = last_run || next_prompt_queue_entry&.fetch("source", nil) == "delegation_callback"
       !running? && !inquiry_blocking_prompt_queue? && @prompt_queue_dispatch_error.nil? && has_run_context &&
-        ((@prompt_queue_claim && @prompt_queue_dispatch_error.nil?) || (!@prompt_queue.empty? && !@prompt_queue_claim))
+        ((@prompt_queue_claim && @prompt_queue_dispatch_error.nil?) ||
+         (active_queue_work&.fetch("resume_pending", false) && !@prompt_queue_claim) ||
+         (!active_queue_work && !@prompt_queue.empty? && !@prompt_queue_claim))
     end
 
     def pending_prompts?
-      !@prompt_queue.empty? || !@prompt_queue_claim.nil?
+      !@prompt_queue.empty? || !@prompt_queue_claim.nil? || !active_queue_work.nil?
     end
 
     def delegation_callback_prompts_only?
@@ -655,6 +718,7 @@ module HQ
       end
       @prompt_queue = []
       @prompt_queue_claim = nil
+      @queue_work = QueueWork.normalize(nil)
       @prompt_queue_dispatch_error = nil
       entries
     end
@@ -1709,6 +1773,7 @@ module HQ
       capture_session_id!
       run.session_id = @session_id unless @session_id.to_s.empty?
       build_summary!
+      gate_successful_queue_work!(run)
       if personal_assistant? && run.status == "success" && @structured_result.is_a?(Hash) && @structured_result["action_proposals"].is_a?(Array)
         run.metadata = (run.metadata || {}).merge("personal_assistant_action_proposals" => @structured_result["action_proposals"])
       end
@@ -1740,6 +1805,30 @@ module HQ
       else
         "Run finished"
       end
+    end
+
+    def gate_successful_queue_work!(run)
+      return unless %w[success no_action_needed].include?(@structured_result&.fetch("status", nil).to_s)
+
+      batch = active_queue_work || open_queue_work_batch!(opened_at: @finished_at || Time.now)
+      return unless batch
+
+      unresolved = QueueWork.unresolved_ids(batch)
+      return if unresolved.empty?
+
+      resumed = QueueWork.request_automatic_continuation!(batch)
+      run.metadata = (run.metadata.is_a?(Hash) ? run.metadata.dup : {}).merge(
+        "queue_work_gate" => true,
+        "queue_work_batch_id" => batch["id"],
+        "queue_work_unresolved_entry_ids" => unresolved,
+        "queue_work_auto_continuation" => resumed
+      )
+      @structured_result = @structured_result.merge(
+        "status" => "partial",
+        "summary" => "Queue work batch #{batch['id']} remains open; unresolved entries: #{unresolved.join(', ')}."
+      )
+      @summary = @structured_result.fetch("summary")
+      run.status = "partial"
     end
 
     def persist_memory_handoff!(run)
@@ -2133,7 +2222,8 @@ module HQ
     end
 
     def next_prompt_queue_entry
-      Array(@prompt_queue_claim&.fetch("entries", nil)).first || @prompt_queue.first
+      Array(@prompt_queue_claim&.fetch("entries", nil)).first ||
+        Array(active_queue_work&.fetch("entries", nil)).first || @prompt_queue.first
     end
 
     def normalize_prompt_queue_authority(value)
@@ -2281,6 +2371,10 @@ module HQ
                       latest.to_s.strip.empty? ? "Continue from the current HQ managed-agent state." : latest.to_s
                     end
       base_prompt = ["[TYCHO ACTION RESULTS — server verified]", feedback.join("\n\n"), base_prompt].join("\n\n") if feedback.any?
+      if (batch = active_queue_work)
+        contract = QueueWork.contract(batch, agent_key: @key)
+        base_prompt = [contract, base_prompt].join("\n\n") unless base_prompt.include?("[TYCHO QUEUE WORK CONTRACT — REQUIRED]")
+      end
       with_execution_guidance(base_prompt, response_style:, include_hidden_guidance:)
     end
 
