@@ -7372,6 +7372,9 @@ module RemoteServerTest
            "expected Agent detail to hide Go to recent at the bottom")
     assert(js[:body].include?("function scrollConversationToRecent"),
            "expected Agent detail to scroll conversations to the recent sentinel")
+    assert(js[:body].include?('root.scrollTo({ top: root.scrollHeight, behavior: "auto" });') &&
+           !js[:body].include?('root.scrollTo({ top: root.scrollHeight, behavior: "smooth" });'),
+           "expected Go to recent to snap immediately without changing distinct smooth scrolling actions")
     assert(js[:body].include?("function scrollAgentConversationToBottom"),
            "expected Agent detail to auto-scroll to the bottom after agent-page renders")
     assert(!js[:body].include?("preserveSummaryOnAutoScroll"),

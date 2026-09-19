@@ -1283,6 +1283,23 @@ def write_smoke_script(path)
           if (!desktopCatchUpLoaded.loaded || !desktopCatchUpLoaded.pendingCleared || !desktopCatchUpLoaded.recentAvailable) {
             throw new Error(`Desktop catch-up activation did not fetch and apply staged messages: ${JSON.stringify(desktopCatchUpLoaded)}`);
           }
+          const goRecentScroll = await ordinaryPage.evaluate(() => {
+            const root = conversationScrollRoot();
+            root.scrollTop = 0;
+            updateGoRecentVisibility();
+            const originalScrollTo = root.scrollTo.bind(root);
+            let options;
+            root.scrollTo = (next) => {
+              options = next;
+              originalScrollTo(next);
+            };
+            document.querySelector("[data-go-recent]")?.click();
+            root.scrollTo = originalScrollTo;
+            return options;
+          });
+          if (goRecentScroll?.behavior !== "auto") {
+            throw new Error(`Go to recent did not snap immediately: ${JSON.stringify(goRecentScroll)}`);
+          }
           await ordinaryPage.evaluate((key) => {
             const current = state.conversations[key];
             const incoming = [...current.blocks, {
