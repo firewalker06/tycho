@@ -54,18 +54,18 @@ module RemoteUIPromptQueueTest
 
       const agent = { key: "queue-agent" };
       const legacy = context.renderPromptQueueEntry(agent, { id: "legacy", prompt: "Queued before state" }, 0);
-      if (!legacy.includes("Queued</small>") || legacy.includes('data-edit-queued-prompt="legacy" data-agent-key="queue-agent" disabled') ||
+      if (!legacy.includes("Message · Queued</span>") || legacy.includes('data-edit-queued-prompt="legacy" data-agent-key="queue-agent" disabled') ||
           legacy.includes('data-delete-queued-prompt="legacy" data-agent-key="queue-agent" disabled')) {
         throw new Error("state-less queued entries must keep enabled edit and delete controls");
       }
 
       const claimed = context.renderPromptQueueEntry(agent, { id: "claimed", prompt: "Already claimed", state: "dispatching" }, 0);
-      if (!claimed.includes("Dispatching</small>") || !claimed.includes('data-edit-queued-prompt="claimed" data-agent-key="queue-agent" disabled') ||
+      if (!claimed.includes("Message · Dispatching</span>") || !claimed.includes('data-edit-queued-prompt="claimed" data-agent-key="queue-agent" disabled') ||
           !claimed.includes('data-delete-queued-prompt="claimed" data-agent-key="queue-agent" disabled')) {
         throw new Error("claimed queue entries must keep edit and delete controls disabled");
       }
       const inProgress = context.renderPromptQueueEntry(agent, { id: "open-work", prompt: "Open work", state: "in_progress" }, 0);
-      if (!inProgress.includes("In progress</small>")) {
+      if (!inProgress.includes("Message · In progress</span>")) {
         throw new Error("open queue work must remain visibly in progress after delivery");
       }
 
@@ -138,10 +138,15 @@ module RemoteUIPromptQueueTest
           ],
         },
       }, 0, { agent });
+      const userReadEntry = readQueueHtml.match(/<li class="prompt-queue-entry" data-prompt-queue-entry="user-entry">([\s\S]*?)<\/li>/)?.[1] || "";
+      const delegatedReadEntry = readQueueHtml.match(/<li class="prompt-queue-entry" data-prompt-queue-entry="delegated-entry">([\s\S]*?)<\/li>/)?.[1] || "";
       if (!readQueueHtml.includes("data-queue-read-block") ||
           !readQueueHtml.includes('aria-label="Read queue, 2 entries read"') ||
           !readQueueHtml.includes('data-icon="eye"') || readQueueHtml.includes("queue-read-brand") ||
-          !readQueueHtml.includes("Required user instructions") || !readQueueHtml.includes("in_progress") ||
+          readQueueHtml.includes("queue-work-required-actions") || readQueueHtml.includes("Required user instructions") ||
+          (readQueueHtml.match(/data-queue-work-required/g) || []).length !== 1 ||
+          !userReadEntry.includes("data-queue-work-required") || delegatedReadEntry.includes("data-queue-work-required") ||
+          !readQueueHtml.includes("in_progress") ||
           (readQueueHtml.match(/data-prompt-queue-entry=/g) || []).length !== 2 ||
           !readQueueHtml.includes("Review the failing test") || !readQueueHtml.includes("Success child") ||
           readQueueHtml.includes("---") || readQueueHtml.includes("Edit") || readQueueHtml.includes("Delete")) {
@@ -153,7 +158,7 @@ module RemoteUIPromptQueueTest
       }, 1, { agent });
       if (!legacyReadHtml.includes('data-icon="eye"') ||
           !legacyReadHtml.includes("legacy first") || !legacyReadHtml.includes("---") ||
-          legacyReadHtml.includes("Required user instructions")) {
+          legacyReadHtml.includes("Required user instructions") || legacyReadHtml.includes("data-queue-work-required")) {
         throw new Error("legacy Read queue events must retain the safe raw fallback and current visual contract");
       }
 

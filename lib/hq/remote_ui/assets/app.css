@@ -4379,32 +4379,6 @@ select {
   max-height: none;
 }
 
-.queue-work-required-actions {
-  display: grid;
-  gap: 8px;
-  margin-bottom: 10px;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--warning) 52%, var(--border));
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--warning) 12%, transparent);
-}
-
-.queue-work-required-actions > strong {
-  color: var(--warning);
-}
-
-.queue-work-required-actions ol {
-  display: grid;
-  gap: 7px;
-  margin: 0;
-  padding-left: 22px;
-}
-
-.queue-work-required-actions li {
-  display: grid;
-  gap: 3px;
-}
-
 .queue-read-legacy-content {
   white-space: pre-wrap;
 }
@@ -6427,6 +6401,26 @@ select {
 .prompt-queue-blocked {
   color: var(--muted);
   font-size: 11px;
+}
+
+.prompt-queue-entry-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.queue-work-required-label {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--warning) 58%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning);
+  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.2;
 }
 
 .prompt-queue-position {
