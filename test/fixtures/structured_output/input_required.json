@@ -1,0 +1,20 @@
+{
+  "status": "input_required",
+  "summary": "A brief operator decision is required.",
+  "summary_sections": null,
+  "inquiry": {
+    "message": "Which path should the agent take?",
+    "fields": [
+      {
+        "key": "path",
+        "label": "Path",
+        "description": "Choose the next path.",
+        "input_type": "select",
+        "required": true,
+        "options": ["First", "Second"]
+      }
+    ]
+  },
+  "attachments": null,
+  "memory_handoff": null
+}

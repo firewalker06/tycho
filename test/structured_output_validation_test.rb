@@ -21,6 +21,7 @@ module StructuredOutputValidationTest
     assert_multiple_schema_violations
     assert_malformed_summary_sections_are_diagnosable
     assert_personal_assistant_action_contract
+    assert_native_codex_schema_split_contract
     assert_successful_correction_for_supported_harnesses
     assert_retry_exhaustion_preserves_invalid_response
     puts "structured_output_validation_test: ok"
@@ -132,6 +133,31 @@ module StructuredOutputValidationTest
     end
   end
 
+  def assert_native_codex_schema_split_contract
+    %w[input_required no_action_needed].each do |status|
+      with_runner("codex", status, correction_limit: 2) do |result|
+        assert(result[:exit_code].zero?,
+               "expected ordinary Codex #{status} output to pass without FRED field materialization: #{result[:output]}")
+        assert(result[:invocations].length == 1,
+               "expected ordinary Codex #{status} output not to enter correction")
+        assert(!result[:output].include?("validation_failed"),
+               "expected ordinary Codex #{status} output not to fail validation")
+      end
+    end
+
+    with_runner(
+      "codex",
+      "personal_assistant_proposal",
+      correction_limit: 2,
+      schema_path: PERSONAL_ASSISTANT_SCHEMA_PATH
+    ) do |result|
+      assert(result[:exit_code].zero?,
+             "expected native Codex FRED proposal output to remain valid: #{result[:output]}")
+      assert(result[:invocations].length == 1,
+             "expected native Codex FRED proposal output not to enter correction")
+    end
+  end
+
   def assert_successful_correction_for_supported_harnesses
     %w[codex claude pi].each do |adapter|
       with_runner(adapter, "corrected", correction_limit: 2) do |result|
@@ -179,7 +205,7 @@ module StructuredOutputValidationTest
     end
   end
 
-  def with_runner(adapter, scenario, correction_limit:)
+  def with_runner(adapter, scenario, correction_limit:, schema_path: SCHEMA_PATH)
     Dir.mktmpdir("tycho-structured-output-runner") do |dir|
       state_path = File.join(dir, "invocations.jsonl")
       last_message_path = File.join(dir, "last-message.json")
@@ -202,7 +228,7 @@ module StructuredOutputValidationTest
           "initial_command" => initial,
           "correction_command" => correction,
           "harness_adapter" => adapter,
-          "schema_path" => SCHEMA_PATH,
+          "schema_path" => schema_path,
           "last_message_path" => last_message_path,
           "invalid_response_path" => invalid_path,
           "session_id" => adapter == "claude" ? "claude-session" : "",
@@ -237,6 +263,8 @@ module StructuredOutputValidationTest
       fixture_name = if %w[first_pass requires_null_stdin].include?(scenario) ||
                         (scenario == "corrected" && count.positive?)
                        "valid.json"
+                     elsif %w[input_required no_action_needed personal_assistant_proposal].include?(scenario)
+                       "#{scenario}.json"
                      elsif scenario == "corrected"
                        "multiple_violations.json"
                      else
