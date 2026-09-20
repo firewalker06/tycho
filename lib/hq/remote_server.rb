@@ -3915,6 +3915,11 @@ module HQ
       reference_context = target.personal_assistant? ? delegation_reference_context([target]) : delegation_reference_context
       blocks.map do |block|
         content, metadata = sanitized_delegation_block(block.content.to_s, block.metadata, reference_context:)
+        if metadata.is_a?(Hash) && !metadata["sleep_recovery_for_incident_id"].to_s.empty? &&
+           !metadata["circuit_breaker_recovery"].is_a?(Hash)
+          recovery = legacy_circuit_breaker_recovery_metadata(target, metadata, block)
+          metadata = metadata.merge("circuit_breaker_recovery" => recovery) if recovery
+        end
         if metadata.is_a?(Hash) && metadata["queue_read"] == true
           batch = target.queue_work_batch(metadata["queue_work_batch_id"])
           if batch
@@ -3938,6 +3943,39 @@ module HQ
           created_at: block.created_at
         }.compact
       end
+    end
+
+    def legacy_circuit_breaker_recovery_metadata(target, metadata, block)
+      incident_id = metadata["sleep_recovery_for_incident_id"].to_s
+      batch = target.queue_work_batch(metadata["queue_work_batch_id"])
+      entry = Array(batch&.fetch("entries", nil)).find do |item|
+        item["source"] == "sleep_circuit_breaker_recovery" &&
+          item.dig("message_metadata", "sleep_recovery_for_incident_id").to_s == incident_id
+      end
+      return nil unless entry
+
+      incident = target.runs.reverse_each.filter_map do |run|
+        value = run.metadata&.dig("sleep_circuit_breaker_incident")
+        value if value.is_a?(Hash) && value["id"].to_s == incident_id
+      end.first
+      message_metadata = entry["message_metadata"].is_a?(Hash) ? entry["message_metadata"] : {}
+      accepted_at = ManagedAgent.parse_time(entry["accepted_at"])
+      not_before = ManagedAgent.parse_time(entry["not_before"])
+      resumed_at = block.created_at
+      resumed_at = resumed_at.iso8601(6) if resumed_at.respond_to?(:iso8601)
+      {
+        "incident_id" => incident_id,
+        "entry_id" => entry["id"],
+        "instruction" => entry["prompt"],
+        "accepted_at" => entry["accepted_at"],
+        "not_before" => entry["not_before"],
+        "resumed_at" => resumed_at,
+        "delay_seconds" => accepted_at && not_before ? (not_before - accepted_at).round : nil,
+        "blocking_call_count" => message_metadata["sleep_recovery_blocking_call_count"] || incident&.dig("blocking_call_count"),
+        "threshold" => message_metadata["sleep_recovery_threshold"] || incident&.dig("threshold"),
+        "stopped_at" => message_metadata["sleep_recovery_observed_at"] || incident&.dig("observed_at"),
+        "queue_work_batch_id" => batch["id"]
+      }.compact
     end
 
     def conversation_messages(target)

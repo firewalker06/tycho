@@ -18,7 +18,7 @@ module SleepCircuitBreakerRecoveryTest
   end
 
   def assert_incident_finalizes_with_dedicated_reason_and_delayed_recovery
-    with_store do |store, agent|
+    with_store do |store, agent, registry|
       finalize_incident!(agent, "incident-one")
       store.save([agent])
       persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
@@ -47,6 +47,33 @@ module SleepCircuitBreakerRecoveryTest
              recovery_metadata["blocking_call_count"] == 3 &&
              recovery_metadata["threshold"] == 3,
              "expected dispatched recovery messages to retain structured Conversation metadata")
+
+      batch = persisted.queue_work_batch(recovery_metadata.fetch("queue_work_batch_id"))
+      legacy_entry = batch.fetch("entries").find { |entry| entry["id"] == recovery["id"] }
+      legacy_entry.fetch("message_metadata").delete("sleep_recovery_observed_at")
+      legacy_entry.fetch("message_metadata").delete("sleep_recovery_threshold")
+      legacy_entry.fetch("message_metadata").delete("sleep_recovery_blocking_call_count")
+      memory = HQ::AgentMemory.new(persisted)
+      legacy_events = memory.events
+      legacy_event = legacy_events.reverse.find do |event|
+        event["type"] == "user_message" &&
+          event.dig("metadata", "sleep_recovery_for_incident_id") == "incident-one"
+      end
+      legacy_event.fetch("metadata").delete("circuit_breaker_recovery")
+      memory.write_events!(legacy_events)
+      store.save([persisted])
+
+      reloaded_recovery = HQ::RemoteService.new(registry:).conversation(persisted.key).find do |block|
+        block.dig(:metadata, "sleep_recovery_for_incident_id") == "incident-one"
+      end
+      legacy_metadata = reloaded_recovery&.dig(:metadata, "circuit_breaker_recovery")
+      assert(legacy_metadata&.fetch("instruction") == recovery["prompt"] &&
+             legacy_metadata["delay_seconds"] == 60 &&
+             legacy_metadata["blocking_call_count"] == 3 &&
+             legacy_metadata["threshold"] == 3 &&
+             legacy_metadata["queue_work_batch_id"] == batch["id"] &&
+             reloaded_recovery[:content].start_with?("[TYCHO QUEUE WORK CONTRACT"),
+             "expected a pre-amendment recovery message to be enriched after service reload")
 
       blocks = HQ::AgentChatLog.new(persisted).chat_blocks
       summary = blocks.find { |block| block.kind == :run_summary }
@@ -142,7 +169,7 @@ module SleepCircuitBreakerRecoveryTest
           status: "succeeded", log_path: raw, metadata: {}
         )]
       )
-      yield HQ::AgentStore.new(registry.projects), agent
+      yield HQ::AgentStore.new(registry.projects), agent, registry
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents) if old_agents
       replace_constant(HQ, :DELEGATIONS_FILE, old_delegations) if old_delegations
