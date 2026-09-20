@@ -31,6 +31,23 @@ module SleepCircuitBreakerRecoveryTest
              recovery["prompt"].include?("tycho agent send") && recovery["prompt"].include?("--delay 60"),
              "expected a dedicated stopped result and incident-scoped delayed recovery")
 
+      due_at = Time.parse(recovery.fetch("not_before"))
+      persisted.claim_pending_prompts!(claimed_at: due_at + 2)
+      persisted.prepare_prompt_queue_claim!
+      recovery_event = HQ::AgentMemory.new(persisted).events.reverse.find do |event|
+        event["type"] == "user_message" && event.dig("metadata", "circuit_breaker_recovery")
+      end
+      recovery_metadata = recovery_event&.dig("metadata", "circuit_breaker_recovery")
+      assert(recovery_metadata&.fetch("incident_id") == "incident-one" &&
+             recovery_metadata["entry_id"] == "sleep-recovery:incident-one" &&
+             recovery_metadata["instruction"] == recovery["prompt"] &&
+             recovery_metadata["accepted_at"] == recovery["accepted_at"] &&
+             recovery_metadata["not_before"] == recovery["not_before"] &&
+             recovery_metadata["delay_seconds"] == 60 &&
+             recovery_metadata["blocking_call_count"] == 3 &&
+             recovery_metadata["threshold"] == 3,
+             "expected dispatched recovery messages to retain structured Conversation metadata")
+
       blocks = HQ::AgentChatLog.new(persisted).chat_blocks
       summary = blocks.find { |block| block.kind == :run_summary }
       assert(summary&.content&.include?("Stopped due to overusing sleep-like commands"),

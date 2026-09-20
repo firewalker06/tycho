@@ -533,6 +533,8 @@ module HQ
       metadata.merge!(consolidated_prompt_queue_metadata(entries))
       metadata["prompt_queue_claim_id"] = claim["id"]
       metadata["queue_work_batch_id"] = batch["id"] if batch
+      recovery_metadata = circuit_breaker_recovery_metadata(entries, claim:, batch:)
+      metadata["circuit_breaker_recovery"] = recovery_metadata if recovery_metadata
       request_ids = Array(claim["personal_assistant_client_request_ids"]).filter_map do |id|
         value = id.to_s.strip
         value.empty? ? nil : value
@@ -1445,6 +1447,31 @@ module HQ
     end
 
     private
+
+    def circuit_breaker_recovery_metadata(entries, claim:, batch:)
+      return nil unless entries.length == 1
+
+      entry = entries.first
+      return nil unless entry["source"] == "sleep_circuit_breaker_recovery"
+
+      message_metadata = entry["message_metadata"].is_a?(Hash) ? entry["message_metadata"] : {}
+      accepted_at = self.class.parse_time(entry["accepted_at"])
+      not_before = self.class.parse_time(entry["not_before"])
+      delay_seconds = not_before && accepted_at ? (not_before - accepted_at).round : nil
+      {
+        "incident_id" => message_metadata["sleep_recovery_for_incident_id"],
+        "entry_id" => entry["id"],
+        "instruction" => entry["prompt"],
+        "accepted_at" => entry["accepted_at"],
+        "not_before" => entry["not_before"],
+        "resumed_at" => claim["claimed_at"],
+        "delay_seconds" => delay_seconds,
+        "blocking_call_count" => message_metadata["sleep_recovery_blocking_call_count"],
+        "threshold" => message_metadata["sleep_recovery_threshold"],
+        "stopped_at" => message_metadata["sleep_recovery_observed_at"],
+        "queue_work_batch_id" => batch&.fetch("id", nil)
+      }.compact
+    end
 
     def derived_log_path(suffix)
       LogPaths.derived_agent_log_path(@log_path, suffix)

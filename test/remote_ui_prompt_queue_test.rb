@@ -50,7 +50,7 @@ module RemoteUIPromptQueueTest
         URL,
       };
       vm.createContext(context);
-      vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\n${extractFunction("parseDelegatedAgentReply")}\n${extractFunction("delegatedAgentReportPayload")}\n${extractFunction("renderDelegatedAgentReply")}\n${extractFunction("renderDelegatedAgentReport")}\n${extractFunction("renderDelegatedAgentReportInquiry")}\n${extractFunction("renderDelegatedAgentReportInquiryField")}\n${extractFunction("delegatedAgentReportStatusLabel")}\n${extractFunction("delegatedAgentReportAttachments")}\n${extractFunction("renderDelegatedAgentReportAttachment")}\n${extractFunction("blockStateToken")}\n${extractFunction("queueReadConversationBlock")}\n${extractFunction("renderQueueReadConversationBlock")}\nthis.renderPromptQueueEntry = renderPromptQueueEntry;\nthis.parseDelegatedAgentReply = parseDelegatedAgentReply;\nthis.renderQueueReadConversationBlock = renderQueueReadConversationBlock;`, context);
+      vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\n${extractFunction("parseDelegatedAgentReply")}\n${extractFunction("delegatedAgentReportPayload")}\n${extractFunction("renderDelegatedAgentReply")}\n${extractFunction("renderDelegatedAgentReport")}\n${extractFunction("renderDelegatedAgentReportInquiry")}\n${extractFunction("renderDelegatedAgentReportInquiryField")}\n${extractFunction("delegatedAgentReportStatusLabel")}\n${extractFunction("delegatedAgentReportAttachments")}\n${extractFunction("renderDelegatedAgentReportAttachment")}\n${extractFunction("blockStateToken")}\n${extractFunction("queueReadConversationBlock")}\n${extractFunction("renderQueueReadConversationBlock")}\n${extractFunction("circuitBreakerRecoveryConversationBlock")}\n${extractFunction("renderCircuitBreakerRecoveryConversationBlock")}\nthis.renderPromptQueueEntry = renderPromptQueueEntry;\nthis.parseDelegatedAgentReply = parseDelegatedAgentReply;\nthis.renderQueueReadConversationBlock = renderQueueReadConversationBlock;\nthis.renderCircuitBreakerRecoveryConversationBlock = renderCircuitBreakerRecoveryConversationBlock;`, context);
 
       const agent = { key: "queue-agent" };
       const legacy = context.renderPromptQueueEntry(agent, { id: "legacy", prompt: "Queued before state" }, 0);
@@ -170,6 +170,30 @@ module RemoteUIPromptQueueTest
           !legacyReadHtml.includes("legacy first") || !legacyReadHtml.includes("---") ||
           legacyReadHtml.includes("Required user instructions") || legacyReadHtml.includes("data-queue-work-required")) {
         throw new Error("legacy Read queue events must retain the safe raw fallback and current visual contract");
+      }
+
+      const recoveryHtml = context.renderCircuitBreakerRecoveryConversationBlock({
+        id: "recovery-1", kind: "message", role: "user", content: "raw queue-work contract",
+        metadata: {
+          circuit_breaker_recovery: {
+            incident_id: "incident-1", entry_id: "sleep-recovery:incident-1",
+            instruction: "Continue without blocking waits.",
+            accepted_at: "2026-09-20T08:33:43.000000Z",
+            not_before: "2026-09-20T08:34:43.000000Z",
+            resumed_at: "2026-09-20T08:34:45.000000Z",
+            stopped_at: "2026-09-20T08:33:42.000000Z",
+            delay_seconds: 60, blocking_call_count: 3, threshold: 3,
+          },
+        },
+      }, 2);
+      if (!recoveryHtml.includes("data-circuit-breaker-recovery-block") ||
+          !recoveryHtml.includes("RECOVERED FROM CIRCUITBREAKER") ||
+          !recoveryHtml.includes('data-icon="heartPlus"') ||
+          !recoveryHtml.includes("60 second recovery") ||
+          !recoveryHtml.includes("3 blocking calls") ||
+          !recoveryHtml.includes("Continue without blocking waits.") ||
+          !recoveryHtml.includes("incident-1") || recoveryHtml.includes("raw queue-work contract")) {
+        throw new Error("circuit-breaker recovery must render as a concise expandable structured block");
       }
 
       const requestContext = {

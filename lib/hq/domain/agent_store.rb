@@ -764,7 +764,10 @@ module HQ
         source: "sleep_circuit_breaker_recovery",
         message_metadata: {
           "sleep_recovery_for_incident_id" => incident_id,
-          "sleep_recovery_ownership_generation" => expected_generation
+          "sleep_recovery_ownership_generation" => expected_generation,
+          "sleep_recovery_observed_at" => incident["observed_at"],
+          "sleep_recovery_threshold" => incident["threshold"],
+          "sleep_recovery_blocking_call_count" => incident["blocking_call_count"]
         }.compact
       )
       metadata["sleep_recovery_pending"] = false

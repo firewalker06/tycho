@@ -4383,6 +4383,78 @@ select {
   white-space: pre-wrap;
 }
 
+.circuit-breaker-recovery-block {
+  border-color: color-mix(in srgb, var(--success) 46%, var(--border));
+  background: color-mix(in srgb, var(--success) 6%, var(--panel));
+}
+
+.circuit-breaker-recovery-block > summary {
+  color: color-mix(in srgb, var(--success) 82%, var(--text));
+}
+
+.circuit-breaker-recovery-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--success);
+}
+
+.circuit-breaker-recovery-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.circuit-breaker-recovery-body {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.circuit-breaker-recovery-details {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.circuit-breaker-recovery-details > div {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.3fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.circuit-breaker-recovery-details dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.circuit-breaker-recovery-details dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.circuit-breaker-recovery-instruction {
+  display: grid;
+  gap: 5px;
+  border-top: 1px solid color-mix(in srgb, var(--success) 25%, var(--border));
+  padding-top: 10px;
+}
+
+.circuit-breaker-recovery-instruction p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .circuit-breaker-recovery-details > div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
+
 .message-group .message {
   width: 100%;
   margin: 0;
