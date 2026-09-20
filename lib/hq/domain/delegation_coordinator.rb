@@ -257,7 +257,8 @@ module HQ
         "status" => report.fetch("status"),
         "summary" => report.fetch("summary"),
         "inquiry" => report["inquiry"],
-        "attachments" => report["attachments"]
+        "attachments" => report["attachments"],
+        "recovery" => report["recovery"]
       }.compact
     end
 

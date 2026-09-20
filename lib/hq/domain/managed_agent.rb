@@ -1402,6 +1402,35 @@ module HQ
       effective_status == "no_action_needed"
     end
 
+    def delegation_recovery_context
+      metadata = last_run&.metadata
+      return nil unless metadata.is_a?(Hash) && metadata["stop_reason"] == "sleep_circuit_breaker"
+
+      incident = metadata["sleep_circuit_breaker_incident"]
+      return nil unless incident.is_a?(Hash) && !incident["id"].to_s.empty?
+
+      incident_id = incident.fetch("id")
+      recovery_entry = queued_prompts.find do |entry|
+        entry["source"] == "sleep_circuit_breaker_recovery" &&
+          entry.dig("message_metadata", "sleep_recovery_for_incident_id").to_s == incident_id.to_s
+      end
+      state, reason = delegation_recovery_state(metadata, recovery_entry)
+      accepted_at = self.class.parse_time(recovery_entry&.fetch("accepted_at", nil))
+      not_before = self.class.parse_time(recovery_entry&.fetch("not_before", nil))
+      {
+        "type" => "sleep_circuit_breaker",
+        "incident_id" => incident_id,
+        "expected_safety_behavior" => true,
+        "state" => state,
+        "scheduled_at" => recovery_entry&.fetch("accepted_at", nil),
+        "not_before" => recovery_entry&.fetch("not_before", nil),
+        "delay_seconds" => accepted_at && not_before ? (not_before - accepted_at).round : nil,
+        "parent_action" => %w[pending scheduled resuming].include?(state) ? "none" : "required",
+        "reason" => reason,
+        "cancels_on" => %w[manual_prompt ownership_change]
+      }.compact
+    end
+
     # A parent-owned turn reports through the delegation coordinator. Its
     # completion is not an operator-facing event, even if the child remains
     # delegated after the turn ends. Match the per-run stamp to the current
@@ -1447,6 +1476,20 @@ module HQ
     end
 
     private
+
+    def delegation_recovery_state(metadata, entry)
+      cancelled = metadata["sleep_recovery_cancelled"].to_s
+      return ["cancelled", cancelled] unless cancelled.empty?
+
+      suppressed = metadata["sleep_recovery_suppressed"].to_s
+      return ["suppressed", suppressed] unless suppressed.empty?
+      return ["pending", nil] if metadata["sleep_recovery_pending"] == true
+      return ["not_scheduled", "automatic_recovery_not_scheduled"] unless entry
+      return ["failed", @prompt_queue_dispatch_error["message"]] if entry["state"] == "failed"
+      return ["resuming", nil] unless entry["state"] == "queued"
+
+      ["scheduled", nil]
+    end
 
     def circuit_breaker_recovery_metadata(entries, claim:, batch:)
       return nil unless entries.length == 1

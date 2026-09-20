@@ -227,6 +227,7 @@ module HQ
           "summary" => safe_text(child.last_summary, 4000),
           "inquiry" => safe_inquiry(child.latest_inquiry),
           "attachments" => safe_attachments(child.structured_result&.fetch("attachments", nil)),
+          "recovery" => safe_recovery(child),
           "created_at" => now.utc.iso8601,
           "delivered_at" => nil,
           "resume_state" => "queued"
@@ -375,6 +376,26 @@ module HQ
           "mime_type" => safe_text(attachment["mime_type"], 200)
         }.compact
       end
+    end
+
+    def safe_recovery(child)
+      return nil unless child.respond_to?(:delegation_recovery_context)
+
+      value = child.delegation_recovery_context
+      return nil unless value.is_a?(Hash) && value["type"] == "sleep_circuit_breaker"
+
+      {
+        "type" => "sleep_circuit_breaker",
+        "incident_id" => safe_text(value["incident_id"], 500),
+        "expected_safety_behavior" => value["expected_safety_behavior"] == true,
+        "state" => safe_text(value["state"], 100),
+        "scheduled_at" => value["scheduled_at"].to_s.empty? ? nil : safe_text(value["scheduled_at"], 100),
+        "not_before" => value["not_before"].to_s.empty? ? nil : safe_text(value["not_before"], 100),
+        "delay_seconds" => value["delay_seconds"].is_a?(Numeric) ? value["delay_seconds"] : nil,
+        "parent_action" => safe_text(value["parent_action"], 100),
+        "reason" => value["reason"].to_s.empty? ? nil : safe_text(value["reason"], 1000),
+        "cancels_on" => Array(value["cancels_on"]).first(10).map { |item| safe_text(item, 100) }
+      }.compact
     end
 
     def safe_http_url(value)

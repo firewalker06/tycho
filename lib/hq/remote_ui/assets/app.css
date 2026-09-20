@@ -4175,6 +4175,50 @@ select {
   background: color-mix(in srgb, var(--success) 4%, var(--panel));
 }
 
+.delegated-agent-recovery {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  border: 1px solid color-mix(in srgb, var(--success) 42%, var(--border));
+  border-radius: 8px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--success) 6%, var(--panel));
+}
+
+.delegated-agent-recovery-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.delegated-agent-recovery p,
+.delegated-agent-recovery dl {
+  margin: 0;
+}
+
+.delegated-agent-recovery dl {
+  display: grid;
+  gap: 5px;
+}
+
+.delegated-agent-recovery dl > div {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.25fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.delegated-agent-recovery dt,
+.delegated-agent-recovery-cancellation {
+  color: var(--muted);
+}
+
+.delegated-agent-recovery dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .message-role.delegation-callback-header {
   min-width: 0;
   text-transform: none;
@@ -4208,6 +4252,11 @@ select {
 }
 
 @media (max-width: 640px) {
+  .delegated-agent-recovery dl > div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
   .agent-group .agent-row.delegated-agent-row {
     width: calc(100% - min(calc(var(--delegation-depth) * 14px), 42px));
     margin-left: min(calc(var(--delegation-depth) * 14px), 42px);

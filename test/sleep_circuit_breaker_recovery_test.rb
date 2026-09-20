@@ -11,10 +11,55 @@ module SleepCircuitBreakerRecoveryTest
 
   def run!
     assert_incident_finalizes_with_dedicated_reason_and_delayed_recovery
+    assert_delegated_callback_exposes_scheduled_recovery
     assert_manual_intent_cancels_recovery_atomically
     assert_stale_ownership_generation_cancels_recovery
     assert_recovery_run_cannot_create_a_recovery_loop
     puts "sleep_circuit_breaker_recovery_test: ok"
+  end
+
+  def assert_delegated_callback_exposes_scheduled_recovery
+    with_store do |store, child|
+      now = Time.now
+      parent_log = File.join(HQ::AGENT_LOGS_DIR, "parent.raw.log")
+      File.write(parent_log, "")
+      parent = HQ::ManagedAgent.new(
+        key: "parent-agent", name: "Parent", project_key: "web", template_key: "custom",
+        workspace: child.workspace, prompt: "Coordinate", agent: "codex", started_at: now, finished_at: now,
+        last_exit_code: 0, log_path: parent_log,
+        runs: [HQ::ManagedAgent::AgentRun.new(
+          run_id: "parent-run", started_at: now, finished_at: now, exit_code: 0,
+          status: "succeeded", log_path: parent_log, metadata: {}
+        )]
+      )
+      store.delegation_coordinator.attach!(agents: [parent, child], child:, parent_key: parent.key)
+      child.last_run.delegation_owner = "parent"
+      child.last_run.delegation_generation = 1
+      finalize_incident!(child, "incident-delegated")
+      store.save([parent, child])
+
+      agents, = store.load_with_poll_events(process_delegations: true, dispatch_prompt_queues: false)
+      persisted_parent = agents.find { |agent| agent.key == parent.key }
+      callback = persisted_parent.queued_prompts.find { |entry| entry["source"] == "delegation_callback" }
+      report = store.delegation_coordinator.delegation_store.reports.find do |item|
+        item["child_run_id"] == "run-incident-delegated"
+      end
+      payload = JSON.parse(callback.fetch("prompt").split("\n", 2).last)
+      payload_recovery = payload.dig("reports", 0, "recovery")
+      stored_recovery = report&.fetch("recovery", nil)
+      assert(callback && report && payload.dig("reports", 0, "summary") ==
+             "Stopped due to overusing sleep-like commands" &&
+             stored_recovery == payload_recovery &&
+             payload_recovery["type"] == "sleep_circuit_breaker" &&
+             payload_recovery["incident_id"] == "incident-delegated" &&
+             payload_recovery["expected_safety_behavior"] == true &&
+             payload_recovery["state"] == "scheduled" &&
+             payload_recovery["parent_action"] == "none" &&
+             payload_recovery["delay_seconds"] == 60 &&
+             !payload_recovery["not_before"].to_s.empty? &&
+             payload_recovery["cancels_on"] == %w[manual_prompt ownership_change],
+             "expected the immediate delegated callback to carry Tycho-owned recovery context")
+    end
   end
 
   def assert_incident_finalizes_with_dedicated_reason_and_delayed_recovery
@@ -94,7 +139,10 @@ module SleepCircuitBreakerRecoveryTest
         actor: HQ::DelegationActor.user_actor
       )
       assert(updated.prompt_queue.none? { |entry| entry["source"] == "sleep_circuit_breaker_recovery" } &&
-             updated.last_run.metadata["sleep_recovery_cancelled"] == "manual_intent",
+             updated.last_run.metadata["sleep_recovery_cancelled"] == "manual_intent" &&
+             updated.delegation_recovery_context["state"] == "cancelled" &&
+             updated.delegation_recovery_context["parent_action"] == "required" &&
+             updated.delegation_recovery_context["reason"] == "manual_intent",
              "expected manual prompt acceptance to cancel recovery under the store lock")
     end
   end
@@ -106,7 +154,10 @@ module SleepCircuitBreakerRecoveryTest
       store.save([agent])
       persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
       assert(persisted.prompt_queue.empty? &&
-             persisted.last_run.metadata["sleep_recovery_suppressed"] == "recovery_loop",
+             persisted.last_run.metadata["sleep_recovery_suppressed"] == "recovery_loop" &&
+             persisted.delegation_recovery_context["state"] == "suppressed" &&
+             persisted.delegation_recovery_context["parent_action"] == "required" &&
+             persisted.delegation_recovery_context["reason"] == "recovery_loop",
              "expected a recovery-triggered incident not to schedule another recovery")
     end
   end
@@ -121,7 +172,10 @@ module SleepCircuitBreakerRecoveryTest
       persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
       assert(persisted.prompt_queue.empty? &&
              persisted.last_run.metadata["sleep_recovery_pending"] == false &&
-             persisted.last_run.metadata["sleep_recovery_cancelled"] == "ownership_generation_changed",
+             persisted.last_run.metadata["sleep_recovery_cancelled"] == "ownership_generation_changed" &&
+             persisted.delegation_recovery_context["state"] == "cancelled" &&
+             persisted.delegation_recovery_context["parent_action"] == "required" &&
+             persisted.delegation_recovery_context["reason"] == "ownership_generation_changed",
              "expected recovery from a stale ownership generation to be cancelled before enqueue")
     end
   end

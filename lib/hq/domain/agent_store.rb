@@ -111,8 +111,8 @@ module HQ
       end
       changed = backfill_color_indexes!(agents) || changed
       changed = backfill_delegation_parents!(agents) || changed
-      changed = @delegation_coordinator.process!(agents) || changed if process_delegations
       agents.each { |agent| changed = materialize_sleep_recovery!(agent) || changed }
+      changed = @delegation_coordinator.process!(agents) || changed if process_delegations
       changed = dispatch_prompt_queues!(agents) || changed if dispatch_prompt_queues
       save_unlocked(agents) if changed
       [agents, events]
