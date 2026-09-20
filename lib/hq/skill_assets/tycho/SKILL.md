@@ -20,7 +20,7 @@ description: Manages Tycho projects, managed agents, delegation, and schedules. 
 | | `agent run <agent-key>` | Start or re-run an existing agent |
 | | `agent stop <agent-key>` | Stop a running agent |
 | | `agent logs <agent-key>` | Print agent log |
-| | `agent send <agent-key> <message>` | Append a message and re-run the agent |
+| | `agent send <agent-key> <message> [--delay SECONDS]` | Send now or schedule a durable continuation |
 | | `agent archive <agent-key>` | Archive an agent and move its logs |
 | | `agent clone <agent-key>` | Clone an existing agent |
 | **queue** | `queue <agent-key>` | Open or inspect the agent's durable queue-work batch |
@@ -186,9 +186,14 @@ Append a user message to the agent's conversation and start it. This is the prim
 ```bash
 tycho agent send my-project-agent-3 "The tests still fail on line 42 — try a different approach"
 tycho agent send my-project-agent-3 "Continue the delegated task" --parent-agent orchestrator-agent-key
+tycho agent send my-project-agent-3 "Check the external job again" --delay 60
 ```
 
-Errors if the agent is already running. Prints pid and log path on success.
+Without `--delay`, Tycho starts an idle agent or queues the message behind its current run. With `--delay`, Tycho persists the message immediately with an exact `not_before` time and starts it only after that time when the target and workspace are idle. Future entries remain visible and editable but do not block already-due work. Local and `--server` JSON responses expose the same stable queue ID, `accepted_at`, and `not_before` values.
+
+Inside a managed agent, sending a delayed message to its own `TYCHO_AGENT_KEY` is an internal continuation. This narrow self-send rule preserves delegation ownership and does not enter Takeover; it does not infer a parent for any other command. Prefer delayed self-send over sleeping while external state changes.
+
+Tycho stops a managed run after its third typed blocking wait invocation when the harness exposes a proven pre-execution signal. The Conversation summary reads **Stopped due to overusing sleep-like commands**. A delayed recovery is scheduled once; any explicit user, parent, or other-agent send/run cancels it before dispatch.
 
 ---
 

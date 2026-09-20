@@ -3975,6 +3975,9 @@ module HQ
     def submit_prompt(key, attrs = {}, actor: nil, personal_assistant_lifecycle: false, acceptance_id: nil, message_metadata: nil, session_context: nil, **attribute_keywords)
       attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
       actor ||= delegation_actor_from_attrs(attrs)
+      if attrs.key?("delay") && attrs["parent_agent_key"].to_s.empty? && attrs["sender_agent_key"].to_s == key.to_s
+        actor = DelegationActor.internal_actor(key)
+      end
       target = find_agent!(key)
       reject_personal_assistant_control!(target) if target.personal_assistant? && !personal_assistant_lifecycle
       if target.personal_assistant? && (!personal_assistant_lifecycle || session_context.nil?) && !@personal_assistant.accepting_prompts?(key)
@@ -3985,6 +3988,28 @@ module HQ
       attachments = import_prompt_attachments(target, attrs, dedupe_key: acceptance_id)
       text = prompt_text(attrs, attachments:)
       text = [text, pull_request_context].reject(&:empty?).join("\n")
+      if attrs.key?("delay")
+        target, entry = @agent_store.enqueue_delayed_prompt_from!(
+          target.key,
+          prompt: text,
+          actor:,
+          delay: attrs["delay"],
+          id: prompt_client_request_id(attrs)
+        )
+        resumed_schedules = actor.user? && target.scheduled? ? scheduler.resume_after_user_message(target.key) : []
+        @agent_activity_snapshot.upsert!(target)
+        visible_entries = target.queued_prompts
+        return {
+          accepted: true,
+          queued: true,
+          started: false,
+          queue_position: visible_entries.index { |candidate| candidate["id"] == entry["id"] }.to_i + 1,
+          queue_entry: prompt_queue_entry_payload(target, entry),
+          agent: agent_payload(target),
+          conversation: conversation(target.key),
+          resumed_schedules: resumed_schedules
+        }
+      end
       if target.running?
         begin
           target, entry = @agent_store.enqueue_prompt_from!(
@@ -6441,6 +6466,7 @@ module HQ
         "id" => entry["id"],
         "prompt" => entry["prompt"],
         "accepted_at" => entry["accepted_at"],
+        "not_before" => entry["not_before"],
         "updated_at" => entry["updated_at"],
         "client_request_id" => entry["client_request_id"],
         "state" => entry["state"] || "queued",

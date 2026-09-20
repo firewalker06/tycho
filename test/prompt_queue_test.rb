@@ -12,6 +12,9 @@ module PromptQueueTest
 
   def run!
     assert_queue_persists_and_reconciles_across_clients
+    assert_delayed_remote_acceptance_is_durable
+    assert_due_entries_bypass_future_entries_in_fifo_order
+    assert_self_delayed_continuation_preserves_delegation_ownership
     assert_claim_race_drains_fifo_without_overlap
     assert_explicit_read_consumes_one_mixed_batch_and_records_conversation
     assert_explicit_read_failure_retains_queue
@@ -77,6 +80,80 @@ module PromptQueueTest
       reconciled = second.agent(agent.key).dig(:prompt_queue, "entries")
       assert(reconciled.length == 4 && reconciled.any? { |entry| entry["prompt"] == "edited prompt" },
              "expected edits and deletes to reconcile across clients")
+    ensure
+      stop_process(pid)
+    end
+  end
+
+  def assert_delayed_remote_acceptance_is_durable
+    with_queue_store do |registry, workspace|
+      agent = terminal_agent(workspace)
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+
+      result = HQ::RemoteService.new(registry:).submit_prompt(
+        agent.key, "prompt" => "continue later", "delay" => 120, "start" => true
+      )
+      entry = result.fetch(:queue_entry)
+      accepted = Time.parse(entry.fetch("accepted_at"))
+      due = Time.parse(entry.fetch("not_before"))
+      restarted = HQ::RemoteService.new(registry:).agent(agent.key)
+      persisted = restarted.dig(:prompt_queue, "entries", 0)
+      assert(result[:queued] && !result[:started] && due - accepted == 120 &&
+             persisted["id"] == entry["id"] && persisted["not_before"] == entry["not_before"] &&
+             restarted[:run_count] == 1,
+             "expected remote delayed acceptance to persist exact timing without starting the stopped target")
+    end
+  end
+
+  def assert_due_entries_bypass_future_entries_in_fifo_order
+    with_queue_store do |registry, workspace|
+      agent, pid = running_agent(workspace)
+      now = Time.now
+      agent.enqueue_prompt!(prompt: "future first", accepted_at: now, not_before: now + 600, id: "future")
+      agent.enqueue_prompt!(prompt: "due second", accepted_at: now + 1, not_before: now - 1, id: "due-2")
+      agent.enqueue_prompt!(prompt: "due third", accepted_at: now + 2, id: "due-3")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+      stop_process(pid)
+      pid = nil
+
+      with_stubbed_start { store.load }
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+                       .find { |candidate| candidate.key == agent.key }
+      assert(persisted.active_queue_work["entries"].map { |entry| entry["id"] } == %w[due-2 due-3] &&
+             persisted.prompt_queue.map { |entry| entry["id"] } == ["future"] && persisted.run_count == 2,
+             "expected due entries to batch in acceptance order without future head-of-line blocking")
+    ensure
+      stop_process(pid)
+    end
+  end
+
+  def assert_self_delayed_continuation_preserves_delegation_ownership
+    with_queue_store do |registry, workspace|
+      parent_workspace = File.join(workspace, "parent-self")
+      FileUtils.mkdir_p(parent_workspace)
+      parent = terminal_agent(parent_workspace)
+      parent.instance_variable_set(:@key, "parent-self")
+      child, pid = running_agent(workspace)
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([parent, child])
+      HQ::RemoteService.new(registry:).submit_prompt(
+        child.key, "prompt" => "delegated setup", "parent_agent_key" => parent.key, "start" => true
+      )
+      before = store.delegation_coordinator.ownership_stamp(child.key)
+
+      persisted, entry = store.enqueue_delayed_prompt_from!(
+        child.key,
+        prompt: "self continuation",
+        actor: HQ::DelegationActor.internal_actor(child.key),
+        delay: 60
+      )
+      after = store.delegation_coordinator.ownership_stamp(child.key)
+      assert(before == after && entry["source"] == "internal_continuation" &&
+             entry.dig("message_metadata", "message_author", "agent_key") == child.key &&
+             persisted.queued_prompts.any? { |candidate| candidate["id"] == entry["id"] },
+             "expected self continuation to preserve ownership generation and agent authorship")
     ensure
       stop_process(pid)
     end

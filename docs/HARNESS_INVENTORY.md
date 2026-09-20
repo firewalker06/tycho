@@ -207,7 +207,7 @@ agent harnesses.
 
 ## OpenCode Capability Inventory
 
-Local versions inspected: `opencode 1.15.13` at `/opt/homebrew/bin/opencode` during initial research, then `opencode 1.17.10` during parser fixture capture.
+Local versions inspected: `opencode 1.15.13` at `/opt/homebrew/bin/opencode` during initial research, `opencode 1.17.10` during parser fixture capture, and `opencode 1.18.4` for the sleep-circuit-breaker pre-execution probe.
 
 Primary docs inspected: OpenCode CLI, config, agents, permissions, MCP servers, commands, and skills docs at `https://opencode.ai/docs/`.
 
@@ -218,6 +218,7 @@ Primary docs inspected: OpenCode CLI, config, agents, permissions, MCP servers, 
 | Executable | `opencode --version` prints `1.15.13`; command is available at `/opt/homebrew/bin/opencode` | Add built-in harness `opencode`, resolver env `TYCHO_OPENCODE_BIN`, fallback paths, and version command `opencode --version` |
 | Non-interactive run | `opencode run [message..]` sends a prompt from argv | Implement headless command around `opencode run`; consider prompt length limits because there is no documented prompt-file flag |
 | Raw output | `opencode run --format json` is documented locally as raw JSON events | Add `HQ::Parser::OpenCode`; first implementation needs real NDJSON fixtures before treating parser mapping as stable |
+| Tool start timing | A live 1.18.4 `bash` probe emitted one `tool_use` record only after completion, with `state.status: completed`; no pending/running record appeared | Keep the sleep circuit breaker disabled for OpenCode until a real pre-execution fixture proves an earlier stable signal |
 | Workspace | `opencode run --dir <path>` runs in a directory; top-level default command accepts a project path | Use `--dir <workspace>` plus process `chdir` for parity with Tycho's detached runner |
 | Model | `-m, --model` accepts `provider/model` | Map Tycho model directly to `--model` |
 | Reasoning effort | `--variant` is described as provider-specific reasoning effort | Map Tycho `reasoning_effort` to OpenCode `--variant`, but label it as provider-specific and allow empty |

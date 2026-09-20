@@ -59,6 +59,16 @@ module RemoteUIPromptQueueTest
         throw new Error("state-less queued entries must keep enabled edit and delete controls");
       }
 
+      const delayed = context.renderPromptQueueEntry(agent, {
+        id: "delayed", prompt: "Continue later", source: "internal_continuation", state: "queued",
+        not_before: "2026-09-20T01:02:03.000000Z"
+      }, 0);
+      if (!delayed.includes("Agent continuation · Queued · due 2026-09-20T01:02:03.000000Z") ||
+          delayed.includes('data-edit-queued-prompt="delayed" data-agent-key="queue-agent" disabled') ||
+          delayed.includes('data-delete-queued-prompt="delayed" data-agent-key="queue-agent" disabled')) {
+        throw new Error("delayed entries must show exact due time and retain edit/delete controls");
+      }
+
       const claimed = context.renderPromptQueueEntry(agent, { id: "claimed", prompt: "Already claimed", state: "dispatching" }, 0);
       if (!claimed.includes("Message · Dispatching</span>") || !claimed.includes('data-edit-queued-prompt="claimed" data-agent-key="queue-agent" disabled') ||
           !claimed.includes('data-delete-queued-prompt="claimed" data-agent-key="queue-agent" disabled')) {

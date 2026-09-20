@@ -320,6 +320,16 @@ module CLICommandTest
                delegated_payload.dig("delegation", "parent", "agent_key") == parent_key &&
                delegated_payload.dig("delegation", "parent", "connected") == true,
                "expected remote CLI creation to attach a server-local parent")
+        delayed_remote = run_tycho(
+          local_env, "agent", "send", delegated_payload.fetch("key"), "Parent continuation",
+          "--delay", "75", "--parent-agent", parent_key, "--server", "peer", "--json"
+        )
+        delayed_remote_payload = JSON.parse(delayed_remote.fetch(:stdout))
+        assert(delayed_remote.fetch(:status).success? && delayed_remote_payload["queued"] &&
+               delayed_remote_payload.dig("queue_entry", "source") == "parent" &&
+               Time.parse(delayed_remote_payload.dig("queue_entry", "not_before")) -
+                 Time.parse(delayed_remote_payload.dig("queue_entry", "accepted_at")) == 75,
+               "expected remote delayed output to match local timing and parent authorship")
         parent_status = run_tycho(local_env, "agent", "status", parent_key, "--server", "peer", "--json")
         assert(JSON.parse(parent_status.fetch(:stdout)).dig("delegation", "children", 0, "agent_key") ==
                delegated_payload.fetch("key"), "expected parent CLI JSON to list delegated children")
@@ -680,6 +690,19 @@ module CLICommandTest
       assert(repeated.fetch(:status).success? && repeated_payload["idempotent"] == true &&
              repeated_payload.dig("batch", "state") == "in_progress",
              "expected repeated reads to return the same open batch without consuming it")
+
+      delayed_json = run_tycho(env, "agent", "send", agent.key, "Continue later", "--delay", "90", "--json")
+      delayed_payload = JSON.parse(delayed_json.fetch(:stdout))
+      accepted = Time.parse(delayed_payload.dig("queue_entry", "accepted_at"))
+      due = Time.parse(delayed_payload.dig("queue_entry", "not_before"))
+      assert(delayed_json.fetch(:status).success? && delayed_payload["queued"] && due - accepted == 90 &&
+             delayed_payload.dig("queue_entry", "source") == "internal_continuation",
+             "expected local delayed JSON output to expose exact timing and self-continuation authorship")
+      delayed_human = run_tycho(env, "agent", "send", agent.key, "Continue much later", "--delay", "120")
+      assert(delayed_human.fetch(:status).success? &&
+             delayed_human.fetch(:stdout).include?("Message scheduled for #{agent.key} at ") &&
+             delayed_human.fetch(:stdout).include?("durable now"),
+             "expected local delayed human output to describe durable scheduling")
     ensure
       if pid
         Process.kill("TERM", -pid)

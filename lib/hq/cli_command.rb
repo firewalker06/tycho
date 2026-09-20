@@ -281,8 +281,9 @@ module HQ
         argument :agent_key, required: true, desc: "Agent key"
         argument :message, required: true, desc: "Message to send"
         option :parent_agent, desc: "Attach the originating parent before this run"
+        option :delay, type: :integer, desc: "Queue the message for delivery after this many seconds"
         remote_options
-        usage_template "agent send %{agent_key} %{message} [--parent-agent KEY] [--server SERVER_KEY] [--json]"
+        usage_template "agent send %{agent_key} %{message} [--delay SECONDS] [--parent-agent KEY] [--server SERVER_KEY] [--json]"
 
         def call(agent_key:, message:, **opts)
           exit CLICommand.send_agent_message(agent_key, message, opts, out: out, err: err)
@@ -1749,6 +1750,9 @@ module HQ
 
     def send_agent_message(agent_key, message, opts = {}, out: $stdout, err: $stderr)
       opts = opts.merge(actor: delegation_actor(opts[:parent_agent]))
+      if !opts[:delay].nil? && opts[:parent_agent].to_s.empty? && ENV["TYCHO_AGENT_KEY"].to_s == agent_key.to_s
+        opts = opts.merge(actor: DelegationActor.internal_actor(agent_key))
+      end
       return remote_send_agent_message(agent_key, message, opts, out:, err:) if remote_requested?(opts)
 
       store = agent_store_for_all
@@ -1757,6 +1761,15 @@ module HQ
       return archived_agent_failure(agent_key, err:) if !agent && archived_agent?(agent_key)
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
       agent = persist_agents_with_parent!(store, agents, agent, opts)
+      unless opts[:delay].nil?
+        agent, entry = store.enqueue_delayed_prompt_from!(
+          agent.key, prompt: message, actor: opts.fetch(:actor), delay: opts[:delay]
+        )
+        scheduler.resume_after_user_message(agent.key) if opts.fetch(:actor).user? && agent.scheduled?
+        position = agent.queued_prompts.index { |candidate| candidate["id"] == entry["id"] }.to_i + 1
+        print_queued_agent(agent_cli_payload(agent), entry, position:, json: opts[:json], out: out)
+        return 0
+      end
       if agent.running?
         agent, entry = store.enqueue_prompt_from!(
           agent.key, prompt: message, actor: opts.fetch(:actor), source: opts.fetch(:actor).parent? ? "parent" : "user"
@@ -2182,7 +2195,9 @@ module HQ
         body: {
           "prompt" => message.to_s,
           "start" => true,
-          "parent_agent_key" => opts[:parent_agent].to_s.strip
+          "parent_agent_key" => opts[:parent_agent].to_s.strip,
+          "delay" => opts[:delay],
+          "sender_agent_key" => (agent_key.to_s if opts.fetch(:actor).internal?)
         }.reject { |_key, value| value.to_s.empty? }
       )
       payload = remote_agent_payload(response.fetch("agent"))
@@ -2451,14 +2466,20 @@ module HQ
         queued: true,
         started: false,
         queue_position: position || value["prompt_queue_count"],
-        queue_entry: queue_entry.slice("id", "accepted_at", "source", "authority", "state"),
+        queue_entry: queue_entry.slice("id", "accepted_at", "not_before", "source", "authority", "state"),
         agent: value
       }
       result[:queue_notice] = notice if notice
       return out.puts(JSON.pretty_generate(result)) if json
 
-      out.puts "Message queued for #{value["key"]} (position #{result[:queue_position]})"
-      out.puts "Agent remains on run #{value["run_count"]}; pending work will start as one consolidated batch."
+      due = result.dig(:queue_entry, "not_before") || result.dig(:queue_entry, :not_before)
+      if due
+        out.puts "Message scheduled for #{value["key"]} at #{due} (position #{result[:queue_position]})"
+        out.puts "The message is durable now and will dispatch when due and the agent is idle."
+      else
+        out.puts "Message queued for #{value["key"]} (position #{result[:queue_position]})"
+        out.puts "Agent remains on run #{value["run_count"]}; pending work will start as one consolidated batch."
+      end
       print_queue_notice(notice, out:)
     end
 

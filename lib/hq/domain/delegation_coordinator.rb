@@ -80,6 +80,7 @@ module HQ
 
     def accept_prompt_from!(child:, actor:, now: Time.now)
       actor ||= DelegationActor.user_actor
+      return [nil, { suppressed_reports: 0, cancelled_resumes: 0 }, false] if actor.internal?
       return accept_prompt!(child:, owner: "user", now:) if actor.user?
 
       delegation_store.validate_agent_prompt!(source_key: actor.agent_key, target_key: child.key)

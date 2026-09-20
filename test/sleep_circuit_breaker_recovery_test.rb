@@ -1,0 +1,149 @@
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "tmpdir"
+
+require_relative "../lib/hq/remote_server"
+
+module SleepCircuitBreakerRecoveryTest
+  module_function
+
+  def run!
+    assert_incident_finalizes_with_dedicated_reason_and_delayed_recovery
+    assert_manual_intent_cancels_recovery_atomically
+    assert_stale_ownership_generation_cancels_recovery
+    assert_recovery_run_cannot_create_a_recovery_loop
+    puts "sleep_circuit_breaker_recovery_test: ok"
+  end
+
+  def assert_incident_finalizes_with_dedicated_reason_and_delayed_recovery
+    with_store do |store, agent|
+      finalize_incident!(agent, "incident-one")
+      store.save([agent])
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      run = persisted.last_run
+      recovery = persisted.prompt_queue.first
+      assert(run.status == "stopped" && run.metadata["stop_reason"] == "sleep_circuit_breaker" &&
+             persisted.last_summary == "Stopped due to overusing sleep-like commands" &&
+             recovery["source"] == "sleep_circuit_breaker_recovery" &&
+             Time.parse(recovery["not_before"]) > Time.parse(recovery["accepted_at"]) &&
+             recovery["prompt"].include?("tycho agent send") && recovery["prompt"].include?("--delay 60"),
+             "expected a dedicated stopped result and incident-scoped delayed recovery")
+
+      blocks = HQ::AgentChatLog.new(persisted).chat_blocks
+      summary = blocks.find { |block| block.kind == :run_summary }
+      assert(summary&.content&.include?("Stopped due to overusing sleep-like commands"),
+             "expected the stop reason in a clear conversation run-summary block")
+    end
+  end
+
+  def assert_manual_intent_cancels_recovery_atomically
+    with_store do |store, agent|
+      finalize_incident!(agent, "incident-two")
+      store.save([agent])
+      store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false)
+      updated = store.accept_ordinary_prompt!(
+        agent.key,
+        text: "Proceed manually",
+        attachments: [],
+        actor: HQ::DelegationActor.user_actor
+      )
+      assert(updated.prompt_queue.none? { |entry| entry["source"] == "sleep_circuit_breaker_recovery" } &&
+             updated.last_run.metadata["sleep_recovery_cancelled"] == "manual_intent",
+             "expected manual prompt acceptance to cancel recovery under the store lock")
+    end
+  end
+
+  def assert_recovery_run_cannot_create_a_recovery_loop
+    with_store do |store, agent|
+      agent.last_run.metadata = { "sleep_recovery_for_incident_id" => "prior-incident" }
+      finalize_incident!(agent, "incident-three")
+      store.save([agent])
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      assert(persisted.prompt_queue.empty? &&
+             persisted.last_run.metadata["sleep_recovery_suppressed"] == "recovery_loop",
+             "expected a recovery-triggered incident not to schedule another recovery")
+    end
+  end
+
+  def assert_stale_ownership_generation_cancels_recovery
+    with_store do |store, agent|
+      finalize_incident!(agent, "incident-stale")
+      incident = agent.last_run.metadata.fetch("sleep_circuit_breaker_incident")
+      incident["ownership_generation"] = 7
+      store.save([agent])
+
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      assert(persisted.prompt_queue.empty? &&
+             persisted.last_run.metadata["sleep_recovery_pending"] == false &&
+             persisted.last_run.metadata["sleep_recovery_cancelled"] == "ownership_generation_changed",
+             "expected recovery from a stale ownership generation to be cancelled before enqueue")
+    end
+  end
+
+  def finalize_incident!(agent, incident_id)
+    run = agent.last_run
+    run.status = "running"
+    run.run_id = "run-#{incident_id}"
+    agent.instance_variable_set(:@last_exit_code, 143)
+    agent.instance_variable_set(:@stop_requested_at, Time.now)
+    path = agent.send(:sleep_incident_file_path, run.run_id)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, JSON.generate(
+      "id" => incident_id,
+      "reason" => "sleep_circuit_breaker",
+      "observed_at" => Time.now.utc.iso8601(6),
+      "threshold" => 3,
+      "blocking_call_count" => 3
+    ))
+    agent.send(:finalize_latest_run!)
+  end
+
+  def with_store
+    Dir.mktmpdir("tycho-sleep-recovery") do |dir|
+      old_agents = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_delegations = replace_constant(HQ, :DELEGATIONS_FILE, File.join(dir, "agent_delegations.json"))
+      old_logs = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
+      old_usage = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p([workspace, HQ::AGENT_LOGS_DIR])
+      config = File.join(dir, "hq.yml")
+      prompts = File.join(dir, "prompts.yml")
+      File.write(config, "projects:\n  - key: web\n    name: Web\n    path: #{workspace}\n")
+      File.write(prompts, "custom: Work.\n")
+      registry = HQ::Registry.new(path: config, system_prompts_path: prompts)
+      now = Time.now
+      raw = File.join(HQ::AGENT_LOGS_DIR, "breaker.raw.log")
+      File.write(raw, "")
+      agent = HQ::ManagedAgent.new(
+        key: "breaker-agent", name: "Breaker", project_key: "web", template_key: "custom",
+        workspace:, prompt: "Work", agent: "codex", started_at: now, finished_at: now,
+        last_exit_code: 0, log_path: raw,
+        runs: [HQ::ManagedAgent::AgentRun.new(
+          run_id: "initial", started_at: now, finished_at: now, exit_code: 0,
+          status: "succeeded", log_path: raw, metadata: {}
+        )]
+      )
+      yield HQ::AgentStore.new(registry.projects), agent
+    ensure
+      replace_constant(HQ, :AGENTS_FILE, old_agents) if old_agents
+      replace_constant(HQ, :DELEGATIONS_FILE, old_delegations) if old_delegations
+      replace_constant(HQ, :AGENT_LOGS_DIR, old_logs) if old_logs
+      replace_constant(HQ, :USAGE_METRICS_FILE, old_usage) if old_usage
+    end
+  end
+
+  def replace_constant(owner, name, value)
+    previous = owner.const_get(name)
+    owner.send(:remove_const, name)
+    owner.const_set(name, value)
+    previous
+  end
+
+  def assert(condition, message)
+    raise message unless condition
+  end
+end
+
+SleepCircuitBreakerRecoveryTest.run! if $PROGRAM_NAME == __FILE__
