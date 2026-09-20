@@ -2,8 +2,9 @@
 
 require "json"
 require "securerandom"
-require "shellwords"
 require "time"
+
+require_relative "shell_command_classifier"
 
 module HQ
   class SleepCircuitBreaker
@@ -20,6 +21,7 @@ module HQ
       @clock = clock
       @seen_call_ids = {}
       @blocking_calls = []
+      @shell_classifier = ShellCommandClassifier.new(blocking_commands: BLOCKING_COMMANDS)
     end
 
     def observe(line)
@@ -104,42 +106,7 @@ module HQ
       return false if invocation.call_id.empty?
       return false unless SHELL_TOOLS.include?(invocation.tool_name.to_s.downcase)
 
-      shell_segments(invocation.command).any? do |segment|
-        executable = unwrap_shell(segment).first.to_s
-        BLOCKING_COMMANDS.include?(File.basename(executable).downcase) ||
-          executable.casecmp("Start-Sleep").zero?
-      end
-    end
-
-    def shell_segments(command)
-      tokens = Shellwords.split(command.to_s)
-      tokens = unwrap_shell(tokens)
-      tokens.slice_before { |token| %w[&& || ;].include?(token) }.map do |segment|
-        %w[&& || ;].include?(segment.first) ? segment.drop(1) : segment
-      end.reject(&:empty?)
-    rescue ArgumentError
-      []
-    end
-
-    def unwrap_shell(tokens)
-      result = Array(tokens).dup
-      loop do
-        executable = File.basename(result.first.to_s).downcase
-        if executable == "env"
-          result.shift
-          result.shift while result.first.to_s.include?("=")
-          next
-        end
-        break unless %w[sh bash zsh dash ksh].include?(executable)
-
-        command_index = result.index { |token| token == "-c" || token.match?(/\A-[a-z]*c[a-z]*\z/i) }
-        break unless command_index && result[command_index + 1]
-
-        result = Shellwords.split(result[command_index + 1])
-      end
-      result
-    rescue ArgumentError
-      []
+      @shell_classifier.blocking_wait?(invocation.command)
     end
 
     def incident(invocation)

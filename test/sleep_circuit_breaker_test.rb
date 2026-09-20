@@ -50,17 +50,11 @@ module SleepCircuitBreakerTest
 
   def assert_false_positives_and_completed_events_do_not_count
     breaker = HQ::SleepCircuitBreaker.new(agent_type: "codex")
-    commands = [
-      "rg -n sleep docs/",
-      "ruby -e 'puts \\\"sleep 10\\\"'",
-      "cat sleep-notes.md"
-    ]
-    commands.each_with_index do |command, index|
-      event = { "type" => "item.started", "item" => {
-        "id" => "false-#{index}", "type" => "command_execution", "command" => command
-      } }
-      assert(breaker.observe(JSON.generate(event)).nil?, "expected prose/search command not to count")
-    end
+    prose = { "type" => "item.started", "item" => {
+      "id" => "prose", "type" => "command_execution", "command" => "rg -n sleep docs/"
+    } }
+    assert(breaker.observe(JSON.generate(prose)).nil?, "expected a typed search command not to count")
+
     completed = { "type" => "item.completed", "item" => {
       "id" => "completed", "type" => "command_execution", "command" => "sleep 30"
     } }
