@@ -223,7 +223,7 @@ tycho agent list [<project-key>] [--archived|--include-archived] --server office
 tycho agent status <agent-key> --server office-mac [--json]
 tycho agent create <project-key> <prompt> --server office-mac [--run] [--json]
 tycho agent run <agent-key> --server office-mac [--json]
-tycho agent send <agent-key> <message> --server office-mac [--json]
+tycho agent send <agent-key> <message> [--delay SECONDS] --server office-mac [--json]
 tycho queue <agent-key> --server office-mac [--json]
 tycho agent stop <agent-key> --server office-mac [--json]
 tycho agent archive <agent-key> --server office-mac [--json]
@@ -694,6 +694,10 @@ curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/messages \
   -H "Content-Type: application/json" \
   -d '{"prompt":"Please continue with the next failing test.","start":true}'
 ```
+
+Pass `"delay":60` to persist a delayed queue entry instead of starting immediately. The HTTP `202` response includes a stable queue entry ID plus exact `accepted_at` and `not_before` timestamps. A delayed entry never dispatches early. Once due, it joins the next eligible batch in acceptance order; future entries stay queued and cannot block due entries accepted before or after them. The same durable state survives server and scheduler restarts, and the store lock makes claim/dispatch idempotent across concurrent pollers.
+
+When an authenticated managed agent uses the CLI to delay-send to its own key, the CLI supplies `sender_agent_key`. The server accepts that value only when it exactly equals the target and records an internal continuation without changing delegation ownership. Other sends keep the normal explicit `parent_agent_key` or user Takeover semantics.
 
 ### `POST /agents/{key}/prompt-queue/read`
 

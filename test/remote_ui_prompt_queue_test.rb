@@ -50,13 +50,23 @@ module RemoteUIPromptQueueTest
         URL,
       };
       vm.createContext(context);
-      vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\n${extractFunction("parseDelegatedAgentReply")}\n${extractFunction("delegatedAgentReportPayload")}\n${extractFunction("renderDelegatedAgentReply")}\n${extractFunction("renderDelegatedAgentReport")}\n${extractFunction("renderDelegatedAgentReportInquiry")}\n${extractFunction("renderDelegatedAgentReportInquiryField")}\n${extractFunction("delegatedAgentReportStatusLabel")}\n${extractFunction("delegatedAgentReportAttachments")}\n${extractFunction("renderDelegatedAgentReportAttachment")}\n${extractFunction("blockStateToken")}\n${extractFunction("queueReadConversationBlock")}\n${extractFunction("renderQueueReadConversationBlock")}\nthis.renderPromptQueueEntry = renderPromptQueueEntry;\nthis.parseDelegatedAgentReply = parseDelegatedAgentReply;\nthis.renderQueueReadConversationBlock = renderQueueReadConversationBlock;`, context);
+      vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\n${extractFunction("parseDelegatedAgentReply")}\n${extractFunction("delegatedAgentReportPayload")}\n${extractFunction("renderDelegatedAgentReply")}\n${extractFunction("renderDelegatedAgentReport")}\n${extractFunction("renderDelegatedAgentRecovery")}\n${extractFunction("renderDelegatedAgentReportInquiry")}\n${extractFunction("renderDelegatedAgentReportInquiryField")}\n${extractFunction("delegatedAgentReportStatusLabel")}\n${extractFunction("delegatedAgentReportAttachments")}\n${extractFunction("renderDelegatedAgentReportAttachment")}\n${extractFunction("blockStateToken")}\n${extractFunction("queueReadConversationBlock")}\n${extractFunction("renderQueueReadConversationBlock")}\n${extractFunction("circuitBreakerRecoveryConversationBlock")}\n${extractFunction("renderCircuitBreakerRecoveryConversationBlock")}\nthis.renderPromptQueueEntry = renderPromptQueueEntry;\nthis.parseDelegatedAgentReply = parseDelegatedAgentReply;\nthis.renderDelegatedAgentRecovery = renderDelegatedAgentRecovery;\nthis.renderQueueReadConversationBlock = renderQueueReadConversationBlock;\nthis.renderCircuitBreakerRecoveryConversationBlock = renderCircuitBreakerRecoveryConversationBlock;`, context);
 
       const agent = { key: "queue-agent" };
       const legacy = context.renderPromptQueueEntry(agent, { id: "legacy", prompt: "Queued before state" }, 0);
       if (!legacy.includes("Message · Queued</span>") || legacy.includes('data-edit-queued-prompt="legacy" data-agent-key="queue-agent" disabled') ||
           legacy.includes('data-delete-queued-prompt="legacy" data-agent-key="queue-agent" disabled')) {
         throw new Error("state-less queued entries must keep enabled edit and delete controls");
+      }
+
+      const delayed = context.renderPromptQueueEntry(agent, {
+        id: "delayed", prompt: "Continue later", source: "internal_continuation", state: "queued",
+        not_before: "2026-09-20T01:02:03.000000Z"
+      }, 0);
+      if (!delayed.includes("Agent continuation · Queued · due 2026-09-20T01:02:03.000000Z") ||
+          delayed.includes('data-edit-queued-prompt="delayed" data-agent-key="queue-agent" disabled') ||
+          delayed.includes('data-delete-queued-prompt="delayed" data-agent-key="queue-agent" disabled')) {
+        throw new Error("delayed entries must show exact due time and retain edit/delete controls");
       }
 
       const claimed = context.renderPromptQueueEntry(agent, { id: "claimed", prompt: "Already claimed", state: "dispatching" }, 0);
@@ -80,6 +90,7 @@ module RemoteUIPromptQueueTest
 
       const delegatedPayload = `Delegated agent reports:\n${JSON.stringify({ type: "delegated_agent_reports", reports: [
         { agent: { name: "Success child" }, status: "success", summary: "## Finished\n\n[Build](https://example.test/build)", attachments: [{ type: "file", title: "Build", url: "https://example.test/build", description: "Verified output", mime_type: "text/html" }] },
+        { agent: { name: "Sleep recovery child" }, status: "stopped", summary: "Stopped due to overusing sleep-like commands", recovery: { type: "sleep_circuit_breaker", incident_id: "incident-1", expected_safety_behavior: true, state: "scheduled", not_before: "2026-09-20T08:34:43.000000Z", delay_seconds: 60, parent_action: "none", cancels_on: ["manual_prompt", "ownership_change"] } },
         { agent: { agent_key: "needs-input" }, status: "input_required", summary: "Waiting.", inquiry: { message: "Choose a release target.", fields: [{ key: "target", label: "Target <script>", description: "Where to deploy", input_type: "select", options: ["Staging", "<Production>"] }] }, attachments: [{ title: "Unsafe", url: "javascript:alert(1)" }, { title: "Credentials", url: "https://user:secret@example.test/private" }] },
         { agent: { name: "Partial child" }, status: "partial", summary: "Partial result." },
         { agent: { name: "Failed child" }, status: "failed", summary: "Failed result." },
@@ -94,11 +105,30 @@ module RemoteUIPromptQueueTest
           !renderedDelegated.includes("Choose a release target.") || !renderedDelegated.includes("Partial") ||
           !renderedDelegated.includes("Failed") || !renderedDelegated.includes("Blocked") ||
           !renderedDelegated.includes("Stopped") || !renderedDelegated.includes("No action needed") ||
+          !renderedDelegated.includes("Expected safety recovery") ||
+          !renderedDelegated.includes("This is expected safety behavior") ||
+          !renderedDelegated.includes("Automatic recovery is scheduled") ||
+          !renderedDelegated.includes("Parent action</dt><dd>None while scheduled") ||
+          !renderedDelegated.includes("Relative delay</dt><dd>60 seconds") ||
+          !renderedDelegated.includes("manual prompt or ownership change cancels automatic recovery") ||
+          !renderedDelegated.includes("incident-1") ||
           !renderedDelegated.includes("Target &lt;script&gt;") || !renderedDelegated.includes("&lt;Production&gt;") ||
           !renderedDelegated.includes("File · text/html") || !renderedDelegated.includes("Verified output") ||
           renderedDelegated.includes("javascript:alert") || renderedDelegated.includes("user:secret") ||
           renderedDelegated.includes("Edit") || renderedDelegated.includes("Delete")) {
         throw new Error("delegated report payload was not safely rendered as readable content");
+      }
+
+      const suppressedRecovery = context.renderDelegatedAgentRecovery({
+        type: "sleep_circuit_breaker", incident_id: "incident-loop", expected_safety_behavior: true,
+        state: "suppressed", parent_action: "required", reason: "recovery_loop",
+        cancels_on: ["manual_prompt", "ownership_change"],
+      });
+      if (!suppressedRecovery.includes('data-recovery-state="suppressed"') ||
+          !suppressedRecovery.includes("Automatic recovery is suppressed") ||
+          !suppressedRecovery.includes("Parent action</dt><dd>Required") ||
+          !suppressedRecovery.includes("recovery_loop") || !suppressedRecovery.includes("incident-loop")) {
+        throw new Error("non-scheduled recovery states must require parent action and expose the reason");
       }
 
       const legacyPayload = `Delegated agent report:\n${JSON.stringify({ type: "delegated_agent_report", agent: { name: "Legacy child" }, status: "succeeded", summary: "Legacy result." })}`;
@@ -160,6 +190,30 @@ module RemoteUIPromptQueueTest
           !legacyReadHtml.includes("legacy first") || !legacyReadHtml.includes("---") ||
           legacyReadHtml.includes("Required user instructions") || legacyReadHtml.includes("data-queue-work-required")) {
         throw new Error("legacy Read queue events must retain the safe raw fallback and current visual contract");
+      }
+
+      const recoveryHtml = context.renderCircuitBreakerRecoveryConversationBlock({
+        id: "recovery-1", kind: "message", role: "user", content: "raw queue-work contract",
+        metadata: {
+          circuit_breaker_recovery: {
+            incident_id: "incident-1", entry_id: "sleep-recovery:incident-1",
+            instruction: "Continue without blocking waits.",
+            accepted_at: "2026-09-20T08:33:43.000000Z",
+            not_before: "2026-09-20T08:34:43.000000Z",
+            resumed_at: "2026-09-20T08:34:45.000000Z",
+            stopped_at: "2026-09-20T08:33:42.000000Z",
+            delay_seconds: 60, blocking_call_count: 3, threshold: 3,
+          },
+        },
+      }, 2);
+      if (!recoveryHtml.includes("data-circuit-breaker-recovery-block") ||
+          !recoveryHtml.includes("RECOVERED FROM CIRCUITBREAKER") ||
+          !recoveryHtml.includes('data-icon="heartPlus"') ||
+          !recoveryHtml.includes("60 second recovery") ||
+          !recoveryHtml.includes("3 blocking calls") ||
+          !recoveryHtml.includes("Continue without blocking waits.") ||
+          !recoveryHtml.includes("incident-1") || recoveryHtml.includes("raw queue-work contract")) {
+        throw new Error("circuit-breaker recovery must render as a concise expandable structured block");
       }
 
       const requestContext = {

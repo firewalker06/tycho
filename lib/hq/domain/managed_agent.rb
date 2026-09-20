@@ -451,14 +451,15 @@ module HQ
       result
     end
 
-    def enqueue_prompt!(prompt:, attachments: nil, accepted_at: Time.now, id: SecureRandom.uuid, client_request_id: nil,
-                        authority: nil, message_metadata: nil, source: nil)
+    def enqueue_prompt!(prompt:, attachments: nil, accepted_at: Time.now, not_before: nil, id: SecureRandom.uuid,
+                        client_request_id: nil, authority: nil, message_metadata: nil, source: nil)
       entry = {
         "id" => id.to_s,
         "prompt" => prompt.to_s.strip,
         "attachments" => normalize_attachments(attachments) || [],
         "accepted_at" => accepted_at.utc.iso8601(6)
       }
+      entry["not_before"] = not_before.utc.iso8601(6) if not_before
       request_id = client_request_id.to_s.strip
       entry["client_request_id"] = request_id unless request_id.empty?
       entry["authority"] = normalize_prompt_queue_authority(authority) if authority
@@ -500,7 +501,7 @@ module HQ
 
         QueueWork.consume_resume_request!(batch)
       else
-        return nil if @prompt_queue.empty?
+        return nil unless prompt_queue_due?(claimed_at)
 
         batch = open_queue_work_batch!(opened_at: claimed_at)
       end
@@ -532,6 +533,8 @@ module HQ
       metadata.merge!(consolidated_prompt_queue_metadata(entries))
       metadata["prompt_queue_claim_id"] = claim["id"]
       metadata["queue_work_batch_id"] = batch["id"] if batch
+      recovery_metadata = circuit_breaker_recovery_metadata(entries, claim:, batch:)
+      metadata["circuit_breaker_recovery"] = recovery_metadata if recovery_metadata
       request_ids = Array(claim["personal_assistant_client_request_ids"]).filter_map do |id|
         value = id.to_s.strip
         value.empty? ? nil : value
@@ -569,9 +572,11 @@ module HQ
 
     def open_queue_work_batch!(opened_at: Time.now)
       return active_queue_work if active_queue_work
-      return nil if @prompt_queue.empty?
+      eligible, future = @prompt_queue.partition { |entry| prompt_entry_due?(entry, opened_at) }
+      return nil if eligible.empty?
 
-      entries = @prompt_queue.shift(@prompt_queue.length)
+      entries = eligible
+      @prompt_queue = future
       batch = QueueWork.build_batch(entries, opened_at:)
       @queue_work["batches"] << batch
       @queue_work["active_batch_id"] = batch["id"]
@@ -606,6 +611,7 @@ module HQ
           "prompt" => entry["prompt"].to_s,
           "attachments" => normalize_attachments(entry["attachments"]) || [],
           "accepted_at" => entry["accepted_at"],
+          "not_before" => entry["not_before"],
           "source" => entry["source"].to_s.empty? ? "user" : entry["source"].to_s,
           "kind" => QueueWork.entry_kind(entry),
           "authority" => entry["authority"]&.slice("owner", "generation"),
@@ -678,7 +684,27 @@ module HQ
       !running? && !inquiry_blocking_prompt_queue? && @prompt_queue_dispatch_error.nil? && has_run_context &&
         ((@prompt_queue_claim && @prompt_queue_dispatch_error.nil?) ||
          (active_queue_work&.fetch("resume_pending", false) && !@prompt_queue_claim) ||
-         (!active_queue_work && !@prompt_queue.empty? && !@prompt_queue_claim))
+         (!active_queue_work && prompt_queue_due? && !@prompt_queue_claim))
+    end
+
+    def prompt_queue_due?(at = Time.now)
+      @prompt_queue.any? { |entry| prompt_entry_due?(entry, at) }
+    end
+
+    def cancel_pending_sleep_recovery!
+      removed = @prompt_queue.select { |entry| entry["source"] == "sleep_circuit_breaker_recovery" }
+      return 0 if removed.empty?
+
+      @prompt_queue.reject! { |entry| entry["source"] == "sleep_circuit_breaker_recovery" }
+      incident_ids = removed.filter_map { |entry| entry.dig("message_metadata", "sleep_recovery_for_incident_id") }
+      @runs.reverse_each do |run|
+        incident_id = run.metadata&.dig("sleep_circuit_breaker_incident", "id")
+        next unless incident_ids.include?(incident_id)
+
+        run.metadata["sleep_recovery_cancelled"] = "manual_intent"
+        break
+      end
+      removed.length
     end
 
     def pending_prompts?
@@ -867,7 +893,8 @@ module HQ
           "TYCHO_RAW_LOG_PATH" => @log_path,
           "TYCHO_MEMORY_PATH" => memory_path,
           "TYCHO_AGENT_TYPE" => harness_adapter,
-          "TYCHO_RUN_ID" => run.run_id
+          "TYCHO_RUN_ID" => run.run_id,
+          "TYCHO_SLEEP_INCIDENT_PATH" => sleep_incident_file_path(run.run_id)
         ),
         RbConfig.ruby, "-e", agent_runner_script, *launch.fetch(:command),
         chdir: @workspace, out: log_file, err: %i[child out], pgroup: true
@@ -938,6 +965,7 @@ module HQ
       stop_stale_direct_output_wait! if running?
       return if running?
 
+      recognize_sleep_circuit_breaker!
       @finished_at ||= Time.now
       @last_exit_code = read_exit_code
       @last_exit_code ||= 143 if @stop_requested_at
@@ -1084,6 +1112,7 @@ module HQ
         *status_file_paths,
         *@runs.filter_map { |run| run_status_file_path(run.run_id) unless run.run_id.to_s.empty? },
         *@runs.filter_map { |run| run_pid_file_path(run.run_id) unless run.run_id.to_s.empty? },
+        *@runs.filter_map { |run| sleep_incident_file_path(run.run_id) unless run.run_id.to_s.empty? },
         last_message_file_path,
         legacy_status_file_path,
         legacy_last_message_file_path
@@ -1198,6 +1227,9 @@ module HQ
     end
 
     def message_author_metadata(actor)
+      if actor&.internal? && actor.agent_key == @key
+        return { "message_author" => { "type" => "agent", "agent_key" => @key, "name" => @name } }
+      end
       return nil unless actor&.parent?
       return nil unless @delegation_parent&.fetch("agent_key", nil) == actor.agent_key
 
@@ -1370,6 +1402,35 @@ module HQ
       effective_status == "no_action_needed"
     end
 
+    def delegation_recovery_context
+      metadata = last_run&.metadata
+      return nil unless metadata.is_a?(Hash) && metadata["stop_reason"] == "sleep_circuit_breaker"
+
+      incident = metadata["sleep_circuit_breaker_incident"]
+      return nil unless incident.is_a?(Hash) && !incident["id"].to_s.empty?
+
+      incident_id = incident.fetch("id")
+      recovery_entry = queued_prompts.find do |entry|
+        entry["source"] == "sleep_circuit_breaker_recovery" &&
+          entry.dig("message_metadata", "sleep_recovery_for_incident_id").to_s == incident_id.to_s
+      end
+      state, reason = delegation_recovery_state(metadata, recovery_entry)
+      accepted_at = self.class.parse_time(recovery_entry&.fetch("accepted_at", nil))
+      not_before = self.class.parse_time(recovery_entry&.fetch("not_before", nil))
+      {
+        "type" => "sleep_circuit_breaker",
+        "incident_id" => incident_id,
+        "expected_safety_behavior" => true,
+        "state" => state,
+        "scheduled_at" => recovery_entry&.fetch("accepted_at", nil),
+        "not_before" => recovery_entry&.fetch("not_before", nil),
+        "delay_seconds" => accepted_at && not_before ? (not_before - accepted_at).round : nil,
+        "parent_action" => %w[pending scheduled resuming].include?(state) ? "none" : "required",
+        "reason" => reason,
+        "cancels_on" => %w[manual_prompt ownership_change]
+      }.compact
+    end
+
     # A parent-owned turn reports through the delegation coordinator. Its
     # completion is not an operator-facing event, even if the child remains
     # delegated after the turn ends. Match the per-run stamp to the current
@@ -1415,6 +1476,45 @@ module HQ
     end
 
     private
+
+    def delegation_recovery_state(metadata, entry)
+      cancelled = metadata["sleep_recovery_cancelled"].to_s
+      return ["cancelled", cancelled] unless cancelled.empty?
+
+      suppressed = metadata["sleep_recovery_suppressed"].to_s
+      return ["suppressed", suppressed] unless suppressed.empty?
+      return ["pending", nil] if metadata["sleep_recovery_pending"] == true
+      return ["not_scheduled", "automatic_recovery_not_scheduled"] unless entry
+      return ["failed", @prompt_queue_dispatch_error["message"]] if entry["state"] == "failed"
+      return ["resuming", nil] unless entry["state"] == "queued"
+
+      ["scheduled", nil]
+    end
+
+    def circuit_breaker_recovery_metadata(entries, claim:, batch:)
+      return nil unless entries.length == 1
+
+      entry = entries.first
+      return nil unless entry["source"] == "sleep_circuit_breaker_recovery"
+
+      message_metadata = entry["message_metadata"].is_a?(Hash) ? entry["message_metadata"] : {}
+      accepted_at = self.class.parse_time(entry["accepted_at"])
+      not_before = self.class.parse_time(entry["not_before"])
+      delay_seconds = not_before && accepted_at ? (not_before - accepted_at).round : nil
+      {
+        "incident_id" => message_metadata["sleep_recovery_for_incident_id"],
+        "entry_id" => entry["id"],
+        "instruction" => entry["prompt"],
+        "accepted_at" => entry["accepted_at"],
+        "not_before" => entry["not_before"],
+        "resumed_at" => claim["claimed_at"],
+        "delay_seconds" => delay_seconds,
+        "blocking_call_count" => message_metadata["sleep_recovery_blocking_call_count"],
+        "threshold" => message_metadata["sleep_recovery_threshold"],
+        "stopped_at" => message_metadata["sleep_recovery_observed_at"],
+        "queue_work_batch_id" => batch&.fetch("id", nil)
+      }.compact
+    end
 
     def derived_log_path(suffix)
       LogPaths.derived_agent_log_path(@log_path, suffix)
@@ -1595,6 +1695,11 @@ module HQ
       derived_log_path("run-#{token}.pid")
     end
 
+    def sleep_incident_file_path(run_id)
+      token = Digest::SHA256.hexdigest(run_id.to_s)[0, 24]
+      derived_log_path("run-#{token}.sleep-incident.json")
+    end
+
     def recover_spawned_pid!
       return if @pid || !last_run || last_run.status != "running"
       return if completed_status_available?
@@ -1644,7 +1749,8 @@ module HQ
               raw_log_path: ENV.fetch("TYCHO_RAW_LOG_PATH"),
               memory_path: ENV.fetch("TYCHO_MEMORY_PATH"),
               agent_type: ENV.fetch("TYCHO_AGENT_TYPE"),
-              run_id: ENV.fetch("TYCHO_RUN_ID")
+              run_id: ENV.fetch("TYCHO_RUN_ID"),
+              incident_path: ENV["TYCHO_SLEEP_INCIDENT_PATH"]
             )
           else
             result = system(*ARGV)
@@ -1773,6 +1879,7 @@ module HQ
       capture_session_id!
       run.session_id = @session_id unless @session_id.to_s.empty?
       build_summary!
+      apply_sleep_circuit_breaker_result!(run)
       gate_successful_queue_work!(run)
       if personal_assistant? && run.status == "success" && @structured_result.is_a?(Hash) && @structured_result["action_proposals"].is_a?(Array)
         run.metadata = (run.metadata || {}).merge("personal_assistant_action_proposals" => @structured_result["action_proposals"])
@@ -1935,6 +2042,40 @@ module HQ
       return true if [128 + Signal.list["TERM"].to_i, 143].include?(@last_exit_code)
 
       @stop_requested_at && @last_exit_code.to_i.positive?
+    end
+
+    def recognize_sleep_circuit_breaker!
+      return unless last_run&.run_id
+      return unless File.file?(sleep_incident_file_path(last_run.run_id))
+
+      @stop_requested_at ||= Time.now
+    end
+
+    def sleep_circuit_breaker_incident(run)
+      return nil unless run&.run_id
+
+      payload = JSON.parse(File.read(sleep_incident_file_path(run.run_id)))
+      payload.is_a?(Hash) && payload["reason"] == "sleep_circuit_breaker" ? payload : nil
+    rescue JSON::ParserError, SystemCallError
+      nil
+    end
+
+    def apply_sleep_circuit_breaker_result!(run)
+      incident = sleep_circuit_breaker_incident(run)
+      return false unless incident
+
+      metadata = run.metadata.is_a?(Hash) ? run.metadata.dup : {}
+      already_recovering = !metadata["sleep_recovery_for_incident_id"].to_s.empty?
+      incident = incident.merge("ownership_generation" => run.delegation_generation)
+      metadata["stop_reason"] = "sleep_circuit_breaker"
+      metadata["sleep_circuit_breaker_incident"] = incident
+      metadata["sleep_recovery_pending"] = !already_recovering
+      metadata["sleep_recovery_suppressed"] = "recovery_loop" if already_recovering
+      run.metadata = metadata
+      run.status = "stopped"
+      @structured_result = nil
+      @summary = "Stopped due to overusing sleep-like commands"
+      true
     end
 
     def signal_process_group(signal)
@@ -2211,6 +2352,7 @@ module HQ
         "prompt" => prompt,
         "attachments" => normalize_attachments(value["attachments"]) || [],
         "accepted_at" => value["accepted_at"].to_s,
+        "not_before" => value["not_before"].to_s.empty? ? nil : value["not_before"].to_s,
         "updated_at" => value["updated_at"].to_s.empty? ? nil : value["updated_at"].to_s,
         "client_request_id" => value["client_request_id"].to_s.empty? ? nil : value["client_request_id"].to_s
       }.compact
@@ -2219,6 +2361,15 @@ module HQ
       result["message_metadata"] = value["message_metadata"] if value["message_metadata"].is_a?(Hash)
       result["source"] = value["source"].to_s unless value["source"].to_s.empty?
       result
+    end
+
+    def prompt_entry_due?(entry, at)
+      value = entry["not_before"].to_s
+      return true if value.empty?
+
+      Time.parse(value) <= at
+    rescue ArgumentError, TypeError
+      true
     end
 
     def next_prompt_queue_entry

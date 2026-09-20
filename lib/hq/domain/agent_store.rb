@@ -9,6 +9,7 @@ require_relative "schedule_store"
 require_relative "visibility"
 require_relative "../ui/rendering/styles"
 require "securerandom"
+require "shellwords"
 
 module HQ
   class AgentStore
@@ -110,6 +111,7 @@ module HQ
       end
       changed = backfill_color_indexes!(agents) || changed
       changed = backfill_delegation_parents!(agents) || changed
+      agents.each { |agent| changed = materialize_sleep_recovery!(agent) || changed }
       changed = @delegation_coordinator.process!(agents) || changed if process_delegations
       changed = dispatch_prompt_queues!(agents) || changed if dispatch_prompt_queues
       save_unlocked(agents) if changed
@@ -327,6 +329,7 @@ module HQ
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
 
+        target.cancel_pending_sleep_recovery!
         unless target.running?
           if prefer_queued && target.pending_prompts?
             target.clear_prompt_queue_dispatch_error!
@@ -355,10 +358,14 @@ module HQ
     end
 
     def accept_prompt_from!(child, actor:, agents: nil, now: Time.now)
-      return @delegation_coordinator.accept_prompt_from!(child:, actor:, now:) if agents
+      if agents
+        child.cancel_pending_sleep_recovery! unless actor&.internal?
+        return @delegation_coordinator.accept_prompt_from!(child:, actor:, now:)
+      end
 
       mutate(dispatch_prompt_queues: false) do |current, _events|
         target = find_agent_in!(current, child.key)
+        target.cancel_pending_sleep_recovery! unless actor&.internal?
         @delegation_coordinator.accept_prompt_from!(child: target, actor:, now:)
       end
     end
@@ -395,11 +402,12 @@ module HQ
     end
 
     def enqueue_prompt_from!(key, prompt:, attachments: nil, actor:, accepted_at: nil, id: nil,
-                             client_request_id: nil, message_metadata: nil, source: nil)
+                             client_request_id: nil, message_metadata: nil, source: nil, not_before: nil,
+                             require_running: true)
       with_exclusive_lock do
         agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
         target = find_agent_in!(agents, key)
-        raise ArgumentError, "Agent is no longer running" unless target.running?
+        raise ArgumentError, "Agent is no longer running" if require_running && !target.running?
 
         FileTransaction.run([AGENTS_FILE, DELEGATIONS_FILE, target.memory_path]) do
           accept_prompt_from!(target, actor:, agents:)
@@ -409,6 +417,7 @@ module HQ
             prompt:,
             attachments:,
             accepted_at: accepted_at || Time.now,
+            not_before:,
             authority: @delegation_coordinator.ownership_stamp(target.key),
             message_metadata: metadata,
             source: source || (actor&.parent? ? "parent" : "user")
@@ -420,6 +429,28 @@ module HQ
           [target, entry]
         end
       end
+    end
+
+    def enqueue_delayed_prompt_from!(key, prompt:, actor:, delay:, id: nil, source: nil)
+      seconds = begin
+        Float(delay)
+      rescue ArgumentError, TypeError
+        raise ArgumentError, "Delay must be a non-negative number"
+      end
+      raise ArgumentError, "Delay must be zero or greater" if seconds.negative?
+
+      accepted_at = Time.now
+      enqueue_prompt_from!(
+        key,
+        prompt:,
+        actor:,
+        accepted_at:,
+        not_before: accepted_at + seconds,
+        id:,
+        source: source || (actor.internal? ? "internal_continuation" : actor.parent? ? "parent" : "user"),
+        message_metadata: { "delayed_send" => true },
+        require_running: false
+      )
     end
 
     def edit_queued_prompt!(key, entry_id, prompt:)
@@ -539,6 +570,7 @@ module HQ
     def accept_ordinary_prompt!(key, text:, attachments:, actor:, retire_inquiry_id: nil, metadata: nil, event_id: nil)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = find_agent_in!(agents, key)
+        target.cancel_pending_sleep_recovery!
         active_id = target.latest_inquiry_id.to_s
         suspended_id = target.suspended_inquiry_id.to_s
         supplied_id = retire_inquiry_id.to_s
@@ -701,6 +733,47 @@ module HQ
     end
 
     private
+
+    def materialize_sleep_recovery!(agent, delay: 60, now: Time.now)
+      run = agent.last_run
+      metadata = run&.metadata
+      return false unless metadata.is_a?(Hash) && metadata["sleep_recovery_pending"] == true
+
+      incident = metadata["sleep_circuit_breaker_incident"]
+      return false unless incident.is_a?(Hash) && !incident["id"].to_s.empty?
+
+      stamp = @delegation_coordinator.ownership_stamp(agent.key)
+      expected_generation = incident["ownership_generation"]
+      if !expected_generation.nil? && stamp&.fetch("generation", nil) != expected_generation
+        metadata["sleep_recovery_pending"] = false
+        metadata["sleep_recovery_cancelled"] = "ownership_generation_changed"
+        return true
+      end
+
+      incident_id = incident.fetch("id")
+      accepted_at = now
+      command = "tycho agent send #{Shellwords.escape(agent.key)} \"<continuation>\" --delay 60"
+      prompt = "This session was abruptly stopped by Tycho's sleep circuit breaker. " \
+               "Continue without blocking waits. Schedule future work with `#{command}` instead of sleeping."
+      agent.enqueue_prompt!(
+        id: "sleep-recovery:#{incident_id}",
+        prompt:,
+        accepted_at:,
+        not_before: accepted_at + delay,
+        authority: stamp,
+        source: "sleep_circuit_breaker_recovery",
+        message_metadata: {
+          "sleep_recovery_for_incident_id" => incident_id,
+          "sleep_recovery_ownership_generation" => expected_generation,
+          "sleep_recovery_observed_at" => incident["observed_at"],
+          "sleep_recovery_threshold" => incident["threshold"],
+          "sleep_recovery_blocking_call_count" => incident["blocking_call_count"]
+        }.compact
+      )
+      metadata["sleep_recovery_pending"] = false
+      metadata["sleep_recovery_scheduled_at"] = accepted_at.utc.iso8601(6)
+      true
+    end
 
     def persist_created_delegation!(agents, child, delegation)
       parent_key = delegation.fetch(:parent_key).to_s

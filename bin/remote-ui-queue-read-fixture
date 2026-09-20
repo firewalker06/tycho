@@ -13,6 +13,7 @@ $stdout.sync = true
 ROOT = File.expand_path("..", __dir__)
 FIXTURE_ROOT = File.expand_path(ENV.fetch("TYCHO_QUEUE_READ_FIXTURE_ROOT", Dir.mktmpdir("tycho-queue-read")))
 PORT = Integer(ENV.fetch("TYCHO_QUEUE_READ_FIXTURE_PORT", "0"), 10)
+MODE = ENV.fetch("TYCHO_QUEUE_READ_FIXTURE_MODE", "queue")
 
 def free_port
   server = TCPServer.new("127.0.0.1", 0)
@@ -77,40 +78,75 @@ delegated_payload = {
     "summary" => "## Delegated result\n\nThe API contract is sound; add the visible queue-read acceptance state."
   }]
 }
-agent.enqueue_prompt!(
-  prompt: "Update the acceptance notes after incorporating the delegated review.",
-  source: "user",
-  authority: { "owner" => "user", "generation" => 2 }
-)
-agent.enqueue_prompt!(
-  prompt: "Delegated agent reports:\n#{JSON.generate(delegated_payload)}",
-  source: "delegation_callback",
-  authority: { "owner" => "parent", "generation" => 3 }
-)
+unless MODE == "recovery"
+  agent.enqueue_prompt!(
+    prompt: "Update the acceptance notes after incorporating the delegated review.",
+    source: "user",
+    authority: { "owner" => "user", "generation" => 2 }
+  )
+  agent.enqueue_prompt!(
+    prompt: "Delegated agent reports:\n#{JSON.generate(delegated_payload)}",
+    source: "delegation_callback",
+    authority: { "owner" => "parent", "generation" => 3 }
+  )
+end
 
 registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
 HQ::AgentStore.new(registry.projects).save([agent])
 memory = HQ::AgentMemory.new(agent)
-memory.append_user_message!("Check for pending delegated and user work before continuing.", created_at: now - 4)
-memory.append_tool_summary!(
-  "$ tycho agent status queue-demo-orchestrator --json\n" \
-  '"queue_notice":{"pending_count":2,"delegated_reply_count":1,"user_prompt_count":1}',
-  tool_name: "exec_command",
-  created_at: now - 3
-)
-memory.append_assistant_message!(
-  "The status response includes `queue_notice`: two pending entries, one user prompt and one delegated reply.",
-  created_at: now - 2
-)
-memory.append_assistant_message!(
-  "I recognize the pending work and will invoke `tycho queue queue-demo-orchestrator` once to read the consolidated batch.",
-  created_at: now - 1
-)
-memory.append_tool_summary!(
-  "$ tycho queue queue-demo-orchestrator --json",
-  tool_name: "exec_command",
-  created_at: now
-)
+if MODE == "recovery"
+  incident_id = "fixture-circuit-breaker-incident"
+  accepted_at = now - 62
+  not_before = accepted_at + 60
+  instruction = "This session was abruptly stopped by Tycho's sleep circuit breaker. Continue without blocking waits. " \
+                "Schedule future work with `tycho agent send queue-demo-orchestrator \"<continuation>\" --delay 60` instead of sleeping."
+  memory.append_run_summary!(
+    summary: "Stopped due to overusing sleep-like commands",
+    status: "stopped",
+    created_at: accepted_at - 2,
+    metadata: { "stop_reason" => "sleep_circuit_breaker" }
+  )
+  memory.append_user_message!(
+    instruction,
+    created_at: now,
+    metadata: {
+      "circuit_breaker_recovery" => {
+        "incident_id" => incident_id,
+        "entry_id" => "sleep-recovery:#{incident_id}",
+        "instruction" => instruction,
+        "accepted_at" => accepted_at.utc.iso8601(6),
+        "not_before" => not_before.utc.iso8601(6),
+        "resumed_at" => now.utc.iso8601(6),
+        "delay_seconds" => 60,
+        "blocking_call_count" => 3,
+        "threshold" => 3,
+        "stopped_at" => (accepted_at - 2).utc.iso8601(6),
+        "queue_work_batch_id" => "fixture-recovery-batch"
+      }
+    }
+  )
+else
+  memory.append_user_message!("Check for pending delegated and user work before continuing.", created_at: now - 4)
+  memory.append_tool_summary!(
+    "$ tycho agent status queue-demo-orchestrator --json\n" \
+    '"queue_notice":{"pending_count":2,"delegated_reply_count":1,"user_prompt_count":1}',
+    tool_name: "exec_command",
+    created_at: now - 3
+  )
+  memory.append_assistant_message!(
+    "The status response includes `queue_notice`: two pending entries, one user prompt and one delegated reply.",
+    created_at: now - 2
+  )
+  memory.append_assistant_message!(
+    "I recognize the pending work and will invoke `tycho queue queue-demo-orchestrator` once to read the consolidated batch.",
+    created_at: now - 1
+  )
+  memory.append_tool_summary!(
+    "$ tycho queue queue-demo-orchestrator --json",
+    tool_name: "exec_command",
+    created_at: now
+  )
+end
 
 server_pid = Process.spawn(
   RbConfig.ruby,
@@ -128,9 +164,13 @@ read_command = [
 ].join(" ")
 
 puts "Queue-read fixture: http://127.0.0.1:#{port}/ui#agent/queue-demo-orchestrator"
-puts "Pending stage: expand ‘2 queued’ to show the user prompt and delegated reply."
-puts "Read stage command: #{read_command}"
-puts "After the command, refresh Conversation and click ‘Read queue, 2 entries read’."
+if MODE == "recovery"
+  puts "Recovery stage: click ‘RECOVERED FROM CIRCUITBREAKER’ to inspect the structured recovery detail."
+else
+  puts "Pending stage: expand ‘2 queued’ to show the user prompt and delegated reply."
+  puts "Read stage command: #{read_command}"
+  puts "After the command, refresh Conversation and click ‘Read queue, 2 entries read’."
+end
 puts "Fixture root: #{FIXTURE_ROOT}"
 
 cleanup = lambda do

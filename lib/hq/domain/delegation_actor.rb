@@ -5,6 +5,7 @@ module HQ
     Actor = Struct.new(:type, :agent_key, keyword_init: true) do
       def user? = type == "user"
       def parent? = type == "parent"
+      def internal? = type == "internal"
     end
 
     def self.user_actor
@@ -16,6 +17,13 @@ module HQ
       raise ArgumentError, "Missing parent agent key" if key.empty?
 
       Actor.new(type: "parent", agent_key: key)
+    end
+
+    def self.internal_actor(agent_key)
+      key = agent_key.to_s.strip
+      raise ArgumentError, "Missing internal agent key" if key.empty?
+
+      Actor.new(type: "internal", agent_key: key)
     end
   end
 end
