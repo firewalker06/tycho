@@ -3895,11 +3895,11 @@ module HQ
     CONVERSATION_TAIL_DEFAULT_LIMIT = 200
     CONVERSATION_TAIL_MAX_LIMIT = 2_000
     # Digest only needs to detect "did anything change", not describe the
-    # entire transcript. Hashing a small fingerprint (total count + a
-    # bounded recent sample) instead of `JSON.generate`-ing the whole
-    # multi-megabyte block array keeps /conversation/metadata polling cheap
-    # regardless of transcript size.
-    CONVERSATION_DIGEST_SAMPLE_SIZE = 20
+    # entire transcript. Fingerprint the ordinary rendered tail (plus the
+    # total count), rather than `JSON.generate`-ing a whole multi-megabyte
+    # block array. This keeps /conversation/metadata polling bounded while
+    # making metadata-only updates to every normally visible block observable.
+    CONVERSATION_DIGEST_WINDOW_SIZE = CONVERSATION_TAIL_DEFAULT_LIMIT
     CONVERSATION_METADATA_FINGERPRINT_DEPTH = 4
     CONVERSATION_METADATA_FINGERPRINT_ITEMS = 8
     CONVERSATION_BLOCKS_CACHE_LIMIT = 200
@@ -3965,10 +3965,10 @@ module HQ
     end
 
     def conversation_digest_for(blocks)
-      sample = blocks.last(CONVERSATION_DIGEST_SAMPLE_SIZE)
+      window = blocks.last(CONVERSATION_DIGEST_WINDOW_SIZE)
       fingerprint = {
         "total" => blocks.length,
-        "recent" => sample.map { |block| conversation_block_fingerprint(block) }
+        "rendered_tail" => window.map { |block| conversation_block_fingerprint(block) }
       }
       Digest::SHA256.hexdigest(JSON.generate(fingerprint))
     end

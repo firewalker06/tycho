@@ -147,6 +147,17 @@ module RemoteServerTest
       assert(read_block && read_block.dig(:metadata, "attachments") == attachments &&
              read_block.dig(:metadata, "prompt_queue_entries") == entries,
              "expected Remote HTTP output and the Read queue Conversation block to share canonical details")
+
+      # Keep the transitioning queue-read block visible in the ordinary 200-block
+      # tail, but outside the former 20-block digest sample. Queue-work state is
+      # rendered in this block, so polling must still observe its update.
+      memory = HQ::AgentMemory.new(agent)
+      25.times { |index| memory.append_assistant_message!("Later message #{index}") }
+      visible_tail = service.conversation_snapshot(agent.key).fetch(:conversation)
+      queue_read_tail_offset = visible_tail.reverse.find_index { |block| block.dig(:metadata, "queue_read") == true }
+      assert(queue_read_tail_offset && queue_read_tail_offset >= 20 &&
+             queue_read_tail_offset < HQ::RemoteService::CONVERSATION_TAIL_DEFAULT_LIMIT,
+             "expected the queue-read block to be visible in the 200-block tail outside the newest 20 blocks")
       initial_metadata = service.conversation_metadata(agent.key)
 
       incomplete = HQ::RemoteServer.new.send(
