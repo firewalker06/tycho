@@ -147,6 +147,7 @@ module RemoteServerTest
       assert(read_block && read_block.dig(:metadata, "attachments") == attachments &&
              read_block.dig(:metadata, "prompt_queue_entries") == entries,
              "expected Remote HTTP output and the Read queue Conversation block to share canonical details")
+      initial_metadata = service.conversation_metadata(agent.key)
 
       incomplete = HQ::RemoteServer.new.send(
         :route, service, "POST", "/agents/#{agent.key}/queue-work/#{response.dig(:batch, "batch_id")}/complete",
@@ -160,10 +161,14 @@ module RemoteServerTest
         { "dispositions" => [{ "entry_id" => entries.fetch(0).fetch("id"), "outcome" => "incorporated" }] }, nil
       ).fetch(:body)
       resolved_block = service.conversation(agent.key).find { |block| block.dig(:metadata, "queue_read") == true }
+      resolved_metadata = service.conversation_metadata(agent.key)
       assert(completed.fetch("accepted") && completed.dig("batch", "state") == "resolved" &&
              resolved_block.dig(:metadata, "queue_work_state") == "resolved" &&
              resolved_block.dig(:metadata, "queue_work_dispositions") == completed.dig("batch", "dispositions"),
              "expected Remote completion and Conversation to project the same resolved batch")
+      assert(initial_metadata[:block_count] == resolved_metadata[:block_count] &&
+             initial_metadata[:digest] != resolved_metadata[:digest],
+             "expected queue-work metadata changes on an existing block to change the metadata poll digest and trigger a refresh")
     ensure
       if pid
         Process.kill("TERM", -pid)

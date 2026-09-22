@@ -3900,6 +3900,8 @@ module HQ
     # multi-megabyte block array keeps /conversation/metadata polling cheap
     # regardless of transcript size.
     CONVERSATION_DIGEST_SAMPLE_SIZE = 20
+    CONVERSATION_METADATA_FINGERPRINT_DEPTH = 4
+    CONVERSATION_METADATA_FINGERPRINT_ITEMS = 8
     CONVERSATION_BLOCKS_CACHE_LIMIT = 200
 
     # Returns the FULL, unwindowed conversation. Used internally (delegation
@@ -3973,7 +3975,47 @@ module HQ
 
     def conversation_block_fingerprint(block)
       content = block[:content].to_s
-      [block[:kind], block[:role], block[:tool_name], block[:created_at], content.bytesize, content[0, 64]]
+      [
+        block[:kind], block[:role], block[:tool_name], block[:created_at], content.bytesize, content[0, 64],
+        conversation_metadata_fingerprint(block[:metadata])
+      ]
+    end
+
+    # Metadata is rendered with its block, but may contain arbitrary nested
+    # payloads. Keep its digest contribution deterministic and bounded while
+    # retaining a content hash for every included string.
+    def conversation_metadata_fingerprint(metadata)
+      return nil unless metadata
+
+      fingerprint = { "metadata" => bounded_conversation_metadata_value(metadata) }
+      if metadata.is_a?(Hash)
+        fingerprint["queue_work"] = bounded_conversation_metadata_value(
+          metadata.slice("queue_work_state", "queue_work_projection", "queue_work_dispositions")
+        )
+      end
+      JSON.generate(fingerprint)
+    end
+
+    def bounded_conversation_metadata_value(value, depth: 0)
+      return ["depth", value.class.name] if depth >= CONVERSATION_METADATA_FINGERPRINT_DEPTH
+
+      case value
+      when Hash
+        entries = value.map { |key, item| [key.to_s, item] }.sort_by(&:first)
+        ["hash", entries.length, entries.first(CONVERSATION_METADATA_FINGERPRINT_ITEMS).map do |key, item|
+          [key, bounded_conversation_metadata_value(item, depth: depth + 1)]
+        end]
+      when Array
+        ["array", value.length, value.first(CONVERSATION_METADATA_FINGERPRINT_ITEMS).map do |item|
+          bounded_conversation_metadata_value(item, depth: depth + 1)
+        end]
+      when String
+        ["string", value.bytesize, Digest::SHA256.hexdigest(value)]
+      when Numeric, TrueClass, FalseClass, NilClass
+        value
+      else
+        ["object", value.class.name, Digest::SHA256.hexdigest(value.to_s)]
+      end
     end
 
     def conversation_metadata(key)
@@ -4243,6 +4285,7 @@ module HQ
       raise Error.new("Dispositions must be an array", status: 400) unless dispositions.is_a?(Array)
 
       result = @agent_store.complete_queue_work!(key, batch_id:, dispositions:)
+      @conversation_blocks_cache&.delete(key.to_s)
       @agent_activity_snapshot.upsert!(result.fetch("agent"))
       result.reject { |name, _value| name.to_s == "agent" }
     rescue ArgumentError => e
