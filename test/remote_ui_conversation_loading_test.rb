@@ -72,6 +72,22 @@ module RemoteUIConversationLoadingTest
         throw new Error("same-ID content or metadata amendments were not staged");
       }
 
+      // An older page can overlap the rendered tail when new blocks arrive
+      // while the page request is in flight. The prepend path must keep only
+      // the older portion so an overlapping page never duplicates messages.
+      const renderedTail = [
+        { id: "tail-one", kind: "message", role: "assistant", content: "Already rendered one" },
+        { id: "tail-two", kind: "message", role: "assistant", content: "Already rendered two" },
+      ];
+      const delayedOlderPage = [
+        { id: "older", kind: "message", role: "assistant", content: "Older history" },
+        ...renderedTail,
+      ];
+      const uniqueOlderPage = unseenConversationBlocks(renderedTail, delayedOlderPage);
+      if (uniqueOlderPage.length !== 1 || uniqueOlderPage[0].id !== "older") {
+        throw new Error("overlapping older page did not discard already-rendered tail blocks");
+      }
+
       const optimistic = { id: "local", kind: "message", role: "user", content: "Optimistic prompt", client_request_id: "request-1" };
       const acknowledged = { id: "server", kind: "message", role: "user", content: "Optimistic prompt", metadata: { personal_assistant_client_request_id: "request-1" } };
       if (!pendingConversationBlockAcknowledged(optimistic, [acknowledged])) {

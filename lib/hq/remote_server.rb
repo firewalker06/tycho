@@ -3928,7 +3928,11 @@ module HQ
       target = find_agent_reference!(key)
       blocks = conversation_for_agent_cached(target)
       total = blocks.length
-      limit = bounded_tail(params["limit"], default: CONVERSATION_TAIL_DEFAULT_LIMIT,
+      # FRED reconciliation needs the complete bounded daily session history,
+      # while ordinary agents get the tighter initial tail that protects the
+      # mobile PWA from huge completed transcripts.
+      default_limit = target.personal_assistant? ? CONVERSATION_TAIL_MAX_LIMIT : CONVERSATION_TAIL_DEFAULT_LIMIT
+      limit = bounded_tail(params["limit"], default: default_limit,
                                              max: CONVERSATION_TAIL_MAX_LIMIT)
       already_loaded = params["before"].to_i
       already_loaded = 0 if already_loaded.negative?
