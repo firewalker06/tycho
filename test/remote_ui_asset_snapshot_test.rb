@@ -25,7 +25,21 @@ module RemoteUIAssetSnapshotTest
     assert_agent_status_icons_use_lucide_without_badges
     assert_agent_filter_and_sort_use_requested_lucide_icons
     assert_peer_update_ui_is_homebrew_gated
+    assert_pull_request_comment_sections_are_unlimited
     puts "remote_ui_asset_snapshot_test: ok"
+  end
+
+  def assert_pull_request_comment_sections_are_unlimited
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    attach = javascript[/function attachSelectedPullRequestLines\(agentKey, pullRequestId\).*?^}/m].to_s
+    pending = javascript[/function renderPendingPullRequestContexts\(agent\).*?^}/m].to_s
+
+    raise "missing PR section attachment behavior" if attach.empty? || pending.empty?
+    raise "PR section attachment still has a maximum count" if attach.include?("maxContexts")
+    raise "PR section attachment must retain duplicate-range protection" unless attach.include?("That pull request range is already attached")
+    unless pending.include?("${pending.length} section${pending.length === 1 ? \"\" : \"s\"}")
+      raise "pending PR sections must show an unbounded section count"
+    end
   end
 
   def assert_peer_update_ui_is_homebrew_gated
