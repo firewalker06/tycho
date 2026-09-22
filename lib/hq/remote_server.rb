@@ -32,6 +32,7 @@ require_relative "domain/file_store"
 require_relative "domain/file_transaction"
 require_relative "domain/git_diff"
 require_relative "domain/harness_catalog"
+require_relative "domain/harness_auth_check"
 require_relative "domain/push_notification_store"
 require_relative "domain/push_subscription_store"
 require_relative "domain/pull_request_diff"
@@ -540,6 +541,9 @@ module HQ
       end
       return created(project: service.create_welcome_project) if method == "POST" && parts == ["setup", "welcome"]
       return ok(setup: service.refresh_harnesses) if method == "POST" && parts == ["setup", "harnesses", "refresh"]
+      if method == "POST" && parts.length == 4 && parts[0, 2] == ["setup", "harnesses"] && parts[3] == "auth-check"
+        return ok(setup: service.check_harness_auth(parts[2]))
+      end
       if %w[PATCH PUT].include?(method) && parts.length == 4 && parts[0, 2] == ["setup", "harnesses"] && parts[3] == "catalog"
         return ok(setup: service.update_harness_catalog(parts[2], body))
       end
@@ -3679,6 +3683,24 @@ module HQ
       setup
     end
 
+    def check_harness_auth(harness_key)
+      key = harness_key.to_s
+      config = @registry.custom_harnesses.find { |candidate| candidate.key == key }
+      adapter, command, environment = if config
+                                        execution = config.resolved_execution
+                                        [config.adapter, execution.fetch(:command), execution.fetch(:env)]
+                                      elsif %w[codex claude opencode pi].include?(key)
+                                        [key, [ExecutableResolver.resolve_tool(key).command], {}]
+                                      else
+                                        raise Error.new("Unknown harness #{harness_key.inspect}", status: 404)
+                                      end
+      snapshot = HarnessAuthCheck.new.check(adapter:, command:, environment:)
+      @registry.update_harness_auth_snapshot!(key, snapshot.to_h)
+      refresh_harnesses
+    rescue ConfigError => e
+      raise Error.new(e.message)
+    end
+
     def update_harness_catalog(harness_key, attrs)
       @registry.update_harness_catalog!(harness_key, attrs)
       HarnessCatalog.clear_cache!
@@ -5650,7 +5672,9 @@ module HQ
     end
 
     def harness_resolver_payload(name, resolution)
-      merge_harness_catalog_config(name, resolver_payload(name, resolution).merge(HarnessCatalog.for_builtin(name, resolution)))
+      merge_harness_catalog_config(name, resolver_payload(name, resolution).merge(
+        HarnessCatalog.for_builtin(name, resolution)
+      ))
     end
 
     def custom_harness_payload(config)
@@ -5680,7 +5704,9 @@ module HQ
     end
 
     def merge_harness_catalog_config(name, payload)
+      snapshot = @registry.harness_auth_snapshot(name)
       config = @registry.harness_catalog(name)
+      payload = payload.merge(auth_snapshot: snapshot) if snapshot
       return payload unless config
 
       source = [payload[:catalog_source], "hq.yml custom catalog"].compact.reject(&:empty?).join(" + ")
