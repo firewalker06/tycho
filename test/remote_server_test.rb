@@ -41,6 +41,7 @@ module RemoteServerTest
     assert_remote_queue_read_preserves_canonical_attachments
     assert_remote_prompt_start_accepts_dash_prefixed_message
     assert_remote_agent_conversation_includes_run_summary
+    assert_remote_conversation_snapshot_windows_large_transcripts
     assert_remote_agent_debug_endpoints
     assert_remote_project_payloads_include_status_and_detail
     assert_remote_project_git_diff_payload
@@ -3117,6 +3118,86 @@ module RemoteServerTest
       archived_summary = service.conversation(created[:key]).find { |block| block[:kind] == "run_summary" }
       assert(archived_summary&.dig(:metadata, "summary_sections") == summary[:metadata]["summary_sections"],
              "expected archived run history to restore structured sections")
+    ensure
+      replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+      replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
+      replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+    end
+  end
+
+  # Regression coverage for Fizzy #226: a huge finished agent's transcript must
+  # not be shipped/rendered in one unbounded payload (iOS Safari PWA content-process
+  # crash). GET /agents/:key/conversation defaults to a bounded tail window, exposes
+  # the true total via conversation_block_count, and supports paging older blocks
+  # with `before` without gaps or duplicates.
+  def assert_remote_conversation_snapshot_windows_large_transcripts
+    Dir.mktmpdir("hq-remote-test") do |dir|
+      old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
+      old_archive_dir = replace_constant(HQ, :AGENT_ARCHIVE_DIR, File.join(dir, "agents", "archive"))
+
+      FileUtils.mkdir_p(HQ::AGENT_LOGS_DIR)
+      FileUtils.mkdir_p(HQ::AGENT_ARCHIVE_DIR)
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      registry = registry_for(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+
+      created = service.create_agent(
+        "project_key" => "web",
+        "template_key" => "custom",
+        "name" => "Huge transcript agent",
+        "prompt" => "Work.",
+        "agent" => "codex"
+      )
+      agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+      memory = HQ::AgentMemory.new(agent)
+      block_total = 500
+      block_total.times do |index|
+        memory.append_assistant_message!("Message number #{index}", created_at: Time.now - (block_total - index))
+      end
+
+      full_conversation = service.conversation(created[:key])
+      total = full_conversation.length
+      assert(total > block_total,
+             "expected the full internal conversation helper to include the #{block_total} seeded " \
+             "assistant messages plus the agent's own seeded system/context blocks, got #{total}")
+
+      default_snapshot = service.conversation_snapshot(created[:key])
+      default_limit = HQ::RemoteService::CONVERSATION_TAIL_DEFAULT_LIMIT
+      assert(default_snapshot[:conversation].length == default_limit,
+             "expected the default GET /conversation window to be capped at #{default_limit} blocks, " \
+             "got #{default_snapshot[:conversation].length}")
+      assert(default_snapshot[:conversation_block_count] == total,
+             "expected conversation_block_count to expose the true transcript total even when windowed")
+      assert(default_snapshot[:conversation_has_older] == true,
+             "expected conversation_has_older to be true when the transcript exceeds the default window")
+      assert(default_snapshot[:conversation].last[:content] == "Message number #{block_total - 1}",
+             "expected the default window to be the most recent tail, not the oldest blocks")
+
+      default_payload_bytes = JSON.generate(default_snapshot[:conversation]).bytesize
+      full_payload_bytes = JSON.generate(full_conversation).bytesize
+      assert(default_payload_bytes < full_payload_bytes,
+             "expected the windowed payload (#{default_payload_bytes} bytes) to be smaller than " \
+             "the full transcript payload (#{full_payload_bytes} bytes)")
+
+      older_page = service.conversation_snapshot(created[:key], { "before" => default_limit.to_s })
+      assert(older_page[:conversation].length == default_limit,
+             "expected an older page request to return a full page of older blocks")
+      assert(older_page[:conversation].last[:content] == full_conversation[total - default_limit - 1][:content],
+             "expected the older page to end exactly where the default tail window begins, with no gap or overlap")
+      assert(older_page[:conversation_has_older] == true,
+             "expected more history to remain available beyond the second page")
+
+      capped = service.conversation_snapshot(created[:key], { "limit" => "999999" })
+      assert(capped[:conversation].length == total,
+             "expected an oversized explicit limit to be satisfied in full for a transcript smaller than the max cap")
+
+      metadata = service.conversation_metadata(created[:key])
+      assert(metadata[:block_count] == total,
+             "expected conversation metadata block_count to reflect the full transcript regardless of windowing")
+      assert(!metadata[:digest].to_s.empty?,
+             "expected conversation metadata to expose a digest for change detection")
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
