@@ -1828,7 +1828,6 @@ module HQ
       ".woff2" => "font/woff2"
     }.freeze
     MAX_PULL_REQUEST_INBOX_ITEMS = 100
-    MAX_PROMPT_PULL_REQUEST_CONTEXTS = 5
     MAX_PROMPT_PULL_REQUEST_COMMENT_BYTES = 8 * 1024
     PROMPT_CLIENT_REQUEST_ID_PATTERN = /\Aclient-[a-zA-Z0-9-]{1,100}\z/
     IMAGE_CONTENT_TYPES = {
@@ -6075,10 +6074,6 @@ module HQ
     def render_prompt_pull_request_contexts(target, attrs)
       contexts = attrs["pull_request_contexts"]
       return "" unless contexts.is_a?(Array) && contexts.any?
-      if contexts.length > MAX_PROMPT_PULL_REQUEST_CONTEXTS
-        raise Error.new("Attach at most #{MAX_PROMPT_PULL_REQUEST_CONTEXTS} pull request ranges.", status: 400)
-      end
-
       rendered = contexts.map do |raw|
         raise Error.new("Pull request context must be an object.", status: 400) unless raw.is_a?(Hash)
 

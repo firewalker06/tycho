@@ -2749,6 +2749,22 @@ module RemoteServerTest
              content.include?("Comment on this range:\nExplain why these two sides differ."),
              "expected PR context to carry repository file, side, and line metadata")
 
+      unlimited_contexts = 6.times.map do |index|
+        {
+          "pull_request_id" => reference.id,
+          "snapshot_id" => "composer-snapshot",
+          "comment" => "Comment section #{index + 1}.",
+          "lines" => [{ "path" => "lib/example.rb", "hunk_index" => 0, "line_index" => index.even? ? 0 : 1 }]
+        }
+      end
+      unlimited_result = service.submit_prompt(created[:key],
+                                               "prompt" => "Review every section.",
+                                               "pull_request_contexts" => unlimited_contexts)
+      unlimited_content = unlimited_result[:conversation].last[:content]
+      assert(unlimited_content.scan(HQ::PullRequestSelection::OPEN).length == unlimited_contexts.length &&
+             unlimited_contexts.all? { |context| unlimited_content.include?(context.fetch("comment")) },
+             "expected every supplied PR comment section to survive without a five-section cap")
+
       begin
         service.submit_prompt(created[:key],
                               "prompt" => "Oversized comment.",
