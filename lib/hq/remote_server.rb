@@ -335,7 +335,7 @@ module HQ
       status = result.fetch(:status, 200)
       write_http(client, status, result.fetch(:body, {}),
                  content_type: result.fetch(:content_type, "application/json"),
-                 headers: result.fetch(:headers, {}))
+                 headers: result.fetch(:headers, {}), raw_body: result.fetch(:raw_body, false))
     rescue Error => e
       status = e.status
       payload = { error: e.message }
@@ -921,9 +921,9 @@ module HQ
       Request.new(method: method.to_s.upcase, path: path, query: query.to_s, headers: headers, body: body)
     end
 
-    def write_http(client, status, body = nil, content_type: "application/json", headers: {}, **payload)
+    def write_http(client, status, body = nil, content_type: "application/json", headers: {}, raw_body: false, **payload)
       body = payload if body.nil? && !payload.empty?
-      content = content_type.start_with?("application/json") ? JSON.pretty_generate(body) : body.to_s
+      content = raw_body || !content_type.start_with?("application/json") ? body.to_s : JSON.pretty_generate(body)
       reason = reason_phrase(status)
       response_headers = headers
       client.write "HTTP/1.1 #{status} #{reason}\r\n"
@@ -1522,7 +1522,7 @@ module HQ
     def request(method, path, body: nil, query: nil)
       uri = target_uri(path, query)
       response = perform_request(method, uri, body)
-      response_payload(response)
+      response_payload(response, raw_body: attachment_blob_path?(path))
     rescue Net::OpenTimeout, Net::ReadTimeout
       {
         status: 504,
@@ -1581,7 +1581,7 @@ module HQ
       klass.new(uri)
     end
 
-    def response_payload(response)
+    def response_payload(response, raw_body: false)
       content_type = response["content-type"].to_s
       if [401, 403].include?(response.code.to_i)
         @credential_resolver&.rejected!(@credential, @config)
@@ -1591,7 +1591,7 @@ module HQ
         }
       end
 
-      if content_type.start_with?("application/json")
+      if content_type.start_with?("application/json") && !raw_body
         parsed = JSON.parse(response.body.to_s)
         @credential_resolver&.verified!(@credential, @config) if response.code.to_i.between?(200, 299)
         parsed = redact_value(parsed) if response.code.to_i >= 400
@@ -1613,7 +1613,8 @@ module HQ
         status: response.code.to_i,
         body: response.body.to_s,
         content_type: content_type.empty? ? "application/octet-stream" : content_type,
-        headers: proxy_response_headers(response)
+        headers: proxy_response_headers(response),
+        raw_body: raw_body
       }
     rescue JSON::ParserError
       {
@@ -1636,6 +1637,10 @@ module HQ
       else
         value
       end
+    end
+
+    def attachment_blob_path?(path)
+      path.to_s.match?(%r{\A/attachments/[^/]+/blob\z})
     end
 
     def resolve_credential
@@ -3464,6 +3469,7 @@ module HQ
           "Content-Disposition" => "attachment; filename=\"#{http_quoted_filename(File.basename(path))}\"",
           "X-Content-Type-Options" => "nosniff"
         },
+        raw_body: true,
         body: File.binread(path)
       }
     rescue SystemCallError => e
