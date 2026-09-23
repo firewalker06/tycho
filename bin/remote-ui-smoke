@@ -64,6 +64,7 @@ def write_fixture(dir)
   File.write(fake_codex_path, <<~'RUBY')
     #!/usr/bin/env ruby
     require "json"
+    exit 0 if ARGV == ["auth", "status"]
     output_index = ARGV.index("-o")
     output = output_index ? ARGV[output_index + 1] : nil
     payload = {
@@ -8497,6 +8498,31 @@ def write_smoke_script(path)
           throw new Error(`Pi harness settings are incomplete: ${JSON.stringify(piHarnessText)}`);
         }
         if (captureDir) await piHarness.screenshot({ path: path.join(captureDir, "pi-harness-settings.png") });
+        const codexHarness = page.locator("[data-harness-name='codex']");
+        if (await codexHarness.count() !== 1) throw new Error("Settings did not render one Codex harness entry");
+        if (!(await codexHarness.evaluate((details) => details.open))) await codexHarness.locator(":scope > summary").click();
+        const unverifiedAuth = await codexHarness.locator(".harness-auth-snapshot").innerText();
+        if (!unverifiedAuth.includes("Not checked") || !unverifiedAuth.includes("has not been checked yet")) {
+          throw new Error(`Harness auth status should be unknown before an explicit check: ${JSON.stringify(unverifiedAuth)}`);
+        }
+        await codexHarness.locator(".harness-action-menu > summary").click();
+        await page.waitForSelector("[data-check-harness-auth]", { state: "visible", timeout: 10_000 });
+        await page.click("[data-check-harness-auth]");
+        await page.waitForFunction(() => document.querySelector("[data-harness-name='codex'] .harness-auth-snapshot")?.innerText.includes("Authenticated"));
+        const checkedAuth = await codexHarness.locator(".harness-auth-snapshot").innerText();
+        if (!checkedAuth.includes("Authenticated") || !checkedAuth.includes("Last checked")) {
+          throw new Error(`Harness auth check did not persist its visible snapshot: ${JSON.stringify(checkedAuth)}`);
+        }
+        if (captureDir) await codexHarness.screenshot({ path: path.join(captureDir, "harness-auth-desktop.png") });
+        const harnessMobilePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+        await harnessMobilePage.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
+        await harnessMobilePage.locator("[data-scroll-settings-section='settings-automation']").click();
+        await harnessMobilePage.waitForSelector("[data-harness-name='codex']", { state: "visible", timeout: 10_000 });
+        await harnessMobilePage.locator("[data-harness-name='codex'] > summary").click();
+        const mobileAuth = await harnessMobilePage.locator("[data-harness-name='codex'] .harness-auth-snapshot").innerText();
+        if (!mobileAuth.includes("Authenticated")) throw new Error("Mobile Settings lost the saved authentication snapshot");
+        if (captureDir) await harnessMobilePage.screenshot({ path: path.join(captureDir, "harness-auth-mobile.png"), fullPage: false });
+        await harnessMobilePage.close();
         const firstHarness = page.locator(".harness-details").first();
         if (await firstHarness.count()) {
           if (!(await firstHarness.evaluate((details) => details.open))) await firstHarness.locator(":scope > summary").click();

@@ -62,6 +62,7 @@ module RemoteServerTest
     assert_remote_setup_payload_includes_readiness
     assert_remote_update_is_local_and_homebrew_gated
     assert_remote_harness_catalogs_are_configurable
+    assert_remote_harness_auth_check_persists_snapshot
     assert_remote_setup_refreshes_harness_catalogs
     assert_remote_setup_uses_shared_executable_resolution
     assert_remote_setup_finds_mise_shims_outside_inherited_path
@@ -4198,6 +4199,41 @@ module RemoteServerTest
       assert(!HQ::HarnessCatalog.catalog_cache.key?(:sentinel), "expected harness refresh to clear cached catalogs")
       assert(response.dig(:body, :setup, :harnesses).map { |item| item[:name] }.include?("codex"),
              "expected harness refresh to return fresh setup readiness")
+    end
+  end
+
+  def assert_remote_harness_auth_check_persists_snapshot
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      bin_dir = File.join(dir, "bin")
+      write_project_workspace(workspace)
+      FileUtils.mkdir_p(bin_dir)
+      executable = File.join(bin_dir, "codex")
+      File.write(executable, <<~SH)
+        #!/bin/sh
+        if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+          printf 'authenticated token=never-store-this\\n'
+          exit 0
+        fi
+        exit 1
+      SH
+      FileUtils.chmod(0o755, executable)
+      registry = registry_for_project(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      server = HQ::RemoteServer.new
+
+      with_env_values("TYCHO_CODEX_BIN" => executable) do
+        response = server.send(:route, service, "POST", "/setup/harnesses/codex/auth-check", {}, nil)
+        codex = response.dig(:body, :setup, :harnesses).find { |item| item[:name] == "codex" }
+        persisted = YAML.safe_load(File.read(registry.path), aliases: true)
+
+        assert(response[:status] == 200, "expected harness auth check endpoint to return ok")
+        assert(codex.dig(:auth_snapshot, :state) == "authenticated", "expected setup to return auth snapshot")
+        assert(codex.dig(:auth_snapshot, :checked_at), "expected snapshot check time")
+        assert(persisted.dig("harness_auth_snapshots", "codex", "state") == "authenticated",
+               "expected auth snapshot to persist in hq.yml")
+        assert(!File.read(registry.path).include?("never-store-this"), "expected auth command output not to persist")
+      end
     end
   end
 

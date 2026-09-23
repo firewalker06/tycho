@@ -74,7 +74,7 @@ module HQ
     }.freeze
 
     attr_reader :path, :projects, :groups, :remote_servers, :system_prompts_path, :custom_harnesses,
-                :harness_catalogs, :session_loop_settings, :personal_assistant
+                :harness_catalogs, :harness_auth_snapshots, :session_loop_settings, :personal_assistant
 
     def archived_projects_path
       default_archived_path
@@ -100,6 +100,7 @@ module HQ
       @system_prompts = load_yaml(@system_prompts_path, optional: true)
       @custom_harnesses = build_custom_harnesses(data["custom_harnesses"])
       @harness_catalogs = build_harness_catalogs(data["harness_catalogs"])
+      @harness_auth_snapshots = build_harness_auth_snapshots(data["harness_auth_snapshots"])
       @session_loop_settings = build_session_loop_settings(data["session_loops"])
       @personal_assistant = data["personal_assistant"].is_a?(Hash) ? data["personal_assistant"] : {}
       @groups = build_groups(data["groups"])
@@ -387,6 +388,34 @@ module HQ
       @harness_catalogs[harness_key.to_s.strip.downcase]
     end
 
+    def update_harness_auth_snapshot!(harness_key, snapshot)
+      key = harness_key.to_s.strip.downcase
+      raise ConfigError, "Missing harness key" if key.empty?
+      unless HQ.supported_harness?(key)
+        raise ConfigError, "Unsupported harness #{key.inspect}. Supported: #{HQ.harness_keys.join(", ")}"
+      end
+
+      state = snapshot[:state].to_s
+      checked_at = snapshot[:checked_at].to_s
+      raise ConfigError, "Invalid authentication state" unless %w[authenticated unauthenticated unknown].include?(state)
+      raise ConfigError, "Missing authentication check time" if checked_at.empty?
+
+      entry = { "state" => state, "checked_at" => checked_at }
+      with_config_lock do
+        data = load_yaml(@path)
+        snapshots = data["harness_auth_snapshots"].is_a?(Hash) ? data["harness_auth_snapshots"] : {}
+        snapshots[key] = entry
+        data["harness_auth_snapshots"] = snapshots
+        write_yaml(@path, data)
+      end
+      load!
+      harness_auth_snapshot(key)
+    end
+
+    def harness_auth_snapshot(harness_key)
+      @harness_auth_snapshots[harness_key.to_s.strip.downcase]
+    end
+
     def update_session_loop_settings!(attrs)
       settings = build_session_loop_settings(attrs, configured: true)
       with_config_lock do
@@ -539,6 +568,20 @@ module HQ
             preserve_case: false
           )
         )
+      end
+    end
+
+    def build_harness_auth_snapshots(raw_snapshots)
+      return {} unless raw_snapshots.is_a?(Hash)
+
+      raw_snapshots.each_with_object({}) do |(raw_key, raw_entry), snapshots|
+        key = raw_key.to_s.strip.downcase
+        entry = raw_entry.is_a?(Hash) ? raw_entry : {}
+        state = entry["state"].to_s
+        checked_at = entry["checked_at"].to_s
+        next if key.empty? || !%w[authenticated unauthenticated unknown].include?(state) || checked_at.empty?
+
+        snapshots[key] = { state:, checked_at: }
       end
     end
 

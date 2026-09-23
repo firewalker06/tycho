@@ -3103,12 +3103,70 @@ select {
   gap: 2px;
 }
 
+.harness-summary-actions {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+}
+
+.harness-action-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.harness-action-menu > summary {
+  display: grid;
+  width: var(--touch-target);
+  height: var(--touch-target);
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  list-style: none;
+  place-items: center;
+}
+
+.harness-action-menu > summary::-webkit-details-marker { display: none; }
+
+.harness-action-menu[open] > summary,
+.harness-action-menu > summary:hover,
+.harness-action-menu > summary:focus-visible { background: color-mix(in srgb, var(--panel-soft) 72%, transparent); color: var(--text); }
+
+.harness-action-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: var(--ds-z-dropdown);
+  width: max-content;
+  min-width: 210px;
+  max-width: min(80vw, 260px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 98%, transparent);
+  box-shadow: var(--shadow);
+  padding: 6px;
+}
+
+.harness-action-popover .more-menu { border: 0; background: transparent; box-shadow: none; padding: 0; }
+
 .harness-detail-body {
   display: grid;
   gap: 8px;
   border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
   padding: 10px;
 }
+
+.harness-auth-snapshot {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-soft) 70%, transparent);
+  padding: 9px 10px;
+}
+
+.harness-auth-snapshot > div { display: grid; min-width: 0; gap: 2px; }
 
 .harness-catalog-editor {
   min-width: 0;

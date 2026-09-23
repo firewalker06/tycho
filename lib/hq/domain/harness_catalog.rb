@@ -242,6 +242,12 @@ module HQ
       out = capture_stdout(Array(command_prefix) + %w[auth list], timeout: OPENCODE_COMMAND_TIMEOUT, environment:)
       return [] if out.to_s.empty?
 
+      opencode_auth_providers_from_output(out)
+    end
+
+    def opencode_auth_providers_from_output(out)
+      return [] if out.to_s.empty?
+
       out.lines.filter_map do |line|
         text = strip_terminal_control(line).strip
         text = text.sub(/\A[●○◐◯]\s*/, "")
@@ -253,6 +259,12 @@ module HQ
 
     def pi_model_rows(command_prefix, environment: {})
       out = capture_stdout(Array(command_prefix) + ["--list-models"], timeout: PI_COMMAND_TIMEOUT, environment:)
+      return [] if out.to_s.empty?
+
+      pi_model_rows_from_output(out)
+    end
+
+    def pi_model_rows_from_output(out)
       return [] if out.to_s.empty?
 
       out.lines.filter_map do |line|
