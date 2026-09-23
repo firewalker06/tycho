@@ -586,7 +586,9 @@ module HQ
         return ok(service.update_agent_delegation(key, body)) if %w[PATCH PUT].include?(method) && tail == ["delegation"]
         return ok(service.archive_agent(key)) if method == "DELETE" && tail.empty?
         return created(service.create_agent_loop(key, body)) if method == "POST" && tail == ["loop-schedule"]
-        return ok(service.conversation_snapshot(key)) if method == "GET" && tail == ["conversation"]
+        if method == "GET" && tail == ["conversation"]
+          return ok(service.conversation_snapshot(key, request&.query_params || {}))
+        end
         return ok(metadata: service.conversation_metadata(key)) if method == "GET" && tail == ["conversation", "metadata"]
         return ok(debug: service.agent_debug(key)) if method == "GET" && tail == ["debug"]
         return ok(log: service.agent_log(key, request&.query_params || {})) if method == "GET" && tail == ["logs"]
@@ -3884,19 +3886,136 @@ module HQ
       }
     end
 
+    # Default/maximum number of conversation blocks returned by a single
+    # GET /agents/:key/conversation call. A huge finished agent's transcript
+    # (megabytes, thousands of blocks) must not be shipped and rendered in one
+    # pass -- see Fizzy #226 (iOS Safari PWA content-process crash from an
+    # unbounded conversation payload/DOM). Callers page backward from the tail
+    # with `before` (see #conversation_snapshot).
+    CONVERSATION_TAIL_DEFAULT_LIMIT = 200
+    CONVERSATION_TAIL_MAX_LIMIT = 2_000
+    # Digest only needs to detect "did anything change", not describe the
+    # entire transcript. Fingerprint the ordinary rendered tail (plus the
+    # total count), rather than `JSON.generate`-ing a whole multi-megabyte
+    # block array. This keeps /conversation/metadata polling bounded while
+    # making metadata-only updates to every normally visible block observable.
+    CONVERSATION_DIGEST_WINDOW_SIZE = CONVERSATION_TAIL_DEFAULT_LIMIT
+    CONVERSATION_METADATA_FINGERPRINT_DEPTH = 4
+    CONVERSATION_METADATA_FINGERPRINT_ITEMS = 8
+    CONVERSATION_BLOCKS_CACHE_LIMIT = 200
+
+    # Returns the FULL, unwindowed conversation. Used internally (delegation
+    # context, queue-work lookups, tests) where the caller genuinely needs
+    # every block; the HTTP GET /agents/:key/conversation route uses
+    # #conversation_snapshot directly so it can apply the default tail window.
     def conversation(key)
-      conversation_snapshot(key).fetch(:conversation)
+      conversation_for_agent_cached(find_agent_reference!(key))
     end
 
-    def conversation_snapshot(key)
+    # Returns a windowed slice of the agent's conversation, tail-first.
+    #
+    # params:
+    #   "limit"  - max blocks to return (default CONVERSATION_TAIL_DEFAULT_LIMIT,
+    #              capped at CONVERSATION_TAIL_MAX_LIMIT).
+    #   "before" - number of the most-recent blocks the caller already has
+    #              (i.e. how far from the tail to page backward). Omitted or 0
+    #              returns the tail. This is a count from the end, not an
+    #              absolute index, so it stays correct even if new blocks were
+    #              appended since the caller's last fetch.
+    #
+    # conversation_block_count/_digest always describe the FULL transcript so
+    # the existing revision/digest polling contract (app.js `receiveConversationMetadata`)
+    # keeps working unchanged; only the `conversation` array itself is windowed.
+    def conversation_snapshot(key, params = {})
       target = find_agent_reference!(key)
-      blocks = conversation_for_agent(target)
+      blocks = conversation_for_agent_cached(target)
+      total = blocks.length
+      # FRED reconciliation needs the complete bounded daily session history,
+      # while ordinary agents get the tighter initial tail that protects the
+      # mobile PWA from huge completed transcripts.
+      default_limit = target.personal_assistant? ? CONVERSATION_TAIL_MAX_LIMIT : CONVERSATION_TAIL_DEFAULT_LIMIT
+      limit = bounded_tail(params["limit"], default: default_limit,
+                                             max: CONVERSATION_TAIL_MAX_LIMIT)
+      already_loaded = params["before"].to_i
+      already_loaded = 0 if already_loaded.negative?
+      end_index = [total - already_loaded, 0].max
+      start_index = [end_index - limit, 0].max
+      window = blocks[start_index...end_index] || []
       {
-        conversation: blocks,
+        conversation: window,
         conversation_revision: agent_revision(target),
-        conversation_block_count: blocks.length,
-        conversation_digest: Digest::SHA256.hexdigest(JSON.generate(blocks))
+        conversation_block_count: total,
+        conversation_digest: conversation_digest_for(blocks),
+        conversation_window_start: start_index,
+        conversation_has_older: start_index.positive?
       }
+    end
+
+    def conversation_for_agent_cached(target)
+      revision = agent_revision(target)
+      cache = (@conversation_blocks_cache ||= {})
+      cached = cache[target.key]
+      return cached[:blocks] if cached && cached[:revision] == revision
+
+      blocks = conversation_for_agent(target)
+      cache.delete(target.key)
+      cache[target.key] = { revision: revision, blocks: blocks }
+      cache.shift while cache.size > CONVERSATION_BLOCKS_CACHE_LIMIT
+      blocks
+    end
+
+    def conversation_digest_for(blocks)
+      window = blocks.last(CONVERSATION_DIGEST_WINDOW_SIZE)
+      fingerprint = {
+        "total" => blocks.length,
+        "rendered_tail" => window.map { |block| conversation_block_fingerprint(block) }
+      }
+      Digest::SHA256.hexdigest(JSON.generate(fingerprint))
+    end
+
+    def conversation_block_fingerprint(block)
+      content = block[:content].to_s
+      [
+        block[:kind], block[:role], block[:tool_name], block[:created_at], content.bytesize, content[0, 64],
+        conversation_metadata_fingerprint(block[:metadata])
+      ]
+    end
+
+    # Metadata is rendered with its block, but may contain arbitrary nested
+    # payloads. Keep its digest contribution deterministic and bounded while
+    # retaining a content hash for every included string.
+    def conversation_metadata_fingerprint(metadata)
+      return nil unless metadata
+
+      fingerprint = { "metadata" => bounded_conversation_metadata_value(metadata) }
+      if metadata.is_a?(Hash)
+        fingerprint["queue_work"] = bounded_conversation_metadata_value(
+          metadata.slice("queue_work_state", "queue_work_projection", "queue_work_dispositions")
+        )
+      end
+      JSON.generate(fingerprint)
+    end
+
+    def bounded_conversation_metadata_value(value, depth: 0)
+      return ["depth", value.class.name] if depth >= CONVERSATION_METADATA_FINGERPRINT_DEPTH
+
+      case value
+      when Hash
+        entries = value.map { |key, item| [key.to_s, item] }.sort_by(&:first)
+        ["hash", entries.length, entries.first(CONVERSATION_METADATA_FINGERPRINT_ITEMS).map do |key, item|
+          [key, bounded_conversation_metadata_value(item, depth: depth + 1)]
+        end]
+      when Array
+        ["array", value.length, value.first(CONVERSATION_METADATA_FINGERPRINT_ITEMS).map do |item|
+          bounded_conversation_metadata_value(item, depth: depth + 1)
+        end]
+      when String
+        ["string", value.bytesize, Digest::SHA256.hexdigest(value)]
+      when Numeric, TrueClass, FalseClass, NilClass
+        value
+      else
+        ["object", value.class.name, Digest::SHA256.hexdigest(value.to_s)]
+      end
     end
 
     def conversation_metadata(key)
@@ -4166,6 +4285,7 @@ module HQ
       raise Error.new("Dispositions must be an array", status: 400) unless dispositions.is_a?(Array)
 
       result = @agent_store.complete_queue_work!(key, batch_id:, dispositions:)
+      @conversation_blocks_cache&.delete(key.to_s)
       @agent_activity_snapshot.upsert!(result.fetch("agent"))
       result.reject { |name, _value| name.to_s == "agent" }
     rescue ArgumentError => e

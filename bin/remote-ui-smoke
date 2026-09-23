@@ -1231,7 +1231,7 @@ def write_smoke_script(path)
             state.pendingConversationUpdates[key] = { revision: "desktop-catch-up-next", blockCount: incoming.length, unseenCount: 1, digest: "desktop-catch-up-next" };
             const originalApiGet = apiGet;
             apiGet = async (path) => {
-              if (String(path).endsWith(`/agents/${encodeURIComponent(key)}/conversation`)) {
+              if (String(path).split("?", 1)[0].endsWith(`/agents/${encodeURIComponent(key)}/conversation`)) {
                 apiGet = originalApiGet;
                 return { conversation: incoming, conversation_revision: "desktop-catch-up-next", conversation_digest: "desktop-catch-up-next" };
               }
@@ -1311,7 +1311,7 @@ def write_smoke_script(path)
             state.pendingConversationUpdates[key] = { revision: "desktop-keyboard-catch-up-next", blockCount: incoming.length, unseenCount: 1, digest: "desktop-keyboard-catch-up-next" };
             const originalApiGet = apiGet;
             apiGet = async (path) => {
-              if (String(path).endsWith(`/agents/${encodeURIComponent(key)}/conversation`)) {
+              if (String(path).split("?", 1)[0].endsWith(`/agents/${encodeURIComponent(key)}/conversation`)) {
                 apiGet = originalApiGet;
                 return { conversation: incoming, conversation_revision: "desktop-keyboard-catch-up-next", conversation_digest: "desktop-keyboard-catch-up-next" };
               }

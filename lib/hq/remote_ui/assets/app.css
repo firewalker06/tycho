@@ -4006,6 +4006,16 @@ select {
   align-content: start;
 }
 
+.conversation-load-older {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 8px;
+}
+
+.conversation-load-older .load-older-messages {
+  font-size: 0.85em;
+}
+
 .agent-relationship-section,
 .agent-relationship-list {
   display: grid;
