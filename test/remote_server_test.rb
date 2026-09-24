@@ -5,6 +5,7 @@ require "fileutils"
 require "stringio"
 require "rbconfig"
 require "base64"
+require "digest"
 require "open3"
 require "yaml"
 
@@ -33,6 +34,7 @@ module RemoteServerTest
     assert_remote_inquiry_payload_has_stable_id_and_guarded_answer
     assert_remote_inquiry_dismiss_restore_and_retirement_lifecycle
     assert_remote_agent_payload_includes_attachments
+    assert_json_attachment_download_preserves_raw_bytes
     assert_remote_agent_pull_request_diff_payload
     assert_agent_pull_request_listing_avoids_eager_metadata_requests
     assert_concurrent_pull_request_diff_refreshes_are_coalesced
@@ -2185,6 +2187,73 @@ module RemoteServerTest
       rescue HQ::RemoteServer::Error => e
         assert(e.status == 409, "expected retired inquiry restore to be rejected")
       end
+    end
+  end
+
+  def assert_json_attachment_download_preserves_raw_bytes
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      created = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Attachment Agent",
+        "prompt" => "Verify attachments.", "agent" => "codex"
+      )
+      agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+      attachments_dir = File.join(workspace, "attachments")
+      FileUtils.mkdir_p(attachments_dir)
+      json_bytes = JSON.generate(
+        "message" => "A \"quoted\" value at C:\\temp\\source",
+        "unicode" => "snow 雪 and snowman ☃",
+        "records" => [{ "items" => [1, { "nested" => ["array", { "object" => true }] }] }]
+      ) + "\n"
+      files = {
+        "structured-report.json" => [json_bytes, "application/json"],
+        "notes.txt" => ["plain text\\with\\slashes\n", "text/plain"],
+        "records.csv" => ["name,quote\nAda,\"hello\"\n", "text/csv"],
+        "archive.zip" => ["PK\x03\x04raw\\zip\x00bytes".b, "application/zip"],
+        "image.png" => ["\x89PNG\r\n\x1A\nraw-image".b, "image/png"]
+      }
+      memory = HQ::AgentMemory.new(agent)
+      files.each do |filename, (bytes, mime_type)|
+        path = File.join(attachments_dir, filename)
+        File.binwrite(path, bytes)
+        memory.append_attachment!(
+          { "kind" => "document", "title" => filename, "url" => path, "mime_type" => mime_type },
+          created_at: Time.now
+        )
+      end
+
+      server = HQ::RemoteServer.new(logger: Logger.new(StringIO.new), output: StringIO.new)
+      files.each do |filename, (source_bytes, mime_type)|
+        attachment = service.agent(created[:key])[:attachments].find { |item| item["title"] == filename }
+        response = server.send(:route, service, "GET", "/attachments/#{attachment["id"]}/blob", {}, nil)
+        wire = StringIO.new
+        assert(response[:raw_body], "expected #{filename} blob route to mark its body as raw")
+        server.send(:write_http, wire, response[:status], response[:body], content_type: response[:content_type],
+                    headers: response[:headers], raw_body: response[:raw_body])
+        headers, downloaded = wire.string.b.split("\r\n\r\n".b, 2)
+
+        assert(response[:content_type] == mime_type, "expected #{filename} content type to be preserved")
+        assert(downloaded == source_bytes.b, "expected #{filename} download bytes to match its source")
+        assert(downloaded.bytesize == source_bytes.bytesize, "expected #{filename} download length to match its source")
+        assert(Digest::SHA256.hexdigest(downloaded) == Digest::SHA256.hexdigest(source_bytes),
+               "expected #{filename} download checksum to match its source")
+        assert(headers.include?("Content-Length: #{source_bytes.bytesize}"),
+               "expected #{filename} response length header to match its source")
+      end
+
+      json_attachment = service.agent(created[:key])[:attachments].find { |item| item["title"] == "structured-report.json" }
+      json_response = service.attachment_blob(json_attachment["id"])
+      assert(json_response.dig(:headers, "Content-Disposition").include?('filename="structured-report.json"'),
+             "expected JSON download filename to be safely preserved")
+      assert(json_response[:body].getbyte(0) == json_bytes.getbyte(0), "expected JSON download to retain its first byte")
+      parsed = JSON.parse(json_response[:body])
+      assert(parsed.is_a?(Hash) && parsed.dig("records", 0, "items", 1, "nested", 1, "object"),
+             "expected JSON download to retain its object structure")
+      assert(parsed["message"].include?("\\temp\\source") && parsed["unicode"].include?("☃"),
+             "expected JSON download to retain quotes, backslashes, and Unicode")
     end
   end
 
@@ -4855,6 +4924,7 @@ module RemoteServerTest
     old_token = ENV["TYCHO_REMOTE_TARGET_TOKEN"]
     ENV["TYCHO_REMOTE_TARGET_TOKEN"] = "target-secret"
     requests = []
+    json_blob = "{\"records\":[{\"path\":\"C:\\\\temp\\\\source\",\"label\":\"雪\"}]}\n"
     handler = lambda do |request|
       requests << request
       case [request[:method], request[:path]]
@@ -4891,6 +4961,13 @@ module RemoteServerTest
           content_type: "image/png",
           body: "png-bytes".b,
           headers: { "X-Content-Type-Options" => "nosniff" }
+        }
+      when ["GET", "/attachments/json/blob"]
+        {
+          status: 200,
+          content_type: "application/json",
+          body: json_blob,
+          headers: { "Content-Disposition" => 'attachment; filename="report.json"' }
         }
       when ["GET", "/agents/unauthorized"]
         {
@@ -4977,6 +5054,12 @@ module RemoteServerTest
         assert(blob[:body] == "png-bytes", "expected broker proxy to pass non-JSON response bodies through")
         assert(blob.dig(:headers, "X-Content-Type-Options") == "nosniff",
                "expected broker proxy to preserve safe blob headers")
+
+        json_blob_response = server.send(:route, service, "GET", "/servers/target/attachments/json/blob", {}, nil)
+        assert(json_blob_response[:raw_body] && json_blob_response[:content_type] == "application/json",
+               "expected broker JSON attachment blobs to remain raw")
+        assert(json_blob_response[:body] == json_blob.b,
+               "expected broker JSON attachment blobs to preserve source bytes")
 
         unauthorized = server.send(:route, service, "GET", "/servers/target/agents/unauthorized", {}, nil)
         assert(unauthorized[:status] == 502, "expected target 401 to be mapped away from broker auth")
