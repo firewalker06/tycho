@@ -24,6 +24,7 @@ module RemoteServerTest
     assert_remote_agent_response_style_selection_is_independent
     assert_remote_archive_reconciles_scheduled_agent_state
     assert_remote_agent_bulk_archive
+    assert_remote_schedule_session_archive_routes
     assert_remote_agent_clone_archives_source_with_editable_name
     assert_remote_agent_payload_has_revision
     assert_remote_agent_payload_distinguishes_running_history_from_never_run
@@ -1868,6 +1869,111 @@ module RemoteServerTest
              "expected only running agent to remain active")
       assert(response.dig(:body, :archived).all? { |item| item[:archive_path].nil? || Dir.exist?(item[:archive_path]) },
              "expected archived agents to report archive destinations when logs existed")
+    ensure
+      if running_pid
+        begin
+          Process.kill("TERM", -running_pid)
+          Process.wait(running_pid)
+        rescue Errno::ESRCH, Errno::ECHILD
+          nil
+        end
+      end
+    end
+  end
+
+  def assert_remote_schedule_session_archive_routes
+    running_pid = nil
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      File.write(HQ::SCHEDULES_FILE, <<~YAML)
+        schedules:
+          - key: individual
+            name: Individual archive
+            cron: "0 9 * * *"
+            target:
+              type: agent
+              project_key: web
+              message: "Run individual work."
+          - key: bulk-idle
+            name: Bulk idle archive
+            cron: "0 10 * * *"
+            target:
+              type: agent
+              project_key: web
+              message: "Run bulk idle work."
+          - key: running
+            name: Running archive
+            cron: "0 11 * * *"
+            target:
+              type: agent
+              project_key: web
+              message: "Run active work."
+          - key: empty
+            name: Empty archive
+            cron: "0 12 * * *"
+            target:
+              type: agent
+              project_key: web
+              message: "Run empty work."
+      YAML
+      service = HQ::RemoteService.new(registry: registry)
+      server = HQ::RemoteServer.new
+
+      started = {}
+      with_stubbed_agent_start do
+        %w[individual bulk-idle running].each do |key|
+          response = server.send(:route, service, "POST", "/schedules/#{key}/run", {}, nil)
+          started[key] = response.dig(:body, :agent, :key)
+        end
+      end
+
+      individual = server.send(:route, service, "POST", "/schedules/individual/archive-session", {}, nil)
+      assert(individual.dig(:body, :archived), "expected individual schedule session archive")
+      assert(individual.dig(:body, :agent_key) == started["individual"],
+             "expected individual archive to target only its current session")
+      assert(service.schedules.map { |schedule| schedule[:key] }.include?("individual"),
+             "expected individual archive to keep the schedule configured")
+      individual_state = HQ::ScheduleStore.new.load.fetch("individual")
+      assert(individual_state.scheduled? && individual_state.last_target_key.nil?,
+             "expected individual archive to clear the session without disabling the schedule")
+
+      repeated = server.send(:route, service, "POST", "/schedules/individual/archive-session", {}, nil)
+      assert(!repeated.dig(:body, :archived) && repeated.dig(:body, :reason) == "no_session",
+             "expected repeated individual archive to be an idempotent no-op")
+
+      running_pid = Process.spawn(RbConfig.ruby, "-e", "sleep 30", pgroup: true, out: File::NULL, err: File::NULL)
+      stored = JSON.parse(File.read(HQ::AGENTS_FILE))
+      stored.each do |agent|
+        next unless agent["key"] == started["running"]
+
+        agent["pid"] = running_pid
+        agent["started_at"] = Time.now.iso8601
+      end
+      File.write(HQ::AGENTS_FILE, JSON.pretty_generate(stored))
+
+      begin
+        server.send(:route, service, "POST", "/schedules/running/archive-session", {}, nil)
+        raise "expected running schedule archive to be rejected"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("is running"),
+               "expected individual archive to protect a running session")
+      end
+
+      bulk = server.send(:route, service, "POST", "/schedules/archive-sessions", {}, nil)
+      assert(bulk.dig(:body, :archived).map { |item| item[:schedule_key] } == ["bulk-idle"],
+             "expected bulk archive to archive every idle current session")
+      skipped = bulk.dig(:body, :skipped).to_h { |item| [item[:schedule_key], item[:reason]] }
+      assert(skipped == { "individual" => "no_session", "running" => "running", "empty" => "no_session" },
+             "expected bulk archive to report no-session and running skips")
+      assert(bulk.dig(:body, :failed).empty?, "expected bulk archive to avoid false failures")
+      configured = YAML.safe_load_file(HQ::SCHEDULES_FILE).fetch("schedules").map { |item| item.fetch("key") }
+      assert(configured == %w[individual bulk-idle running empty],
+             "expected bulk session archive to preserve every schedule definition")
+      active_keys = service.agents.map { |agent| agent[:key] }
+      assert(active_keys == [started["running"]],
+             "expected only the protected running schedule session to remain active")
     ensure
       if running_pid
         begin
@@ -7122,6 +7228,17 @@ module RemoteServerTest
            js[:body].include?('sublabel: "Archive this session and run a fresh one"') &&
            js[:body].include?('icon: "folderSync"'),
            "expected Schedule refresh-session action to use folder-sync for archive-and-run")
+    assert(js[:body].include?('data-archive-schedule-session="${escapeAttr(schedule.key)}"') &&
+           js[:body].include?('<span>Archive</span>') &&
+           js[:body].include?('aria-label="Archive ${escapeAttr(schedule.name || schedule.key)} session"') &&
+           js[:body].include?('apiPost(`/schedules/${encodeURIComponent(key)}/archive-session`)'),
+           "expected every schedule row to expose an accessible session archive action")
+    assert(js[:body].include?('label: "Archive all sessions"') &&
+           js[:body].include?('attrs: "data-archive-all-schedule-sessions"') &&
+           js[:body].include?('apiPost("/schedules/archive-sessions")') &&
+           js[:body].include?("Every schedule stays configured") &&
+           js[:body].include?("Running sessions and sessions with queued prompts are skipped and reported"),
+           "expected the schedule-list menu to confirm and report safe bulk session archive")
     assert(js[:body].include?('folderDown: `') &&
            js[:body].include?('M12 10v6') &&
            js[:body].include?('iconSvg("folderDown")') &&
@@ -7153,7 +7270,7 @@ module RemoteServerTest
            "expected Remote UI to expose schedule creation")
     assert(js[:body].include?("${renderScheduleDaemonActions(daemon, schedules)}") &&
            js[:body].include?('data-overlay-key="schedule-daemon"') &&
-           js[:body].include?('aria-label="Daemon actions"'),
+           js[:body].include?('aria-label="Schedule list actions"'),
            "expected daemon actions to share the New schedule toolbar behind a context menu")
     assert(js[:body].include?('label: "Restart daemon"') &&
            js[:body].include?('label: "Stop daemon"') &&

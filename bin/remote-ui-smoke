@@ -3189,7 +3189,7 @@ def write_smoke_script(path)
           };
         });
         if (!daemonMenuLayout.found ||
-            daemonMenuLayout.labels.join("|") !== "Restart daemon|Stop daemon" ||
+            daemonMenuLayout.labels.join("|") !== "Restart daemon|Stop daemon|Archive all sessions" ||
             daemonMenuLayout.scheduleLabels.join("|") !== "Run now|Refresh session|Edit schedule|Delete schedule" ||
             daemonMenuLayout.topDelta > 2 ||
             daemonMenuLayout.toolbarChildren !== 2) {
