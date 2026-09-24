@@ -20,6 +20,7 @@ module AgentStoreRecoveryTest
     assert_snapshot_record_and_metadata_schemas
     assert_validated_restore_and_corruption_rejection
     assert_restore_rolls_back_store_and_state_when_state_replacement_fails
+    assert_restore_rolls_back_corrupt_store_bytes_when_state_replacement_fails
     assert_cli_restore_preserves_malformed_active_store_for_forensics
     puts "agent_store_recovery_test: ok"
   end
@@ -252,6 +253,44 @@ module AgentStoreRecoveryTest
       assert(persisted.fetch("session_id") == ledger.fetch("session_id") &&
              ledger.fetch("session_id") == "current-session",
              "expected active store and recovery state to remain consistent after rollback")
+    end
+  end
+
+  def assert_restore_rolls_back_corrupt_store_bytes_when_state_replacement_fails
+    with_store do |store, recovery, clock, dir|
+      historical = build_agent("corrupt-transactional-restore", session_id: "historical-session")
+      store.save([historical])
+      snapshot = recovery.backups.fetch(0).fetch("path")
+
+      clock.replace(Time.utc(2026, 9, 22, 9))
+      current = build_agent("corrupt-transactional-restore", session_id: "current-session")
+      store_path = File.join(dir, "managed_agents.json")
+      state_path = "#{store_path}.recovery.json"
+      recovery.send(:update_state, [current.to_hash], allow_retired_keys: true, replace_sessions: true)
+      corrupt_bytes = "{broken\xFFactive".b
+      File.binwrite(store_path, corrupt_bytes)
+      before_state = File.binread(state_path)
+      original_update_state = recovery.method(:update_state)
+      recovery.define_singleton_method(:update_state) do |records, allow_retired_keys:, replace_sessions: false|
+        raise IOError, "simulated corrupt-store recovery-state replacement failure" if replace_sessions
+
+        original_update_state.call(records, allow_retired_keys:, replace_sessions:)
+      end
+
+      begin
+        store.restore_backup!(snapshot)
+        raise "expected corrupt-store recovery-state replacement failure to fail restore"
+      rescue IOError => e
+        assert(e.message.include?("simulated corrupt-store recovery-state replacement failure"),
+               "expected corrupt-store state replacement failure to propagate")
+      end
+      assert(File.binread(store_path) == corrupt_bytes,
+             "expected failed restore to recover the exact non-UTF-8 active-store bytes")
+      assert(File.binread(state_path) == before_state,
+             "expected failed restore to recover the exact recovery-state bytes")
+      ledger = JSON.parse(File.read(state_path)).fetch("sessions").fetch("corrupt-transactional-restore")
+      assert(ledger.fetch("session_id") == "current-session",
+             "expected corrupt-store rollback to retain the pre-restore recovery identity")
     end
   end
 

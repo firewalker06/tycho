@@ -52,7 +52,7 @@ module HQ
         return
       end
 
-      FileStore.atomic_write(path, state.fetch(:content), backup: false)
+      FileStore.atomic_write_bytes(path, state.fetch(:content), backup: false)
       File.chmod(state.fetch(:mode), path)
     rescue StandardError => e
       HQ.logger.error("FileTransaction") { "Failed to restore #{path}: #{e.class} - #{e.message}" }
