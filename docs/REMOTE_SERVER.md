@@ -14,6 +14,61 @@ The Remote Sessions server is HQ's local JSON API for inspecting and controlling
 
 No Rack, Puma, WEBrick, or external webserver gem is used.
 
+## Managed-agent store backups and recovery
+
+Every successful write to `~/.tycho/logs/managed_agents.json` validates the
+record set and creates at most one checksum-verified snapshot per UTC day in
+`~/.tycho/logs/managed_agents.json.backups/`. Snapshot metadata records the
+SHA-256 digest, byte size, record count, native-session count, and creation
+time. `TYCHO_AGENT_STORE_BACKUP_RETENTION_DAYS` controls retention and defaults
+to 30 days. Rotation runs only after a new snapshot validates and always keeps
+the newest valid snapshot. Backup or metadata failure is logged but cannot
+replace the active store or an earlier valid snapshot.
+
+Validation is semantic as well as byte-level. Restorable metadata must use the
+supported schema version and kind, bind to the current store and exact snapshot
+filename, contain valid ISO 8601 timestamps, and report non-negative sizes and
+counts. Agent records must contain the stable fields present since the first
+managed-agent store format, with valid types and timestamps; newer fields stay
+optional for backward compatibility. A matching checksum cannot make malformed
+records or metadata restorable. Required identity, selector, workspace, and log
+path strings must be non-blank; the initial prompt remains allowed to be empty
+for compatible scheduled-agent records.
+
+Tycho also keeps a private recovery ledger beside the store. It restores a
+session ID lost by a stale save, rejects an unexpected reappearance of an
+archived key, and warns about large record-count changes. Legacy records with
+a session ID only in run history migrate that identity back to the top-level
+record. A native agent with completed history but no recoverable identity logs
+a warning and starts a fresh native session instead of pretending to resume.
+
+To restore without editing JSON manually:
+
+1. Stop the TUI, Remote Sessions server, and schedule daemon so no process can
+   write stale in-memory state after the restore.
+2. List only snapshots whose content and metadata still validate:
+
+   ```bash
+   tycho agent store backups
+   ```
+
+3. Restore the selected absolute snapshot path:
+
+   ```bash
+   tycho agent store restore ~/.tycho/logs/managed_agents.json.backups/managed_agents-YYYYMMDDTHHMMSSffffffZ-CHECK.json
+   ```
+
+The restore rechecks the checksum and schemas under the normal store lock. A
+healthy current store becomes a validated `pre-restore-*.json` snapshot. If
+the current bytes are malformed, Tycho preserves them exactly as a non-restorable
+`pre-restore-invalid-*.raw` forensic artifact with checksum, size, parse error,
+and `content_valid: false` metadata. Tycho replaces the active store and its
+recovery ledger in one rollback transaction, so a ledger write failure fails
+the restore and returns both files to their pre-restore bytes. If the selected
+snapshot or either safety artifact cannot be validated, the current store is
+unchanged. Restart Tycho and check `tycho agent list` before starting any
+recovered agent.
+
 ## Running
 
 Start the server:
