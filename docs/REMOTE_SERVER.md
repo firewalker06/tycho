@@ -14,6 +14,46 @@ The Remote Sessions server is HQ's local JSON API for inspecting and controlling
 
 No Rack, Puma, WEBrick, or external webserver gem is used.
 
+## Managed-agent store backups and recovery
+
+Every successful write to `~/.tycho/logs/managed_agents.json` validates the
+record set and creates at most one checksum-verified snapshot per UTC day in
+`~/.tycho/logs/managed_agents.json.backups/`. Snapshot metadata records the
+SHA-256 digest, byte size, record count, native-session count, and creation
+time. `TYCHO_AGENT_STORE_BACKUP_RETENTION_DAYS` controls retention and defaults
+to 30 days. Rotation runs only after a new snapshot validates and always keeps
+the newest valid snapshot. Backup or metadata failure is logged but cannot
+replace the active store or an earlier valid snapshot.
+
+Tycho also keeps a private recovery ledger beside the store. It restores a
+session ID lost by a stale save, rejects an unexpected reappearance of an
+archived key, and warns about large record-count changes. Legacy records with
+a session ID only in run history migrate that identity back to the top-level
+record. A native agent with completed history but no recoverable identity logs
+a warning and starts a fresh native session instead of pretending to resume.
+
+To restore without editing JSON manually:
+
+1. Stop the TUI, Remote Sessions server, and schedule daemon so no process can
+   write stale in-memory state after the restore.
+2. List only snapshots whose content and metadata still validate:
+
+   ```bash
+   tycho agent store backups
+   ```
+
+3. Restore the selected absolute snapshot path:
+
+   ```bash
+   tycho agent store restore ~/.tycho/logs/managed_agents.json.backups/managed_agents-YYYYMMDDTHHMMSSffffffZ-CHECK.json
+   ```
+
+The restore rechecks the checksum and record schema under the normal store
+lock, creates and validates a timestamped `pre-restore-*.json` snapshot of the
+current store, then atomically installs the selected data. If validation or
+the emergency snapshot fails, the current store is unchanged. Restart Tycho
+and check `tycho agent list` before starting any recovered agent.
+
 ## Running
 
 Start the server:

@@ -325,6 +325,39 @@ module HQ
         end
       end
 
+      class AgentStore < Dry::CLI::Command
+        desc "Inspect or restore managed-agent store backups"
+
+        def call(**)
+          exit CLICommand.usage("Missing agent store command", err: err)
+        end
+      end
+
+      class AgentStoreBackups < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "List validated managed-agent store backups"
+        option :json, type: :boolean, default: false, desc: "Print JSON"
+        usage_template "agent store backups [--json]"
+
+        def call(**opts)
+          exit CLICommand.list_agent_store_backups(opts, out: out, err: err)
+        end
+      end
+
+      class AgentStoreRestore < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Restore a validated managed-agent store backup"
+        argument :path, required: true, desc: "Backup snapshot path"
+        option :json, type: :boolean, default: false, desc: "Print JSON"
+        usage_template "agent store restore %{path} [--json]"
+
+        def call(path:, **opts)
+          exit CLICommand.restore_agent_store(path, opts, out: out, err: err)
+        end
+      end
+
       register "agent", Agent do |prefix|
         prefix.register "create", AgentCreate
         prefix.register "list", AgentList
@@ -336,6 +369,10 @@ module HQ
         prefix.register "archive", AgentArchive
         prefix.register "finalize", AgentFinalize
         prefix.register "clone", AgentClone
+        prefix.register "store", AgentStore do |store|
+          store.register "backups", AgentStoreBackups
+          store.register "restore", AgentStoreRestore
+        end
       end
 
       class QueueRead < Dry::CLI::Command
@@ -1817,6 +1854,37 @@ module HQ
       failure("Invalid dispositions JSON: #{e.message}", err:)
     rescue StandardError => e
       failure("Failed to complete queue work: #{e.message}", err:)
+    end
+
+    def list_agent_store_backups(opts = {}, out: $stdout, err: $stderr)
+      backups = agent_store_for_all.backups
+      if opts[:json]
+        out.puts JSON.pretty_generate(backups)
+      elsif backups.empty?
+        out.puts "No validated managed-agent store backups found."
+      else
+        backups.each do |backup|
+          fields = %w[created_at record_count sha256 path].map { |key| backup.fetch(key) }
+          out.puts fields.join("\t")
+        end
+      end
+      0
+    rescue StandardError => e
+      failure("Failed to list managed-agent store backups: #{e.message}", err:)
+    end
+
+    def restore_agent_store(path, opts = {}, out: $stdout, err: $stderr)
+      records = agent_store_for_all.restore_backup!(path)
+      result = { restored: true, record_count: records.length, source: File.expand_path(path.to_s) }
+      if opts[:json]
+        out.puts JSON.pretty_generate(result)
+      else
+        out.puts "Restored #{records.length} managed agents from #{result.fetch(:source)}."
+        out.puts "A validated pre-restore snapshot was retained beside the rolling backups."
+      end
+      0
+    rescue StandardError => e
+      failure("Failed to restore managed-agent store: #{e.message}", err:)
     end
 
     def archive_agent(agent_key, opts = {}, out: $stdout, err: $stderr)

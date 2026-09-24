@@ -3,6 +3,7 @@
 require_relative "constants"
 require_relative "file_transaction"
 require_relative "file_store"
+require_relative "agent_store_recovery"
 require_relative "managed_agent"
 require_relative "delegation_coordinator"
 require_relative "schedule_store"
@@ -39,12 +40,13 @@ module HQ
 
     attr_reader :delegation_coordinator
 
-    def initialize(projects, usage_metrics_store: nil, delegation_coordinator: nil)
+    def initialize(projects, usage_metrics_store: nil, delegation_coordinator: nil, recovery: nil)
       @projects = projects
       @usage_metrics_store = usage_metrics_store || UsageMetrics.store(
         path: File.join(File.dirname(AGENTS_FILE), "usage_metrics.json")
       )
       @delegation_coordinator = delegation_coordinator || DelegationCoordinator.new
+      @recovery = recovery || AgentStoreRecovery.new(store_path: AGENTS_FILE)
     end
 
     def load
@@ -73,9 +75,18 @@ module HQ
       changed = false
       events = []
       schedule_keys = schedule_keys_by_agent
-      agents = Array(FileStore.read_json(AGENTS_FILE, fallback: [])).map do |hash|
+      raw_records = Array(FileStore.read_json(AGENTS_FILE, fallback: []))
+      raw_records, recovered = @recovery.reconcile_loaded(raw_records)
+      changed = recovered
+      agents = raw_records.map do |hash|
         agent = ManagedAgent.from_hash(hash)
         agent.usage_metrics_store = @usage_metrics_store
+        if agent.missing_native_session_identity?
+          HQ.logger.warn("AgentStore") do
+            "#{agent.key} has prior #{agent.agent} runs without a recoverable native session ID; " \
+              "its next run will start fresh"
+          end
+        end
         changed = true if hash != agent.to_hash
         if agent.schedule_key.nil? && schedule_keys.key?(agent.key)
           agent.associate_schedule!(schedule_keys.fetch(agent.key))
@@ -127,8 +138,11 @@ module HQ
       with_exclusive_lock { save_unlocked(agents) }
     end
 
-    def save_unlocked(agents)
-      FileStore.write_json(AGENTS_FILE, agents.map(&:to_hash))
+    def save_unlocked(agents, allow_retired_keys: false)
+      current = File.exist?(AGENTS_FILE) ? Array(FileStore.read_json(AGENTS_FILE, fallback: [])) : []
+      records = @recovery.prepare(agents.map(&:to_hash), current_records: current, allow_retired_keys:)
+      FileStore.write_json(AGENTS_FILE, records)
+      @recovery.after_save(records, allow_retired_keys:)
     end
 
     def create_for_project(project)
@@ -320,8 +334,16 @@ module HQ
         current, = load_with_poll_events_unlocked(process_delegations: false)
         existing = current.to_h { |agent| [agent.key, true] }
         additions = Array(archived_agents).reject { |agent| existing[agent.key] }
-        save_unlocked(current + additions) unless additions.empty?
+        save_unlocked(current + additions, allow_retired_keys: true) unless additions.empty?
       end
+    end
+
+    def backups
+      with_exclusive_lock { @recovery.backups }
+    end
+
+    def restore_backup!(path)
+      with_exclusive_lock { @recovery.restore!(path) }
     end
 
     def start_agent!(key, run_metadata: nil, prefer_queued: false)

@@ -273,6 +273,14 @@ module HQ
                          else
                            hash["reasoning_effort"]
                          end
+      session_id = hash["session_id"].to_s.strip
+      recovered_session_run = runs.reverse_each.find { |run| !run.session_id.to_s.strip.empty? } if session_id.empty?
+      session_id = recovered_session_run&.session_id if session_id.empty?
+      session_bootstrapped = if hash.key?("session_bootstrapped")
+                               hash["session_bootstrapped"]
+                             elsif session_id && HQ.harness_adapter(hash["agent"]) == "claude"
+                               recovered_session_run&.status != "running"
+                             end
       new(
         key: hash["key"],
         name: hash["name"],
@@ -295,8 +303,8 @@ module HQ
         response_style: hash.key?("response_style") ? hash["response_style"] : nil,
         skills: hash["skills"],
         unread: hash["unread"],
-        session_id: hash["session_id"],
-        session_bootstrapped: hash["session_bootstrapped"],
+        session_id: session_id,
+        session_bootstrapped: session_bootstrapped,
         color_index: hash["color_index"],
         summary: hash["summary"],
         structured_result: hash["structured_result"],
@@ -820,6 +828,11 @@ module HQ
 
       finalize_previous_run!
       reconcile_session_bootstrap!
+      if missing_native_session_identity?
+        HQ.logger.warn("Agent") do
+          "#{@key} has prior #{@agent} runs without a native session ID; starting a fresh native session"
+        end
+      end
       if claude_like_agent? && @session_id.to_s.empty?
         @session_id = SecureRandom.uuid
         @session_bootstrapped = false
@@ -2572,6 +2585,15 @@ module HQ
 
       claude_like_agent? ? @session_bootstrapped : @runs.any?
     end
+
+    def missing_native_session_identity?
+      return false unless HQ::BUILTIN_HARNESSES.include?(harness_adapter)
+      return false unless @session_id.to_s.empty?
+
+      @runs.any? { |run| !run.metadata.to_h["start_failure"] && !run.metadata.to_h["spawn_error"] }
+    end
+
+    public :missing_native_session_identity?
 
     def claude_like_agent?
       harness_adapter == "claude"
