@@ -1246,7 +1246,7 @@ module RemoteServerTest
         deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5.0
         loop do
           current = service.agent(session[:active_key])
-          break if current[:run_count].to_i >= 2
+          break if current[:run_count].to_i >= 2 && current[:finished_at]
           raise "expected the fake FRED queue dispatch to finish" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
 
           sleep 0.02
