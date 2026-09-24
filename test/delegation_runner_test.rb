@@ -146,6 +146,7 @@ module DelegationRunnerTest
       raise "expected automatic resume record" unless reports.first["resume_state"] == "resumed"
 
       wait_for_agent(agents_path, parent_key, minimum_runs: 2)
+      wait_for_store_idle(agents_path)
     end
     puts "delegation_runner_test: ok"
   end
@@ -173,6 +174,14 @@ module DelegationRunnerTest
       end
 
       sleep 0.1
+    end
+  end
+
+  def wait_for_store_idle(path)
+    File.open("#{path}.lock", File::RDWR | File::CREAT, 0o600) do |file|
+      file.flock(File::LOCK_EX)
+    ensure
+      file.flock(File::LOCK_UN)
     end
   end
 

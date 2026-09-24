@@ -8,6 +8,7 @@ require "securerandom"
 require "time"
 
 require_relative "file_store"
+require_relative "file_transaction"
 
 module HQ
   class AgentStoreRecovery
@@ -26,6 +27,7 @@ module HQ
       "created_at" => String,
       "log_path" => String
     }.freeze
+    NON_BLANK_RECORD_FIELDS = %w[key name project_key template_key workspace log_path].freeze
     OPTIONAL_RECORD_FIELDS = {
       "started_at" => [String, NilClass],
       "finished_at" => [String, NilClass],
@@ -186,19 +188,13 @@ module HQ
       raise IOError, "Backup checksum or contents are invalid: #{data_path}" unless valid_snapshot?(data_path, metadata)
 
       records = validate_records!(JSON.parse(FileStore.read_text(data_path)))
-      emergency = emergency_backup!
-      begin
+      emergency_backup!
+      FileTransaction.run([store_path, state_path]) do
         FileStore.write_json(store_path, records)
         installed = validate_records!(JSON.parse(FileStore.read_text(store_path)))
         raise IOError, "restored store did not match the selected snapshot" unless installed == records
-      rescue StandardError
-        restore_emergency!(emergency) if emergency
-        raise
-      end
-      begin
+
         update_state(records, allow_retired_keys: true, replace_sessions: true)
-      rescue StandardError => e
-        log_warning("Restored the managed-agent store but could not update recovery metadata: #{e.class} - #{e.message}")
       end
       records
     end
@@ -283,15 +279,6 @@ module HQ
       FileUtils.rm_f(data_path) if data_path
       FileUtils.rm_f(metadata_path) if metadata_path
       raise
-    end
-
-    def restore_emergency!(emergency)
-      if emergency.fetch("valid")
-        records = validate_records!(JSON.parse(FileStore.read_text(emergency.fetch("path"))))
-        FileStore.write_json(store_path, records)
-      else
-        FileStore.atomic_write_bytes(store_path, File.binread(emergency.fetch("path")))
-      end
     end
 
     def rotate_backups!
@@ -421,7 +408,7 @@ module HQ
           next unless normalized.key?(field)
           raise IOError, "managed-agent record #{field} has invalid type" unless schema_type?(normalized[field], type)
         end
-        %w[key name project_key workspace].each do |field|
+        NON_BLANK_RECORD_FIELDS.each do |field|
           raise IOError, "managed-agent record has blank #{field}" if normalized[field].strip.empty?
         end
         parse_timestamp!(normalized.fetch("created_at"), "managed-agent created_at")

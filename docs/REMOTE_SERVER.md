@@ -31,7 +31,9 @@ filename, contain valid ISO 8601 timestamps, and report non-negative sizes and
 counts. Agent records must contain the stable fields present since the first
 managed-agent store format, with valid types and timestamps; newer fields stay
 optional for backward compatibility. A matching checksum cannot make malformed
-records or metadata restorable.
+records or metadata restorable. Required identity, selector, workspace, and log
+path strings must be non-blank; the initial prompt remains allowed to be empty
+for compatible scheduled-agent records.
 
 Tycho also keeps a private recovery ledger beside the store. It restores a
 session ID lost by a stale save, rejects an unexpected reappearance of an
@@ -60,10 +62,12 @@ The restore rechecks the checksum and schemas under the normal store lock. A
 healthy current store becomes a validated `pre-restore-*.json` snapshot. If
 the current bytes are malformed, Tycho preserves them exactly as a non-restorable
 `pre-restore-invalid-*.raw` forensic artifact with checksum, size, parse error,
-and `content_valid: false` metadata, then atomically installs the selected valid
-snapshot. If the selected snapshot or either safety artifact cannot be
-validated, the current store is unchanged. Restart Tycho and check
-`tycho agent list` before starting any recovered agent.
+and `content_valid: false` metadata. Tycho replaces the active store and its
+recovery ledger in one rollback transaction, so a ledger write failure fails
+the restore and returns both files to their pre-restore bytes. If the selected
+snapshot or either safety artifact cannot be validated, the current store is
+unchanged. Restart Tycho and check `tycho agent list` before starting any
+recovered agent.
 
 ## Running
 

@@ -19,6 +19,7 @@ module AgentStoreRecoveryTest
     assert_daily_backup_rotation_and_failure_safety
     assert_snapshot_record_and_metadata_schemas
     assert_validated_restore_and_corruption_rejection
+    assert_restore_rolls_back_store_and_state_when_state_replacement_fails
     assert_cli_restore_preserves_malformed_active_store_for_forensics
     puts "agent_store_recovery_test: ok"
   end
@@ -177,6 +178,17 @@ module AgentStoreRecoveryTest
              "expected checksum-consistent malformed records to be excluded from listing")
       assert_restore_rejected(store, malformed_path, "expected malformed record snapshot to be rejected")
 
+      blank_log_path_records = valid_records.map(&:dup)
+      blank_log_path_records.fetch(0)["log_path"] = "   "
+      blank_log_path = write_snapshot_fixture(
+        backup_dir,
+        "managed_agents-blank-log-path.json",
+        blank_log_path_records
+      )
+      assert(!recovery.backups.any? { |entry| entry["path"] == blank_log_path },
+             "expected a checksum-consistent blank log_path snapshot to be excluded from listing")
+      assert_restore_rejected(store, blank_log_path, "expected blank log_path snapshot to be rejected")
+
       mutations = {
         "version" => { "schema_version" => 2 },
         "kind" => { "kind" => "unknown" },
@@ -195,6 +207,51 @@ module AgentStoreRecoveryTest
                "expected invalid #{label} metadata to be excluded from listing")
         assert_restore_rejected(store, path, "expected invalid #{label} metadata to be rejected")
       end
+    end
+  end
+
+  def assert_restore_rolls_back_store_and_state_when_state_replacement_fails
+    with_store do |store, recovery, clock, dir|
+      historical = build_agent("transactional-restore", session_id: "historical-session")
+      store.save([historical])
+      snapshot = recovery.backups.fetch(0).fetch("path")
+
+      clock.replace(Time.utc(2026, 9, 22, 9))
+      current = build_agent("transactional-restore", session_id: "current-session")
+      store_path = File.join(dir, "managed_agents.json")
+      state_path = "#{store_path}.recovery.json"
+      current_records = [current.to_hash]
+      HQ::FileStore.write_json(store_path, current_records)
+      recovery.send(:update_state, current_records, allow_retired_keys: true, replace_sessions: true)
+      before_store = File.binread(store_path)
+      before_state = File.binread(state_path)
+      original_update_state = recovery.method(:update_state)
+      recovery.define_singleton_method(:update_state) do |records, allow_retired_keys:, replace_sessions: false|
+        raise IOError, "simulated recovery-state replacement failure" if replace_sessions
+
+        original_update_state.call(records, allow_retired_keys:, replace_sessions:)
+      end
+
+      begin
+        store.restore_backup!(snapshot)
+        raise "expected recovery-state replacement failure to fail restore"
+      rescue IOError => e
+        assert(e.message.include?("simulated recovery-state replacement failure"),
+               "expected state replacement failure to propagate")
+      end
+      assert(File.binread(store_path) == before_store,
+             "expected failed restore to roll back the active store")
+      assert(File.binread(state_path) == before_state,
+             "expected failed restore to roll back recovery state")
+
+      reloaded = store.load.fetch(0)
+      assert(reloaded.session_id == "current-session",
+             "expected AgentStore reload after failed restore to retain current identity")
+      persisted = JSON.parse(File.read(store_path)).fetch(0)
+      ledger = JSON.parse(File.read(state_path)).fetch("sessions").fetch("transactional-restore")
+      assert(persisted.fetch("session_id") == ledger.fetch("session_id") &&
+             ledger.fetch("session_id") == "current-session",
+             "expected active store and recovery state to remain consistent after rollback")
     end
   end
 
