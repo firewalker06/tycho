@@ -16,6 +16,14 @@ module HQ
   class Scheduler
     LoopStartError = Class.new(StandardError)
     RefreshError = Class.new(StandardError)
+    ArchiveError = Class.new(StandardError) do
+      attr_reader :reason
+
+      def initialize(message, reason:)
+        @reason = reason
+        super(message)
+      end
+    end
     DEFAULT_INTERVAL = 30
     MISSED_GRACE_SECONDS = 60
     REFRESH_STOP_TIMEOUT_SECONDS = 2.0
@@ -126,6 +134,63 @@ module HQ
       resume_and_run_now(schedule.key, now:)
     end
 
+    def archive_session(key, now: Time.now)
+      schedule, states, state = schedule_state_for(key)
+      target = last_agent(schedule, state, load_agents(dispatch_prompt_queues: false))
+      return archive_no_session_result(schedule, state) unless target
+
+      if target.running?
+        raise ArchiveError.new(
+          "Scheduled session #{target.key.inspect} is running; wait for it to finish or stop it before archiving",
+          reason: "running"
+        )
+      end
+      if target.pending_prompts? && !target.delegation_callback_prompts_only?
+        raise ArchiveError.new(
+          "Scheduled session #{target.key.inspect} has queued prompts; run or delete them before archiving",
+          reason: "queued_prompts"
+        )
+      end
+
+      archive_path = @agent_store.archive_agent!(target.key)
+      reconcile_archived_agent!(target.key, archived_agent: target, now:, preserve_schedule_status: true)
+      {
+        archived: true,
+        schedule_key: schedule.key,
+        agent_key: target.key,
+        archive_path: archive_path,
+        schedule: schedule_payload(schedule, store.load.fetch(schedule.key))
+      }
+    rescue ArgumentError => e
+      raise ArchiveError.new(e.message, reason: "archive_blocked")
+    end
+
+    def archive_sessions(now: Time.now)
+      archived = []
+      skipped = []
+      failed = []
+
+      schedule_registry.schedules.each do |schedule|
+        result = archive_session(schedule.key, now:)
+        if result.fetch(:archived)
+          archived << result
+        else
+          skipped << result.slice(:schedule_key, :reason, :agent_key)
+        end
+      rescue ArchiveError => e
+        skipped << { schedule_key: schedule.key, reason: e.reason, error: e.message }
+      rescue StandardError => e
+        failed << { schedule_key: schedule.key, error: e.message }
+      end
+
+      {
+        archived: archived,
+        skipped: skipped,
+        failed: failed,
+        archive_count: archived.length
+      }
+    end
+
     def run_now(key, now: Time.now, dry_run: false)
       schedule, states, state = schedule_state_for(key)
       if expire_schedule!(schedule, state, now:)
@@ -206,7 +271,7 @@ module HQ
       end
     end
 
-    def reconcile_archived_agent!(agent_key, archived_agent: nil, now: Time.now)
+    def reconcile_archived_agent!(agent_key, archived_agent: nil, now: Time.now, preserve_schedule_status: false)
       key = agent_key.to_s
       return false if key.empty?
 
@@ -218,7 +283,7 @@ module HQ
         next unless state.last_target_key.to_s == key
 
         preserve_archived_agent_system_message!(schedule, archived_agent)
-        reconcile_archived_agent_state!(schedule, state, key, now:)
+        reconcile_archived_agent_state!(schedule, state, key, now:, preserve_schedule_status:)
         changed = true
       end
       store.save(states) if changed
@@ -469,17 +534,26 @@ module HQ
       )
     end
 
-    def reconcile_archived_agent_state!(schedule, state, agent_key, now:)
+    def reconcile_archived_agent_state!(schedule, state, agent_key, now:, preserve_schedule_status: false)
       state.previous_target_key = agent_key
       state.last_target_key = nil
       state.last_target_kind = nil
       state.last_finished_at ||= now
       state.run_count = 0
-      state.mark_scheduled! if state.stopped? || state.paused?
+      state.mark_scheduled! if !preserve_schedule_status && (state.stopped? || state.paused?)
       publish("schedule.agent_archived", schedule, state,
               agent_key: agent_key,
               target_key: agent_key,
               reason: "manual_archive")
+    end
+
+    def archive_no_session_result(schedule, state)
+      {
+        archived: false,
+        schedule_key: schedule.key,
+        reason: "no_session",
+        schedule: schedule_payload(schedule, state)
+      }
     end
 
     def preserve_archived_agent_system_message!(schedule, archived_agent)

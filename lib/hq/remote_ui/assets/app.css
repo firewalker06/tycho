@@ -2310,12 +2310,13 @@ select {
   min-width: 0;
 }
 
-.schedule-row-actions > button:not(.schedule-toggle-button, .schedule-session-button) {
+.schedule-row-actions > button:not(.schedule-toggle-button, .schedule-session-button, .schedule-archive-button) {
   min-width: 88px;
 }
 
 .schedule-toggle-button,
-.schedule-session-button {
+.schedule-session-button,
+.schedule-archive-button {
   padding: 0 10px;
 }
 
