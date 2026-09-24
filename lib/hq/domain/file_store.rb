@@ -32,11 +32,20 @@ module HQ
     end
 
     def atomic_write(path, content, backup: true)
+      atomic_write_content(path, content.to_s.encode(Encoding::UTF_8), backup:)
+    end
+
+    def atomic_write_bytes(path, content, backup: true)
+      atomic_write_content(path, content.to_s.b, backup:, binary: true)
+    end
+
+    def atomic_write_content(path, content, backup:, binary: false)
       FileUtils.mkdir_p(File.dirname(path))
       temp_path = "#{path}.tmp-#{$PROCESS_ID}-#{SecureRandom.hex(6)}"
 
       File.open(temp_path, File::WRONLY | File::CREAT | File::EXCL, 0o600) do |file|
-        file.write(content.to_s.encode(Encoding::UTF_8))
+        file.binmode if binary
+        file.write(content)
         file.flush
         file.fsync
       end

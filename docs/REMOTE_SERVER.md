@@ -25,6 +25,14 @@ to 30 days. Rotation runs only after a new snapshot validates and always keeps
 the newest valid snapshot. Backup or metadata failure is logged but cannot
 replace the active store or an earlier valid snapshot.
 
+Validation is semantic as well as byte-level. Restorable metadata must use the
+supported schema version and kind, bind to the current store and exact snapshot
+filename, contain valid ISO 8601 timestamps, and report non-negative sizes and
+counts. Agent records must contain the stable fields present since the first
+managed-agent store format, with valid types and timestamps; newer fields stay
+optional for backward compatibility. A matching checksum cannot make malformed
+records or metadata restorable.
+
 Tycho also keeps a private recovery ledger beside the store. It restores a
 session ID lost by a stale save, rejects an unexpected reappearance of an
 archived key, and warns about large record-count changes. Legacy records with
@@ -48,11 +56,14 @@ To restore without editing JSON manually:
    tycho agent store restore ~/.tycho/logs/managed_agents.json.backups/managed_agents-YYYYMMDDTHHMMSSffffffZ-CHECK.json
    ```
 
-The restore rechecks the checksum and record schema under the normal store
-lock, creates and validates a timestamped `pre-restore-*.json` snapshot of the
-current store, then atomically installs the selected data. If validation or
-the emergency snapshot fails, the current store is unchanged. Restart Tycho
-and check `tycho agent list` before starting any recovered agent.
+The restore rechecks the checksum and schemas under the normal store lock. A
+healthy current store becomes a validated `pre-restore-*.json` snapshot. If
+the current bytes are malformed, Tycho preserves them exactly as a non-restorable
+`pre-restore-invalid-*.raw` forensic artifact with checksum, size, parse error,
+and `content_valid: false` metadata, then atomically installs the selected valid
+snapshot. If the selected snapshot or either safety artifact cannot be
+validated, the current store is unchanged. Restart Tycho and check
+`tycho agent list` before starting any recovered agent.
 
 ## Running
 

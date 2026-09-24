@@ -41,11 +41,15 @@ module DelegationRunnerTest
         payload = {
           "status" => "success",
           "summary" => "Completed by detached fake harness",
+          "summary_sections" => nil,
           "inquiry" => nil,
-          "attachments" => nil
+          "attachments" => nil,
+          "memory_handoff" => nil
         }
+        resumed_session = ARGV.find { |argument| argument.start_with?("fake-") }
+        session_id = resumed_session || "fake-#{Process.pid}"
         File.write(output, JSON.generate(payload)) if output
-        puts JSON.generate("type" => "thread.started", "thread_id" => "fake-#{Process.pid}")
+        puts JSON.generate("type" => "thread.started", "thread_id" => session_id)
         puts JSON.generate("type" => "item.completed", "item" => {
           "type" => "agent_message", "text" => JSON.generate(payload)
         })

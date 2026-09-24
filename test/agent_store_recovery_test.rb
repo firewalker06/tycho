@@ -2,6 +2,8 @@
 
 require "fileutils"
 require "json"
+require "open3"
+require "rbconfig"
 require "tmpdir"
 
 require_relative "../lib/hq/domain/agent_store"
@@ -12,9 +14,12 @@ module AgentStoreRecoveryTest
   def run!
     assert_restart_and_legacy_migration_preserve_session_identity
     assert_recovery_ledger_repairs_session_loss_and_archived_key_reappearance
+    assert_stale_nonempty_identity_and_bootstrap_regressions_are_blocked
     assert_missing_native_identity_is_detected
     assert_daily_backup_rotation_and_failure_safety
+    assert_snapshot_record_and_metadata_schemas
     assert_validated_restore_and_corruption_rejection
+    assert_cli_restore_preserves_malformed_active_store_for_forensics
     puts "agent_store_recovery_test: ok"
   end
 
@@ -75,6 +80,29 @@ module AgentStoreRecoveryTest
            "expected completed native history without identity to require a fresh session")
   end
 
+  def assert_stale_nonempty_identity_and_bootstrap_regressions_are_blocked
+    with_store do |store, _recovery, _clock, dir|
+      current = build_agent("identity-guard", session_id: "new-session", session_bootstrapped: true)
+      store.save([current])
+
+      stale_id = build_agent("identity-guard", session_id: "old-session", session_bootstrapped: true)
+      begin
+        store.save([stale_id])
+        raise "expected stale non-empty session ID to be rejected"
+      rescue IOError => e
+        assert(e.message.include?("would change native session ID"), "expected explicit session drift failure")
+      end
+      persisted = JSON.parse(File.read(File.join(dir, "managed_agents.json"))).fetch(0)
+      assert(persisted.fetch("session_id") == "new-session", "expected rejected drift to preserve the current ID")
+
+      stale_bootstrap = build_agent("identity-guard", session_id: "new-session", session_bootstrapped: false)
+      store.save([stale_bootstrap])
+      restarted = store.load.fetch(0)
+      assert(restarted.session_id == "new-session", "expected matching identity to remain stable")
+      assert(restarted.session_bootstrapped, "expected bootstrapped state to remain monotonically true")
+    end
+  end
+
   def assert_daily_backup_rotation_and_failure_safety
     with_store(retention_days: 2) do |store, recovery, clock, dir|
       store.save([build_agent("day-one", session_id: "session-one")])
@@ -133,6 +161,83 @@ module AgentStoreRecoveryTest
     end
   end
 
+  def assert_snapshot_record_and_metadata_schemas
+    with_store do |store, recovery, _clock, dir|
+      store.save([build_agent("schema-source", session_id: "schema-session")])
+      valid_path = recovery.backups.fetch(0).fetch("path")
+      valid_records = JSON.parse(File.read(valid_path))
+      backup_dir = File.join(dir, "managed_agents.json.backups")
+
+      malformed_path = write_snapshot_fixture(
+        backup_dir,
+        "managed_agents-malformed-record.json",
+        [{ "key" => "only-a-key" }]
+      )
+      assert(!recovery.backups.any? { |entry| entry["path"] == malformed_path },
+             "expected checksum-consistent malformed records to be excluded from listing")
+      assert_restore_rejected(store, malformed_path, "expected malformed record snapshot to be rejected")
+
+      mutations = {
+        "version" => { "schema_version" => 2 },
+        "kind" => { "kind" => "unknown" },
+        "source" => { "source" => "other.json" },
+        "snapshot" => { "snapshot" => "different.json" },
+        "timestamp" => { "created_at" => "not-a-time" }
+      }
+      mutations.each do |label, overrides|
+        path = write_snapshot_fixture(
+          backup_dir,
+          "managed_agents-invalid-#{label}.json",
+          valid_records,
+          metadata: overrides
+        )
+        assert(!recovery.backups.any? { |entry| entry["path"] == path },
+               "expected invalid #{label} metadata to be excluded from listing")
+        assert_restore_rejected(store, path, "expected invalid #{label} metadata to be rejected")
+      end
+    end
+  end
+
+  def assert_cli_restore_preserves_malformed_active_store_for_forensics
+    Dir.mktmpdir("hq-agent-store-cli-recovery-test") do |dir|
+      logs = File.join(dir, "logs")
+      path = File.join(logs, "managed_agents.json")
+      clock = MutableClock.new(Time.utc(2026, 9, 21, 8))
+      recovery = HQ::AgentStoreRecovery.new(store_path: path, now: -> { clock.time })
+      recovery.after_save([build_agent("cli-restore", session_id: "cli-session").to_hash])
+      snapshot = recovery.backups.fetch(0).fetch("path")
+      invalid_bytes = "{broken\xFFactive".b
+      FileUtils.mkdir_p(logs)
+      File.binwrite(path, invalid_bytes)
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      File.write(config_path, "projects: []\n")
+      File.write(prompts_path, "--- {}\n")
+      env = {
+        "TYCHO_HOME" => File.join(dir, "home"),
+        "TYCHO_LOGS_ROOT" => logs,
+        "TYCHO_CONFIG_PATH" => config_path,
+        "TYCHO_SYSTEM_PROMPTS_PATH" => prompts_path
+      }
+      executable = File.expand_path("../bin/tycho", __dir__)
+      stdout, stderr, status = Open3.capture3(
+        env, RbConfig.ruby, executable, "agent", "store", "restore", snapshot, "--json",
+        chdir: File.expand_path("..", __dir__)
+      )
+      assert(status.success?, "expected CLI restore over malformed active JSON to succeed: #{stderr}")
+      assert(JSON.parse(stdout).fetch("restored"), "expected CLI restore result")
+      restored = JSON.parse(File.read(path)).fetch(0)
+      assert(restored.fetch("session_id") == "cli-session", "expected CLI restore to install the valid snapshot")
+      forensic = Dir.glob(File.join("#{path}.backups", "pre-restore-invalid-*.raw"))
+      assert(forensic.length == 1, "expected one clearly marked forensic pre-restore artifact")
+      assert(File.binread(forensic.fetch(0)) == invalid_bytes, "expected forensic artifact to preserve exact invalid bytes")
+      forensic_metadata = JSON.parse(File.read("#{forensic.fetch(0)}.metadata.json"))
+      assert(forensic_metadata.fetch("kind") == "forensic_pre_restore" &&
+             forensic_metadata.fetch("content_valid") == false,
+             "expected forensic metadata to identify invalid active content")
+    end
+  end
+
   def with_store(retention_days: 30)
     Dir.mktmpdir("hq-agent-store-recovery-test") do |dir|
       path = File.join(dir, "managed_agents.json")
@@ -165,6 +270,37 @@ module AgentStoreRecoveryTest
       session_id:,
       session_bootstrapped:
     )
+  end
+
+  def write_snapshot_fixture(dir, filename, records, metadata: {})
+    path = File.join(dir, filename)
+    FileUtils.mkdir_p(dir)
+    HQ::FileStore.write_json(path, records, backup: false)
+    bytes = File.binread(path)
+    value = {
+      "schema_version" => 1,
+      "kind" => "daily",
+      "created_at" => "2026-09-21T08:00:00.000000Z",
+      "backup_date" => "2026-09-21",
+      "source" => "managed_agents.json",
+      "snapshot" => File.basename(path),
+      "sha256" => Digest::SHA256.hexdigest(bytes),
+      "byte_size" => bytes.bytesize,
+      "record_count" => records.length,
+      "session_count" => records.count { |record| !record["session_id"].to_s.empty? }
+    }.merge(metadata)
+    metadata_path = path.sub(/\.json\z/, ".metadata.json")
+    HQ::FileStore.write_json(metadata_path, value, backup: false)
+    path
+  end
+
+  def assert_restore_rejected(store, path, message)
+    begin
+      store.restore_backup!(path)
+      raise message
+    rescue IOError
+      nil
+    end
   end
 
   def assert(condition, message)

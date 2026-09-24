@@ -1880,7 +1880,7 @@ module HQ
         out.puts JSON.pretty_generate(result)
       else
         out.puts "Restored #{records.length} managed agents from #{result.fetch(:source)}."
-        out.puts "A validated pre-restore snapshot was retained beside the rolling backups."
+        out.puts "A pre-restore safety artifact was retained beside the rolling backups."
       end
       0
     rescue StandardError => e
