@@ -496,6 +496,7 @@ def write_smoke_script(path)
       const delegationOnly = process.env.TYCHO_REMOTE_UI_DELEGATION_ONLY === "1";
       const titleCopyOnly = process.env.TYCHO_REMOTE_UI_TITLE_COPY_ONLY === "1";
       const summaryAttachmentsOnly = process.env.TYCHO_REMOTE_UI_SUMMARY_ATTACHMENTS_ONLY === "1";
+      const quickAgentsPriorityOnly = process.env.TYCHO_REMOTE_UI_QUICK_AGENTS_PRIORITY_ONLY === "1";
       const draft = "Remote UI smoke draft " + Date.now();
       const errors = [];
 
@@ -2613,7 +2614,120 @@ def write_smoke_script(path)
         errors.splice(consoleErrorStart, errors.length - consoleErrorStart, ...unexpectedErrors);
       }
 
+      async function assertQuickAgentPriority(candidate = page) {
+        await candidate.setViewportSize({ width: 390, height: 844 });
+        await candidate.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
+        await candidate.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+        await candidate.evaluate(() => {
+          if (!state.unreadPanelOpen) toggleUnreadPanel();
+        });
+        await candidate.waitForSelector("#unread-agent-search", { state: "visible", timeout: 10_000 });
+
+        const order = await candidate.evaluate(() => {
+          const source = state.agents[0];
+          window.__quickSwitchPriorityCaptureState = {
+            agents: state.agents,
+            agentDetails: state.agentDetails,
+            personalAssistant: state.personalAssistant,
+          };
+          state.agents = [
+            {
+              ...source,
+              key: "quick-switch-newest-ordinary",
+              resource_key: "quick-switch-newest-ordinary",
+              name: "Newest ordinary agent",
+              awaiting_input: false,
+              unread: false,
+              latest_inquiry: null,
+              last_result: "success",
+              status: "succeeded",
+              updated_at: "2026-12-01T12:00:00Z",
+            },
+            {
+              ...source,
+              key: "quick-switch-awaiting-input",
+              resource_key: "quick-switch-awaiting-input",
+              name: "Awaiting input response",
+              awaiting_input: true,
+              unread: true,
+              latest_inquiry: null,
+              last_result: "input required",
+              status: "awaiting-input",
+              updated_at: "2026-02-01T12:00:00Z",
+            },
+            {
+              ...source,
+              key: "quick-switch-active-inquiry",
+              resource_key: "quick-switch-active-inquiry",
+              name: "Inquiry response needed",
+              awaiting_input: false,
+              unread: false,
+              latest_inquiry: { id: "quick-switch-inquiry" },
+              last_result: "success",
+              status: "succeeded",
+              updated_at: "2026-01-01T12:00:00Z",
+            },
+            {
+              ...source,
+              key: "quick-switch-no-action",
+              resource_key: "quick-switch-no-action",
+              name: "No action agent",
+              awaiting_input: false,
+              unread: false,
+              latest_inquiry: null,
+              last_result: "no action",
+              status: "no_action_needed",
+              updated_at: "2027-01-01T12:00:00Z",
+            },
+          ];
+          state.agentDetails = {};
+          state.personalAssistant = {};
+          syncUnreadAlert();
+          return Array.from(document.querySelectorAll(".switcher-agent-row"), (row) => row.dataset.openAgent);
+        });
+        const expected = [
+          "quick-switch-awaiting-input",
+          "quick-switch-active-inquiry",
+          "quick-switch-newest-ordinary",
+          "quick-switch-no-action",
+        ];
+
+        try {
+          if (order.join("|") !== expected.join("|")) {
+            throw new Error(`Quick agent response-needed priority regressed: ${JSON.stringify(order)}`);
+          }
+          if (captureDir) {
+            await candidate.locator("#unread-agents-panel").screenshot({
+              path: path.join(captureDir, "quick-agents-priority-mobile.png"),
+            });
+            await candidate.setViewportSize({ width: 1440, height: 900 });
+            await candidate.waitForTimeout(100);
+            await candidate.locator("#unread-agents-panel").screenshot({
+              path: path.join(captureDir, "quick-agents-priority-desktop.png"),
+            });
+          }
+        } finally {
+          await candidate.evaluate(() => {
+            const saved = window.__quickSwitchPriorityCaptureState;
+            if (!saved) return;
+            state.agents = saved.agents;
+            state.agentDetails = saved.agentDetails;
+            state.personalAssistant = saved.personalAssistant;
+            delete window.__quickSwitchPriorityCaptureState;
+            syncUnreadAlert();
+          });
+          await candidate.setViewportSize({ width: 390, height: 844 });
+          await candidate.waitForTimeout(100);
+        }
+      }
+
       try {
+        if (quickAgentsPriorityOnly) {
+          await assertQuickAgentPriority();
+          if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
+          console.log("remote-ui-quick-agents-priority-smoke: ok");
+          return;
+        }
         if (delegationOnly) {
           await assertDelegationCallbackMessages();
           if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
@@ -4478,6 +4592,7 @@ def write_smoke_script(path)
           null,
           { timeout: 10_000 }
         );
+        await assertQuickAgentPriority(agentsRegressionPage);
         const switcherAgentCount = await agentsRegressionPage.locator(".switcher-agent-row").count();
         const switcherFredCount = await agentsRegressionPage.locator(".switcher-fred-row").count();
         if (switcherAgentCount < 2) {
@@ -8946,6 +9061,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     end
     if ENV["TYCHO_REMOTE_UI_DELEGATION_ONLY"].to_s == "1"
       smoke_env["TYCHO_REMOTE_UI_DELEGATION_ONLY"] = "1"
+    end
+    if ENV["TYCHO_REMOTE_UI_QUICK_AGENTS_PRIORITY_ONLY"].to_s == "1"
+      smoke_env["TYCHO_REMOTE_UI_QUICK_AGENTS_PRIORITY_ONLY"] = "1"
     end
     capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
     unless capture_dir.empty?

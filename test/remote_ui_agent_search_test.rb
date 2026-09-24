@@ -82,6 +82,22 @@ module RemoteUIAgentSearchTest
         throw new Error("named agent sorting must not be changed by no-action status");
       }
 
+      const awaitingInput = { key: "awaiting-input", name: "Awaiting input", awaiting_input: true, updated_at: "2026-01-01T12:00:00Z" };
+      const activeInquiry = { key: "active-inquiry", name: "Active inquiry", latest_inquiry: { id: "inquiry-1" }, updated_at: "2026-02-01T12:00:00Z" };
+      const newestOrdinary = { key: "newest-ordinary", name: "Newest ordinary", updated_at: "2026-12-01T12:00:00Z" };
+      const prioritized = [newestOrdinary, awaitingInput, noActionReadNewer, activeInquiry].sort(helpers.compareQuickSwitchAgents);
+      if (prioritized.map((agent) => agent.key).join(",") !== "active-inquiry,awaiting-input,newest-ordinary,no-action-read-newer") {
+        throw new Error(`quick switcher did not put awaiting-input and inquiry agents first: ${JSON.stringify(prioritized)}`);
+      }
+
+      const tiedAwaiting = [
+        { key: "waiting-z", name: "Zulu", awaiting_input: true, updated_at: "2026-03-01T12:00:00Z" },
+        { key: "waiting-a", name: "Alpha", latest_inquiry: { id: "inquiry-2" }, updated_at: "2026-03-01T12:00:00Z" },
+      ].sort(helpers.compareQuickSwitchAgents);
+      if (tiedAwaiting.map((agent) => agent.key).join(",") !== "waiting-a,waiting-z") {
+        throw new Error(`quick switcher did not retain deterministic name ordering for tied priority agents: ${JSON.stringify(tiedAwaiting)}`);
+      }
+
       const parts = helpers.highlightSearchParts("A <Personal> & personal", "personal");
       if (parts.filter((part) => part.highlighted).length !== 2 || parts.map((part) => part.text).join("") !== "A <Personal> & personal") {
         throw new Error(`visible match ranges were not preserved safely: ${JSON.stringify(parts)}`);
