@@ -88,6 +88,11 @@ module RemoteUIPersonalAssistantBehaviorTest
         "personalAssistantSelectedRecommendationIds",
         "submitPersonalAssistantRecommendation",
         "renderPersonalAssistantRecommendations",
+        "personalAssistantContinuityPreview",
+        "personalAssistantHandoffItems",
+        "personalAssistantHandoffSection",
+        "personalAssistantHandoffHtml",
+        "renderPersonalAssistantContinuity",
         "personalAssistantRecoveredSubmissionBlocks",
         "personalAssistantPollDelay",
         "notePersonalAssistantRefreshFailure",
@@ -148,7 +153,40 @@ module RemoteUIPersonalAssistantBehaviorTest
       assert(duplicateEvent.length === 1, "duplicate event IDs were not deduplicated");
 
       context.escapeHtml = (value) => String(value);
+      context.escapeAttr = (value) => String(value);
       context.emptyState = () => "empty";
+      context.routeHash = ({ key }) => `#agent/${key}`;
+      context.personalAssistantObservedTime = (value) => String(value);
+      context.personalAssistantHistoryDate = (entry) => entry.active_date;
+      context.personalAssistantHistoryConversationLink = () => "";
+      context.personalAssistantExpiredProposals = () => [];
+      context.personalAssistantHistoryActions = () => [];
+      context.state.agents = [{ key: "worker", name: "Review agent", status: "idle" }];
+      context.state.agentDetails = {};
+      context.state.personalAssistantHistoryEntry = null;
+      context.state.personalAssistantHistoryLoading = false;
+      context.state.personalAssistantHistoryError = "";
+      const continuityHtml = context.renderPersonalAssistantContinuity({
+        active_timezone: "Asia/Jakarta",
+        active_settings: { model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "Asia/Jakarta" },
+        next_rollover_at: "2026-09-25T00:00:00+07:00",
+        continuity: { outcome: "Kept the active work moving.", decisions: ["Preserve the current session."] },
+        task_references: [{ kind: "agent", agent_key: "worker" }],
+        history: [
+          { id: "handoff-1", active_date: "2026-09-23", summary: "Reviewed current work." },
+          { id: "handoff-2", active_date: "2026-09-22", summary: "Reconciled open tasks." },
+        ],
+      }, []);
+      assert(continuityHtml.includes('<section class="pa-context-panel pa-context-settings"') &&
+        continuityHtml.includes("<dl>") && continuityHtml.includes("<dt>Timezone</dt>") &&
+        continuityHtml.includes('<section class="pa-context-panel pa-tracked-agents"') &&
+        continuityHtml.includes('<section class="pa-context-panel pa-history"') &&
+        continuityHtml.includes('<article><time datetime="2026-09-23"') &&
+        continuityHtml.includes('class="pa-history-actions"'),
+      "FRED context did not retain its semantic section, settings, agent, and history hierarchy");
+      assert(!continuityHtml.includes("<p><strong>Tracked agents</strong></p>") &&
+        !continuityHtml.includes("<p><strong>Saved summaries and handoffs</strong></p>"),
+      "FRED context retained the flat bold-paragraph hierarchy");
       const recommendationItem = {
         active_date: "2026-09-11",
         state: "active",

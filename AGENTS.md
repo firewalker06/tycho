@@ -28,7 +28,7 @@ Runtime artifacts are written to `~/.tycho/logs/`, including app state files suc
 - `bin/remote-ui-phase3-smoke`: run the reusable Phase 3 FRED browser fixture with isolated roots, a fake harness, and real Chrome; set `TYCHO_PHASE3_UI_ROOT=/path/to/charlie/ui/checkout` for a read-only UI overlay, `TYCHO_PHASE3_CAPTURE_DIR` for JSON/screenshots, `TYCHO_PHASE3_SAMPLES` for sample count, and `TYCHO_PHASE3_REPORT_ONLY=1` when recording a known-blocked baseline. The fixture reports semantic-progress inventory timings, not active-harness load, and accepts `TYCHO_PLAYWRIGHT_PATH`/`TYCHO_CHROME_PATH` overrides.
 - `bin/capture-site-quickstart`: regenerate the v0.10.0 website launch and watch screenshots from deterministic synthetic Remote UI fixtures at 1440x900.
 - `bin/capture-site-tui-conversation`: regenerate the v0.10.0 website TUI conversation screenshot from a deterministic synthetic fixture at 1440x900.
-- `bin/capture-personal-assistant`: regenerate Personal Assistant captures from an isolated fixture server with pinned Playwright.
+- `bin/capture-personal-assistant`: regenerate Personal Assistant captures from an isolated fixture server with pinned Playwright; set `TYCHO_PERSONAL_ASSISTANT_CONTEXT_ONLY=1` and `TYCHO_PERSONAL_ASSISTANT_CONTEXT_CAPTURE_DIR=/tmp/fred-context-captures` for focused desktop and mobile History and context evidence.
 
 For a clean checkout, run `npm ci && npx playwright install chromium` before `bin/capture-personal-assistant`.
 - `bundle exec ruby -c bin/tycho`: syntax-check the main executable before opening a PR.
