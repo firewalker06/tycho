@@ -7590,9 +7590,12 @@ module RemoteServerTest
     assert(js[:body].include?("function quickSwitchAgents"),
            "expected the Remote UI logo popup to include all agents")
     assert(js[:body].include?("function compareQuickSwitchAgents"),
-           "expected the Remote UI logo popup to sort unread agents first")
+           "expected the Remote UI logo popup to sort response-needed agents first")
     assert(js[:body].include?("REMOTE_HELPERS.compareQuickSwitchAgents"),
            "expected the Remote UI logo popup to use the shared quick switch ordering")
+    assert(helpers_js[:body].include?("function agentNeedsResponse") &&
+           helpers_js[:body].include?("agent?.awaiting_input || agent?.latest_inquiry"),
+           "expected quick switch ordering to recognize awaiting input and active inquiries")
     assert(js[:body].include?("function syncAppBadge"),
            "expected the Remote UI to sync unread agents to the PWA app badge")
     assert(js[:body].include?("navigator.setAppBadge"),
