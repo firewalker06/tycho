@@ -224,6 +224,9 @@ module SleepCircuitBreakerRecoveryTest
       old_delegations = replace_constant(HQ, :DELEGATIONS_FILE, File.join(dir, "agent_delegations.json"))
       old_logs = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
       old_usage = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
+      old_log_file = replace_constant(HQ, :LOG_FILE, File.join(dir, "hq.log"))
+      old_logger = HQ.instance_variable_get(:@logger)
+      HQ.instance_variable_set(:@logger, nil)
       old_schedules = replace_constant(HQ, :SCHEDULES_FILE, File.join(dir, "schedules.yml"))
       old_schedule_state = replace_constant(HQ, :SCHEDULES_STATE_FILE, File.join(dir, "schedules.json"))
       workspace = File.join(dir, "workspace")
@@ -264,6 +267,10 @@ module SleepCircuitBreakerRecoveryTest
       replace_constant(HQ, :DELEGATIONS_FILE, old_delegations) if old_delegations
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs) if old_logs
       replace_constant(HQ, :USAGE_METRICS_FILE, old_usage) if old_usage
+      temporary_logger = HQ.instance_variable_get(:@logger)
+      temporary_logger&.close unless temporary_logger.equal?(old_logger)
+      HQ.instance_variable_set(:@logger, old_logger)
+      replace_constant(HQ, :LOG_FILE, old_log_file) if old_log_file
       replace_constant(HQ, :SCHEDULES_FILE, old_schedules) if old_schedules
       replace_constant(HQ, :SCHEDULES_STATE_FILE, old_schedule_state) if old_schedule_state
       replace_env(old_env) if old_env
