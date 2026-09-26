@@ -6736,6 +6736,22 @@ module RemoteServerTest
            css[:body].include?("@keyframes inquiry-loading-sweep") &&
            css[:body].include?("@keyframes inquiry-loading-border"),
            "expected pending inquiry detail to hide Summary and render a quiet animated form skeleton")
+    assert(js[:body].include?("pendingInquirySubmissionKeys: new Set()") &&
+           js[:body].include?("function inquirySubmissionPending") &&
+           js[:body].include?("function saveInquirySubmissionDraft") &&
+           js[:body].include?("function restoreInquirySubmissionDraft") &&
+           js[:body].include?("inquirySubmissionPending(agent.key, agent.latest_inquiry?.id)") &&
+           js[:body].include?('renderInquiryLoadingSkeleton(agent, "Submitting inquiry")') &&
+           js[:body].include?("state.pendingInquirySubmissionKeys.has(submissionKey)") &&
+           js[:body].include?("saveFormDraft(form);") &&
+           js[:body].include?("saveInquirySubmissionDraft(form);") &&
+           js[:body].include?("state.pendingInquirySubmissionKeys.add(submissionKey);") &&
+           js[:body].include?("state.pendingInquirySubmissionKeys.delete(submissionKey);") &&
+           js[:body].include?("Could not submit inquiry: ${error.message}") &&
+           js[:body].include?("focusInquirySubmissionStatus(inquiryId)") &&
+           js[:body].include?("focusInquiryForm(key, inquiryId)") &&
+           css[:body].include?(".inquiry-submission-error"),
+           "expected inquiry answers to hide optimistically, prevent duplicates, and restore an accessible retry state after failure")
     assert(js[:body].include?('id="inquiry-form" class="inquiry-form${'),
            "expected inquiry answers to use a dedicated form")
     assert(js[:body].include?("fullScreenInquiryKeys") &&

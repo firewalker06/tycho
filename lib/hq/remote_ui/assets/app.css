@@ -7193,6 +7193,13 @@ body:has(.inquiry-form-full-screen) {
   overscroll-behavior: contain;
 }
 
+.inquiry-submission-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 650;
+}
+
 .inquiry-field {
   align-content: start;
   gap: 6px;

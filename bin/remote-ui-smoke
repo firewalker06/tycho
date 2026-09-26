@@ -1981,12 +1981,17 @@ def write_smoke_script(path)
             }];
             window.__originalInquiryAttachmentPayloads = pendingAttachmentPayloads;
             pendingAttachmentPayloads = async () => {
+              await new Promise((resolve) => setTimeout(resolve, 350));
               throw new Error("Phase 1 attachment preparation failed");
             };
           }, inquiryAgentKey);
           const answerPath = `/personal-assistant/inquiries/${inquiryId}/answer`;
           const answerPostCountBeforePreparationFailure = requestsFor(answerPath, "POST").length;
           await phasePage.locator("#inquiry-form button[type='submit']").click();
+          await phasePage.waitForFunction((id) => {
+            const status = document.querySelector(`[data-inquiry-submission-status='${CSS.escape(id)}']`);
+            return !document.querySelector("#inquiry-form") && Boolean(status) && document.activeElement === status;
+          }, inquiryId, { timeout: 2_000, polling: 25 });
           await phasePage.waitForFunction(({ key, prompt }) => {
             const recovery = Array.from(document.querySelectorAll("[data-pa-submission-recovery]")).find((element) => element.textContent.includes(prompt));
             const record = Object.values(state.personalAssistantSubmissionStates || {}).find((candidate) => candidate.prompt?.includes(prompt));
