@@ -36,6 +36,11 @@ Run the suite before opening a PR:
 bin/test
 ```
 
+Before merging, push the final PR head, run `bin/test` on that pushed SHA, and
+post the required `signoff/tycho-bin-test` status. The exact commands, pinned
+`gh-signoff` version, failure reporting, and cross-clone workflow are in
+[Local CI signoff](docs/LOCAL_CI.md).
+
 At minimum, changes should pass:
 
 ```bash
