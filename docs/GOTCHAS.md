@@ -81,6 +81,20 @@ own PID. A recycled foreign PID will have a different PGID (or raise
 Any code that signals a persisted PID across process restarts needs the
 same ownership check, not just a `kill(0)` liveness probe.
 
+## Test isolation must cross subprocess boundaries
+
+Replacing `HQ::AGENTS_FILE`, `HQ::AGENT_LOGS_DIR`, or other Ruby constants
+isolates only the current test process. If that fixture can start a managed
+harness, `bin/tycho`, or another Ruby process, the child resolves constants
+again and uses the real `~/.tycho` paths unless the fixture also exports
+isolated `TYCHO_CONFIG_PATH`, `TYCHO_SYSTEM_PROMPTS_PATH`,
+`TYCHO_LOGS_ROOT`, and schedule paths.
+
+Give potentially dispatching fixtures a fake or missing harness executable as
+well. A delayed queue becoming due during a slow full-suite run must fail or
+finish inside the fixture; it must never launch the operator's real Codex or
+Claude binary.
+
 ## Glamour markdown renders inside Bubbletea
 
 Calling `Glamour.render` directly from inside a running Bubbletea

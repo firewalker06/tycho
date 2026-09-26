@@ -689,7 +689,8 @@ module HQ
 
     def prompt_queue_dispatchable?
       has_run_context = last_run || next_prompt_queue_entry&.fetch("source", nil) == "delegation_callback"
-      !running? && !inquiry_blocking_prompt_queue? && @prompt_queue_dispatch_error.nil? && has_run_context &&
+      !archived? && !running? && !blocked? && !inquiry_blocking_prompt_queue? &&
+        @prompt_queue_dispatch_error.nil? && has_run_context &&
         ((@prompt_queue_claim && @prompt_queue_dispatch_error.nil?) ||
          (active_queue_work&.fetch("resume_pending", false) && !@prompt_queue_claim) ||
          (!active_queue_work && prompt_queue_due? && !@prompt_queue_claim))

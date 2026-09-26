@@ -2,6 +2,8 @@
 
 require "fileutils"
 require "json"
+require "open3"
+require "rbconfig"
 require "tmpdir"
 
 require_relative "../lib/hq/remote_server"
@@ -10,12 +12,30 @@ module SleepCircuitBreakerRecoveryTest
   module_function
 
   def run!
+    assert_subprocesses_inherit_isolated_tycho_paths
     assert_incident_finalizes_with_dedicated_reason_and_delayed_recovery
     assert_delegated_callback_exposes_scheduled_recovery
     assert_manual_intent_cancels_recovery_atomically
     assert_stale_ownership_generation_cancels_recovery
     assert_recovery_run_cannot_create_a_recovery_loop
     puts "sleep_circuit_breaker_recovery_test: ok"
+  end
+
+  def assert_subprocesses_inherit_isolated_tycho_paths
+    with_store do |_store, _agent|
+      stdout, stderr, status = Open3.capture3(
+        RbConfig.ruby,
+        "-I", File.join(HQ::ROOT_DIR, "lib"),
+        "-rhq/domain/constants",
+        "-e", "print HQ::AGENTS_FILE"
+      )
+      expected = File.join(ENV.fetch("TYCHO_LOGS_ROOT"), "managed_agents.json")
+      assert(status.success?, "expected isolated child probe to succeed: #{stderr}")
+      assert(stdout == expected,
+             "expected child processes to use the test agent store, got #{stdout.inspect}")
+      assert(ENV.fetch("TYCHO_CODEX_BIN").start_with?(ENV.fetch("TYCHO_LOGS_ROOT")),
+             "expected tests to prevent accidental use of the real Codex harness")
+    end
   end
 
   def assert_delegated_callback_exposes_scheduled_recovery
@@ -204,12 +224,30 @@ module SleepCircuitBreakerRecoveryTest
       old_delegations = replace_constant(HQ, :DELEGATIONS_FILE, File.join(dir, "agent_delegations.json"))
       old_logs = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
       old_usage = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
+      old_log_file = replace_constant(HQ, :LOG_FILE, File.join(dir, "hq.log"))
+      old_logger = HQ.instance_variable_get(:@logger)
+      HQ.instance_variable_set(:@logger, nil)
+      old_schedules = replace_constant(HQ, :SCHEDULES_FILE, File.join(dir, "schedules.yml"))
+      old_schedule_state = replace_constant(HQ, :SCHEDULES_STATE_FILE, File.join(dir, "schedules.json"))
       workspace = File.join(dir, "workspace")
       FileUtils.mkdir_p([workspace, HQ::AGENT_LOGS_DIR])
       config = File.join(dir, "hq.yml")
       prompts = File.join(dir, "prompts.yml")
       File.write(config, "projects:\n  - key: web\n    name: Web\n    path: #{workspace}\n")
       File.write(prompts, "custom: Work.\n")
+      File.write(HQ::SCHEDULES_FILE, "schedules: []\n")
+      old_env = replace_env(
+        "TYCHO_HOME" => File.join(dir, "home"),
+        "TYCHO_CONFIG_DIR" => File.join(dir, "config"),
+        "TYCHO_CONFIG_PATH" => config,
+        "TYCHO_SYSTEM_PROMPTS_PATH" => prompts,
+        "TYCHO_LOGS_ROOT" => dir,
+        "TYCHO_SCHEDULES_ROOT" => File.join(dir, "schedule-runs"),
+        "TYCHO_SCHEDULES_PATH" => HQ::SCHEDULES_FILE,
+        "TYCHO_SCHEDULES_STATE_PATH" => HQ::SCHEDULES_STATE_FILE,
+        "TYCHO_SCHEDULER_DAEMON_PATH" => File.join(dir, "scheduler-daemon.json"),
+        "TYCHO_CODEX_BIN" => File.join(dir, "missing-codex")
+      )
       registry = HQ::Registry.new(path: config, system_prompts_path: prompts)
       now = Time.now
       raw = File.join(HQ::AGENT_LOGS_DIR, "breaker.raw.log")
@@ -229,6 +267,21 @@ module SleepCircuitBreakerRecoveryTest
       replace_constant(HQ, :DELEGATIONS_FILE, old_delegations) if old_delegations
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs) if old_logs
       replace_constant(HQ, :USAGE_METRICS_FILE, old_usage) if old_usage
+      temporary_logger = HQ.instance_variable_get(:@logger)
+      temporary_logger&.close unless temporary_logger.equal?(old_logger)
+      HQ.instance_variable_set(:@logger, old_logger)
+      replace_constant(HQ, :LOG_FILE, old_log_file) if old_log_file
+      replace_constant(HQ, :SCHEDULES_FILE, old_schedules) if old_schedules
+      replace_constant(HQ, :SCHEDULES_STATE_FILE, old_schedule_state) if old_schedule_state
+      replace_env(old_env) if old_env
+    end
+  end
+
+  def replace_env(values)
+    values.to_h do |key, value|
+      previous = ENV[key]
+      value.nil? ? ENV.delete(key) : ENV[key] = value
+      [key, previous]
     end
   end
 

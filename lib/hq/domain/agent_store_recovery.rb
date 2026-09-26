@@ -17,6 +17,8 @@ module HQ
     SNAPSHOT_SCHEMA_VERSION = 1
     RESTORABLE_SNAPSHOT_KINDS = %w[daily pre_restore].freeze
     FORENSIC_SNAPSHOT_KIND = "forensic_pre_restore"
+    LARGE_REDUCTION_MINIMUM = 5
+    LARGE_REDUCTION_RATIO = 0.5
     REQUIRED_RECORD_FIELDS = {
       "key" => String,
       "name" => String,
@@ -60,7 +62,7 @@ module HQ
       @retention_days = normalize_retention(configured_retention)
     end
 
-    def prepare(records, current_records:, allow_retired_keys: false)
+    def prepare(records, current_records:, allow_retired_keys: false, allow_large_reduction: false)
       candidate = validate_records!(records)
       current = validate_records!(current_records)
       state = read_state
@@ -68,6 +70,7 @@ module HQ
       current_sessions = session_index(current)
       current_keys = current.map { |record| record.fetch("key") }
       candidate_keys = candidate.map { |record| record.fetch("key") }
+      reject_suspicious_reduction!(current_keys, candidate_keys) unless allow_large_reduction
       retired = Array(state["retired_keys"]) - current_keys
       resurrected = candidate_keys & retired
       unless resurrected.empty? || allow_retired_keys
@@ -200,6 +203,16 @@ module HQ
     end
 
     private
+
+    def reject_suspicious_reduction!(current_keys, candidate_keys)
+      removed = current_keys - candidate_keys
+      return if removed.length < LARGE_REDUCTION_MINIMUM
+      return if removed.length.fdiv([current_keys.length, 1].max) < LARGE_REDUCTION_RATIO
+
+      raise IOError,
+            "suspicious managed-agent record-count reduction rejected: " \
+            "#{current_keys.length} -> #{candidate_keys.length} (#{removed.length} removed)"
+    end
 
     def create_daily_backup(records)
       today = @now.call.utc.strftime("%Y-%m-%d")

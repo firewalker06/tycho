@@ -24,7 +24,9 @@ module PromptQueueTest
     assert_entries_accepted_after_claim_form_a_consecutive_batch
     assert_authority_is_captured_per_fifo_entry
     assert_callback_can_start_a_never_run_parent
-    assert_stop_pauses_and_archive_refuses_pending_work
+    assert_normal_stop_dispatches_pending_work
+    assert_idle_agent_without_live_pid_dispatches_pending_work
+    assert_ineligible_agents_do_not_dispatch_pending_work
     assert_legacy_entries_load_without_authority
     assert_success_finish_gate_resumes_once_in_same_session
     assert_late_status_write_cannot_finish_successor_run
@@ -408,31 +410,85 @@ module PromptQueueTest
     end
   end
 
-  def assert_stop_pauses_and_archive_refuses_pending_work
+  def assert_normal_stop_dispatches_pending_work
     with_queue_store do |registry, workspace|
       agent, pid = running_agent(workspace)
       store = HQ::AgentStore.new(registry.projects)
       agent.enqueue_prompt!(prompt: "keep after stop")
       store.save([agent])
 
-      stopped = store.stop_agent!(agent.key)
-      Process.wait(pid)
+      stopped = nil
+      with_stubbed_start { stopped = store.stop_agent!(agent.key) }
       pid = nil
-      persisted = store.load.find { |candidate| candidate.key == agent.key }
-      assert(stopped.prompt_queue_dispatch_error && persisted.pending_prompts? && persisted.run_count == 1,
-             "expected Stop to pause rather than dispatch or discard queued work")
-      begin
-        store.archive_agent!(agent.key)
-        raise "expected archive to refuse queued work"
-      rescue ArgumentError => e
-        assert(e.message.include?("queued prompts"), "expected an explicit queued-work archive refusal")
-      end
-      with_stubbed_start { store.retry_prompt_queue!(agent.key) }
-      resumed = store.load.find { |candidate| candidate.key == agent.key }
-      assert(resumed.active_queue_work && resumed.prompt_queue_dispatch_error.nil?,
-             "expected explicit Retry queue to resume paused durable work")
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+                       .find { |candidate| candidate.key == agent.key }
+      assert(stopped.run_count == 2 && persisted.active_queue_work &&
+             persisted.prompt_queue_dispatch_error.nil? &&
+             persisted.active_queue_work.dig("entries", 0, "prompt") == "keep after stop",
+             "expected Stop to launch one canonical queued-work run after the prior process exits")
     ensure
       stop_process(pid)
+    end
+  end
+
+  def assert_idle_agent_without_live_pid_dispatches_pending_work
+    with_queue_store do |registry, workspace|
+      agent, pid = running_agent(workspace)
+      agent.enqueue_prompt!(prompt: "dispatch after idle")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+      stop_process(pid)
+      pid = nil
+
+      with_stubbed_start { store.load }
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+                       .find { |candidate| candidate.key == agent.key }
+      assert(persisted.run_count == 2 && persisted.active_queue_work &&
+             persisted.active_queue_work.dig("entries", 0, "prompt") == "dispatch after idle",
+             "expected polling an idle agent with no live PID to dispatch its pending queue")
+    ensure
+      stop_process(pid)
+    end
+  end
+
+  def assert_ineligible_agents_do_not_dispatch_pending_work
+    with_queue_store do |registry, workspace|
+      blocked = terminal_agent(workspace, status: "blocked", structured_result: {
+        "status" => "blocked", "summary" => "Blocked"
+      })
+      blocked.enqueue_prompt!(prompt: "blocked queue")
+
+      archived = terminal_agent(workspace)
+      archived.instance_variable_set(:@key, "archived-queue-agent")
+      archived.instance_variable_set(:@archived, true)
+      archived.enqueue_prompt!(prompt: "archived queue")
+
+      paused = terminal_agent(workspace)
+      paused.instance_variable_set(:@key, "paused-queue-agent")
+      paused.associate_schedule!("paused-schedule")
+      paused.enqueue_prompt!(prompt: "paused schedule queue")
+
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([blocked, archived, paused])
+      schedule_store = HQ::ScheduleStore.new
+      state = schedule_store.state_for({}, "paused-schedule")
+      state.last_target_key = paused.key
+      state.mark_paused!
+      schedule_store.save(state.key => state)
+
+      starts = 0
+      original = HQ::ManagedAgent.instance_method(:start!)
+      HQ::ManagedAgent.define_method(:start!) do |**_options|
+        starts += 1
+        true
+      end
+      store.load
+
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+      assert(starts.zero? && persisted.all? { |candidate| candidate.prompt_queue.length == 1 },
+             "expected archived, blocked, and paused-schedule agents to retain queues without dispatch")
+    ensure
+      HQ::ManagedAgent.define_method(:start!, original) if defined?(original) && original
     end
   end
 
@@ -751,6 +807,7 @@ module PromptQueueTest
       old_delegations = replace_constant(HQ, :DELEGATIONS_FILE, File.join(dir, "agent_delegations.json"))
       old_logs = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
       old_usage = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
+      old_schedules = replace_constant(HQ, :SCHEDULES_STATE_FILE, File.join(dir, "schedules.json"))
       workspace = File.join(dir, "workspace")
       FileUtils.mkdir_p(workspace)
       FileUtils.mkdir_p(HQ::AGENT_LOGS_DIR)
@@ -761,6 +818,7 @@ module PromptQueueTest
       replace_constant(HQ, :DELEGATIONS_FILE, old_delegations) if old_delegations
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs) if old_logs
       replace_constant(HQ, :USAGE_METRICS_FILE, old_usage) if old_usage
+      replace_constant(HQ, :SCHEDULES_STATE_FILE, old_schedules) if old_schedules
     end
   end
 
