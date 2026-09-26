@@ -7056,6 +7056,48 @@ def write_smoke_script(path)
         if (structuredInquiryAnswer.next_step !== "Ship the focused change." || structuredInquiryAnswer.environments?.[0] !== "Staging" || structuredInquiryAnswer.approved !== true || structuredInquiryAnswer.user_feedback !== "Keep the explanation short." || Object.hasOwn(structuredInquiryAnswer, "feedback")) {
           throw new Error(`Inquiry feedback is missing from the structured answer: ${JSON.stringify(structuredInquiryAnswer)}`);
         }
+        const mobileInquiryId = await page.locator("#inquiry-form").getAttribute("data-inquiry-id");
+        await page.evaluate(({ key, inquiryId }) => {
+          const form = document.querySelector("#inquiry-form");
+          const submissionKey = inquirySubmissionKey(key, inquiryId);
+          saveInquirySubmissionDraft(form);
+          state.pendingInquirySubmissionKeys.add(submissionKey);
+          state.expandedInquiryKeys.delete(`${key}:${inquiryId}`);
+          state.renderedViewHtml = "";
+          render();
+          state.pendingInquirySubmissionKeys.delete(submissionKey);
+          state.inquirySubmissionErrors.set(submissionKey, "Could not submit inquiry: mobile fixture failure");
+          restoreInquirySubmissionFailure(key, inquiryId);
+          state.renderedViewHtml = "";
+          render();
+        }, { key: agentKey, inquiryId: mobileInquiryId });
+        await page.waitForFunction((id) => {
+          const disclosure = document.querySelector(".mobile-inquiry");
+          const form = document.querySelector("#inquiry-form");
+          const control = form?.querySelector("[name='next_step']");
+          return Boolean(disclosure?.open && form?.getClientRects().length && document.activeElement === control &&
+            form.querySelector("[data-inquiry-submission-error]")?.textContent.includes("mobile fixture failure"));
+        }, mobileInquiryId, { timeout: 10_000, polling: 25 });
+        const mobileFailureRecovery = await page.evaluate(() => ({
+          approved: document.querySelector("[name='approved']")?.value,
+          environments: document.querySelector("[name='environments'][value='Staging']")?.checked,
+          feedback: document.querySelector("#inquiry-feedback")?.value,
+          focused: document.activeElement?.getAttribute("name"),
+          formVisible: Boolean(document.querySelector("#inquiry-form")?.getClientRects().length),
+          open: document.querySelector(".mobile-inquiry")?.open,
+          response: document.querySelector("[name='next_step']")?.value,
+        }));
+        if (!mobileFailureRecovery.open || !mobileFailureRecovery.formVisible ||
+            mobileFailureRecovery.response !== "Ship the focused change." || !mobileFailureRecovery.environments ||
+            mobileFailureRecovery.approved !== "Yes" || mobileFailureRecovery.feedback !== "Keep the explanation short." ||
+            mobileFailureRecovery.focused !== "next_step") {
+          throw new Error(`Mobile inquiry failure did not restore an open, focused, complete form: ${JSON.stringify(mobileFailureRecovery)}`);
+        }
+        await page.evaluate(({ key, inquiryId }) => {
+          state.inquirySubmissionErrors.delete(inquirySubmissionKey(key, inquiryId));
+          state.renderedViewHtml = "";
+          render();
+        }, { key: agentKey, inquiryId: mobileInquiryId });
         await page.click("[data-toggle-inquiry-full-screen]");
         await page.waitForSelector("#inquiry-form.inquiry-form-full-screen", { state: "visible", timeout: 10_000 });
         await page.locator("#inquiry-feedback").press("Tab");

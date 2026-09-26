@@ -6749,7 +6749,9 @@ module RemoteServerTest
            js[:body].include?("state.pendingInquirySubmissionKeys.delete(submissionKey);") &&
            js[:body].include?("Could not submit inquiry: ${error.message}") &&
            js[:body].include?("focusInquirySubmissionStatus(inquiryId)") &&
-           js[:body].include?("focusInquiryForm(key, inquiryId)") &&
+           js[:body].include?("function restoreInquirySubmissionFailure") &&
+           js[:body].include?("state.expandedInquiryKeys.add(`${agentKey}:${inquiryId}`)") &&
+           js[:body].include?("restoreInquirySubmissionFailure(key, inquiryId)") &&
            css[:body].include?(".inquiry-submission-error"),
            "expected inquiry answers to hide optimistically, prevent duplicates, and restore an accessible retry state after failure")
     assert(js[:body].include?('id="inquiry-form" class="inquiry-form${'),
