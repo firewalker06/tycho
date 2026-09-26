@@ -968,7 +968,7 @@ Returns one bounded, deterministically sorted page of safe directory entries. Pa
 
 ### `GET /projects/{key}/workspace/preview?path={relative}`
 
-Returns a UTF-8-safe text preview up to 256 KB. Binary, oversized, sensitive, missing, and unreadable files return explicit sanitized errors. Both workspace endpoints are read-only and remain project-scoped when brokered to a peer server.
+Returns a UTF-8-safe text preview up to 256 KB. Supported image previews use the separate 10 MB image limit, matching ordinary managed-agent attachment uploads. Binary, oversized, sensitive, missing, and unreadable files return explicit sanitized errors. Both workspace endpoints are read-only and remain project-scoped when brokered to a peer server.
 
 ### `GET /projects/{key}/skills/{agent}`
 
