@@ -74,7 +74,8 @@ module HQ
 
       changed = false
       events = []
-      schedule_keys = schedule_keys_by_agent
+      schedule_states = ScheduleStore.new.load
+      schedule_keys = schedule_keys_by_agent(schedule_states)
       raw_records = Array(FileStore.read_json(AGENTS_FILE, fallback: []))
       raw_records, recovered = @recovery.reconcile_loaded(raw_records)
       changed = recovered
@@ -124,7 +125,7 @@ module HQ
       changed = backfill_delegation_parents!(agents) || changed
       agents.each { |agent| changed = materialize_sleep_recovery!(agent) || changed }
       changed = @delegation_coordinator.process!(agents) || changed if process_delegations
-      changed = dispatch_prompt_queues!(agents) || changed if dispatch_prompt_queues
+      changed = dispatch_prompt_queues!(agents, schedule_states:) || changed if dispatch_prompt_queues
       save_unlocked(agents) if changed
       [agents, events]
     rescue StandardError => e
@@ -393,18 +394,12 @@ module HQ
     end
 
     def stop_agent!(key)
-      mutate do |agents, _events|
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
 
-        if target.running?
-          if target.pending_prompts?
-            target.fail_prompt_queue_dispatch!(
-              "Queued work is paused after Stop. Choose Retry queue to continue without losing it."
-            )
-          end
-          target.stop!
-        end
+        target.stop! if target.running?
+        dispatch_prompt_queue!(target, agents) if prompt_queue_dispatchable?(target, ScheduleStore.new.load)
         target
       end
     end
@@ -819,14 +814,21 @@ module HQ
       agents.find { |agent| agent.key == key.to_s } || raise(ArgumentError, "Unknown agent: #{key}")
     end
 
-    def dispatch_prompt_queues!(agents)
+    def dispatch_prompt_queues!(agents, schedule_states: ScheduleStore.new.load)
       changed = false
       agents.each do |agent|
-        next unless agent.prompt_queue_dispatchable?
+        next unless prompt_queue_dispatchable?(agent, schedule_states)
 
         changed = dispatch_prompt_queue!(agent, agents) || changed
       end
       changed
+    end
+
+    def prompt_queue_dispatchable?(agent, schedule_states)
+      return false unless agent.prompt_queue_dispatchable?
+
+      schedule = schedule_states[agent.schedule_key.to_s] if agent.scheduled?
+      !schedule || schedule.scheduled?
     end
 
     def dispatch_prompt_queue!(agent, agents)
@@ -926,8 +928,8 @@ module HQ
       agent
     end
 
-    def schedule_keys_by_agent
-      ScheduleStore.new.load.each_with_object({}) do |(schedule_key, state), result|
+    def schedule_keys_by_agent(schedule_states = ScheduleStore.new.load)
+      schedule_states.each_with_object({}) do |(schedule_key, state), result|
         agent_key = state.last_target_key.to_s
         result[agent_key] = schedule_key unless agent_key.empty?
       end
