@@ -139,9 +139,14 @@ module HQ
       with_exclusive_lock { save_unlocked(agents) }
     end
 
-    def save_unlocked(agents, allow_retired_keys: false)
+    def save_unlocked(agents, allow_retired_keys: false, allow_large_reduction: false)
       current = File.exist?(AGENTS_FILE) ? Array(FileStore.read_json(AGENTS_FILE, fallback: [])) : []
-      records = @recovery.prepare(agents.map(&:to_hash), current_records: current, allow_retired_keys:)
+      records = @recovery.prepare(
+        agents.map(&:to_hash),
+        current_records: current,
+        allow_retired_keys:,
+        allow_large_reduction:
+      )
       FileStore.write_json(AGENTS_FILE, records)
       @recovery.after_save(records, allow_retired_keys:)
     end
@@ -676,7 +681,10 @@ module HQ
           reconcile_archived_callbacks(callbacks)
           [target.key, destination]
         end
-        save_unlocked(agents.reject { |agent| requested.include?(agent.key) })
+        save_unlocked(
+          agents.reject { |agent| requested.include?(agent.key) },
+          allow_large_reduction: true
+        )
         destinations
       rescue StandardError
         transaction&.rollback

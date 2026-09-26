@@ -14,6 +14,7 @@ module AgentStoreRecoveryTest
   def run!
     assert_restart_and_legacy_migration_preserve_session_identity
     assert_recovery_ledger_repairs_session_loss_and_archived_key_reappearance
+    assert_large_unapproved_record_reduction_is_rejected
     assert_stale_nonempty_identity_and_bootstrap_regressions_are_blocked
     assert_missing_native_identity_is_detected
     assert_daily_backup_rotation_and_failure_safety
@@ -23,6 +24,27 @@ module AgentStoreRecoveryTest
     assert_restore_rolls_back_corrupt_store_bytes_when_state_replacement_fails
     assert_cli_restore_preserves_malformed_active_store_for_forensics
     puts "agent_store_recovery_test: ok"
+  end
+
+  def assert_large_unapproved_record_reduction_is_rejected
+    with_store do |store, _recovery, _clock, dir|
+      agents = 18.times.map do |index|
+        build_agent("bulk-guard-#{index}", session_id: "bulk-session-#{index}")
+      end
+      store.save(agents)
+      before = File.binread(File.join(dir, "managed_agents.json"))
+
+      begin
+        store.save([agents.first])
+        raise "expected a destructive bulk reduction to be rejected"
+      rescue IOError => e
+        assert(e.message.include?("suspicious managed-agent record-count reduction"),
+               "expected an explicit bulk-reduction safety failure")
+      end
+
+      assert(File.binread(File.join(dir, "managed_agents.json")) == before,
+             "expected a rejected bulk reduction to preserve the active store")
+    end
   end
 
   def assert_restart_and_legacy_migration_preserve_session_identity
