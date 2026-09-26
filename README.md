@@ -139,6 +139,8 @@ Source-checkout users can replace `tycho` with `bin/tycho` in these examples.
   Tailscale, and multiserver operation.
 - [Scheduled Runs](docs/SCHEDULED_RUNS.md) — recurring agent configuration and
   policies.
+- [Local CI signoff](docs/LOCAL_CI.md) — required maintainer-run `bin/test`
+  attestations for pull requests.
 - [Agent memory](docs/AGENT_MEMORY.md) and
   [delegation](docs/AGENT_DELEGATION.md) — session persistence and managed-agent
   ownership.
@@ -154,7 +156,7 @@ Source-checkout users can replace `tycho` with `bin/tycho` in these examples.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Run `bin/test` before opening a pull
-request.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Run `bin/test` and follow the
+[local CI signoff](docs/LOCAL_CI.md) workflow before merging a pull request.
 
 Tycho is released under the [MIT License](LICENSE).

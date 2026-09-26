@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-09-16
+2026-09-26
 
 ## Strategic Direction
 
@@ -96,6 +96,7 @@ Key references:
 | Schedule interactive protection | A due run stops with reason `interactive` when the schedule-owned agent has later user messages; resuming records an acknowledgement boundary and keeps the same session | User conversations in scheduled sessions must not be overwritten by the next cron tick, and recovery should be one explicit action |
 | Schedule management | Expose schedule list/detail/run/pause/resume/reload in both TUI and Remote UI | Interfaces should manage and observe schedules, but the daemon owns ticking, locks, missed-run policy, and dispatch |
 | Open-source license | MIT | Keep adoption simple while making contribution and reuse terms explicit |
+| Pull-request test attestation | Enforced GitHub `signoff` ruleset requiring `signoff/tycho-bin-test`, posted locally with pinned `basecamp/gh-signoff` v0.4.1 after `bin/test` passes on the pushed head | Keep test execution local while retaining a branch-protected, commit-specific merge gate; document repeatable success, failure, and cross-clone attestation workflows |
 
 ## Current Focus
 
