@@ -308,7 +308,14 @@ module PromptQueueTest
       })
       memory = HQ::AgentMemory.new(agent)
       memory.append_inquiry_request!(inquiry, inquiry_id: "inquiry-queue-test")
-      agent.enqueue_prompt!(prompt: "wait behind inquiry")
+      agent.enqueue_prompt!(
+        prompt: "delegated result while awaiting input",
+        source: "delegation_callback",
+        attachments: [{
+          "type" => "link", "title" => "Delegated evidence",
+          "url" => "https://example.test/delegated-evidence"
+        }]
+      )
       store = HQ::AgentStore.new(registry.projects)
       store.save([agent])
 
@@ -319,18 +326,30 @@ module PromptQueueTest
              restored.dig(:prompt_queue, "entries").length == 1,
              "expected active and client-dismissed restorable inquiries to retain and block the queue")
 
-      with_stubbed_start do
+      execution_prompts = []
+      with_stubbed_start(prompts: execution_prompts) do
         service.answer_inquiry(
           agent.key,
           "inquiry-queue-test",
-          "answer" => "Use the safe path",
+          "answer" => '{"path":"safe"}',
           "start" => true
         )
         service.agent(agent.key)
       end
       persisted = store.load.find { |candidate| candidate.key == agent.key }
-      assert(persisted.run_count == 3 && persisted.active_queue_work,
-             "expected the inquiry answer run to finish before one durable queued-work run starts")
+      events = HQ::AgentMemory.new(persisted).events
+      direct_index = events.index { |event| event["type"] == "user_message" && event.dig("metadata", "inquiry_response") == true }
+      queue_index = events.index { |event| event.dig("metadata", "queue_read") == true }
+      assert(persisted.run_count == 2 && persisted.active_queue_work &&
+             persisted.queued_prompts.none? { |entry| entry["state"] == "queued" } &&
+             execution_prompts.one? && execution_prompts.first.include?('"path": "safe"') &&
+             execution_prompts.first.include?("delegated result while awaiting input") &&
+             execution_prompts.first.include?("[TYCHO QUEUE WORK CONTRACT — REQUIRED]") &&
+             direct_index && queue_index && direct_index < queue_index &&
+             events[queue_index].dig("metadata", "attachments", 0, "title") == "Delegated evidence",
+             "expected the inquiry answer and pending delegated reply in one parsed, structured run " \
+             "(runs=#{persisted.run_count}, prompts=#{execution_prompts.length}, direct=#{direct_index.inspect}, " \
+             "queue=#{queue_index.inspect}, entries=#{persisted.queued_prompts.map { |entry| entry['state'] }.inspect})")
     end
   end
 
@@ -417,23 +436,28 @@ module PromptQueueTest
       })
       memory = HQ::AgentMemory.new(agent)
       memory.append_inquiry_request!(inquiry, inquiry_id: "manual-retire-inquiry")
-      agent.enqueue_prompt!(prompt: "preserved queued work")
+      agent.enqueue_prompt!(prompt: "queued delegated context", source: "delegation_callback")
       store = HQ::AgentStore.new(registry.projects)
       store.save([agent])
       service = HQ::RemoteService.new(registry:)
 
-      with_stubbed_start do
+      execution_prompts = []
+      with_stubbed_start(prompts: execution_prompts) do
         manual = service.submit_prompt(agent.key, "prompt" => "Proceed manually", "start" => true)
-        assert(manual.dig(:agent, :prompt_queue, "entries").length == 1,
-               "expected a manual ordinary prompt to preserve the suspended queue")
+        assert(manual.dig(:agent, :prompt_queue, "entries").length == 1 &&
+               manual.dig(:agent, :prompt_queue, "entries", 0, "state") == "in_progress",
+               "expected a manual ordinary prompt to claim the suspended queue into the same run")
         service.agent(agent.key)
       end
 
       persisted = store.load.find { |candidate| candidate.key == agent.key }
       events = HQ::AgentMemory.new(persisted).events
       assert(events.any? { |event| event["type"] == "inquiry_cancelled" } &&
-             persisted.run_count == 3 && persisted.active_queue_work,
-             "expected manual retirement to run first and queued work to dispatch afterward")
+             persisted.run_count == 2 && persisted.active_queue_work &&
+             execution_prompts.one? && execution_prompts.first.include?("Proceed manually") &&
+             execution_prompts.first.include?("queued delegated context") &&
+             events.count { |event| event.dig("metadata", "queue_read") == true } == 1,
+             "expected manual retirement and queued work to share one run and one Read queue block")
     end
   end
 
@@ -836,10 +860,12 @@ module PromptQueueTest
     )
   end
 
-  def with_stubbed_start(error: nil)
+  def with_stubbed_start(error: nil, prompts: nil)
     original = HQ::ManagedAgent.instance_method(:start!)
     HQ::ManagedAgent.define_method(:start!) do |delegation_stamp: nil, run_metadata: nil|
       raise error if error
+
+      prompts << send(:prompt_for_execution) if prompts
 
       now = Time.now
       @started_at = now
