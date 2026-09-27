@@ -16,6 +16,7 @@ module PromptQueueTest
     assert_due_entries_bypass_future_entries_in_fifo_order
     assert_self_delayed_continuation_preserves_delegation_ownership
     assert_claim_race_drains_fifo_without_overlap
+    assert_automatic_dispatch_records_one_structured_read_block
     assert_explicit_read_consumes_one_mixed_batch_and_records_conversation
     assert_explicit_read_failure_retains_queue
     assert_explicit_read_keeps_concurrent_arrivals
@@ -187,6 +188,7 @@ module PromptQueueTest
         event.dig("metadata", "prompt_queue_claim_id")
       end
       assert(queued_messages.length == 1 &&
+             queued_messages.first.dig("metadata", "queue_read") == true &&
              queued_messages.first["content"].include?("TYCHO QUEUE WORK CONTRACT") &&
              queued_messages.first["content"].index("second accepted") <
                queued_messages.first["content"].index("first accepted") &&
@@ -196,6 +198,72 @@ module PromptQueueTest
       assert(queued_messages.first.dig("metadata", "prompt_queue_sources") == {
                "delegation_callback" => 1, "user" => 1
              }, "expected automatic dispatch to preserve mixed queue source counts in one native input")
+    end
+  end
+
+  def assert_automatic_dispatch_records_one_structured_read_block
+    cases = {
+      "user" => [["required user instruction", "user"]],
+      "delegated" => [["delegated result", "delegation_callback"]],
+      "mixed" => [["required mixed instruction", "user"], ["mixed delegated result", "delegation_callback"]]
+    }
+    cases.each do |name, entries|
+      with_queue_store do |registry, workspace|
+        attachment = {
+          "type" => "link", "title" => "Queue context", "url" => "https://example.test/queue-context",
+          "description" => "Canonical queue attachment", "source" => "user"
+        }
+        agent = terminal_agent(workspace)
+        entries.each_with_index do |(prompt, source), index|
+          agent.enqueue_prompt!(prompt:, source:, attachments: name == "mixed" && index.zero? ? [attachment] : [])
+        end
+        store = HQ::AgentStore.new(registry.projects)
+        store.save([agent])
+        service = HQ::RemoteService.new(registry:)
+
+        with_stubbed_start { service.agent(agent.key) }
+        persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+                         .find { |candidate| candidate.key == agent.key }
+        claim_events = HQ::AgentMemory.new(persisted).events.select do |event|
+          event.dig("metadata", "prompt_queue_claim_id")
+        end
+        read_events = claim_events.select { |event| event.dig("metadata", "queue_read") == true }
+        conversation = service.conversation(agent.key)
+        block = conversation.find { |candidate| candidate.dig(:metadata, "queue_read") == true }
+        expected_prompts = entries.map(&:first)
+        raw_duplicate = conversation.any? do |candidate|
+          candidate.dig(:metadata, "prompt_queue_claim_id") && candidate.dig(:metadata, "queue_read") != true
+        end
+        assert(claim_events.length == 1 && read_events.length == 1 && block && !raw_duplicate &&
+               read_events.first.dig("metadata", "prompt_queue_entries").map { |entry| entry["prompt"] } == expected_prompts &&
+               read_events.first.dig("metadata", "queue_work_state") == "in_progress" &&
+               block[:content].include?("TYCHO QUEUE WORK CONTRACT"),
+               "expected #{name} automatic dispatch to persist one structured Read queue block without a raw duplicate")
+        if name == "mixed"
+          recorded_attachment = read_events.first.dig("metadata", "attachments", 0)
+          assert(recorded_attachment &&
+                 HQ::AttachmentNormalizer.attachment_target(recorded_attachment) == attachment["url"] &&
+                 recorded_attachment["description"] == attachment["description"],
+                 "expected automatic dispatch to reuse canonical queue attachment projection")
+        end
+
+        repeated = store.read_prompt_queue!(agent.key)
+        after_read = HQ::AgentMemory.new(store.load.find { |candidate| candidate.key == agent.key }).events.count do |event|
+          event.dig("metadata", "queue_read") == true
+        end
+        assert(repeated[:idempotent] && after_read == 1,
+               "expected an explicit read after #{name} automatic dispatch to reuse the same block")
+
+        dispositions = repeated[:entries].map do |entry|
+          outcome = entry["source"] == "delegation_callback" ? "incorporated" : "completed"
+          { "entry_id" => entry["id"], "outcome" => outcome }
+        end
+        store.complete_queue_work!(agent.key, batch_id: repeated.dig(:batch, "batch_id"), dispositions:)
+        resolved = service.conversation(agent.key).find { |candidate| candidate.dig(:metadata, "queue_read") == true }
+        assert(resolved.dig(:metadata, "queue_work_state") == "resolved" &&
+               resolved.dig(:metadata, "queue_work_dispositions").length == entries.length,
+               "expected the #{name} automatic Read queue block to project resolved completion metadata")
+      end
     end
   end
 
@@ -295,6 +363,7 @@ module PromptQueueTest
       persisted = store.load.find { |candidate| candidate.key == agent.key }
       messages = queued_memory_events(agent.key, store)
       assert(persisted.run_count == 3 && messages.length == 2 &&
+             messages.all? { |event| event.dig("metadata", "queue_read") == true } &&
              messages.map { |event| event["content"] }.zip(%w[first next]).all? { |content, word| content.include?(word) },
              "expected consecutive batches to start one follow-up run each")
     ensure
