@@ -206,16 +206,16 @@ tycho queue my-project-agent-3
 tycho queue my-project-agent-3 --server peer --json
 ```
 
-A successful first read records one Conversation block labeled **Read queue** and moves the entries into an open queue-work batch; it does not mark them complete. The response leads with required user instructions while retaining the canonical FIFO entries and structured delegated reports. Entries arriving after the locked read remain queued for the next batch. Relevant agent command responses include a non-destructive queue notice for the current managed agent when `TYCHO_AGENT_KEY` has pending or open work.
+A successful first read removes the entries from the pending queue, records one Conversation block labeled **Read queue**, and moves the entries into an internal open queue-work batch. The response leads with required user instructions while retaining the canonical FIFO entries and structured delegated reports. Entries arriving after the locked read remain queued for the next batch. Relevant agent command responses include a non-destructive queue notice only for entries that are still pending.
 
-Before returning a successful agent result, record exactly one source-appropriate outcome for every stable entry ID:
+A successful or no-action-needed agent result automatically records `completed` for unresolved user instructions and `incorporated` for unresolved delegated callbacks in a delivered batch. Use explicit completion only for non-default outcomes:
 
 ```bash
 tycho queue-work complete my-project-agent-3 BATCH_ID \
   --dispositions-json '[{"entry_id":"USER_ID","outcome":"completed"},{"entry_id":"REPORT_ID","outcome":"incorporated"}]'
 ```
 
-User outcomes are `completed`, `needs_input`, or `declined_with_reason`; delegated callback outcomes are `incorporated` or `superseded_with_reason`. The two `*_with_reason` outcomes require a non-empty `reason`. Missing, duplicate, unknown, conflicting, or invalid outcomes leave the batch open. An identical completion is idempotent. Tycho gates a false success and resumes the same native session once with the unresolved checklist; a second incomplete attempt stays open without looping.
+User outcomes are `completed`, `needs_input`, or `declined_with_reason`; delegated callback outcomes are `incorporated` or `superseded_with_reason`. The two `*_with_reason` outcomes require a non-empty `reason`. Missing, duplicate, unknown, conflicting, or invalid explicit outcomes leave the batch open. An identical completion is idempotent. Failed, partial, blocked, and input-required runs never auto-complete queue work. Work that arrived but was not delivered remains gated and resumes the same native session once.
 
 ---
 

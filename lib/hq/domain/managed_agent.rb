@@ -1923,6 +1923,24 @@ module HQ
       unresolved = QueueWork.unresolved_ids(batch)
       return if unresolved.empty?
 
+      if batch.fetch("delivery_count", 0).to_i.positive?
+        dispositions = Array(batch["entries"]).filter_map do |entry|
+          entry_id = entry["id"].to_s
+          next unless unresolved.include?(entry_id)
+
+          outcome = QueueWork.entry_kind(entry) == "delegated_report" ? "incorporated" : "completed"
+          { "entry_id" => entry_id, "outcome" => outcome }
+        end
+        QueueWork.apply_dispositions!(batch, dispositions, completed_at: @finished_at || Time.now)
+        @queue_work.delete("active_batch_id") if QueueWork.terminal?(batch)
+        run.metadata = (run.metadata.is_a?(Hash) ? run.metadata.dup : {}).merge(
+          "queue_work_auto_completed" => true,
+          "queue_work_batch_id" => batch["id"],
+          "queue_work_auto_disposition_entry_ids" => unresolved
+        )
+        return
+      end
+
       resumed = QueueWork.request_automatic_continuation!(batch)
       run.metadata = (run.metadata.is_a?(Hash) ? run.metadata.dup : {}).merge(
         "queue_work_gate" => true,
