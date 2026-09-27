@@ -100,26 +100,17 @@ module MemoryHandoffTest
       required_only_path = File.join(dir, "required_only_agent_result.json")
       bundled = JSON.parse(File.read(SCHEMA_PATH))
       bundled["required"] -= %w[memory_handoff summary_sections]
+      retired_property = %w[action proposals].join("_")
+      bundled["properties"][retired_property] = { "type" => ["array", "null"] }
+      bundled["required"] << retired_property
       File.write(required_only_path, JSON.generate(bundled))
       HQ.migrate_agent_result_schema!(required_only_path)
       required_only = JSON.parse(File.read(required_only_path))
       assert((%w[memory_handoff summary_sections] - required_only.fetch("required")).empty?,
              "expected missing owned required fields to persist even when definitions already match")
-
-      legacy_path = File.join(dir, "legacy_agent_result.json")
-      File.write(legacy_path, JSON.generate("type" => "object", "properties" => { "action_proposals" => { "type" => "array" } }, "required" => ["action_proposals"]))
-      HQ.migrate_agent_result_schema!(legacy_path)
-      legacy = JSON.parse(File.read(legacy_path))
-      assert(!legacy.fetch("properties").key?("action_proposals") && !legacy.fetch("required").include?("action_proposals"),
-             "expected ordinary user schemas to shed the FRED-only proposal field")
-
-      fred_path = File.join(dir, "personal_assistant_result.json")
-      File.write(fred_path, JSON.generate("type" => "object", "properties" => {}))
-      HQ.migrate_personal_assistant_result_schema!(fred_path)
-      fred = JSON.parse(File.read(fred_path))
-      assert(fred.dig("properties", "action_proposals", "items", "anyOf").is_a?(Array) &&
-             fred.fetch("required").include?("action_proposals"),
-             "expected the dedicated FRED schema migration to retain the proposal catalog")
+      assert(!required_only.fetch("properties").key?(retired_property) &&
+             !required_only.fetch("required").include?(retired_property),
+             "expected retired result property to be removed from user schemas")
     end
   end
 

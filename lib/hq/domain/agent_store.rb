@@ -155,50 +155,6 @@ module HQ
       create_from_template(project, project.agent_templates.first.key)
     end
 
-    # Protected daily sessions use the same exclusive, durable store lifecycle
-    # as normal agents. This prevents a state file from pointing at an agent
-    # that was never committed, or an archived PA leaving its record behind.
-    def create_personal_assistant!(agent)
-      mutate(dispatch_prompt_queues: false) do |agents, _events|
-        raise ArgumentError, "A Personal Assistant session is already active" if agents.any?(&:personal_assistant?)
-
-        agents.unshift(agent)
-        agent
-      end
-    end
-
-    def archive_personal_assistant!(key)
-      with_exclusive_lock do
-        agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
-        target = find_agent_in!(agents, key)
-        raise ArgumentError, "Not a Personal Assistant session" unless target.personal_assistant?
-        raise ArgumentError, "Personal Assistant is still running" if target.running?
-
-        transaction = FileTransaction.new([AGENTS_FILE, *target.log_files.select { |path| File.exist?(path) }])
-        destination = target.archive_logs!
-        transaction.on_rollback { remove_failed_archive(destination) }
-        save_unlocked(agents.reject { |agent| agent.key == target.key })
-      rescue StandardError
-        transaction&.rollback
-        raise
-      end
-    end
-
-    def delete_personal_assistant!(key)
-      with_exclusive_lock do
-        agents, = load_with_poll_events_unlocked(process_delegations: false)
-        target = find_agent_in!(agents, key)
-        raise ArgumentError, "Not a Personal Assistant session" unless target.personal_assistant?
-        raise ArgumentError, "Personal Assistant is still running" if target.running?
-
-        paths = target.log_files.select { |path| File.exist?(path) }
-        FileTransaction.run([AGENTS_FILE, *paths]) do
-          paths.each { |path| FileUtils.rm_f(path) }
-          save_unlocked(agents.reject { |agent| agent.key == target.key })
-        end
-      end
-    end
-
     def create_from_template(project, template_key, existing_agents: nil)
       existing = existing_agents || load
       suffix = next_suffix(project.key, existing)
@@ -648,9 +604,6 @@ module HQ
         targets = requested.map do |key|
           agents.find { |agent| agent.key == key } || raise(ArgumentError, "Unknown agent: #{key}")
         end
-        if targets.any?(&:personal_assistant?)
-          raise ArgumentError, "Personal Assistant is managed by its daily lifecycle and cannot be archived manually"
-        end
         raise ArgumentError, "Agent is running" if targets.any?(&:running?)
         blocked = targets.select { |target| target.pending_prompts? && !target.delegation_callback_prompts_only? }
         unless blocked.empty?
@@ -857,11 +810,6 @@ module HQ
 
       baseline = claim["baseline_run_count"].to_i
       run_metadata = { "prompt_queue_claim_id" => claim["id"] }
-      request_ids = Array(claim["personal_assistant_client_request_ids"]).filter_map do |id|
-        value = id.to_s.strip
-        value.empty? ? nil : value
-      end
-      run_metadata["personal_assistant_client_request_ids"] = request_ids unless request_ids.empty?
       accepted = begin
         stamp = Array(claim["entries"]).last&.fetch("authority", nil)
         options = { run_metadata: }

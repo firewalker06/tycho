@@ -72,14 +72,16 @@ module HQ
 
   # Keep existing user-owned schemas valid as the structured result contract
   # grows. This changes only fields Tycho owns.
+  RETIRED_RESULT_PROPERTIES = [%w[action proposals].join("_")].freeze
+
   def self.migrate_agent_result_schema!(path)
     source = File.join(BUNDLED_CONFIG_DIR, "schemas", "agent_result.json")
-    migrate_result_schema!(path, source:, owned_properties: %w[memory_handoff summary_sections], remove_properties: %w[action_proposals])
-  end
-
-  def self.migrate_personal_assistant_result_schema!(path)
-    source = File.join(BUNDLED_CONFIG_DIR, "schemas", "personal_assistant_result.json")
-    migrate_result_schema!(path, source:, owned_properties: %w[memory_handoff summary_sections action_proposals])
+    migrate_result_schema!(
+      path,
+      source:,
+      owned_properties: %w[memory_handoff summary_sections],
+      remove_properties: RETIRED_RESULT_PROPERTIES
+    )
   end
 
   def self.migrate_result_schema!(path, source:, owned_properties:, remove_properties: [])
@@ -102,7 +104,7 @@ module HQ
     end
     required = Array(current["required"])
     updated_required = required - remove_properties
-    missing_required = owned_properties.reject { |key| updated_required.include?(key) }
+    missing_required = owned_properties.reject { |key| required.include?(key) }
     updated_required += missing_required
     changed ||= updated_required != required
     current["required"] = updated_required if changed
@@ -114,7 +116,6 @@ module HQ
 
   LOGS_DIR = USER_LOGS_DIR
   AGENTS_FILE = File.join(LOGS_DIR, "managed_agents.json")
-  PERSONAL_ASSISTANT_DIR = File.join(LOGS_DIR, "personal_assistant")
   DELEGATIONS_FILE = File.join(LOGS_DIR, "agent_delegations.json")
   SERVER_IDENTITY_FILE = File.join(USER_CONFIG_DIR, "server_identity.json")
   USAGE_METRICS_FILE = File.join(LOGS_DIR, "usage_metrics.json")
@@ -132,9 +133,6 @@ module HQ
   AGENT_ARCHIVE_DIR = File.join(AGENT_LOGS_DIR, "archive")
   AGENT_RESULT_SCHEMA = migrate_agent_result_schema!(
     ensure_user_config_file(File.join("schemas", "agent_result.json"), File.join("schemas", "agent_result.json"))
-  )
-  PERSONAL_ASSISTANT_RESULT_SCHEMA = migrate_personal_assistant_result_schema!(
-    ensure_user_config_file(File.join("schemas", "personal_assistant_result.json"), File.join("schemas", "personal_assistant_result.json"))
   )
   LOG_FILE = File.join(LOGS_DIR, "hq.log")
   HOOKS_LOG_FILE = File.join(LOGS_DIR, "hooks.log")

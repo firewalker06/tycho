@@ -42,10 +42,8 @@ module ManagedAgentTest
     assert_queue_work_contract_reaches_every_harness
     assert_response_style_applies_to_cold_and_resumed_runs
     assert_native_resume_includes_same_second_follow_up
-    assert_native_resume_includes_action_receipt_once
     assert_response_style_can_be_disabled_and_run_session_is_recorded
     assert_agent_result_schema_describes_summary
-    assert_personal_assistant_uses_dedicated_result_schema
     assert_harness_structured_output_contracts
     assert_no_action_status_conflicts_are_normalized
     assert_agent_updates_replace_the_prior_base_prompt
@@ -66,7 +64,6 @@ module ManagedAgentTest
     assert_stop_kills_term_ignoring_harness_before_restart
     assert_stop_finalizes_when_group_exits_before_signal
     assert_agent_runner_warns_when_command_cannot_execute
-    assert_personal_assistant_intent_pid_and_status_recovery
     assert_spawn_failure_clears_stale_result_and_persists_run
     assert_store_spawn_failure_persists_failed_run
     puts "managed_agent_test: ok"
@@ -550,41 +547,6 @@ module ManagedAgentTest
              "expected native resume prompt to include follow-up created at the prior finish timestamp")
       assert(!prompt.include?("Continue from the current HQ managed-agent state."),
              "expected same-second follow-up to replace generic resume prompt")
-    end
-  ensure
-    replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
-  end
-
-  def assert_native_resume_includes_action_receipt_once
-    old_logs_dir = nil
-    Dir.mktmpdir("hq-managed-agent-action-receipt-test") do |dir|
-      logs_dir = File.join(dir, "agents")
-      FileUtils.mkdir_p(logs_dir)
-      old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, logs_dir)
-      finished_at = Time.parse("2026-07-18T13:09:48+07:00") + 0.75
-      receipt = "Tycho completed inspect_agents."
-      agent = HQ::ManagedAgent.new(
-        key: "action-receipt-resume", name: "Action receipt resume", project_key: "demo",
-        template_key: "custom", workspace: dir, prompt: "Cold prompt", agent: "opencode",
-        session_id: "ses_action_receipt", runs: [HQ::ManagedAgent::AgentRun.new(
-          started_at: finished_at - 5, finished_at:, exit_code: 0, status: "success", command: "opencode run"
-        )]
-      )
-      agent.send(:memory_store).append_personal_assistant_action_result!(receipt, created_at: finished_at + 0.1,
-                                                                                     metadata: { "personal_assistant_action_proposal_id" => "pa-1" })
-      during_run_receipt = "Tycho completed inspect_projects."
-      agent.send(:memory_store).append_personal_assistant_action_result!(during_run_receipt, created_at: finished_at - 0.1,
-                                                                                                metadata: { "personal_assistant_action_proposal_id" => "pa-2" })
-      agent.send(:memory_store).append_user_message!("What should I do next?", created_at: finished_at + 0.2)
-      prompt = agent.send(:prompt_for_execution)
-      assert(prompt.include?(receipt) && prompt.include?(during_run_receipt) && prompt.include?("What should I do next?"),
-             "expected the next native resume to include server receipts delivered after and during the prior run")
-
-      later = HQ::ManagedAgent::AgentRun.new(started_at: finished_at + 1, finished_at: finished_at + 2,
-                                               exit_code: 0, status: "success", command: "opencode run")
-      agent.instance_variable_set(:@runs, [later])
-      assert(!agent.send(:prompt_for_execution).include?(receipt) && !agent.send(:prompt_for_execution).include?(during_run_receipt),
-             "expected action receipts to leave native resume context after one run")
     end
   ensure
     replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
@@ -1705,29 +1667,6 @@ module ManagedAgentTest
            "Claude should receive the same canonical result schema as Codex")
   ensure
     replace_constant(HQ, :AGENT_RESULT_SCHEMA, old_schema_path) if old_schema_path
-  end
-
-  def assert_personal_assistant_uses_dedicated_result_schema
-    ordinary = HQ::ManagedAgent.new(
-      key: "ordinary-schema", name: "Ordinary schema", project_key: "demo", template_key: "custom",
-      workspace: Dir.tmpdir, prompt: "Prompt", agent: "codex"
-    )
-    fred = HQ::ManagedAgent.new(
-      key: "fred-schema", name: "FRED schema", project_key: "__personal_assistant__",
-      template_key: "personal_assistant_daily", workspace: Dir.tmpdir, prompt: "Prompt", agent: "codex",
-      role: "personal_assistant_daily"
-    )
-
-    ordinary_command = ordinary.send(:build_command).fetch(:command)
-    fred_command = fred.send(:build_command).fetch(:command)
-    assert(argument_after(ordinary_command, "--output-schema") == HQ::AGENT_RESULT_SCHEMA,
-           "expected ordinary agents to use the general result schema")
-    assert(argument_after(fred_command, "--output-schema") == HQ::PERSONAL_ASSISTANT_RESULT_SCHEMA,
-           "expected FRED to use its dedicated result schema")
-    assert(!JSON.parse(ordinary.send(:canonical_result_schema_json)).fetch("properties").key?("action_proposals"),
-           "expected ordinary prompt-only schema guidance to omit FRED proposals")
-    assert(JSON.parse(fred.send(:canonical_result_schema_json)).fetch("properties").key?("action_proposals"),
-           "expected FRED prompt-only schema guidance to retain proposals")
   end
 
   def assert_harness_structured_output_contracts
@@ -2982,32 +2921,6 @@ module ManagedAgentTest
     index ? command[index + 1] : nil
   end
 
-  def assert_personal_assistant_intent_pid_and_status_recovery
-    Dir.mktmpdir("hq-pa-intent-recovery") do |dir|
-      metadata = { "personal_assistant_summary_intent" => "intent-recovery" }
-      live = HQ::ManagedAgent.new(key: "pa-live", name: "PA", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "live.log"), role: "personal_assistant_daily", runs: [HQ::ManagedAgent::AgentRun.new(run_id: "live-run", status: "running", metadata:)])
-      pid = Process.spawn("sleep", "2", pgroup: true)
-      File.write(live.send(:run_pid_file_path, "live-run"), pid.to_s)
-      assert(live.running?, "expected assert_personal_assistant_intent_pid_and_status_recovery to recover live child PID")
-      Process.kill("TERM", -pid) rescue nil
-
-      completed = HQ::ManagedAgent.new(key: "pa-completed", name: "PA", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "completed.log"), role: "personal_assistant_daily", runs: [HQ::ManagedAgent::AgentRun.new(run_id: "completed-run", status: "running", metadata:)])
-      File.write(completed.send(:run_status_file_path, "completed-run"), "0")
-      overlap_pid = Process.spawn("sleep", "2", pgroup: true)
-      File.write(completed.send(:run_pid_file_path, "completed-run"), overlap_pid.to_s)
-      completed.poll!
-      assert(%w[success succeeded].include?(completed.last_run.status) && completed.last_run.finished_at, "expected completed pid:nil intent run to finalize, got #{completed.last_run.to_hash.inspect}")
-      assert(!File.exist?(completed.send(:run_status_file_path, "completed-run")) && !File.exist?(completed.send(:run_pid_file_path, "completed-run")), "expected completed status to win and clean status/PID handshake")
-      assert(completed.status != "running", "expected live handshake to be unable to resurrect finalized run")
-      Process.kill("TERM", -overlap_pid) rescue nil
-      orphan = HQ::ManagedAgent.new(key: "pa-orphan", name: "PA", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "orphan.log"), role: "personal_assistant_daily", runs: [HQ::ManagedAgent::AgentRun.new(run_id: "orphan-run", status: "failed", metadata: {})])
-      orphan_pid_path = orphan.send(:run_pid_file_path, "orphan-run")
-      File.write(orphan_pid_path, "999999")
-      archive = orphan.archive_logs!(File.join(dir, "archive"))
-      assert(!File.exist?(orphan_pid_path) && File.exist?(File.join(archive, File.basename(orphan_pid_path))), "expected archive to remove orphan PID handshake from active logs")
-    end
-  end
-
   def assert_spawn_failure_clears_stale_result_and_persists_run
     Dir.mktmpdir("hq-spawn-failure") do |dir|
       executable = File.join(dir, "codex")
@@ -3015,7 +2928,7 @@ module ManagedAgentTest
       FileUtils.chmod(0o755, executable)
       previous_codex_bin = ENV["TYCHO_CODEX_BIN"]
       ENV["TYCHO_CODEX_BIN"] = executable
-      agent = HQ::ManagedAgent.new(key: "spawn-failure", name: "Spawn", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "spawn.log"), role: "personal_assistant_daily")
+      agent = HQ::ManagedAgent.new(key: "spawn-failure", name: "Spawn", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "spawn.log"))
       metrics_store = HQ::UsageMetrics::Store.new(path: File.join(dir, "usage_metrics.json"))
       agent.usage_metrics_store = metrics_store
       agent.structured_result = { "status" => "success", "summary" => "stale" }
@@ -3046,7 +2959,7 @@ module ManagedAgentTest
       ENV["TYCHO_CODEX_BIN"] = executable
       original_spawn = HQ::ManagedAgent.instance_method(:spawn)
       HQ::ManagedAgent.define_method(:spawn) { |_env, *_args, **_options| raise Errno::EAGAIN, "forced store spawn failure" }
-      agent = HQ::ManagedAgent.new(key: "store-spawn", name: "Store", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "store.log"), role: "personal_assistant_daily")
+      agent = HQ::ManagedAgent.new(key: "store-spawn", name: "Store", project_key: "p", template_key: "t", workspace: dir, prompt: "x", log_path: File.join(dir, "store.log"))
       agent.structured_result = { "status" => "success", "summary" => "stale" }
       store = HQ::AgentStore.new([])
       store.save([agent])

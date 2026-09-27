@@ -160,13 +160,6 @@ module HQ
             timestamp:,
             metadata: message_metadata_for(event, sequence:)
           )
-        when "personal_assistant_action_result"
-          conversation << Parser::ConversationEntry.new(
-            role: "assistant",
-            content: event["content"].to_s,
-            timestamp:,
-            metadata: message_metadata_for(event, sequence:)
-          )
         when "tool_summary"
           entry = Parser::SystemEntry.new(
             type: :tool_call,

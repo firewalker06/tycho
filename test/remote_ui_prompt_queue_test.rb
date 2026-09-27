@@ -42,7 +42,6 @@ module RemoteUIPromptQueueTest
       const context = {
         escapeAttr: (value) => String(value),
         escapeHtml: (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"),
-        personalAssistantControlError: () => null,
         renderMarkdown: (value) => `<markdown>${value}</markdown>`,
         statusBadge: (label) => `<badge>${label}</badge>`,
         titleFromKey: (value) => String(value),
@@ -216,16 +215,8 @@ module RemoteUIPromptQueueTest
         throw new Error("circuit-breaker recovery must render as a concise expandable structured block");
       }
 
-      const requestContext = {
-        personalAssistantAgent: () => false,
-        findAgent: () => null,
-        personalAssistantSessionContext: () => null,
-      };
-      vm.createContext(requestContext);
-      vm.runInContext(`${extractFunction("personalAssistantEndpointAdapter")}\nthis.personalAssistantEndpointAdapter = personalAssistantEndpointAdapter;`, requestContext);
       const clientRequestId = "client-queue-reconciliation";
-      const adapter = requestContext.personalAssistantEndpointAdapter("queue-agent", { personalAssistant: false });
-      const requestBody = adapter.writeBody({ prompt: "One queued prompt", start: true }, clientRequestId);
+      const requestBody = { prompt: "One queued prompt", start: true, client_request_id: clientRequestId };
       if (requestBody.client_request_id !== clientRequestId) {
         throw new Error("generic queued submissions must send their optimistic ID for server reconciliation");
       }
@@ -234,7 +225,6 @@ module RemoteUIPromptQueueTest
         escapeAttr: (value) => String(value),
         escapeHtml: (value) => String(value),
         iconSvg: () => "",
-        personalAssistantControlError: () => null,
         optimisticPromptQueueEntries: () => [{
           id: clientRequestId, prompt: "One queued prompt", state: "queued", attachments: []
         }],

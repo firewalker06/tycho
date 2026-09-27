@@ -12,7 +12,6 @@ module StructuredOutputValidationTest
 
   FIXTURE_ROOT = File.expand_path("fixtures/structured_output", __dir__)
   SCHEMA_PATH = File.expand_path("../config/schemas/agent_result.json", __dir__)
-  PERSONAL_ASSISTANT_SCHEMA_PATH = File.expand_path("../config/schemas/personal_assistant_result.json", __dir__)
 
   def run!
     assert_runner_uses_null_child_stdin
@@ -20,7 +19,6 @@ module StructuredOutputValidationTest
     assert_malformed_json_feedback
     assert_multiple_schema_violations
     assert_malformed_summary_sections_are_diagnosable
-    assert_personal_assistant_action_contract
     assert_native_codex_schema_split_contract
     assert_successful_correction_for_supported_harnesses
     assert_retry_exhaustion_preserves_invalid_response
@@ -88,56 +86,11 @@ module StructuredOutputValidationTest
            "expected unusable rich targets to report exact correction paths")
   end
 
-  def assert_personal_assistant_action_contract
-    ordinary_schema = JSON.parse(File.read(SCHEMA_PATH))
-    assert(!ordinary_schema.fetch("properties").key?("action_proposals") &&
-           !ordinary_schema.fetch("required").include?("action_proposals"),
-           "expected ordinary agent schema to exclude FRED action proposals")
-    ordinary_payload = JSON.parse(File.read(fixture("valid.json"))).merge("action_proposals" => nil)
-    assert(!validator.validate(ordinary_payload).valid?,
-           "expected ordinary agent output to reject FRED action proposals")
-    schema = JSON.parse(File.read(PERSONAL_ASSISTANT_SCHEMA_PATH))
-    alternatives = schema.dig("properties", "action_proposals", "items", "anyOf")
-    catalog = HQ::PersonalAssistantActionCatalog
-    schema_types = alternatives.flat_map { |entry| entry.dig("properties", "type", "enum") }
-    assert(schema_types.sort == catalog::ARGUMENTS.keys.sort,
-           "expected model action schema to cover exactly the server action catalog")
-
-    alternatives.each do |entry|
-      argument_schema = entry.dig("properties", "arguments")
-      entry.dig("properties", "type", "enum").each do |type|
-        keys = catalog::ARGUMENTS.fetch(type)
-        assert(argument_schema.fetch("required").sort == keys.sort,
-               "expected all #{type} arguments to be explicit in the model schema")
-        nullable = argument_schema.fetch("properties").filter_map do |key, definition|
-          key if Array(definition["type"]).include?("null")
-        end
-        assert(nullable.sort == Array(catalog::NULLABLE_ARGUMENTS[type]).sort,
-               "expected #{type} nullability to match server execution")
-        arguments = keys.to_h { |key| [key, nullable.include?(key) ? nil : "example"] }
-        proposal = { "type" => type, "description" => "Review this action", "arguments" => arguments }
-        payload = JSON.parse(File.read(fixture("valid.json"))).merge("action_proposals" => [proposal])
-        assert(personal_assistant_validator.validate(payload).valid?, "expected #{type} proposal to pass the model contract")
-
-        %w[server parent_agent_key actor command].each do |forbidden|
-          injected = payload.merge("action_proposals" => [proposal.merge("arguments" => arguments.merge(forbidden => "untrusted"))])
-          assert(!personal_assistant_validator.validate(injected).valid?, "expected #{type} to reject injected #{forbidden}")
-        end
-        next if keys.empty?
-
-        missing = payload.merge("action_proposals" => [proposal.merge("arguments" => arguments.reject { |key, _| key == keys.first })])
-        assert(!personal_assistant_validator.validate(missing).valid?, "expected #{type} to reject omitted arguments")
-        wrong_type = payload.merge("action_proposals" => [proposal.merge("arguments" => arguments.merge(keys.first => true))])
-        assert(!personal_assistant_validator.validate(wrong_type).valid?, "expected #{type} to reject a non-string argument")
-      end
-    end
-  end
-
   def assert_native_codex_schema_split_contract
     %w[input_required no_action_needed].each do |status|
       with_runner("codex", status, correction_limit: 2) do |result|
         assert(result[:exit_code].zero?,
-               "expected ordinary Codex #{status} output to pass without FRED field materialization: #{result[:output]}")
+               "expected ordinary Codex #{status} output to pass: #{result[:output]}")
         assert(result[:invocations].length == 1,
                "expected ordinary Codex #{status} output not to enter correction")
         assert(!result[:output].include?("validation_failed"),
@@ -145,17 +98,6 @@ module StructuredOutputValidationTest
       end
     end
 
-    with_runner(
-      "codex",
-      "personal_assistant_proposal",
-      correction_limit: 2,
-      schema_path: PERSONAL_ASSISTANT_SCHEMA_PATH
-    ) do |result|
-      assert(result[:exit_code].zero?,
-             "expected native Codex FRED proposal output to remain valid: #{result[:output]}")
-      assert(result[:invocations].length == 1,
-             "expected native Codex FRED proposal output not to enter correction")
-    end
   end
 
   def assert_successful_correction_for_supported_harnesses
@@ -263,7 +205,7 @@ module StructuredOutputValidationTest
       fixture_name = if %w[first_pass requires_null_stdin].include?(scenario) ||
                         (scenario == "corrected" && count.positive?)
                        "valid.json"
-                     elsif %w[input_required no_action_needed personal_assistant_proposal].include?(scenario)
+                     elsif %w[input_required no_action_needed].include?(scenario)
                        "#{scenario}.json"
                      elsif scenario == "corrected"
                        "multiple_violations.json"
@@ -309,11 +251,6 @@ module StructuredOutputValidationTest
 
   def validator
     schema = JSON.parse(File.read(SCHEMA_PATH))
-    HQ::AgentStructuredOutputValidator.new(schema:)
-  end
-
-  def personal_assistant_validator
-    schema = JSON.parse(File.read(PERSONAL_ASSISTANT_SCHEMA_PATH))
     HQ::AgentStructuredOutputValidator.new(schema:)
   end
 

@@ -74,7 +74,7 @@ module HQ
     }.freeze
 
     attr_reader :path, :projects, :groups, :remote_servers, :system_prompts_path, :custom_harnesses,
-                :harness_catalogs, :harness_auth_snapshots, :session_loop_settings, :personal_assistant
+                :harness_catalogs, :harness_auth_snapshots, :session_loop_settings
 
     def archived_projects_path
       default_archived_path
@@ -102,7 +102,6 @@ module HQ
       @harness_catalogs = build_harness_catalogs(data["harness_catalogs"])
       @harness_auth_snapshots = build_harness_auth_snapshots(data["harness_auth_snapshots"])
       @session_loop_settings = build_session_loop_settings(data["session_loops"])
-      @personal_assistant = data["personal_assistant"].is_a?(Hash) ? data["personal_assistant"] : {}
       @groups = build_groups(data["groups"])
       @remote_servers = build_remote_servers(data["remote_servers"])
       HQ.custom_harnesses = @custom_harnesses
@@ -435,26 +434,6 @@ module HQ
       end
       load!
       @session_loop_settings
-    end
-
-    def update_personal_assistant!(attrs)
-      with_config_lock do
-        data = load_yaml(@path)
-        data["personal_assistant"] = attrs
-        write_yaml(@path, data)
-      end
-      load!
-      @personal_assistant
-    end
-
-    def clear_personal_assistant!
-      with_config_lock do
-        data = load_yaml(@path)
-        data.delete("personal_assistant")
-        write_yaml(@path, data)
-      end
-      load!
-      @personal_assistant
     end
 
     def update_session_loop_defaults!(attrs)

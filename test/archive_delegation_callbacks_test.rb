@@ -93,8 +93,6 @@ module ArchiveDelegationCallbacksTest
     service.instance_variable_set(:@agent_store, fake_store)
     service.instance_variable_set(:@agent_activity_snapshot, Snapshot.new)
     service.define_singleton_method(:find_agent!) { |_key| agent }
-    service.define_singleton_method(:reject_personal_assistant_control!) { |_target| nil }
-
     error = capture_error { service.archive_agent(agent.key) }
     assert(error.is_a?(HQ::RemoteServer::Error) && error.status == 409,
            "expected peer archive conflicts to map to HTTP 409")

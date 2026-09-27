@@ -25,7 +25,7 @@ module GemPackageTest
   end
 
   def verify_packaged_schemas!(unpacked)
-    %w[agent_result.json personal_assistant_result.json].each do |name|
+    %w[agent_result.json].each do |name|
       path = File.join(unpacked, "config", "schemas", name)
       raise "packaged gem is missing #{name}" unless File.file?(path)
     end
@@ -68,11 +68,7 @@ module GemPackageTest
       require "hq/domain/constants"
       schemas_dir = File.join(ENV.fetch("TYCHO_PACKAGE_TEST_HOME"), ".tycho", "config", "schemas")
       ordinary = File.join(schemas_dir, "agent_result.json")
-      fred = File.join(schemas_dir, "personal_assistant_result.json")
       raise "ordinary schema bootstrap failed" unless HQ::AGENT_RESULT_SCHEMA == ordinary && File.file?(ordinary)
-      raise "FRED schema bootstrap failed" unless HQ::PERSONAL_ASSISTANT_RESULT_SCHEMA == fred && File.file?(fred)
-      raise "ordinary schema includes FRED proposals" if JSON.parse(File.read(ordinary)).dig("properties", "action_proposals")
-      raise "FRED schema lacks proposals" unless JSON.parse(File.read(fred)).dig("properties", "action_proposals")
     RUBY
     env = { "TYCHO_PACKAGE_TEST_HOME" => home, "TYCHO_HOME" => File.join(home, ".tycho") }
     stdout, stderr, status = Open3.capture3(

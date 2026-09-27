@@ -45,9 +45,6 @@ require_relative "domain/server_identity"
 require_relative "domain/skill_discovery"
 require_relative "domain/skill_installer"
 require_relative "domain/onboarding"
-require_relative "domain/personal_assistant"
-require_relative "domain/personal_assistant_actions"
-require_relative "domain/personal_assistant_action_worker"
 require_relative "domain/visibility"
 require_relative "domain/web_push_notifier"
 require_relative "domain/usage_metrics"
@@ -85,7 +82,7 @@ module HQ
                    restart_command: nil, token: HQ.env("REMOTE_TOKEN"), logger: HQ.logger, output: $stdout,
                    daemonize_after_startup: false, daemon_log_path: REMOTE_DAEMON_LOG_FILE, daemonizer: nil,
                    resource_catalog: nil, resource_snapshot_path: nil, agent_activity_snapshot: nil,
-                   personal_assistant_action_worker: nil, registry: nil, clock: -> { Time.now })
+                   registry: nil, clock: -> { Time.now })
       @host = host.to_s.empty? ? DEFAULT_HOST : host.to_s
       @port = port.to_i.positive? ? port.to_i : DEFAULT_PORT
       @public_url = public_url.to_s
@@ -101,21 +98,11 @@ module HQ
       @agent_activity_snapshot = agent_activity_snapshot || AgentActivitySnapshot.new
       @registry = registry
       @clock = clock
-      @personal_assistant_actions = personal_assistant_action_worker&.respond_to?(:actions) ? personal_assistant_action_worker.actions : build_personal_assistant_action_store
-      @personal_assistant_action_worker = personal_assistant_action_worker || build_personal_assistant_action_worker
-      @personal_assistant_timezone_cache = PersonalAssistantLifecycle::TimezoneSnapshotCache.new
-      @personal_assistant_snapshot_lock = Mutex.new
-      @personal_assistant_snapshot = nil
-      @personal_assistant_snapshot_revision = 0
     end
 
-    # The listener and the single FRED action worker share one explicit server
-    # lifetime. Tests and embedding callers can stop both without sending a
-    # process signal.
     def shutdown
       @shutdown = true
       close_listener!
-      @personal_assistant_action_worker&.shutdown
       true
     end
 
@@ -148,9 +135,6 @@ module HQ
         @output.flush if @output.respond_to?(:flush)
       end
       daemonize_after_startup! if @daemonize_after_startup
-      # Process.daemon forks away every non-calling thread. Start the bounded
-      # FRED worker only after the final serving process exists.
-      @personal_assistant_action_worker.start!
       warm_resource_catalog!
 
       until @shutdown
@@ -167,7 +151,6 @@ module HQ
         poll_agent_push_notifications! unless @shutdown
       end
     ensure
-      @personal_assistant_action_worker&.shutdown
       RemoteServerControl.clear(host: @host, port: @port)
       server&.close unless server&.closed?
       @daemon_log_io&.close
@@ -184,100 +167,6 @@ module HQ
 
       def query_params
         @query_params ||= URI.decode_www_form(query.to_s).to_h
-      end
-    end
-
-    def build_personal_assistant_action_store
-      PersonalAssistantActions.new(
-        path: File.join(HQ::PERSONAL_ASSISTANT_DIR, "proposals.json"),
-        executor: method(:execute_background_personal_assistant_action),
-        verifier: method(:verify_background_personal_assistant_action),
-        guard: method(:guard_background_personal_assistant_action),
-        auto_execute: false
-      )
-    end
-
-    def build_personal_assistant_action_worker
-      PersonalAssistantActionWorker.new(
-        actions: @personal_assistant_actions,
-        logger: @logger,
-        on_result: method(:record_background_personal_assistant_action)
-      )
-    end
-
-    def background_personal_assistant_service
-      RemoteService.new(
-        registry: @registry || Registry.new,
-        clock: @clock,
-        server_url: "http://#{@host}:#{@port}",
-        public_url: @public_url,
-        auth_required: !@token.empty?,
-        restartable: restartable?,
-        agent_activity_snapshot: @agent_activity_snapshot,
-        personal_assistant_actions: @personal_assistant_actions,
-        personal_assistant_action_worker: @personal_assistant_action_worker,
-        personal_assistant_timezone_cache: @personal_assistant_timezone_cache
-      )
-    end
-
-    def execute_background_personal_assistant_action(type, arguments)
-      background_personal_assistant_service.execute_personal_assistant_action(type, arguments)
-    end
-
-    def verify_background_personal_assistant_action(type, arguments, proposal)
-      background_personal_assistant_service.verify_personal_assistant_action_execution(type, arguments, proposal)
-    end
-
-    def guard_background_personal_assistant_action(proposal)
-      service = background_personal_assistant_service
-      service.ensure_personal_assistant_action_active!(proposal)
-      service.revalidate_personal_assistant_action!(proposal)
-    end
-
-    def record_background_personal_assistant_action(proposal)
-      background_personal_assistant_service.record_personal_assistant_action_outcome!(proposal)
-      invalidate_personal_assistant_snapshot!
-    end
-
-    def invalidate_personal_assistant_snapshot!
-      @personal_assistant_snapshot_lock.synchronize do
-        @personal_assistant_snapshot = nil
-        @personal_assistant_snapshot_revision += 1
-      end
-    end
-
-    def personal_assistant_snapshot(service)
-      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      signature = personal_assistant_snapshot_signature(service)
-      snapshot_revision = @personal_assistant_snapshot_lock.synchronize { @personal_assistant_snapshot_revision }
-      cached = @personal_assistant_snapshot_lock.synchronize do
-        snapshot = @personal_assistant_snapshot
-        snapshot if snapshot && snapshot.fetch(:signature) == signature && now - snapshot.fetch(:created_at) < 2
-      end
-      return cached.fetch(:payload) if cached
-
-      payload = service.personal_assistant_bundle
-      finished_signature = personal_assistant_snapshot_signature(service)
-      finished_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      @personal_assistant_snapshot_lock.synchronize do
-        if @personal_assistant_snapshot_revision == snapshot_revision && signature == finished_signature
-          @personal_assistant_snapshot = { created_at: finished_at, signature: signature, payload: payload }
-        end
-      end
-      payload
-    end
-
-    def personal_assistant_snapshot_signature(service)
-      paths = [
-        @personal_assistant_actions.path,
-        File.join(HQ::PERSONAL_ASSISTANT_DIR, "state.json"),
-        HQ::AGENTS_FILE,
-        service.registry.path
-      ]
-      paths.map do |path|
-        [path, Digest::SHA256.hexdigest(File.binread(path))]
-      rescue Errno::ENOENT
-        [path, nil]
       end
     end
 
@@ -326,10 +215,7 @@ module HQ
         public_url: @public_url,
         auth_required: !@token.empty?,
         restartable: restartable?,
-        agent_activity_snapshot: @agent_activity_snapshot,
-        personal_assistant_actions: @personal_assistant_actions,
-        personal_assistant_action_worker: @personal_assistant_action_worker,
-        personal_assistant_timezone_cache: @personal_assistant_timezone_cache
+        agent_activity_snapshot: @agent_activity_snapshot
       )
       result = route(service, request.method, request.path, json_body(request), request)
       status = result.fetch(:status, 200)
@@ -377,8 +263,7 @@ module HQ
                                   server_url: "http://#{@host}:#{@port}",
                                   public_url: @public_url,
                                   auth_required: !@token.empty?,
-                                  agent_activity_snapshot: @agent_activity_snapshot,
-                                  personal_assistant_timezone_cache: @personal_assistant_timezone_cache)
+                                  agent_activity_snapshot: @agent_activity_snapshot)
       service.dispatch_agent_push_notifications!
     rescue StandardError => e
       HQ.logger.warn("Push") { "Agent push notification poll failed: #{e.class} - #{e.message}" }
@@ -388,8 +273,6 @@ module HQ
       parts = path.split("/").reject(&:empty?)
       body = body.is_a?(Hash) ? body.dup : {}
       actor = request_actor(body)
-      invalidate_personal_assistant_snapshot! if parts.first == "personal-assistant" && method != "GET"
-
       if parts.first == "servers"
         broker = RemoteBroker.new(registry: service.registry, server_url: service.server_url)
         @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
@@ -464,61 +347,6 @@ module HQ
         end
       end
       return ok(service.agent_activity) if method == "GET" && parts == ["activity"]
-      if method == "GET" && parts == ["personal-assistant"]
-        bundle = personal_assistant_snapshot(service)
-        return ok(personal_assistant: bundle.fetch(:personal_assistant))
-      end
-      if method == "GET" && parts == ["personal-assistant", "current-work"]
-        bundle = personal_assistant_snapshot(service)
-        return ok(bundle.fetch(:current_work))
-      end
-      return ok(history: service.personal_assistant_history) if method == "GET" && parts == ["personal-assistant", "history"]
-      if method == "GET" && parts.length == 3 && parts[0, 2] == ["personal-assistant", "history"]
-        return ok(history: service.personal_assistant_history(parts[2]))
-      end
-      return ok(personal_assistant: service.setup_personal_assistant(body)) if method == "POST" && parts == ["personal-assistant", "setup"]
-      return ok(personal_assistant: service.open_personal_assistant) if method == "POST" && parts == ["personal-assistant", "open"]
-      return ok(personal_assistant: service.restart_personal_assistant(body)) if method == "POST" && parts == ["personal-assistant", "restart"]
-      return ok(personal_assistant: service.reset_personal_assistant(body)) if method == "POST" && parts == ["personal-assistant", "reset"]
-      return ok(service.submit_personal_assistant_prompt(body, actor:)) if method == "POST" && parts == ["personal-assistant", "messages"]
-      if method == "GET" && parts.length == 4 && parts[0, 3] == ["personal-assistant", "messages", "acceptance"]
-        return ok(acceptance: service.personal_assistant_message_acceptance(parts[3]))
-      end
-      if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "inquiries"]
-        return ok(service.answer_personal_assistant_inquiry(parts[2], body, actor:)) if parts[3] == "answer"
-        return ok(service.dismiss_personal_assistant_inquiry(parts[2], body, actor:)) if parts[3] == "dismiss"
-        return ok(service.restore_personal_assistant_inquiry(parts[2], body, actor:)) if parts[3] == "restore"
-      end
-      if parts.length == 3 && parts[0, 2] == ["personal-assistant", "prompt-queue"]
-        return ok(service.edit_personal_assistant_queued_prompt(parts[2], body, actor:)) if %w[PATCH PUT].include?(method)
-        return ok(service.delete_personal_assistant_queued_prompt(parts[2], body, actor:)) if method == "DELETE"
-      end
-      if method == "POST" && parts == ["personal-assistant", "prompt-queue", "retry"]
-        return ok(service.retry_personal_assistant_prompt_queue(body, actor:))
-      end
-      if method == "GET" && parts == ["personal-assistant", "actions"]
-        bundle = personal_assistant_snapshot(service)
-        return ok(proposals: bundle.fetch(:actions))
-      end
-      return ok(agent: service.mark_personal_assistant_read(body)) if method == "PUT" && parts == ["personal-assistant", "reading"]
-      if method == "GET" && parts.length == 3 && parts[0, 2] == ["personal-assistant", "actions"]
-        return ok(proposal: service.personal_assistant_action(parts[2]))
-      end
-      if method == "GET" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "preflight"
-        return ok(preflight: service.personal_assistant_action_preflight(parts[2]))
-      end
-      if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "confirm"
-        result = service.confirm_personal_assistant_action(parts[2], body)
-        return accepted(result) if service.background_personal_assistant_actions?
-
-        return ok(proposal: result)
-      end
-      if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "reject"
-        return ok(proposal: service.reject_personal_assistant_action(parts[2]))
-      end
-      if method == "POST" && parts.length == 4 && parts[0, 2] == ["personal-assistant", "actions"] && parts[3] == "verify"
-        return ok(proposal: service.verify_personal_assistant_action(parts[2]))
-      end
       return ok(service.resource_snapshot) if method == "GET" && parts == ["resources"]
       return ok(service.metrics_query(request&.query_params || {})) if method == "GET" && parts == ["metrics"]
       return ok(service.metrics_backfill(body)) if method == "POST" && parts == ["metrics", "backfill"]
@@ -790,8 +618,6 @@ module HQ
         ui_asset("image/png", RemoteUI.png_asset("pwa-icon-512"))
       when "/pwa-icon-maskable-512.png"
         ui_asset("image/png", RemoteUI.png_asset("pwa-icon-maskable-512"))
-      when "/fred-avatar.png"
-        ui_asset("image/png", RemoteUI.png_asset("fred-avatar"))
       when "/favicon.svg"
         ui_asset("image/svg+xml; charset=utf-8", RemoteUI.favicon_svg)
       else
@@ -826,7 +652,6 @@ module HQ
         "/pwa-icon-192.png",
         "/pwa-icon-512.png",
         "/pwa-icon-maskable-512.png",
-        "/fred-avatar.png",
         "/favicon.png",
         "/favicon.svg",
         "/favicon.ico"
@@ -957,8 +782,7 @@ module HQ
         public_url: @public_url,
         auth_required: !@token.empty?,
         restartable: restartable?,
-        agent_activity_snapshot: @agent_activity_snapshot,
-        personal_assistant_timezone_cache: @personal_assistant_timezone_cache
+        agent_activity_snapshot: @agent_activity_snapshot
       )
       @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
       @resource_catalog.refresh(
@@ -1861,26 +1685,11 @@ module HQ
                    github_client: GitHubAPIClient.new,
                    pull_request_diff_store: PullRequestDiff::Store.new,
                    agent_activity_snapshot: AgentActivitySnapshot.new,
-                   personal_assistant_actions: nil,
-                   personal_assistant_action_worker: nil,
-                   personal_assistant_timezone_cache: nil,
                    clock: -> { Time.now })
       @registry = registry
       @clock = clock
       @projects = registry.projects.map { |config| Project.new(config) }
       @agent_store = AgentStore.new(@projects)
-      @personal_assistant = PersonalAssistantLifecycle.new(
-        registry:, agent_store: @agent_store, clock: @clock, state_path: File.join(HQ::PERSONAL_ASSISTANT_DIR, "state.json"),
-        timezone_cache: personal_assistant_timezone_cache
-      )
-      @personal_assistant_action_worker = personal_assistant_action_worker
-      @personal_assistant_actions = personal_assistant_actions || personal_assistant_action_worker&.actions
-      @personal_assistant_actions ||= PersonalAssistantActions.new(
-        path: File.join(HQ::PERSONAL_ASSISTANT_DIR, "proposals.json"),
-        executor: method(:execute_personal_assistant_action), verifier: method(:verify_personal_assistant_action_execution),
-        guard: method(:ensure_personal_assistant_action_active!),
-        auto_execute: personal_assistant_action_worker.nil?, clock: @clock
-      )
       @agent_archive_store = AgentArchiveStore.new
       @push_subscription_store = push_subscription_store
       @push_notification_store = push_notification_store
@@ -2100,926 +1909,6 @@ module HQ
       }
     end
 
-    def personal_assistant
-      personal_assistant_bundle.fetch(:personal_assistant)
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: 409)
-    end
-
-    def personal_assistant_bundle
-      status = @personal_assistant.reconcile
-      ingest_personal_assistant_actions!(status)
-      actions = @personal_assistant_actions.proposals.select { |proposal| proposal["active_key"] == status[:active_key] }
-      agent = load_all_agents.find { |candidate| candidate.key == status[:active_key] && candidate.personal_assistant? }
-      payload = status.merge(capabilities: personal_assistant_capabilities)
-      payload = payload.merge(agent: agent_payload(agent)) if agent
-      {
-        personal_assistant: payload,
-        actions: actions,
-        current_work: current_work_payload(status, actions)
-      }
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: 409)
-    end
-
-    def personal_assistant_current_work
-      personal_assistant_bundle.fetch(:current_work)
-    end
-
-    def setup_personal_assistant(attrs)
-      @personal_assistant.setup!(attrs)
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: 400)
-    end
-
-    def open_personal_assistant
-      @personal_assistant.open!
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: 409)
-    end
-
-    def restart_personal_assistant(attrs)
-      @personal_assistant_actions.with_no_executing_actions! { @personal_assistant.restart!(attrs) }
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: 409)
-    end
-
-    def personal_assistant_history(id = nil)
-      return @personal_assistant.status[:history] if id.nil?
-
-      entry = @personal_assistant.continuity_history_entry(id)
-      raise Error.new("Unknown Personal Assistant history entry", status: 404) unless entry
-
-      archived_actions = personal_assistant_archived_history_actions(entry)
-      entry.merge(
-        "archived_actions" => archived_actions,
-        "expired_actions" => archived_actions.select { |action| action["expired"] == true },
-        "archived_conversation" => personal_assistant_archived_conversation_reference(entry)
-      ).compact
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: 404)
-    end
-
-    def reset_personal_assistant(attrs)
-      raise Error.new("Reset FRED requires exact confirmation", status: 400) unless attrs["confirmed"] == true
-
-      @personal_assistant_actions.reset! { @personal_assistant.reset! }
-      @personal_assistant.status
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: 409)
-    end
-
-    def submit_personal_assistant_prompt(attrs, actor: DelegationActor.user_actor)
-      raise Error.new("Parent-declared requests cannot message FRED", status: 403) if actor.parent?
-
-      attrs = attrs.is_a?(Hash) ? attrs.transform_keys(&:to_s) : {}
-      accept_personal_assistant_message(attrs, kind: "message")
-    end
-
-    def personal_assistant_message_acceptance(client_request_id)
-      id = client_request_id.to_s.strip
-      raise Error.new("FRED message acceptance was not found", status: 404,
-                      details: { "code" => "acceptance_not_found", "client_request_id" => id }) if id.empty?
-
-      @personal_assistant.with_message_acceptance_lock(id) do
-        record = @personal_assistant.message_acceptance_record(id)
-        unless record
-          raise Error.new("FRED message acceptance was not found", status: 404,
-                          details: { "code" => "acceptance_not_found", "client_request_id" => id })
-        end
-
-        reconcile_personal_assistant_acceptance!(record)
-        @personal_assistant.message_acceptance(id)
-      end
-    end
-
-    def answer_personal_assistant_inquiry(inquiry_id, attrs = {}, actor: DelegationActor.user_actor)
-      raise Error.new("Parent-declared requests cannot answer FRED inquiries", status: 403) if actor.parent?
-
-      attrs = attrs.is_a?(Hash) ? attrs.transform_keys(&:to_s) : {}
-      answer = required_text(attrs, "answer", fallback: "prompt")
-      feedback = attrs["feedback"].to_s.strip
-      answer, feedback_embedded = inquiry_answer_with_feedback(answer, feedback, supplied: attrs.key?("feedback"))
-      accept_personal_assistant_message(
-        attrs.merge("prompt" => answer), kind: "inquiry_answer", inquiry_id: inquiry_id.to_s,
-        answer:, feedback:, feedback_embedded:
-      )
-    end
-
-    def dismiss_personal_assistant_inquiry(inquiry_id, attrs = {}, actor: DelegationActor.user_actor)
-      raise Error.new("Parent-declared requests cannot dismiss FRED inquiries", status: 403) if actor.parent?
-
-      with_personal_assistant_session!(attrs) do |context|
-        target = personal_assistant_target_for_context!(context)
-        target = @agent_store.suspend_inquiry!(target.key, inquiry_id)
-        @agent_activity_snapshot.upsert!(target)
-        {
-          accepted: true, inquiry_id: inquiry_id.to_s, active_key: context["active_key"],
-          generation: context["generation"], agent: agent_payload(target), conversation: conversation_for_agent(target)
-        }
-      end
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
-    end
-
-    def restore_personal_assistant_inquiry(inquiry_id, attrs = {}, actor: DelegationActor.user_actor)
-      raise Error.new("Parent-declared requests cannot restore FRED inquiries", status: 403) if actor.parent?
-
-      with_personal_assistant_session!(attrs) do |context|
-        target = personal_assistant_target_for_context!(context)
-        target = @agent_store.restore_inquiry!(target.key, inquiry_id)
-        @agent_activity_snapshot.upsert!(target)
-        {
-          accepted: true, restored: true, inquiry_id: inquiry_id.to_s, active_key: context["active_key"],
-          generation: context["generation"], agent: agent_payload(target), conversation: conversation_for_agent(target)
-        }
-      end
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
-    end
-
-    def edit_personal_assistant_queued_prompt(entry_id, attrs = {}, actor: DelegationActor.user_actor)
-      raise Error.new("Parent-declared requests cannot edit FRED's prompt queue", status: 403) if actor.parent?
-
-      with_personal_assistant_session!(attrs) do |context|
-        target = personal_assistant_target_for_context!(context)
-        unless target.prompt_queue.any? { |entry| entry["id"].to_s == entry_id.to_s }
-          state = target.queued_prompts.find { |entry| entry["id"].to_s == entry_id.to_s }
-          raise Error.new("Queued prompt is no longer editable", status: 409) if state
-        end
-
-        prompt = required_text(attrs, "prompt", fallback: "content")
-        target, entry = @agent_store.edit_queued_prompt!(target.key, entry_id, prompt:)
-        @agent_activity_snapshot.upsert!(target)
-        { accepted: true, active_key: context["active_key"], generation: context["generation"], queue_entry: prompt_queue_entry_payload(target, entry), agent: agent_payload(target) }
-      end
-    rescue ArgumentError => e
-      status = e.message.start_with?("Unknown queued prompt") ? 404 : 409
-      raise Error.new(e.message, status:)
-    end
-
-    def delete_personal_assistant_queued_prompt(entry_id, attrs = {}, actor: DelegationActor.user_actor)
-      raise Error.new("Parent-declared requests cannot delete FRED's prompt queue", status: 403) if actor.parent?
-
-      cancellation_id = nil
-      with_personal_assistant_session!(attrs) do |context|
-        target = personal_assistant_target_for_context!(context)
-        queue_entry = target.prompt_queue.find { |entry| entry["id"].to_s == entry_id.to_s }
-        state = target.queued_prompts.find { |entry| entry["id"].to_s == entry_id.to_s }
-        acceptance = @personal_assistant.message_acceptance_for_queue_entry(entry_id)
-        acceptance = reconcile_personal_assistant_acceptance!(acceptance) if acceptance
-
-        if acceptance && acceptance["state"] == "canceled"
-          raise Error.new("Queued prompt cancellation is inconsistent with the queue", status: 409) if queue_entry || state
-
-          return personal_assistant_canceled_queue_response(acceptance["client_request_id"], target, context, replayed: true)
-        end
-        raise Error.new("Queued prompt is no longer deletable", status: 409) if !queue_entry && state
-
-        if acceptance && acceptance["state"] == "unknown" && acceptance["code"].to_s.start_with?("cancellation_")
-          raise_personal_assistant_acceptance_error(
-            acceptance["client_request_id"], "FRED could not prove whether the queued message was canceled", code: "cancellation_unknown"
-          ) unless queue_entry
-          cancellation_id = acceptance["client_request_id"]
-        elsif acceptance && acceptance["state"] == "queued"
-          cancellation_id = acceptance["client_request_id"]
-          @personal_assistant.update_message_acceptance!(
-            cancellation_id, "state" => "unknown", "code" => "cancellation_in_flight"
-          )
-        elsif acceptance
-          raise Error.new("Queued prompt is no longer deletable", status: 409)
-        end
-
-        target, entry = @agent_store.delete_queued_prompt!(target.key, entry_id)
-        Array(entry["attachments"]).each { |attachment| cleanup_uploaded_attachment_file(target, attachment) }
-        @agent_activity_snapshot.upsert!(target)
-        if cancellation_id
-          @personal_assistant.update_message_acceptance!(cancellation_id, "state" => "canceled", "code" => "canceled")
-          personal_assistant_canceled_queue_response(cancellation_id, target, context, replayed: false).merge(
-            deleted: prompt_queue_entry_payload(target, entry)
-          )
-        else
-          { accepted: true, active_key: context["active_key"], generation: context["generation"], deleted: prompt_queue_entry_payload(target, entry), agent: agent_payload(target) }
-        end
-      end
-    rescue Error
-      raise
-    rescue ArgumentError => e
-      if cancellation_id
-        raise_personal_assistant_acceptance_error(
-          cancellation_id, "FRED could not prove whether the queued message was canceled", code: "cancellation_unknown"
-        )
-      end
-
-      status = e.message.start_with?("Unknown queued prompt") ? 404 : 409
-      raise Error.new(e.message, status:)
-    rescue StandardError
-      raise_personal_assistant_acceptance_error(
-        cancellation_id, "FRED could not prove whether the queued message was canceled", code: "cancellation_unknown"
-      ) if cancellation_id
-
-      raise
-    end
-
-    def retry_personal_assistant_prompt_queue(attrs = {}, actor: DelegationActor.user_actor)
-      raise Error.new("Parent-declared requests cannot retry FRED's prompt queue", status: 403) if actor.parent?
-
-      with_personal_assistant_session!(attrs) do |context|
-        target = personal_assistant_target_for_context!(context)
-        target = @agent_store.retry_prompt_queue!(target.key)
-        @agent_activity_snapshot.upsert!(target)
-        { accepted: true, active_key: context["active_key"], generation: context["generation"], agent: agent_payload(target), conversation: conversation_for_agent(target) }
-      end
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
-    end
-
-    def personal_assistant_actions
-      personal_assistant_bundle.fetch(:actions)
-    end
-
-    def personal_assistant_action(id)
-      @personal_assistant_actions.proposal(id)
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: e.message == "Unknown proposal" ? 404 : 409)
-    end
-
-    def current_work_payload(status, actions)
-      now = @clock.call.utc
-      activity = @agent_activity_snapshot.snapshot
-      recent_cutoff = now - (24 * 60 * 60)
-      agents = Array(activity[:agents]).select do |agent|
-        state = agent[:status].to_s
-        recent = [agent[:finished_at], agent[:updated_at]].compact.any? do |value|
-          Time.iso8601(value.to_s) >= recent_cutoff
-        rescue ArgumentError
-          false
-        end
-        %w[running awaiting-input blocked failed partial].include?(state) ||
-          (state == "succeeded" && recent)
-      end
-      tracked = { agents: [], projects: [], schedules: [] }
-      visible_project_keys = visible_projects.map(&:key)
-      visible_agent_keys = Array(activity[:agents]).filter_map { |agent| agent[:key].to_s unless agent[:key].to_s.empty? }
-      visible_schedule_keys = schedule_registry.schedules.filter_map do |schedule|
-        schedule.key if visible_project_keys.include?(schedule.project_key.to_s)
-      end
-      Array(actions).each do |action|
-        reference = action["tracked"]
-        next unless reference.is_a?(Hash)
-
-        kind = reference["kind"].to_s
-        collection = { "agent" => :agents, "project" => :projects, "schedule" => :schedules }[kind]
-        next unless collection
-
-        key = reference["key"].to_s
-        next if key.empty? || tracked[collection].any? { |item| item[:key] == key }
-        visible = case kind
-                  when "agent" then visible_agent_keys.include?(key)
-                  when "project" then visible_project_keys.include?(key)
-                  when "schedule" then visible_schedule_keys.include?(key)
-                  end
-        next unless visible
-
-        tracked[collection] << {
-          id: "#{kind}:#{key}",
-          key: key,
-          name: reference["name"],
-          proposal_id: reference["proposal_id"],
-          link: "/#{kind == "agent" ? "agents" : kind + "s"}/#{URI.encode_www_form_component(key)}"
-        }.compact
-      end
-      observed_at = activity[:generated_at] || now.iso8601
-      revision = Digest::SHA256.hexdigest(JSON.generate([activity[:revision], agents, tracked]))
-      {
-        schema_version: 1,
-        revision: revision,
-        observed_at: observed_at,
-        fresh_until: (now + 2).iso8601,
-        state: activity[:ready] ? "fresh" : "unavailable",
-        active_key: status[:active_key],
-        generation: status[:generation],
-        agents: agents,
-        tracked: tracked
-      }
-    end
-
-    def background_personal_assistant_actions?
-      !@personal_assistant_action_worker.nil?
-    end
-
-    def personal_assistant_capabilities
-      {
-        types: PersonalAssistantActionCatalog::TYPES,
-        read_only: PersonalAssistantActionCatalog::READ_ONLY,
-        mutations: PersonalAssistantActionCatalog::MUTATIONS,
-        message_acceptance: {
-          required: ["client_request_id", "active_key", "generation"],
-          lookup_path: "/personal-assistant/messages/acceptance/:client_request_id"
-        },
-        dedicated_endpoints: {
-          inquiries: ["answer", "dismiss", "restore"],
-          prompt_queue: ["edit", "delete", "retry"]
-        },
-        actions: {
-          confirmation: ["confirmed", "proposal_digest", "precondition_token"],
-          preflight_path: "/personal-assistant/actions/:id/preflight",
-          lookup_path: "/personal-assistant/actions/:id",
-          current_work_path: "/personal-assistant/current-work",
-          background: background_personal_assistant_actions?
-        }
-      }
-    end
-
-    def personal_assistant_action_preflight(id)
-      proposal = @personal_assistant_actions.proposal(id)
-      stored = proposal["preflight"]
-      return stored if proposal["preflight_frozen"] == true && stored.is_a?(Hash)
-
-      status = @personal_assistant.status
-      ensure_personal_assistant_action_active!(proposal, status:)
-      preview = build_personal_assistant_action_preflight(proposal, status:)
-      @personal_assistant_actions.set_preflight!(id, preview, precondition_token: preview.fetch("precondition_token"))
-      preview
-    rescue Error
-      raise
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: e.message == "Unknown proposal" ? 404 : 409)
-    end
-
-    def confirm_personal_assistant_action(id, attrs)
-      attrs = attrs.is_a?(Hash) ? attrs.transform_keys(&:to_s) : {}
-      proposal = ensure_current_personal_assistant_action!(id)
-      unless attrs["confirmed"] == true
-        raise Error.new("Exact Tycho confirmation is required", status: 409,
-                        details: { "code" => "confirmation_required" })
-      end
-
-      digest = attrs["proposal_digest"].to_s.strip
-      token = attrs["precondition_token"].to_s.strip
-      if background_personal_assistant_actions?
-        action_conflict!("A proposal digest is required", code: "proposal_digest_required") if digest.empty?
-        action_conflict!("Assistant proposal has changed", code: "proposal_changed") unless digest == proposal["digest"].to_s
-        unless %w[ready awaiting_confirmation].include?(proposal["state"])
-          if proposal["state"] != "rejected" && proposal["preflight_frozen"] == true
-            action_conflict!("A server-owned precondition token is required", code: "precondition_required") if token.empty?
-            action_conflict!("The displayed action preview is stale", code: "precondition_changed") unless token == proposal["precondition_token"].to_s
-          end
-          return replayed_personal_assistant_action(id, digest:)
-        end
-        action_conflict!("A server-owned precondition token is required", code: "precondition_required") if token.empty?
-
-        displayed = personal_assistant_action_preflight(id)
-        ensure_personal_assistant_preview_available!(displayed)
-        latest = @personal_assistant_actions.receipt!(id, digest:)
-        return replayed_personal_assistant_action(id, digest:) unless %w[ready awaiting_confirmation].include?(latest["state"])
-        current = build_personal_assistant_action_preflight(proposal, status: @personal_assistant.status)
-        unless displayed["precondition_token"].to_s == token && current["precondition_token"].to_s == token
-          latest = @personal_assistant_actions.receipt!(id, digest:)
-          return replayed_personal_assistant_action(id, digest:) unless %w[ready awaiting_confirmation].include?(latest["state"])
-          action_conflict!("The displayed action preview is stale", code: "precondition_changed")
-        end
-        if %w[ready awaiting_confirmation].include?(proposal["state"])
-          @personal_assistant_actions.freeze_preflight!(
-            id,
-            displayed,
-            precondition_token: token,
-            execution_arguments: personal_assistant_action_execution_arguments(proposal, displayed)
-          )
-        end
-      elsif PersonalAssistantActionCatalog::MUTATIONS.include?(proposal["type"]) && %w[ready awaiting_confirmation].include?(proposal["state"])
-        action_conflict!("A proposal digest is required", code: "proposal_digest_required") if digest.empty?
-        action_conflict!("Assistant proposal has changed", code: "proposal_changed") unless digest == proposal["digest"].to_s
-        action_conflict!("A server-owned precondition token is required", code: "precondition_required") if token.empty?
-        displayed = personal_assistant_action_preflight(id)
-        ensure_personal_assistant_preview_available!(displayed)
-        action_conflict!("The displayed action preview is stale", code: "precondition_changed") unless displayed["precondition_token"].to_s == token
-        @personal_assistant_actions.freeze_preflight!(
-          id,
-          displayed,
-          precondition_token: token,
-          execution_arguments: personal_assistant_action_execution_arguments(proposal, displayed)
-        )
-      elsif !token.empty?
-        displayed = personal_assistant_action_preflight(id)
-        ensure_personal_assistant_preview_available!(displayed)
-        action_conflict!("The displayed action preview is stale", code: "precondition_changed") unless displayed["precondition_token"].to_s == token
-        if %w[ready awaiting_confirmation].include?(proposal["state"])
-          @personal_assistant_actions.freeze_preflight!(
-            id,
-            displayed,
-            precondition_token: token,
-            execution_arguments: personal_assistant_action_execution_arguments(proposal, displayed)
-          )
-        end
-      end
-
-      if background_personal_assistant_actions?
-        receipt = @personal_assistant_actions.enqueue!(id, confirmed: true, digest:)
-        @personal_assistant_action_worker.wake!
-        receipt.merge("queued" => receipt.dig("proposal", "state") == "queued")
-      else
-        proposal = @personal_assistant_actions.execute!(id, confirmed: true)
-        record_personal_assistant_action_outcome!(proposal)
-      end
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: 409)
-    rescue Error
-      raise
-    rescue StandardError => e
-      proposal = @personal_assistant_actions.proposal(id) rescue nil
-      record_personal_assistant_action_outcome!(proposal) if proposal
-      raise Error.new(e.message, status: 409)
-    end
-
-    def replayed_personal_assistant_action(id, digest:)
-      receipt = @personal_assistant_actions.receipt!(id, digest:)
-      receipt.merge(
-        "accepted" => receipt["state"] != "rejected",
-        "queued" => false,
-        "replayed" => true
-      )
-    end
-
-    def revalidate_personal_assistant_action!(proposal)
-      ensure_personal_assistant_preview_available!(proposal["preflight"]) if proposal["preflight"].is_a?(Hash)
-      token = proposal["precondition_token"].to_s.strip
-      return true if token.empty?
-
-      current = build_personal_assistant_action_preflight(proposal, status: @personal_assistant.status)
-      return true if current["precondition_token"].to_s == token
-
-      action_conflict!("The action preview changed before execution", code: "precondition_changed")
-    end
-
-    def build_personal_assistant_action_preflight(proposal, status:)
-      details = personal_assistant_action_details(proposal.fetch("type"), proposal.fetch("arguments"))
-      material = {
-        "active_key" => status[:active_key],
-        "generation" => status[:generation],
-        "proposal_digest" => proposal["digest"],
-        "type" => proposal["type"],
-        "arguments" => proposal["arguments"],
-        "details" => personal_assistant_action_precondition_details(details)
-      }
-      token = Digest::SHA256.hexdigest(JSON.generate(material))
-      {
-        "proposal_id" => proposal["id"],
-        "digest" => proposal["digest"],
-        "active_key" => proposal["active_key"],
-        "generation" => status[:generation],
-        "state" => proposal["state"],
-        "type" => proposal["type"],
-        "prepared" => details.fetch("available", true) && details.fetch("prepared", true),
-        "precondition" => { "kind" => "server_state", "token" => token },
-        "precondition_token" => token,
-        "details" => details
-      }
-    rescue Error, ScheduleRegistry::Error, ArgumentError => e
-      details = { "available" => false, "prepared" => false, "reason" => e.message, "resolved_server" => resolved_personal_assistant_server }
-      token = Digest::SHA256.hexdigest(JSON.generate("proposal_digest" => proposal["digest"], "details" => details))
-      {
-        "proposal_id" => proposal["id"], "digest" => proposal["digest"], "active_key" => proposal["active_key"],
-        "generation" => status[:generation], "state" => proposal["state"], "type" => proposal["type"],
-        "prepared" => false, "precondition" => { "kind" => "server_state", "token" => token },
-        "precondition_token" => token, "details" => details
-      }
-    end
-
-    def personal_assistant_action_details(type, arguments)
-      case type
-      when "create_agent"
-        project = find_project!(arguments.fetch("project_key"))
-        template = project.agent_templates.first
-        harness = arguments["agent"].nil? ? template.agent : arguments["agent"]
-        model = arguments["model"].nil? ? template.model : arguments["model"]
-        effort = arguments["reasoning_effort"].nil? ? template.reasoning_effort : arguments["reasoning_effort"]
-        unless HQ.supported_harness?(harness.to_s)
-          raise Error.new("Unsupported agent #{harness.inspect}", status: 409)
-        end
-        {
-          "available" => true, "prepared" => true, "resolved_server" => resolved_personal_assistant_server,
-          "project" => personal_assistant_project_reference(project), "user_owned" => true,
-          "name" => arguments["name"], "harness" => harness, "model" => model,
-          "reasoning_effort" => effort, "starts" => false
-        }
-      when "start_agent", "message_agent", "stop_agent"
-        target = find_agent!(arguments.fetch("agent_key"))
-        {
-          "available" => true, "resolved_server" => resolved_personal_assistant_server,
-          "target" => { "key" => target.key, "name" => target.display_name, "project_key" => target.project_key },
-          "status" => target.status, "running" => target.running?, "last_run_id" => target.last_run&.run_id
-        }.compact
-      when "create_project"
-        if @projects.any? { |project| project.key == arguments["key"] }
-          raise Error.new("Project already exists: #{arguments["key"]}", status: 409)
-        end
-        harness = arguments["agent"].to_s.strip
-        harness = HQ.harness_keys.first if harness.empty?
-        {
-          "available" => true, "prepared" => true, "resolved_server" => resolved_personal_assistant_server,
-          "before" => nil,
-          "after" => {
-            "key" => arguments["key"], "name" => arguments["name"], "path" => arguments["path"],
-            "group" => arguments["group"], "agent" => harness, "model" => arguments["model"],
-            "reasoning_effort" => arguments["reasoning_effort"]
-          }
-        }
-      when "update_project"
-        project = find_project!(arguments.fetch("project_key"))
-        before = personal_assistant_project_settings(project)
-        after = before.merge(
-          "name" => arguments["name"].nil? ? before["name"] : arguments["name"],
-          "group" => arguments["group"].nil? ? before["group"] : arguments["group"],
-          "agent" => arguments["agent"].nil? ? before["agent"] : arguments["agent"],
-          "model" => arguments["model"].nil? ? before["model"] : arguments["model"],
-          "reasoning_effort" => arguments["reasoning_effort"].nil? ? before["reasoning_effort"] : arguments["reasoning_effort"]
-        )
-        { "available" => true, "prepared" => true, "resolved_server" => resolved_personal_assistant_server,
-          "project" => personal_assistant_project_reference(project), "before" => before, "after" => after }
-      when "create_schedule"
-        raise Error.new("Schedule already exists: #{arguments["key"]}", status: 409) if schedule_registry.find(arguments["key"])
-
-        personal_assistant_schedule_details(arguments.merge("operation" => "create"), existing: nil)
-      when "pause_schedule", "resume_schedule"
-        schedule = schedule_registry.find(arguments.fetch("schedule_key"))
-        raise Error.new("Unknown schedule: #{arguments["schedule_key"]}", status: 404) unless schedule
-        personal_assistant_schedule_details({ "schedule_key" => schedule.key, "operation" => type.delete_suffix("_schedule") }, existing: schedule)
-      when "install_or_update_tycho_skill"
-        { "available" => true, "prepared" => true, "resolved_server" => resolved_personal_assistant_server,
-          "harness" => arguments["harness"], "action" => arguments["action"] }
-      else
-        { "available" => true, "prepared" => true, "resolved_server" => resolved_personal_assistant_server }
-      end
-    end
-
-    def personal_assistant_schedule_details(arguments, existing:)
-      schedule = existing
-      if schedule.nil?
-        schedule = ScheduleDefinition.new(
-          key: arguments.fetch("key"), name: arguments.fetch("name"), cron: arguments.fetch("cron"),
-          timezone: arguments.fetch("timezone"), project_key: arguments.fetch("project_key"),
-          agent_name: arguments.fetch("agent_name"), message: arguments.fetch("message"),
-          system_message: arguments["system_message"]
-        )
-      end
-      project = find_project!(schedule.project_key)
-      schedule_state = ScheduleStore.new.load[schedule.key] || ScheduleState.new(key: schedule.key, enabled: true, status: "scheduled")
-      operation = arguments["operation"].to_s
-      operation = "create" if operation.empty?
-      enabled_before = schedule_state.enabled != false
-      enabled_after = case operation
-                      when "pause" then false
-                      when "resume" then true
-                      else enabled_before
-                      end
-      next_run = schedule.next_due_after(@clock.call).iso8601
-      {
-        "available" => true, "prepared" => true, "resolved_server" => resolved_personal_assistant_server,
-        "schedule" => { "key" => schedule.key, "name" => schedule.name, "cron" => schedule.cron,
-                         "timezone" => schedule.timezone, "next_run" => next_run, "project_key" => project.key,
-                         "agent_name" => schedule.agent_name, "agent_key" => schedule.agent_key },
-        "operation" => operation, "enabled_before" => enabled_before, "enabled_after" => enabled_after
-      }.compact
-    end
-
-    def personal_assistant_action_precondition_details(details)
-      stable = JSON.parse(JSON.generate(details))
-      stable.dig("schedule")&.delete("next_run")
-      stable
-    end
-
-    def resolved_personal_assistant_server
-      { "id" => "local", "url" => @server_url.empty? ? nil : @server_url, "local" => true }.compact
-    end
-
-    def personal_assistant_project_reference(project)
-      { "key" => project.key, "name" => project.name, "path" => project.path, "group" => project.group }
-    end
-
-    def personal_assistant_project_settings(project)
-      {
-        "key" => project.key, "name" => project.name, "group" => project.group, "path" => project.path,
-        "agent" => project.config.agent, "model" => project.config.model,
-        "reasoning_effort" => project.config.reasoning_effort
-      }
-    end
-
-    def action_conflict!(message, code:)
-      raise Error.new(message, status: 409, details: { "code" => code })
-    end
-
-    def ensure_personal_assistant_preview_available!(preview)
-      return if preview.is_a?(Hash) && preview["prepared"] == true && preview.dig("details", "available") != false
-
-      action_conflict!("The action preview is unavailable", code: "preview_unavailable")
-    end
-
-    def reject_personal_assistant_action(id)
-      ensure_current_personal_assistant_action!(id)
-      @personal_assistant_actions.reject!(id)
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: 409)
-    end
-
-    def verify_personal_assistant_action(id)
-      attempted = false
-      ensure_current_personal_assistant_action!(id)
-      attempted = true
-      proposal = @personal_assistant_actions.verify!(id)
-      record_personal_assistant_action_outcome!(proposal)
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: 409)
-    rescue Error
-      record_personal_assistant_action_outcome!(@personal_assistant_actions.proposal(id)) if attempted
-      raise
-    end
-
-    def ensure_current_personal_assistant_action!(id)
-      proposal = @personal_assistant_actions.proposal(id)
-      ensure_personal_assistant_action_active!(proposal)
-      proposal
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: 404)
-    end
-
-    def ensure_personal_assistant_action_active!(proposal, status: nil)
-      status ||= @personal_assistant.status
-      return if status[:state] == "active" && proposal["active_key"] == status[:active_key]
-
-      raise Error.new("This action belongs to an earlier FRED conversation", status: 409)
-    end
-
-    def execute_personal_assistant_action(type, arguments)
-      case type
-      when "read_docs"
-        path = arguments.fetch("path", "").to_s.delete_prefix("docs/")
-        root = File.join(HQ::ROOT_DIR, "docs")
-        expanded = File.realpath(File.expand_path(path, root)) rescue nil
-        docs_root = File.realpath(root)
-        raise ArgumentError, "Documentation path is outside Tycho docs" unless expanded && expanded.start_with?("#{docs_root}/") && File.file?(expanded)
-        content = truncate_personal_assistant_text(File.read(expanded, 100_000), 16_000)
-        { "path" => "docs/#{path}", "content" => content, "truncated" => File.size(expanded) > content.bytesize }
-      when "search_docs"
-        query = arguments.fetch("query", "").to_s.strip
-        raise ArgumentError, "Documentation search query is required" if query.empty?
-        root = File.realpath(File.join(HQ::ROOT_DIR, "docs"))
-        results = Dir.glob(File.join(root, "**", "*.md")).filter_map do |path|
-          path = File.realpath(path) rescue nil
-          next unless path&.start_with?("#{root}/")
-
-          text = File.read(path); next unless text.downcase.include?(query.downcase)
-          { "path" => path.delete_prefix("#{HQ::ROOT_DIR}/"), "match" => text.lines.find { |line| line.downcase.include?(query.downcase) }.to_s.strip }
-        end.first(20)
-        { "results" => results }
-      when "inspect_agents" then { "agents" => agents }
-      when "inspect_projects" then { "projects" => projects }
-      when "inspect_schedules" then { "schedules" => schedules }
-      when "inspect_agent_run"
-        target = find_agent!(arguments.fetch("agent_key"))
-        { "agent" => agent_payload(target), "run" => agent_run_debug_payload(target) }
-      when "inspect_agent_log"
-        agent_log(arguments.fetch("agent_key"), "type" => "raw", "tail" => "100")
-      when "install_or_update_tycho_skill"
-        change_skills(arguments.fetch("harness"), arguments.fetch("action"), "confirmed" => true)
-      when "create_agent"
-        execution = arguments.dup
-        effective_settings = execution.delete("__fred_effective_settings")
-        { "agent" => create_agent(execution.merge("start" => false), actor: DelegationActor.user_actor, effective_settings:) }
-      when "message_agent"
-        submit_prompt(arguments.fetch("agent_key"), "prompt" => arguments.fetch("prompt"), actor: DelegationActor.user_actor)
-      when "start_agent" then start_agent(arguments.fetch("agent_key"), {}, actor: DelegationActor.user_actor)
-      when "stop_agent" then stop_agent(arguments.fetch("agent_key"))
-      when "create_project"
-        create_personal_assistant_project(arguments)
-      when "update_project"
-        update_personal_assistant_project(arguments)
-      when "create_schedule"
-        { "schedule" => create_schedule(arguments.compact) }
-      when "pause_schedule"
-        { "schedule" => pause_schedule(arguments.fetch("schedule_key")) }
-      when "resume_schedule"
-        resume_schedule(arguments.fetch("schedule_key"))
-      else raise ArgumentError, "Unsupported assistant action"
-      end
-    end
-
-    def ingest_personal_assistant_actions!(status)
-      @personal_assistant.finalized_proposals(refresh: false).each do |snapshot|
-        next if snapshot["run_id"].to_s == status[:summary_run_id].to_s && !status[:summary_run_id].to_s.empty?
-
-        proposals = @personal_assistant_actions.register_finalized!(snapshot["proposals"], active_key: snapshot["active_key"], source_run_id: snapshot["run_id"])
-        proposals.each { |proposal| record_personal_assistant_action_outcome!(proposal) if %w[executed failed].include?(proposal["state"]) }
-        @personal_assistant_action_worker&.wake! if proposals.any? { |proposal| proposal["state"] == "ready" }
-        @personal_assistant.mark_finalized_proposals_registered!(snapshot["run_id"])
-      end
-    rescue ArgumentError => e
-      HQ.logger.warn("PersonalAssistant") { "Rejected finalized action proposals: #{e.message}" }
-    end
-
-    def create_personal_assistant_project(arguments)
-      attrs = arguments.compact.transform_keys(&:to_sym)
-      attrs[:agent] = HQ.harness_keys.first if attrs[:agent].to_s.empty?
-      @registry.add_project!(attrs)
-      reload_projects_from_registry!
-      { "project" => project(arguments.fetch("key")) }
-    rescue ConfigError => e
-      raise Error.new(e.message, status: 400)
-    end
-
-    def personal_assistant_archived_history_actions(entry)
-      active_key = entry["agent_key"].to_s
-      return [] if active_key.empty?
-
-      @personal_assistant_actions.proposals.filter_map do |proposal|
-        next unless proposal["active_key"].to_s == active_key
-        original_state = proposal["state"].to_s
-        next unless %w[ready awaiting_confirmation queued executing verifying failed executed rejected].include?(original_state)
-
-        archived = proposal.reject do |key, _value|
-          %w[preflight precondition_token preflight_frozen lease_expires_at claimed_at executed_at verification_started_at verified_at].include?(key)
-        end.merge("read_only" => true)
-        if %w[ready awaiting_confirmation].include?(original_state)
-          archived.merge!("state" => "expired", "historical_state" => original_state, "expired" => true)
-        end
-        archived
-      end
-    end
-
-    def personal_assistant_archived_conversation_reference(entry)
-      key = entry["agent_key"].to_s
-      return nil if key.empty? || !@agent_archive_store.find(key)
-
-      encoded = URI.encode_www_form_component(key)
-      {
-        "agent_key" => key,
-        "read_only" => true,
-        "path" => "/agents/#{encoded}",
-        "conversation_path" => "/agents/#{encoded}/conversation"
-      }
-    end
-
-    def update_personal_assistant_project(arguments)
-      key = arguments.fetch("project_key")
-      attrs = arguments.reject { |field, value| field == "project_key" || value.nil? }
-      { "project" => update_project(key, attrs) }
-    end
-
-    # Verification never infers ownership from current state. Only a committed
-    # action receipt is authoritative; without one, recovery stays unknown.
-    def verify_personal_assistant_action_execution(type, arguments, proposal)
-      case type
-      when "create_agent"
-        matches = load_all_agents.select do |agent|
-          agent.project_key == arguments["project_key"] && agent.name == arguments["name"] && agent.prompt == arguments["prompt"]
-        end
-        state = matches.empty? ? "no matching agent" : "matching agent state observed"
-        verification_unknown("#{state}; no committed receipt proves this proposal created it.")
-      when "create_project"
-        target = @projects.find { |project| project.key == arguments["key"] }
-        state = target ? "project state observed" : "no project with that key"
-        verification_unknown("#{state}; no committed receipt proves this proposal changed it.")
-      when "update_project"
-        target = @projects.find { |project| project.key == arguments["project_key"] }
-        state = target ? "project settings observed" : "project no longer exists"
-        verification_unknown("#{state}; no committed receipt proves this proposal changed them.")
-      when "create_schedule"
-        target = schedules.find { |schedule| schedule[:key].to_s == arguments["key"] }
-        state = target ? "schedule state observed" : "no schedule with that key"
-        verification_unknown("#{state}; no committed receipt proves this proposal created it.")
-      when "pause_schedule"
-        target = schedule(arguments["schedule_key"])
-        state = target[:paused] ? "paused schedule state observed" : "schedule is not paused"
-        verification_unknown("#{state}; no committed receipt proves this proposal paused it.")
-      when "resume_schedule"
-        target = schedule(arguments["schedule_key"])
-        state = !target[:paused] ? "resumed schedule state observed" : "schedule is still paused"
-        verification_unknown("#{state}; no committed receipt proves this proposal resumed it.")
-      when "start_agent"
-        target = find_agent!(arguments["agent_key"])
-        state = target.running? ? "running agent state observed" : "agent is not running"
-        verification_unknown("#{state}; no committed receipt proves this proposal started it.")
-      when "stop_agent"
-        target = find_agent!(arguments["agent_key"])
-        state = target.running? ? "agent is still running" : "stopped agent state observed"
-        verification_unknown("#{state}; no committed receipt proves this proposal stopped it.")
-      else
-        verification_unknown("Tycho cannot safely verify this action without repeating it.")
-      end
-    rescue Error, ArgumentError => e
-      verification_unknown(e.message)
-    end
-
-    def verification_unknown(reason)
-      { "completed" => false, "reason" => reason }
-    end
-
-    def record_personal_assistant_action_outcome!(proposal)
-      return proposal unless proposal.is_a?(Hash) && %w[executed failed].include?(proposal["state"])
-
-      proposal = attach_personal_assistant_tracking!(proposal)
-      @personal_assistant.record_action_result!(proposal) if @personal_assistant.respond_to?(:record_action_result!)
-      append_personal_assistant_action_feedback!(proposal)
-      proposal
-    rescue StandardError => e
-      HQ.logger.warn("PersonalAssistant") { "Could not record action outcome: #{e.message}" }
-      proposal
-    end
-
-    def attach_personal_assistant_tracking!(proposal)
-      return proposal unless proposal.is_a?(Hash) && proposal["state"] == "executed" && proposal["tracked"].nil?
-
-      result = proposal["result"] || {}
-      tracked = case proposal["type"]
-                when "create_agent"
-                  personal_assistant_reference("agent", result["agent"], proposal)
-                when "create_project", "update_project"
-                  personal_assistant_reference("project", result["project"], proposal)
-                when "create_schedule", "pause_schedule", "resume_schedule"
-                  personal_assistant_reference("schedule", result["schedule"], proposal)
-                end
-      tracked ? @personal_assistant_actions.track!(proposal.fetch("id"), tracked) : proposal
-    end
-
-    def personal_assistant_reference(kind, value, proposal)
-      return nil unless value.is_a?(Hash)
-
-      key = value["key"] || value[:key]
-      return nil if key.to_s.empty?
-
-      reference = {
-        "kind" => kind,
-        "key" => key.to_s,
-        "created_by" => "fred",
-        "proposal_id" => proposal.fetch("id")
-      }
-      reference["name"] = (value["name"] || value[:name]).to_s if (value["name"] || value[:name]).to_s != ""
-      reference["project_key"] = (value["project_key"] || value[:project_key]).to_s if (value["project_key"] || value[:project_key]).to_s != ""
-      reference["status"] = (value["status"] || value[:status]).to_s if (value["status"] || value[:status]).to_s != ""
-      reference["agent_key"] = key.to_s if kind == "agent"
-      reference["project_key"] = key.to_s if kind == "project"
-      reference["schedule_key"] = key.to_s if kind == "schedule"
-      reference
-    end
-
-    def append_personal_assistant_action_feedback!(proposal)
-      key = proposal["active_key"].to_s
-      return if key.empty?
-      content = personal_assistant_action_feedback(proposal)
-
-      @agent_store.mutate do |agents, _|
-        target = agents.find { |agent| agent.key == key && agent.personal_assistant? }
-        next unless target
-        next if AgentMemory.new(target).personal_assistant_action_result_recorded?(proposal["id"], content:)
-
-        target.add_personal_assistant_action_result!(content, metadata: {
-                                                     "personal_assistant_action_proposal_id" => proposal["id"],
-                                                     "personal_assistant_action_source_run_id" => proposal["source_run_id"],
-                                                     "personal_assistant_action_state" => proposal["state"]
-                                                   })
-      end
-    end
-
-    def personal_assistant_action_feedback(proposal)
-      heading = proposal["state"] == "executed" ? "Tycho completed #{proposal["type"]}." : "Tycho could not complete #{proposal["type"]}: #{proposal["error"]}."
-      detail = personal_assistant_action_result_summary(proposal["type"], proposal["result"])
-      recovery = case proposal.dig("recovery", "state")
-                 when "replacement_available" then "Tycho verified no effect. Prepare a new proposal for confirmation if the user still wants this action."
-                 when "outcome_unknown" then "The outcome is unknown. Investigate before proposing another mutation."
-                 else "You can verify the outcome before proposing a replacement." if proposal.dig("recovery", "action") == "verify"
-                 end
-      [heading, detail, recovery].compact.reject(&:empty?).join("\n\n")
-    end
-
-    def personal_assistant_action_result_summary(type, result)
-      return "" unless result.is_a?(Hash)
-
-      case type
-      when "read_docs"
-        ["Source: #{result["path"]}", truncate_personal_assistant_text(result["content"], 3_000)].join("\n\n")
-      when "search_docs"
-        truncate_personal_assistant_text(Array(result["results"]).map { |item| "- #{item["path"]}: #{item["match"]}" }.join("\n"), 3_500)
-      when "inspect_agents"
-        Array(result["agents"]).first(30).map { |item| "- #{item[:name] || item["name"]} (#{item[:key] || item["key"]}): #{item[:status] || item["status"]}" }.join("\n")
-      when "inspect_projects"
-        Array(result["projects"]).first(30).map { |item| "- #{item[:name] || item["name"]} (#{item[:key] || item["key"]})" }.join("\n")
-      when "inspect_schedules"
-        Array(result["schedules"]).first(30).map { |item| "- #{item[:name] || item["name"]} (#{item[:key] || item["key"]}): #{item[:status] || item["status"] || "configured"}" }.join("\n")
-      when "inspect_agent_log"
-        truncate_personal_assistant_text(Array(result["tail"] || result[:tail]).last(40).join("\n"), 3_500)
-      else
-        truncate_personal_assistant_text(JSON.generate(result), 3_500)
-      end
-    end
-
-    def truncate_personal_assistant_text(value, bytes)
-      value.to_s.encode(Encoding::UTF_8, invalid: :replace, undef: :replace).each_char.with_object(String.new) do |character, output|
-        break output if output.bytesize + character.bytesize > bytes
-
-        output << character
-      end
-    end
-
     def agent(key)
       agent_payload(find_agent_reference!(key))
     end
@@ -3119,7 +2008,7 @@ module HQ
     end
 
     def rebuild_agent_memory(key)
-      agent = reject_personal_assistant_control!(find_agent!(key))
+      agent = find_agent!(key)
       written = AgentChatLog.new(agent).rebuild_memory_from_raw_log!
       raise Error.new("Unable to rebuild memory from raw log", status: 422) unless written
       save_agent(agent)
@@ -3143,7 +2032,7 @@ module HQ
     end
 
     def refresh_agent_pull_request_metadata(key)
-      agent = reject_personal_assistant_control!(find_agent!(key))
+      agent = find_agent!(key)
       ensure_github_enabled!
       references = PullRequestDiff.references_for_agent(agent)
       catalog_store = pull_request_catalog(agent)
@@ -3185,7 +2074,7 @@ module HQ
     end
 
     def refresh_agent_pull_request_diff(key, id)
-      agent = reject_personal_assistant_control!(find_agent!(key))
+      agent = find_agent!(key)
       ensure_github_enabled!
       reference = pull_request_reference!(agent, id)
       refresh_pull_request_snapshot(reference)
@@ -3194,7 +2083,7 @@ module HQ
     end
 
     def refresh_agent_pull_requests(key)
-      agent = reject_personal_assistant_control!(find_agent!(key))
+      agent = find_agent!(key)
       ensure_github_enabled!
       refreshed = []
       failed = []
@@ -3268,7 +2157,6 @@ module HQ
       agents = load_all_agents
       agent = agents.find { |candidate| candidate.key == key.to_s }
       raise Error.new("Unknown agent: #{key}", status: 404) unless agent
-      reject_personal_assistant_control!(agent)
 
       interval = Integer(attrs["interval_minutes"].to_s, 10)
       ends_at = Time.iso8601(required_text(attrs, "ends_at", fallback: "ends_at"))
@@ -3506,7 +2394,6 @@ module HQ
         break
       end
       raise Error.new("Attachment not found", status: 404) unless target_agent && target_attachment
-      reject_personal_assistant_control!(target_agent)
 
       deleted = target_agent.delete_attachment!(target_attachment)
       cleanup_uploaded_attachment_file(target_agent, target_attachment) if deleted
@@ -3973,11 +2860,7 @@ module HQ
       target = find_agent_reference!(key)
       blocks = conversation_for_agent_cached(target)
       total = blocks.length
-      # FRED reconciliation needs the complete bounded daily session history,
-      # while ordinary agents get the tighter initial tail that protects the
-      # mobile PWA from huge completed transcripts.
-      default_limit = target.personal_assistant? ? CONVERSATION_TAIL_MAX_LIMIT : CONVERSATION_TAIL_DEFAULT_LIMIT
-      limit = bounded_tail(params["limit"], default: default_limit,
+      limit = bounded_tail(params["limit"], default: CONVERSATION_TAIL_DEFAULT_LIMIT,
                                              max: CONVERSATION_TAIL_MAX_LIMIT)
       already_loaded = params["before"].to_i
       already_loaded = 0 if already_loaded.negative?
@@ -4074,7 +2957,7 @@ module HQ
       blocks = AgentChatLog.new(target).chat_blocks
       return conversation_messages(target) if blocks.empty?
 
-      reference_context = target.personal_assistant? ? delegation_reference_context([target]) : delegation_reference_context
+      reference_context = delegation_reference_context
       blocks.map do |block|
         content, metadata = sanitized_delegation_block(block.content.to_s, block.metadata, reference_context:)
         if metadata.is_a?(Hash) && !metadata["sleep_recovery_for_incident_id"].to_s.empty? &&
@@ -4153,7 +3036,7 @@ module HQ
     end
 
     def mark_agent_read(key)
-      target = reject_personal_assistant_control!(find_agent!(key))
+      target = find_agent!(key)
       if target.unread?
         target.mark_read!
         save_agent(target)
@@ -4161,31 +3044,16 @@ module HQ
       agent_payload(target)
     end
 
-    def mark_personal_assistant_read(attrs)
-      with_personal_assistant_session!(attrs) do |context|
-        target = personal_assistant_target_for_context!(context)
-        if target.unread?
-          target.mark_read!
-          save_agent(target)
-        end
-        agent_payload(target)
-      end
-    end
-
-    def submit_prompt(key, attrs = {}, actor: nil, personal_assistant_lifecycle: false, acceptance_id: nil, message_metadata: nil, session_context: nil, **attribute_keywords)
+    def submit_prompt(key, attrs = {}, actor: nil, **attribute_keywords)
       attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
       actor ||= delegation_actor_from_attrs(attrs)
       if attrs.key?("delay") && attrs["parent_agent_key"].to_s.empty? && attrs["sender_agent_key"].to_s == key.to_s
         actor = DelegationActor.internal_actor(key)
       end
       target = find_agent!(key)
-      reject_personal_assistant_control!(target) if target.personal_assistant? && !personal_assistant_lifecycle
-      if target.personal_assistant? && (!personal_assistant_lifecycle || session_context.nil?) && !@personal_assistant.accepting_prompts?(key)
-        raise Error.new("Personal Assistant is closing for daily rollover and is not accepting new prompts", status: 409)
-      end
       target = associate_delegation_from_attrs!(target, attrs, actor:)
       pull_request_context = render_prompt_pull_request_contexts(target, attrs)
-      attachments = import_prompt_attachments(target, attrs, dedupe_key: acceptance_id)
+      attachments = import_prompt_attachments(target, attrs)
       text = prompt_text(attrs, attachments:)
       text = [text, pull_request_context].reject(&:empty?).join("\n")
       if attrs.key?("delay")
@@ -4218,8 +3086,6 @@ module HQ
             attachments:,
             actor:,
             id: prompt_client_request_id(attrs),
-            client_request_id: acceptance_id,
-            message_metadata:,
             source: actor.parent? ? "parent" : "user"
           )
           resumed_schedules = actor.user? && target.scheduled? ? scheduler.resume_after_user_message(target.key) : []
@@ -4253,9 +3119,7 @@ module HQ
           text:,
           attachments:,
           actor:,
-          retire_inquiry_id: attrs["retire_inquiry_id"],
-          metadata: message_metadata,
-          event_id: acceptance_id && "personal-assistant-message:#{acceptance_id}"
+          retire_inquiry_id: attrs["retire_inquiry_id"]
         )
       end
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"]) && !target.running?
@@ -4269,7 +3133,7 @@ module HQ
     end
 
     def edit_queued_prompt(key, entry_id, attrs)
-      reject_personal_assistant_control!(find_agent!(key))
+      find_agent!(key)
       prompt = required_text(attrs, "prompt", fallback: "content")
       target, entry = @agent_store.edit_queued_prompt!(key, entry_id, prompt:)
       @agent_activity_snapshot.upsert!(target)
@@ -4280,7 +3144,7 @@ module HQ
     end
 
     def delete_queued_prompt(key, entry_id)
-      reject_personal_assistant_control!(find_agent!(key))
+      find_agent!(key)
       target, entry = @agent_store.delete_queued_prompt!(key, entry_id)
       Array(entry["attachments"]).each { |attachment| cleanup_uploaded_attachment_file(target, attachment) }
       @agent_activity_snapshot.upsert!(target)
@@ -4291,7 +3155,7 @@ module HQ
     end
 
     def retry_prompt_queue(key)
-      reject_personal_assistant_control!(find_agent!(key))
+      find_agent!(key)
       target = @agent_store.retry_prompt_queue!(key)
       @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target), conversation: conversation(target.key) }
@@ -4300,7 +3164,7 @@ module HQ
     end
 
     def read_prompt_queue(key)
-      reject_personal_assistant_control!(find_agent!(key))
+      find_agent!(key)
       result = @agent_store.read_prompt_queue!(key)
       entries = Array(result.fetch(:entries))
       delegated = entries.count { |entry| entry["source"] == "delegation_callback" }
@@ -4323,7 +3187,7 @@ module HQ
     end
 
     def complete_queue_work(key, batch_id, attrs = {})
-      reject_personal_assistant_control!(find_agent!(key))
+      find_agent!(key)
       dispositions = attrs["dispositions"]
       raise Error.new("Dispositions must be an array", status: 400) unless dispositions.is_a?(Array)
 
@@ -4362,7 +3226,7 @@ module HQ
       answer = required_text(attrs, "answer", fallback: "prompt")
       feedback = attrs["feedback"].to_s.strip
       answer, feedback_embedded = inquiry_answer_with_feedback(answer, feedback, supplied: attrs.key?("feedback"))
-      target = reject_personal_assistant_control!(find_agent!(key))
+      target = find_agent!(key)
       attachments = import_prompt_attachments(target, attrs)
       target = @agent_store.answer_inquiry!(
         key,
@@ -4382,7 +3246,7 @@ module HQ
 
     def dismiss_inquiry(key, inquiry_id, actor: DelegationActor.user_actor)
       raise Error.new("Parent-declared requests cannot dismiss user inquiries", status: 403) if actor.parent?
-      reject_personal_assistant_control!(find_agent!(key))
+      find_agent!(key)
 
       target = @agent_store.suspend_inquiry!(key, inquiry_id)
       @agent_activity_snapshot.upsert!(target)
@@ -4393,7 +3257,7 @@ module HQ
 
     def restore_inquiry(key, inquiry_id, actor: DelegationActor.user_actor)
       raise Error.new("Parent-declared requests cannot restore user inquiries", status: 403) if actor.parent?
-      reject_personal_assistant_control!(find_agent!(key))
+      find_agent!(key)
 
       target = @agent_store.restore_inquiry!(key, inquiry_id)
       @agent_activity_snapshot.upsert!(target)
@@ -4403,7 +3267,7 @@ module HQ
     end
 
     def update_agent_delegation(key, attrs)
-      reject_personal_assistant_control!(find_agent!(key))
+      find_agent!(key)
       connected = attrs["connected"]
       unless [true, false].include?(connected)
         raise Error.new("connected must be true or false", status: 422)
@@ -4437,7 +3301,7 @@ module HQ
     def start_agent(key, attrs = {}, actor: nil, **attribute_keywords)
       attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
       actor ||= delegation_actor_from_attrs(attrs)
-      target = reject_personal_assistant_control!(find_agent!(key))
+      target = find_agent!(key)
       target = associate_delegation_from_attrs!(target, attrs, actor:)
       @agent_store.accept_prompt_from!(target, actor:) if target.delegation_parent
       target = @agent_store.start_agent!(target.key, prefer_queued: true) unless target.running?
@@ -4446,7 +3310,7 @@ module HQ
     end
 
     def stop_agent(key)
-      target = reject_personal_assistant_control!(find_agent!(key))
+      target = find_agent!(key)
       target = @agent_store.stop_agent!(target.key)
       @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target) }
@@ -4482,7 +3346,6 @@ module HQ
 
     def update_agent(key, attrs)
       target = @agent_store.update_agent!(key) do |candidate, _agents, _events|
-        reject_personal_assistant_control!(candidate)
         raise Error.new("Agent is running", status: 409) if candidate.running?
 
         project = find_project!(candidate.project_key)
@@ -4499,7 +3362,7 @@ module HQ
     end
 
     def clone_agent(key, attrs)
-      source = reject_personal_assistant_control!(find_agent!(key))
+      source = find_agent!(key)
       current = load_all_agents
       source = current.find { |agent| agent.key == key.to_s } || source
       archive_source = truthy?(attrs["archive_source"])
@@ -4538,7 +3401,6 @@ module HQ
 
     def archive_agent(key)
       target = find_agent!(key)
-      reject_personal_assistant_control!(target)
       raise Error.new("Agent is running", status: 409) if target.running?
 
       archived_callback_count = target.queued_prompts.count { |entry| entry["source"] == "delegation_callback" }
@@ -4563,8 +3425,6 @@ module HQ
 
       current = load_all_agents
       agents_by_key = current.to_h { |agent| [agent.key, agent] }
-      personal_assistant = keys.map { |key| agents_by_key[key] }.compact.find(&:personal_assistant?)
-      reject_personal_assistant_control!(personal_assistant) if personal_assistant
       archived = []
       skipped = []
       failed = []
@@ -4578,11 +3438,6 @@ module HQ
 
         if target.running?
           skipped << { agent_key: key, reason: "running" }
-          next
-        end
-
-        if target.personal_assistant?
-          skipped << { agent_key: key, reason: "personal_assistant" }
           next
         end
 
@@ -4607,14 +3462,6 @@ module HQ
       }
     end
 
-    def reject_personal_assistant_control!(target)
-      if target.personal_assistant?
-        raise Error.new("Personal Assistant is managed by its dedicated lifecycle and cannot be controlled through agent endpoints", status: 409)
-      end
-
-      target
-    end
-
     def reconcile_archived_schedule_agent(agent)
       scheduler.reconcile_archived_agent!(agent.key, archived_agent: agent)
     rescue StandardError
@@ -4622,506 +3469,6 @@ module HQ
     end
 
     private
-
-    def personal_assistant_action_execution_arguments(proposal, preflight)
-      arguments = proposal.fetch("arguments").dup
-      details = preflight["details"] if preflight.is_a?(Hash)
-      return arguments unless details.is_a?(Hash)
-
-      case proposal["type"]
-      when "create_agent"
-        effective = {}
-        {
-          "agent" => "harness",
-          "model" => "model",
-          "reasoning_effort" => "reasoning_effort"
-        }.each do |argument_key, detail_key|
-          next unless details.key?(detail_key)
-
-          arguments[argument_key] = details[detail_key]
-          effective[argument_key] = details[detail_key]
-        end
-        workspace = details.dig("project", "path")
-        effective["workspace"] = workspace if details.dig("project", "path")
-        arguments["__fred_effective_settings"] = effective unless effective.empty?
-      when "create_project"
-        after = details["after"]
-        if after.is_a?(Hash)
-          %w[key name path group agent model reasoning_effort].each do |key|
-            arguments[key] = after[key] if after.key?(key)
-          end
-        end
-      end
-      arguments
-    end
-
-    def with_personal_assistant_session!(attrs)
-      attrs = attrs.is_a?(Hash) ? attrs.transform_keys(&:to_s) : {}
-      begin
-        @personal_assistant.with_active_session!(active_key: attrs["active_key"], generation: attrs["generation"]) do |context|
-          yield context
-        end
-      rescue PersonalAssistantLifecycle::SessionConflict => e
-        details = { code: e.code }
-        details[:active_key] = e.active_key unless e.active_key.to_s.empty?
-        details[:generation] = e.generation if e.generation.to_i.positive?
-        raise Error.new(e.message, status: 409, details:)
-      end
-    end
-
-    def personal_assistant_target_for_context!(context)
-      agents = if @agent_store.respond_to?(:load_with_poll_events)
-                  @agent_store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
-                else
-                  @agent_store.load
-                end
-      target = agents.find { |agent| agent.key == context["active_key"] && agent.personal_assistant? }
-      unless target
-        raise Error.new("FRED active session is unavailable", status: 409,
-                        details: { code: "session_unavailable", active_key: context["active_key"], generation: context["generation"] })
-      end
-
-      target
-    end
-
-    def personal_assistant_client_request_id!(attrs)
-      id = attrs["client_request_id"].to_s.strip
-      return id if id.match?(PROMPT_CLIENT_REQUEST_ID_PATTERN)
-
-      code = id.empty? ? "client_request_id_required" : "client_request_id_invalid"
-      raise Error.new("FRED client_request_id must match client-[A-Za-z0-9-]{1,100}", status: 400, details: { code: })
-    end
-
-    def accept_personal_assistant_message(attrs, kind:, inquiry_id: nil, answer: nil, feedback: "", feedback_embedded: false)
-      id = personal_assistant_client_request_id!(attrs)
-      prompt = answer || prompt_text(attrs, attachments: Array(attrs["attachments"]))
-
-      @personal_assistant.with_message_acceptance_lock(id) do
-        with_personal_assistant_session!(attrs) do |context|
-          payload = personal_assistant_message_payload(
-            attrs, context:, kind:, prompt:, inquiry_id:, feedback:
-          )
-          fingerprint = Digest::SHA256.hexdigest(JSON.generate(canonical_personal_assistant_value(payload)))
-          record, created = @personal_assistant.begin_message_acceptance!(
-            client_request_id: id, active_key: context["active_key"], generation: context["generation"],
-            fingerprint:, payload:, validate: false
-          )
-          if created
-            complete_personal_assistant_message!(
-              record, attrs, context:, kind:, inquiry_id:, answer:, feedback:, feedback_embedded:, prompt:
-            )
-          else
-            resume_personal_assistant_message!(
-              record, attrs, context:, kind:, inquiry_id:, answer:, feedback:, feedback_embedded:, prompt:
-            )
-          end
-        end
-      end
-    rescue PersonalAssistantLifecycle::AcceptanceConflict => e
-      raise Error.new(e.message, status: 409, details: { code: e.code, client_request_id: id })
-    end
-
-    def complete_personal_assistant_message!(record, attrs, context:, kind:, inquiry_id:, answer:, feedback:, feedback_embedded:, prompt:)
-      id = record.fetch("client_request_id")
-      begin
-        result = apply_personal_assistant_message!(
-          id, attrs, context:, kind:, inquiry_id:, answer:, feedback:, feedback_embedded:, prompt:
-        )
-        if result[:queued]
-          @personal_assistant.update_message_acceptance!(id, "state" => "queued", "queue_entry_id" => result.dig(:queue_entry, "id"))
-        else
-          @personal_assistant.update_message_acceptance!(id, "state" => "message_recorded", "message_id" => id)
-        end
-      rescue Error => e
-        reject_personal_assistant_acceptance!(id, e)
-        raise
-      rescue StandardError => e
-        mark_personal_assistant_acceptance_unknown!(id, e.message)
-        raise_personal_assistant_acceptance_error(
-          id, "FRED could not prove whether the message was recorded", code: "acceptance_unknown"
-        )
-      end
-
-      if result[:queued]
-        return personal_assistant_message_response(id, result:, replayed: false)
-      end
-      unless record["start_requested"]
-        @personal_assistant.update_message_acceptance!(id, "state" => "accepted")
-        return personal_assistant_message_response(id, result:, replayed: false)
-      end
-
-      start_personal_assistant_message!(id, attrs, context:, result:)
-    end
-
-    def resume_personal_assistant_message!(record, attrs, context:, kind:, inquiry_id:, answer:, feedback:, feedback_embedded:, prompt:)
-      id = record.fetch("client_request_id")
-      record = reconcile_personal_assistant_acceptance!(record)
-      case record["state"]
-      when "accepted", "queued", "dispatched"
-        return personal_assistant_message_response(id, replayed: true)
-      when "canceled"
-        raise_personal_assistant_acceptance_error(id, "FRED canceled this message", code: "canceled")
-      when "rejected"
-        raise_personal_assistant_acceptance_error(id, "FRED rejected this message acceptance", code: "rejected")
-      when "expired"
-        raise_personal_assistant_acceptance_error(id, "FRED message acceptance has expired and cannot be replayed", code: "acceptance_expired")
-      when "start_failed"
-        raise_personal_assistant_acceptance_error(id, "FRED message was accepted, but the requested run could not start", code: "start_failed")
-      when "unknown"
-        if record["code"].to_s.start_with?("cancellation_")
-          raise_personal_assistant_acceptance_error(id, "FRED could not prove whether the queued message was canceled", code: "cancellation_unknown")
-        end
-
-        raise_personal_assistant_acceptance_error(id, "FRED could not prove whether the requested run started", code: "acceptance_unknown")
-      when "staged"
-        evidence = personal_assistant_message_evidence(id, context["active_key"])
-        if evidence[:journal_unavailable]
-          unless evidence[:queue_entry]
-            mark_personal_assistant_acceptance_unknown!(id, "The FRED message journal is unavailable")
-            raise_personal_assistant_acceptance_error(id, "FRED could not prove whether the message was recorded", code: "acceptance_unknown")
-          end
-        end
-        if evidence[:queue_entry]
-          @personal_assistant.update_message_acceptance!(id, "state" => "queued", "queue_entry_id" => evidence[:queue_entry]["id"])
-          return personal_assistant_message_response(id, replayed: true)
-        end
-        unless evidence[:message]
-          return complete_personal_assistant_message!(
-            record, attrs, context:, kind:, inquiry_id:, answer:, feedback:, feedback_embedded:, prompt:
-          )
-        end
-
-        @personal_assistant.update_message_acceptance!(id, "state" => "message_recorded", "message_id" => id)
-        record = @personal_assistant.message_acceptance_record(id)
-      end
-
-      if record["state"] == "message_recorded" && record["start_requested"] == true && record["launch_attempted"] != true
-        start_personal_assistant_message!(id, attrs, context:, result: nil)
-      else
-        @personal_assistant.update_message_acceptance!(id, "state" => "accepted") if record["state"] == "message_recorded"
-        personal_assistant_message_response(id, replayed: true)
-      end
-    end
-
-    def apply_personal_assistant_message!(id, attrs, context:, kind:, inquiry_id:, answer:, feedback:, feedback_embedded:, prompt:)
-      metadata = {
-        "personal_assistant_client_request_id" => id
-      }
-      recommendation = personal_assistant_recommendation_metadata!(attrs, prompt:)
-      metadata["personal_assistant_recommendation"] = recommendation if recommendation
-      event_id = "personal-assistant-message:#{id}"
-      if kind == "inquiry_answer"
-        target = personal_assistant_target_for_context!(context)
-        attachments = import_prompt_attachments(target, attrs, dedupe_key: id)
-        target = @agent_store.answer_inquiry!(
-          target.key,
-          inquiry_id: inquiry_id,
-          answer: answer || prompt,
-          attachments:,
-          feedback:,
-          feedback_embedded:,
-          metadata:,
-          event_id_prefix: event_id
-        )
-        @agent_activity_snapshot.upsert!(target)
-        { agent: agent_payload(target), conversation: conversation_for_agent(target) }
-      else
-        submit_prompt(
-          context.fetch("active_key"), attrs.merge("start" => false),
-          actor: DelegationActor.user_actor, personal_assistant_lifecycle: true,
-          acceptance_id: id, message_metadata: metadata, session_context: context
-        )
-      end
-    rescue ArgumentError => e
-      raise Error.new(e.message, status: 409)
-    end
-
-    def start_personal_assistant_message!(id, attrs, context:, result: nil)
-      # Persist an unknown outcome before entering the external start path. A
-      # process crash after this write must never cause a duplicate start on
-      # the next client request; only a recorded run can resolve it.
-      @personal_assistant.update_message_acceptance!(
-        id, "state" => "unknown", "code" => "launch_in_flight", "launch_attempted" => true
-      )
-      target = nil
-      begin
-        target = @agent_store.start_agent!(
-          context.fetch("active_key"),
-          run_metadata: personal_assistant_run_metadata(id)
-        )
-      rescue StandardError => e
-        target = personal_assistant_agent_for(context["active_key"])
-        run = personal_assistant_run_for(target, id)
-        return finalize_personal_assistant_start!(id, target, run, result:) if run
-
-        @personal_assistant.update_message_acceptance!(id, "state" => "unknown", "code" => "acceptance_unknown", "error" => e.message)
-        raise_personal_assistant_acceptance_error(id, "FRED could not prove whether the requested run started", code: "acceptance_unknown")
-      end
-
-      run = personal_assistant_run_for(target, id)
-      finalize_personal_assistant_start!(id, target, run, result:)
-    end
-
-    def finalize_personal_assistant_start!(id, target, run, result: nil)
-      if run && run.metadata.is_a?(Hash) && run.metadata["start_failure"] == true
-        @personal_assistant.update_message_acceptance!(
-          id, "state" => "start_failed", "code" => "start_failed", "run_id" => run.run_id,
-          "error" => target&.last_summary.to_s
-        )
-        return raise_personal_assistant_acceptance_error(
-          id, "FRED message was accepted, but the requested run could not start", code: "start_failed"
-        )
-      end
-      unless run
-        @personal_assistant.update_message_acceptance!(id, "state" => "unknown", "code" => "acceptance_unknown", "error" => "No matching run was recorded")
-        return raise_personal_assistant_acceptance_error(
-          id, "FRED could not prove whether the requested run started", code: "acceptance_unknown"
-        )
-      end
-
-      @personal_assistant.update_message_acceptance!(id, "state" => "dispatched", "run_id" => run.run_id)
-      target ||= personal_assistant_agent_for(@personal_assistant.message_acceptance_record(id)["active_key"])
-      @agent_activity_snapshot.upsert!(target) if target
-      response_result = if target
-                          { agent: agent_payload(target), conversation: conversation_for_agent(target) }
-                        else
-                          result
-                        end
-      personal_assistant_message_response(id, result: response_result, replayed: false)
-    end
-
-    def reconcile_personal_assistant_acceptance!(record)
-      id = record["client_request_id"].to_s
-      state = record["state"].to_s
-      return record if %w[accepted dispatched start_failed canceled rejected expired].include?(state)
-      cancellation_unknown = state == "unknown" && record["code"].to_s.start_with?("cancellation_")
-
-      target = personal_assistant_agent_for(record["active_key"])
-      return record unless target
-
-      evidence = personal_assistant_message_evidence(id, target.key)
-      if (run = personal_assistant_run_for(target, id))
-        if run.metadata.is_a?(Hash) && run.metadata["start_failure"] == true
-          return @personal_assistant.update_message_acceptance!(
-            id, "state" => "start_failed", "code" => "start_failed", "run_id" => run.run_id,
-            "error" => target.last_summary.to_s
-          )
-        end
-
-        return @personal_assistant.update_message_acceptance!(id, "state" => "dispatched", "run_id" => run.run_id)
-      end
-      return record if cancellation_unknown
-      if evidence[:queue_entry] && %w[staged message_recorded queued].include?(state)
-        return @personal_assistant.update_message_acceptance!(
-          id, "state" => "queued", "queue_entry_id" => evidence[:queue_entry]["id"], "queue_claim_id" => evidence[:queue_claim_id]
-        )
-      end
-      if evidence[:message] && %w[staged message_recorded].include?(state)
-        return @personal_assistant.update_message_acceptance!(id, "state" => "message_recorded", "message_id" => id)
-      end
-      return record if evidence[:journal_unavailable]
-
-      record
-    end
-
-    def personal_assistant_message_evidence(client_request_id, active_key)
-      target = personal_assistant_agent_for(active_key)
-      return {} unless target
-
-      queue_entry = target.queued_prompts.find do |entry|
-        entry["id"].to_s == client_request_id.to_s || entry["client_request_id"].to_s == client_request_id.to_s
-      end
-      claim = target.prompt_queue_claim
-      claim_entry = Array(claim&.fetch("entries", nil)).find do |entry|
-        entry["id"].to_s == client_request_id.to_s || entry["client_request_id"].to_s == client_request_id.to_s
-      end
-      journal_unavailable = false
-      message = begin
-        AgentMemory.new(target).personal_assistant_message_event(client_request_id)
-      rescue StandardError
-        journal_unavailable = true
-        nil
-      end
-      {
-        message:,
-        queue_entry: queue_entry || claim_entry,
-        queue_claim_id: claim_entry && claim["id"],
-        journal_unavailable:
-      }
-    end
-
-    def personal_assistant_agent_for(key)
-      key = key.to_s
-      return nil if key.empty?
-
-      agents = if @agent_store.respond_to?(:load_with_poll_events)
-                  @agent_store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
-                else
-                  @agent_store.load
-                end
-      agents.find { |agent| agent.key == key && agent.personal_assistant? }
-    end
-
-    def personal_assistant_run_for(target, client_request_id)
-      return nil unless target
-
-      id = client_request_id.to_s
-      target.runs.reverse.find do |run|
-        metadata = run.metadata
-        metadata.is_a?(Hash) && (metadata["personal_assistant_client_request_id"].to_s == id || Array(metadata["personal_assistant_client_request_ids"]).map(&:to_s).include?(id))
-      end
-    end
-
-    def personal_assistant_run_metadata(client_request_id)
-      { "personal_assistant_client_request_id" => client_request_id.to_s }
-    end
-
-    def personal_assistant_canceled_queue_response(client_request_id, target, context, replayed:)
-      acceptance = @personal_assistant.message_acceptance(client_request_id)
-      {
-        accepted: true,
-        canceled: true,
-        replayed:,
-        client_request_id: client_request_id.to_s,
-        active_key: context["active_key"],
-        generation: context["generation"],
-        acceptance:,
-        agent: agent_payload(target),
-        conversation: conversation_for_agent(target)
-      }
-    end
-
-    def personal_assistant_message_response(client_request_id, result: nil, replayed: true)
-      acceptance = @personal_assistant.message_acceptance(client_request_id)
-      body = {
-        accepted: true,
-        replayed: replayed,
-        client_request_id: client_request_id.to_s,
-        active_key: acceptance && acceptance["active_key"],
-        generation: acceptance && acceptance["generation"],
-        acceptance:
-      }
-      body[:inquiry_id] = acceptance["inquiry_id"] if acceptance && acceptance["inquiry_id"]
-      body[:queued] = true if acceptance && acceptance["state"] == "queued"
-      if result.is_a?(Hash)
-        body[:queued] = true if result[:queued]
-        body[:queue_entry] = result[:queue_entry] if result[:queue_entry]
-        body[:agent] = result[:agent] if result[:agent]
-        body[:conversation] = result[:conversation] if result[:conversation]
-      end
-      unless body[:agent]
-        target = personal_assistant_agent_for(acceptance && acceptance["active_key"])
-        if target
-          body[:agent] = agent_payload(target)
-          body[:conversation] = conversation_for_agent(target)
-          if acceptance && acceptance["state"] == "queued"
-            body[:queue_entry] = body[:agent].dig(:prompt_queue, "entries")&.find { |entry| entry["id"] == client_request_id.to_s }
-          end
-        end
-      end
-      body
-    end
-
-    def raise_personal_assistant_acceptance_error(client_request_id, message, code:)
-      acceptance = @personal_assistant.message_acceptance(client_request_id)
-      details = { code:, acceptance: }
-      raise Error.new(message, status: 409, details:)
-    end
-
-    def reject_personal_assistant_acceptance!(client_request_id, error)
-      record = @personal_assistant.message_acceptance_record(client_request_id)
-      return unless record
-      return unless %w[staged message_recorded].include?(record["state"].to_s)
-
-      details = error.respond_to?(:details) && error.details.is_a?(Hash) ? error.details : {}
-      code = details[:code] || details["code"]
-      @personal_assistant.update_message_acceptance!(
-        client_request_id, "state" => "rejected", "code" => code || "rejected", "error" => error.message
-      )
-    end
-
-    def mark_personal_assistant_acceptance_unknown!(client_request_id, error)
-      record = @personal_assistant.message_acceptance_record(client_request_id)
-      return unless record
-      return if %w[accepted queued dispatched start_failed canceled rejected expired].include?(record["state"].to_s)
-
-      @personal_assistant.update_message_acceptance!(
-        client_request_id, "state" => "unknown", "code" => "acceptance_unknown", "error" => error.to_s[0, 600]
-      )
-    end
-
-    def personal_assistant_message_payload(attrs, context:, kind:, prompt:, inquiry_id:, feedback:)
-      {
-        "active_key" => context["active_key"],
-        "generation" => context["generation"],
-        "kind" => kind.to_s,
-        "prompt" => prompt.to_s.strip,
-        "inquiry_id" => inquiry_id.to_s.strip.empty? ? nil : inquiry_id.to_s.strip,
-        "retire_inquiry_id" => attrs["retire_inquiry_id"].to_s.strip.empty? ? nil : attrs["retire_inquiry_id"].to_s.strip,
-        "feedback" => feedback.to_s,
-        "start" => truthy?(attrs["start"]),
-        "pull_request_contexts" => attrs["pull_request_contexts"],
-        "attachments" => personal_assistant_attachment_fingerprints(attrs["attachments"]),
-        "recommendation" => personal_assistant_recommendation_metadata!(attrs, prompt:)
-      }.delete_if { |_key, value| value.nil? }
-    end
-
-    def personal_assistant_recommendation_metadata!(attrs, prompt:)
-      requested = attrs["recommendation"]
-      return nil if requested.nil?
-      unless requested.is_a?(Hash) && requested["prompt"].to_s.strip == prompt.to_s.strip
-        raise Error.new("FRED recommendation selection does not match the submitted prompt", status: 409,
-                        details: { code: "recommendation_mismatch" })
-      end
-
-      status = @personal_assistant.status
-      recommendations = status[:recommendations] || status["recommendations"] || {}
-      items = Array(recommendations["items"] || recommendations[:items])
-      index = items.index { |item| (item["prompt"] || item[:prompt]).to_s.strip == prompt.to_s.strip }
-      unless index
-        raise Error.new("FRED recommendation changed; refresh and choose it again", status: 409,
-                        details: { code: "recommendation_stale" })
-      end
-
-      entry = items[index]
-      for_date = (recommendations["for_date"] || recommendations[:for_date]).to_s
-      {
-        "id" => "#{for_date.empty? ? "undated" : for_date}:#{index}",
-        "for_date" => for_date[0, 40],
-        "source" => (recommendations["source"] || recommendations[:source]).to_s[0, 40],
-        "title" => (entry["title"] || entry[:title] || prompt).to_s.strip[0, 96],
-        "description" => (entry["description"] || entry[:description] || prompt).to_s.strip[0, 120],
-        "prompt" => prompt.to_s.strip[0, 240]
-      }
-    end
-
-    def personal_assistant_attachment_fingerprints(value)
-      Array(value).first(5).map do |attachment|
-        next attachment.to_s unless attachment.is_a?(Hash)
-
-        fingerprint = attachment.each_with_object({}) do |(key, item), result|
-          next if %w[content_base64 base64 content].include?(key.to_s)
-
-          result[key.to_s] = item
-        end
-        content = attachment["content_base64"] || attachment["base64"] || attachment["content"]
-        fingerprint["content_sha256"] = Digest::SHA256.hexdigest(content.to_s) unless content.nil?
-        canonical_personal_assistant_value(fingerprint)
-      end
-    end
-
-    def canonical_personal_assistant_value(value)
-      case value
-      when Hash
-        value.each_with_object({}) do |(key, item), result|
-          result[key.to_s] = canonical_personal_assistant_value(item)
-        end.sort.to_h
-      when Array
-        value.map { |item| canonical_personal_assistant_value(item) }
-      else
-        value
-      end
-    end
 
     def validate_ad_hoc_remote_url!(value)
       uri = URI.parse(value.to_s.strip)
@@ -5145,34 +3492,15 @@ module HQ
     end
 
     def visible_agents(agents)
-      HQ::Visibility.visible_agents(agents, @projects).reject(&:personal_assistant?)
+      HQ::Visibility.visible_agents(agents, @projects)
     end
 
-    # FRED is deliberately outside the generic agent catalog, yet its finished
-    # work still deserves the same unread and push reconciliation.
     def notification_agents(agents)
-      visible_agents(agents) + active_personal_assistant_notification_agents(agents)
+      visible_agents(agents)
     end
 
-    def active_personal_assistant_notification_agents(agents)
-      session = @personal_assistant.active_notification_session
-      return [] unless session
-
-      active_key = session["active_key"].to_s
-      return [] if active_key.empty?
-
-      agents.select { |agent| agent.personal_assistant? && agent.key == active_key }
-    rescue ArgumentError
-      []
-    end
-
-    # FRED remains outside the generic agent catalog, but an active unread FRED
-    # session is still operator attention and belongs in aggregate unread counts.
     def replace_agent_activity_snapshot!(agents)
-      @agent_activity_snapshot.replace!(
-        visible_agents(agents),
-        extra_unread_count: active_personal_assistant_notification_agents(agents).count(&:unread?)
-      )
+      @agent_activity_snapshot.replace!(visible_agents(agents))
     end
 
     def hidden_setting_value(attrs)
@@ -5490,7 +3818,7 @@ module HQ
 
     def readable_archived_agent(key)
       agent = @agent_archive_store.find(key)&.agent
-      return nil unless agent && (agent.personal_assistant? || archived_agent_visible?(agent))
+      return nil unless agent && archived_agent_visible?(agent)
 
       agent
     end
@@ -5668,7 +3996,7 @@ module HQ
       end
 
       group_count = [unread_count.to_i, 1].max
-      body = "#{agent.personal_assistant? ? "FRED" : agent.display_name}: #{truncate(agent.last_summary, 120)}"
+      body = "#{agent.display_name}: #{truncate(agent.last_summary, 120)}"
       body = "#{body} (#{group_count} unread agents)" if group_count > 1
 
       {
@@ -5680,7 +4008,7 @@ module HQ
           renotify: event == "input_required",
           silent: event != "input_required",
           badge_count: group_count,
-          url: agent.personal_assistant? ? "/#personal-assistant" : "/#agent/#{agent.key}"
+          url: "/#agent/#{agent.key}"
         }
       }
     end
@@ -5756,13 +4084,6 @@ module HQ
         summary: agent.last_summary,
         updated_at: agent.last_activity_at&.iso8601
       }
-    end
-
-    def personal_assistant_quick_switch_summary(agent)
-      request = agent.messages.reverse.find do |message|
-        message.role == "user" && !message.metadata&.fetch("personal_assistant_summary", false)
-      end
-      truncate(request&.content.to_s.strip.empty? ? agent.last_summary : request.content, 120)
     end
 
     def archived_project_count
@@ -5890,11 +4211,7 @@ module HQ
     end
 
     def schema_readiness
-      schemas = {
-        ordinary: schema_file_readiness(AGENT_RESULT_SCHEMA),
-        personal_assistant: schema_file_readiness(PERSONAL_ASSISTANT_RESULT_SCHEMA)
-      }
-      { valid: schemas.values.all? { |schema| schema[:valid] }, path: AGENT_RESULT_SCHEMA, schemas: }
+      schema_file_readiness(AGENT_RESULT_SCHEMA)
     end
 
     def schema_file_readiness(path)
@@ -6173,8 +4490,6 @@ module HQ
         last_exit_code: agent.last_exit_code,
         last_result: agent.last_result_label,
         summary: agent.last_summary,
-        role: agent.personal_assistant? ? "personal_assistant_daily" : nil,
-        quick_switch_summary: agent.personal_assistant? ? personal_assistant_quick_switch_summary(agent) : nil,
         cost_snapshot: agent.cost_snapshot,
         latest_inquiry: inquiry,
         suspended_inquiry: suspended_inquiry_payload(agent),
@@ -6242,11 +4557,7 @@ module HQ
     end
 
     def delegation_payload(agent, reference_context: nil, relationship_context: nil)
-      reference_context ||= if agent.personal_assistant?
-                              delegation_reference_context([agent])
-                            else
-                              delegation_reference_context
-                            end
+      reference_context ||= delegation_reference_context
       relationship_context ||= delegation_relationship_context
       relationships = {
         "parent" => relationship_context.fetch(:parents)[agent.key],

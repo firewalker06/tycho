@@ -18,10 +18,6 @@ module RemoteUIAssetSnapshotTest
     assert_delegated_summary_attention_icon_is_in_header
     assert_focused_detail_close_control
     assert_archived_agents_are_reference_only_and_read_only
-    assert_personal_assistant_is_chat_first
-    assert_personal_assistant_first_run_uses_starters
-    assert_personal_assistant_visits_without_opening_ceremony
-    assert_personal_assistant_hides_internal_chat_events
     assert_agent_status_icons_use_lucide_without_badges
     assert_agent_filter_and_sort_use_requested_lucide_icons
     assert_peer_update_ui_is_homebrew_gated
@@ -101,114 +97,6 @@ module RemoteUIAssetSnapshotTest
     ]
     missing_css = required_css.reject { |fragment| css.include?(fragment) }
     raise "focused detail close control must stay borderless and desktop-only: #{missing_css.join(", ")}" unless missing_css.empty?
-  end
-
-  def assert_personal_assistant_is_chat_first
-    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
-    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
-    required_javascript = [
-      'function renderPersonalAssistantProposal(proposal)',
-      'data-proposal-id=',
-      'data-proposal-run=',
-      'Approval needed',
-      'Technical details',
-      'data-confirm-pa-proposal=',
-      'data-reject-pa-proposal=',
-      'function renderPersonalAssistantRecommendations(item, blocks = [], options = {})',
-      'pendingPersonalAssistantProposalIds: new Set()',
-      'state.pendingPersonalAssistantProposalIds.has(id)',
-      'function renderConversationWorkspace({',
-      'classNames: ["conversation-only", "agent-workspace-conversation", "personal-assistant-page"]',
-      'conversationStateKey: "personal-assistant-thread"',
-      'function personalAssistantHeaderTitleHtml()',
-      'function personalAssistantMoreMenuHtml()',
-      'setHeader("FRED", "", "A", { titleHtml: personalAssistantHeaderTitleHtml(), hideSubtitle: true });',
-      'setHeaderMore(personalAssistantMoreMenuHtml(), "FRED actions", "personal-assistant");'
-    ]
-    missing = required_javascript.reject { |fragment| javascript.include?(fragment) }
-    raise "missing chat-first Personal Assistant contract: #{missing.join(", ")}" unless missing.empty?
-
-    forbidden = ['aria-label="Action proposals"', '<h2>Action proposals</h2>', 'JSON.stringify({ type: proposal.type']
-    present = forbidden.select { |fragment| javascript.include?(fragment) }
-    raise "Personal Assistant still exposes permanent proposal clutter: #{present.join(", ")}" unless present.empty?
-
-    required_css = [
-      '.personal-assistant-page .agent-conversation-scroll',
-      '.agent-workspace.conversation-only .agent-conversation-scroll',
-      '.personal-assistant-page .agent-dock',
-      'env(safe-area-inset-bottom, 0px)'
-    ]
-    missing_css = required_css.reject { |fragment| css.include?(fragment) }
-    raise "missing chat-first layout contract: #{missing_css.join(", ")}" unless missing_css.empty?
-
-    legacy_css = ['.pa-header', '.pa-tycho-nav', '.pa-composer-row', 'body:has(.personal-assistant-page) .app-header']
-    present_css = legacy_css.select { |fragment| css.include?(fragment) }
-    raise "FRED still owns a duplicate conversation shell: #{present_css.join(", ")}" unless present_css.empty?
-  end
-
-  def assert_personal_assistant_first_run_uses_starters
-    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
-    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
-    required_javascript = [
-      "function personalAssistantRecommendationContext(item, entry, index)",
-      "function submitPersonalAssistantRecommendation(suggestion)",
-      'class="message assistant pa-recommendations"',
-      "renderPersonalAssistantRecommendations(item, allBlocks",
-      "leadingHtml: recommendations",
-      "form.requestSubmit(submitter)",
-      'querySelector("#composer #prompt-input")',
-      '<h2>Recommendations</h2>',
-      'aria-label="FRED recommendations"',
-      'data-recommendation-source=',
-      'personal_assistant_recommendation',
-      'name="external_events_prompt"'
-    ]
-    missing = required_javascript.reject { |fragment| javascript.include?(fragment) }
-    raise "missing Personal Assistant first-run starter contract: #{missing.join(", ")}" unless missing.empty?
-
-    required_css = [
-      ".header-mark .brand-logo {",
-      ".fred-avatar { display: inline-block; flex: 0 0 auto; width: 32px; height: 32px;"
-    ]
-    missing = required_css.reject { |fragment| css.include?(fragment) }
-    raise "missing Personal Assistant header identity scale: #{missing.join(", ")}" unless missing.empty?
-
-    forbidden = ["What would you like to do?", "What FRED can do", 'id="pa-project-starter-form"', "${currentWork}"]
-    present = forbidden.select { |fragment| javascript.include?(fragment) }
-    raise "Personal Assistant still renders removed starter surfaces: #{present.join(", ")}" unless present.empty?
-  end
-
-  def assert_personal_assistant_hides_internal_chat_events
-    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
-    filter = javascript[/function personalAssistantVisibleConversationBlocks\(blocks\).*?^}/m]
-
-    raise "missing Personal Assistant conversation visibility filter" unless filter
-    unless filter.include?('block?.kind === "message" && ["user", "assistant"].includes(block.role)')
-      raise "Personal Assistant must render only user and FRED message blocks"
-    end
-    unless javascript.include?("? personalAssistantVisibleConversationBlocks(allConversationBlocks)")
-      raise "Personal Assistant visibility filter is not applied to its conversation renderer"
-    end
-  end
-
-  def assert_personal_assistant_visits_without_opening_ceremony
-    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
-    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
-
-    required = [
-      '<a class="ui-button" href="#personal-assistant">Go to FRED</a>',
-      '<details class="pa-lifecycle">',
-      "Restart FRED with updated settings",
-      'tychoLoadingState("Loading FRED", { className: "pa-loading-state", body: "Fetching today’s session." })',
-      '["ready", "dormant", "unconfigured"].includes(state.personalAssistant.state)'
-    ]
-    missing = required.reject { |fragment| javascript.include?(fragment) }
-    raise "missing direct FRED visit contract: #{missing.join(", ")}" unless missing.empty?
-
-    forbidden = ["data-open-personal-assistant", "Start fresh conversation", "Open today’s conversation when you are ready."]
-    present = forbidden.select { |fragment| javascript.include?(fragment) }
-    raise "FRED still requires an opening ceremony: #{present.join(", ")}" unless present.empty?
-    raise "missing FRED loading state layout" unless css.include?(".pa-setup, .pa-loading-state")
   end
 
   def assert_initial_loading_shell_contract
