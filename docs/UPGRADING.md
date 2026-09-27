@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+## 0.12.0
+
+Upgrade normally through Homebrew, or update a source checkout with Git and
+rerun `bin/setup` when requested. Existing project, schedule, managed-agent,
+delegation, QueueWork, memory, and credential stores do not need a manual data
+migration.
+
+### Queued work
+
+Tycho now claims queued user prompts and delegated reports into a durable
+QueueWork batch. A due batch joins the inquiry answer or ordinary prompt that
+starts the next run; successful processing records default per-entry outcomes
+and clears the batch automatically. Partial, failed, blocked, and
+input-required runs retain unresolved work.
+
+Conversation shows this work as one right-aligned **Read queue** disclosure.
+Its compact state contains the instruction snippet and lifecycle status; open
+it to inspect canonical entry IDs, sources, attachments, targets, and outcomes.
+Automation should not depend on the old raw queued-message projection.
+
+### Delayed continuations and wait protection
+
+Managed agents can enqueue a delayed continuation instead of keeping a run
+open. Repeated blocking waits trigger a circuit breaker and a bounded recovery
+entry. Existing schedules and ordinary queued prompts keep their current
+configuration.
+
+### Removed experimental surface
+
+The retired experimental assistant UI and runtime have been removed. Legacy
+agent records remain hidden and removed configuration is ignored, so no data
+cleanup is required. Delete obsolete configuration when convenient.
+
+### Skills and verification
+
+Update each Tycho-owned installed skill from **Settings → Skills**, then restart
+the harness if it does not discover the new version. After upgrading, run:
+
+```bash
+tycho --version
+tycho doctor
+tycho agent list
+tycho schedule list
+```
+
+Homebrew bottles are available for Apple Silicon macOS and Linux. Intel macOS
+remains source-only, as established in v0.11.1.
+
 ## 0.11.1
 
 Configured Remote servers now report whether their own Tycho installation can

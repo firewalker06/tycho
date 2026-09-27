@@ -101,6 +101,13 @@ Key references:
 
 ## Current Focus
 
+**v0.12.0 release preparation**: consolidates durable QueueWork batching,
+structured Read queue disclosures, same-run inquiry/prompt ingestion, automatic
+successful settlement, stop-time dispatch, delayed continuations, sleep-loop
+protection, and managed-agent store recovery. It also removes the retired
+experimental assistant surface, windows long Conversation histories, and moves
+the merge gate from hosted CI to exact-head local signoff.
+
 **v0.11.1 release preparation**: adds a capability-gated, explicitly confirmed
 Remote UI update action for configured Homebrew peers. The action waits for the
 peer restart, refreshes its resources, restores polling after failure, and
