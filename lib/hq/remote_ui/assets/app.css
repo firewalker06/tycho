@@ -1749,10 +1749,6 @@ select {
   color: var(--accent);
 }
 
-.desktop-settings {
-  display: none;
-}
-
 .nav-mark {
   display: inline-grid;
   place-items: center;
@@ -8474,33 +8470,6 @@ body:has(.inquiry-form-full-screen) {
     min-height: var(--touch-target);
     padding: 8px 10px;
     font-size: 13px;
-  }
-
-  .desktop-settings {
-    position: fixed;
-    bottom: 12px;
-    left: max(12px, calc(50% - 612px));
-    z-index: 4;
-    display: grid;
-    grid-template-columns: 24px minmax(0, 1fr);
-    align-items: center;
-    justify-items: start;
-    width: 144px;
-    min-height: var(--touch-target);
-    padding: 8px 10px;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    color: var(--muted);
-    font-size: 13px;
-  }
-
-  .desktop-settings.active {
-    color: var(--accent);
-  }
-
-  .desktop-settings:hover {
-    color: var(--text);
   }
 
   .quick-agent-fab {
