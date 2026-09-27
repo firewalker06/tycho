@@ -7,12 +7,14 @@ module RemoteUIPromptQueueTest
 
   ROOT = File.expand_path("..", __dir__)
   APP_PATH = File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js")
+  CSS_PATH = File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css")
 
   def run!
     script = <<~'JAVASCRIPT'
       const fs = require("fs");
       const vm = require("vm");
       const source = fs.readFileSync(process.argv[1], "utf8");
+      const styles = fs.readFileSync(process.argv[2], "utf8");
 
       function extractFunction(name) {
         const start = source.indexOf(`function ${name}`);
@@ -47,9 +49,12 @@ module RemoteUIPromptQueueTest
         titleFromKey: (value) => String(value),
         truncate: (value, max) => String(value).length <= max ? String(value) : `${String(value).slice(0, max - 1)}…`,
         iconSvg: (name) => `<svg data-icon="${name}"></svg>`,
+        attachmentTarget: (attachment) => attachment?.url || attachment?.path || attachment?.blob_path || "",
+        attachmentHref: (attachment) => /^https?:/.test(String(attachment?.url || "")) ? attachment.url : attachment?.blob_path || "",
         URL,
       };
       vm.createContext(context);
+      vm.runInContext(extractFunction("renderQueueWorkAttachments"), context);
       vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\n${extractFunction("parseDelegatedAgentReply")}\n${extractFunction("delegatedAgentReportPayload")}\n${extractFunction("renderDelegatedAgentReply")}\n${extractFunction("renderDelegatedAgentReport")}\n${extractFunction("renderDelegatedAgentRecovery")}\n${extractFunction("renderDelegatedAgentReportInquiry")}\n${extractFunction("renderDelegatedAgentReportInquiryField")}\n${extractFunction("delegatedAgentReportStatusLabel")}\n${extractFunction("delegatedAgentReportAttachments")}\n${extractFunction("renderDelegatedAgentReportAttachment")}\n${extractFunction("blockStateToken")}\n${extractFunction("queueReadConversationBlock")}\n${extractFunction("renderQueueReadConversationBlock")}\n${extractFunction("circuitBreakerRecoveryConversationBlock")}\n${extractFunction("renderCircuitBreakerRecoveryConversationBlock")}\nthis.renderPromptQueueEntry = renderPromptQueueEntry;\nthis.parseDelegatedAgentReply = parseDelegatedAgentReply;\nthis.renderDelegatedAgentRecovery = renderDelegatedAgentRecovery;\nthis.renderQueueReadConversationBlock = renderQueueReadConversationBlock;\nthis.renderCircuitBreakerRecoveryConversationBlock = renderCircuitBreakerRecoveryConversationBlock;`, context);
 
       const agent = { key: "queue-agent" };
@@ -162,14 +167,23 @@ module RemoteUIPromptQueueTest
             state: "in_progress",
             required_actions: [{ id: "user-entry", prompt: "Review the failing test" }],
           },
+          queue_work_dispositions: {
+            "user-entry": { entry_id: "user-entry", outcome: "completed" },
+            "delegated-entry": { entry_id: "delegated-entry", outcome: "incorporated" },
+          },
           prompt_queue_entries: [
-            { id: "user-entry", prompt: "Review the failing test", source: "user", state: "in_progress", attachments: [] },
-            { id: "delegated-entry", prompt: delegatedPayload, source: "delegation_callback", state: "in_progress", attachments: [] },
+            { id: "user-entry", prompt: "Review the failing test", source: "user", state: "in_progress", attachments: [
+              { type: "file", title: "Failure log", path: "/tmp/failure.log" },
+            ] },
+            { id: "delegated-entry", prompt: delegatedPayload, source: "delegation_callback", state: "in_progress", attachments: [
+              { type: "link", title: "Review target", url: "https://example.test/review-target" },
+            ] },
           ],
         },
       }, 0, { agent });
-      const userReadEntry = readQueueHtml.match(/<li class="prompt-queue-entry" data-prompt-queue-entry="user-entry">([\s\S]*?)<\/li>/)?.[1] || "";
-      const delegatedReadEntry = readQueueHtml.match(/<li class="prompt-queue-entry" data-prompt-queue-entry="delegated-entry">([\s\S]*?)<\/li>/)?.[1] || "";
+      const delegatedEntryStart = readQueueHtml.indexOf('data-prompt-queue-entry="delegated-entry"');
+      const userReadEntry = readQueueHtml.slice(readQueueHtml.indexOf('data-prompt-queue-entry="user-entry"'), delegatedEntryStart);
+      const delegatedReadEntry = readQueueHtml.slice(delegatedEntryStart, readQueueHtml.indexOf("</ol>", delegatedEntryStart));
       if (!readQueueHtml.includes("data-queue-read-block") ||
           !readQueueHtml.includes('aria-label="Read queue, 2 entries read, in_progress, Review the failing test"') ||
           !readQueueHtml.includes('data-icon="eye"') || readQueueHtml.includes("queue-read-brand") ||
@@ -177,11 +191,22 @@ module RemoteUIPromptQueueTest
           readQueueHtml.includes("queue-work-required-actions") || readQueueHtml.includes("Required user instructions") ||
           (readQueueHtml.match(/data-queue-work-required/g) || []).length !== 1 ||
           !userReadEntry.includes("data-queue-work-required") || delegatedReadEntry.includes("data-queue-work-required") ||
+          !userReadEntry.includes("Entry <code>user-entry</code>") ||
+          !delegatedReadEntry.includes("Entry <code>delegated-entry</code>") ||
+          !userReadEntry.includes('data-queue-work-outcome="completed"') ||
+          !delegatedReadEntry.includes('data-queue-work-outcome="incorporated"') ||
+          !readQueueHtml.includes("Failure log") || !readQueueHtml.includes("/tmp/failure.log") ||
+          !readQueueHtml.includes("Review target") || !readQueueHtml.includes("https://example.test/review-target") ||
+          (readQueueHtml.match(/aria-label="Entry attachments"/g) || []).length !== 2 ||
           !readQueueHtml.includes("in_progress") ||
           (readQueueHtml.match(/data-prompt-queue-entry=/g) || []).length !== 2 ||
           !readQueueHtml.includes("Review the failing test") || !readQueueHtml.includes("Success child") ||
           readQueueHtml.includes("---") || readQueueHtml.includes("Edit") || readQueueHtml.includes("Delete")) {
         throw new Error("Read queue must render as a concise expandable block with structured read-only entries");
+      }
+      if (!styles.includes(".queue-work-entry-attachments code") ||
+          !styles.includes("overflow-wrap: anywhere") || !styles.includes("white-space: normal")) {
+        throw new Error("canonical queue details must remain readable at desktop and mobile widths");
       }
       const legacyReadHtml = context.renderQueueReadConversationBlock({
         id: "legacy-read", kind: "message", role: "user", content: "legacy first\n\n---\n\nlegacy second",
@@ -244,7 +269,7 @@ module RemoteUIPromptQueueTest
       }
     JAVASCRIPT
 
-    output, status = Open3.capture2e("node", "-e", script, APP_PATH)
+    output, status = Open3.capture2e("node", "-e", script, APP_PATH, CSS_PATH)
     raise output unless status.success?
 
     puts "remote_ui_prompt_queue_test: ok"

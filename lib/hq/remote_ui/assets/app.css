@@ -6479,6 +6479,50 @@ select {
   gap: 5px;
 }
 
+.queue-work-entry-id,
+.queue-work-entry-outcome {
+  display: block;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.queue-work-entry-id code,
+.queue-work-entry-outcome strong {
+  color: var(--text);
+}
+
+.queue-work-entry-attachments {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  margin: 3px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.queue-work-entry-attachments li,
+.queue-work-entry-attachments a,
+.queue-work-entry-attachments span {
+  min-width: 0;
+}
+
+.queue-work-entry-attachments a,
+.queue-work-entry-attachments span {
+  display: grid;
+  gap: 2px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.queue-work-entry-attachments code {
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .queue-work-required-label {
   display: inline-flex;
   align-items: center;
