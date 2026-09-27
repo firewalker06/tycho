@@ -169,7 +169,7 @@ if MODE == "recovery"
 else
   puts "Pending stage: expand ‘2 queued’ to show the user prompt and delegated reply."
   puts "Read stage command: #{read_command}"
-  puts "After the command, refresh Conversation and click ‘Read queue, 2 entries read’."
+  puts "After the command, refresh Conversation and inspect the right-aligned ‘Read queue’ lifecycle card."
 end
 puts "Fixture root: #{FIXTURE_ROOT}"
 
