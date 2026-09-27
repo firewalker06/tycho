@@ -4275,7 +4275,7 @@ module RemoteServerTest
              "expected Remote readiness to redact custom profile environment values")
       claude = setup[:harnesses].find { |item| item[:name] == "claude" }
       claude_models = Array(claude[:model_suggestions]).map { |item| item[:value] }
-      assert(claude_models == %w[claude-fable-5 claude-opus-5 claude-opus-4-8 claude-sonnet-5 claude-haiku-4-5],
+      assert(claude_models == %w[claude-fable-5-1 claude-opus-5-5 claude-opus-5 claude-sonnet-5 claude-haiku-4-5],
              "expected Claude readiness to expose only current Anthropic model aliases")
       assert(setup[:tools].map { |item| item[:name] }.sort == %w[tailscale],
              "expected optional tool readiness entries")

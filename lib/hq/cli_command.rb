@@ -189,7 +189,7 @@ module HQ
         desc "Create a new agent for a project"
         argument :project_key, required: true, desc: "Project key"
         argument :prompt, required: true, desc: "Initial prompt for the agent"
-        option :model, desc: "Model override (e.g. claude-opus-4-8)"
+        option :model, desc: "Model override (e.g. claude-opus-5-5)"
         option :harness, desc: "Agent harness override (codex, claude, opencode, pi, or a configured custom profile)"
         option :name, desc: "Agent name override"
         option :template, desc: "Template key to use (defaults to project's first template)"

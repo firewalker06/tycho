@@ -59,7 +59,7 @@ tycho agent create <project-key> <prompt> [options]
 
 | Flag | Description |
 |------|-------------|
-| `--model MODEL` | Model override, e.g. `claude-opus-4-5`, `o4-mini` |
+| `--model MODEL` | Model override, e.g. `claude-opus-5-5`, `o4-mini` |
 | `--harness HARNESS` | Agent harness, e.g. `claude`, `codex` (defaults to project default) |
 | `--name NAME` | Override auto-generated agent name |
 | `--template KEY` | Template key (defaults to project's first template) |
@@ -75,7 +75,7 @@ tycho agent create my-project "Refactor the auth module to use JWT"
 tycho agent create my-project "Fix failing tests in spec/models" --run
 
 # Specify harness and model
-tycho agent create global-web "Review open PRs" --harness claude --model claude-opus-4-5 --run
+tycho agent create global-web "Review open PRs" --harness claude --model claude-opus-5-5 --run
 
 # Delegate and report the child outcome back automatically
 tycho agent create global-web "Review the auth boundary" --parent-agent global-web-agent-123 --run
