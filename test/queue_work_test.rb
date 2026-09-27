@@ -29,7 +29,8 @@ module QueueWorkTest
            "required actions must project user instructions before contextual reports")
     assert(contract.index("do the user instruction") < contract.index("structured report one") &&
            contract.include?('"entry_ids":["report-1","user-1","report-2"]') &&
-           contract.include?("Tycho blocks successful finalization"),
+           contract.include?("successful final result automatically records") &&
+           contract.include?("record only non-default outcomes explicitly"),
            "native work contracts must lead with counts, stable IDs, and the completion gate")
     assert(projection.dig("required_actions", 0, "attachments") == entries[1]["attachments"],
            "required-action projection must preserve attachments")

@@ -29,6 +29,7 @@ module PromptQueueTest
     assert_idle_agent_without_live_pid_dispatches_pending_work
     assert_ineligible_agents_do_not_dispatch_pending_work
     assert_legacy_entries_load_without_authority
+    assert_success_auto_completes_delivered_queue_work
     assert_success_finish_gate_resumes_once_in_same_session
     assert_late_status_write_cannot_finish_successor_run
     assert_active_and_restorable_inquiries_block_dispatch
@@ -774,10 +775,35 @@ module PromptQueueTest
              resumed.active_queue_work["automatic_continuation_count"] == 1,
              "expected one same-session continuation for unresolved work")
 
+      resumed.record_queue_read!(resumed.active_queue_work)
       resumed.structured_result = { "status" => "success", "summary" => "Still incomplete" }
       resumed.send(:gate_successful_queue_work!, resumed.last_run)
-      assert(resumed.last_run.status == "partial" && resumed.active_queue_work["resume_pending"] == false,
-             "expected a second unresolved finish to stay visible without an uncontrolled loop")
+      completed = resumed.queue_work_batch(batch["id"])
+      assert(resumed.last_run.status != "partial" && resumed.active_queue_work.nil? &&
+             completed["state"] == "resolved" &&
+             completed.dig("dispositions", "required-entry", "outcome") == "completed" &&
+             resumed.last_run.metadata["queue_work_auto_completed"] == true,
+             "expected the successful processing run to auto-complete delivered queue work")
+    end
+  end
+
+  def assert_success_auto_completes_delivered_queue_work
+    with_queue_store do |_registry, workspace|
+      agent = terminal_agent(workspace, status: "success", structured_result: {
+        "status" => "success", "summary" => "Processed the queue"
+      })
+      agent.enqueue_prompt!(prompt: "Do the requested work", source: "user", id: "user-entry")
+      agent.enqueue_prompt!(prompt: "Review report", source: "delegation_callback", id: "report-entry")
+      batch = agent.open_queue_work_batch!
+      agent.record_queue_read!(batch)
+
+      agent.send(:gate_successful_queue_work!, agent.last_run)
+      completed = agent.queue_work_batch(batch["id"])
+      assert(agent.last_run.status == "success" && agent.active_queue_work.nil? &&
+             completed["state"] == "resolved" &&
+             completed.dig("dispositions", "user-entry", "outcome") == "completed" &&
+             completed.dig("dispositions", "report-entry", "outcome") == "incorporated",
+             "expected a successful delivered batch to receive source-appropriate default outcomes")
     end
   end
 

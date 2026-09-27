@@ -152,7 +152,7 @@ module HQ
         "[TYCHO QUEUE WORK CONTRACT — REQUIRED]",
         JSON.generate(machine),
         "You own this entire batch. Process every entry. Reading or receiving it does not complete it.",
-        "Tycho blocks successful finalization until every stable entry ID has one valid source-appropriate outcome.",
+        "Tycho keeps this batch durable while it is processed. A successful final result automatically records completed user instructions and incorporated delegated reports; record only non-default outcomes explicitly.",
         "",
         "REQUIRED USER INSTRUCTIONS (#{projected.fetch('user_instruction_count')})"
       ]
@@ -171,7 +171,7 @@ module HQ
       lines << "- None" if projected.fetch("contextual_reports").empty?
       lines << ""
       lines << "CANONICAL FIFO ENTRY IDS: #{projected.fetch('entry_ids').join(', ')}"
-      lines << "Record dispositions before final output with: #{machine.fetch('completion_command')}"
+      lines << "For needs_input, declined_with_reason, or superseded_with_reason outcomes, record dispositions before final output with: #{machine.fetch('completion_command')}"
       lines.join("\n")
     end
 
