@@ -12,6 +12,7 @@ module HQ
     MAX_SEARCH_ENTRIES = 10_000
     MAX_NAME_BYTES = 1_024
     MAX_PREVIEW_BYTES = 256 * 1024
+    MAX_IMAGE_PREVIEW_BYTES = 10 * 1024 * 1024
     IMAGE_MIME_TYPES = {
       ".avif" => "image/avif",
       ".gif" => "image/gif",
@@ -120,12 +121,13 @@ module HQ
 
       file = resolve!(root, relative, kind: :file)
       stat = File.stat(file)
-      raise too_large if stat.size > MAX_PREVIEW_BYTES
-
       if (mime_type = image_mime_type(relative))
+        raise image_too_large if stat.size > MAX_IMAGE_PREVIEW_BYTES
         assert_image_safe!(file, mime_type)
         return file_payload(relative, stat, format: "image", mime_type:)
       end
+
+      raise too_large if stat.size > MAX_PREVIEW_BYTES
 
       bytes = File.binread(file, MAX_PREVIEW_BYTES + 1)
       raise too_large if bytes.bytesize > MAX_PREVIEW_BYTES
@@ -154,10 +156,10 @@ module HQ
 
       file = resolve!(root, relative, kind: :file)
       stat = File.stat(file)
-      raise too_large if stat.size > MAX_PREVIEW_BYTES
+      raise image_too_large if stat.size > MAX_IMAGE_PREVIEW_BYTES
 
-      bytes = File.binread(file, MAX_PREVIEW_BYTES + 1)
-      raise too_large if bytes.bytesize > MAX_PREVIEW_BYTES
+      bytes = File.binread(file, MAX_IMAGE_PREVIEW_BYTES + 1)
+      raise image_too_large if bytes.bytesize > MAX_IMAGE_PREVIEW_BYTES
       assert_image_bytes_safe!(bytes, mime_type)
 
       { path: relative, name: File.basename(relative), size_bytes: stat.size, mime_type:, body: bytes }
@@ -370,11 +372,11 @@ module HQ
     def assert_image_safe!(file, mime_type)
       return unless mime_type == "image/svg+xml"
 
-      assert_image_bytes_safe!(File.binread(file, MAX_PREVIEW_BYTES + 1), mime_type)
+      assert_image_bytes_safe!(File.binread(file, MAX_IMAGE_PREVIEW_BYTES + 1), mime_type)
     end
 
     def assert_image_bytes_safe!(bytes, mime_type)
-      raise too_large if bytes.bytesize > MAX_PREVIEW_BYTES
+      raise image_too_large if bytes.bytesize > MAX_IMAGE_PREVIEW_BYTES
       return unless mime_type == "image/svg+xml"
 
       text = bytes.dup.force_encoding(Encoding::UTF_8)
@@ -494,6 +496,10 @@ module HQ
 
     def too_large
       Error.new("too_large", "File is too large to preview", status: 413)
+    end
+
+    def image_too_large
+      Error.new("image_too_large", "Image is too large to preview", status: 413)
     end
   end
 end

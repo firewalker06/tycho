@@ -15,6 +15,7 @@ module ProjectWorkspaceTest
     assert_rejects_directories_above_the_deterministic_scan_cap
     assert_previews_unicode_and_scrubs_invalid_utf8
     assert_classifies_markdown_and_images
+    assert_previews_ordinary_attachment_sized_images_with_a_separate_limit
     assert_edits_only_safe_current_plain_text
     assert_rejects_binary_large_sensitive_and_generated_files
     assert_reports_permission_errors
@@ -108,6 +109,24 @@ module ProjectWorkspaceTest
       assert(markdown[:format] == "markdown" && markdown[:editable], "expected Markdown to use the shared rich-preview format")
       assert(image[:format] == "image" && image[:mime_type] == "image/png", "expected supported images to expose image preview metadata")
       assert(blob[:body] == png && blob[:mime_type] == "image/png", "expected image bytes to remain scoped to the workspace")
+    end
+  end
+
+  def assert_previews_ordinary_attachment_sized_images_with_a_separate_limit
+    with_workspace do |root|
+      card_attachment_size = 251_284
+      File.binwrite(File.join(root, "attachment.png"), "\x89PNG\r\n\x1A\n".b + ("x" * (card_attachment_size - 8)))
+      File.binwrite(File.join(root, "large-image.png"), "\x89PNG\r\n\x1A\n".b + ("x" * HQ::ProjectWorkspace::MAX_IMAGE_PREVIEW_BYTES))
+      browser = HQ::ProjectWorkspace.new(root)
+
+      preview = browser.preview(path: "attachment.png")
+      image = browser.image(path: "attachment.png")
+      assert(preview[:format] == "image" && preview[:size_bytes] == card_attachment_size,
+             "expected a 245 KB PNG attachment to receive an image preview")
+      assert(image[:body].bytesize == card_attachment_size,
+             "expected image endpoint to serve an ordinary attachment without the text cap")
+      assert_error("image_too_large") { browser.preview(path: "large-image.png") }
+      assert_error("image_too_large") { browser.image(path: "large-image.png") }
     end
   end
 
