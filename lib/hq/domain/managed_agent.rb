@@ -630,6 +630,17 @@ module HQ
       }
     end
 
+    def include_pending_queue_work_with_user_input!(claimed_at: Time.now)
+      batch = active_queue_work || open_queue_work_batch!(opened_at: claimed_at)
+      return nil unless batch
+
+      QueueWork.consume_resume_request!(batch) if batch["resume_pending"] == true
+      result = record_queue_read!(batch, created_at: claimed_at)
+      @prompt_queue_claim = nil
+      @prompt_queue_dispatch_error = nil
+      result
+    end
+
     def complete_queue_work!(batch_id, dispositions, completed_at: Time.now)
       batch = QueueWork.find(@queue_work, batch_id)
       raise ArgumentError, "Unknown queue-work batch: #{batch_id}" unless batch
@@ -2529,7 +2540,11 @@ module HQ
                     elsif !native_resume?
                       composed_prompt
                     else
-                      latest = memory_store.latest_user_message_after(threshold, inclusive: true)
+                      latest = memory_store.latest_user_message_after(
+                        threshold,
+                        inclusive: true,
+                        ignored_metadata: { "queue_read" => true }
+                      )
                       latest.to_s.strip.empty? ? "Continue from the current HQ managed-agent state." : latest.to_s
                     end
       if (batch = active_queue_work)

@@ -535,6 +535,7 @@ module HQ
         author_metadata = target.message_author_metadata(actor)
         message_metadata = [author_metadata, metadata].select { |value| value.is_a?(Hash) }.reduce({}) { |result, value| result.merge(value) }
         target.add_user_message!(text, attachments:, metadata: message_metadata, event_id:)
+        include_pending_queue_work_with_user_input!(target)
         target
       end
     end
@@ -555,6 +556,7 @@ module HQ
           feedback_event_id = event_id_prefix.to_s.empty? ? nil : "#{event_id_prefix}:feedback"
           target.add_user_message!(feedback, metadata: feedback_metadata, event_id: feedback_event_id)
         end
+        include_pending_queue_work_with_user_input!(target)
         target
       end
     end
@@ -818,6 +820,12 @@ module HQ
           @delegation_coordinator.mark_report_resumed!(report_id, now: Time.now) if report_id
         end
       end
+    end
+
+    def include_pending_queue_work_with_user_input!(target)
+      result = target.include_pending_queue_work_with_user_input!
+      mark_claim_reports_resumed!("entries" => result[:entries]) if result && !result[:idempotent]
+      result
     end
 
     def canonical_workspace(path)
