@@ -72,12 +72,19 @@ module HQ
 
   # Keep existing user-owned schemas valid as the structured result contract
   # grows. This changes only fields Tycho owns.
+  RETIRED_RESULT_PROPERTIES = [%w[action proposals].join("_")].freeze
+
   def self.migrate_agent_result_schema!(path)
     source = File.join(BUNDLED_CONFIG_DIR, "schemas", "agent_result.json")
-    migrate_result_schema!(path, source:, owned_properties: %w[memory_handoff summary_sections])
+    migrate_result_schema!(
+      path,
+      source:,
+      owned_properties: %w[memory_handoff summary_sections],
+      remove_properties: RETIRED_RESULT_PROPERTIES
+    )
   end
 
-  def self.migrate_result_schema!(path, source:, owned_properties:)
+  def self.migrate_result_schema!(path, source:, owned_properties:, remove_properties: [])
     current = JSON.parse(File.read(path))
     bundled = JSON.parse(File.read(source))
     properties = current["properties"]
@@ -91,8 +98,12 @@ module HQ
       changed ||= properties[key] != value
       properties[key] = value
     end
+    remove_properties.each do |key|
+      removed = properties.delete(key)
+      changed ||= !removed.nil?
+    end
     required = Array(current["required"])
-    updated_required = required
+    updated_required = required - remove_properties
     missing_required = owned_properties.reject { |key| required.include?(key) }
     updated_required += missing_required
     changed ||= updated_required != required

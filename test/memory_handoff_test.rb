@@ -100,12 +100,17 @@ module MemoryHandoffTest
       required_only_path = File.join(dir, "required_only_agent_result.json")
       bundled = JSON.parse(File.read(SCHEMA_PATH))
       bundled["required"] -= %w[memory_handoff summary_sections]
+      retired_property = %w[action proposals].join("_")
+      bundled["properties"][retired_property] = { "type" => ["array", "null"] }
+      bundled["required"] << retired_property
       File.write(required_only_path, JSON.generate(bundled))
       HQ.migrate_agent_result_schema!(required_only_path)
       required_only = JSON.parse(File.read(required_only_path))
       assert((%w[memory_handoff summary_sections] - required_only.fetch("required")).empty?,
              "expected missing owned required fields to persist even when definitions already match")
-
+      assert(!required_only.fetch("properties").key?(retired_property) &&
+             !required_only.fetch("required").include?(retired_property),
+             "expected retired result property to be removed from user schemas")
     end
   end
 
