@@ -4456,8 +4456,24 @@ select {
 
 .queue-read-summary-status {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 10px;
+}
+
+.queue-read-preview {
+  min-width: 0;
+  max-width: min(42vw, 520px);
+  overflow: hidden;
+  color: var(--muted);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.queue-read-preview::before {
+  content: "— ";
 }
 
 .queue-work-state {
@@ -4474,6 +4490,21 @@ select {
 
 .queue-read-legacy-content {
   white-space: pre-wrap;
+}
+
+@media (max-width: 640px) {
+  .queue-read-block {
+    width: 100%;
+    margin-right: 0;
+  }
+
+  .queue-read-preview {
+    max-width: 28vw;
+  }
+
+  .queue-read-summary-status {
+    gap: 6px;
+  }
 }
 
 .circuit-breaker-recovery-block {

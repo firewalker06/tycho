@@ -541,9 +541,12 @@ module HQ
       metadata["queue_work_batch_id"] = batch["id"] if batch
       recovery_metadata = circuit_breaker_recovery_metadata(entries, claim:, batch:)
       metadata["circuit_breaker_recovery"] = recovery_metadata if recovery_metadata
-      add_user_message!(prompt, attachments:, metadata:)
+      if batch
+        record_queue_read!(batch, created_at: self.class.parse_time(claim["claimed_at"]) || Time.now, metadata:)
+      else
+        add_user_message!(prompt, attachments:, metadata:)
+      end
       claim["message_appended"] = true
-      QueueWork.mark_delivered!(batch) if batch
       true
     end
 
@@ -586,6 +589,45 @@ module HQ
 
     def mark_queue_work_read!(batch, read_id:)
       QueueWork.mark_delivered!(batch, read_id:)
+    end
+
+    def record_queue_read!(batch, created_at: Time.now, metadata: nil)
+      entries = Array(batch["entries"])
+      read_id = batch["read_id"].to_s
+      first_read = read_id.empty?
+      read_id = "queue-read:#{SecureRandom.uuid}" if first_read
+      mark_queue_work_read!(batch, read_id:)
+
+      content = QueueWork.contract(batch, agent_key: @key)
+      attachments = consolidated_prompt_queue_attachments(entries)
+      read_entries = consolidated_prompt_queue_entries(entries, state: batch["state"])
+      event_metadata = metadata.is_a?(Hash) ? metadata.dup : {}
+      event_metadata.merge!(consolidated_prompt_queue_metadata(entries)).merge!(
+        "queue_read" => true,
+        "read_label" => "Read queue",
+        "prompt_queue_entries" => read_entries,
+        "queue_work_batch_id" => batch["id"],
+        "queue_work_state" => batch["state"],
+        "queue_work_projection" => QueueWork.projection(batch)
+      )
+      if first_read
+        AgentMemory.new(self).append_queue_read!(
+          content,
+          read_id:,
+          created_at:,
+          attachments:,
+          metadata: event_metadata
+        )
+      end
+      {
+        entries:,
+        read_entries:,
+        content:,
+        attachments:,
+        read_id:,
+        batch: QueueWork.payload(batch),
+        idempotent: !first_read
+      }
     end
 
     def complete_queue_work!(batch_id, dispositions, completed_at: Time.now)

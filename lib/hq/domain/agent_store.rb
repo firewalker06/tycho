@@ -474,44 +474,10 @@ module HQ
           batch = target.active_queue_work || target.open_queue_work_batch!(opened_at: read_at)
           raise ArgumentError, "No pending queue entries for #{target.key}" unless batch
 
-          read_id = batch["read_id"].to_s
-          first_read = read_id.empty?
-          read_id = "queue-read:#{SecureRandom.uuid}" if first_read
-          target.mark_queue_work_read!(batch, read_id:)
-          entries = Array(batch["entries"])
-          content = QueueWork.contract(batch, agent_key: target.key)
-          attachments = target.consolidated_prompt_queue_attachments(entries)
-          read_entries = target.consolidated_prompt_queue_entries(entries, state: batch["state"])
-          projection = QueueWork.projection(batch)
-          metadata = target.consolidated_prompt_queue_metadata(entries).merge(
-            "queue_read" => true,
-            "read_label" => "Read queue",
-            "prompt_queue_entries" => read_entries,
-            "queue_work_batch_id" => batch["id"],
-            "queue_work_state" => batch["state"],
-            "queue_work_projection" => projection
-          )
-          if first_read
-            AgentMemory.new(target).append_queue_read!(
-              content,
-              read_id:,
-              created_at: read_at,
-              attachments:,
-              metadata:
-            )
-            mark_claim_reports_resumed!("entries" => entries)
-          end
+          result = target.record_queue_read!(batch, created_at: read_at)
+          mark_claim_reports_resumed!("entries" => result[:entries]) unless result[:idempotent]
           save_unlocked(agents)
-          result = {
-            agent: target,
-            entries:,
-            read_entries:,
-            content:,
-            attachments:,
-            read_id:,
-            batch: QueueWork.payload(batch),
-            idempotent: !first_read
-          }
+          result[:agent] = target
         end
         result
       end

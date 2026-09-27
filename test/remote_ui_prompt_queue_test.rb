@@ -45,6 +45,7 @@ module RemoteUIPromptQueueTest
         renderMarkdown: (value) => `<markdown>${value}</markdown>`,
         statusBadge: (label) => `<badge>${label}</badge>`,
         titleFromKey: (value) => String(value),
+        truncate: (value, max) => String(value).length <= max ? String(value) : `${String(value).slice(0, max - 1)}…`,
         iconSvg: (name) => `<svg data-icon="${name}"></svg>`,
         URL,
       };
@@ -170,8 +171,9 @@ module RemoteUIPromptQueueTest
       const userReadEntry = readQueueHtml.match(/<li class="prompt-queue-entry" data-prompt-queue-entry="user-entry">([\s\S]*?)<\/li>/)?.[1] || "";
       const delegatedReadEntry = readQueueHtml.match(/<li class="prompt-queue-entry" data-prompt-queue-entry="delegated-entry">([\s\S]*?)<\/li>/)?.[1] || "";
       if (!readQueueHtml.includes("data-queue-read-block") ||
-          !readQueueHtml.includes('aria-label="Read queue, 2 entries read"') ||
+          !readQueueHtml.includes('aria-label="Read queue, 2 entries read, in_progress, Review the failing test"') ||
           !readQueueHtml.includes('data-icon="eye"') || readQueueHtml.includes("queue-read-brand") ||
+          !readQueueHtml.includes('class="queue-read-preview">Review the failing test</span>') ||
           readQueueHtml.includes("queue-work-required-actions") || readQueueHtml.includes("Required user instructions") ||
           (readQueueHtml.match(/data-queue-work-required/g) || []).length !== 1 ||
           !userReadEntry.includes("data-queue-work-required") || delegatedReadEntry.includes("data-queue-work-required") ||
