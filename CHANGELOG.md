@@ -4,10 +4,56 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
-### Distribution correction
+## 0.12.0 - 2026-09-27
 
-- Correct the v0.11.1 Homebrew contract: v0.11.0 is the last Intel macOS
-  bottle, and v0.11.1 ships Apple Silicon macOS and Linux bottles only.
+### Highlights
+
+- Make queued work a durable receiver-owned contract. Tycho batches pending
+  user prompts and delegated reports, preserves FIFO entries and attachments,
+  renders one compact expandable **Read queue** block, and records per-entry
+  outcomes without exposing duplicate raw contracts.
+- Process queued work in fewer turns. Due entries join an inquiry answer or
+  ordinary prompt in the same run, successful batches clear automatically,
+  work arriving after a claim stays in the next batch, and stopped agents
+  resume eligible queued work without a manual retry.
+- Add delayed continuations and a sleep circuit breaker so managed agents can
+  schedule bounded follow-up work without holding a run open or repeatedly
+  issuing blocking waits.
+- Protect managed-agent state with rolling recovery snapshots, transactional
+  restore, and session-ID reconciliation that rejects accidental large store
+  reductions.
+- Remove the retired experimental assistant surface, schema, actions, assets,
+  and smoke fixtures while keeping legacy records hidden.
+
+### Remote UI and workflow improvements
+
+- Window long Conversation histories and page older blocks on demand, reducing
+  the initial payload and DOM size for iOS PWAs and large agent transcripts.
+- Add optimistic inquiry submission with guarded rollback, prioritize quick
+  agents that need a response, restore Settings primary navigation, and add
+  schedule-session archive controls.
+- Preserve JSON attachment bytes, lift the pull-request diff comment-section
+  limit, fix File Browser row alignment and image preview limits, and keep
+  recent-conversation navigation anchored correctly.
+- Add harness authentication snapshots and refresh Claude suggestions for
+  Opus 5.5 and Fable 5.1.
+
+### Maintainer and distribution changes
+
+- Replace hosted CI with the enforced, commit-specific
+  `signoff/tycho-bin-test` attestation produced after a trusted maintainer runs
+  the complete local suite.
+- Correct the Homebrew platform contract: v0.11.0 remains the last Intel macOS
+  bottle; current releases ship Apple Silicon macOS and Linux bottles only.
+
+### Compatibility
+
+- Existing project, schedule, agent, delegation, queue, and memory stores need
+  no manual migration.
+- Removed experimental configuration is ignored and its legacy agent records
+  remain hidden. Remove obsolete configuration when convenient.
+- Update Tycho-owned installed skills after upgrading so managed agents receive
+  the current QueueWork commands and lifecycle contract.
 
 ## 0.11.1 - 2026-09-16
 
