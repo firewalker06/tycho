@@ -79,13 +79,23 @@ delegated_payload = {
   }]
 }
 unless MODE == "recovery"
+  acceptance_notes = File.join(workspace, "acceptance-notes.md")
+  File.write(acceptance_notes, "# Queue read acceptance\n")
   agent.enqueue_prompt!(
+    id: "fixture-user-entry",
     prompt: "Update the acceptance notes after incorporating the delegated review.",
+    attachments: [{
+      "type" => "file", "title" => "Acceptance notes", "path" => acceptance_notes
+    }],
     source: "user",
     authority: { "owner" => "user", "generation" => 2 }
   )
   agent.enqueue_prompt!(
+    id: "fixture-delegated-entry",
     prompt: "Delegated agent reports:\n#{JSON.generate(delegated_payload)}",
+    attachments: [{
+      "type" => "link", "title" => "Delegated review", "url" => "https://github.com/firewalker06/tycho/issues/233"
+    }],
     source: "delegation_callback",
     authority: { "owner" => "parent", "generation" => 3 }
   )
@@ -169,7 +179,7 @@ if MODE == "recovery"
 else
   puts "Pending stage: expand ‘2 queued’ to show the user prompt and delegated reply."
   puts "Read stage command: #{read_command}"
-  puts "After the command, refresh Conversation and inspect the right-aligned ‘Read queue’ lifecycle card."
+  puts "After the command, refresh Conversation and inspect the right-aligned expandable ‘Read queue’ lifecycle card."
 end
 puts "Fixture root: #{FIXTURE_ROOT}"
 

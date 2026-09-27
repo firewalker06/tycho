@@ -181,33 +181,46 @@ module RemoteUIPromptQueueTest
           ],
         },
       }, 0, { agent });
+      const summaryEnd = readQueueHtml.indexOf("</summary>");
+      const collapsedSummary = readQueueHtml.slice(readQueueHtml.indexOf("<summary"), summaryEnd);
+      const expandedDetail = readQueueHtml.slice(summaryEnd);
       if (!readQueueHtml.includes("data-queue-read-block") ||
-          !readQueueHtml.includes('class="message queue-read-block"') ||
-          !readQueueHtml.includes('role="status" aria-live="polite"') ||
+          !readQueueHtml.includes('class="message-group queue-read-block"') ||
+          !readQueueHtml.includes('<summary class="queue-read-summary"') ||
           !readQueueHtml.includes('aria-label="Read queue, in_progress, Review the failing test"') ||
           !readQueueHtml.includes('data-icon="eye"') || readQueueHtml.includes("queue-read-brand") ||
           !readQueueHtml.includes('class="queue-read-preview">Review the failing test</span>') ||
-          !readQueueHtml.includes('class="queue-work-state">in_progress</span>') ||
-          readQueueHtml.includes("2 entries read") || readQueueHtml.includes("user-entry") ||
-          readQueueHtml.includes("delegated-entry") || readQueueHtml.includes("Failure log") ||
-          readQueueHtml.includes("/tmp/failure.log") || readQueueHtml.includes("Review target") ||
-          readQueueHtml.includes("https://example.test/review-target") || readQueueHtml.includes("Success child") ||
-          readQueueHtml.includes("queue-read-body") || readQueueHtml.includes("<details") ||
-          readQueueHtml.includes("<summary") || readQueueHtml.includes("Edit") || readQueueHtml.includes("Delete")) {
-        throw new Error("Read queue must render only its label, safe preview, and lifecycle status");
+          !readQueueHtml.includes('class="queue-work-state">in_progress</span>') || summaryEnd < 0 ||
+          collapsedSummary.includes("2 entries read") || collapsedSummary.includes("user-entry") ||
+          collapsedSummary.includes("delegated-entry") || collapsedSummary.includes("Failure log") ||
+          collapsedSummary.includes("Review target") || collapsedSummary.includes("Success child") ||
+          !expandedDetail.includes("Entry <code>user-entry</code>") ||
+          !expandedDetail.includes("Entry <code>delegated-entry</code>") ||
+          !expandedDetail.includes("User message · Read · 1 attachment") ||
+          !expandedDetail.includes("Delegated reply · Read · 1 attachment") ||
+          !expandedDetail.includes('data-queue-work-outcome="completed"') ||
+          !expandedDetail.includes('data-queue-work-outcome="incorporated"') ||
+          !expandedDetail.includes("Failure log") || !expandedDetail.includes("/tmp/failure.log") ||
+          !expandedDetail.includes("Review target") ||
+          !expandedDetail.includes('href="https://example.test/review-target" target="_blank" rel="noreferrer"') ||
+          (expandedDetail.match(/aria-label="Entry attachments"/g) || []).length !== 2 ||
+          readQueueHtml.includes("Edit") || readQueueHtml.includes("Delete")) {
+        throw new Error("Read queue must keep a compact summary and expose canonical metadata when expanded");
       }
       if (!styles.includes(".queue-read-block") || !styles.includes("justify-self: end") ||
-          !styles.includes("margin-left: 28px")) {
-        throw new Error("Read queue must share the right-aligned user-message lane");
+          !styles.includes("margin-left: 28px") || !styles.includes("overflow-wrap: anywhere")) {
+        throw new Error("Read queue disclosure must stay right-aligned and overflow-safe");
       }
       const legacyReadHtml = context.renderQueueReadConversationBlock({
         id: "legacy-read", kind: "message", role: "user", content: "legacy first\n\n---\n\nlegacy second",
         metadata: { queue_read: true, read_label: "Read queue", prompt_queue_entry_count: 2 },
       }, 1, { agent });
-      if (!legacyReadHtml.includes('data-icon="eye"') || !legacyReadHtml.includes("legacy first") ||
-          legacyReadHtml.includes("legacy second") || legacyReadHtml.includes("---") ||
+      const legacySummary = legacyReadHtml.slice(legacyReadHtml.indexOf("<summary"), legacyReadHtml.indexOf("</summary>"));
+      if (!legacyReadHtml.includes('data-icon="eye"') || !legacySummary.includes("legacy first") ||
+          legacySummary.includes("legacy second") || legacySummary.includes("---") ||
+          !legacyReadHtml.includes("legacy second") || !legacyReadHtml.includes("---") ||
           legacyReadHtml.includes("Required user instructions") || legacyReadHtml.includes("data-queue-work-required")) {
-        throw new Error("legacy Read queue events must retain a safe concise preview");
+        throw new Error("legacy Read queue events must retain a safe concise summary and expandable fallback");
       }
 
       const recoveryHtml = context.renderCircuitBreakerRecoveryConversationBlock({

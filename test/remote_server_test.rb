@@ -6928,11 +6928,12 @@ module RemoteServerTest
            "expected Remote UI inquiry responses to use the user answers label")
     assert(js[:body].include?("function renderQueueReadConversationBlock") &&
            js[:body].include?('data-queue-read-block') &&
-           js[:body].include?('class="message queue-read-block"') &&
-           js[:body].include?('role="status" aria-live="polite"') &&
+           js[:body].include?('class="message-group queue-read-block"') &&
+           js[:body].include?('<summary class="queue-read-summary"') &&
            js[:body].include?('class="queue-read-preview"') &&
-           js[:body].include?('class="queue-work-state"'),
-           "expected explicit queue reads to render as one concise accessible Conversation card")
+           js[:body].include?('class="queue-work-state"') &&
+           js[:body].include?('showCanonicalDetails: true'),
+           "expected explicit queue reads to render as one concise accessible Conversation disclosure")
     assert(js[:body].include?('class="parsed-json-key"'),
            "expected Remote UI parsed replies to style key labels")
     assert(js[:body].include?('class="parsed-json-value"'),
