@@ -211,6 +211,13 @@ module RemoteUIPromptQueueTest
           !styles.includes("margin-left: 28px") || !styles.includes("overflow-wrap: anywhere")) {
         throw new Error("Read queue disclosure must stay right-aligned and overflow-safe");
       }
+      const sharedBodyRule = styles.indexOf(".message-group-body {");
+      const closedBodyRule = styles.indexOf("details.queue-read-block:not([open]) > .queue-read-body {");
+      const closedBodyRuleEnd = styles.indexOf("}", closedBodyRule);
+      if (sharedBodyRule < 0 || closedBodyRule <= sharedBodyRule ||
+          !styles.slice(closedBodyRule, closedBodyRuleEnd).includes("display: none")) {
+        throw new Error("closed Read queue details must hide the body despite shared message-group display styling");
+      }
       const legacyReadHtml = context.renderQueueReadConversationBlock({
         id: "legacy-read", kind: "message", role: "user", content: "legacy first\n\n---\n\nlegacy second",
         metadata: { queue_read: true, read_label: "Read queue", prompt_queue_entry_count: 2 },

@@ -4499,6 +4499,10 @@ select {
   overflow: hidden;
 }
 
+details.queue-read-block:not([open]) > .queue-read-body {
+  display: none;
+}
+
 .queue-read-legacy-content {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
