@@ -758,7 +758,7 @@ When an authenticated managed agent uses the CLI to delay-send to its own key, t
 
 Moves every currently pending delegated reply and user prompt into one FIFO-preserving durable QueueWork batch. The server records one Conversation block labeled **Read queue** on the first read; repeated reads return the same open batch idempotently. Reading does not complete the work. A concurrent entry accepted after the read lock remains queued for the next batch.
 
-The response and Conversation event share the same structured `entries` representation, including normalized attachments, status, dispositions, and an instructions-first required-actions projection. In the Remote UI, the event appears as a warning-colored expandable **Read queue** block with an eye icon, open/resolved state, required user instructions, and the full FIFO detail rendered through the existing prompt-queue renderer.
+The response and Conversation event share the same structured `entries` representation, including normalized attachments, status, dispositions, and an instructions-first required-actions projection. In the Remote UI, the event appears as a warning-colored, right-aligned **Read queue** card with an eye icon, one concise instruction snippet, and its lifecycle state. Canonical FIFO details, attachments, and dispositions remain available in the stored QueueWork and API representation without adding dense metadata to Conversation.
 
 ```bash
 curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/prompt-queue/read

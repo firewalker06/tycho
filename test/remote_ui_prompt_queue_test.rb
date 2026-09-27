@@ -181,41 +181,33 @@ module RemoteUIPromptQueueTest
           ],
         },
       }, 0, { agent });
-      const delegatedEntryStart = readQueueHtml.indexOf('data-prompt-queue-entry="delegated-entry"');
-      const userReadEntry = readQueueHtml.slice(readQueueHtml.indexOf('data-prompt-queue-entry="user-entry"'), delegatedEntryStart);
-      const delegatedReadEntry = readQueueHtml.slice(delegatedEntryStart, readQueueHtml.indexOf("</ol>", delegatedEntryStart));
       if (!readQueueHtml.includes("data-queue-read-block") ||
-          !readQueueHtml.includes('aria-label="Read queue, 2 entries read, in_progress, Review the failing test"') ||
+          !readQueueHtml.includes('class="message queue-read-block"') ||
+          !readQueueHtml.includes('role="status" aria-live="polite"') ||
+          !readQueueHtml.includes('aria-label="Read queue, in_progress, Review the failing test"') ||
           !readQueueHtml.includes('data-icon="eye"') || readQueueHtml.includes("queue-read-brand") ||
           !readQueueHtml.includes('class="queue-read-preview">Review the failing test</span>') ||
-          readQueueHtml.includes("queue-work-required-actions") || readQueueHtml.includes("Required user instructions") ||
-          (readQueueHtml.match(/data-queue-work-required/g) || []).length !== 1 ||
-          !userReadEntry.includes("data-queue-work-required") || delegatedReadEntry.includes("data-queue-work-required") ||
-          !userReadEntry.includes("Entry <code>user-entry</code>") ||
-          !delegatedReadEntry.includes("Entry <code>delegated-entry</code>") ||
-          !userReadEntry.includes('data-queue-work-outcome="completed"') ||
-          !delegatedReadEntry.includes('data-queue-work-outcome="incorporated"') ||
-          !readQueueHtml.includes("Failure log") || !readQueueHtml.includes("/tmp/failure.log") ||
-          !readQueueHtml.includes("Review target") || !readQueueHtml.includes("https://example.test/review-target") ||
-          (readQueueHtml.match(/aria-label="Entry attachments"/g) || []).length !== 2 ||
-          !readQueueHtml.includes("in_progress") ||
-          (readQueueHtml.match(/data-prompt-queue-entry=/g) || []).length !== 2 ||
-          !readQueueHtml.includes("Review the failing test") || !readQueueHtml.includes("Success child") ||
-          readQueueHtml.includes("---") || readQueueHtml.includes("Edit") || readQueueHtml.includes("Delete")) {
-        throw new Error("Read queue must render as a concise expandable block with structured read-only entries");
+          !readQueueHtml.includes('class="queue-work-state">in_progress</span>') ||
+          readQueueHtml.includes("2 entries read") || readQueueHtml.includes("user-entry") ||
+          readQueueHtml.includes("delegated-entry") || readQueueHtml.includes("Failure log") ||
+          readQueueHtml.includes("/tmp/failure.log") || readQueueHtml.includes("Review target") ||
+          readQueueHtml.includes("https://example.test/review-target") || readQueueHtml.includes("Success child") ||
+          readQueueHtml.includes("queue-read-body") || readQueueHtml.includes("<details") ||
+          readQueueHtml.includes("<summary") || readQueueHtml.includes("Edit") || readQueueHtml.includes("Delete")) {
+        throw new Error("Read queue must render only its label, safe preview, and lifecycle status");
       }
-      if (!styles.includes(".queue-work-entry-attachments code") ||
-          !styles.includes("overflow-wrap: anywhere") || !styles.includes("white-space: normal")) {
-        throw new Error("canonical queue details must remain readable at desktop and mobile widths");
+      if (!styles.includes(".queue-read-block") || !styles.includes("justify-self: end") ||
+          !styles.includes("margin-left: 28px")) {
+        throw new Error("Read queue must share the right-aligned user-message lane");
       }
       const legacyReadHtml = context.renderQueueReadConversationBlock({
         id: "legacy-read", kind: "message", role: "user", content: "legacy first\n\n---\n\nlegacy second",
         metadata: { queue_read: true, read_label: "Read queue", prompt_queue_entry_count: 2 },
       }, 1, { agent });
-      if (!legacyReadHtml.includes('data-icon="eye"') ||
-          !legacyReadHtml.includes("legacy first") || !legacyReadHtml.includes("---") ||
+      if (!legacyReadHtml.includes('data-icon="eye"') || !legacyReadHtml.includes("legacy first") ||
+          legacyReadHtml.includes("legacy second") || legacyReadHtml.includes("---") ||
           legacyReadHtml.includes("Required user instructions") || legacyReadHtml.includes("data-queue-work-required")) {
-        throw new Error("legacy Read queue events must retain the safe raw fallback and current visual contract");
+        throw new Error("legacy Read queue events must retain a safe concise preview");
       }
 
       const recoveryHtml = context.renderCircuitBreakerRecoveryConversationBlock({
