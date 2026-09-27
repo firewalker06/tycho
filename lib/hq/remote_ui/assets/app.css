@@ -4440,6 +4440,8 @@ select {
 
 .queue-read-block {
   justify-self: end;
+  width: min(calc(100% - 28px), 1040px);
+  max-width: calc(100% - 28px);
   margin-right: 0;
   margin-left: 28px;
   border-color: color-mix(in srgb, var(--warning) 34%, var(--border));
@@ -4457,6 +4459,7 @@ select {
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
+  cursor: pointer;
 }
 
 .queue-read-icon {
@@ -4490,8 +4493,25 @@ select {
   color: color-mix(in srgb, var(--warning) 84%, var(--text));
 }
 
+.queue-read-body {
+  min-width: 0;
+  padding: 10px 12px 12px;
+  overflow: hidden;
+}
+
+details.queue-read-block:not([open]) > .queue-read-body {
+  display: none;
+}
+
+.queue-read-legacy-content {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 640px) {
   .queue-read-block {
+    width: calc(100% - 28px);
+    max-width: calc(100% - 28px);
     margin-right: 0;
     margin-left: 28px;
   }
