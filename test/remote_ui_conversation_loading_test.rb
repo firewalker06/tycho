@@ -89,7 +89,7 @@ module RemoteUIConversationLoadingTest
       }
 
       const optimistic = { id: "local", kind: "message", role: "user", content: "Optimistic prompt", client_request_id: "request-1" };
-      const acknowledged = { id: "server", kind: "message", role: "user", content: "Optimistic prompt", metadata: { personal_assistant_client_request_id: "request-1" } };
+      const acknowledged = { id: "server", kind: "message", role: "user", content: "Optimistic prompt", metadata: { client_request_id: "request-1" } };
       if (!pendingConversationBlockAcknowledged(optimistic, [acknowledged])) {
         throw new Error("server acknowledgement did not suppress the duplicate optimistic message");
       }

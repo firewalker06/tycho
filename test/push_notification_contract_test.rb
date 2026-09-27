@@ -7,11 +7,7 @@ require_relative "../lib/hq/remote_server"
 module PushNotificationContractTest
   module_function
 
-  Agent = Struct.new(:key, :status, :display_name, :last_summary, :personal, :unread, keyword_init: true) do
-    def personal_assistant?
-      personal
-    end
-
+  Agent = Struct.new(:key, :status, :display_name, :last_summary, :unread, keyword_init: true) do
     def no_action_needed?
       false
     end
@@ -67,7 +63,7 @@ module PushNotificationContractTest
     expected_titles.each do |status, title|
       payload = service.send(:agent_push_payload, Agent.new(
                                key: "release-check", status:, display_name: "Release check",
-                               last_summary: "Confirm the rollout.", personal: false
+                               last_summary: "Confirm the rollout."
                              ), unread_count: 2).fetch(:payload)
       assert(payload == {
                title:,
@@ -80,28 +76,14 @@ module PushNotificationContractTest
              }, "expected concise generic #{status} notification contract")
     end
 
-    fred_payload = service.send(:agent_push_payload, Agent.new(
-                                     key: "fred-today", status: "awaiting-input", display_name: "ignored",
-                                     last_summary: "Choose a release path.", personal: true
-                                   ), unread_count: 1).fetch(:payload)
-    assert(fred_payload == {
-             title: "Input needed",
-             body: "FRED: Choose a release path.",
-             tag: "hq:agents",
-             renotify: true,
-             silent: false,
-             badge_count: 1,
-             url: "/#personal-assistant"
-           }, "expected FRED notification to retain its identity and route in the concise contract")
-
     notifier = RecordingNotifier.new
     service.instance_variable_set(:@push_notification_store, RecordingPushStore.new)
     service.instance_variable_set(:@web_push_notifier, notifier)
     agents = [
       Agent.new(key: "release-input", status: "awaiting-input", display_name: "Release input",
-                last_summary: "Confirm the rollout.", personal: false, unread: true),
+                last_summary: "Confirm the rollout.", unread: true),
       Agent.new(key: "release-done", status: "succeeded", display_name: "Release done",
-                last_summary: "Rollout confirmed.", personal: false, unread: true)
+                last_summary: "Rollout confirmed.", unread: true)
     ]
     service.send(:dispatch_agent_push_events, agents.map { |agent| Event.new(agent_key: agent.key) }, agents:)
     assert(notifier.payloads.map(&:last) == [

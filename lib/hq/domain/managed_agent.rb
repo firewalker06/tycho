@@ -521,8 +521,6 @@ module HQ
         "baseline_run_count" => run_count,
         "message_appended" => resuming_batch
       }
-      client_request_ids = entries.map { |entry| entry["client_request_id"].to_s.strip }.reject(&:empty?)
-      @prompt_queue_claim["personal_assistant_client_request_ids"] = client_request_ids unless client_request_ids.empty?
       @prompt_queue_dispatch_error = nil
       @prompt_queue_claim
     end
@@ -543,11 +541,6 @@ module HQ
       metadata["queue_work_batch_id"] = batch["id"] if batch
       recovery_metadata = circuit_breaker_recovery_metadata(entries, claim:, batch:)
       metadata["circuit_breaker_recovery"] = recovery_metadata if recovery_metadata
-      request_ids = Array(claim["personal_assistant_client_request_ids"]).filter_map do |id|
-        value = id.to_s.strip
-        value.empty? ? nil : value
-      end
-      metadata["personal_assistant_client_request_ids"] = request_ids unless request_ids.empty?
       add_user_message!(prompt, attachments:, metadata:)
       claim["message_appended"] = true
       QueueWork.mark_delivered!(batch) if batch
@@ -766,10 +759,6 @@ module HQ
       @archived
     end
 
-    def personal_assistant?
-      @role == "personal_assistant_daily"
-    end
-
     def refresh_session_identity!
       capture_session_id!
       @session_id
@@ -972,9 +961,6 @@ module HQ
     end
 
     def poll!
-      if !@pid && recover_completed_intent_run!
-        return
-      end
       return unless @pid
       stop_stale_direct_output_wait! if running?
       return if running?
@@ -1036,7 +1022,6 @@ module HQ
     end
 
     def running?
-      recover_spawned_pid!
       return false unless @pid
       return false if completed_status_available?
       return false unless ProcessLiveness.alive?(@pid)
@@ -1307,19 +1292,6 @@ module HQ
                        agent_key: @key,
                        project_key: @project_key,
                        content: text)
-    end
-
-    # Server-owned action receipts are part of the assistant's durable context,
-    # but are never represented as a fabricated user request or a new run.
-    def add_personal_assistant_action_result!(content, metadata: nil)
-      text = content.to_s.strip
-      return if text.empty?
-
-      created_at = Time.now
-      @messages << AgentMessage.new(role: "assistant", content: text, created_at:, metadata: metadata)
-      trim_messages!
-      memory_store.append_personal_assistant_action_result!(text, created_at:, metadata:)
-      HQ.hooks.publish("personal_assistant.action_result_added", agent_key: @key, content: text)
     end
 
     def conversation_messages
@@ -1714,31 +1686,6 @@ module HQ
       derived_log_path("run-#{token}.sleep-incident.json")
     end
 
-    def recover_spawned_pid!
-      return if @pid || !last_run || last_run.status != "running"
-      return if completed_status_available?
-      return unless last_run.metadata&.key?("personal_assistant_summary_intent")
-
-      path = run_pid_file_path(last_run.run_id)
-      candidate = Integer(File.read(path).strip, 10)
-      @pid = candidate if ProcessLiveness.alive?(candidate) && own_process_group?(candidate)
-    rescue StandardError
-      nil
-    end
-
-    def recover_completed_intent_run!
-      return false unless !@pid && last_run&.status == "running"
-      return false unless last_run.metadata&.key?("personal_assistant_summary_intent")
-      return false unless completed_status_available?
-
-      @finished_at ||= Time.now
-      @last_exit_code = read_exit_code
-      FileUtils.rm_f(run_pid_file_path(last_run.run_id))
-      @pid = nil
-      finalize_latest_run!
-      true
-    end
-
     def unscoped_status_file_path
       derived_log_path("status")
     end
@@ -1895,9 +1842,6 @@ module HQ
       build_summary!
       apply_sleep_circuit_breaker_result!(run)
       gate_successful_queue_work!(run)
-      if personal_assistant? && run.status == "success" && @structured_result.is_a?(Hash) && @structured_result["action_proposals"].is_a?(Array)
-        run.metadata = (run.metadata || {}).merge("personal_assistant_action_proposals" => @structured_result["action_proposals"])
-      end
       persist_memory_handoff!(run)
       capture_run_memory!(run)
       add_assistant_message!(@summary) if @summary
@@ -2333,11 +2277,7 @@ module HQ
         "entries" => entries,
         "claimed_at" => value["claimed_at"].to_s,
         "baseline_run_count" => value["baseline_run_count"].to_i,
-        "message_appended" => value["message_appended"] == true,
-        "personal_assistant_client_request_ids" => Array(value["personal_assistant_client_request_ids"]).filter_map do |request_id|
-          normalized = request_id.to_s.strip
-          normalized.empty? ? nil : normalized
-        end
+        "message_appended" => value["message_appended"] == true
       }
     end
 
@@ -2524,9 +2464,6 @@ module HQ
                        end
       threshold = last_run&.finished_at || @finished_at || @started_at
       threshold = Time.at(threshold.to_i) if threshold
-      receipt_cutoff = last_run&.started_at || @started_at
-      receipt_cutoff = Time.at(receipt_cutoff.to_i) if receipt_cutoff
-      feedback = native_resume? ? memory_store.personal_assistant_action_results_after(receipt_cutoff) : []
       base_prompt = if !claimed_prompt.to_s.strip.empty?
                       claimed_prompt
                     elsif !native_resume?
@@ -2535,7 +2472,6 @@ module HQ
                       latest = memory_store.latest_user_message_after(threshold, inclusive: true)
                       latest.to_s.strip.empty? ? "Continue from the current HQ managed-agent state." : latest.to_s
                     end
-      base_prompt = ["[TYCHO ACTION RESULTS — server verified]", feedback.join("\n\n"), base_prompt].join("\n\n") if feedback.any?
       if (batch = active_queue_work)
         contract = QueueWork.contract(batch, agent_key: @key)
         base_prompt = [contract, base_prompt].join("\n\n") unless base_prompt.include?("[TYCHO QUEUE WORK CONTRACT — REQUIRED]")
@@ -2725,7 +2661,7 @@ module HQ
     end
 
     def result_schema_path
-      personal_assistant? ? PERSONAL_ASSISTANT_RESULT_SCHEMA : AGENT_RESULT_SCHEMA
+      AGENT_RESULT_SCHEMA
     end
 
     def canonical_result_schema_json

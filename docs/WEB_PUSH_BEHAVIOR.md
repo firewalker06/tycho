@@ -98,7 +98,7 @@ Example agent payload:
 - `lib/hq/domain/web_push_notifier.rb`: sends encrypted Web Push payloads.
 - `lib/hq/remote_ui/assets/service-worker.js`: receives push events, displays notifications, and updates badges in the background.
 - `lib/hq/remote_ui/assets/app.js`: mirrors unread-agent state to the header logo badge and the installed PWA app badge.
-- `test/push_notification_contract_test.rb`: locks exact agent, FRED, schedule, and test payload copy and delivery options.
+- `test/push_notification_contract_test.rb`: locks exact agent, schedule, and test payload copy and delivery options.
 - `test/remote_server_test.rb`: regression coverage for push payload shape, service worker behavior, and Remote UI hooks.
 - `test/web_push_notifier_test.rb`: delivery-error coverage for permanent and transient subscription failures.
 

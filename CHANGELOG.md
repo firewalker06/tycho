@@ -44,10 +44,6 @@ All notable changes to Tycho will be documented in this file.
 
 ### Highlights
 
-- Add FRED, an opt-in protected daily Personal Assistant in Remote UI. It has
-  explicit setup, personality and timezone settings, durable/replay-safe
-  message acceptance, daily continuity, recommendations, action previews, and
-  per-action confirmation receipts.
 - Add compatible custom harness profiles for Codex, Claude Code, OpenCode, and
   Pi. Profiles retain their native command, session, parsing, skill, metrics,
   and readiness behavior.
@@ -79,7 +75,7 @@ All notable changes to Tycho will be documented in this file.
 - Improve schedule session refresh and status reporting, including automatic
   resume after a user reply and documented daemon-state semantics.
 - Add GPT-6 Astra pricing and refresh the operator quickstart, harness,
-  workspace, scheduling, delegation, and Personal Assistant documentation.
+  workspace, scheduling, and delegation documentation.
 
 ### Compatibility and upgrade notes
 
@@ -92,9 +88,6 @@ All notable changes to Tycho will be documented in this file.
 - After upgrading, update each installed Tycho-owned skill in
   **Settings → Skills** and restart a harness if it does not discover the new
   version. See [Upgrading to 0.11](docs/UPGRADING.md#0110).
-- FRED is disabled until explicitly configured in Remote UI. Its protected
-  daily sessions are intentionally unavailable through ordinary agent,
-  delegation, inquiry, and queue lifecycle endpoints.
 - Remove the unfinished Tycho GitHub App login and review-posting workflow,
   including `tycho github login|status|logout`. Agent-scoped pull-request diffs
   remain read-only and use an authenticated local `gh` CLI.

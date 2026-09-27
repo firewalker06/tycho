@@ -49,13 +49,11 @@ run the confirmed **Update** action for each Tycho-owned installation, then
 restart a harness if needed. Tycho never overwrites unmarked or locally changed
 skills; reconcile those copies manually. See [Tycho skills](TYCHO_SKILLS.md).
 
-### Custom profiles and FRED
+### Custom profiles
 
 Existing `adapter: claude` custom harness entries remain supported. New custom
 profiles must declare a supported native adapter (`codex`, `claude`,
-`opencode`, or `pi`). FRED is opt-in and disabled until it is configured in
-Remote UI. It uses protected daily sessions, so ordinary agent lifecycle and
-delegation APIs cannot control it.
+`opencode`, or `pi`).
 
 ### Delegation and notifications
 

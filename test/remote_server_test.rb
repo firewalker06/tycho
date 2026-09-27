@@ -54,12 +54,6 @@ module RemoteServerTest
     assert_remote_hidden_settings_filter_projects_and_agents
     assert_remote_response_style_settings
     assert_remote_session_loop_settings
-    assert_remote_personal_assistant_routes
-    assert_remote_personal_assistant_message_acceptance
-    assert_remote_personal_assistant_acceptance_launch_and_queue_reconciliation
-    assert_remote_personal_assistant_dedicated_routes
-    assert_remote_personal_assistant_action_execution
-    assert_remote_archived_personal_assistant_history
     assert_remote_skill_installation_requires_confirmation
     assert_remote_schedule_routes
     assert_remote_setup_payload_includes_readiness
@@ -86,7 +80,6 @@ module RemoteServerTest
     assert_serve_command_accepts_daemon_mode
     assert_remote_push_subscription_lifecycle
     assert_remote_agent_push_notifications
-    assert_remote_fred_push_notifications
     assert_remote_search_index_includes_agents_and_projects
     assert_remote_skills_payload_uses_discovery
     assert_remote_ui_routes_load_without_auth
@@ -638,950 +631,6 @@ module RemoteServerTest
     end
   end
 
-  def assert_remote_personal_assistant_routes
-    with_remote_temp_store do |dir|
-      workspace = File.join(dir, "workspace")
-      write_project_workspace(workspace)
-      service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
-      server = HQ::RemoteServer.new
-
-      initial = server.send(:route, service, "GET", "/personal-assistant", {}, nil)
-      assert(initial.dig(:body, :personal_assistant, :state) == "unconfigured",
-             "expected personal assistant to remain off by default, got #{initial.dig(:body, :personal_assistant).inspect}")
-      begin
-        server.send(:route, service, "POST", "/personal-assistant/setup", {
-                      "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta"
-                    }, nil)
-        raise "expected setup confirmation rejection"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 400 && e.message.include?("explicitly confirmed"),
-               "expected setup mutation to require an exact confirmation")
-      end
-      configured = server.send(:route, service, "POST", "/personal-assistant/setup", {
-                                 "confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta", "personality" => "steady"
-                               }, nil)
-      assert(configured.dig(:body, :personal_assistant, :configured) &&
-             configured.dig(:body, :personal_assistant, :config, "personality") == "steady",
-             "expected confirmed setup to persist the validated personality")
-      opened = server.send(:route, service, "POST", "/personal-assistant/open", {}, nil)
-      key = opened.dig(:body, :personal_assistant, :active_key)
-      assert(key && opened.dig(:body, :personal_assistant, :agent, "role") == "personal_assistant_daily",
-             "expected Remote API to open the protected daily conversation")
-      assert(!service.agents.any? { |agent| agent[:key] == key },
-             "expected generic agent list to omit the protected FRED daily session")
-      assert(!service.resource_snapshot[:agents].any? { |agent| agent[:key] == key },
-             "expected generic resource catalog to omit the protected FRED daily session")
-      assert(!service.execute_personal_assistant_action("inspect_agents", {}).fetch("agents").any? { |agent| agent[:key] == key },
-             "expected FRED inspect_agents to retain generic-agent semantics without listing itself")
-      personal_status = server.send(:route, service, "GET", "/personal-assistant", {}, nil)
-      assert(personal_status.dig(:body, :personal_assistant, :agent, :key) == key,
-             "expected dedicated FRED status API to retain the protected conversation detail")
-      fred = service.send(:find_agent!, key)
-      fred.mark_unread!
-      service.send(:save_agent, fred)
-      read = server.send(:route, service, "PUT", "/personal-assistant/reading", {
-                           "active_key" => key,
-                           "generation" => opened.dig(:body, :personal_assistant, :generation)
-                         }, nil)
-      assert(!read.dig(:body, :agent, :unread), "expected the active FRED session to clear unread through its protected route")
-      proposals_path = File.join(HQ::PERSONAL_ASSISTANT_DIR, "proposals.json")
-      HQ::FileStore.write_json(proposals_path, {
-                                 "proposals" => [
-                                   { "id" => "historical-fixture", "type" => "start_agent", "description" => "Old fixture", "arguments" => { "agent_key" => "fixture" }, "active_key" => "personal-assistant-2026-09-04-5", "source_run_id" => "old-run", "state" => "rejected" },
-                                   { "id" => "current-proposal", "type" => "start_agent", "description" => "Current action", "arguments" => { "agent_key" => "fixture" }, "active_key" => key, "source_run_id" => "current-run", "state" => "awaiting_confirmation" }
-                                 ]
-                               })
-      actions = server.send(:route, service, "GET", "/personal-assistant/actions", {}, nil)
-      assert(actions.dig(:body, :proposals).map { |proposal| proposal["id"] } == ["current-proposal"],
-             "expected FRED actions API to scope receipts and proposals to the active daily session")
-      executing_state = HQ::FileStore.read_json(proposals_path, fallback: {})
-      executing_state.fetch("proposals").find { |proposal| proposal["id"] == "current-proposal" }["state"] = "executing"
-      HQ::FileStore.write_json(proposals_path, executing_state)
-      begin
-        server.send(:route, service, "POST", "/personal-assistant/reset", { "confirmed" => true }, nil)
-        raise "expected executing proposal to block reset before lifecycle mutation"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409 && e.message.include?("still executing") &&
-               service.send(:load_all_agents).any? { |agent| agent.key == key } && service.registry.personal_assistant["enabled"] == true,
-               "expected executing proposal reset preflight to leave FRED configured and active")
-      end
-      executing_state.fetch("proposals").find { |proposal| proposal["id"] == "current-proposal" }["state"] = "awaiting_confirmation"
-      HQ::FileStore.write_json(proposals_path, executing_state)
-      begin
-        server.send(:route, service, "POST", "/personal-assistant/actions/proposals", {
-                      "proposals" => [{ "type" => "start_agent", "description" => "Start an agent", "arguments" => { "agent_key" => "example" } }]
-                    }, nil)
-        raise "expected client proposal injection to be unavailable"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 404, "expected client proposal injection to be unavailable")
-      end
-      begin
-        server.send(:route, service, "POST", "/agents/#{key}/archive", {}, nil)
-        raise "expected protected archive rejection"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409 && e.message.include?("dedicated lifecycle"),
-               "expected the Remote API to hide manual archive control behind a conflict")
-      end
-      [["/agents/#{key}/start", {}], ["/agents/#{key}/stop", {}], ["/agents/#{key}/messages", { "prompt" => "Hello", "start" => true }]].each do |path, body|
-        begin
-          server.send(:route, service, "POST", path, body, nil)
-          raise "expected protected lifecycle rejection for #{path}"
-        rescue HQ::RemoteServer::Error => e
-          assert(e.status == 409 && e.message.include?("dedicated lifecycle"),
-                 "expected #{path} to reject ordinary control of FRED")
-        end
-      end
-      [["POST", "/agents/#{key}/memory/rebuild", {}], ["PUT", "/agents/#{key}/reading", {}], ["POST", "/agents/#{key}/pull-requests/refresh", {}]].each do |method, path, body|
-        begin
-          server.send(:route, service, method, path, body, nil)
-          raise "expected protected generic write rejection for #{path}"
-        rescue HQ::RemoteServer::Error => e
-          assert(e.status == 409 && e.message.include?("dedicated lifecycle"),
-                 "expected #{path} to reject ordinary writes to FRED")
-        end
-      end
-      protected_agent = service.send(:find_agent!, key)
-      protected_attachment_path = File.join(protected_agent.workspace, "protected.txt")
-      File.write(protected_attachment_path, "Protected FRED attachment\n")
-      protected_agent.add_user_message!("Keep this attachment.", attachments: [{ "type" => "file", "title" => "Protected attachment", "path" => protected_attachment_path }])
-      service.send(:save_agent, protected_agent)
-      protected_attachment_id = service.personal_assistant.dig(:agent, :attachments, 0, "id")
-      protected_log_paths = protected_agent.log_files.select { |path| File.exist?(path) }
-      begin
-        server.send(:route, service, "DELETE", "/attachments/#{protected_attachment_id}", {}, nil)
-        raise "expected protected attachment deletion rejection"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409 && e.message.include?("dedicated lifecycle") && File.exist?(protected_attachment_path),
-               "expected attachment deletion to preserve FRED-owned file and metadata")
-      end
-      begin
-        server.send(:route, service, "POST", "/agents/archive", { "keys" => [key] }, nil)
-        raise "expected protected bulk archive rejection"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409 && e.message.include?("dedicated lifecycle"),
-               "expected bulk archive to reject ordinary control of FRED")
-      end
-      begin
-        server.send(:route, service, "POST", "/personal-assistant/reset", {}, nil)
-        raise "expected reset confirmation rejection"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 400 && e.message.include?("exact confirmation"),
-               "expected FRED reset to require exact confirmation")
-      end
-      reset = server.send(:route, service, "POST", "/personal-assistant/reset", { "confirmed" => true }, nil)
-      assert(reset.dig(:body, :personal_assistant, :state) == "unconfigured" && !reset.dig(:body, :personal_assistant, :configured),
-             "expected confirmed reset to return FRED onboarding state")
-      assert(service.send(:load_all_agents).none?(&:personal_assistant?) && service.registry.personal_assistant.empty?,
-             "expected reset to delete the protected session and clear FRED configuration")
-      assert(protected_log_paths.none? { |path| File.exist?(path) } &&
-             Dir.glob(File.join(HQ::AGENT_ARCHIVE_DIR, "**", "*#{key}*"), File::FNM_DOTMATCH).empty?,
-             "expected reset to delete FRED session logs instead of moving them into the archive")
-      assert(!File.read(service.registry.path).include?("personal_assistant"),
-             "expected reset to remove FRED model, reasoning effort, and timezone from configuration")
-      assert(HQ::FileStore.read_json(proposals_path, fallback: {}).fetch("proposals", []).empty?,
-             "expected reset to clear pending and historical FRED action state")
-    end
-  end
-
-  def assert_remote_personal_assistant_message_acceptance
-    with_remote_temp_store do |dir|
-      old_codex_bin = ENV["TYCHO_CODEX_BIN"]
-      ENV["TYCHO_CODEX_BIN"] = File.join(dir, "missing-fred-codex")
-      begin
-        workspace = File.join(dir, "workspace")
-        write_project_workspace(workspace)
-        service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
-        server = HQ::RemoteServer.new
-        server.send(:route, service, "POST", "/personal-assistant/setup", {
-                      "confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta"
-                    }, nil)
-        opened = server.send(:route, service, "POST", "/personal-assistant/open", {}, nil)
-        session = opened.dig(:body, :personal_assistant)
-        context = { "active_key" => session[:active_key], "generation" => session[:generation] }
-        post_message = lambda do |body|
-          server.send(:route, service, "POST", "/personal-assistant/messages", body, nil).fetch(:body)
-        end
-
-      attachment = {
-        "filename" => "note.txt",
-        "mime_type" => "text/plain",
-        "content_base64" => Base64.strict_encode64("hello from FRED")
-      }
-      first_request = context.merge(
-        "client_request_id" => "client-duplicate-message",
-        "prompt" => "Record this once.",
-        "attachments" => [attachment],
-        "start" => false
-      )
-      first = post_message.call(first_request)
-      replay = post_message.call(first_request)
-      assert(first[:accepted] && first.dig(:acceptance, "state") == "accepted",
-             "expected the first FRED message to return a durable accepted state")
-      assert(replay[:accepted] && replay[:replayed] && replay.dig(:acceptance, "state") == "accepted",
-             "expected an identical FRED message to replay its acceptance")
-      fred = service.send(:find_agent!, session[:active_key])
-      message_events = HQ::AgentMemory.new(fred).events.select do |event|
-        event["type"] == "user_message" && event.dig("metadata", "personal_assistant_client_request_id") == "client-duplicate-message"
-      end
-      assert(message_events.length == 1, "expected duplicate FRED messages to append one journal event")
-      assert(fred.attachments.count { |item| item["source"] == "remote_upload" } == 1,
-             "expected duplicate FRED messages to import one attachment")
-
-      recommendation = session.dig(:recommendations, "items", 0)
-      recommendation_request = context.merge(
-        "client_request_id" => "client-recommendation-message",
-        "prompt" => recommendation.fetch("prompt"),
-        "recommendation" => recommendation.merge(
-          "id" => "#{session.dig(:recommendations, "for_date")}:0",
-          "for_date" => session.dig(:recommendations, "for_date"),
-          "source" => session.dig(:recommendations, "source")
-        ),
-        "start" => false
-      )
-      selected = post_message.call(recommendation_request)
-      selected_replay = post_message.call(recommendation_request)
-      assert(selected[:accepted] && selected_replay[:replayed],
-             "expected recommendation selection to use durable message acceptance and replay")
-      recommendation_events = HQ::AgentMemory.new(service.send(:find_agent!, session[:active_key])).events.select do |event|
-        event["type"] == "user_message" &&
-          event.dig("metadata", "personal_assistant_client_request_id") == "client-recommendation-message"
-      end
-      recorded_recommendation = recommendation_events.first&.dig("metadata", "personal_assistant_recommendation")
-      assert(recommendation_events.length == 1 &&
-             recorded_recommendation&.fetch("prompt") == recommendation.fetch("prompt") &&
-             recorded_recommendation&.fetch("description") == recommendation.fetch("description") &&
-             recorded_recommendation&.fetch("id") == "#{session.dig(:recommendations, "for_date")}:0",
-             "expected one replayable user message with authoritative title, description, and request context")
-
-      begin
-        post_message.call(recommendation_request.merge(
-          "client_request_id" => "client-mismatched-recommendation",
-          "recommendation" => recommendation.merge("prompt" => "A different prompt")
-        ))
-        raise "expected mismatched recommendation rejection"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409 && e.details[:code] == "recommendation_mismatch",
-               "expected recommendation wording mismatch to fail before persistence")
-      end
-
-      begin
-        post_message.call(first_request.merge("prompt" => "A different payload."))
-        raise "expected client request payload mismatch"
-      rescue HQ::RemoteServer::Error => e
-        code = e.details.is_a?(Hash) ? (e.details[:code] || e.details["code"]) : nil
-        assert(e.status == 409 && code == "payload_mismatch",
-               "expected a reused FRED request ID with another payload to conflict: #{e.details.inspect}")
-      end
-
-      store = service.instance_variable_get(:@agent_store)
-      start_attempts = 0
-      store.define_singleton_method(:start_agent!) do |_key, run_metadata: nil, **_options|
-        start_attempts += 1
-        raise IOError, "simulated lost FRED start acknowledgement"
-      end
-      lost_request = context.merge(
-        "client_request_id" => "client-lost-ack",
-        "prompt" => "Record before the launch acknowledgement is lost.",
-        "start" => true
-      )
-      begin
-        post_message.call(lost_request)
-        raise "expected an unknown start outcome"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409 && e.details[:code] == "acceptance_unknown",
-               "expected an interrupted FRED launch to return acceptance_unknown")
-      ensure
-        store.singleton_class.remove_method(:start_agent!)
-      end
-      lookup = server.send(:route, service, "GET", "/personal-assistant/messages/acceptance/client-lost-ack", {}, nil)
-      assert(lookup.dig(:body, :acceptance, "state") == "unknown" &&
-             lookup.dig(:body, :acceptance, "launch_attempted") == true,
-             "expected lookup to preserve an unknown launch outcome")
-      lost_events = HQ::AgentMemory.new(service.send(:find_agent!, session[:active_key])).events.select do |event|
-        event["type"] == "user_message" && event.dig("metadata", "personal_assistant_client_request_id") == "client-lost-ack"
-      end
-      assert(lost_events.length == 1, "expected the lost acknowledgement path to retain its one message")
-      begin
-        post_message.call(lost_request)
-        raise "expected unknown acceptance replay to remain unavailable"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409 && e.details[:code] == "acceptance_unknown" && start_attempts == 1,
-               "expected an unknown acceptance not to launch again or report accepted")
-      end
-
-      failed_start_request = context.merge(
-        "client_request_id" => "client-start-failed",
-        "prompt" => "Record a proven startup failure.",
-        "start" => true
-      )
-      begin
-        post_message.call(failed_start_request)
-        raise "expected a proven FRED startup failure"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409 && e.details[:code] == "start_failed",
-               "expected a recorded FRED startup failure to remain actionable")
-      end
-      failed_lookup = server.send(:route, service, "GET", "/personal-assistant/messages/acceptance/client-start-failed", {}, nil)
-      assert(failed_lookup.dig(:body, :acceptance, "state") == "start_failed",
-             "expected lookup to preserve the distinct start_failed state")
-      begin
-        post_message.call(failed_start_request)
-        raise "expected start_failed acceptance replay to remain rejected"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409 && e.details[:code] == "start_failed",
-               "expected a start_failed duplicate not to return accepted true")
-      end
-
-      lifecycle = service.instance_variable_get(:@personal_assistant)
-      evidence_payload = lambda do |id|
-        context.merge("client_request_id" => id, "kind" => "message", "prompt" => "Evidence for #{id}", "start" => false)
-      end
-      staged_id = "client-staged-run-evidence"
-      staged_payload = evidence_payload.call(staged_id)
-      lifecycle.begin_message_acceptance!(
-        client_request_id: staged_id, active_key: context["active_key"], generation: context["generation"],
-        fingerprint: Digest::SHA256.hexdigest(JSON.generate(staged_payload)), payload: staged_payload, validate: false
-      )
-      recorded_id = "client-recorded-failure-evidence"
-      recorded_payload = evidence_payload.call(recorded_id).merge("start" => true)
-      lifecycle.begin_message_acceptance!(
-        client_request_id: recorded_id, active_key: context["active_key"], generation: context["generation"],
-        fingerprint: Digest::SHA256.hexdigest(JSON.generate(recorded_payload)), payload: recorded_payload, validate: false
-      )
-      lifecycle.update_message_acceptance!(recorded_id, "state" => "message_recorded", "message_id" => recorded_id)
-      evidence_agent = store.load.find { |candidate| candidate.key == session[:active_key] }
-      now = Time.now
-      evidence_agent.runs.concat([
-        HQ::ManagedAgent::AgentRun.new(
-          run_id: "fred-staged-evidence-run", started_at: now, finished_at: now, status: "succeeded",
-          log_path: evidence_agent.raw_log_path,
-          metadata: { "personal_assistant_client_request_id" => staged_id }
-        ),
-        HQ::ManagedAgent::AgentRun.new(
-          run_id: "fred-recorded-failure-evidence-run", started_at: now, finished_at: now, status: "failed",
-          log_path: evidence_agent.raw_log_path,
-          metadata: { "personal_assistant_client_request_id" => recorded_id, "start_failure" => true }
-        )
-      ])
-      store.save([evidence_agent])
-      staged_lookup = server.send(:route, service, "GET", "/personal-assistant/messages/acceptance/#{staged_id}", {}, nil).fetch(:body)
-      recorded_lookup = server.send(:route, service, "GET", "/personal-assistant/messages/acceptance/#{recorded_id}", {}, nil).fetch(:body)
-      assert(staged_lookup.dig(:acceptance, "state") == "dispatched" &&
-             staged_lookup.dig(:acceptance, "run_id") == "fred-staged-evidence-run",
-             "expected positive run evidence to promote a staged acceptance to dispatched")
-      assert(recorded_lookup.dig(:acceptance, "state") == "start_failed" &&
-             recorded_lookup.dig(:acceptance, "run_id") == "fred-recorded-failure-evidence-run",
-             "expected positive start-failure evidence to promote a recorded acceptance to start_failed")
-      evidence_events = HQ::AgentMemory.new(store.load.find { |candidate| candidate.key == session[:active_key] }).events.select do |event|
-        event["type"] == "user_message" && [staged_id, recorded_id].include?(event.dig("metadata", "personal_assistant_client_request_id"))
-      end
-      assert(evidence_events.empty?, "expected evidence-only acceptance reconciliation not to append the message again")
-
-        concurrent_context = context
-        threads = %w[a b].map do |suffix|
-          Thread.new do
-            post_message.call(concurrent_context.merge(
-                                 "client_request_id" => "client-concurrent-#{suffix}",
-                                 "prompt" => "Concurrent request #{suffix}",
-                                 "start" => false
-                               ))
-          end
-        end
-        concurrent = threads.map(&:value)
-        assert(concurrent.all? { |response| response[:accepted] && response.dig(:acceptance, "state") == "accepted" },
-               "expected concurrent FRED request IDs to receive independent durable acceptances")
-
-        same_id_request = context.merge(
-          "client_request_id" => "client-concurrent-same",
-          "prompt" => "The same request must append once.",
-          "start" => false
-        )
-        same_id_threads = 2.times.map do
-          Thread.new { post_message.call(same_id_request) }
-        end
-        same_id_responses = same_id_threads.map(&:value)
-        assert(same_id_responses.all? { |response| response[:accepted] && response.dig(:acceptance, "state") == "accepted" },
-               "expected same-ID concurrent FRED requests to resolve to accepted or replayed")
-        assert(same_id_responses.count { |response| response[:replayed] } == 1,
-               "expected exactly one same-ID concurrent FRED request to be a replay")
-        same_id_events = HQ::AgentMemory.new(service.send(:find_agent!, session[:active_key])).events.count do |event|
-          event["type"] == "user_message" && event.dig("metadata", "personal_assistant_client_request_id") == "client-concurrent-same"
-        end
-        assert(same_id_events == 1, "expected same-ID concurrent FRED requests to append one journal event")
-
-        old_context = context
-        restarted = server.send(:route, service, "POST", "/personal-assistant/restart", { "confirmed" => true }, nil)
-        new_session = restarted.dig(:body, :personal_assistant)
-        assert(new_session[:active_key] != old_context["active_key"] && new_session[:generation] > old_context["generation"],
-               "expected restart to roll the FRED session identity")
-        begin
-          post_message.call(old_context.merge(
-                              "client_request_id" => "client-stale-rollover",
-                              "prompt" => "Must not enter the new FRED session.",
-                              "start" => false
-                            ))
-          raise "expected a stale FRED session request to fail"
-        rescue HQ::RemoteServer::Error => e
-          assert(e.status == 409 && e.details[:code] == "stale_session",
-                 "expected a request captured before rollover to fail with stale_session")
-        end
-
-        lifecycle = service.instance_variable_get(:@personal_assistant)
-        257.times do |index|
-          payload = {
-            "active_key" => new_session[:active_key], "generation" => new_session[:generation],
-            "kind" => "message", "prompt" => "Retention #{index}", "start" => false
-          }
-          lifecycle.begin_message_acceptance!(
-            client_request_id: "client-retention-#{index}",
-            active_key: new_session[:active_key], generation: new_session[:generation],
-            fingerprint: Digest::SHA256.hexdigest(JSON.generate(payload)), payload:, validate: false
-          )
-        end
-        expired = lifecycle.message_acceptance("client-retention-0")
-        assert(expired["state"] == "expired" && expired["code"] == "acceptance_expired",
-               "expected evicted FRED acceptance IDs to leave explicit tombstones")
-        begin
-          lifecycle.begin_message_acceptance!(
-            client_request_id: "client-retention-0",
-            active_key: new_session[:active_key], generation: new_session[:generation],
-            fingerprint: "another", payload: { "prompt" => "reuse" }, validate: false
-          )
-          raise "expected an expired acceptance ID to remain unavailable"
-        rescue HQ::PersonalAssistantLifecycle::AcceptanceConflict => e
-          assert(e.code == "acceptance_expired", "expected expired FRED IDs not to be silently reusable")
-        end
-
-        next_session = server.send(:route, service, "POST", "/personal-assistant/restart", { "confirmed" => true }, nil)
-        next_context = {
-          "active_key" => next_session.dig(:body, :personal_assistant, :active_key),
-          "generation" => next_session.dig(:body, :personal_assistant, :generation)
-        }
-        state_path = File.join(HQ::PERSONAL_ASSISTANT_DIR, "state.json")
-        state = HQ::FileStore.read_json(state_path, fallback: {})
-        tombstones = Array(state["message_acceptance_tombstones"])
-        assert(tombstones.none? { |item| item["generation"].to_i == new_session[:generation].to_i },
-               "expected closed-generation FRED tombstones to be pruned")
-        assert(lifecycle.message_acceptance("client-retention-0").nil?,
-               "expected lookup to stop retaining an evicted ID after its generation closes")
-
-        begin
-          post_message.call(context.merge(
-                              "client_request_id" => "client-pruned-stale",
-                              "prompt" => "Must stay outside the later FRED session.",
-                              "start" => false
-                            ))
-          raise "expected a stale context to fail after tombstone pruning"
-        rescue HQ::RemoteServer::Error => e
-          assert(e.status == 409 && e.details[:code] == "stale_session",
-                 "expected stale FRED context rejection to survive tombstone pruning")
-        end
-
-        257.times do |index|
-          payload = {
-            "active_key" => next_context["active_key"], "generation" => next_context["generation"],
-            "kind" => "message", "prompt" => "Current generation retention #{index}", "start" => false
-          }
-          lifecycle.begin_message_acceptance!(
-            client_request_id: "client-current-retention-#{index}",
-            active_key: next_context["active_key"], generation: next_context["generation"],
-            fingerprint: Digest::SHA256.hexdigest(JSON.generate(payload)), payload:, validate: false
-          )
-        end
-        current_expired = lifecycle.message_acceptance("client-current-retention-0")
-        assert(current_expired["state"] == "expired" && current_expired["code"] == "acceptance_expired",
-               "expected current-generation anti-replay tombstones to remain available")
-      end
-    ensure
-      if old_codex_bin
-        ENV["TYCHO_CODEX_BIN"] = old_codex_bin
-      else
-        ENV.delete("TYCHO_CODEX_BIN")
-      end
-    end
-  end
-
-  def assert_remote_personal_assistant_acceptance_launch_and_queue_reconciliation
-    with_remote_temp_store do |dir|
-      old_codex_bin = ENV["TYCHO_CODEX_BIN"]
-      old_fake_gate = ENV["TYCHO_FRED_FAKE_GATE"]
-      fake_codex = File.join(dir, "fake-fred-codex")
-      fake_gate = File.join(dir, "hold-first-fred-run")
-      File.write(fake_codex, <<~RUBY)
-        #!#{RbConfig.ruby}
-        require "json"
-
-        gate = ENV["TYCHO_FRED_FAKE_GATE"].to_s
-        sleep 0.01 while !gate.empty? && File.exist?(gate)
-        result = {
-          "status" => "success",
-          "summary" => "FRED fake harness completed.",
-          "summary_sections" => nil,
-          "inquiry" => nil,
-          "attachments" => nil,
-          "memory_handoff" => nil
-        }
-        output_index = ARGV.index("-o")
-        File.write(ARGV.fetch(output_index + 1), JSON.generate(result)) if output_index
-        puts JSON.generate("type" => "thread.started", "thread_id" => "fred-fake-session")
-        puts JSON.generate(
-          "type" => "item.completed",
-          "item" => { "type" => "agent_message", "text" => JSON.generate(result) }
-        )
-      RUBY
-      File.chmod(0o755, fake_codex)
-      FileUtils.touch(fake_gate)
-      ENV["TYCHO_CODEX_BIN"] = fake_codex
-      ENV["TYCHO_FRED_FAKE_GATE"] = fake_gate
-      begin
-        workspace = File.join(dir, "workspace")
-        write_project_workspace(workspace)
-        service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
-        server = HQ::RemoteServer.new
-        server.send(:route, service, "POST", "/personal-assistant/setup", {
-                      "confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta"
-                    }, nil)
-        opened = server.send(:route, service, "POST", "/personal-assistant/open", {}, nil)
-        session = opened.dig(:body, :personal_assistant)
-        context = { "active_key" => session[:active_key], "generation" => session[:generation] }
-
-        launched = server.send(
-          :route, service, "POST", "/personal-assistant/messages",
-          context.merge("client_request_id" => "client-positive-launch", "prompt" => "Start this FRED run.", "start" => true), nil
-        ).fetch(:body)
-        assert(launched[:accepted] && launched.dig(:acceptance, "state") == "dispatched" &&
-               !launched.dig(:acceptance, "run_id").to_s.empty?,
-               "expected a successful fake FRED launch to resolve as dispatched")
-
-        queued = server.send(
-          :route, service, "POST", "/personal-assistant/messages",
-          context.merge("client_request_id" => "client-queued-reconcile", "prompt" => "Queue this FRED run.", "start" => false), nil
-        ).fetch(:body)
-        assert(queued[:accepted] && queued.dig(:acceptance, "state") == "queued",
-               "expected a message submitted during a FRED run to be durably queued")
-
-        cancel_request = context.merge(
-          "client_request_id" => "client-queued-cancel", "prompt" => "Cancel this queued FRED message.", "start" => false
-        )
-        cancel_queued = server.send(:route, service, "POST", "/personal-assistant/messages", cancel_request, nil).fetch(:body)
-        assert(cancel_queued[:accepted] && cancel_queued.dig(:acceptance, "state") == "queued",
-               "expected the cancellation fixture to begin as a queued acceptance")
-        canceled = server.send(
-          :route, service, "DELETE", "/personal-assistant/prompt-queue/client-queued-cancel", context, nil
-        ).fetch(:body)
-        assert(canceled[:accepted] && canceled[:canceled] && !canceled[:replayed] &&
-               canceled.dig(:acceptance, "state") == "canceled" &&
-               canceled.dig(:deleted, "id") == "client-queued-cancel",
-               "expected dedicated queue deletion to settle a durable canceled receipt")
-        canceled_lookup = server.send(
-          :route, service, "GET", "/personal-assistant/messages/acceptance/client-queued-cancel", {}, nil
-        ).fetch(:body)
-        assert(canceled_lookup.dig(:acceptance, "state") == "canceled",
-               "expected acceptance lookup to reconcile the canceled queue receipt")
-        begin
-          server.send(:route, service, "POST", "/personal-assistant/messages", cancel_request, nil)
-          raise "expected a canceled FRED message replay to remain unavailable"
-        rescue HQ::RemoteServer::Error => e
-          assert(e.status == 409 && e.details[:code] == "canceled" &&
-                 e.details.dig(:acceptance, "state") == "canceled",
-                 "expected an identical canceled message replay to return its receipt without requeue")
-        end
-        canceled_replay = server.send(
-          :route, service, "DELETE", "/personal-assistant/prompt-queue/client-queued-cancel", context, nil
-        ).fetch(:body)
-        assert(canceled_replay[:accepted] && canceled_replay[:canceled] && canceled_replay[:replayed] &&
-               canceled_replay.dig(:acceptance, "state") == "canceled",
-               "expected repeated queue cancellation to replay the durable receipt without dispatch")
-
-        interrupted_id = "client-queued-cancel-interrupted"
-        interrupted_request = context.merge(
-          "client_request_id" => interrupted_id, "prompt" => "Interrupt this queued cancellation.", "start" => false
-        )
-        interrupted_queued = server.send(:route, service, "POST", "/personal-assistant/messages", interrupted_request, nil).fetch(:body)
-        assert(interrupted_queued.dig(:acceptance, "state") == "queued",
-               "expected the interrupted cancellation fixture to begin as queued")
-        lifecycle = service.instance_variable_get(:@personal_assistant)
-        original_acceptance_update = lifecycle.method(:update_message_acceptance!)
-        lifecycle.define_singleton_method(:update_message_acceptance!) do |client_request_id, attributes|
-          if client_request_id.to_s == interrupted_id && attributes.is_a?(Hash) && attributes["state"] == "canceled"
-            raise IOError, "simulated lost cancellation acknowledgement"
-          end
-
-          original_acceptance_update.call(client_request_id, attributes)
-        end
-        begin
-          server.send(:route, service, "DELETE", "/personal-assistant/prompt-queue/#{interrupted_id}", context, nil)
-          raise "expected an interrupted queue cancellation to remain unknown"
-        rescue HQ::RemoteServer::Error => e
-          assert(e.status == 409 && e.details[:code] == "cancellation_unknown" &&
-                 e.details.dig(:acceptance, "state") == "unknown",
-                 "expected an interrupted cancellation to return an unknown receipt without success")
-        ensure
-          lifecycle.singleton_class.remove_method(:update_message_acceptance!)
-        end
-        interrupted_lookup = server.send(
-          :route, service, "GET", "/personal-assistant/messages/acceptance/#{interrupted_id}", {}, nil
-        ).fetch(:body)
-        assert(interrupted_lookup.dig(:acceptance, "state") == "unknown" &&
-               interrupted_lookup.dig(:acceptance, "code") == "cancellation_in_flight",
-               "expected lookup to preserve cancellation uncertainty rather than claiming canceled")
-        begin
-          server.send(:route, service, "POST", "/personal-assistant/messages", interrupted_request, nil)
-          raise "expected an interrupted cancellation replay to remain unavailable"
-        rescue HQ::RemoteServer::Error => e
-          assert(e.status == 409 && e.details[:code] == "cancellation_unknown" &&
-                 e.details.dig(:acceptance, "state") == "unknown",
-                 "expected an interrupted cancellation replay not to requeue or report accepted")
-        end
-
-        race_id = "client-queued-cancel-dispatch-race"
-        race_request = context.merge(
-          "client_request_id" => race_id, "prompt" => "Dispatch wins this cancellation race.", "start" => false
-        )
-        race_queued = server.send(:route, service, "POST", "/personal-assistant/messages", race_request, nil).fetch(:body)
-        assert(race_queued.dig(:acceptance, "state") == "queued",
-               "expected the cancellation race fixture to begin as queued")
-        lifecycle.update_message_acceptance!(race_id, "state" => "unknown", "code" => "cancellation_in_flight")
-
-        FileUtils.rm_f(fake_gate)
-        deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5.0
-        loop do
-          current = service.agent(session[:active_key])
-          break if current[:run_count].to_i >= 2 && current[:finished_at]
-          raise "expected the fake FRED queue dispatch to finish" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
-
-          sleep 0.02
-        end
-        reconciled = server.send(
-          :route, service, "GET", "/personal-assistant/messages/acceptance/client-queued-reconcile", {}, nil
-        ).fetch(:body)
-        assert(reconciled.dig(:acceptance, "state") == "dispatched" &&
-               !reconciled.dig(:acceptance, "run_id").to_s.empty?,
-               "expected queued FRED acceptance to reconcile to its positive dispatched run evidence")
-        race_lookup = server.send(
-          :route, service, "GET", "/personal-assistant/messages/acceptance/#{race_id}", {}, nil
-        ).fetch(:body)
-        assert(race_lookup.dig(:acceptance, "state") == "dispatched" &&
-               !race_lookup.dig(:acceptance, "run_id").to_s.empty?,
-               "expected positive dispatch evidence to win a cancellation race without downgrading to queued")
-      ensure
-        FileUtils.rm_f(fake_gate)
-        if old_codex_bin
-          ENV["TYCHO_CODEX_BIN"] = old_codex_bin
-        else
-          ENV.delete("TYCHO_CODEX_BIN")
-        end
-        if old_fake_gate
-          ENV["TYCHO_FRED_FAKE_GATE"] = old_fake_gate
-        else
-          ENV.delete("TYCHO_FRED_FAKE_GATE")
-        end
-      end
-    end
-  end
-
-  def assert_remote_personal_assistant_dedicated_routes
-    with_remote_temp_store do |dir|
-      old_codex_bin = ENV["TYCHO_CODEX_BIN"]
-      ENV["TYCHO_CODEX_BIN"] = File.join(dir, "missing-fred-codex")
-      begin
-        workspace = File.join(dir, "workspace")
-        write_project_workspace(workspace)
-        registry = registry_for_project(dir, workspace)
-        service = HQ::RemoteService.new(registry:)
-        server = HQ::RemoteServer.new
-        server.send(:route, service, "POST", "/personal-assistant/setup", {
-                      "confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta"
-                    }, nil)
-        opened = server.send(:route, service, "POST", "/personal-assistant/open", {}, nil)
-        session = opened.dig(:body, :personal_assistant)
-        context = { "active_key" => session[:active_key], "generation" => session[:generation] }
-        store = service.instance_variable_get(:@agent_store)
-
-      seed_inquiry = lambda do |number|
-        agent = store.load.find { |candidate| candidate.key == session[:active_key] }
-        started_at = Time.now - number
-        run = HQ::ManagedAgent::AgentRun.new(
-          run_id: "fred-inquiry-run-#{number}", started_at:, finished_at: started_at + 1,
-          status: "input_required", log_path: agent.raw_log_path
-        )
-        inquiry = {
-          "message" => "Choose FRED step #{number}",
-          "fields" => [{ "key" => "next_step", "label" => "Next step", "input_type" => "text", "required" => true }]
-        }
-        agent.runs << run
-        agent.structured_result = { "status" => "input_required", "summary" => "Needs input", "inquiry" => inquiry }
-        inquiry_id = agent.send(:inquiry_identity, inquiry, run:)
-        HQ::AgentMemory.new(agent).append_inquiry_request!(inquiry, created_at: started_at + 1, inquiry_id:)
-        store.save([agent])
-        inquiry_id
-      end
-
-      first_inquiry = seed_inquiry.call(1)
-      answer = server.send(
-        :route, service, "POST", "/personal-assistant/inquiries/#{first_inquiry}/answer",
-        context.merge(
-          "client_request_id" => "client-inquiry-answer-1",
-          "answer" => JSON.generate("next_step" => "Continue"),
-          "feedback" => "Use the smallest safe step.",
-          "start" => false
-        ), nil
-      ).fetch(:body)
-      assert(answer[:accepted] && answer.dig(:acceptance, "state") == "accepted" &&
-             answer.dig(:acceptance, "inquiry_id") == first_inquiry,
-             "expected the dedicated inquiry answer route to use its path inquiry ID")
-
-      second_inquiry = seed_inquiry.call(2)
-      dismissed = server.send(
-        :route, service, "POST", "/personal-assistant/inquiries/#{second_inquiry}/dismiss", context, nil
-      ).fetch(:body)
-      restored = server.send(
-        :route, service, "POST", "/personal-assistant/inquiries/#{second_inquiry}/restore", context, nil
-      ).fetch(:body)
-      assert(dismissed[:accepted] && dismissed[:inquiry_id] == second_inquiry,
-             "expected the dedicated dismiss route to suspend the requested inquiry")
-      assert(restored[:accepted] && restored[:restored] && restored[:inquiry_id] == second_inquiry,
-             "expected the dedicated restore route to restore the requested inquiry")
-
-      begin
-        server.send(:route, service, "POST", "/agents/#{session[:active_key]}/inquiries/#{second_inquiry}/answer", {
-                      "answer" => "forbidden"
-                    }, nil)
-        raise "expected generic FRED inquiry control rejection"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409 && e.message.include?("dedicated lifecycle"),
-               "expected generic inquiry control to reject the protected FRED session")
-      end
-
-      server.send(
-        :route, service, "POST", "/personal-assistant/inquiries/#{second_inquiry}/answer",
-        context.merge("client_request_id" => "client-inquiry-answer-2", "answer" => "Proceed", "start" => false), nil
-      )
-
-      queue_entry = "fred-queue-edit"
-      agent = store.load.find { |candidate| candidate.key == session[:active_key] }
-      agent.enqueue_prompt!(prompt: "Original queued prompt", id: queue_entry)
-      store.save([agent])
-      edited = server.send(
-        :route, service, "PATCH", "/personal-assistant/prompt-queue/#{queue_entry}",
-        context.merge("prompt" => "Edited queued prompt"), nil
-      ).fetch(:body)
-      assert(edited[:accepted] && edited.dig(:queue_entry, "prompt") == "Edited queued prompt",
-             "expected the dedicated queue edit route to update a queued FRED entry")
-      deleted = server.send(
-        :route, service, "DELETE", "/personal-assistant/prompt-queue/#{queue_entry}", context, nil
-      ).fetch(:body)
-      assert(deleted[:accepted] && deleted.dig(:deleted, "id") == queue_entry,
-             "expected the dedicated queue delete route to delete a queued FRED entry")
-
-      claimed_entry = "fred-queue-claimed"
-      agent = store.load.find { |candidate| candidate.key == session[:active_key] }
-      agent.enqueue_prompt!(prompt: "Already claimed queued prompt", id: claimed_entry)
-      agent.send(:claim_pending_prompts!)
-      agent.send(:fail_prompt_queue_dispatch!, "claimed entry fixture")
-      store.save([agent])
-      begin
-        server.send(
-          :route, service, "PATCH", "/personal-assistant/prompt-queue/#{claimed_entry}",
-          context.merge("prompt" => "Must not edit a claimed prompt"), nil
-        )
-        raise "expected an already-claimed queue edit to conflict"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409 && e.message.include?("no longer editable"),
-               "expected an already-claimed queue edit to return a conflict")
-      end
-      begin
-        server.send(
-          :route, service, "DELETE", "/personal-assistant/prompt-queue/#{claimed_entry}", context, nil
-        )
-        raise "expected an already-claimed queue delete to conflict"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409 && e.message.include?("no longer deletable"),
-               "expected an already-claimed queue delete to return a conflict")
-      end
-
-      retry_agent = store.load.find { |candidate| candidate.key == session[:active_key] }
-      retry_agent.enqueue_prompt!(prompt: "Retry this queued prompt", id: "fred-queue-retry")
-      retry_agent.send(:claim_pending_prompts!)
-      retry_agent.send(:fail_prompt_queue_dispatch!, "simulated dispatch failure")
-      store.save([retry_agent])
-      retried = server.send(
-        :route, service, "POST", "/personal-assistant/prompt-queue/retry", context, nil
-      ).fetch(:body)
-      assert(retried[:accepted] && retried.dig(:agent, :prompt_queue, "dispatch_error"),
-             "expected the dedicated queue retry route to perform one explicit retry")
-
-      begin
-        server.send(:route, service, "POST", "/personal-assistant/prompt-queue/retry", context.merge("parent_agent_key" => "parent"), nil)
-        raise "expected parent-declared FRED queue retry rejection"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 403, "expected parent-declared FRED queue control to remain forbidden")
-      end
-      end
-    ensure
-      if old_codex_bin
-        ENV["TYCHO_CODEX_BIN"] = old_codex_bin
-      else
-        ENV.delete("TYCHO_CODEX_BIN")
-      end
-    end
-  end
-
-  def assert_remote_personal_assistant_action_execution
-    with_remote_temp_store do |dir|
-      workspace = File.join(dir, "workspace")
-      write_project_workspace(workspace)
-      service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
-      server = HQ::RemoteServer.new
-      server.send(:route, service, "POST", "/personal-assistant/setup", {
-                    "confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta"
-                  }, nil)
-      opened = server.send(:route, service, "POST", "/personal-assistant/open", {}, nil)
-      active_key = opened.dig(:body, :personal_assistant, :active_key)
-      actions = service.instance_variable_get(:@personal_assistant_actions)
-      register = lambda do |item, run_id|
-        actions.register_finalized!([item], active_key:, source_run_id: run_id).first
-      end
-      confirm = lambda do |proposal|
-        preflight = server.send(:route, service, "GET", "/personal-assistant/actions/#{proposal.fetch("id")}/preflight", {}, nil).fetch(:body).fetch(:preflight)
-        server.send(:route, service, "POST", "/personal-assistant/actions/#{proposal.fetch("id")}/confirm", {
-                      "confirmed" => true, "proposal_digest" => proposal.fetch("digest"),
-                      "precondition_token" => preflight.fetch("precondition_token")
-                    }, nil).dig(:body, :proposal)
-      end
-
-      created_project = register.call(
-        { "type" => "create_project", "description" => "Create FRED project", "arguments" => {
-          "key" => "fred-demo", "name" => "FRED Demo", "path" => workspace, "group" => "FRED", "agent" => "codex", "model" => nil, "reasoning_effort" => nil
-        } }, "fred-create-project"
-      )
-      project_result = confirm.call(created_project)
-      assert(project_result.dig("result", "project", "key") == "fred-demo" && project_result.dig("tracked", "project_key") == "fred-demo",
-             "expected confirmed FRED project creation to return and track its local identity")
-      updated_project = register.call(
-        { "type" => "update_project", "description" => "Rename FRED project", "arguments" => {
-          "project_key" => "fred-demo", "name" => "FRED Demo Updated", "group" => nil, "agent" => nil, "model" => nil, "reasoning_effort" => nil
-        } }, "fred-update-project"
-      )
-      updated_result = confirm.call(updated_project)
-      assert(updated_result.dig("result", "project", "name") == "FRED Demo Updated" && updated_result.dig("result", "project", "group") == "FRED",
-             "expected null project update values to preserve existing configuration")
-
-      created_schedule = register.call(
-        { "type" => "create_schedule", "description" => "Schedule daily review", "arguments" => {
-          "key" => "fred-daily", "name" => "FRED daily", "cron" => "0 9 * * *", "timezone" => "local", "project_key" => "fred-demo", "agent_name" => "FRED reviewer", "message" => "Review the project.", "system_message" => nil
-        } }, "fred-create-schedule"
-      )
-      schedule_result = confirm.call(created_schedule)
-      assert(schedule_result.dig("result", "schedule", "key") == "fred-daily" && schedule_result.dig("tracked", "schedule_key") == "fred-daily",
-             "expected confirmed FRED schedule creation to return and track its local identity")
-      paused = confirm.call(register.call(
-                              { "type" => "pause_schedule", "description" => "Pause", "arguments" => { "schedule_key" => "fred-daily" } }, "fred-pause-schedule"
-                            ))
-      assert(paused.dig("result", "schedule", "paused"), "expected confirmed FRED pause to return paused schedule state")
-      resumed = confirm.call(register.call(
-                               { "type" => "resume_schedule", "description" => "Resume", "arguments" => { "schedule_key" => "fred-daily" } }, "fred-resume-schedule"
-                             ))
-      assert(!resumed.dig("result", "schedule", "paused"), "expected confirmed FRED resume to return active schedule state")
-
-      inspected_agent = service.create_agent("project_key" => "web", "name" => "Inspectable", "prompt" => "Inspect me", "agent" => "codex")
-      run_receipt = register.call(
-        { "type" => "inspect_agent_run", "description" => "Inspect run", "arguments" => { "agent_key" => inspected_agent[:key] } }, "fred-inspect-run"
-      )
-      log_receipt = register.call(
-        { "type" => "inspect_agent_log", "description" => "Inspect log", "arguments" => { "agent_key" => inspected_agent[:key] } }, "fred-inspect-log"
-      )
-      assert(run_receipt.dig("result", "agent", "key") == inspected_agent[:key] && log_receipt.dig("result", "agent_key") == inspected_agent[:key],
-             "expected FRED agent run and log inspections to return useful scoped data")
-
-      conversation = service.conversation(active_key)
-      assert(conversation.any? { |entry| entry[:content].include?("Tycho completed create_project.") },
-             "expected completed FRED actions to persist a readable conversation receipt")
-      created_receipt = conversation.find { |entry| entry.dig(:metadata, "personal_assistant_action_proposal_id") == created_project["id"] }
-      assert(created_receipt && created_receipt.dig(:metadata, "personal_assistant_action_source_run_id") == "fred-create-project",
-             "expected FRED receipt metadata to survive the conversation endpoint")
-      fred_agent = service.send(:find_agent!, active_key)
-      HQ::AgentMemory.new(fred_agent).send(:append_event!, {
-        "type" => "assistant_message", "content" => "Prepared the project action.", "run_id" => "fred-create-project", "created_at" => Time.now.iso8601
-      })
-      source_turn = service.conversation(active_key).find { |entry| entry[:content] == "Prepared the project action." }
-      assert(source_turn.dig(:metadata, "run_id") == "fred-create-project",
-             "expected a FRED source turn run ID to survive the conversation endpoint")
-      duplicate_project = register.call(
-        { "type" => "create_project", "description" => "Check an existing project", "arguments" => created_project.fetch("arguments").merge("name" => "FRED Demo Updated") },
-        "fred-verify-existing-project"
-      )
-      begin
-        confirm.call(duplicate_project)
-        raise "expected unavailable duplicate project preview to be rejected"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409 && e.details&.fetch("code", nil) == "preview_unavailable",
-               "expected duplicate project confirmation to reject its unavailable preview")
-      end
-      assert(actions.proposal(duplicate_project.fetch("id"))["state"] == "awaiting_confirmation",
-             "expected an unavailable duplicate project preview to remain unaccepted")
-      stale = register.call(
-        { "type" => "start_agent", "description" => "Start later", "arguments" => { "agent_key" => inspected_agent[:key] } }, "fred-stale-action"
-      )
-      receipt_count = service.conversation(active_key).length
-      service.record_personal_assistant_action_outcome!(stale)
-      assert(service.conversation(active_key).length == receipt_count,
-             "expected an unclaimed proposal to produce no fabricated failure receipt")
-      restarted = server.send(:route, service, "POST", "/personal-assistant/restart", { "confirmed" => true }, nil)
-      assert(restarted.dig(:body, :personal_assistant, :active_key) != active_key, "expected restart to create a new FRED generation")
-      begin
-        confirm.call(stale)
-        raise "expected stale action confirmation to be rejected"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409 && e.message.include?("earlier FRED conversation"), "expected old FRED proposal IDs to be inert after restart")
-      end
-    end
-  end
-
-  def assert_remote_archived_personal_assistant_history
-    with_remote_temp_store do |dir|
-      workspace = File.join(dir, "workspace")
-      write_project_workspace(workspace)
-      service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
-      server = HQ::RemoteServer.new
-      server.send(:route, service, "POST", "/personal-assistant/setup", {
-                    "confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "Asia/Jakarta"
-                  }, nil)
-      opened = server.send(:route, service, "POST", "/personal-assistant/open", {}, nil)
-      archived_key = opened.dig(:body, :personal_assistant, :active_key)
-      session = service.personal_assistant
-      service.submit_personal_assistant_prompt(
-        {
-          "prompt" => "Keep this archived conversation readable.",
-          "client_request_id" => "client-archive-history",
-          "active_key" => session[:active_key],
-          "generation" => session[:generation],
-          "start" => false
-        }
-      )
-      restarted = server.send(:route, service, "POST", "/personal-assistant/restart", { "confirmed" => true }, nil)
-      assert(restarted.dig(:body, :personal_assistant, :active_key) != archived_key, "expected restart to archive the previous FRED session")
-
-      archived = server.send(:route, service, "GET", "/agents/#{archived_key}", {}, nil)
-      archived_agent = archived.dig(:body, :agent)
-      assert(archived_agent[:archived] && archived_agent[:key] == archived_key,
-             "expected an archived FRED session to be readable by its history key")
-      conversation = server.send(:route, service, "GET", "/agents/#{archived_key}/conversation", {}, nil)
-      assert(conversation.dig(:body, :conversation).any? { |entry| entry[:content].include?("Keep this archived conversation readable.") },
-             "expected archived FRED history to retain its conversation")
-      assert(!service.agents.any? { |agent| agent[:key] == archived_key } &&
-             !service.resource_snapshot[:agents].any? { |agent| agent[:key] == archived_key } &&
-             !service.archived_agents[:agents].any? { |agent| agent[:key] == archived_key },
-             "expected archived FRED history to remain hidden from generic agent catalogs")
-      begin
-        server.send(:route, service, "POST", "/agents/#{archived_key}/start", {}, nil)
-        raise "expected archived FRED mutation to remain unavailable"
-      rescue HQ::RemoteServer::Error => e
-        assert([404, 409].include?(e.status), "expected archived FRED history to be read-only")
-      end
-    end
-  end
-
   def assert_remote_skill_installation_requires_confirmation
     with_remote_temp_store do |dir|
       home = File.join(dir, "home")
@@ -1646,7 +695,6 @@ module RemoteServerTest
   def assert_remote_agent_lifecycle
     Dir.mktmpdir("hq-remote-test") do |dir|
       old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
-      old_personal_assistant_dir = replace_constant(HQ, :PERSONAL_ASSISTANT_DIR, File.join(dir, "personal_assistant"))
       old_delegations_file = replace_constant(HQ, :DELEGATIONS_FILE, File.join(dir, "agent_delegations.json"))
       old_server_identity_file = replace_constant(HQ, :SERVER_IDENTITY_FILE, File.join(dir, "server_identity.json"))
       old_usage_metrics_file = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
@@ -1654,7 +702,6 @@ module RemoteServerTest
       old_archive_dir = replace_constant(HQ, :AGENT_ARCHIVE_DIR, File.join(dir, "agents", "archive"))
 
       FileUtils.mkdir_p(HQ::AGENT_LOGS_DIR)
-      FileUtils.mkdir_p(HQ::PERSONAL_ASSISTANT_DIR)
       FileUtils.mkdir_p(HQ::AGENT_ARCHIVE_DIR)
       workspace = File.join(dir, "workspace")
       FileUtils.mkdir_p(workspace)
@@ -1686,7 +733,6 @@ module RemoteServerTest
       assert(service.agents.empty?, "expected archived agent to be removed from active list")
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
-      replace_constant(HQ, :PERSONAL_ASSISTANT_DIR, old_personal_assistant_dir) if old_personal_assistant_dir
       replace_constant(HQ, :DELEGATIONS_FILE, old_delegations_file) if old_delegations_file
       replace_constant(HQ, :SERVER_IDENTITY_FILE, old_server_identity_file) if old_server_identity_file
       replace_constant(HQ, :USAGE_METRICS_FILE, old_usage_metrics_file) if old_usage_metrics_file
@@ -4280,10 +3326,8 @@ module RemoteServerTest
       assert(setup[:tools].map { |item| item[:name] }.sort == %w[tailscale],
              "expected optional tool readiness entries")
       assert(setup.dig(:schema, :valid) == true, "expected valid result schemas")
-      assert(setup.dig(:schema, :schemas, :ordinary) == { valid: true, path: HQ::AGENT_RESULT_SCHEMA },
+      assert(setup[:schema] == { valid: true, path: HQ::AGENT_RESULT_SCHEMA },
              "expected setup to report ordinary result-schema readiness")
-      assert(setup.dig(:schema, :schemas, :personal_assistant) == { valid: true, path: HQ::PERSONAL_ASSISTANT_RESULT_SCHEMA },
-             "expected setup to report FRED result-schema readiness")
       assert(setup.dig(:config, :prompt_template_count) == 1, "expected prompt template count")
       schedule_prompt_template = setup.dig(:config, :schedule_system_message_template).to_s
       assert(schedule_prompt_template.include?("%{title}"),
@@ -5732,61 +4776,6 @@ module RemoteServerTest
     end
   end
 
-  def assert_remote_fred_push_notifications
-    with_remote_temp_store do |dir|
-      workspace = File.join(dir, "workspace")
-      write_project_workspace(workspace)
-      notifier = RecordingPushNotifier.new
-      service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace), web_push_notifier: notifier)
-      service.setup_personal_assistant("confirmed" => true, "model" => "gpt-5.6-sol", "reasoning_effort" => "medium", "timezone" => "UTC")
-      finished_at = Time.now - 60
-      fred = HQ::ManagedAgent.new(
-        key: "personal-assistant-test-1", name: "Personal Assistant · today", project_key: "__personal_assistant__",
-        template_key: "personal_assistant_daily", workspace: workspace, prompt: "Assist.", role: "personal_assistant_daily",
-        started_at: finished_at, finished_at: finished_at, last_exit_code: 0, summary: "Choose the release path.", unread: true,
-        structured_result: { "status" => "input_required", "summary" => "Choose the release path.", "inquiry" => { "message" => "Release now?" } },
-        runs: [HQ::ManagedAgent::AgentRun.new(started_at: finished_at, finished_at: finished_at, exit_code: 0, status: "input_required")]
-      )
-      historical_fred = HQ::ManagedAgent.new(
-        key: "personal-assistant-yesterday-0", name: "Personal Assistant · yesterday", project_key: "__personal_assistant__",
-        template_key: "personal_assistant_daily", workspace: workspace, prompt: "Assist.", role: "personal_assistant_daily",
-        started_at: finished_at, finished_at: finished_at, last_exit_code: 0, summary: "Old work.", unread: true,
-        runs: [HQ::ManagedAgent::AgentRun.new(started_at: finished_at, finished_at: finished_at, exit_code: 0, status: "succeeded")]
-      )
-      HQ::AgentStore.new([]).save([fred, historical_fred])
-      HQ::FileStore.write_json(File.join(HQ::PERSONAL_ASSISTANT_DIR, "state.json"), {
-                                 "active_key" => fred.key, "active_date" => Time.now.utc.strftime("%F"),
-                                 "active_timezone" => "UTC", "generation" => 1, "phase" => "active"
-                               })
-
-      active_notification_keys = service.send(:notification_agents, HQ::AgentStore.new([]).load).select(&:personal_assistant?).map(&:key)
-      assert(active_notification_keys == [fred.key], "expected only the active FRED generation to join notification reconciliation")
-
-      result = service.dispatch_agent_push_notifications!
-      assert(result[:events] == 1, "expected a protected FRED session to dispatch one notification")
-      payload = notifier.payloads.first
-      assert(payload[:title] == "Input needed" && payload[:url] == "/#personal-assistant",
-             "expected FRED answer-required push to use distinct copy and its dedicated route")
-      assert(payload[:badge_count] == 1 && payload[:body].start_with?("FRED:"),
-             "expected FRED push to participate in the shared unread badge")
-      assert(service.agents.empty?, "expected FRED to remain outside the generic agent catalog")
-      activity = service.agent_activity
-      assert(activity[:unread_count] == 1 && activity[:agents].empty?,
-             "expected an unread answer-required FRED to count without entering the generic activity catalog")
-      read = service.mark_personal_assistant_read("active_key" => fred.key, "generation" => 1)
-      assert(!read[:unread] && service.agent_activity[:unread_count].zero?,
-             "expected opening FRED to durably dismiss its answer-required unread count")
-      service.dispatch_agent_push_notifications!
-      assert(notifier.payloads.length == 1, "expected FRED notification deduplication to survive polling")
-      HQ::FileStore.write_json(File.join(HQ::PERSONAL_ASSISTANT_DIR, "state.json"), {
-                                 "active_key" => fred.key, "active_date" => Time.now.utc.strftime("%F"),
-                                 "active_timezone" => "UTC", "generation" => 1, "phase" => "closing"
-                               })
-      assert(service.send(:notification_agents, HQ::AgentStore.new([]).load).none?(&:personal_assistant?),
-             "expected a closing FRED generation to be excluded from unread and push reconciliation")
-    end
-  end
-
   def assert_remote_search_index_includes_agents_and_projects
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
@@ -5873,11 +4862,6 @@ module RemoteServerTest
     response = server.send(:route_ui, "/")
     assert(response[:content_type].include?("text/html"), "expected / to return HTML")
     assert(response[:body].include?("Tycho - Factorio for Agents"), "expected / body to include app shell title")
-    assert(response[:body].include?("<span>FRED</span>"), "expected app navigation to use the FRED product name")
-    assert(response[:body].include?("fred-sidebar-avatar") &&
-           response[:body].include?("/fred-avatar.png?v=#{HQ::RemoteUI.asset_version}") &&
-           response[:body].include?("fred-sidebar-avatar\" src=\"/fred-avatar.png?v=#{HQ::RemoteUI.asset_version}\" alt=\"\""),
-           "expected FRED sidebar navigation to use the cache-busted decorative avatar asset")
     legacy_request = HQ::RemoteServer.const_get(:Request).new(
       method: "GET",
       path: "/ui",
@@ -5950,12 +4934,11 @@ module RemoteServerTest
            response[:body].include?('aria-describedby="confirmation-description"'),
            "expected the root shell to expose the shared labeled confirmation dialog")
     primary_nav = response[:body][%r{<nav id="bottom-nav".*?</nav>}m]
-    assert(primary_nav.scan(/data-tab="/).length == 3 &&
+    assert(primary_nav.scan(/data-tab="/).length == 2 &&
            primary_nav.include?('data-tab="now"') &&
-           primary_nav.include?('data-tab="personal-assistant"') &&
            primary_nav.include?('data-tab="agents"') &&
            !primary_nav.include?('data-tab="settings"'),
-           "expected primary navigation to contain only Now, FRED, and Agents")
+           "expected primary navigation to contain only Now and Agents")
     assert(response[:body].include?('id="desktop-settings"') && response[:body].include?('aria-label="Settings"'),
            "expected Settings to remain a separately accessible desktop control")
     assert(!response[:body].include?('data-tab="search"'), "expected root shell to remove Search navigation")
@@ -6377,9 +5360,6 @@ module RemoteServerTest
            "expected the mobile Quick Agent form to fill and scroll within the viewport")
     assert(css[:body].include?("--touch-target: 44px") && css[:body].include?("--control-height: 44px"),
            "expected audited Remote UI controls to share accessible sizing tokens")
-    assert(css[:body].include?(".pa-suggestion { display: grid;") &&
-           css[:body].include?("width: 100%; min-height: var(--touch-target);"),
-           "expected FRED first-run list actions to meet the shared 44px touch target")
     assert(css[:body].include?(".top-actions .search-box"),
            "expected Agents tab search to flex inside the action row")
     assert(css[:body].include?(".top-actions {\n  flex-wrap: nowrap;"),
@@ -6808,11 +5788,6 @@ module RemoteServerTest
            "expected each focused view mode to expose its own active trigger icon")
     assert(js[:body].include?('class="focused-composer"') && js[:body].include?("Continue conversation"),
            "expected mobile focused views to collapse the follow-up composer")
-    assert(css[:body].include?(".personal-assistant-page #composer:not(.composer-full-screen):focus-within") &&
-           css[:body].include?("min-height: var(--touch-target)") &&
-           css[:body].include?(".personal-assistant-page .agent-dock") &&
-           css[:body].include?(".composer-action-menu > summary {\n  border: 0;"),
-           "expected FRED to start with a one-line composer, expand on focus, and keep prompt icons borderless")
     assert(js[:body].include?('iconSvg("badgeQuestionMark")'),
            "expected inquiry prompt banners to render a badge question icon")
     assert(js[:body].include?('class="inquiry-mark"'),
@@ -7070,9 +6045,6 @@ module RemoteServerTest
            css[:body].include?("flex-wrap: nowrap") &&
            css[:body].include?("overflow-x: auto"),
            "expected Settings to keep a sticky in-page section navigator with active-section feedback")
-    assert(js[:body].include?('"settings-personal-assistant": "personal-assistant"') &&
-           js[:body].include?('["personal-assistant", "FRED", "settings-personal-assistant"]'),
-           "expected the FRED Settings navigator to resolve its section panel")
     assert(response[:body].include?("ui-detail-header__back") &&
            response[:body].include?("ui-detail-header__identity") &&
            response[:body].include?("ui-detail-header__title") &&
@@ -7846,13 +6818,6 @@ module RemoteServerTest
            "expected Agent detail to mark read from visible render state rather than data fetch")
     assert(js[:body].include?("readMarkTimer"),
            "expected Agent detail read marking to use a guarded dwell timer")
-    assert(js[:body].include?("function schedulePersonalAssistantReading") &&
-           js[:body].include?("personalAssistantReadMarkTimer") &&
-           js[:body].include?("route.type !== \"personalAssistant\"") &&
-           js[:body].include?("personalAssistantSessionMatches(context)"),
-           "expected FRED unread clearing to cancel on navigation and reject stale daily generations")
-    assert(js[:body].include?("personalAssistantReadingContext === contextId"),
-           "expected repeated FRED renders to coalesce an in-flight read mutation")
     assert(js[:body].include?("/reading"),
            "expected Agent detail read state to use the reading endpoint")
     assert(js[:body].include?('if (agent.unread) return "Unread";'),
@@ -8219,111 +7184,6 @@ module RemoteServerTest
            "expected user chat labels to render the square-user-round icon")
     assert(js[:body].include?("iconSvg(\"botMessageSquare\")"),
            "expected assistant chat labels to render the bot-message-square icon")
-    assert(js[:body].include?("function personalAssistantMessageIdentity"),
-           "expected Personal Assistant messages to have a product-specific sender identity")
-    assert(js[:body].include?("function renderConversationWorkspace({") &&
-           js[:body].include?('classNames: ["conversation-only", "agent-workspace-conversation", "personal-assistant-page"]') &&
-           js[:body].include?('conversationStateKey: "personal-assistant-thread"') &&
-           css[:body].include?(".personal-assistant-page .agent-conversation-scroll") &&
-           !css[:body].include?(".personal-assistant-page { display: grid; grid-template-rows:"),
-           "expected FRED to reuse the ordinary Agent conversation workspace rather than own a parallel shell")
-    assert(response[:body].include?('id="header-mark"') &&
-           response[:body].include?('aria-controls="unread-agents-panel"'),
-           "expected FRED to retain the shared header agent switcher ARIA contract")
-    assert(js[:body].include?("function agentSwitcherMark") &&
-           js[:body].include?("function toggleUnreadPanel") &&
-           js[:body].include?("function openUnreadPanelFromKeyboard") &&
-           js[:body].include?("function handleUnreadPanelKeydown") &&
-           !js[:body].include?("function positionPersonalAssistantSwitcher"),
-           "expected FRED logo clicks and Cmd/Ctrl+K to use the ordinary shared switcher behavior")
-    assert(!css[:body].include?("body:has(.personal-assistant-page) .app-header") &&
-           !css[:body].include?(".pa-header") &&
-           !css[:body].include?(".pa-composer-row"),
-           "expected FRED to avoid a separate header, switcher, and composer layout")
-    assert(js[:body].include?('setHeader("FRED", "", "A", { titleHtml: personalAssistantHeaderTitleHtml(), hideSubtitle: true });') &&
-           js[:body].include?('setHeaderMore(personalAssistantMoreMenuHtml(), "FRED actions", "personal-assistant");') &&
-           js[:body].include?("function personalAssistantHeaderTitleHtml") &&
-           js[:body].include?("function personalAssistantMoreMenuHtml"),
-           "expected FRED to use the regular header while hiding Agent-only metadata and actions")
-    assert(js[:body].include?("Friendly Robot for Execution Dispatcher"),
-           "expected Personal Assistant UI to expand FRED where appropriate")
-    fred_settings = js[:body].split("function renderPersonalAssistantSettings", 2).last.split("function personalAssistantActionCopy", 2).first
-    assert(!fred_settings.include?("item.introduction") &&
-           fred_settings.include?('${item.configured ? `<div class="kv-grid">') &&
-           fred_settings.include?('data-initiate-personal-assistant>Set up FRED</button>') &&
-           !fred_settings.include?("Setup is available through the Personal Assistant API"),
-           "expected unconfigured FRED settings to hide prompt and configuration copy behind a setup action")
-    assert(fred_settings.include?('<a class="ui-button" href="#personal-assistant">Go to FRED</a>') &&
-           fred_settings.include?('<details class="pa-lifecycle">') &&
-           fred_settings.include?("Restart FRED with updated settings") &&
-           !fred_settings.include?('data-open-personal-assistant') &&
-           !fred_settings.include?("Start fresh conversation"),
-           "expected FRED settings to navigate directly and reserve restart for lifecycle controls")
-    initiate_handler = js[:body][js[:body].index("function handleViewClick"), 1_500]
-    assert(initiate_handler.include?('data-initiate-personal-assistant') &&
-           initiate_handler.include?('navigate({ type: "tab", tab: "personal-assistant" })'),
-           "expected FRED setup to open the Personal Assistant setup screen")
-    assert(js[:body].include?("Set up FRED") &&
-           js[:body].include?("FRED—Friendly Robot for Execution Dispatcher—helps you prepare and oversee work in Tycho.".b) &&
-           js[:body].include?("I confirm these settings for FRED.") &&
-           !js[:body].include?("Codex found; account access is checked when it runs.") &&
-           !js[:body].include?("Open today’s conversation when you’re ready.".b),
-           "expected FRED setup to explain its purpose without readiness noise or a ready screen")
-    assert(js[:body].include?('tychoLoadingState("Loading FRED", { className: "pa-loading-state", body: "Fetching today’s session." })'.b) &&
-           !js[:body].include?('data-open-personal-assistant') &&
-           !js[:body].include?('showGrowl("FRED opened"') &&
-           js[:body].include?('["ready", "dormant", "unconfigured"].includes(state.personalAssistant.state)'),
-           "expected visiting FRED to open its daily session without an opening ceremony")
-    setup_handler = js[:body].split('if (["personal-assistant-setup-form", "personal-assistant-settings-form"]', 2).last.split('if (event.target.id === "server-connection-form")', 2).first
-    assert(setup_handler.include?('apiPost("/personal-assistant/setup"') &&
-           setup_handler.include?('apiPost("/personal-assistant/open"') &&
-           setup_handler.index('apiPost("/personal-assistant/setup"') < setup_handler.index('apiPost("/personal-assistant/open"'),
-           "expected confirmed FRED setup to open the empty daily conversation immediately")
-    assert(js[:body].include?('class="pa-setup ui-surface"') &&
-           js[:body].include?('name="model" required') &&
-           js[:body].include?('name="timezone" required') &&
-           js[:body].include?('name="personality"') &&
-           js[:body].include?('class="pa-personality-options"') &&
-           js[:body].include?("Changes FRED’s stable voice and interaction style, not its safety or approval rules.".b) &&
-           js[:body].include?('aria-describedby="pa-setup-guidance"'),
-           "expected FRED setup to expose accessible personality previews with shared field contracts")
-    assert(!js[:body].include?("confirmed: true, model: \"gpt-5.6-sol\""),
-           "expected first-use FRED flow not to silently submit fixed settings")
-    assert(js[:body].include?("personalAssistant ? \"/personal-assistant/messages\""),
-           "expected FRED messages to use the dedicated Personal Assistant API")
-    fred_recommendations = js[:body].split("function renderPersonalAssistantRecommendations", 2).last.split("function personalAssistantConversationEventIdentity", 2).first
-    assert(fred_recommendations.include?('<h2>Recommendations</h2>') &&
-           fred_recommendations.include?('class="pa-suggestions" aria-label="FRED recommendations"') &&
-           fred_recommendations.include?('data-pa-suggestion=') &&
-           !fred_recommendations.include?("What would you like to do?") &&
-           !fred_recommendations.include?("What FRED can do") &&
-           !fred_recommendations.include?("pa-project-starter"),
-           "expected first-use FRED to show only accessible recommendation actions")
-    assert(js[:body].include?('name="external_events_prompt"') &&
-           js[:body].include?('maxlength="4000"') &&
-           setup_handler.include?('personality: String(values.get("personality") || "")') &&
-           setup_handler.include?('external_events_prompt: String(values.get("external_events_prompt") || "")'),
-           "expected Settings to round-trip personality and the bounded external-event recommendation prompt")
-    fred_conversation_filter = js[:body][/function personalAssistantVisibleConversationBlocks\(blocks\).*?^}/m]
-    assert(fred_conversation_filter&.include?('block?.kind === "message" && ["user", "assistant"].includes(block.role)') &&
-           js[:body].include?("? personalAssistantVisibleConversationBlocks(allConversationBlocks)"),
-           "expected FRED chat to hide internal activity and run-summary blocks without removing them from logs")
-    settings_markup = js[:body].split("function personalAssistantMoreMenuHtml", 2).last.split("function renderSetup", 2).first
-    assert(settings_markup.include?('moreMenuButton({ label: "Settings", icon: "settings", attrs: "data-open-settings" })') &&
-           !settings_markup.include?("agentMoreMenuHtml") && !settings_markup.include?("settingsMoreMenuHtml"),
-           "expected FRED's shared-header overflow to contain only the compact Settings action")
-    reset_handler = js[:body].split('if (event.target.closest("[data-reset-personal-assistant]"))', 2).last.split('const confirmPa', 2).first
-    assert(js[:body].include?('data-reset-personal-assistant') && reset_handler.include?('Reset FRED?') &&
-           reset_handler.include?("permanently deletes any active FRED session") &&
-           js[:body].include?('/personal-assistant/reset'),
-           "expected the main Settings view to offer confirmed destructive FRED reset through the dedicated API")
-    assert(js[:body].include?('alt="FRED"') && js[:body].include?("/fred-avatar.png"),
-           "expected FRED identity to use the served circular avatar asset")
-    assert(js[:body].include?("iconSvg(\"thumbsUp\")") && js[:body].include?("iconSvg(\"thumbsDown\")"),
-           "expected Personal Assistant approval controls to use Lucide thumbs icons")
-    assert(js[:body].include?('data-confirm-pa-proposal=') && js[:body].include?('data-reject-pa-proposal=') &&
-           js[:body].include?('aria-label="${escapeAttr(confirmLabel)}"'),
-           "expected Personal Assistant approvals to expose action-specific labels and rejection")
     assert(js[:body].include?("checkCheck") &&
            js[:body].include?('return iconSvg("checkCheck")'),
            "expected usage completion labels to render the Lucide check-check icon")
@@ -8437,11 +7297,6 @@ module RemoteServerTest
            "expected Remote UI to scope in-document hash link handling to Markdown viewers")
     assert(js[:body].include?("history.replaceState(null, \"\", routeHash(route))"),
            "expected Markdown hash links to preserve the attachment route")
-    assert(js[:body].include?('const TOP_TABS = ["now", "personal-assistant", "agents", "settings"];') &&
-           js[:body].include?('setHeaderMore(personalAssistantMoreMenuHtml(), "FRED actions", "personal-assistant");') &&
-           js[:body].include?('label: "Settings"') &&
-           response[:body].include?('data-tab="personal-assistant"'),
-           "expected every primary view to retain top-right Settings access")
     assert(!response[:body].include?('data-tab="reviews"'),
            "expected Remote UI to hide the paused review inbox")
     assert(!helpers_js[:body].include?('parts[0] === "reviews"'),
@@ -8479,13 +7334,6 @@ module RemoteServerTest
            js[:body].include?('document.addEventListener("input", deferPollAfterFormInput, true)') &&
            js[:body].include?("quietRemaining > 0 && !options.force"),
            "expected form typing to defer automatic polling for three seconds")
-    assert(js[:body].include?("function fullScreenEditorOpen") &&
-           js[:body].include?("const personalAssistantRoute = parseRoute().type === \"personalAssistant\";") &&
-           js[:body].include?("if (fullScreenEditorOpen() && !personalAssistantRoute) return;") &&
-           js[:body].include?("if (fullScreenEditorOpen() && !options.force && !personalAssistantRoute) return;") &&
-           js[:body].scan("state.fullScreenComposerKeys.delete(key);\n  schedule();").length >= 1 &&
-           js[:body].scan("state.fullScreenInquiryKeys.delete(key);\n  schedule();").length >= 1,
-           "expected generic full-screen forms to pause polling while focused FRED keeps polling")
     activity_poll = js[:body][/async function pollAgentActivity\(\).*?^}/m]
     assert(activity_poll && !activity_poll.include?("fullScreenEditorOpen"),
            "expected logo activity polling to continue while full-screen editors are open")
@@ -8565,20 +7413,6 @@ module RemoteServerTest
     assert(logo[:content_type].include?("image/png"), "expected Remote UI logo route to return PNG")
     assert(logo[:body].bytesize.positive?, "expected Remote UI logo route to return image bytes")
 
-    fred_avatar_request = HQ::RemoteServer.const_get(:Request).new(
-      method: "GET",
-      path: "/fred-avatar.png",
-      headers: {},
-      body: ""
-    )
-    assert(server.send(:ui_request?, fred_avatar_request), "expected FRED avatar to be recognized as a UI route")
-    fred_avatar = server.send(:route_ui, "/fred-avatar.png")
-    assert(fred_avatar[:content_type].include?("image/png"), "expected FRED avatar route to return PNG")
-    assert(fred_avatar[:body].byteslice(0, 8) == "\x89PNG\r\n\x1A\n".b, "expected FRED avatar to be a PNG")
-    assert(fred_avatar[:body].byteslice(16, 8).unpack("N2") == [128, 128],
-           "expected FRED avatar PNG to be 128x128")
-    assert(fred_avatar[:body].bytesize < 20_000,
-           "expected FRED avatar PNG to remain materially smaller than the legacy asset")
 
     horizontal_logo = server.send(:route_ui, "/remote-logo-horizontal.png")
     assert(horizontal_logo[:content_type].include?("image/png"), "expected Remote UI horizontal logo route to return PNG")
@@ -8794,7 +7628,6 @@ module RemoteServerTest
   def with_remote_temp_store
     Dir.mktmpdir("hq-remote-test") do |dir|
       old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
-      old_personal_assistant_dir = replace_constant(HQ, :PERSONAL_ASSISTANT_DIR, File.join(dir, "personal_assistant"))
       old_delegations_file = replace_constant(HQ, :DELEGATIONS_FILE, File.join(dir, "agent_delegations.json"))
       old_server_identity_file = replace_constant(HQ, :SERVER_IDENTITY_FILE, File.join(dir, "server_identity.json"))
       old_usage_metrics_file = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
@@ -8814,7 +7647,6 @@ module RemoteServerTest
       ENV["TYCHO_DISABLE_SCHEDULE_PROCESS_DETECTION"] = "1"
 
       FileUtils.mkdir_p(HQ::AGENT_LOGS_DIR)
-      FileUtils.mkdir_p(HQ::PERSONAL_ASSISTANT_DIR)
       FileUtils.mkdir_p(HQ::AGENT_ARCHIVE_DIR)
       FileUtils.mkdir_p(HQ::PROJECT_LOGS_DIR)
       FileUtils.mkdir_p(HQ::PROJECT_ARCHIVE_DIR)
@@ -8823,7 +7655,6 @@ module RemoteServerTest
       yield dir
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
-      replace_constant(HQ, :PERSONAL_ASSISTANT_DIR, old_personal_assistant_dir) if old_personal_assistant_dir
       replace_constant(HQ, :DELEGATIONS_FILE, old_delegations_file) if old_delegations_file
       replace_constant(HQ, :SERVER_IDENTITY_FILE, old_server_identity_file) if old_server_identity_file
       replace_constant(HQ, :USAGE_METRICS_FILE, old_usage_metrics_file) if old_usage_metrics_file

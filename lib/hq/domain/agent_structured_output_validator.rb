@@ -2,7 +2,6 @@
 
 require "json"
 require "uri"
-require_relative "personal_assistant_action_catalog"
 
 module HQ
   class AgentStructuredOutputValidator
@@ -19,7 +18,6 @@ module HQ
       payload, compatibility_errors = canonicalize_compatibility_fields(payload)
       errors = compatibility_errors + validate_value(payload, @schema, "$")
       errors.concat(validate_summary_sections(payload))
-      errors.concat(validate_action_proposals(payload))
       Result.new(valid?: errors.empty?, payload:, errors:, raw_text:)
     end
 
@@ -42,9 +40,6 @@ module HQ
 
       result = payload.dup
       errors = []
-      # Older FRED sessions predate action proposals. Preserve their structured
-      # results while keeping the FRED-only field out of ordinary agent output.
-      result["action_proposals"] = nil if action_proposals_supported? && !result.key?("action_proposals")
       decode_compatibility_field(result, "inquiry_json", "inquiry", errors)
       decode_compatibility_field(result, "attachments_json", "attachments", errors)
       decode_compatibility_field(result, "summary_sections_json", "summary_sections", errors)
@@ -141,26 +136,6 @@ module HQ
           []
         end
       end
-    end
-
-    def validate_action_proposals(payload)
-      return [] unless action_proposals_supported?
-
-      proposals = payload.is_a?(Hash) ? payload["action_proposals"] : nil
-      return [] unless proposals.is_a?(Array)
-
-      expected = PersonalAssistantActionCatalog::ARGUMENTS
-      proposals.each_with_index.filter_map do |proposal, index|
-        type = proposal.is_a?(Hash) ? proposal["type"] : nil
-        arguments = proposal.is_a?(Hash) ? proposal["arguments"] : nil
-        next if expected.key?(type) && arguments.is_a?(Hash) && arguments.keys.sort == expected[type].sort
-
-        error("invalid_action_arguments", "$.action_proposals[#{index}].arguments", "Arguments must match action type #{type}")
-      end
-    end
-
-    def action_proposals_supported?
-      @schema.dig("properties", "action_proposals").is_a?(Hash)
     end
 
     def nonempty_summary_field_errors(block, field, path)

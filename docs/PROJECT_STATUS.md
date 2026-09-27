@@ -81,9 +81,8 @@ Key references:
 | Remote UI deployment coherence | Snapshot all browser assets and their shared hash when `tycho serve` starts; require a daemon restart to load source updates | Prevent an old Ruby API from serving a newer on-disk JavaScript client after a pull, which can break push subscription renewal and other cross-boundary flows |
 | Remote UI agent activity | Keep a server-owned in-memory activity snapshot updated by lifecycle mutations and the existing notification reconciliation pass; poll its compact read-only endpoint independently from page refreshes | Logo unread counts and agent switching stay current while forms pause page polling, without adding another server loop or letting slower catalog responses overwrite newer activity |
 | Remote UI linked-agent navigation | Expose direct parent/child links beside composer attachments and mark linked sessions in the quick agent switcher; clicking the link symbol or pressing Tab drills into the selected agent's direct links | Delegation topology stays reachable after the conversation's relationship card scrolls out of view without adding another route or duplicating relationship state |
-| QueueWork lifecycle | Move each receiver-owned pending queue into one durable open batch under the agent-store lock; preserve canonical FIFO entries, attachments, and newest-entry ownership stamp while projecting user instructions before structured delegated reports. Reading is idempotent delivery, not completion. A Tycho-owned disposition command requires one source-appropriate outcome per entry, and the finish gate resumes one unresolved false-success attempt in the same native session before leaving further incomplete work visible. `Read queue` Conversation blocks dynamically expose open/resolved state, required instructions, dispositions, and full FIFO detail with the inquiry warning palette and eye icon. | Mixed user/delegated work cannot be silently acknowledged by a model result, new arrivals stay isolated for the next batch, concurrent readers share one batch, result schemas remain ordinary/FRED-safe, and bounded continuation prevents uncontrolled loops. |
+| QueueWork lifecycle | Move each receiver-owned pending queue into one durable open batch under the agent-store lock; preserve canonical FIFO entries, attachments, and newest-entry ownership stamp while projecting user instructions before structured delegated reports. Reading is idempotent delivery, not completion. A Tycho-owned disposition command requires one source-appropriate outcome per entry, and the finish gate resumes one unresolved false-success attempt in the same native session before leaving further incomplete work visible. `Read queue` Conversation blocks dynamically expose open/resolved state, required instructions, dispositions, and full FIFO detail with the inquiry warning palette and eye icon. | Mixed user/delegated work cannot be silently acknowledged by a model result, new arrivals stay isolated for the next batch, concurrent readers share one batch, result schemas remain role-neutral, and bounded continuation prevents uncontrolled loops. |
 | Queue auto-dispatch | After a process exits or Stop terminates it, atomically claim all due entries into one canonical QueueWork batch and start only an eligible agent; retain queues for archived or blocked agents, active/restorable inquiries, paused/stopped schedules, dispatch failures, and workspace contention | Pending work must not depend on another manual retry or polling race, while the store lock and existing claim record prevent overlapping stop/status/callback paths from starting duplicate runs. |
-| FRED durable action worker | Persist immutable proposal receipts as the action queue; confirm with a server-owned preview token, freeze effective settings, execute through one bounded post-daemon worker, and expose truthful prior-generation actions as read-only history | Effects are not repeated by duplicate confirmation, live work is protected by per-action locks and leases, nullable defaults cannot drift between preview and effect, uncertain verification stays unknown, and history cannot carry authorization across a rollover |
 | Remote multiserver resources | Keep one UI-serving broker, aggregate only compact Agent and Project resources through a disk-backed stale-while-revalidate catalog, and require explicit server identity for details and mutations | Combined lists stay responsive across peer failures and broker restarts; only a validated full snapshot may remove cached resources, while schedules, setup, GitHub, push, restart, and other server-level behavior remain local |
 | Project workspace browsing | Keep canonical path resolution, sensitive/generated-file policy, bounded listing, Markdown/image previews, and optimistic-lock plain-text edits in `ProjectWorkspace`; expose only relative paths through project-scoped endpoints | Remote and multiserver browsing must not leak host paths or let client routing bypass traversal, symlink, VCS, credential, binary, encoding, or size controls |
 | Remote credential ownership | Bind one bearer credential to each stable remote server key and verified scheme/host/effective-port origin; keep Tycho-managed values in atomic mode-`0600` `~/.tycho/config/remote_credentials.json`, with explicit per-server `token_env` overrides | CLI and broker share one resolver, multiple peers cannot select credentials by incidental names, origin changes require explicit recovery, and browser promotion removes its copy only after verified persistence |
@@ -101,55 +100,13 @@ Key references:
 
 ## Current Focus
 
-**FRED experience**: Keep the Personal Assistant compact and task-focused.
-Each daily conversation begins with a dated recommendation message that remains
-visible after chat content loads. Choosing an item submits its exact prompt as a
-normal durable user request, persists the recommendation context on the message,
-and uses the existing acceptance ID for queueing, replay, and interrupted-delivery
-recovery without duplicate messages. The
-existing rollover summary produces one bounded set for the next local date from
-unfinished work, cleanup, daily journals, available Miki changes, Tycho
-capabilities, and an optional server-side external-events prompt. First use and
-summary failures degrade to explicit safe starters, while same-day restarts keep
-the current set. The former Current Work panel, fixed starter question, project
-picker, and static capability list no longer occupy FRED's starting surface.
-Setup keeps visible model, effort, timezone, and explicit confirmation, with
-catalog suggestions and FRED access before the first project. Four trusted,
-versioned personality presets change FRED's stable interaction principles while
-leaving safety, truthfulness, structured output, confirmations, and response-style
-overrides intact; missing configuration remains backwards-compatible with the
-Balanced preset. Settings edits
-and a non-destructive restart are separate from destructive reset. Readable
-action previews and useful receipts connect requests to projects, agents,
-schedules, and run results; returned results become bounded context for the
-next message without starting an automatic action loop. The pure action
-catalog, model schema, and server validation stay aligned through contract tests.
-Daily continuity and tracked work remain inspectable across conversations.
-Durable mutations use one server-lifetime bounded worker with frozen previews,
-conservative outcome verification, and read-only archived-action history whose
-`expired_actions` subset contains only unconfirmed approvals; the
-measured fixture optimization still supports the compatibility current-work
-endpoint, while the focused UI no longer polls or renders it. Timezone boundaries
-remain cached across request services without holding a global lock across long
-effects. Phase3 measurement also confirms that durable
-semantic conversation events appear before final structured output, so focused
-polling remains sufficient without a new stream protocol. Configured FRED
-defers the slow shell/setup discovery on its focused conversation path; actual
-active work polls at 1.5 s, idle work at 12 s, and hidden work at 30 s, with a
-two-failure cap, recovery reset, and immediate explicit retry. Current-work
-reconciliation preserves drafts, focus, scroll, and unchanged DOM. The
-historical synthetic `/setup` observation of 3.47 s remains a catalog
-measurement, not a final UI latency claim.
-Preserve the protected daily role, server-local identity, exact confirmation
-for each mutation, and no blind retry after an uncertain execution outcome.
-
 **v0.11.1 release preparation**: adds a capability-gated, explicitly confirmed
 Remote UI update action for configured Homebrew peers. The action waits for the
 peer restart, refreshes its resources, restores polling after failure, and
 does not expose source-installed or unknown peers as updateable.
 
-**v0.11.0 release preparation**: adds the protected FRED Personal Assistant,
-native-adapter custom harness profiles, safer editable/searchable workspace
+**v0.11.0 release preparation**: adds native-adapter custom harness profiles,
+safer editable/searchable workspace
 files, lifecycle update controls, explicit project creation, and batched,
 operator-quiet delegated callbacks. Upgrade guidance records the intentional
 project-command break and bundled-skill update.
@@ -424,7 +381,6 @@ and queued-run push notification behavior. Schedule-management work remains on
 - [x] Sticky Settings section navigator over one continuous page and copyable native session ID in Conversation Settings
 - [x] In-flow desktop conversation composer with resize-aware mobile content reservation
 - [x] Accessible full-screen Conversation editor with polling-safe autosaved drafts, focus containment, mobile visual-viewport sizing, and Escape-to-exit
-- [x] Focused configured-FRED refresh defers shell discovery, preserves composer state during polling, skips unchanged current-work DOM replacement, and uses bounded visible/idle/hidden recovery cadence
 - [x] Focused Summary/Attachment full-view controls and compact mobile follow-up composer
 - [x] Finalized-run estimated session-cost snapshots on latest and historical Summary pages, including Codex token-delta estimates from an auditable OpenAI model rate card, explicit rebuild backfill, and no startup log scan
 - [ ] Dedicated mobile activity/log detail page

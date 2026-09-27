@@ -73,11 +73,10 @@ def write_fixture(dir)
       "summary_sections" => [{ "type" => "text", "text" => "Rendered semantic run summary details.", "url" => nil, "attachment" => nil }],
       "inquiry" => nil,
       "attachments" => nil,
-      "memory_handoff" => nil,
-      "action_proposals" => nil
+      "memory_handoff" => nil
     }
     File.write(output, JSON.generate(payload)) if output
-    puts JSON.generate("type" => "thread.started", "thread_id" => "smoke-#{Process.pid}")
+    puts JSON.generate("type" => "thread.started", "thread_id" => "smoke-fixture-session")
     puts JSON.generate("type" => "item.completed", "item" => {
       "type" => "agent_message", "text" => JSON.generate(payload)
     })
@@ -315,23 +314,6 @@ def archive_agent(base_url, agent_key)
   request.body = "{}"
   response = Net::HTTP.start(uri.hostname, uri.port) { |http| http.request(request) }
   raise "Failed to archive smoke agent: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
-end
-
-def open_personal_assistant(base_url)
-  uri = URI("#{base_url}/personal-assistant/setup")
-  request = Net::HTTP::Post.new(uri)
-  request["Content-Type"] = "application/json"
-  request.body = JSON.generate(confirmed: true, model: "gpt-5.6-sol", reasoning_effort: "medium", timezone: "Asia/Jakarta")
-  response = Net::HTTP.start(uri.hostname, uri.port) { |http| http.request(request) }
-  raise "Failed to configure FRED smoke fixture: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
-
-  uri = URI("#{base_url}/personal-assistant/open")
-  request = Net::HTTP::Post.new(uri)
-  request["Content-Type"] = "application/json"
-  request.body = "{}"
-  response = Net::HTTP.start(uri.hostname, uri.port) { |http| http.request(request) }
-  raise "Failed to open FRED smoke fixture: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
-
 end
 
 def start_agent(base_url, agent_key, parent_agent_key: nil)
@@ -1037,1026 +1019,7 @@ def write_smoke_script(path)
         return;
       }
 
-      async function assertPersonalAssistantConversationShell() {
-        const ordinaryPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-        const fredPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-        try {
-          await ordinaryPage.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
-          await ordinaryPage.waitForSelector(".agent-workspace.conversation-only", { state: "visible", timeout: 10_000 });
-          await fredPage.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "networkidle" });
-          await fredPage.waitForSelector(".personal-assistant-page", { state: "visible", timeout: 10_000 });
-          const shellMetrics = async (page, selectors) => page.evaluate((selectors) => {
-            const shell = document.querySelector(".app-shell");
-            const header = document.querySelector(selectors.header);
-            const title = document.getElementById("screen-title");
-            const subtitle = document.getElementById("screen-subtitle");
-            const content = document.querySelector(".content");
-            const conversation = document.querySelector(selectors.conversation);
-            const nav = document.querySelector(".bottom-nav");
-            const composer = document.querySelector(selectors.composer);
-            const composerForm = document.querySelector(selectors.composerForm);
-            const settings = document.querySelector(selectors.settings);
-            const desktopSettings = document.getElementById("desktop-settings");
-            const shellRect = shell.getBoundingClientRect();
-            const headerRect = header.getBoundingClientRect();
-            const contentRect = content.getBoundingClientRect();
-            const conversationRect = conversation.getBoundingClientRect();
-            const navRect = nav.getBoundingClientRect();
-            const composerRect = composer.getBoundingClientRect();
-            const composerFormRect = composerForm.getBoundingClientRect();
-            const settingsRect = settings.getBoundingClientRect();
-            const desktopSettingsRect = desktopSettings.getBoundingClientRect();
-            const navItems = Array.from(nav.querySelectorAll("button")).map((item) => {
-              const rect = item.getBoundingClientRect();
-              const style = getComputedStyle(item);
-              return {
-                label: item.textContent.trim(),
-                top: rect.top,
-                right: rect.right,
-                bottom: rect.bottom,
-                left: rect.left,
-                width: rect.width,
-                height: rect.height,
-                visible: style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0,
-              };
-            }).filter((item) => item.visible);
-            const firstConversationChild = conversation.querySelector(selectors.firstConversationChild) || Array.from(conversation.children).find((child) => {
-              const rect = child.getBoundingClientRect();
-              const style = getComputedStyle(child);
-              return style.display !== "none" && style.visibility !== "hidden" && rect.height > 0 && rect.bottom >= conversationRect.top;
-            });
-            const firstConversationChildRect = firstConversationChild?.getBoundingClientRect();
-            return {
-              shell: { height: shellRect.height, top: parseFloat(getComputedStyle(shell).borderTopWidth), left: parseFloat(getComputedStyle(shell).borderLeftWidth), right: parseFloat(getComputedStyle(shell).borderRightWidth) },
-              header: {
-                top: headerRect.top,
-                height: headerRect.height,
-                left: headerRect.left,
-                right: headerRect.right,
-                bottomBorder: parseFloat(getComputedStyle(header).borderBottomWidth),
-                title: title?.textContent.trim(),
-                subtitleHidden: subtitle?.classList.contains("hidden"),
-              },
-              content: { top: contentRect.top, left: contentRect.left, right: contentRect.right, bottom: contentRect.bottom },
-              conversation: { top: conversationRect.top, left: conversationRect.left, right: conversationRect.right, bottom: conversationRect.bottom },
-              nav: {
-                top: navRect.top,
-                left: navRect.left,
-                right: navRect.right,
-                bottom: navRect.bottom,
-                paddingTop: parseFloat(getComputedStyle(nav).paddingTop),
-                topInset: navItems[0] ? navItems[0].top - navRect.top : null,
-                firstVisibleLabel: navItems[0]?.label || null,
-                items: navItems,
-                gaps: navItems.slice(1).map((item, index) => item.top - navItems[index].bottom),
-              },
-              composer: { left: composerRect.left, right: composerRect.right, bottom: composerRect.bottom },
-              composerForm: { left: composerFormRect.left, right: composerFormRect.right, bottom: composerFormRect.bottom },
-              settings: { left: settingsRect.left, top: settingsRect.top, right: settingsRect.right, bottom: settingsRect.bottom },
-              desktopSettings: { left: desktopSettingsRect.left, top: desktopSettingsRect.top, right: desktopSettingsRect.right, bottom: desktopSettingsRect.bottom, visible: getComputedStyle(desktopSettings).display !== "none" },
-              firstConversationChild: firstConversationChildRect ? {
-                label: firstConversationChild.className || firstConversationChild.tagName,
-                top: firstConversationChildRect.top,
-                gapFromConversation: firstConversationChildRect.top - conversationRect.top,
-                gapFromHeader: firstConversationChildRect.top - headerRect.bottom,
-              } : null,
-              viewport: { width: innerWidth, height: innerHeight },
-              overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-            };
-          }, selectors);
-          const equalMetric = (ordinary, fred, label, tolerance = 1) => {
-            if (Math.abs(ordinary - fred) > tolerance) throw new Error(`FRED ${label} drifted from ordinary conversation: ${JSON.stringify({ ordinary, fred })}`);
-          };
-          const assertSharedShell = (ordinary, fred, viewport) => {
-            ["height", "top", "left", "right"].forEach((key) => equalMetric(ordinary.shell[key], fred.shell[key], `shell ${key}`));
-            ["top", "left", "right", "bottomBorder"].forEach((key) => equalMetric(ordinary.header[key], fred.header[key], `header ${key}`));
-            if (fred.header.title !== "FRED" || !fred.header.subtitleHidden || ordinary.header.subtitleHidden) {
-              throw new Error(`FRED header did not preserve the shared shell while hiding Agent-only metadata: ${JSON.stringify({ ordinary: ordinary.header, fred: fred.header })}`);
-            }
-            ["left", "right"].forEach((key) => equalMetric(ordinary.content[key], fred.content[key], `content ${key}`));
-            ["left", "right"].forEach((key) => equalMetric(ordinary.conversation[key], fred.conversation[key], `conversation ${key}`));
-            [ordinary, fred].forEach((metrics, index) => {
-              const label = index === 0 ? "ordinary" : "FRED";
-              equalMetric(metrics.conversation.top - metrics.header.bottom, 0, `${label} conversation starts below header`);
-            });
-            ["top", "left", "right", "bottom"].forEach((key) => equalMetric(ordinary.nav[key], fred.nav[key], `navigation ${key}`));
-            [ordinary, fred].forEach((metrics, index) => {
-              const label = index === 0 ? "ordinary" : "FRED";
-              if (metrics.nav.firstVisibleLabel !== "Now" || metrics.nav.items.map((item) => item.label).join(",") !== "Now,FRED,Agents") {
-                throw new Error(`${label} desktop sidebar lost its primary navigation order: ${JSON.stringify(metrics.nav)}`);
-              }
-            });
-            ["paddingTop", "topInset"].forEach((key) => equalMetric(ordinary.nav[key], fred.nav[key], `sidebar ${key}`));
-            ordinary.nav.items.forEach((item, index) => ["top", "right", "bottom", "left", "width", "height"].forEach((key) => equalMetric(item[key], fred.nav.items[index][key], `sidebar item ${index}:${key}`)));
-            ordinary.nav.gaps.forEach((gap, index) => equalMetric(gap, fred.nav.gaps[index], `sidebar item gap ${index}`));
-            ["left", "right", "bottom"].forEach((key) => equalMetric(ordinary.composer[key], fred.composer[key], `composer ${key}`));
-            ["left", "right", "bottom"].forEach((key) => equalMetric(ordinary.composerForm[key], fred.composerForm[key], `composer form ${key}`));
-            ["left", "right"].forEach((key) => equalMetric(ordinary.settings[key], fred.settings[key], `settings ${key}`));
-            [ordinary, fred].forEach((metrics, index) => {
-              const label = index === 0 ? "ordinary" : "FRED";
-              if (metrics.settings.top < metrics.header.top || metrics.settings.bottom > metrics.header.bottom) {
-                throw new Error(`${label} settings control escaped the shared header: ${JSON.stringify({ header: metrics.header, settings: metrics.settings })}`);
-              }
-            });
-            if (!fred.desktopSettings.visible || Math.abs(fred.desktopSettings.left - fred.nav.left) > 1 || Math.abs(fred.desktopSettings.right - fred.nav.right) > 1 || Math.abs(fred.desktopSettings.bottom - (viewport.height - 12)) > 1) {
-              throw new Error(`FRED desktop Settings lost its pinned sidebar position: ${JSON.stringify(fred.desktopSettings)}`);
-            }
-            if (!ordinary.firstConversationChild || !fred.firstConversationChild) throw new Error(`Conversation content is missing: ${JSON.stringify({ ordinary, fred })}`);
-            [ordinary, fred].forEach((metrics, index) => {
-              const label = index === 0 ? "ordinary" : "FRED";
-              if (metrics.firstConversationChild.top < metrics.conversation.top || metrics.firstConversationChild.top >= metrics.conversation.bottom) {
-                throw new Error(`${label} conversation content escaped the shared scroll pane: ${JSON.stringify(metrics.firstConversationChild)}`);
-              }
-            });
-            if (ordinary.overflow || fred.overflow || ordinary.shell.height < viewport.height - 1 || fred.shell.height < viewport.height - 1) throw new Error(`FRED shared shell overflowed or lost viewport height: ${JSON.stringify({ ordinary, fred, viewport })}`);
-          };
-          const openFredSwitcher = async (candidate) => {
-            const trigger = candidate.locator(".app-header #header-mark");
-            if (await trigger.count() !== 1) throw new Error("FRED did not use the shared agent switcher trigger");
-            await trigger.click();
-            await candidate.waitForSelector("#unread-agents-panel:not(.hidden)", { state: "visible", timeout: 10_000 });
-          };
-          const closeFredSwitcher = async (candidate) => {
-            await candidate.keyboard.press("Escape");
-            await candidate.waitForSelector("#unread-agents-panel", { state: "hidden", timeout: 10_000 });
-          };
-          const assertFredHeaderActions = async (candidate) => {
-            await candidate.click("#header-more-button");
-            await candidate.waitForSelector("#header-more-panel:not(.hidden)", { state: "visible", timeout: 10_000 });
-            const labels = await candidate.locator("#header-more-panel [role='menuitem']").evaluateAll((items) => (
-              items.map((item) => item.querySelector("strong")?.textContent.trim())
-            ));
-            if (labels.length !== 1 || labels[0] !== "Settings") {
-              throw new Error(`FRED shared-header actions exposed Agent-only controls: ${JSON.stringify(labels)}`);
-            }
-            await candidate.keyboard.press("Escape");
-            await candidate.waitForSelector("#header-more-panel", { state: "hidden", timeout: 10_000 });
-          };
-          const fredNonUserBlockMetrics = async (candidate) => candidate.evaluate(() => {
-            const welcome = document.querySelector(".personal-assistant-page .pa-recommendations");
-            const continuity = document.querySelector(".personal-assistant-page .pa-continuity");
-            if (!welcome || !continuity) return null;
-            const blockMetrics = (block) => {
-              const rect = block.getBoundingClientRect();
-              return { left: rect.left, right: rect.right };
-            };
-            return {
-              welcome: blockMetrics(welcome),
-              continuity: blockMetrics(continuity),
-            };
-          });
-          const assertFredNonUserBlocks = async (candidate, viewport, expected) => {
-            const metrics = await fredNonUserBlockMetrics(candidate);
-            if (!metrics) throw new Error("FRED recommendations or history block is missing");
-            ["welcome", "continuity"].forEach((block) => {
-              equalMetric(metrics[block].left, expected.left, `${viewport} FRED ${block} left edge`);
-              equalMetric(metrics[block].right, expected.right, `${viewport} FRED ${block} non-user gutter`);
-            });
-          };
-          const desktopOrdinary = await shellMetrics(ordinaryPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .message-list", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
-          const desktopFred = await shellMetrics(fredPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .pa-recommendations", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
-          assertSharedShell(desktopOrdinary, desktopFred, desktopFred.viewport);
-          const desktopCatchUp = await ordinaryPage.evaluate((key) => {
-            const baseline = Array.from({ length: 28 }, (_item, index) => ({
-              id: `desktop-catch-up-${index}`,
-              kind: "message",
-              role: index % 2 ? "assistant" : "user",
-              content: `Desktop catch-up message ${index}`,
-            }));
-            const incoming = [...baseline, {
-              id: "desktop-catch-up-new",
-              kind: "message",
-              role: "assistant",
-              content: "Desktop staged message",
-            }];
-            state.conversations[key] = { revision: "desktop-catch-up", blocks: baseline, loaded: true, loading: false };
-            state.pendingConversationUpdates[key] = { revision: "desktop-catch-up-next", blockCount: incoming.length, unseenCount: 1, digest: "desktop-catch-up-next" };
-            const originalApiGet = apiGet;
-            apiGet = async (path) => {
-              if (String(path).split("?", 1)[0].endsWith(`/agents/${encodeURIComponent(key)}/conversation`)) {
-                apiGet = originalApiGet;
-                return { conversation: incoming, conversation_revision: "desktop-catch-up-next", conversation_digest: "desktop-catch-up-next" };
-              }
-              return originalApiGet(path);
-            };
-            state.renderedViewHtml = "";
-            render({ preserveLiveEditor: true });
-            const root = document.querySelector("[data-agent-conversation-scroll]");
-            root.scrollTop = 0;
-            updateGoRecentVisibility();
-            const dock = document.querySelector("[data-agent-dock]");
-            const pane = document.querySelector("[data-agent-conversation-pane]");
-            const load = document.querySelector("[data-load-pending-conversation]");
-            const recent = document.querySelector("[data-go-recent]");
-            const overlay = document.querySelector("[data-conversation-catchup-overlay]");
-            const dockActions = document.querySelector("[data-agent-floating-actions]");
-            const paneRect = pane?.getBoundingClientRect();
-            const dockRect = dock?.getBoundingClientRect();
-            const overlayRect = overlay?.getBoundingClientRect();
-            const loadRect = load?.getBoundingClientRect();
-            return {
-              labels: [load?.textContent.trim()],
-              group: load?.parentElement?.getAttribute("aria-label"),
-              noRecent: !recent,
-              inConversation: load?.closest("[data-agent-conversation-pane]") === pane,
-              outsideDockActions: !dockActions?.contains(load),
-              overlayed: Boolean(overlayRect && paneRect && dockRect && loadRect &&
-                loadRect.left >= paneRect.left && loadRect.right <= paneRect.right &&
-                Math.abs(overlayRect.left + overlayRect.width / 2 - (paneRect.left + paneRect.width / 2)) <= 2 &&
-                loadRect.bottom <= dockRect.top - 8),
-              visible: Boolean(loadRect && loadRect.top >= 0 && loadRect.bottom <= innerHeight),
-              arrow: load?.querySelector(".ui-icon path")?.getAttribute("d"),
-              stagedVisible: document.body.textContent.includes("Desktop staged message"),
-              scrollTop: root.scrollTop,
-            };
-          }, agentKey);
-          if (desktopCatchUp.labels.join(",") !== "Load 1 new message" || desktopCatchUp.group !== "Conversation catch-up" || !desktopCatchUp.noRecent ||
-              !desktopCatchUp.inConversation || !desktopCatchUp.outsideDockActions || !desktopCatchUp.overlayed || !desktopCatchUp.visible || desktopCatchUp.arrow !== "m6 9 6 6 6-6" || desktopCatchUp.stagedVisible || desktopCatchUp.scrollTop > 8) {
-            throw new Error(`Desktop conversation catch-up controls lost their floating-overlay behavior: ${JSON.stringify(desktopCatchUp)}`);
-          }
-          if (captureDir) await ordinaryPage.screenshot({ path: path.join(captureDir, "ordinary-catchup-overlay-desktop.png"), fullPage: false });
-          await ordinaryPage.click("[data-load-pending-conversation]");
-          await ordinaryPage.waitForSelector("[data-load-pending-conversation]", { state: "detached", timeout: 10_000 });
-          const desktopCatchUpLoaded = await ordinaryPage.evaluate((key) => ({
-            loaded: state.conversations[key]?.blocks?.some((block) => block.content === "Desktop staged message"),
-            pendingCleared: !state.pendingConversationUpdates[key],
-            recentAvailable: Boolean(document.querySelector("[data-go-recent]")),
-          }), agentKey);
-          if (!desktopCatchUpLoaded.loaded || !desktopCatchUpLoaded.pendingCleared || !desktopCatchUpLoaded.recentAvailable) {
-            throw new Error(`Desktop catch-up activation did not fetch and apply staged messages: ${JSON.stringify(desktopCatchUpLoaded)}`);
-          }
-          const goRecentScroll = await ordinaryPage.evaluate(() => {
-            const root = conversationScrollRoot();
-            root.scrollTop = 0;
-            updateGoRecentVisibility();
-            const originalScrollTo = root.scrollTo.bind(root);
-            let options;
-            root.scrollTo = (next) => {
-              options = next;
-              originalScrollTo(next);
-            };
-            document.querySelector("[data-go-recent]")?.click();
-            root.scrollTo = originalScrollTo;
-            return options;
-          });
-          if (goRecentScroll?.behavior !== "auto") {
-            throw new Error(`Go to recent did not snap immediately: ${JSON.stringify(goRecentScroll)}`);
-          }
-          await ordinaryPage.evaluate((key) => {
-            const current = state.conversations[key];
-            const incoming = [...current.blocks, {
-              id: "desktop-keyboard-catch-up-new",
-              kind: "message",
-              role: "assistant",
-              content: "Desktop keyboard staged message",
-            }];
-            state.pendingConversationUpdates[key] = { revision: "desktop-keyboard-catch-up-next", blockCount: incoming.length, unseenCount: 1, digest: "desktop-keyboard-catch-up-next" };
-            const originalApiGet = apiGet;
-            apiGet = async (path) => {
-              if (String(path).split("?", 1)[0].endsWith(`/agents/${encodeURIComponent(key)}/conversation`)) {
-                apiGet = originalApiGet;
-                return { conversation: incoming, conversation_revision: "desktop-keyboard-catch-up-next", conversation_digest: "desktop-keyboard-catch-up-next" };
-              }
-              return originalApiGet(path);
-            };
-            state.renderedViewHtml = "";
-            render({ preserveLiveEditor: true });
-          }, agentKey);
-          await ordinaryPage.locator("[data-load-pending-conversation]").focus();
-          await ordinaryPage.keyboard.press("Enter");
-          await ordinaryPage.waitForSelector("[data-load-pending-conversation]", { state: "detached", timeout: 10_000 });
-          const keyboardCatchUp = await ordinaryPage.evaluate((key) => ({
-            loaded: state.conversations[key]?.blocks?.some((block) => block.content === "Desktop keyboard staged message"),
-            focusedId: document.activeElement?.id,
-          }), agentKey);
-          if (!keyboardCatchUp.loaded || keyboardCatchUp.focusedId !== "prompt-input") {
-            throw new Error(`Keyboard catch-up activation did not restore focus to the composer: ${JSON.stringify(keyboardCatchUp)}`);
-          }
-          await assertFredNonUserBlocks(fredPage, "desktop", {
-            left: desktopFred.conversation.left,
-            right: desktopFred.conversation.right - 32,
-          });
-          await assertFredHeaderActions(fredPage);
-          await openFredSwitcher(fredPage);
-          await closeFredSwitcher(fredPage);
-          if (captureDir) {
-            await ordinaryPage.screenshot({ path: path.join(captureDir, "ordinary-conversation-desktop.png"), fullPage: false });
-            await fredPage.screenshot({ path: path.join(captureDir, "fred-conversation-desktop.png"), fullPage: false });
-          }
-          const mobileOrdinaryPage = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });
-          const mobileFredPage = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });
-          try {
-            await mobileOrdinaryPage.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
-            await mobileOrdinaryPage.waitForSelector(".agent-workspace.conversation-only", { state: "visible", timeout: 10_000 });
-            await mobileFredPage.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "networkidle" });
-            await mobileFredPage.waitForSelector(".personal-assistant-page", { state: "visible", timeout: 10_000 });
-            await mobileFredPage.waitForFunction(() => {
-              const nav = document.querySelector(".bottom-nav");
-              const header = document.querySelector(".app-header");
-              return innerWidth === 390 && nav && header && nav.getBoundingClientRect().width > 0 && header.getBoundingClientRect().width === innerWidth;
-            }, null, { timeout: 10_000 });
-            const mobileOrdinary = await shellMetrics(mobileOrdinaryPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .message-list", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
-            const mobileFred = await shellMetrics(mobileFredPage, { header: ".app-header", conversation: ".agent-conversation-pane", firstConversationChild: ".agent-conversation-scroll > .pa-recommendations", composer: ".agent-dock", composerForm: "#composer", settings: "#header-more-button" });
-            const mobileCatchUp = await mobileOrdinaryPage.evaluate((key) => {
-              const baseline = Array.from({ length: 28 }, (_item, index) => ({
-                id: `mobile-catch-up-${index}`,
-                kind: "message",
-                role: index % 2 ? "assistant" : "user",
-                content: `Mobile catch-up message ${index}`,
-              }));
-              state.conversations[key] = { revision: "mobile-catch-up", blocks: baseline, loaded: true, loading: false };
-              state.pendingConversationUpdates[key] = { revision: "mobile-catch-up-next", blockCount: 30, unseenCount: 2, digest: "mobile-catch-up-next" };
-              state.renderedViewHtml = "";
-              render({ preserveLiveEditor: true });
-              const root = document.querySelector("[data-agent-conversation-scroll]");
-              root.scrollTop = 0;
-              updateGoRecentVisibility();
-              const dock = document.querySelector("[data-agent-dock]");
-              const pane = document.querySelector("[data-agent-conversation-pane]");
-              const load = document.querySelector("[data-load-pending-conversation]");
-              const recent = document.querySelector("[data-go-recent]");
-              const overlay = document.querySelector("[data-conversation-catchup-overlay]");
-              const dockActions = document.querySelector("[data-agent-floating-actions]");
-              const dockRect = dock?.getBoundingClientRect();
-              const paneRect = pane?.getBoundingClientRect();
-              const overlayRect = overlay?.getBoundingClientRect();
-              const loadRect = load?.getBoundingClientRect();
-              return {
-                labels: [load?.textContent.trim()],
-                group: load?.parentElement?.getAttribute("aria-label"),
-                noRecent: !recent,
-                inConversation: load?.closest("[data-agent-conversation-pane]") === pane,
-                outsideDockActions: !dockActions?.contains(load),
-                overlayed: Boolean(overlayRect && paneRect && dockRect && loadRect &&
-                  loadRect.left >= paneRect.left && loadRect.right <= paneRect.right &&
-                  Math.abs(overlayRect.left + overlayRect.width / 2 - (paneRect.left + paneRect.width / 2)) <= 2 &&
-                  loadRect.bottom <= dockRect.top - 8),
-                visible: Boolean(loadRect && loadRect.top >= 0 && loadRect.bottom <= innerHeight),
-                targetHeight: loadRect?.height >= 38,
-                dockTop: dockRect?.top,
-              };
-            }, agentKey);
-            if (mobileCatchUp.labels.join(",") !== "Load 2 new messages" || mobileCatchUp.group !== "Conversation catch-up" || !mobileCatchUp.noRecent ||
-                !mobileCatchUp.inConversation || !mobileCatchUp.outsideDockActions || !mobileCatchUp.overlayed || !mobileCatchUp.visible || !mobileCatchUp.targetHeight) {
-              throw new Error(`Mobile conversation catch-up controls lost their floating-overlay behavior: ${JSON.stringify(mobileCatchUp)}`);
-            }
-            if (captureDir) await mobileOrdinaryPage.screenshot({ path: path.join(captureDir, "ordinary-catchup-overlay-mobile.png"), fullPage: false });
-            ["bottomBorder"].forEach((key) => equalMetric(mobileOrdinary.header[key], mobileFred.header[key], `mobile header ${key}`));
-            if (mobileFred.header.title !== "FRED" || !mobileFred.header.subtitleHidden || mobileOrdinary.header.subtitleHidden) {
-              throw new Error(`FRED mobile header did not hide Agent-only metadata: ${JSON.stringify({ mobileOrdinary: mobileOrdinary.header, mobileFred: mobileFred.header })}`);
-            }
-            if (mobileOrdinary.overflow || mobileFred.overflow ||
-                Math.abs(mobileFred.nav.left) > 1 || Math.abs(mobileFred.nav.right - mobileFred.viewport.width) > 1 ||
-                Math.abs(mobileFred.nav.bottom - mobileFred.viewport.height) > 1 || mobileFred.nav.items.length !== 3 ||
-                mobileFred.nav.items.some((item) => item[0] < -1 || item[1] < -1 || item[0] + item[2] > mobileFred.viewport.width + 1 || item[1] + item[3] > mobileFred.viewport.height + 1) ||
-                Math.abs(mobileFred.header.left) > 1 || Math.abs(mobileFred.header.right - mobileFred.viewport.width) > 1 ||
-                Math.abs(mobileFred.composerForm.left - mobileOrdinary.composerForm.left) > 1 || Math.abs(mobileFred.composerForm.right - mobileOrdinary.composerForm.right) > 1 ||
-                mobileFred.settings.left < 0 || mobileFred.settings.right > mobileFred.viewport.width ||
-                mobileFred.settings.top < 0 || mobileFred.settings.bottom > mobileFred.header.height + 1 ||
-                mobileFred.composer.bottom > mobileFred.nav.top || Math.abs(mobileFred.nav.top - mobileFred.composer.bottom) > 1) {
-              throw new Error(`FRED mobile shell overflowed or left a composer-to-nav gap: ${JSON.stringify({ mobileOrdinary, mobileFred })}`);
-            }
-            const fredComposer = await mobileFredPage.evaluate(() => {
-              const composer = document.querySelector(".personal-assistant-page #composer");
-              const input = composer?.querySelector("#prompt-input");
-              const dock = composer?.closest(".agent-dock");
-              const nav = document.querySelector(".bottom-nav");
-              const controls = composer?.querySelector(".send-row");
-              const compact = {
-                inputHeight: input?.getBoundingClientRect().height || 0,
-                controlsVisible: Boolean(controls?.getClientRects().length),
-                dockBottom: dock?.getBoundingClientRect().bottom || 0,
-                navTop: nav?.getBoundingClientRect().top || 0,
-              };
-              input?.focus();
-              return new Promise((resolve) => requestAnimationFrame(() => resolve({
-                compact,
-                expanded: {
-                  inputHeight: input?.getBoundingClientRect().height || 0,
-                  controlsVisible: Boolean(controls?.getClientRects().length),
-                },
-              })));
-            });
-            if (fredComposer.compact.inputHeight < 40 || fredComposer.compact.inputHeight > 48 || fredComposer.compact.controlsVisible ||
-                Math.abs(fredComposer.compact.navTop - fredComposer.compact.dockBottom) > 1 ||
-                fredComposer.expanded.inputHeight < 90 || !fredComposer.expanded.controlsVisible) {
-              throw new Error(`FRED compact composer did not expand from a one-line prompt: ${JSON.stringify(fredComposer)}`);
-            }
-            await assertFredHeaderActions(mobileFredPage);
-            await assertFredNonUserBlocks(mobileFredPage, "mobile", {
-              left: mobileOrdinary.conversation.left,
-              right: mobileOrdinary.conversation.right - 28,
-            });
-            await openFredSwitcher(mobileFredPage);
-            await closeFredSwitcher(mobileFredPage);
-            if (captureDir) {
-              await mobileOrdinaryPage.screenshot({ path: path.join(captureDir, "ordinary-conversation-mobile.png"), fullPage: false });
-              await mobileFredPage.screenshot({ path: path.join(captureDir, "fred-conversation-mobile.png"), fullPage: false });
-            }
-          } finally {
-            await mobileOrdinaryPage.close();
-            await mobileFredPage.close();
-          }
-        } finally {
-          await ordinaryPage.close();
-          await fredPage.close();
-        }
-      }
 
-      if (!workspaceOnly && !delegationOnly) await assertPersonalAssistantConversationShell();
-
-      async function assertPersonalAssistantPhase1() {
-        const fredBackendUrl = process.env.TYCHO_REMOTE_UI_FRED_PHASE1_BACKEND_URL;
-        if (!fredBackendUrl) return;
-
-        const holdPath = process.env.TYCHO_REMOTE_UI_FRED_HOLD_PATH;
-        const inquiryPath = process.env.TYCHO_REMOTE_UI_FRED_INQUIRY_PATH;
-        const codexPath = process.env.TYCHO_REMOTE_UI_FRED_CODEX_PATH;
-        if (!holdPath || !inquiryPath || !codexPath) throw new Error("Phase 1 browser fixture needs hold, inquiry, and Codex paths");
-
-        const phaseRequests = [];
-        const phaseErrors = [];
-        const expectedRecoveryConsoleErrors = [];
-        let expectedQueueConflictPath = "";
-        let expectedInquiryConflictPath = "";
-        const expectedFairAcceptanceIds = new Set();
-        const phaseContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true });
-        const phasePage = await phaseContext.newPage();
-        await phasePage.emulateMedia({ reducedMotion: "reduce" });
-        phasePage.on("console", (message) => {
-          if (message.type() !== "error") return;
-          const index = expectedRecoveryConsoleErrors.indexOf(message.text());
-          if (index >= 0) expectedRecoveryConsoleErrors.splice(index, 1);
-          else phaseErrors.push(message.text());
-        });
-        phasePage.on("pageerror", (error) => phaseErrors.push(error.message));
-
-        const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-        const requestBody = (request) => {
-          const raw = request.postData();
-          if (!raw) return {};
-          try { return JSON.parse(raw); } catch (_error) { return {}; }
-        };
-        const fredPath = (pathname) => pathname === "/personal-assistant" ||
-          pathname.startsWith("/personal-assistant/") || /^\\/agents\\/[^/]+\\/conversation$/.test(pathname);
-        const shellPath = (pathname) => pathname === "/setup" || pathname.startsWith("/setup/") ||
-          pathname === "/schedules" || pathname.startsWith("/schedules/") || pathname.startsWith("/servers/resources");
-        const upstreamResponse = async (route) => {
-          const request = route.request();
-          const url = new URL(request.url());
-          const headers = { ...request.headers() };
-          ["host", "content-length", "origin", "referer"].forEach((name) => delete headers[name]);
-          const options = {
-            url: new URL(`${url.pathname}${url.search}`, fredBackendUrl).toString(),
-            method: request.method(),
-            headers,
-          };
-          const postData = request.postData();
-          if (postData !== null) options.postData = postData;
-          return route.fetch(options);
-        };
-        await phasePage.route("**/*", async (route) => {
-          const request = route.request();
-          let url;
-          try { url = new URL(request.url()); } catch (_error) { return route.continue(); }
-          if (!shellPath(url.pathname) && !fredPath(url.pathname)) return route.continue();
-          if (shellPath(url.pathname)) {
-            await sleep(1_800);
-            return route.continue();
-          }
-
-          const body = requestBody(request);
-          const phaseRequest = { method: request.method(), path: url.pathname, body };
-          phaseRequests.push(phaseRequest);
-          const delayedPrompt = "phase1 delayed first message";
-          const lostPrompt = "phase1 lost response";
-          if (request.method() === "POST" && url.pathname === "/personal-assistant/messages" && body.prompt === delayedPrompt) {
-            await sleep(1_200);
-          }
-          if (request.method() === "POST" && url.pathname === "/personal-assistant/messages" && body.prompt === lostPrompt) {
-            const response = await upstreamResponse(route);
-            await response.body();
-            expectedRecoveryConsoleErrors.push("Failed to load resource: net::ERR_FAILED");
-            return route.abort("failed");
-          }
-          if (request.method() === "POST" && url.pathname.startsWith("/personal-assistant/inquiries/") && url.pathname.endsWith("/dismiss") &&
-              phaseRequests.filter((candidate) => candidate.method === "POST" && candidate.path === url.pathname).length > 1) {
-            await sleep(350);
-          }
-          const response = await upstreamResponse(route);
-          const status = response.status();
-          const fairAcceptanceId = url.pathname.startsWith("/personal-assistant/messages/acceptance/")
-            ? decodeURIComponent(url.pathname.split("/").at(-1) || "") : "";
-          if (status === 404 && request.method() === "GET" && expectedFairAcceptanceIds.has(fairAcceptanceId)) {
-            expectedRecoveryConsoleErrors.push("Failed to load resource: the server responded with a status of 404 (Not Found)");
-          }
-          if (request.method() === "PATCH" && url.pathname === expectedQueueConflictPath && [404, 409].includes(status)) {
-            expectedRecoveryConsoleErrors.push(`Failed to load resource: the server responded with a status of ${status} (${status === 404 ? "Not Found" : "Conflict"})`);
-          }
-          if (request.method() === "POST" && url.pathname === expectedInquiryConflictPath && phaseRequests.filter((candidate) => (
-            candidate.method === "POST" && candidate.path === url.pathname
-          )).length > 1 && status === 409) {
-            expectedRecoveryConsoleErrors.push("Failed to load resource: the server responded with a status of 409 (Conflict)");
-          }
-          if ((request.method() === "DELETE" && url.pathname.startsWith("/personal-assistant/prompt-queue/")) ||
-              (request.method() === "POST" && url.pathname === "/personal-assistant/messages")) {
-            const responseBody = await response.body();
-            try { phaseRequest.response = JSON.parse(responseBody.toString()); } catch (_error) { phaseRequest.response = {}; }
-            return route.fulfill({ response, body: responseBody });
-          }
-          return route.fulfill({ response });
-        });
-
-        const submit = async (prompt) => {
-          const input = phasePage.locator("#composer #prompt-input");
-          await input.fill(prompt);
-          await phasePage.locator("#composer button[type='submit']:visible").last().click();
-        };
-        const userMessageIds = async (prompt) => phasePage.locator("article.message.user").evaluateAll((articles, expected) => (
-          articles.filter((article) => article.textContent.includes(expected)).map((article) => article.dataset.clientRequestId).filter(Boolean)
-        ), prompt);
-        const waitForNode = async (predicate, timeout = 10_000, label = "") => {
-          const deadline = Date.now() + timeout;
-          while (!predicate()) {
-            if (Date.now() >= deadline) {
-              const snapshot = await phasePage.evaluate(() => ({
-                hash: location.hash,
-                forms: Array.from(document.querySelectorAll("[data-prompt-queue-edit-form]")).map((form) => ({
-                  entryId: form.dataset.entryId,
-                  hidden: form.classList.contains("hidden"),
-                  prompt: form.querySelector("textarea")?.value,
-                  submitDisabled: form.querySelector("button[type='submit']")?.disabled,
-                  pending: form.getAttribute("aria-busy"),
-                })),
-              }));
-              throw new Error(`${label || "Phase 1 browser state"} timed out: ${JSON.stringify(snapshot)}`);
-            }
-            await phasePage.waitForTimeout(100);
-          }
-        };
-        const assertNoNestedForms = async (label) => {
-          const nestedForms = await phasePage.evaluate(() => Array.from(document.querySelectorAll("form form")).map((form) => ({
-            id: form.id,
-            entryId: form.dataset.entryId || "",
-            owner: form.closest("form")?.id || "",
-          })));
-          if (nestedForms.length) throw new Error(`${label} produced nested forms: ${JSON.stringify(nestedForms)}`);
-        };
-        const waitForUserMessageCount = (prompt, count, timeout = 10_000) => phasePage.waitForFunction(({ expectedPrompt, expectedCount }) => (
-          Array.from(document.querySelectorAll("article.message.user"))
-            .filter((article) => article.textContent.includes(expectedPrompt)).length >= expectedCount
-        ), { expectedPrompt: prompt, expectedCount: count }, { timeout, polling: 100 });
-        const waitForMessageStatus = (prompt, status, timeout = 12_000) => phasePage.waitForFunction(({ expectedPrompt, expectedStatus }) => (
-          Array.from(document.querySelectorAll("article.message.user")).some((article) => {
-            if (!article.textContent.includes(expectedPrompt)) return false;
-            return article.nextElementSibling?.dataset.paMessageStatus === expectedStatus;
-          })
-        ), { expectedPrompt: prompt, expectedStatus: status }, { timeout, polling: 100 });
-        const mutationRequests = () => phaseRequests.filter((request) => ["POST", "PATCH", "PUT", "DELETE"].includes(request.method));
-        const requestsFor = (path, method = null) => phaseRequests.filter((request) => request.path === path && (!method || request.method === method));
-
-        try {
-          const shellStartedAt = Date.now();
-          await phasePage.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "domcontentloaded" });
-          await phasePage.waitForSelector(".personal-assistant-page[data-personal-assistant-state='active']", { state: "visible", timeout: 10_000 });
-          const shellReadyMs = Date.now() - shellStartedAt;
-          if (shellReadyMs >= 1_600) throw new Error(`FRED status/conversation waited for the delayed shell: ${shellReadyMs}ms`);
-          await phasePage.waitForSelector("#composer #prompt-input", { state: "visible", timeout: 10_000 });
-          await assertNoNestedForms("initial FRED composer");
-
-          const delayedPrompt = "phase1 delayed first message";
-          const newerDraft = "phase1 newer draft stays intact";
-          fs.writeFileSync(holdPath, "hold");
-          const pendingStartedAt = Date.now();
-          await submit(delayedPrompt);
-          await phasePage.waitForSelector("[data-pa-message-status='sending']", { state: "visible", timeout: 2_000 });
-          const firstPendingPaintMs = Date.now() - pendingStartedAt;
-          if (firstPendingPaintMs >= 1_000) throw new Error(`First FRED message did not paint promptly: ${firstPendingPaintMs}ms`);
-          await phasePage.locator("#composer #prompt-input").fill(newerDraft);
-          fs.rmSync(holdPath, { force: true });
-          await phasePage.waitForSelector("[data-pa-message-status='running']", { state: "visible", timeout: 10_000 });
-          const runningSeenAt = Date.now();
-          const activePollDelay = await phasePage.evaluate(() => personalAssistantPollDelay());
-          if (activePollDelay !== 4_000) throw new Error(`Active FRED polling lost its measured 4s cadence: ${activePollDelay}`);
-          await waitForMessageStatus(delayedPrompt, "accepted");
-          const terminalFreshnessMs = Date.now() - runningSeenAt;
-          if ((await phasePage.locator("#composer #prompt-input").inputValue()) !== newerDraft) {
-            throw new Error("A newer FRED draft was overwritten by the completed response");
-          }
-
-          const duplicatePrompt = "phase1 duplicate intended text";
-          await submit(duplicatePrompt);
-          await waitForUserMessageCount(duplicatePrompt, 1);
-          await submit(duplicatePrompt);
-          await waitForUserMessageCount(duplicatePrompt, 2);
-          await waitForMessageStatus(duplicatePrompt, "accepted");
-          const duplicateIds = await userMessageIds(duplicatePrompt);
-          if (new Set(duplicateIds).size !== 2) throw new Error(`Duplicate intended text did not retain two request identities: ${JSON.stringify(duplicateIds)}`);
-
-          const fairUnknownIds = await phasePage.evaluate(() => {
-            const context = personalAssistantSessionContext();
-            const agentKey = state.personalAssistant?.active_key || "";
-            return Array.from({ length: 6 }, (_value, index) => {
-              const clientRequestId = `client-phase1-fair-${Date.now().toString(36)}-${index}`;
-              updatePersonalAssistantSubmission(clientRequestId, "unknown", {
-                prompt: `phase1 unresolved ${index}`,
-                agent_key: agentKey,
-                active_key: context.active_key,
-                generation: context.generation,
-                server_key: context.server_key,
-                acceptance_state: "unknown",
-                message_recorded: false,
-              });
-              return clientRequestId;
-            });
-          });
-          fairUnknownIds.forEach((clientRequestId) => expectedFairAcceptanceIds.add(clientRequestId));
-          await phasePage.evaluate(() => reconcilePersonalAssistantSubmissions());
-          await phasePage.evaluate(() => reconcilePersonalAssistantSubmissions());
-          const fairAcceptanceRequests = phaseRequests.filter((request) => request.method === "GET" &&
-            request.path.startsWith("/personal-assistant/messages/acceptance/") &&
-            fairUnknownIds.includes(decodeURIComponent(request.path.split("/").at(-1) || "")));
-          const fairAcceptanceIds = new Set(fairAcceptanceRequests.map((request) => decodeURIComponent(request.path.split("/").at(-1) || "")));
-          if (fairAcceptanceIds.size !== fairUnknownIds.length) {
-            throw new Error(`FRED acceptance reconciliation starved older unresolved records: ${JSON.stringify({ fairUnknownIds, fairAcceptanceRequests })}`);
-          }
-          const retainedFairUnknownIds = await phasePage.evaluate((ids) => ids.filter((id) => (
-            state.personalAssistantSubmissionStates[personalAssistantSubmissionStorageId({
-              server_key: personalAssistantServerKey(),
-              active_key: personalAssistantSessionContext()?.active_key,
-              generation: personalAssistantSessionContext()?.generation,
-              client_request_id: id,
-            })]?.state === "unknown"
-          )), fairUnknownIds);
-          if (retainedFairUnknownIds.length !== fairUnknownIds.length) {
-            throw new Error(`FRED unresolved acceptance records were evicted: ${JSON.stringify({ fairUnknownIds, retainedFairUnknownIds })}`);
-          }
-
-          const queueSeedPrompt = "phase1 queue seed holds the run";
-          const queueKeepPrompt = "phase1 queue retained for failure";
-          const queueDeletePrompt = "phase1 queue deleted explicitly";
-          fs.writeFileSync(holdPath, "hold");
-          await submit(queueSeedPrompt);
-          await phasePage.waitForSelector("[data-pa-message-status='running']", { state: "visible", timeout: 10_000 });
-          await submit(queueKeepPrompt);
-          await submit(queueDeletePrompt);
-          await phasePage.waitForSelector("[data-prompt-queue]", { state: "visible", timeout: 10_000 });
-          await assertNoNestedForms("FRED queue first paint");
-          await phasePage.locator("[data-prompt-queue]").evaluate((queue) => { queue.open = true; });
-          await phasePage.waitForFunction(() => document.querySelectorAll("[data-prompt-queue-entry]").length >= 2, null, { timeout: 10_000, polling: 100 });
-          const fullScreenToggle = phasePage.locator("#composer [data-toggle-composer-full-screen]");
-          if (await fullScreenToggle.count()) {
-            await fullScreenToggle.click();
-            try {
-              await phasePage.waitForSelector("#composer.composer-full-screen", { state: "visible", timeout: 5_000 });
-            } catch (error) {
-              const fullScreenDebug = await phasePage.evaluate(() => ({
-                composer: document.querySelector("#composer")?.outerHTML.slice(0, 500) || "",
-                fullScreenKeys: Array.from(state.fullScreenComposerKeys || []),
-                hash: location.hash,
-              }));
-              throw new Error(`FRED full-screen editor did not render: ${JSON.stringify({ fullScreenDebug, error: error.message })}`);
-            }
-            const fullScreenInput = phasePage.locator("#composer #prompt-input");
-            const fullScreenDraft = "phase1 full-screen draft survives refresh";
-            await fullScreenInput.fill(fullScreenDraft);
-            await fullScreenInput.focus();
-            await phasePage.evaluate(() => refresh({ force: true, forceConversation: true }));
-            await phasePage.waitForFunction((expected) => document.querySelector("#composer #prompt-input")?.value === expected, fullScreenDraft, { timeout: 10_000, polling: 100 });
-            await assertNoNestedForms("full-screen FRED refresh");
-            const fullScreenQueueState = await phasePage.evaluate(() => ({
-              activeElement: document.activeElement?.id || "",
-              queueInsideComposer: Boolean(document.querySelector("#composer [data-prompt-queue]")),
-              queueInDock: Boolean(document.querySelector("[data-agent-dock] > [data-prompt-queue]")),
-            }));
-            if (fullScreenQueueState.queueInsideComposer || !fullScreenQueueState.queueInDock || fullScreenQueueState.activeElement !== "prompt-input") {
-              throw new Error(`Full-screen FRED refresh moved the queue or lost editor focus: ${JSON.stringify(fullScreenQueueState)}`);
-            }
-            await phasePage.locator("#composer [data-toggle-composer-full-screen]").click();
-            await phasePage.waitForSelector("#composer:not(.composer-full-screen)", { state: "visible", timeout: 5_000 });
-            await assertNoNestedForms("dock FRED after full-screen close");
-          }
-          const queueEntries = phasePage.locator("[data-prompt-queue-entry]");
-          const keepEntry = queueEntries.filter({ hasText: queueKeepPrompt }).first();
-          const deleteEntry = queueEntries.filter({ hasText: queueDeletePrompt }).first();
-          if (await keepEntry.count() !== 1 || await deleteEntry.count() !== 1) throw new Error("FRED queue fixture did not expose both queued controls");
-          const deleteEntryId = await deleteEntry.getAttribute("data-prompt-queue-entry");
-          await keepEntry.locator("[data-edit-queued-prompt]").click();
-          const entryId = await keepEntry.getAttribute("data-prompt-queue-entry");
-          const saveOwnership = await keepEntry.locator("[data-prompt-queue-edit-form] button[type='submit']").evaluate((button) => ({
-            formId: button.form?.id || "",
-            formEntryId: button.form?.dataset.entryId || "",
-          }));
-          if (saveOwnership.formId === "composer" || saveOwnership.formEntryId !== entryId) {
-            throw new Error(`FRED queue Save has the wrong browser form owner: ${JSON.stringify({ entryId, saveOwnership })}`);
-          }
-          const editState = await keepEntry.evaluate((entry) => ({
-            buttonDisabled: entry.querySelector("[data-edit-queued-prompt]")?.disabled,
-            formHidden: entry.querySelector("[data-prompt-queue-edit-form]")?.classList.contains("hidden"),
-          }));
-          if (editState.buttonDisabled || editState.formHidden) throw new Error(`FRED queue edit control did not open: ${JSON.stringify(editState)}`);
-          const editedQueuePrompt = "phase1 queue retained after edit";
-          await keepEntry.locator("[data-prompt-queue-edit-form] textarea").fill(editedQueuePrompt);
-          const editedValue = await keepEntry.locator("[data-prompt-queue-edit-form] textarea").inputValue();
-          if (editedValue !== editedQueuePrompt) throw new Error(`FRED queue edit did not retain typed value: ${editedValue}`);
-          await keepEntry.locator("[data-prompt-queue-edit-form] button[type='submit']").click();
-          await waitForNode(() => phaseRequests.some((request) => request.method === "PATCH" && request.path.startsWith("/personal-assistant/prompt-queue/")), 10_000, "FRED queue edit request");
-          await phasePage.waitForFunction((prompt) => Array.from(document.querySelectorAll("[data-prompt-queue-entry] strong")).some((strong) => strong.textContent.includes(prompt)), editedQueuePrompt, { timeout: 10_000, polling: 100 });
-
-          const queueConflictPrompt = "phase1 queue conflict stays editable locally";
-          await submit(queueConflictPrompt);
-          const conflictEntry = queueEntries.filter({ hasText: queueConflictPrompt }).first();
-          await conflictEntry.waitFor({ state: "visible", timeout: 10_000 });
-          const conflictEntryId = await conflictEntry.getAttribute("data-prompt-queue-entry");
-          expectedQueueConflictPath = `/personal-assistant/prompt-queue/${encodeURIComponent(conflictEntryId)}`;
-          await waitForNode(() => phaseRequests.some((request) => request.method === "POST" &&
-            request.path === "/personal-assistant/messages" &&
-            request.response?.acceptance?.client_request_id === conflictEntryId &&
-            request.response?.acceptance?.queue_entry_id === conflictEntryId), 10_000, "FRED queue conflict acceptance");
-          const conflictDelete = await phasePage.evaluate(async (entryId) => {
-            const context = state.personalAssistant;
-            const response = await fetch(`/personal-assistant/prompt-queue/${encodeURIComponent(entryId)}`, {
-              method: "DELETE",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ active_key: context.active_key, generation: context.generation }),
-            });
-            return { status: response.status, body: await response.json() };
-          }, conflictEntryId);
-          if (conflictDelete.status !== 200 || conflictDelete.body.acceptance?.state !== "canceled") {
-            const conflictState = await phasePage.evaluate(() => {
-              const item = state.personalAssistant;
-              const agent = item?.active_key ? (state.agentDetails[item.active_key] || item.agent) : null;
-              return {
-                entries: (agent?.prompt_queue?.entries || []).map((entry) => ({ id: entry.id, clientRequestId: entry.client_request_id, prompt: entry.prompt, state: entry.state })),
-                agentRunning: agent?.running,
-              };
-            });
-            const conflictPost = phaseRequests.find((request) => request.method === "POST" &&
-              request.path === "/personal-assistant/messages" && request.response?.acceptance?.client_request_id === conflictEntryId);
-            throw new Error(`FRED queue conflict fixture did not delete through the reviewed route: ${JSON.stringify({ conflictDelete, conflictPost, conflictEntryId, conflictState })}`);
-          }
-          await conflictEntry.locator("[data-edit-queued-prompt]").click();
-          const conflictEditPrompt = "phase1 stale queue edit remains in the form";
-          await conflictEntry.locator("[data-prompt-queue-edit-form] textarea").fill(conflictEditPrompt);
-          await conflictEntry.locator("[data-prompt-queue-edit-form] button[type='submit']").click();
-          const conflictError = phasePage.locator(`[data-pa-control-error='queue-edit:${conflictEntryId}']`);
-          await conflictError.waitFor({ state: "visible", timeout: 10_000 });
-          const conflictErrorText = await conflictError.textContent();
-          if (!(conflictErrorText.includes("no longer editable") || conflictErrorText.includes("Unknown queued prompt"))) {
-            throw new Error(`FRED queue conflict error was not factual: ${await conflictError.textContent()}`);
-          }
-          if (await conflictEntry.locator("[data-prompt-queue-edit-form] textarea").inputValue() !== conflictEditPrompt) {
-            throw new Error("FRED queue conflict discarded the edited text");
-          }
-          await phasePage.evaluate(() => refresh({ force: true, forceConversation: true }));
-          await phasePage.waitForFunction((entryId) => !document.querySelector(`[data-prompt-queue-entry='${CSS.escape(entryId)}']`), conflictEntryId, { timeout: 10_000, polling: 100 });
-          await assertNoNestedForms("forced FRED queue refresh");
-
-          await deleteEntry.locator("[data-delete-queued-prompt]").click();
-          await waitForNode(() => phaseRequests.some((request) => request.method === "DELETE" &&
-            request.path.endsWith(`/${deleteEntryId}`) && request.response), 10_000, "FRED queue delete response");
-          const queuePatch = requestsFor("/personal-assistant/prompt-queue/", "PATCH");
-          const queueDelete = requestsFor("/personal-assistant/prompt-queue/", "DELETE");
-          if (!phaseRequests.some((request) => request.method === "PATCH" && request.path.startsWith("/personal-assistant/prompt-queue/")) ||
-              !phaseRequests.some((request) => request.method === "DELETE" && request.path.startsWith("/personal-assistant/prompt-queue/"))) {
-            throw new Error(`FRED queue edit/delete did not use dedicated routes: ${JSON.stringify({ queuePatch, queueDelete, phaseRequests })}`);
-          }
-          const queueMutationBodies = phaseRequests.filter((request) => request.path.startsWith("/personal-assistant/prompt-queue/") && ["PATCH", "DELETE"].includes(request.method));
-          if (!queueMutationBodies.every((request) => request.body.active_key && Number.isInteger(request.body.generation))) {
-            throw new Error(`FRED queue mutations lost captured session context: ${JSON.stringify(queueMutationBodies)}`);
-          }
-          const deletedQueueRequest = phaseRequests.find((request) => request.method === "DELETE" && request.path.endsWith(`/${deleteEntryId}`));
-          if (deletedQueueRequest?.response?.acceptance?.state !== "canceled" || deletedQueueRequest.response?.canceled !== true) {
-            throw new Error(`FRED queue deletion did not return a durable canceled receipt: ${JSON.stringify(deletedQueueRequest)}`);
-          }
-          await phasePage.waitForFunction((clientRequestId) => (
-            Object.values(state.personalAssistantSubmissionStates || {}).some((record) => (
-              record.client_request_id === clientRequestId && record.state === "canceled"
-            ))
-          ), deleteEntryId, { timeout: 5_000, polling: 100 });
-          const canceledLookup = await phasePage.evaluate(async (clientRequestId) => {
-            const response = await fetch(`/personal-assistant/messages/acceptance/${encodeURIComponent(clientRequestId)}`);
-            return response.json();
-          }, deleteEntryId);
-          if (canceledLookup.acceptance?.state !== "canceled") {
-            throw new Error(`FRED canceled acceptance did not survive read-only lookup: ${JSON.stringify(canceledLookup)}`);
-          }
-
-          fs.renameSync(codexPath, `${codexPath}.disabled`);
-          fs.rmSync(holdPath, { force: true });
-          await phasePage.waitForSelector(".prompt-queue-error", { state: "visible", timeout: 12_000 });
-          await waitForMessageStatus(editedQueuePrompt, "failed");
-          if (await phasePage.locator(`[data-pa-submission-recovery]`).filter({ hasText: editedQueuePrompt }).count() !== 1) {
-            throw new Error("Queued start failure did not remain visible as a FRED recovery record");
-          }
-          fs.renameSync(`${codexPath}.disabled`, codexPath);
-          await phasePage.locator("[data-retry-prompt-queue]").click();
-          await waitForNode(() => phaseRequests.some((request) => request.method === "POST" && request.path === "/personal-assistant/prompt-queue/retry"));
-          const retryRequest = phaseRequests.find((request) => request.method === "POST" && request.path === "/personal-assistant/prompt-queue/retry");
-          if (!retryRequest.body.active_key || !Number.isInteger(retryRequest.body.generation)) throw new Error(`Queue retry lost FRED session context: ${JSON.stringify(retryRequest)}`);
-          await phasePage.waitForFunction(() => {
-            const item = state.personalAssistant;
-            const agent = item?.active_key ? (state.agentDetails[item.active_key] || item.agent) : null;
-            return Boolean(agent) && !agent.running && !agent.prompt_queue?.dispatch_error && !(agent.prompt_queue?.entries || []).length;
-          }, null, { timeout: 12_000, polling: 100 });
-
-          const failedRunPrompt = "phase1 terminal failed run";
-          await submit(failedRunPrompt);
-          await waitForMessageStatus(failedRunPrompt, "failed", 15_000);
-          const failedRunRecovery = phasePage.locator("[data-pa-submission-recovery]").filter({ hasText: failedRunPrompt }).first();
-          await failedRunRecovery.waitFor({ state: "visible", timeout: 10_000 });
-          const failedRunCopy = await failedRunRecovery.textContent();
-          if (!failedRunCopy.includes("FRED run failed") || failedRunCopy.includes("Message failed to send") || failedRunCopy.includes("FRED did not accept this message")) {
-            throw new Error(`Terminal FRED run failure used delivery-failure copy: ${failedRunCopy}`);
-          }
-
-          const lostPrompt = "phase1 lost response";
-          const lostPostCountBefore = requestsFor("/personal-assistant/messages", "POST").length;
-          await submit(lostPrompt);
-          const lostRecovery = phasePage.locator("[data-pa-submission-recovery]").filter({ hasText: lostPrompt }).first();
-          await lostRecovery.waitFor({ state: "visible", timeout: 10_000 });
-          await phasePage.waitForSelector("[data-pa-message-status='unknown']", { state: "visible", timeout: 2_000 });
-          if (requestsFor("/personal-assistant/messages", "POST").length !== lostPostCountBefore + 1) {
-            throw new Error("Lost FRED response triggered an automatic retry");
-          }
-          await lostRecovery.locator("[data-check-pa-submission]").click();
-          await phasePage.waitForFunction((prompt) => {
-            const article = Array.from(document.querySelectorAll("article.message.user")).find((candidate) => candidate.textContent.includes(prompt));
-            const status = article?.nextElementSibling?.dataset.paMessageStatus;
-            return status === "accepted" || status === "running";
-          }, lostPrompt, { timeout: 12_000, polling: 100 });
-          if (requestsFor("/personal-assistant/messages", "POST").length !== lostPostCountBefore + 1) throw new Error("Acceptance lookup retried the lost FRED message");
-
-          const navigationPrompt = "phase1 response after navigation";
-          await submit(navigationPrompt);
-          await phasePage.evaluate(() => navigate({ type: "tab", tab: "agents" }));
-          await phasePage.waitForFunction(() => location.hash === "#agents", null, { timeout: 5_000, polling: 100 });
-          await phasePage.waitForTimeout(1_500);
-          if (await phasePage.evaluate(() => location.hash) !== "#agents" || await phasePage.locator(".personal-assistant-page").count() !== 0) {
-            throw new Error("A stale FRED response forced navigation back to the conversation");
-          }
-
-          await phasePage.setViewportSize({ width: 1440, height: 900 });
-          await phasePage.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "domcontentloaded" });
-          await phasePage.waitForSelector(".personal-assistant-page", { state: "visible", timeout: 10_000 });
-          fs.writeFileSync(inquiryPath, "inquiry");
-          const inquiryPrompt = "phase1 inquiry controls";
-          await submit(inquiryPrompt);
-          try {
-            await phasePage.waitForSelector("#inquiry-form", { state: "visible", timeout: 12_000 });
-          } catch (error) {
-            const inquiryResponse = phaseRequests.filter((request) => request.method === "POST" && request.path === "/personal-assistant/messages").at(-1);
-            const viewState = await phasePage.evaluate(() => ({
-              route: location.hash,
-              personalAssistant: state.personalAssistant,
-              agent: state.personalAssistant?.active_key ? state.agentDetails[state.personalAssistant.active_key] : null,
-            }));
-            throw new Error(`FRED inquiry did not render: ${JSON.stringify({ inquiryResponse, viewState, error: error.message })}`);
-          }
-          const inquiryId = await phasePage.locator("#inquiry-form").getAttribute("data-inquiry-id");
-          expectedInquiryConflictPath = `/personal-assistant/inquiries/${encodeURIComponent(inquiryId)}/dismiss`;
-          const inquiryConflict = await phasePage.evaluate(async (id) => {
-            const context = state.personalAssistant;
-            const response = await fetch(`/personal-assistant/inquiries/${encodeURIComponent(id)}/dismiss`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ active_key: context.active_key, generation: context.generation }),
-            });
-            return { status: response.status, body: await response.json() };
-          }, inquiryId);
-          if (inquiryConflict.status !== 200) throw new Error(`FRED inquiry conflict fixture could not establish a stale action: ${JSON.stringify(inquiryConflict)}`);
-          await phasePage.locator("#inquiry-form .composer-action-menu > summary").click();
-          await phasePage.locator(`[data-inquiry-lifecycle-action='dismiss'][data-inquiry-id='${inquiryId}']`).click();
-          await phasePage.waitForFunction((id) => {
-            const button = document.querySelector(`[data-inquiry-lifecycle-action='dismiss'][data-inquiry-id='${CSS.escape(id)}']`);
-            const agentKey = button?.dataset.agentKey;
-            return Boolean(button) && button.disabled && state.pendingInquiryActions.get(agentKey) === "dismiss";
-          }, inquiryId, { timeout: 2_000, polling: 25 });
-          await waitForNode(() => phaseRequests.some((request) => request.method === "POST" && request.path === `/personal-assistant/inquiries/${inquiryId}/dismiss`));
-          const inquiryError = phasePage.locator(`[data-pa-control-error='inquiry-dismiss:${inquiryId}']`);
-          try {
-            await inquiryError.waitFor({ state: "visible", timeout: 10_000 });
-          } catch (error) {
-            const inquiryDebug = await phasePage.evaluate((id) => ({
-              agent: state.personalAssistant?.active_key ? state.agentDetails[state.personalAssistant.active_key] : null,
-              controlErrors: state.personalAssistantControlErrors,
-              context: personalAssistantSessionContext(),
-              controls: Array.from(document.querySelectorAll("[data-pa-control-error]")).map((element) => ({
-                text: element.textContent,
-                value: element.getAttribute("data-pa-control-error"),
-              })),
-              form: document.querySelector("#inquiry-form")?.outerHTML.slice(0, 1200) || "",
-              inquiryId: id,
-              pending: Array.from(state.pendingInquiryActions.entries()),
-            }), inquiryId);
-            throw new Error(`FRED inquiry control error did not render: ${JSON.stringify({ inquiryDebug, error: error.message })}`);
-          }
-          if (!(await inquiryError.textContent()).includes("Inquiry has changed")) {
-            throw new Error(`FRED inquiry conflict error was not factual: ${await inquiryError.textContent()}`);
-          }
-          await phasePage.evaluate(() => refresh({ force: true, forceConversation: true }));
-          await phasePage.waitForFunction(() => !document.querySelector("#inquiry-form") && document.querySelector("#composer"), null, { timeout: 10_000, polling: 100 });
-          await phasePage.locator("#composer .composer-action-menu > summary").click();
-          const restoreInquiry = phasePage.locator(`[data-inquiry-lifecycle-action='restore'][data-inquiry-id='${inquiryId}']`);
-          await restoreInquiry.waitFor({ state: "visible", timeout: 10_000 });
-          await phasePage.waitForFunction((id) => {
-            const button = document.querySelector(`[data-inquiry-lifecycle-action='restore'][data-inquiry-id='${CSS.escape(id)}']`);
-            return Boolean(button) && !button.disabled;
-          }, inquiryId, { timeout: 10_000, polling: 100 });
-          await restoreInquiry.click();
-          await waitForNode(() => phaseRequests.some((request) => request.method === "POST" && request.path === `/personal-assistant/inquiries/${inquiryId}/restore`));
-          await phasePage.waitForSelector("#inquiry-form", { state: "visible", timeout: 10_000 });
-          const inquiryAgentKey = await phasePage.evaluate(() => state.personalAssistant?.active_key || "");
-          const preparationFailureAnswer = "phase1 answer retained after attachment preparation";
-          await phasePage.locator("#inquiry-form [data-inquiry-control]").first().fill(preparationFailureAnswer);
-          await phasePage.locator("#inquiry-feedback").fill("Retain this answer while attachment preparation fails.");
-          await phasePage.evaluate((key) => {
-            state.pendingPromptAttachments[key] = [{
-              id: "phase1-inquiry-attachment-prep-failure",
-              filename: "phase1-preparation-failure.txt",
-              mimeType: "text/plain",
-              type: "text",
-              size: 7,
-              file: new File(["fixture"], "phase1-preparation-failure.txt", { type: "text/plain" }),
-            }];
-            window.__originalInquiryAttachmentPayloads = pendingAttachmentPayloads;
-            pendingAttachmentPayloads = async () => {
-              await new Promise((resolve) => setTimeout(resolve, 350));
-              throw new Error("Phase 1 attachment preparation failed");
-            };
-          }, inquiryAgentKey);
-          const answerPath = `/personal-assistant/inquiries/${inquiryId}/answer`;
-          const answerPostCountBeforePreparationFailure = requestsFor(answerPath, "POST").length;
-          await phasePage.locator("#inquiry-form button[type='submit']").click();
-          await phasePage.waitForFunction((id) => {
-            const status = document.querySelector(`[data-inquiry-submission-status='${CSS.escape(id)}']`);
-            return !document.querySelector("#inquiry-form") && Boolean(status) && document.activeElement === status;
-          }, inquiryId, { timeout: 2_000, polling: 25 });
-          await phasePage.waitForFunction(({ key, prompt }) => {
-            const recovery = Array.from(document.querySelectorAll("[data-pa-submission-recovery]")).find((element) => element.textContent.includes(prompt));
-            const record = Object.values(state.personalAssistantSubmissionStates || {}).find((candidate) => candidate.prompt?.includes(prompt));
-            const answer = document.querySelector("#inquiry-form [data-inquiry-control]");
-            const attachment = pendingAttachmentsFor(key).find((candidate) => candidate.id === "phase1-inquiry-attachment-prep-failure");
-            return Boolean(recovery && record && record.state === "failed" && answer?.value === prompt && attachment);
-          }, { key: inquiryAgentKey, prompt: preparationFailureAnswer }, { timeout: 10_000, polling: 100 });
-          const preparationFailureState = await phasePage.evaluate(({ key, prompt }) => {
-            const recovery = Array.from(document.querySelectorAll("[data-pa-submission-recovery]")).find((element) => element.textContent.includes(prompt));
-            const record = Object.values(state.personalAssistantSubmissionStates || {}).find((candidate) => candidate.prompt?.includes(prompt));
-            return {
-              answer: document.querySelector("#inquiry-form [data-inquiry-control]")?.value || "",
-              feedback: document.querySelector("#inquiry-feedback")?.value || "",
-              attachmentRetained: pendingAttachmentsFor(key).some((candidate) => candidate.id === "phase1-inquiry-attachment-prep-failure"),
-              recovery: recovery?.textContent || "",
-              failureKind: recovery?.dataset.paSubmissionFailureKind || "",
-              state: record?.state || "",
-            };
-          }, { key: inquiryAgentKey, prompt: preparationFailureAnswer });
-          if (requestsFor(answerPath, "POST").length !== answerPostCountBeforePreparationFailure ||
-              preparationFailureState.state === "sending" ||
-              !preparationFailureState.recovery.includes("Message was not sent") ||
-              !preparationFailureState.recovery.includes("Phase 1 attachment preparation failed") ||
-              preparationFailureState.recovery.includes("Delivery status is unknown") ||
-              preparationFailureState.failureKind !== "pre_post" ||
-              preparationFailureState.answer !== preparationFailureAnswer ||
-              preparationFailureState.feedback !== "Retain this answer while attachment preparation fails." ||
-              !preparationFailureState.attachmentRetained) {
-            throw new Error(`FRED inquiry attachment preparation failure was not recoverable before POST: ${JSON.stringify({ answerPostCountBeforePreparationFailure, answerPostCountAfter: requestsFor(answerPath, "POST").length, preparationFailureState })}`);
-          }
-          await phasePage.evaluate((key) => {
-            pendingAttachmentPayloads = window.__originalInquiryAttachmentPayloads;
-            state.pendingPromptAttachments[key] = [];
-            state.renderedViewHtml = "";
-            render({ preserveLiveEditor: true });
-          }, inquiryAgentKey);
-          await phasePage.locator("#inquiry-form [data-inquiry-control]").first().fill("continue");
-          await phasePage.locator("#inquiry-form button[type='submit']").click();
-          await waitForNode(() => phaseRequests.some((request) => request.method === "POST" && request.path === answerPath));
-          const answerRequest = phaseRequests.find((request) => request.method === "POST" && request.path === answerPath);
-          if (!answerRequest?.body.active_key || !Number.isInteger(answerRequest.body.generation) || !answerRequest.body.client_request_id) {
-            throw new Error(`FRED inquiry answer lost stable identity/context: ${JSON.stringify(answerRequest)}`);
-          }
-
-          const invalidGeneric = mutationRequests().filter((request) => request.path.startsWith("/agents/") &&
-            (request.path.includes("/messages") || request.path.includes("/inquiries/") || request.path.includes("/prompt-queue/")));
-          if (invalidGeneric.length) throw new Error(`FRED controls used protected generic endpoints: ${JSON.stringify(invalidGeneric)}`);
-          if (phaseErrors.length) throw new Error(`Phase 1 browser console errors: ${phaseErrors.join(" | ")}`);
-          if (captureDir) {
-            await phasePage.goto(`${baseUrl}/ui#personal-assistant`, { waitUntil: "domcontentloaded" });
-            await phasePage.screenshot({ path: path.join(captureDir, "fred-phase1-desktop.png"), fullPage: false });
-            await phasePage.setViewportSize({ width: 390, height: 844 });
-            await phasePage.screenshot({ path: path.join(captureDir, "fred-phase1-mobile.png"), fullPage: false });
-          }
-          console.log(`remote-ui-smoke: FRED Phase 1 ok (first pending ${firstPendingPaintMs}ms, terminal freshness ${terminalFreshnessMs}ms, active poll ${activePollDelay}ms)`);
-        } finally {
-          fs.rmSync(holdPath, { force: true });
-          fs.rmSync(inquiryPath, { force: true });
-          if (fs.existsSync(`${codexPath}.disabled`) && !fs.existsSync(codexPath)) fs.renameSync(`${codexPath}.disabled`, codexPath);
-          await phasePage.unrouteAll({ behavior: "ignoreErrors" });
-          await phaseContext.close();
-        }
-      }
-
-      if (process.env.TYCHO_REMOTE_UI_FRED_PHASE1_BACKEND_URL) await assertPersonalAssistantPhase1();
 
       async function assertLoadingShellFailureRecovery() {
         const failurePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -2633,7 +1596,6 @@ def write_smoke_script(path)
           window.__quickSwitchPriorityCaptureState = {
             agents: state.agents,
             agentDetails: state.agentDetails,
-            personalAssistant: state.personalAssistant,
           };
           state.agents = [
             {
@@ -2686,7 +1648,6 @@ def write_smoke_script(path)
             },
           ];
           state.agentDetails = {};
-          state.personalAssistant = {};
           syncUnreadAlert();
           return Array.from(document.querySelectorAll(".switcher-agent-row"), (row) => row.dataset.openAgent);
         });
@@ -2717,7 +1678,6 @@ def write_smoke_script(path)
             if (!saved) return;
             state.agents = saved.agents;
             state.agentDetails = saved.agentDetails;
-            state.personalAssistant = saved.personalAssistant;
             delete window.__quickSwitchPriorityCaptureState;
             syncUnreadAlert();
           });
@@ -4599,7 +3559,6 @@ def write_smoke_script(path)
         );
         await assertQuickAgentPriority(agentsRegressionPage);
         const switcherAgentCount = await agentsRegressionPage.locator(".switcher-agent-row").count();
-        const switcherFredCount = await agentsRegressionPage.locator(".switcher-fred-row").count();
         if (switcherAgentCount < 2) {
           throw new Error(`Agent switcher did not include both smoke agents: ${switcherAgentCount}`);
         }
@@ -4607,7 +3566,7 @@ def write_smoke_script(path)
           const alignment = await agentsRegressionPage.evaluate(() => {
             const rows = Array.from(document.querySelectorAll(".switcher-agent-row"));
             const measure = (row) => {
-              const avatar = row.querySelector(":scope > .fred-switcher-avatar, :scope > .status-mark, :scope > .agent-status-icon");
+              const avatar = row.querySelector(":scope > .status-mark, :scope > .agent-status-icon");
               const title = row.querySelector(":scope > .row-title");
               const avatarRect = avatar?.getBoundingClientRect();
               const titleRect = title?.getBoundingClientRect();
@@ -4619,21 +3578,18 @@ def write_smoke_script(path)
                 gap: titleRect.left - avatarRect.right,
               } : null;
             };
-            const fred = rows.find((row) => row.classList.contains("switcher-fred-row"));
-            const ordinary = rows.filter((row) => !row.classList.contains("switcher-fred-row"));
             return {
-              fred: fred ? measure(fred) : null,
-              ordinary: ordinary.map(measure),
+              rows: rows.map(measure),
               overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
             };
           });
-          const fred = alignment.fred;
-          const aligned = fred && alignment.ordinary.length && alignment.ordinary.every((ordinary) => ordinary &&
-            Math.abs(ordinary.avatarLeft - fred.avatarLeft) <= 1 &&
-            Math.abs(ordinary.avatarWidth - fred.avatarWidth) <= 1 &&
-            Math.abs(ordinary.avatarHeight - fred.avatarHeight) <= 1 &&
-            Math.abs(ordinary.titleLeft - fred.titleLeft) <= 1 &&
-            Math.abs(ordinary.gap - fred.gap) <= 1);
+          const reference = alignment.rows[0];
+          const aligned = reference && alignment.rows.length > 1 && alignment.rows.every((row) => row &&
+            Math.abs(row.avatarLeft - reference.avatarLeft) <= 1 &&
+            Math.abs(row.avatarWidth - reference.avatarWidth) <= 1 &&
+            Math.abs(row.avatarHeight - reference.avatarHeight) <= 1 &&
+            Math.abs(row.titleLeft - reference.titleLeft) <= 1 &&
+            Math.abs(row.gap - reference.gap) <= 1);
           if (!aligned || alignment.overflow) {
             throw new Error(`Agent switcher avatar/text columns drifted at ${viewport}: ${JSON.stringify(alignment)}`);
           }
@@ -4666,11 +3622,11 @@ def write_smoke_script(path)
           throw new Error("Agent switcher search did not filter and highlight the agent-name match");
         }
         await agentsRegressionPage.fill("#unread-agent-search", "web");
-        if (await agentsRegressionPage.locator(".switcher-agent-row .row-title > span .agent-search-match").count() !== switcherAgentCount - switcherFredCount) {
+        if (await agentsRegressionPage.locator(".switcher-agent-row .row-title > span .agent-search-match").count() !== switcherAgentCount) {
           throw new Error("Agent switcher search did not highlight project-name matches");
         }
         await agentsRegressionPage.fill("#unread-agent-search", "personal");
-        if (await agentsRegressionPage.locator(".switcher-agent-row").count() !== switcherAgentCount - switcherFredCount ||
+        if (await agentsRegressionPage.locator(".switcher-agent-row").count() !== switcherAgentCount ||
             await agentsRegressionPage.locator(".switcher-agent-row .agent-search-match").count() !== 0) {
           throw new Error("Agent switcher exposed an invisible group-name match");
         }
@@ -6591,22 +5547,22 @@ def write_smoke_script(path)
           root.scrollTop = 0;
           const before = root.scrollTop;
           const pending = {
-            id: "pending-fred-manual-load",
+            id: "pending-manual-load",
             kind: "message",
             role: "user",
-            content: "FRED optimistic message remains visible",
+            content: "Optimistic message remains visible",
             created_at: new Date().toISOString(),
-            client_request_id: "fred-manual-load",
-            metadata: { personal_assistant_client_request_id: "fred-manual-load" },
+            client_request_id: "manual-load",
+            metadata: { client_request_id: "manual-load" },
           };
           state.pendingConversationMessages[key] = [pending];
           const incoming = [...baseline, {
-            id: "fred-manual-load-server",
+            id: "manual-load-server",
             kind: "message",
             role: "user",
             content: pending.content,
             created_at: pending.created_at,
-            metadata: { personal_assistant_client_request_id: "fred-manual-load" },
+            metadata: { client_request_id: "manual-load" },
           }, {
             id: "manual-load-new",
             kind: "message",
@@ -6664,10 +5620,10 @@ def write_smoke_script(path)
         const loadedConversation = await page.evaluate((key) => ({
           contentLoaded: state.conversations[key]?.blocks?.some((block) => block.content === "Server message staged for manual loading"),
           pendingCleared: !state.pendingConversationUpdates[key],
-          visibleFreds: document.body.textContent.split("FRED optimistic message remains visible").length - 1,
+          visibleOptimistic: document.body.textContent.split("Optimistic message remains visible").length - 1,
         }), agentKey);
         if (!loadedConversation.contentLoaded || !loadedConversation.pendingCleared ||
-            await page.locator("[data-load-pending-conversation]").count() || loadedConversation.visibleFreds !== 1 ||
+            await page.locator("[data-load-pending-conversation]").count() || loadedConversation.visibleOptimistic !== 1 ||
             (await page.locator("#prompt-input").inputValue()) !== draft) {
           throw new Error("Manual conversation loading did not apply the staged snapshot while preserving the composer");
         }
@@ -9049,11 +8005,11 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       prompt: "Review mobile navigation and report concise findings.",
       parent_agent_key: orchestrator_agent_key
     )
-    fred_switcher_agent_keys = 8.times.map do |index|
+    switcher_agent_keys = 8.times.map do |index|
       create_agent(
         base_url,
-        name: "FRED switcher fixture #{index + 1}",
-        prompt: "Exercise FRED's long agent switcher list."
+        name: "Switcher fixture #{index + 1}",
+        prompt: "Exercise the long agent switcher list."
       )
     end
     send_agent_message(
@@ -9068,9 +8024,8 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     associate_agent_pull_request(fixture.fetch(:logs_dir), unscheduled_agent_key)
     wait_for_resource_agents(
       base_url,
-      [agent_key, unscheduled_agent_key, orchestrator_agent_key, delegated_agent_key, security_agent_key, mobile_agent_key, *fred_switcher_agent_keys]
+      [agent_key, unscheduled_agent_key, orchestrator_agent_key, delegated_agent_key, security_agent_key, mobile_agent_key, *switcher_agent_keys]
     )
-    open_personal_assistant(base_url)
     archive_agent(base_url, archived_agent_key)
     start_agent(base_url, delegated_agent_key, parent_agent_key: orchestrator_agent_key)
     wait_for_delegation_callback(base_url, orchestrator_agent_key)
@@ -9089,11 +8044,6 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       "TYCHO_REMOTE_UI_TAKEOVER_AGENT_KEY" => security_agent_key,
       "CHROME_PATH" => browser
     }
-    smoke_env["TYCHO_REMOTE_UI_FRED_PHASE1_BACKEND_URL"] = ENV["TYCHO_REMOTE_UI_FRED_PHASE1_BACKEND_URL"] if ENV["TYCHO_REMOTE_UI_FRED_PHASE1_BACKEND_URL"]
-    %w[HOLD_PATH DELAY_PATH INQUIRY_PATH CODEX_PATH].each do |suffix|
-      key = "TYCHO_REMOTE_UI_FRED_#{suffix}"
-      smoke_env[key] = ENV[key] if ENV[key]
-    end
     if ENV["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"].to_s == "1"
       smoke_env["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"] = "1"
     end
