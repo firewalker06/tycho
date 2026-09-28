@@ -12,7 +12,7 @@ module HQ
     MAX_SEARCH_ENTRIES = 10_000
     MAX_NAME_BYTES = 1_024
     MAX_PREVIEW_BYTES = 256 * 1024
-    MAX_IMAGE_PREVIEW_BYTES = 10 * 1024 * 1024
+    MAX_IMAGE_PREVIEW_BYTES = 20 * 1024 * 1024
     IMAGE_MIME_TYPES = {
       ".avif" => "image/avif",
       ".gif" => "image/gif",
