@@ -733,6 +733,18 @@ module HQ
       claimed + @prompt_queue.map { |entry| entry.merge("state" => "queued") }
     end
 
+    def visible_prompt_queue_entries
+      entries = @prompt_queue.map { |entry| entry.merge("state" => "queued") }
+      batch = active_queue_work
+      return entries unless batch
+      return entries if running? && @prompt_queue_dispatch_error.nil?
+
+      state = @prompt_queue_dispatch_error ? "failed" : batch.fetch("state", "in_progress")
+      Array(batch["entries"]).map do |entry|
+        entry.merge("state" => state, "queue_work_batch_id" => batch["id"])
+      end + entries
+    end
+
     def prompt_queue_dispatchable?
       has_run_context = last_run || next_prompt_queue_entry&.fetch("source", nil) == "delegation_callback"
       !archived? && !running? && !blocked? && !inquiry_blocking_prompt_queue? &&

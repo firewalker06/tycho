@@ -4509,6 +4509,7 @@ module HQ
     end
 
     def agent_list_payload(agent, reference_context: nil, relationship_context: nil)
+      visible_queue_entries = agent.visible_prompt_queue_entries
       {
         key: agent.key,
         name: agent.display_name,
@@ -4532,8 +4533,8 @@ module HQ
         last_exit_code: agent.last_exit_code,
         last_result: agent.last_result_label,
         summary: agent.last_summary,
-        prompt_queue_count: agent.queued_prompts.length,
-        prompt_queue_delegation_callback_count: agent.queued_prompts.count do |entry|
+        prompt_queue_count: visible_queue_entries.length,
+        prompt_queue_delegation_callback_count: visible_queue_entries.count do |entry|
           entry["source"] == "delegation_callback"
         end,
         prompt_queue_dispatch_error: agent.prompt_queue_dispatch_error,
@@ -4954,7 +4955,7 @@ module HQ
     end
 
     def prompt_queue_payload(agent)
-      entries = agent.queued_prompts
+      entries = agent.visible_prompt_queue_entries
       {
         "entries" => entries.each_with_index.map do |entry, index|
           prompt_queue_entry_payload(agent, entry).merge("position" => index + 1)
