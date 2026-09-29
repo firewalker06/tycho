@@ -800,10 +800,123 @@ def write_smoke_script(path)
 
       if (!workspaceOnly && !delegationOnly && process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY !== "1") await assertInitialLoadingShell();
 
+      async function assertSummaryFreshness(candidate, viewport) {
+        await candidate.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
+        await candidate.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+        const baseline = await candidate.evaluate(async (key) => {
+          clearTimeout(state.timer);
+          state.timer = null;
+          schedule = () => {
+            clearTimeout(state.timer);
+            state.timer = null;
+          };
+          const initialRunCount = Number(findAgent(key)?.run_count || 0);
+          const response = await fetch(`/agents/${encodeURIComponent(key)}/messages`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: "Create the baseline Summary for the polling regression.", start: true }),
+          });
+          if (!response.ok) throw new Error(`Could not create baseline Summary: ${response.status}`);
+          const deadline = Date.now() + 10_000;
+          let completed = false;
+          while (Date.now() < deadline) {
+            const detailResponse = await fetch(`/agents/${encodeURIComponent(key)}`);
+            const detail = await detailResponse.json();
+            if (!detail.agent?.running && Number(detail.agent?.run_count || 0) > initialRunCount) {
+              completed = true;
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          if (!completed) throw new Error("Baseline Summary run did not finish");
+          delete state.conversations[key];
+          delete state.pendingConversationUpdates[key];
+          await refresh({ force: true, forceConversation: true });
+          const agent = findAgent(key);
+          const summaryId = runSummaryId(latestRunSummaryFromAgent(agent) || {});
+          if (!summaryId) throw new Error("Baseline run did not create a Summary");
+          history.replaceState(null, "", routeHash({ type: "agentSummary", key, summaryId }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+          return { summaryId, revision: state.conversations[key]?.revision };
+        }, agentKey);
+        await candidate.waitForSelector("[data-agent-summary-page]", { state: "visible", timeout: 10_000 });
+
+        await candidate.evaluate(async (key) => {
+          const initialRunCount = Number(findAgent(key)?.run_count || 0);
+          const response = await fetch(`/agents/${encodeURIComponent(key)}/messages`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: "Create the newer Summary discovered by normal polling.", start: true }),
+          });
+          if (!response.ok) throw new Error(`Could not create newer Summary: ${response.status}`);
+          const deadline = Date.now() + 10_000;
+          while (Date.now() < deadline) {
+            const detailResponse = await fetch(`/agents/${encodeURIComponent(key)}`);
+            const detail = await detailResponse.json();
+            if (!detail.agent?.running && Number(detail.agent?.run_count || 0) > initialRunCount) return;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          throw new Error("Newer Summary run did not finish");
+        }, agentKey);
+
+        const stale = await candidate.evaluate(async (key) => {
+          const workspace = document.querySelector("[data-agent-workspace]");
+          const requestPaths = [];
+          const originalApiGet = apiGet;
+          apiGet = async (requestPath) => {
+            requestPaths.push(String(requestPath));
+            return originalApiGet(requestPath);
+          };
+          try {
+            await refresh();
+          } finally {
+            apiGet = originalApiGet;
+          }
+          const notice = document.querySelector("[data-summary-refresh-state]");
+          return {
+            route: parseRoute().summaryId,
+            requestPaths,
+            workspacePreserved: document.querySelector("[data-agent-workspace]") === workspace,
+            notice: notice?.innerText,
+            action: notice?.querySelector("[data-open-latest-summary-after-load]")?.innerText,
+            pending: Boolean(state.pendingConversationUpdates[key]),
+          };
+        }, agentKey);
+        if (stale.route !== baseline.summaryId || !stale.workspacePreserved || !stale.pending ||
+            !stale.requestPaths.some((path) => path.endsWith(`/agents/${encodeURIComponent(agentKey)}/conversation/metadata`)) ||
+            !stale.notice?.includes("new messages") || stale.action !== "Update summary") {
+          throw new Error(`${viewport} normal Summary polling did not expose its update action: ${JSON.stringify({ baseline, stale })}`);
+        }
+        await candidate.click("[data-open-latest-summary-after-load]");
+        await candidate.waitForFunction((previousSummaryId) => (
+          parseRoute().summaryId !== "" && parseRoute().summaryId !== previousSummaryId &&
+          document.querySelector("[data-agent-summary-page]")?.innerText.includes("Rendered semantic run summary details.") &&
+          !document.querySelector("[data-summary-refresh-state]")
+        ), baseline.summaryId);
+        const updated = await candidate.evaluate(() => ({
+          route: parseRoute().summaryId,
+          content: document.querySelector("[data-agent-summary-page]")?.innerText,
+          stale: Boolean(document.querySelector("[data-summary-refresh-state]")),
+          pending: Boolean(state.pendingConversationUpdates[parseRoute().key]),
+        }));
+        if (updated.route === baseline.summaryId || !updated.content?.includes("Rendered semantic run summary details.") || updated.stale || updated.pending) {
+          throw new Error(`${viewport} Summary did not update in place: ${JSON.stringify(updated)}`);
+        }
+        await candidate.evaluate(() => {
+          clearTimeout(state.timer);
+          state.timer = null;
+        });
+        return { stale, updated };
+      }
+
       async function assertSummaryAttachmentScrolling(candidate, viewport, input) {
         await candidate.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await candidate.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
         await candidate.evaluate((key) => {
+          clearTimeout(state.timer);
+          state.timer = null;
           document.body.classList.add("summary-scroll-review-fixture");
           const fixtureStyle = document.createElement("style");
           fixtureStyle.textContent = ".summary-scroll-review-fixture [data-run-summary-id='summary-scroll-review'] { margin-top: 1000px; }";
@@ -1008,12 +1121,14 @@ def write_smoke_script(path)
       if (summaryAttachmentsOnly) {
         await page.setViewportSize({ width: 1200, height: 800 });
         const desktop = await assertSummaryAttachmentScrolling(page, "desktop", "wheel");
+        const desktopFreshness = await assertSummaryFreshness(page, "desktop");
         const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
         const mobilePage = await mobileContext.newPage();
         const mobile = await assertSummaryAttachmentScrolling(mobilePage, "mobile", "touch");
+        const mobileFreshness = await assertSummaryFreshness(mobilePage, "mobile");
         if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
-        if (captureDir) fs.writeFileSync(path.join(captureDir, "summary-attachment-results.json"), JSON.stringify({ desktop, mobile }, null, 2));
-        console.log(`remote-ui-summary-attachment-smoke: ${JSON.stringify({ desktop, mobile })}`);
+        if (captureDir) fs.writeFileSync(path.join(captureDir, "summary-attachment-results.json"), JSON.stringify({ desktopFreshness, desktop, mobileFreshness, mobile }, null, 2));
+        console.log(`remote-ui-summary-attachment-smoke: ${JSON.stringify({ desktopFreshness, desktop, mobileFreshness, mobile })}`);
         await mobileContext.close();
         await browser.close();
         return;

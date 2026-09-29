@@ -5385,6 +5385,28 @@ details.queue-read-block:not([open]) > .queue-read-body {
   cursor: default;
 }
 
+.summary-refresh-notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--warning) 44%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning) 8%, var(--panel));
+  padding: 10px 12px;
+}
+
+.summary-refresh-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.summary-refresh-copy span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .agent-attachment-body {
   position: relative;
   display: grid;
@@ -8681,6 +8703,16 @@ body:has(.inquiry-form-full-screen) {
 
   .summary-outcome-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .summary-refresh-notice {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .summary-refresh-notice .inline-icon-button {
+    grid-column: 1 / -1;
+    justify-content: center;
+    width: 100%;
   }
 
   .agent-form {
