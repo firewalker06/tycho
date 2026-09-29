@@ -254,17 +254,26 @@ module HQ
       end
 
       # tool_result.content can be a plain string OR an array of
-      # {type: "text", text: "..."} parts (notably for the Agent tool).
+      # content parts (notably for the Agent and Read tools). Image parts can
+      # contain megabytes of base64 data; keep only a display-safe label in
+      # memory instead of copying the binary payload into the conversation.
       def stringify_tool_result_content(content)
         return content.to_s unless content.is_a?(Array)
 
         content.map do |part|
-          if part.is_a?(Hash) && part["type"] == "text"
-            part["text"].to_s
-          else
-            part.to_s
-          end
+          next part.to_s unless part.is_a?(Hash)
+          next part["text"].to_s if part["type"] == "text"
+
+          image_tool_result_label(part) || part.to_s
         end.join("\n")
+      end
+
+      def image_tool_result_label(part)
+        return nil unless part["type"] == "image"
+
+        source = part["source"].is_a?(Hash) ? part["source"] : {}
+        media_type = source["media_type"].to_s.strip
+        media_type.empty? ? "[image]" : "[image: #{media_type}]"
       end
 
       def lookup_tool_name(system, tool_use_id)
