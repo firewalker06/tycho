@@ -45,6 +45,12 @@ module RemoteUISummaryFreshnessTest
           !app.includes('navigate({ type: "agentSummary", key, summaryId: latestSummaryId });')) {
         throw new Error("Summary refresh action did not reuse the conversation loader and retain Summary navigation");
       }
+      if (!app.includes('if (preserveWorkspace && focusedRoute.type === "agentSummary")') ||
+          !app.includes("if (summaryAgent) await ensureConversation(summaryAgent);") ||
+          !app.includes("syncFocusedSummaryFreshness(agent, route);") ||
+          !app.includes("data-summary-freshness-region")) {
+        throw new Error("Preserved Summary polling did not request conversation metadata and sync the stale indicator in place");
+      }
     JAVASCRIPT
 
     _stdout, stderr, status = Open3.capture3("node", "-e", script, HELPERS_PATH, APP_PATH, chdir: ROOT)

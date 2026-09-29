@@ -803,63 +803,105 @@ def write_smoke_script(path)
       async function assertSummaryFreshness(candidate, viewport) {
         await candidate.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await candidate.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
-        const stale = await candidate.evaluate((key) => {
+        const baseline = await candidate.evaluate(async (key) => {
           clearTimeout(state.timer);
           state.timer = null;
           schedule = () => {
             clearTimeout(state.timer);
             state.timer = null;
           };
-          const older = {
-            kind: "run_summary", content: "Older summary.", created_at: "2026-09-13T03:00:00Z",
-            metadata: { summary_id: "summary-refresh-older", run_number: 1, status: "success", attachments: [] },
-          };
-          const incoming = [older, {
-            kind: "message", role: "assistant", content: "New conversation activity.", created_at: "2026-09-13T04:00:00Z",
-          }, {
-            kind: "run_summary", content: "Updated summary.", created_at: "2026-09-13T05:00:00Z",
-            metadata: { summary_id: "summary-refresh-current", run_number: 2, status: "success", attachments: [] },
-          }];
-          state.conversations[key] = { revision: "summary-refresh-older", blocks: [older], total: 1, loaded: true, loading: false };
-          receiveConversationMetadata(key, { revision: "summary-refresh-current", block_count: incoming.length, digest: "summary-refresh-current" });
-          const originalApiGet = apiGet;
-          apiGet = async (requestPath) => {
-            if (String(requestPath).includes(`/agents/${encodeURIComponent(key)}/conversation?`)) {
-              apiGet = originalApiGet;
-              return {
-                conversation: incoming,
-                conversation_revision: "summary-refresh-current",
-                conversation_block_count: incoming.length,
-                conversation_digest: "summary-refresh-current",
-              };
+          const initialRunCount = Number(findAgent(key)?.run_count || 0);
+          const response = await fetch(`/agents/${encodeURIComponent(key)}/messages`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: "Create the baseline Summary for the polling regression.", start: true }),
+          });
+          if (!response.ok) throw new Error(`Could not create baseline Summary: ${response.status}`);
+          const deadline = Date.now() + 10_000;
+          let completed = false;
+          while (Date.now() < deadline) {
+            const detailResponse = await fetch(`/agents/${encodeURIComponent(key)}`);
+            const detail = await detailResponse.json();
+            if (!detail.agent?.running && Number(detail.agent?.run_count || 0) > initialRunCount) {
+              completed = true;
+              break;
             }
-            return originalApiGet(requestPath);
-          };
-          history.replaceState(null, "", routeHash({ type: "agentSummary", key, summaryId: "summary-refresh-older" }));
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          if (!completed) throw new Error("Baseline Summary run did not finish");
+          delete state.conversations[key];
+          delete state.pendingConversationUpdates[key];
+          await refresh({ force: true, forceConversation: true });
+          const agent = findAgent(key);
+          const summaryId = runSummaryId(latestRunSummaryFromAgent(agent) || {});
+          if (!summaryId) throw new Error("Baseline run did not create a Summary");
+          history.replaceState(null, "", routeHash({ type: "agentSummary", key, summaryId }));
           state.renderedRouteKey = null;
           state.renderedViewHtml = "";
           render();
+          return { summaryId, revision: state.conversations[key]?.revision };
+        }, agentKey);
+        await candidate.waitForSelector("[data-agent-summary-page]", { state: "visible", timeout: 10_000 });
+
+        await candidate.evaluate(async (key) => {
+          const initialRunCount = Number(findAgent(key)?.run_count || 0);
+          const response = await fetch(`/agents/${encodeURIComponent(key)}/messages`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: "Create the newer Summary discovered by normal polling.", start: true }),
+          });
+          if (!response.ok) throw new Error(`Could not create newer Summary: ${response.status}`);
+          const deadline = Date.now() + 10_000;
+          while (Date.now() < deadline) {
+            const detailResponse = await fetch(`/agents/${encodeURIComponent(key)}`);
+            const detail = await detailResponse.json();
+            if (!detail.agent?.running && Number(detail.agent?.run_count || 0) > initialRunCount) return;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          throw new Error("Newer Summary run did not finish");
+        }, agentKey);
+
+        const stale = await candidate.evaluate(async (key) => {
+          const workspace = document.querySelector("[data-agent-workspace]");
+          const requestPaths = [];
+          const originalApiGet = apiGet;
+          apiGet = async (requestPath) => {
+            requestPaths.push(String(requestPath));
+            return originalApiGet(requestPath);
+          };
+          try {
+            await refresh();
+          } finally {
+            apiGet = originalApiGet;
+          }
+          const notice = document.querySelector("[data-summary-refresh-state]");
           return {
             route: parseRoute().summaryId,
-            notice: document.querySelector("[data-summary-refresh-state]")?.innerText,
-            action: document.querySelector("[data-open-latest-summary-after-load]")?.innerText,
+            requestPaths,
+            workspacePreserved: document.querySelector("[data-agent-workspace]") === workspace,
+            notice: notice?.innerText,
+            action: notice?.querySelector("[data-open-latest-summary-after-load]")?.innerText,
+            pending: Boolean(state.pendingConversationUpdates[key]),
           };
         }, agentKey);
-        if (stale.route !== "summary-refresh-older" || !stale.notice?.includes("2 new messages are ready to load.") || stale.action !== "Update summary") {
-          throw new Error(`${viewport} stale Summary state is incomplete: ${JSON.stringify(stale)}`);
+        if (stale.route !== baseline.summaryId || !stale.workspacePreserved || !stale.pending ||
+            !stale.requestPaths.some((path) => path.endsWith(`/agents/${encodeURIComponent(agentKey)}/conversation/metadata`)) ||
+            !stale.notice?.includes("new messages") || stale.action !== "Update summary") {
+          throw new Error(`${viewport} normal Summary polling did not expose its update action: ${JSON.stringify({ baseline, stale })}`);
         }
         await candidate.click("[data-open-latest-summary-after-load]");
-        await candidate.waitForFunction(() => (
-          parseRoute().summaryId === "summary-refresh-current" &&
-          document.querySelector("[data-agent-summary-page]")?.innerText.includes("Updated summary.") &&
+        await candidate.waitForFunction((previousSummaryId) => (
+          parseRoute().summaryId !== "" && parseRoute().summaryId !== previousSummaryId &&
+          document.querySelector("[data-agent-summary-page]")?.innerText.includes("Rendered semantic run summary details.") &&
           !document.querySelector("[data-summary-refresh-state]")
-        ));
+        ), baseline.summaryId);
         const updated = await candidate.evaluate(() => ({
+          route: parseRoute().summaryId,
           content: document.querySelector("[data-agent-summary-page]")?.innerText,
           stale: Boolean(document.querySelector("[data-summary-refresh-state]")),
           pending: Boolean(state.pendingConversationUpdates[parseRoute().key]),
         }));
-        if (!updated.content?.includes("Updated summary.") || updated.stale || updated.pending) {
+        if (updated.route === baseline.summaryId || !updated.content?.includes("Rendered semantic run summary details.") || updated.stale || updated.pending) {
           throw new Error(`${viewport} Summary did not update in place: ${JSON.stringify(updated)}`);
         }
         await candidate.evaluate(() => {
