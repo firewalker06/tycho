@@ -16,6 +16,7 @@ module PromptQueueTest
     assert_due_entries_bypass_future_entries_in_fifo_order
     assert_self_delayed_continuation_preserves_delegation_ownership
     assert_claim_race_drains_fifo_without_overlap
+    assert_pending_queue_visibility_tracks_processing_state
     assert_automatic_dispatch_records_one_structured_read_block
     assert_explicit_read_consumes_one_mixed_batch_and_records_conversation
     assert_explicit_read_failure_retains_queue
@@ -199,6 +200,53 @@ module PromptQueueTest
       assert(queued_messages.first.dig("metadata", "prompt_queue_sources") == {
                "delegation_callback" => 1, "user" => 1
              }, "expected automatic dispatch to preserve mixed queue source counts in one native input")
+    end
+  end
+
+  def assert_pending_queue_visibility_tracks_processing_state
+    with_queue_store do |registry, workspace|
+      agent, pid = running_agent(workspace)
+      agent.enqueue_prompt!(prompt: "pending before read", source: "user")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+      service = HQ::RemoteService.new(registry:)
+
+      pending = service.agent(agent.key)
+      assert(pending.dig(:prompt_queue, "entries").map { |entry| entry["prompt"] } == ["pending before read"] &&
+             pending.dig(:prompt_queue, "pending_count") == 1,
+             "expected unclaimed work to remain visible in the pending queue")
+
+      claimed = store.load.find { |candidate| candidate.key == agent.key }
+      batch = claimed.open_queue_work_batch!
+      claimed.record_queue_read!(batch)
+      store.save([claimed])
+      processing = service.agent(agent.key)
+      assert(processing.dig(:prompt_queue, "entries").empty? &&
+             processing.dig(:prompt_queue, "pending_count").zero? &&
+             processing.dig(:prompt_queue, "queue_work", "entry_ids") == [batch["entries"].first["id"]],
+             "expected in-progress work to stay durable without duplicating the visible pending queue")
+
+      stop_process(pid)
+      pid = nil
+      failed_agent = store.load.find { |candidate| candidate.key == agent.key }
+      failed_at = Time.now
+      failed_agent.instance_variable_set(:@pid, nil)
+      failed_agent.instance_variable_set(:@finished_at, failed_at)
+      failed_agent.instance_variable_set(:@last_exit_code, 1)
+      failed_agent.instance_variable_set(:@structured_result, {
+        "status" => "failed", "summary" => "Queue processing failed"
+      })
+      failed_agent.last_run.finished_at = failed_at
+      failed_agent.last_run.exit_code = 1
+      failed_agent.last_run.status = "failed"
+      store.save([failed_agent])
+      failed = service.agent(agent.key)
+      assert(failed[:status] == "failed" &&
+             failed.dig(:prompt_queue, "entries").map { |entry| entry["prompt"] } == ["pending before read"] &&
+             failed.dig(:prompt_queue, "pending_count") == 1,
+             "expected unresolved queue work to become visible as soon as processing fails")
+    ensure
+      stop_process(pid)
     end
   end
 
