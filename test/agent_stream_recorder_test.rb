@@ -15,6 +15,7 @@ module AgentStreamRecorderTest
     assert_messages_persist_before_process_exit
     assert_replay_deduplicates_events
     assert_claude_and_opencode_shapes_project
+    assert_claude_image_results_do_not_persist_base64
     assert_pi_status_and_malformed_records_project_durably
     puts "agent_stream_recorder_test: ok"
   end
@@ -91,6 +92,67 @@ module AgentStreamRecorderTest
 
       assert(journal(claude_path).events.first["content"] == "Claude progress", "expected Claude projection")
       assert(journal(opencode_path).events.first["content"] == "OpenCode progress", "expected OpenCode projection")
+    end
+  end
+
+  def assert_claude_image_results_do_not_persist_base64
+    Dir.mktmpdir("tycho-stream-claude-image") do |dir|
+      raw_path = File.join(dir, "claude.raw.log")
+      memory_path = File.join(dir, "claude.memory.jsonl")
+      image_data = "a" * 200_000
+      script = <<~'RUBY'
+        image_data = "a" * 200_000
+        puts JSON.generate(
+          "type" => "assistant",
+          "message" => {
+            "content" => [{
+              "type" => "tool_use", "id" => "read-image", "name" => "Read",
+              "input" => { "file_path" => "/tmp/frame.png" }
+            }]
+          }
+        )
+        puts JSON.generate(
+          "type" => "user",
+          "message" => {
+            "content" => [{
+              "type" => "tool_result", "tool_use_id" => "read-image",
+              "content" => [{
+                "type" => "image",
+                "source" => { "type" => "base64", "media_type" => "image/png", "data" => image_data }
+              }]
+            }]
+          }
+        )
+      RUBY
+      exit_code = HQ::AgentStreamRecorder.run(
+        command: [RbConfig.ruby, "-rjson", "-e", script],
+        raw_log_path: raw_path,
+        memory_path:,
+        agent_type: "claude",
+        run_id: "claude-image-run"
+      )
+
+      result = journal(memory_path).events.find do |event|
+        event["type"] == "tool_summary" && event.dig("metadata", "details", "type") == "tool_result"
+      end
+      serialized = JSON.generate(result)
+      raw = File.read(raw_path)
+      fake_agent = Struct.new(:memory_path, :pid, :finished_at, :raw_log_path, :agent, :runs)
+                         .new(memory_path, nil, Time.now, raw_path, "claude", [])
+      displayed = HQ::AgentChatLog.new(fake_agent).chat_blocks.find do |block|
+        block.content == "tool result: [image: image/png]"
+      end
+
+      assert(exit_code.zero?, "expected the synthetic Claude stream to exit successfully")
+      assert(raw.bytesize > image_data.bytesize && raw.include?(image_data),
+             "expected the raw log to retain the original base64 image payload")
+      assert(result["content"] == "tool result: [image: image/png]",
+             "expected an image label instead of base64 in the tool summary")
+      assert(result.dig("metadata", "details", "raw") == "[image: image/png]",
+             "expected compact image metadata instead of the base64 payload")
+      assert(serialized.bytesize < 2_000 && !serialized.include?(image_data),
+             "expected projected image tool metadata to exclude the base64 payload")
+      assert(displayed, "expected the conversation display projection to use the compact image label")
     end
   end
 

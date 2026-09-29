@@ -1935,7 +1935,8 @@ module ManagedAgentTest
       assert(!agent.running?, "expected stale unstructured output to be stopped")
       assert(agent.status == "stopped",
              "expected stale unstructured output to finalize as stopped, got #{agent.status.inspect}")
-      assert(agent.last_exit_code == 143, "expected stopped process to preserve its SIGTERM exit status")
+      assert(agent.last_exit_code == 143,
+             "expected stopped process to preserve its SIGTERM exit status, got #{agent.last_exit_code.inspect}")
       assert(agent.latest_inquiry.nil?, "expected automatic stop not to synthesize an inquiry")
       assert(agent.last_summary.include?("no structured agent output"),
              "expected the automatic stop summary to explain the missing JSON output")

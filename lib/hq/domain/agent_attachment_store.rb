@@ -11,7 +11,7 @@ require_relative "constants"
 module HQ
   class AgentAttachmentStore
     MAX_ATTACHMENTS_PER_MESSAGE = 5
-    MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+    MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
     MAX_TOTAL_BYTES = 25 * 1024 * 1024
 
     IMAGE_CONTENT_TYPES = {

@@ -1822,7 +1822,8 @@ module HQ
       thread = Thread.new do
         _waited_pid, status = Process.wait2(pid)
         begin
-          write_status_file(status_path, process_exit_code(status))
+          # The runner publishes the harness status before finalization; only fill in when it could not.
+          write_status_file(status_path, process_exit_code(status)) unless valid_status_file?(status_path)
         rescue StandardError
           nil
         end
