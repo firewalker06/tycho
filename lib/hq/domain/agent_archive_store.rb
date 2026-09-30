@@ -44,7 +44,15 @@ module HQ
     end
 
     def find(key)
-      all.find { |record| record.agent.key == key.to_s }
+      target = key.to_s
+      signature = root_signature
+      cached = self.class.cache_mutex.synchronize { self.class.snapshot_cache[@root] }
+      if cached && cached.fetch(:signature) == signature
+        return cached.fetch(:records).find { |record| record.agent.key == target }
+      end
+
+      direct_manifest_paths(target).filter_map { |path| load_record(path) }
+                                   .find { |record| record.agent.key == target }
     end
 
     def save(record)
@@ -64,6 +72,17 @@ module HQ
 
     def invalidate!
       self.class.cache_mutex.synchronize { self.class.snapshot_cache.delete(@root) }
+    end
+
+    def direct_manifest_paths(key)
+      suffix = "-#{key}"
+      Dir.children(@root).select { |entry| entry.end_with?(suffix) }
+         .sort
+         .reverse_each
+         .map { |entry| File.join(@root, entry, "agent_manifest.json") }
+         .select { |path| File.file?(path) }
+    rescue Errno::ENOENT
+      []
     end
 
     def load_record(path)

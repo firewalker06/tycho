@@ -1,0 +1,411 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "net/http"
+require "open3"
+require "optparse"
+require "rbconfig"
+require "socket"
+require "tmpdir"
+require "time"
+require "timeout"
+require "uri"
+
+ROOT = File.expand_path("..", __dir__)
+
+options = {
+  output: File.join(Dir.tmpdir, "tycho-remote-ui-profile.json"),
+  screenshots: nil,
+  trace: nil,
+  archive: nil,
+  fail_over: nil
+}
+OptionParser.new do |parser|
+  parser.banner = "Usage: bin/remote-ui-profile [options]"
+  parser.on("--output PATH", "Write the JSON report (default: /tmp/tycho-remote-ui-profile.json)") { |value| options[:output] = value }
+  parser.on("--screenshots DIR", "Capture one viewport PNG per route") { |value| options[:screenshots] = value }
+  parser.on("--trace PATH", "Write a Playwright trace ZIP") { |value| options[:trace] = value }
+  parser.on("--archive DIR", "Also profile a copied Tycho agent archive") { |value| options[:archive] = value }
+  parser.on("--fail-over MS", Float, "Exit nonzero when any route exceeds this duration") { |value| options[:fail_over] = value }
+end.parse!
+
+def free_port
+  server = TCPServer.new("127.0.0.1", 0)
+  server.addr[1]
+ensure
+  server&.close
+end
+
+def chrome_path
+  explicit = ENV["CHROME_PATH"].to_s
+  return explicit unless explicit.empty?
+
+  [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+  ].find { |path| File.executable?(path) }
+end
+
+def write_fixture(dir, project_key)
+  config_dir = File.join(dir, "config")
+  workspace = File.join(dir, "workspace")
+  logs_dir = File.join(dir, "logs")
+  FileUtils.mkdir_p([config_dir, workspace, logs_dir])
+  FileUtils.mkdir_p(File.join(workspace, "docs"))
+  File.write(File.join(workspace, "README.md"), "# Remote UI profile fixture\n")
+  File.write(File.join(workspace, "docs", "guide.md"), "# Guide\n\nDeterministic profiler content.\n")
+
+  system("git", "init", "-q", workspace)
+  system("git", "-C", workspace, "config", "user.email", "profile@example.invalid")
+  system("git", "-C", workspace, "config", "user.name", "Tycho profiler")
+  system("git", "-C", workspace, "add", ".")
+  system("git", "-C", workspace, "commit", "-qm", "Seed profiler workspace")
+  File.write(File.join(workspace, "README.md"), "# Remote UI profile fixture\n\nChanged worktree content.\n")
+
+  config_path = File.join(config_dir, "hq.yml")
+  File.write(config_path, <<~YAML)
+    ---
+    remote_servers:
+      - key: unavailable-a
+        name: Unavailable A
+        url: http://127.0.0.1:1
+      - key: unavailable-b
+        name: Unavailable B
+        url: http://127.0.0.1:2
+    projects:
+      - key: #{project_key}
+        name: Profile Project
+        group: Personal
+        path: #{workspace.inspect}
+        agent: codex
+  YAML
+  prompts_path = File.join(config_dir, "system_prompts.yml")
+  File.write(prompts_path, "---\ncustom: \"Profile %{project_key}.\"\n")
+  response_style_path = File.join(config_dir, "response_style.md")
+  File.write(response_style_path, "Use concise language.\n")
+  schedules_path = File.join(config_dir, "schedules.yml")
+  File.write(schedules_path, <<~YAML)
+    ---
+    schedules:
+      - key: profile-schedule
+        name: Profile schedule
+        cron: "0 9 * * 1-5"
+        target:
+          type: agent
+          project_key: #{project_key}
+          message: "Profile scheduled routes."
+  YAML
+  schema_dir = File.join(config_dir, "schemas")
+  FileUtils.mkdir_p(schema_dir)
+  FileUtils.cp(File.join(ROOT, "config", "schemas", "agent_result.json"), schema_dir)
+  {
+    config_path:,
+    prompts_path:,
+    response_style_path:,
+    schedules_path:,
+    workspace:,
+    logs_dir:,
+    home: File.join(dir, "home"),
+    tycho_home: File.join(dir, "tycho-home")
+  }
+end
+
+def wait_for_remote(base_url, log_path, pid)
+  Timeout.timeout(20) do
+    loop do
+      response = Net::HTTP.get_response(URI("#{base_url}/servers/resources"))
+      return if response.is_a?(Net::HTTPSuccess)
+    rescue Errno::ECONNREFUSED, Errno::ECONNRESET
+      Process.kill(0, pid)
+      sleep 0.1
+    end
+  end
+rescue Timeout::Error, Errno::ESRCH
+  raise "Remote profiler fixture did not start:\n#{File.read(log_path)}"
+end
+
+def request_json_post(url, payload)
+  uri = URI(url)
+  request = Net::HTTP::Post.new(uri)
+  request["Content-Type"] = "application/json"
+  request.body = JSON.generate(payload)
+  response = Net::HTTP.start(uri.hostname, uri.port) { |http| http.request(request) }
+  raise "#{request.method} #{uri.path} failed: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
+
+  JSON.parse(response.body)
+end
+
+def get_json(url)
+  response = Net::HTTP.get_response(URI(url))
+  raise "GET #{url} failed: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
+
+  JSON.parse(response.body)
+end
+
+def seed_conversation(agent, workspace)
+  memory_path = agent.fetch("memory_path")
+  now = Time.utc(2026, 9, 30, 0, 0, 0)
+  File.open(memory_path, "a") do |file|
+    800.times do |index|
+      type = index % 4 == 3 ? "tool_summary" : "assistant_message"
+      event = {
+        "type" => type,
+        "content" => "Profile event #{index + 1}: " + ("deterministic payload " * 12),
+        "created_at" => (now + index).iso8601,
+        "sequence" => index + 10,
+        "event_id" => format("profile-%04d", index + 1),
+        "schema_version" => 1
+      }
+      event["metadata"] = { "tool_name" => "Read" } if type == "tool_summary"
+      file.puts(JSON.generate(event))
+    end
+  end
+
+  attachment_path = File.join(workspace, "docs", "guide.md")
+  attachments_path = memory_path.sub(/memory\.jsonl\z/, "attachments.json")
+  File.write(attachments_path, JSON.pretty_generate(
+    "attachments" => [{
+      "type" => "file",
+      "kind" => "document",
+      "title" => "Profiler guide",
+      "path" => attachment_path,
+      "mime_type" => "text/markdown",
+      "description" => "Deterministic attachment route fixture",
+      "created_at" => now.iso8601
+    }]
+  ))
+end
+
+def install_playwright(dir)
+  explicit = ENV["TYCHO_PLAYWRIGHT_PATH"].to_s
+  return explicit unless explicit.empty?
+
+  raise "npm is required for Remote UI profiling" unless system("npm", "--version", out: File::NULL, err: File::NULL)
+
+  node_dir = File.join(dir, "node")
+  FileUtils.mkdir_p(node_dir)
+  File.write(File.join(node_dir, "package.json"), JSON.generate("private" => true))
+  out, err, status = Open3.capture3(
+    "npm", "install", "--prefix", node_dir, "--no-audit", "--fund=false", "--ignore-scripts", "playwright"
+  )
+  raise "Failed to install Playwright:\n#{out}\n#{err}" unless status.success?
+
+  File.join(node_dir, "node_modules", "playwright")
+end
+
+def write_browser_script(path)
+  File.write(path, <<~'JAVASCRIPT')
+    const { chromium } = require(process.env.PLAYWRIGHT_PATH);
+    const fs = require("fs");
+
+    const twoFrames = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const metricMap = (payload) => Object.fromEntries(payload.metrics.map(({ name, value }) => [name, value]));
+
+    async function main() {
+      const routes = JSON.parse(process.env.PROFILE_ROUTES);
+      const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH, headless: true });
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      if (process.env.TRACE_PATH) await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
+      const page = await context.newPage();
+      const cdp = await context.newCDPSession(page);
+      await cdp.send("Performance.enable");
+      await page.addInitScript(() => {
+        window.__tychoProfile = { longTasks: [] };
+        new PerformanceObserver((list) => {
+          window.__tychoProfile.longTasks.push(...list.getEntries().map(({ startTime, duration }) => ({ startTime, duration })));
+        }).observe({ type: "longtask", buffered: true });
+      });
+
+      await page.goto(`${process.env.BASE_URL}/ui#now`, { waitUntil: "domcontentloaded" });
+      await page.waitForFunction(() => (
+        document.body.dataset.routeType && document.querySelector("#app")?.getAttribute("aria-busy") === "false"
+      ), null, { timeout: 30000 });
+      const results = [];
+      for (const route of routes) {
+        await page.evaluate(() => {
+          performance.clearResourceTimings();
+          window.__tychoProfile.longTasks = [];
+        });
+        const before = metricMap(await cdp.send("Performance.getMetrics"));
+        const started = Date.now();
+        await page.evaluate((hash) => { location.hash = hash; }, route.hash);
+        await page.waitForFunction(({ hash, type }) => (
+          location.hash === hash && document.body.dataset.routeType === type &&
+          document.body.dataset.routeLoading !== "true" &&
+          document.querySelector("#app")?.getAttribute("aria-busy") === "false" &&
+          !document.querySelector(".tycho-loading-state")
+        ), { hash: route.hash, type: route.type }, { timeout: 30000 });
+        await page.waitForLoadState("networkidle");
+        await page.evaluate(twoFrames);
+        const durationMs = Date.now() - started;
+        const after = metricMap(await cdp.send("Performance.getMetrics"));
+        const pageData = await page.evaluate(() => ({
+          domNodes: document.getElementsByTagName("*").length,
+          bodyBytes: document.body.innerHTML.length,
+          longTasks: window.__tychoProfile.longTasks,
+          resources: performance.getEntriesByType("resource").map(({ name, duration, transferSize }) => ({ name, duration, transferSize })),
+        }));
+        const longTaskMs = pageData.longTasks.reduce((sum, item) => sum + item.duration, 0);
+        const blockingMs = pageData.longTasks.reduce((sum, item) => sum + Math.max(0, item.duration - 50), 0);
+        results.push({
+          name: route.name,
+          hash: route.hash,
+          type: route.type,
+          duration_ms: durationMs,
+          long_task_ms: Math.round(longTaskMs * 10) / 10,
+          total_blocking_ms: Math.round(blockingMs * 10) / 10,
+          dom_nodes: pageData.domNodes,
+          body_bytes: pageData.bodyBytes,
+          transferred_bytes: pageData.resources.reduce((sum, item) => sum + (item.transferSize || 0), 0),
+          request_count: pageData.resources.length,
+          script_ms: Math.round(((after.ScriptDuration || 0) - (before.ScriptDuration || 0)) * 100000) / 100,
+          layout_ms: Math.round(((after.LayoutDuration || 0) - (before.LayoutDuration || 0)) * 100000) / 100,
+          style_ms: Math.round(((after.RecalcStyleDuration || 0) - (before.RecalcStyleDuration || 0)) * 100000) / 100,
+          js_heap_bytes: after.JSHeapUsedSize || 0,
+        });
+        if (process.env.SCREENSHOT_DIR) {
+          const filename = `${String(results.length).padStart(2, "0")}-${route.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.png`;
+          await page.screenshot({ path: `${process.env.SCREENSHOT_DIR}/${filename}`, fullPage: false });
+        }
+      }
+      if (process.env.TRACE_PATH) await context.tracing.stop({ path: process.env.TRACE_PATH });
+      console.log(JSON.stringify({ generated_at: new Date().toISOString(), viewport: "1440x900", routes: results }, null, 2));
+      await browser.close();
+    }
+
+    main().catch((error) => { console.error(error); process.exit(1); });
+  JAVASCRIPT
+end
+
+Dir.mktmpdir("tycho-remote-ui-profile") do |dir|
+  archive_manifest = if options[:archive]
+                       JSON.parse(File.read(File.join(File.expand_path(options[:archive]), "agent_manifest.json")))
+                     end
+  project_key = archive_manifest&.fetch("project_key", nil).to_s
+  project_key = "profile" if project_key.empty?
+  fixture = write_fixture(dir, project_key)
+  if options[:archive]
+    archive_root = File.join(fixture[:logs_dir], "agents", "archive")
+    FileUtils.mkdir_p(archive_root)
+    FileUtils.cp_r(File.expand_path(options[:archive]), archive_root)
+  end
+
+  port = free_port
+  base_url = "http://127.0.0.1:#{port}"
+  server_log = File.join(dir, "server.log")
+  server_env = {
+    "TYCHO_HOME" => fixture[:tycho_home],
+    "TYCHO_SKILLS_HOME" => fixture[:home],
+    "TYCHO_CONFIG_PATH" => fixture[:config_path],
+    "TYCHO_SYSTEM_PROMPTS_PATH" => fixture[:prompts_path],
+    "TYCHO_RESPONSE_STYLE_PATH" => fixture[:response_style_path],
+    "TYCHO_SCHEDULES_PATH" => fixture[:schedules_path],
+    "TYCHO_LOGS_ROOT" => fixture[:logs_dir]
+  }
+  server_pid = Process.spawn(
+    server_env,
+    RbConfig.ruby, "bin/tycho",
+    "serve", "--host", "127.0.0.1", "--port", port.to_s,
+    chdir: ROOT,
+    out: server_log,
+    err: server_log
+  )
+  begin
+    wait_for_remote(base_url, server_log, server_pid)
+    created = request_json_post("#{base_url}/agents", {
+      project_key:,
+      template_key: "custom",
+      name: "Profile Agent",
+      prompt: "Exercise every Remote UI route.",
+      agent: "codex"
+    }).fetch("agent")
+    seed_conversation(created, fixture[:workspace])
+    detail = get_json("#{base_url}/agents/#{created.fetch('key')}").fetch("agent")
+    attachment_id = Array(detail["attachments"]).first&.fetch("id", nil)
+
+    key = created.fetch("key")
+    routes = [
+      ["Now", "#now", "tab"],
+      ["Agents", "#agents", "tab"],
+      ["Settings", "#settings", "tab"],
+      ["Hidden settings", "#settings/hidden", "hiddenSettings"],
+      ["Project detail", "#project/#{project_key}", "project"],
+      ["Project edit", "#project/#{project_key}/edit", "projectForm"],
+      ["Project workspace", "#project/#{project_key}/files", "projectWorkspace"],
+      ["Project diff", "#project/#{project_key}/diff?scope=worktree", "projectDiff"],
+      ["New agent", "#project/#{project_key}/agent/new", "agentForm"],
+      ["Agent conversation", "#agent/#{key}", "agent"],
+      ["Agent summary", "#agent/#{key}/summary", "agentSummary"],
+      ["Agent pull requests", "#agent/#{key}/pr-diffs", "agentPullRequests"],
+      ["Edit agent", "#agent/#{key}/edit", "agentForm"],
+      ["Clone agent", "#agent/#{key}/clone", "agentForm"],
+      ["Archive agent", "#agent/#{key}/archive", "agentArchive"],
+      ["Agent loop", "#agent/#{key}/loop", "agentLoop"],
+      ["New schedule", "#schedule/new?project=#{project_key}", "scheduleForm"],
+      ["Edit schedule", "#schedule/profile-schedule/edit", "scheduleForm"],
+      ["Schedule message", "#schedule/profile-schedule/message", "scheduleMessage"]
+    ]
+    if attachment_id
+      routes.insert(12, ["Agent attachment", "#agent/#{key}/attachment/#{attachment_id}", "agentAttachment"])
+      routes.insert(13, ["Attachment", "#attachment/#{attachment_id}", "attachment"])
+    end
+    if archive_manifest
+      archive_key = archive_manifest.fetch("key")
+      routes << ["Archived agent conversation", "#agent/#{archive_key}", "agent"]
+    end
+    route_payload = routes.map { |name, hash, type| { name:, hash:, type: } }
+
+    chrome = chrome_path
+    raise "Chrome/Chromium is required; set CHROME_PATH" unless chrome
+    playwright = install_playwright(dir)
+    browser_script = File.join(dir, "profile.js")
+    write_browser_script(browser_script)
+    FileUtils.mkdir_p(options[:screenshots]) if options[:screenshots]
+    FileUtils.mkdir_p(File.dirname(File.expand_path(options[:output])))
+    FileUtils.mkdir_p(File.dirname(File.expand_path(options[:trace]))) if options[:trace]
+    env = {
+      "PLAYWRIGHT_PATH" => playwright,
+      "CHROME_PATH" => chrome,
+      "BASE_URL" => base_url,
+      "PROFILE_ROUTES" => JSON.generate(route_payload),
+      "SCREENSHOT_DIR" => options[:screenshots].to_s,
+      "TRACE_PATH" => options[:trace].to_s
+    }
+    stdout, stderr, status = Open3.capture3(env, "node", browser_script, chdir: ROOT)
+    raise "Remote UI browser profiler failed:\n#{stdout}\n#{stderr}" unless status.success?
+
+    report = JSON.parse(stdout)
+    report["fixture"] = {
+      "synthetic_conversation_events" => 800,
+      "unavailable_peer_count" => 2,
+      "archive" => options[:archive] && File.expand_path(options[:archive])
+    }
+    File.write(options[:output], "#{JSON.pretty_generate(report)}\n")
+    puts format("%-28s %8s %9s %10s %10s", "Route", "Wall ms", "Block ms", "DOM nodes", "Heap MB")
+    report.fetch("routes").each do |route|
+      puts format("%-28s %8.0f %9.1f %10d %10.1f", route.fetch("name"), route.fetch("duration_ms"),
+                  route.fetch("total_blocking_ms"), route.fetch("dom_nodes"), route.fetch("js_heap_bytes") / 1_048_576.0)
+    end
+    puts "Report: #{File.expand_path(options[:output])}"
+    puts "Trace: #{File.expand_path(options[:trace])}" if options[:trace]
+    puts "Screenshots: #{File.expand_path(options[:screenshots])}" if options[:screenshots]
+
+    if options[:fail_over]
+      slow = report.fetch("routes").select { |route| route.fetch("duration_ms") > options[:fail_over] }
+      unless slow.empty?
+        warn "Routes over #{options[:fail_over]} ms: #{slow.map { |route| route.fetch('name') }.join(', ')}"
+        exit 1
+      end
+    end
+  ensure
+    begin
+      Process.kill("TERM", server_pid)
+      Process.wait(server_pid)
+    rescue Errno::ESRCH, Errno::ECHILD
+      nil
+    end
+  end
+end

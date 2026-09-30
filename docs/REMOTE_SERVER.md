@@ -504,7 +504,8 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `POST` | `/skills/{harness}/update` | Update outdated, provably Tycho-owned skills after explicit confirmation. |
 | `GET` | `/attachments/{id}` | Read normalized attachment metadata and inline preview content when available. |
 | `GET` | `/attachments/{id}/blob` | Stream the attachment file bytes for image and binary previews. |
-| `GET` | `/setup` | Read Remote UI readiness, auth, Tailscale, config, log, and refresh metadata. |
+| `GET` | `/setup` | Read full Remote UI readiness, including harness, tool, and skill diagnostics. |
+| `GET` | `/setup/summary` | Read lightweight shell, auth, count, config, onboarding, log, push, and refresh metadata without cold harness discovery. |
 | `POST` | `/setup/welcome` | Create the first-run welcome sandbox project under `~/.tycho/workspaces/welcome`. |
 | `GET` | `/search` | Return agent and project payloads for compatibility with older client-side search flows. |
 | `GET` | `/`, `/ui`, `/ui.css`, `/ui.js` | Serve the Remote UI. `/ui` remains a compatibility alias. |
@@ -977,6 +978,10 @@ Discovers skills for the project workspace and agent harness, reusing `HQ::Skill
 ### `GET /setup`
 
 Returns Remote UI readiness metadata: local URL, public Tailscale/MagicDNS URL, auth state, counts, harness readiness, skill installation status, schema/config readiness, log/storage summary, refresh intervals, and safety defaults. Built-ins and configured custom profiles appear separately; a profile's readiness and catalog use its declared adapter. Harness readiness entries may include `model_suggestions`, `reasoning_effort_suggestions`, and `catalog_source`; these are UI hints only and are not validation allowlists.
+
+### `GET /setup/summary`
+
+Returns the same shell, auth, counts, build, config, onboarding, log, push, refresh, and safety metadata without running harness catalogs or skill/tool diagnostics. Ordinary Remote UI routes use this endpoint during cold boot; Settings and agent/project forms load the full `/setup` payload before rendering diagnostic or catalog-dependent controls.
 
 ### `GET /skills`
 
