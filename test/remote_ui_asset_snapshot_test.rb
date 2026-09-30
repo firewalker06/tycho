@@ -22,7 +22,32 @@ module RemoteUIAssetSnapshotTest
     assert_agent_filter_and_sort_use_requested_lucide_icons
     assert_peer_update_ui_is_homebrew_gated
     assert_pull_request_comment_sections_are_unlimited
+    assert_detail_composer_submissions_are_optimistic
     puts "remote_ui_asset_snapshot_test: ok"
+  end
+
+  def assert_detail_composer_submissions_are_optimistic
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
+
+    required = [
+      "composerSubmissionErrors: new Map()",
+      "composerRecoveryDrafts: new Map()",
+      "function composerDetailSubmissionRoute",
+      "if (!agentSplitRoute(route) || workspaceRoute?.key !== agentKey) return null;",
+      "function restoreComposerSubmissionFailure",
+      'if (form.dataset.submitting === "true") return;',
+      'form.dataset.submitting = "true";',
+      'if (navigatedOptimistically) navigate({ type: "agent", key });',
+      'if (!navigatedOptimistically) navigate({ type: "agent", key });',
+      "restoreComposerSubmissionFailure(key, draftChanged ? null : originRoute)",
+      'role="alert" data-composer-submission-error',
+      'role="status" aria-live="polite" aria-atomic="true">sending...',
+      'block.pending ? \' aria-busy="true"\' : ""',
+    ]
+    missing = required.reject { |fragment| javascript.include?(fragment) }
+    raise "missing optimistic detail-composer contract: #{missing.join(", ")}" unless missing.empty?
+    raise "missing detail-composer failure styling" unless css.include?(".composer-submission-error")
   end
 
   def assert_pull_request_comment_sections_are_unlimited
