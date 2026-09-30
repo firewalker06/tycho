@@ -13,7 +13,7 @@ module AgentCostSnapshotTest
       runs.length
     end
   end
-  FakeRun = Struct.new(:session_id, :finished_at, keyword_init: true)
+  FakeRun = Struct.new(:session_id, :finished_at, :agent, :model, keyword_init: true)
 
   def run!
     assert_claude_cost_accumulates_per_session
@@ -21,8 +21,10 @@ module AgentCostSnapshotTest
     assert_opencode_sums_step_costs
     assert_missing_history_is_marked_partial
     assert_codex_estimates_cost_from_cumulative_token_deltas
+    assert_custom_codex_prices_openai_qualified_models
     assert_codex_prices_gpt_6_astra_cache_writes
     assert_unknown_codex_model_stays_unpriced
+    assert_unknown_custom_codex_model_stays_unpriced
     assert_missing_cost_is_not_treated_as_zero
     puts "agent_cost_snapshot_test: ok"
   end
@@ -140,6 +142,31 @@ module AgentCostSnapshotTest
            "expected the applied output price to persist")
   end
 
+  def assert_custom_codex_prices_openai_qualified_models
+    previous = HQ.custom_harnesses
+    HQ.custom_harnesses = [
+      HQ::HarnessConfig.new(key: "company-codex", adapter: "codex", execution_command: "company-codex")
+    ]
+    current_run = run("custom-codex-session", 1, agent: "company-codex", model: "openai.gpt-5.6-sol")
+    agent = agent("company-codex", [current_run], nil, model: "openai.gpt-5.6-sol")
+    snapshot = advance(agent, current_run, [usage("turn.completed", "usage" => {
+      "input_tokens" => 100,
+      "cached_input_tokens" => 40,
+      "output_tokens" => 20
+    })])
+
+    assert((snapshot["run_amount_usd"] - 0.00092).abs < 0.000_000_001,
+           "expected a custom Codex profile to use the shared OpenAI list price")
+    assert(snapshot["model"] == "openai.gpt-5.6-sol",
+           "expected cost attribution to retain the configured qualified model")
+    assert(snapshot.dig("pricing", "model") == "gpt-5.6-sol",
+           "expected pricing attribution to record the canonical OpenAI model")
+    assert(snapshot.dig("pricing", "source") == HQ::OpenAIModelPricing::SOURCE_URL,
+           "expected custom Codex pricing to retain the authoritative source")
+  ensure
+    HQ.custom_harnesses = previous if defined?(previous)
+  end
+
   def assert_unknown_codex_model_stays_unpriced
     current_run = run("codex-session", 1)
     agent = agent("codex", [current_run], nil, model: "codex-auto-review")
@@ -154,6 +181,28 @@ module AgentCostSnapshotTest
            "expected an explicit missing-price reason")
     assert(snapshot["token_snapshot"]["input_tokens"] == 100,
            "expected token telemetry to survive missing pricing")
+  end
+
+  def assert_unknown_custom_codex_model_stays_unpriced
+    previous = HQ.custom_harnesses
+    HQ.custom_harnesses = [
+      HQ::HarnessConfig.new(key: "company-codex", adapter: "codex", execution_command: "company-codex")
+    ]
+    current_run = run("custom-codex-session", 1, agent: "company-codex", model: "openai.private-model")
+    agent = agent("company-codex", [current_run], nil, model: "openai.private-model")
+    snapshot = advance(agent, current_run, [usage("turn.completed", "usage" => {
+      "input_tokens" => 100,
+      "cached_input_tokens" => 40,
+      "output_tokens" => 20
+    })])
+
+    assert(snapshot["amount_usd"].nil?, "expected unknown qualified OpenAI models to stay unpriced")
+    assert(snapshot["reason_unavailable"].include?("openai.private-model"),
+           "expected the unavailable reason to identify the configured model")
+    assert(snapshot["token_snapshot"]["input_tokens"] == 100,
+           "expected custom Codex token telemetry to survive missing pricing")
+  ensure
+    HQ.custom_harnesses = previous if defined?(previous)
   end
 
   def assert_missing_cost_is_not_treated_as_zero
@@ -177,9 +226,9 @@ module AgentCostSnapshotTest
     )
   end
 
-  def run(session_id, index)
+  def run(session_id, index, agent: nil, model: nil)
     time = Time.utc(2026, 7, 22, 10, index, 0)
-    FakeRun.new(session_id: session_id, finished_at: time)
+    FakeRun.new(session_id: session_id, finished_at: time, agent: agent, model: model)
   end
 
   def usage(event_type, values)

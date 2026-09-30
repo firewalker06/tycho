@@ -80,6 +80,10 @@ module OpenAIModelPricingTest
   def assert_resolves_aliases_and_snapshots
     assert(HQ::OpenAIModelPricing.price_model_for("gpt-5.6") == "gpt-5.6-sol",
            "expected the GPT-5.6 alias to use Sol pricing")
+    assert(HQ::OpenAIModelPricing.price_model_for("openai.gpt-5.6-sol") == "gpt-5.6-sol",
+           "expected an OpenAI-qualified custom model to use the canonical price")
+    assert(HQ::OpenAIModelPricing.price_model_for("openai.gpt-5.6") == "gpt-5.6-sol",
+           "expected aliases to resolve after removing an OpenAI qualifier")
     assert(HQ::OpenAIModelPricing.price_model_for("gpt-5.5-2026-04-23") == "gpt-5.5",
            "expected dated snapshots to use their base model price")
   end
@@ -87,6 +91,10 @@ module OpenAIModelPricingTest
   def assert_rejects_unknown_models_and_invalid_usage
     unknown = HQ::OpenAIModelPricing.estimate(
       model: "codex-auto-review",
+      tokens: { "input_tokens" => 10, "cached_input_tokens" => 0, "output_tokens" => 1 }
+    )
+    unknown_qualified = HQ::OpenAIModelPricing.estimate(
+      model: "openai.private-model",
       tokens: { "input_tokens" => 10, "cached_input_tokens" => 0, "output_tokens" => 1 }
     )
     invalid = HQ::OpenAIModelPricing.estimate(
@@ -97,6 +105,9 @@ module OpenAIModelPricingTest
     assert(unknown["amount_usd"].nil?, "expected unknown internal models to remain unpriced")
     assert(unknown["reason_unavailable"].include?("No OpenAI list price"),
            "expected an explicit unknown-model reason")
+    assert(unknown_qualified["amount_usd"].nil? &&
+           unknown_qualified["reason_unavailable"].include?("openai.private-model"),
+           "expected unknown qualified models to stay unpriced with their configured attribution")
     assert(invalid["amount_usd"].nil?, "expected inconsistent token usage to remain unpriced")
   end
 

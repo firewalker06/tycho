@@ -89,3 +89,11 @@ semantics remain native: Codex's schema flags, Claude's stream JSON, OpenCode's
 variant and permission model, and Pi's tool allowlist and structured-result
 correction behavior. Keep the profile adapter aligned with the protocol the
 wrapper actually implements.
+
+Codex profiles use the same versioned OpenAI list-price estimator as the
+built-in Codex harness. A gateway may qualify an OpenAI model with the
+`openai.` prefix, for example `openai.gpt-5.6-sol`; Tycho preserves that
+configured name for attribution and records the canonical OpenAI model used by
+the price table in the pricing metadata. A model without a recorded OpenAI
+price remains unpriced with an explicit reason instead of being treated as
+zero.
