@@ -8021,6 +8021,12 @@ body:has(.inquiry-form-full-screen) {
   min-width: 0;
 }
 
+.summary-outcome-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .focused-view-toolbar {
   display: flex;
   flex-wrap: wrap;
