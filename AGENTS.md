@@ -78,6 +78,10 @@ For input components, keep paste handling compatible with Bubbles `TextInput` an
 
 This repository now has lightweight automated coverage under `test/`. Every change should at minimum pass `bin/test` and a manual run of `bin/tycho` when TUI behavior is affected.
 
+### Required local CI signoff
+
+Read and follow [docs/LOCAL_CI.md](docs/LOCAL_CI.md); it is the canonical runbook. For every final pushed PR head, run `bin/test`, publish `signoff/tycho-bin-test` with pinned `gh-signoff` **v0.4.1** against that exact published SHA, and verify the status. If tests fail, publish the documented failure status for that SHA. After any new commit, push it and repeat the full sequence. Implementation or review is not complete while this required status is missing or stale.
+
 Validate the affected key paths in the UI, especially grouped project rows, table alignment, detail views, sidebar log inspection, agent create/edit flows, agent chat and structured inquiry submission, refresh, and the `g` shortcut that opens the selected project in a terminal.
 
 For Remote UI `/ui` changes, run `bundle exec ruby test/remote_server_test.rb` and do browser verification for user-visible behavior. A safe fallback pattern is to start `bin/tycho serve` on a spare localhost port with temp env vars (`TYCHO_CONFIG_PATH`, `TYCHO_SYSTEM_PROMPTS_PATH`, `TYCHO_LOGS_ROOT`), create fixture data through the JSON API, then drive `http://127.0.0.1:{port}/ui` with Playwright + local Google Chrome. Check concrete browser facts such as focused form values surviving `refresh({ force: true })`, details toggles preserving state across polling, mutually exclusive panels closing as expected, and sticky/fixed docks staying pinned inside the viewport.
