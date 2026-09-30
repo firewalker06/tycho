@@ -25,6 +25,7 @@ module CLICommandTest
     assert_project_commands_manage_full_lifecycle
     assert_project_command_and_help_paths_do_not_create_projects
     assert_agent_queue_notice_and_read_outputs
+    assert_failed_claim_cli_inspection_and_discard
     assert_remote_server_commands_manage_full_agent_lifecycle
     assert_remote_client_reports_timeout_and_unsupported_operation
     assert_debug_claude_is_listed_in_usage
@@ -708,6 +709,58 @@ module CLICommandTest
         Process.kill("TERM", -pid)
         Process.wait(pid)
       end
+    end
+  end
+
+  def assert_failed_claim_cli_inspection_and_discard
+    Dir.mktmpdir("hq-cli-failed-queue-test") do |dir|
+      workspace = File.join(dir, "workspace")
+      logs_root = File.join(dir, "logs")
+      FileUtils.mkdir_p([workspace, File.join(logs_root, "agents")])
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      File.write(config_path, <<~YAML)
+        projects:
+          - key: demo
+            name: Demo
+            path: #{workspace}
+            agent: codex
+      YAML
+      File.write(prompts_path, "{}\n")
+      now = Time.now
+      agent = HQ::ManagedAgent.new(
+        key: "failed-queue-cli-agent", name: "Failed Queue CLI", project_key: "demo", template_key: "custom",
+        workspace:, prompt: "Work", agent: "codex", started_at: now, finished_at: now, last_exit_code: 0,
+        runs: [HQ::ManagedAgent::AgentRun.new(started_at: now, finished_at: now, exit_code: 0,
+                                              status: "success", log_path: File.join(logs_root, "agent.raw.log"))],
+        log_path: File.join(logs_root, "agent.raw.log")
+      )
+      agent.enqueue_prompt!(prompt: "failed CLI work", id: "failed-cli-entry", source: "user")
+      agent.claim_pending_prompts!
+      agent.prepare_prompt_queue_claim!
+      agent.fail_prompt_queue_dispatch!("simulated CLI dispatch failure")
+      File.write(File.join(logs_root, "managed_agents.json"), JSON.pretty_generate([agent.to_hash]))
+      env = {
+        "TYCHO_CONFIG_PATH" => config_path,
+        "TYCHO_SYSTEM_PROMPTS_PATH" => prompts_path,
+        "TYCHO_LOGS_ROOT" => logs_root
+      }
+
+      read = run_tycho(env, "queue", agent.key, "--json")
+      read_payload = JSON.parse(read.fetch(:stdout))
+      assert(read.fetch(:status).success? && read_payload.fetch("idempotent") &&
+             read_payload.fetch("entries").map { |entry| entry["id"] } == ["failed-cli-entry"],
+             "expected tycho queue to inspect a failed claimed batch")
+
+      discarded = run_tycho(
+        env, "queue-work", "discard", agent.key, "--reason", "operator cancelled stale work", "--json"
+      )
+      discarded_payload = JSON.parse(discarded.fetch(:stdout))
+      assert(discarded.fetch(:status).success? && discarded_payload.fetch("discarded") &&
+             discarded_payload.dig("batch", "state") == "resolved" &&
+             discarded_payload.dig("batch", "dispositions", "failed-cli-entry", "reason") ==
+               "operator cancelled stale work",
+             "expected queue-work discard to resolve an allowed failed claim with an inspectable reason")
     end
   end
 

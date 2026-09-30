@@ -24,6 +24,9 @@ module PromptQueueTest
     assert_explicit_read_keeps_concurrent_arrivals
     assert_concurrent_readers_share_one_open_batch
     assert_dispatch_failure_retains_one_prepared_batch_for_retry
+    assert_resolved_failed_claim_reconciles_and_drains_newer_fifo_work
+    assert_failed_claim_can_be_discarded_except_for_delegation_callbacks
+    assert_loaded_resolved_claim_reconciles_after_later_successful_runs
     assert_entries_accepted_after_claim_form_a_consecutive_batch
     assert_authority_is_captured_per_fifo_entry
     assert_callback_can_start_a_never_run_parent
@@ -387,6 +390,123 @@ module PromptQueueTest
       assert(before == 1 && after == 1, "expected retry not to duplicate the prepared ordinary prompt")
       assert(persisted.active_queue_work && persisted.run_count == 2,
              "expected a successful retry to accept one run while retaining the open batch")
+    end
+  end
+
+  def assert_resolved_failed_claim_reconciles_and_drains_newer_fifo_work
+    with_queue_store do |registry, workspace|
+      agent = terminal_agent(workspace)
+      agent.enqueue_prompt!(prompt: "failed first", id: "failed-first")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+      service = HQ::RemoteService.new(registry:)
+
+      with_stubbed_start(error: "spawn failed after claim persistence") { service.agent(agent.key) }
+      failed = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      failed.enqueue_prompt!(prompt: "newer second", id: "newer-second")
+      store.save([failed])
+
+      inspected = service.read_prompt_queue(agent.key)
+      status = service.agent(agent.key)
+      assert(inspected[:idempotent] && inspected[:entries].map { |entry| entry["id"] } == ["failed-first"] &&
+             status.dig(:prompt_queue, "entries").map { |entry| entry["id"] } == %w[failed-first newer-second],
+             "expected a failed claim and newer FIFO entries to remain inspectable")
+
+      completion = store.complete_queue_work!(
+        agent.key,
+        batch_id: inspected.dig(:batch, "batch_id"),
+        dispositions: [{ "entry_id" => "failed-first", "outcome" => "completed" }]
+      )
+      reconciled = completion.fetch("agent")
+      assert(reconciled.prompt_queue_claim.nil? && reconciled.prompt_queue_dispatch_error.nil?,
+             "expected resolving queue work to retire its matching failed claim and dispatch error")
+
+      before_runs = reconciled.run_count
+      prompts = []
+      with_stubbed_start(prompts:) { service.agent(agent.key) }
+      drained = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      reads = queued_memory_events(agent.key, store)
+      assert(drained.run_count == before_runs + 1 && prompts.one? && prompts.first.include?("newer second") &&
+             !prompts.first.include?("failed first") && reads.length == 2,
+             "expected resolved failed work not to replay and the newer entry to dispatch exactly once")
+    end
+  end
+
+  def assert_failed_claim_can_be_discarded_except_for_delegation_callbacks
+    with_queue_store do |registry, workspace|
+      agent = terminal_agent(workspace)
+      agent.enqueue_prompt!(prompt: "discard me", id: "discard-me", source: "sleep_circuit_breaker_recovery")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+      service = HQ::RemoteService.new(registry:)
+      with_stubbed_start(error: "temporary launch failure") { service.agent(agent.key) }
+
+      response = HQ::RemoteServer.allocate.send(
+        :route, service, "POST", "/agents/#{agent.key}/prompt-queue/discard",
+        { "reason" => "obsolete recovery" }, nil
+      )
+      result = response.fetch(:body)
+      batch = result.fetch(:batch)
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      assert(response.fetch(:status) == 200 && result.fetch(:discarded) && batch.fetch("state") == "resolved" &&
+             batch.dig("dispositions", "discard-me", "outcome") == "declined_with_reason" &&
+             batch.dig("dispositions", "discard-me", "reason") == "obsolete recovery" &&
+             persisted.prompt_queue_claim.nil?,
+             "expected the Remote discard route to record an allowed failed-work disposition")
+    end
+
+    with_queue_store do |registry, workspace|
+      agent = terminal_agent(workspace)
+      agent.enqueue_prompt!(prompt: "protected callback", id: "protected", source: "delegation_callback")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+      service = HQ::RemoteService.new(registry:)
+      with_stubbed_start(error: "temporary launch failure") { service.agent(agent.key) }
+
+      error = begin
+        store.discard_prompt_queue!(agent.key)
+        nil
+      rescue ArgumentError => e
+        e
+      end
+      retained = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      assert(error&.message&.include?("Delegated replies cannot be discarded") && retained.prompt_queue_claim &&
+             retained.prompt_queue_dispatch_error,
+             "expected protected delegation callbacks to reject discard and remain retryable")
+    end
+  end
+
+  def assert_loaded_resolved_claim_reconciles_after_later_successful_runs
+    with_queue_store do |_registry, workspace|
+      agent = terminal_agent(workspace)
+      agent.enqueue_prompt!(prompt: "already handled", id: "handled")
+      claim = agent.claim_pending_prompts!
+      batch = agent.queue_work_batch(claim.fetch("id"))
+      agent.prepare_prompt_queue_claim!
+      agent.fail_prompt_queue_dispatch!("old dispatch failure")
+      agent.complete_queue_work!(batch.fetch("id"), [
+                                   { "entry_id" => "handled", "outcome" => "completed" }
+                                 ])
+      stale = agent.to_hash
+      stale["prompt_queue_claim"] = {
+        "id" => batch.fetch("id"), "entries" => batch.fetch("entries"),
+        "claimed_at" => Time.now.utc.iso8601(6), "baseline_run_count" => 2, "message_appended" => true
+      }
+      stale["prompt_queue_dispatch_error"] = {
+        "message" => "old dispatch failure", "failed_at" => Time.now.utc.iso8601(6), "retryable" => true
+      }
+      4.times do
+        now = Time.now
+        stale.fetch("runs") << HQ::ManagedAgent::AgentRun.new(
+          started_at: now, finished_at: now, exit_code: 0, status: "success",
+          log_path: File.join(workspace, "raw.log")
+        ).to_h
+      end
+
+      reconciled = HQ::ManagedAgent.from_hash(stale)
+      assert(reconciled.run_count >= 5 && reconciled.queue_work_batch(batch.fetch("id"))["state"] == "resolved" &&
+             reconciled.prompt_queue_claim.nil? && reconciled.prompt_queue_dispatch_error.nil?,
+             "expected persisted resolved claims to reconcile even after later successful runs")
     end
   end
 

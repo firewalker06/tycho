@@ -413,8 +413,23 @@ module HQ
         end
       end
 
+      class QueueWorkDiscard < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Discard a failed claimed queue-work batch when its sources permit"
+        argument :agent_key, required: true, desc: "Agent key"
+        option :reason, desc: "Recorded discard reason"
+        remote_options
+        usage_template "queue-work discard %{agent_key} [--reason REASON] [--server SERVER_KEY] [--json]"
+
+        def call(agent_key:, **opts)
+          exit CLICommand.discard_agent_queue_work(agent_key, opts, out: out, err: err)
+        end
+      end
+
       register "queue-work", QueueWorkCommand do |prefix|
         prefix.register "complete", QueueWorkComplete
+        prefix.register "discard", QueueWorkDiscard
       end
 
       class Memory < Dry::CLI::Command
@@ -1856,6 +1871,16 @@ module HQ
       failure("Failed to complete queue work: #{e.message}", err:)
     end
 
+    def discard_agent_queue_work(agent_key, opts = {}, out: $stdout, err: $stderr)
+      return remote_discard_agent_queue_work(agent_key, opts, out:, err:) if remote_requested?(opts)
+
+      result = agent_store_for_all.discard_prompt_queue!(agent_key, reason: opts[:reason])
+      print_queue_work_completion(queue_work_completion_payload(result), json: opts[:json], out:)
+      0
+    rescue StandardError => e
+      failure("Failed to discard queue work: #{e.message}", err:)
+    end
+
     def list_agent_store_backups(opts = {}, out: $stdout, err: $stderr)
       backups = agent_store_for_all.backups
       if opts[:json]
@@ -2300,6 +2325,18 @@ module HQ
       )
       print_queue_work_completion(payload, json: opts[:json], out:)
       payload["accepted"] ? 0 : 1
+    rescue RemoteCLIClient::Error, KeyError => e
+      failure(e.message, err: err)
+    end
+
+    def remote_discard_agent_queue_work(agent_key, opts, out:, err:)
+      payload = remote_client(opts[:server]).request(
+        "POST",
+        "#{remote_resource_path('agents', agent_key)}/prompt-queue/discard",
+        body: { "reason" => opts[:reason] }.compact
+      )
+      print_queue_work_completion(payload, json: opts[:json], out:)
+      0
     rescue RemoteCLIClient::Error, KeyError => e
       failure(e.message, err: err)
     end

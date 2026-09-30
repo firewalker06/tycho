@@ -250,6 +250,7 @@ and queued-run push notification behavior. Schedule-management work remains on
 - [x] Keep agent activity live during focused Remote UI workflows
 - [x] Add verified provenance and ancestor-operation rejection for delegated agents
 - [x] Add persistent, multi-client prompt queueing for running agents
+- [x] Reconcile resolved failed queue claims, keep failed batches inspectable, and provide source-safe retry/discard recovery
 - [x] Add durable delayed agent messages with due-aware FIFO batching, restart-safe dispatch, and local/remote CLI parity
 - [x] Add a structured sleep circuit breaker with process-tree termination, dedicated stop rendering, and cancellable one-shot recovery
 

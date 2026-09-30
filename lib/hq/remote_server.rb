@@ -460,6 +460,7 @@ module HQ
         return ok(service.prompt_queue_notice(key)) if method == "GET" && tail == ["prompt-queue", "notice"]
         return ok(service.read_prompt_queue(key)) if method == "POST" && tail == ["prompt-queue", "read"]
         return ok(service.retry_prompt_queue(key)) if method == "POST" && tail == ["prompt-queue", "retry"]
+        return ok(service.discard_prompt_queue(key, body)) if method == "POST" && tail == ["prompt-queue", "discard"]
         if method == "POST" && tail.length == 3 && tail.first == "queue-work" && tail[2] == "complete"
           return ok(service.complete_queue_work(key, tail[1], body))
         end
@@ -3176,6 +3177,22 @@ module HQ
       target = @agent_store.retry_prompt_queue!(key)
       @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target), conversation: conversation(target.key) }
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
+    end
+
+    def discard_prompt_queue(key, attrs = {})
+      find_agent!(key)
+      result = @agent_store.discard_prompt_queue!(key, reason: attrs["reason"])
+      target = result.fetch("agent")
+      @conversation_blocks_cache&.delete(key.to_s)
+      @agent_activity_snapshot.upsert!(target)
+      {
+        discarded: result.fetch("discarded"),
+        batch: result.fetch("batch"),
+        agent: agent_payload(target),
+        conversation: conversation(target.key)
+      }
     rescue ArgumentError => e
       raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
     end

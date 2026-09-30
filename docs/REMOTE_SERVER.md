@@ -761,6 +761,8 @@ Moves every currently pending delegated reply and user prompt into one FIFO-pres
 
 The response and Conversation event share the same structured `entries` representation, including normalized attachments, status, dispositions, and an instructions-first required-actions projection. In the Remote UI, the event appears as a warning-colored, right-aligned **Read queue** disclosure whose collapsed summary contains an eye icon, one concise instruction snippet, and its lifecycle state. Expanding it exposes canonical FIFO entry IDs, sources, normalized attachment titles and safe targets, and terminal dispositions without making the default Conversation view dense. While the receiving agent is processing that batch, its entries are omitted from the pending queue below the Conversation to avoid duplicate presentation. The durable batch remains intact and unresolved entries return to the pending queue as soon as the agent is no longer running. Partial, failed, blocked, and input-required results keep those entries unresolved and expose `queue not processed since state is x` with the exact result state; successful and no-action-needed results continue to auto-complete delivered work.
 
+A dispatch start failure remains readable through this endpoint even though its claim is already prepared. The response returns that failed claimed batch idempotently; newer entries remain listed behind it and are not folded into the failed batch.
+
 ```bash
 curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/prompt-queue/read
 ```
@@ -773,6 +775,18 @@ Records source-appropriate entry dispositions without changing the general agent
 curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/queue-work/BATCH_ID/complete \
   -H "Content-Type: application/json" \
   -d '{"dispositions":[{"entry_id":"ENTRY_ID","outcome":"completed"}]}'
+```
+
+Resolving a batch also retires any matching failed dispatch claim and error. The next pending batch can then dispatch in FIFO order without replaying the resolved Read queue message.
+
+### `POST /agents/{key}/prompt-queue/discard`
+
+Records every entry in the failed claimed batch as `declined_with_reason`, retires its claim and dispatch error, and advances newer FIFO work. An optional `reason` is stored with every disposition. The endpoint rejects any batch containing a protected delegation callback; those batches must be retried.
+
+```bash
+curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/prompt-queue/discard \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"Obsolete recovery request"}'
 ```
 
 ### `POST /agents/{key}/start`
