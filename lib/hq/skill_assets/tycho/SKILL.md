@@ -24,7 +24,7 @@ description: Manages Tycho projects, managed agents, delegation, and schedules. 
 | | `agent archive <agent-key>` | Archive an agent and move its logs |
 | | `agent clone <agent-key>` | Clone an existing agent |
 | **queue** | `queue <agent-key>` | Open or inspect the agent's durable queue-work batch |
-| **queue-work** | `queue-work complete <agent-key> <batch-id> --dispositions-json JSON` | Record one outcome per queue-work entry |
+| **queue-work** | `queue-work complete ...` / `queue-work discard <agent-key>` | Record entry outcomes or safely discard an allowed failed batch |
 | **schedule** | `schedule list` | List all schedules and daemon status |
 | | `schedule validate` | Validate schedule config |
 | | `schedule run <schedule-key>` | Trigger a schedule immediately |
@@ -216,6 +216,14 @@ tycho queue-work complete my-project-agent-3 BATCH_ID \
 ```
 
 User outcomes are `completed`, `needs_input`, or `declined_with_reason`; delegated callback outcomes are `incorporated` or `superseded_with_reason`. The two `*_with_reason` outcomes require a non-empty `reason`. Missing, duplicate, unknown, conflicting, or invalid explicit outcomes leave the batch open. An identical completion is idempotent. Failed, partial, blocked, and input-required runs never auto-complete queue work. Work that arrived but was not delivered remains gated and resumes the same native session once.
+
+Failed dispatch claims remain inspectable with `tycho queue`. Retry from the Remote UI when the work should still run, or discard an allowed failed batch explicitly:
+
+```bash
+tycho queue-work discard my-project-agent-3 --reason "Obsolete recovery request"
+```
+
+Discard records durable `declined_with_reason` outcomes and then advances newer FIFO work. Tycho refuses to discard a batch containing protected delegation callbacks; retry those batches instead.
 
 ---
 

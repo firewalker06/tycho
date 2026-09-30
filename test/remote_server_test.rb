@@ -6546,8 +6546,8 @@ module RemoteServerTest
            js[:body].include?('data-state-key="agent-prompt-queue:${escapeAttr(agent.key)}"'),
            "expected Agent detail to render a persistent expandable prompt queue")
     assert(js[:body].include?("data-edit-queued-prompt") && js[:body].include?("data-delete-queued-prompt") &&
-           js[:body].include?("data-retry-prompt-queue"),
-           "expected queued prompts to expose Edit, Delete, and failed-dispatch retry actions")
+           js[:body].include?("data-retry-prompt-queue") && js[:body].include?("data-discard-prompt-queue"),
+           "expected queued prompts to expose Edit, Delete, retry, and safe failed-batch discard actions")
     assert(js[:body].include?('enterkeyhint="enter"'),
            "expected Agent composer textarea to hint newline-capable keyboards")
     assert(js[:body].include?('event.target?.id === "prompt-input"'),

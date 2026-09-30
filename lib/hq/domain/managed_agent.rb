@@ -218,6 +218,7 @@ module HQ
         entry_normalizer: method(:normalize_prompt_queue_entry)
       )
       @prompt_queue_dispatch_error = normalize_prompt_queue_dispatch_error(prompt_queue_dispatch_error)
+      reconcile_prompt_queue_claim!
     end
 
     def color_index=(value)
@@ -648,7 +649,41 @@ module HQ
 
       result = QueueWork.apply_dispositions!(batch, dispositions, completed_at:)
       @queue_work.delete("active_batch_id") if QueueWork.terminal?(batch)
+      reconcile_prompt_queue_claim!
       result
+    end
+
+    def discard_failed_prompt_queue!(reason: "Discarded by operator after failed dispatch", discarded_at: Time.now)
+      raise ArgumentError, "No queued dispatch is waiting to be discarded" unless @prompt_queue_dispatch_error
+
+      claim = @prompt_queue_claim
+      batch = claim && QueueWork.find(@queue_work, claim["id"])
+      raise ArgumentError, "No failed claimed batch is available to discard" unless batch
+      if Array(batch["entries"]).any? { |entry| entry["source"] == "delegation_callback" }
+        raise ArgumentError, "Delegated replies cannot be discarded; retry the queue instead"
+      end
+
+      dispositions = Array(batch["entries"]).map do |entry|
+        {
+          "entry_id" => entry.fetch("id"),
+          "outcome" => "declined_with_reason",
+          "reason" => reason.to_s.strip.empty? ? "Discarded by operator after failed dispatch" : reason.to_s.strip
+        }
+      end
+      result = complete_queue_work!(batch.fetch("id"), dispositions, completed_at: discarded_at)
+      result["discarded"] = true
+      result
+    end
+
+    def reconcile_prompt_queue_claim!
+      claim = @prompt_queue_claim
+      return false unless claim
+
+      batch = QueueWork.find(@queue_work, claim["id"])
+      return false unless QueueWork.terminal?(batch)
+
+      complete_prompt_queue_claim!
+      true
     end
 
     def consolidated_prompt_queue_content(entries)
@@ -988,7 +1023,7 @@ module HQ
           "TYCHO_RUN_ID" => run.run_id,
           "TYCHO_SLEEP_INCIDENT_PATH" => sleep_incident_file_path(run.run_id)
         ),
-        RbConfig.ruby, "-e", agent_runner_script, *launch.fetch(:command),
+        current_ruby_executable, "-e", agent_runner_script, *launch.fetch(:command),
         chdir: @workspace, out: log_file, err: %i[child out], pgroup: true
       )
       log_file.close
@@ -1552,6 +1587,18 @@ module HQ
 
     private
 
+    def current_ruby_executable
+      configured = RbConfig.ruby.to_s
+      return configured if File.file?(configured) && File.executable?(configured)
+
+      resolved = ExecutableResolver.executable_path("ruby")
+      return resolved if resolved
+
+      raise Errno::ENOENT,
+            "Tycho's Ruby executable no longer exists at #{configured.inspect}, and no current ruby was found on PATH. " \
+            "Install or activate Ruby, then restart Tycho before retrying the queue"
+    end
+
     def delegation_recovery_state(metadata, entry)
       cancelled = metadata["sleep_recovery_cancelled"].to_s
       return ["cancelled", cancelled] unless cancelled.empty?
@@ -1639,7 +1686,7 @@ module HQ
         "correction_limit" => structured_output_correction_limit
       }
       runner_command = [
-        RbConfig.ruby,
+        current_ruby_executable,
         "-I", File.expand_path("../..", __dir__),
         "-r", "hq/domain/agent_correction_runner",
         "-e", "HQ::AgentCorrectionRunner.run_from_environment!"
@@ -1834,7 +1881,8 @@ module HQ
         begin
           executable = ENV.fetch("TYCHO_EXECUTABLE")
           agent_key = ENV.fetch("TYCHO_AGENT_KEY")
-          system(RbConfig.ruby, executable, "agent", "finalize", agent_key, out: File::NULL, err: File::NULL)
+          ruby = File.executable?(RbConfig.ruby) ? RbConfig.ruby : "ruby"
+          system(ruby, executable, "agent", "finalize", agent_key, out: File::NULL, err: File::NULL)
         rescue StandardError
           nil
         end

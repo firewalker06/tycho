@@ -463,6 +463,18 @@ module HQ
       end
     end
 
+    def discard_prompt_queue!(key, reason: nil)
+      mutate do |agents, _events|
+        target = agents.find { |agent| agent.key == key.to_s }
+        raise ArgumentError, "Unknown agent: #{key}" unless target
+        raise ArgumentError, "An inquiry must be resolved before discarding queued work" if target.inquiry_blocking_prompt_queue?
+
+        result = target.discard_failed_prompt_queue!(reason: reason)
+        dispatch_prompt_queue!(target, agents)
+        result.merge("agent" => target)
+      end
+    end
+
     def read_prompt_queue!(key, read_at: Time.now)
       with_exclusive_lock do
         agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
@@ -470,8 +482,14 @@ module HQ
         paths = [AGENTS_FILE, DELEGATIONS_FILE, target.memory_path, target.attachments_path]
         result = nil
         FileTransaction.run(paths) do
-          raise ArgumentError, "Queued work is already claimed for dispatch" if target.prompt_queue_claim
-          batch = target.active_queue_work || target.open_queue_work_batch!(opened_at: read_at)
+          claim = target.prompt_queue_claim
+          failed_claim = claim && target.prompt_queue_dispatch_error
+          raise ArgumentError, "Queued work is already claimed for dispatch" if claim && !failed_claim
+          batch = if failed_claim
+                    target.queue_work_batch(claim.fetch("id"))
+                  else
+                    target.active_queue_work || target.open_queue_work_batch!(opened_at: read_at)
+                  end
           raise ArgumentError, "No pending queue entries for #{target.key}" unless batch
 
           result = target.record_queue_read!(batch, created_at: read_at)

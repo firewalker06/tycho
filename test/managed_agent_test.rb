@@ -64,6 +64,7 @@ module ManagedAgentTest
     assert_stop_kills_term_ignoring_harness_before_restart
     assert_stop_finalizes_when_group_exits_before_signal
     assert_agent_runner_warns_when_command_cannot_execute
+    assert_deleted_ruby_executable_resolves_current_path_or_actionable_recovery
     assert_spawn_failure_clears_stale_result_and_persists_run
     assert_store_spawn_failure_persists_failed_run
     puts "managed_agent_test: ok"
@@ -1923,6 +1924,36 @@ module ManagedAgentTest
       assert(File.read(status_path) == "127", "expected runner status file to record 127")
       assert(output.include?("failed to execute #{missing_command.inspect}"),
              "expected missing command warning in runner output")
+    end
+  end
+
+  def assert_deleted_ruby_executable_resolves_current_path_or_actionable_recovery
+    Dir.mktmpdir("hq-current-ruby-test") do |dir|
+      replacement = File.join(dir, "ruby")
+      FileUtils.ln_s(RbConfig.ruby, replacement)
+      original_ruby = RbConfig.method(:ruby)
+      original_path = ENV["PATH"]
+      RbConfig.define_singleton_method(:ruby) { "/deleted/ruby-4.0.7/bin/ruby" }
+      ENV["PATH"] = dir
+      agent = HQ::ManagedAgent.new(
+        key: "ruby-resolution-agent", name: "Ruby Resolution", project_key: "demo", template_key: "custom",
+        workspace: dir, prompt: "Work", agent: "codex", log_path: File.join(dir, "raw.log")
+      )
+
+      assert(agent.send(:current_ruby_executable) == replacement,
+             "expected a deleted daemon Ruby path to resolve the current PATH executable at launch time")
+      ENV["PATH"] = ""
+      error = begin
+        agent.send(:current_ruby_executable)
+        nil
+      rescue Errno::ENOENT => e
+        e
+      end
+      assert(error&.message&.include?("restart Tycho before retrying the queue"),
+             "expected missing replacement Ruby guidance to give an actionable retry recovery")
+    ensure
+      RbConfig.define_singleton_method(:ruby, original_ruby) if original_ruby
+      ENV["PATH"] = original_path
     end
   end
 
