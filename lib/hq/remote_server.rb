@@ -350,6 +350,7 @@ module HQ
       return ok(service.resource_snapshot) if method == "GET" && parts == ["resources"]
       return ok(service.metrics_query(request&.query_params || {})) if method == "GET" && parts == ["metrics"]
       return ok(service.metrics_backfill(body)) if method == "POST" && parts == ["metrics", "backfill"]
+      return ok(setup: service.setup_summary) if method == "GET" && parts == ["setup", "summary"]
       if method == "GET" && parts == ["agents", "archived"]
         return ok(service.archived_agents(request&.query_params || {}))
       end
@@ -538,6 +539,9 @@ module HQ
           status: server[:status],
           stale: server[:stale],
           ready: server[:local] ? local[:ready] : !server[:last_success_at].nil?,
+          activity_error: server[:error],
+          activity_status: server[:status],
+          activity_retry_after_ms: server[:retry_after_ms],
           agents: agents
         }
       end
@@ -2510,6 +2514,22 @@ module HQ
     end
 
     def setup
+      setup_payload.merge(
+        harnesses: harness_readiness,
+        skill_installation: skill_installation,
+        tools: tool_readiness
+      )
+    end
+
+    def setup_summary
+      setup_payload.merge(
+        harnesses: [],
+        skill_installation: { harnesses: [] },
+        tools: []
+      )
+    end
+
+    def setup_payload
       all_agents = load_all_agents
       agents = visible_agents(all_agents)
       hidden_projects = HQ::Visibility.hidden_projects(@projects)
@@ -2542,9 +2562,6 @@ module HQ
           running_agents: agents.count(&:running?),
           unread_agents: agents.count(&:unread?)
         },
-        harnesses: harness_readiness,
-        skill_installation: skill_installation,
-        tools: tool_readiness,
         schema: schema_readiness,
         config: config_readiness,
         onboarding: onboarding_payload,
@@ -4106,14 +4123,13 @@ module HQ
     end
 
     def harness_readiness
-      builtins = [
-        harness_resolver_payload("codex", ExecutableResolver.resolve_tool("codex")),
-        harness_resolver_payload("claude", ExecutableResolver.resolve_tool("claude")),
-        harness_resolver_payload("opencode", ExecutableResolver.resolve_tool("opencode")),
-        harness_resolver_payload("pi", ExecutableResolver.resolve_tool("pi"))
-      ]
-      custom = HQ.custom_harnesses.values.sort_by(&:key).map { |config| custom_harness_payload(config) }
-      builtins + custom
+      jobs = %w[codex claude opencode pi].map do |name|
+        -> { harness_resolver_payload(name, ExecutableResolver.resolve_tool(name)) }
+      end
+      jobs += HQ.custom_harnesses.values.sort_by(&:key).map do |config|
+        -> { custom_harness_payload(config) }
+      end
+      jobs.map { |job| Thread.new(&job) }.map(&:value)
     end
 
     def tool_readiness
@@ -4921,7 +4937,8 @@ module HQ
     end
 
     def agent_revision(agent)
-      paths = [agent.raw_log_path, agent.memory_path, agent.attachments_path, HQ::AGENTS_FILE]
+      paths = [agent.raw_log_path, agent.memory_path, agent.attachments_path]
+      paths << HQ::AGENTS_FILE unless agent.archived?
       paths.filter_map do |path|
         File.mtime(path).to_f if path && File.exist?(path)
       rescue SystemCallError

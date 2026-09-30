@@ -45,6 +45,7 @@ module RemoteServerTest
     assert_remote_prompt_start_accepts_dash_prefixed_message
     assert_remote_agent_conversation_includes_run_summary
     assert_remote_conversation_snapshot_windows_large_transcripts
+    assert_archived_conversation_cache_ignores_active_store_changes
     assert_remote_agent_debug_endpoints
     assert_remote_project_payloads_include_status_and_detail
     assert_remote_project_git_diff_payload
@@ -2459,6 +2460,49 @@ module RemoteServerTest
     end
   end
 
+  def assert_archived_conversation_cache_ignores_active_store_changes
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      registry = registry_for(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      created = service.create_agent(
+        "project_key" => "web",
+        "template_key" => "custom",
+        "name" => "Archived cache fixture",
+        "prompt" => "Work.",
+        "agent" => "codex"
+      )
+      agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+      20.times { |index| HQ::AgentMemory.new(agent).append_assistant_message!("Archived message #{index}") }
+      HQ::AgentStore.new(registry.projects).archive_agent!(agent.key)
+
+      HQ::AgentArchiveStore.cache_mutex.synchronize do
+        HQ::AgentArchiveStore.snapshot_cache.delete(HQ::AGENT_ARCHIVE_DIR)
+      end
+      archive_store = HQ::AgentArchiveStore.new
+      archive = archive_store.find(agent.key)
+      assert(archive&.agent&.key == agent.key, "expected direct archived-key lookup to resolve the manifest")
+      assert(!HQ::AgentArchiveStore.snapshot_cache.key?(HQ::AGENT_ARCHIVE_DIR),
+             "expected a direct archived-key lookup not to deserialize the full archive index")
+
+      first = service.conversation_snapshot(agent.key)
+      cached_blocks = service.instance_variable_get(:@conversation_blocks_cache).dig(agent.key, :blocks)
+      first_revision = service.agent(agent.key).fetch(:revision)
+      FileUtils.touch(HQ::AGENTS_FILE, mtime: Time.now + 60)
+      second = service.conversation_snapshot(agent.key)
+      second_blocks = service.instance_variable_get(:@conversation_blocks_cache).dig(agent.key, :blocks)
+      second_revision = service.agent(agent.key).fetch(:revision)
+
+      assert(first_revision == second_revision,
+             "expected active managed-agent writes not to invalidate an immutable archive revision")
+      assert(cached_blocks.equal?(second_blocks),
+             "expected archived conversation blocks to stay cached after active-store changes")
+      assert(first[:conversation] == second[:conversation],
+             "expected cached archived conversation output to remain unchanged")
+    end
+  end
+
   def assert_remote_agent_debug_endpoints
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
@@ -3291,6 +3335,7 @@ module RemoteServerTest
       )
 
       setup = service.setup
+      summary = service.setup_summary
       assert(setup[:ui_url] == "http://127.0.0.1:7373/", "expected local UI URL")
       assert(setup[:public_ui_url] == "http://hq.tailnet.test:7373/", "expected public UI URL")
       assert(setup.dig(:tailscale, :https) == false, "expected HTTP Tailscale state")
@@ -3325,6 +3370,11 @@ module RemoteServerTest
              "expected Claude readiness to expose only current Anthropic model aliases")
       assert(setup[:tools].map { |item| item[:name] }.sort == %w[tailscale],
              "expected optional tool readiness entries")
+      assert(summary[:harnesses].empty? && summary[:tools].empty? && summary.dig(:skill_installation, :harnesses).empty?,
+             "expected setup summary to skip cold harness, tool, and skill diagnostics")
+      assert(summary.slice(:build, :counts, :config, :onboarding, :refresh_intervals) ==
+             setup.slice(:build, :counts, :config, :onboarding, :refresh_intervals),
+             "expected setup summary to preserve shell and onboarding metadata")
       assert(setup.dig(:schema, :valid) == true, "expected valid result schemas")
       assert(setup[:schema] == { valid: true, path: HQ::AGENT_RESULT_SCHEMA },
              "expected setup to report ordinary result-schema readiness")
@@ -5610,22 +5660,20 @@ module RemoteServerTest
            "expected create-only agent submission to live behind a secondary option")
     assert(js[:content_type].include?("javascript"), "expected /ui.js to return JavaScript")
     assert(js[:body].include?("DEFAULT_REFRESH_INTERVALS"), "expected UI JavaScript to define refresh defaults")
+    activity_loader = js[:body][/async function loadAgentActivity\(options = \{\}\).*?^}/m].to_s
     assert(js[:body].include?("AGENT_ACTIVITY_POLL_INTERVALS") &&
-           js[:body].include?('brokerGet("/servers/activity")') &&
            js[:body].include?("function pollAgentActivity") &&
-           js[:body].include?("function loadAgentActivity") &&
-           js[:body].include?('`/servers/${encodeURIComponent(server.key)}/activity`'),
-           "expected the logo agent activity to poll a dedicated lightweight endpoint")
+           activity_loader.include?('brokerGet("/servers/activity")') &&
+           !activity_loader.include?("/servers/${"),
+           "expected logo agent activity to use the cached aggregate without blocking peer proxy requests")
     assert(js[:body].include?("function mergeAgentActivity") &&
            js[:body].include?("state.activityAppliedSequence") &&
            js[:body].include?("syncUnreadAlert();"),
            "expected activity polling to reject stale responses and update the logo without a page render")
-    assert(js[:body].include?("REMOTE_HELPERS.mergeActivityServers") &&
-           js[:body].include?("Peer activity fetch degraded") &&
-           js[:body].include?("retrying automatically") &&
+    assert(js[:body].include?('activity_error: activityServer.activity_error || null') &&
            js[:body].include?('return "Degraded"') &&
            js[:body].include?("server-activity-error"),
-           "expected peer activity 5xx failures to degrade independently with an automatic retry signal")
+           "expected cached peer activity failures to retain a visible degraded signal")
     assert(js[:body].include?("window.TychoRemoteHelpers"),
            "expected the main Remote UI script to use the helper namespace")
     assert(js[:body].include?('updateViaCache: "none"'),

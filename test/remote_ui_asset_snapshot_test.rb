@@ -21,6 +21,7 @@ module RemoteUIAssetSnapshotTest
     assert_agent_status_icons_use_lucide_without_badges
     assert_agent_filter_and_sort_use_requested_lucide_icons
     assert_peer_update_ui_is_homebrew_gated
+    assert_fast_route_bootstrap_uses_cached_peer_activity
     assert_pull_request_comment_sections_are_unlimited
     assert_detail_composer_submissions_are_optimistic
     puts "remote_ui_asset_snapshot_test: ok"
@@ -76,6 +77,25 @@ module RemoteUIAssetSnapshotTest
     ]
     missing = required.reject { |fragment| javascript.include?(fragment) }
     raise "missing Homebrew-gated peer update UI contract: #{missing.join(", ")}" unless missing.empty?
+  end
+
+  def assert_fast_route_bootstrap_uses_cached_peer_activity
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    activity_loader = javascript[/async function loadAgentActivity\(options = \{\}\).*?^}/m].to_s
+    raise "missing aggregate activity loader" unless activity_loader.include?('brokerGet("/servers/activity")')
+    if activity_loader.include?("/servers/${encodeURIComponent(server.key)}/activity")
+      raise "ordinary activity polling still performs blocking peer proxy requests"
+    end
+
+    required = [
+      'apiGet(loadDetailedSetup ? "/setup" : "/setup/summary")',
+      "function detailedSetupRoute(route = parseRoute())",
+      '["hiddenSettings", "agentForm", "projectForm"].includes(route.type)',
+      "if (detailedSetupRoute(route)) await ensureDetailedSetup();",
+      "state.setupDetailed = loadDetailedSetup"
+    ]
+    missing = required.reject { |fragment| javascript.include?(fragment) }
+    raise "missing lightweight setup bootstrap contract: #{missing.join(', ')}" unless missing.empty?
   end
 
   def assert_delegated_summary_attention_icon_is_in_header
