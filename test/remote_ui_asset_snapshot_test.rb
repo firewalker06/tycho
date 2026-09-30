@@ -19,6 +19,7 @@ module RemoteUIAssetSnapshotTest
     assert_focused_detail_close_control
     assert_archived_agents_are_reference_only_and_read_only
     assert_agent_status_icons_use_lucide_without_badges
+    assert_summary_outcome_has_visible_status_and_no_session_header
     assert_agent_filter_and_sort_use_requested_lucide_icons
     assert_peer_update_ui_is_homebrew_gated
     assert_fast_route_bootstrap_uses_cached_peer_activity
@@ -267,6 +268,27 @@ module RemoteUIAssetSnapshotTest
     forbidden_styles = %w[background border padding border-radius]
     styled = forbidden_styles.select { |property| icon_styles.include?(property) }
     raise "status icon styles must not create a badge: #{styled.join(", ")}" unless styled.empty?
+  end
+
+  def assert_summary_outcome_has_visible_status_and_no_session_header
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
+    summary_renderer = javascript[/function renderAgentSummaryView\(agent, options = \{\}\).*?^}/m].to_s
+
+    raise "missing Summary renderer" if summary_renderer.empty?
+    raise "Summary still renders a Current session header" if summary_renderer.include?("Current session")
+    unless summary_renderer.include?("summaryOutcomeValueInline(summary.status || agentDisplayedStatusKey(agent), summary.status || statusLabel(agent))")
+      raise "Summary Outcome must render the result status identifier beside its icon"
+    end
+    unless javascript.include?("function summaryOutcomeValueInline(status, label") && javascript.include?("${escapeHtml(label)}")
+      raise "Summary Outcome must expose visible status text without relying on its icon"
+    end
+    unless javascript.include?('["succeeded", "success", "completed", "partial"].includes(status)')
+      raise "partial status must use the success intent"
+    end
+    unless css.include?(".summary-outcome-value") && css.include?("align-items: center;")
+      raise "Summary Outcome status identifier must preserve icon and text alignment"
+    end
   end
 
   def assert_agent_filter_and_sort_use_requested_lucide_icons

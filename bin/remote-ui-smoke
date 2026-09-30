@@ -909,6 +909,9 @@ def write_smoke_script(path)
           clearTimeout(state.timer);
           state.timer = null;
         });
+        if (captureDir) {
+          await candidate.screenshot({ path: path.join(captureDir, `summary-freshness-${viewport}.png`), fullPage: false });
+        }
         return { stale, updated };
       }
 
