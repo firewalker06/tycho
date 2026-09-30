@@ -18,7 +18,8 @@ module HQ
       adapter = HQ.harness_adapter(run.respond_to?(:agent) && !run.agent.to_s.empty? ? run.agent : agent.agent)
       usage = Array(usage_entries)
       token_snapshot, run_tokens = codex_token_snapshots(adapter, usage, previous:, prior_session_runs:)
-      run_model = run.respond_to?(:model) ? run.model : agent_model(agent)
+      run_model = run.respond_to?(:model) ? run.model : nil
+      run_model = agent_model(agent) if run_model.to_s.strip.empty?
       cost_result = run_cost_for(adapter, usage, model: run_model, run_tokens: run_tokens)
       run_cost = cost_result.fetch("amount_usd")
 
