@@ -86,6 +86,30 @@ module CLICommandTest
       )
       assert(!repeated.fetch(:status).success? && repeated.fetch(:stderr).include?("not attached"),
              "expected repeated CLI removal to fail safely")
+
+      archived_agent = HQ::ManagedAgent.new(
+        key: "archived-pr-diff-cli-agent", name: "Archived PR Diff CLI", project_key: "demo", template_key: "custom",
+        workspace:, prompt: "Done", agent: "codex", log_path: File.join(logs_root, "agents", "archived-pr-diff-cli-agent.raw.log")
+      )
+      archive_dir = File.join(logs_root, "agents", "archive", "20260930-120000-#{archived_agent.key}")
+      FileUtils.mkdir_p(archive_dir)
+      File.write(File.join(archive_dir, "agent_manifest.json"), JSON.pretty_generate(archived_agent.to_hash))
+
+      {
+        "unknown" => "missing-pr-diff-cli-agent",
+        "archived" => archived_agent.key
+      }.each do |state, key|
+        {
+          "add" => ["https://github.com/example/web/pull/456"],
+          "remove" => ["https://github.com/example/web/pull/456"]
+        }.each do |action, arguments|
+          result = run_tycho(env, "agent", "pr-diff", action, key, *arguments, "--json")
+          payload = JSON.parse(result.fetch(:stdout))
+          assert(!result.fetch(:status).success? && result.fetch(:stderr).empty? &&
+                 payload == { "ok" => false, "error" => "Unknown or archived agent: #{key}" },
+                 "expected #{action} --json to return a structured error for an #{state} agent")
+        end
+      end
     end
   end
 

@@ -1750,7 +1750,7 @@ module HQ
       return remote_mutate_agent_pr_diff("POST", agent_key, url, opts, out:, err:) if remote_requested?(opts)
 
       agent = active_agent_for_pr_diff(agent_key)
-      return failure("Unknown or archived agent: #{agent_key}", err: err) unless agent
+      return command_failure("Unknown or archived agent: #{agent_key}", opts, out:, err:) unless agent
 
       reference = PullRequestDiff.manual_reference_from_url(url, agent_key: agent.key)
       catalog = PullRequestDiff::Catalog.new(path: agent.pull_request_catalog_path)
@@ -1765,7 +1765,7 @@ module HQ
       return remote_mutate_agent_pr_diff("DELETE", agent_key, target, opts, out:, err:) if remote_requested?(opts)
 
       agent = active_agent_for_pr_diff(agent_key)
-      return failure("Unknown or archived agent: #{agent_key}", err: err) unless agent
+      return command_failure("Unknown or archived agent: #{agent_key}", opts, out:, err:) unless agent
 
       catalog = PullRequestDiff::Catalog.new(path: agent.pull_request_catalog_path)
       references = catalog.references(PullRequestDiff.references_for_agent(agent))

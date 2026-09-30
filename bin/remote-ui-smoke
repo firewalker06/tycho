@@ -39,7 +39,7 @@ def write_fixture(dir)
   schedules_path = File.join(config_dir, "schedules.yml")
   fake_codex_path = File.join(dir, "fake-codex")
   fake_gh_path = File.join(dir, "fake-gh")
-  File.write(config_path, <<~YAML)
+  config = <<~YAML
     ---
     projects:
       - key: web
@@ -47,8 +47,9 @@ def write_fixture(dir)
         group: Personal
         path: #{workspace.inspect}
         agent: codex
-        pr_url: https://github.com/example/web/pull/123
   YAML
+  config << "    pr_url: https://github.com/example/web/pull/123\n" unless ENV["TYCHO_REMOTE_UI_PR_DIFF_MANAGEMENT_ONLY"] == "1"
+  File.write(config_path, config)
   File.write(prompts_path, "---\ncustom: \"Check the workspace.\"\n")
   File.write(schedules_path, <<~YAML)
     ---
@@ -480,6 +481,7 @@ def write_smoke_script(path)
       const summaryAttachmentsOnly = process.env.TYCHO_REMOTE_UI_SUMMARY_ATTACHMENTS_ONLY === "1";
       const quickAgentsPriorityOnly = process.env.TYCHO_REMOTE_UI_QUICK_AGENTS_PRIORITY_ONLY === "1";
       const optimisticDetailFormsOnly = process.env.TYCHO_REMOTE_UI_OPTIMISTIC_DETAIL_FORMS_ONLY === "1";
+      const prDiffManagementOnly = process.env.TYCHO_REMOTE_UI_PR_DIFF_MANAGEMENT_ONLY === "1";
       const draft = "Remote UI smoke draft " + Date.now();
       const errors = [];
 
@@ -1903,7 +1905,65 @@ def write_smoke_script(path)
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "optimistic-detail-failure-mobile.png"), fullPage: false });
       }
 
+      async function assertPrDiffManagement() {
+        const candidate = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+        const key = unscheduledAgentKey;
+        try {
+          await candidate.goto(`${baseUrl}/ui#agent/${encodeURIComponent(key)}`, { waitUntil: "networkidle" });
+          await candidate.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+          const initialCatalog = await candidate.evaluate(async (agentKey) => {
+            const response = await fetch(`/agents/${encodeURIComponent(agentKey)}/pull-requests`);
+            if (!response.ok) throw new Error(`Could not load initial PR catalog: ${response.status}`);
+            return response.json();
+          }, key);
+          if (initialCatalog.pull_requests?.length !== 0) {
+            throw new Error(`PR management fixture did not start server-backed and empty: ${JSON.stringify(initialCatalog)}`);
+          }
+
+          await candidate.click("#header-more-button");
+          await candidate.waitForSelector(`[data-open-agent-pr-diffs='${key}']`, { state: "visible", timeout: 10_000 });
+          const navigationLabel = await candidate.locator(`[data-open-agent-pr-diffs='${key}']`).innerText();
+          if (!navigationLabel.includes("PR Diffs") || !navigationLabel.includes("No pull requests") ||
+              !navigationLabel.includes("Attach one")) {
+            throw new Error(`Zero-PR navigation was not discoverable: ${JSON.stringify(navigationLabel)}`);
+          }
+          if (captureDir) await candidate.screenshot({ path: path.join(captureDir, "pr-diffs-zero-pr-navigation.png"), fullPage: false });
+
+          await candidate.click(`[data-open-agent-pr-diffs='${key}']`);
+          await candidate.waitForSelector(".agent-pr-diff-shell .empty-state", { state: "visible", timeout: 10_000 });
+          await candidate.waitForSelector("[data-add-pr-diff-form]", { state: "visible", timeout: 10_000 });
+          if (captureDir) await candidate.screenshot({ path: path.join(captureDir, "pr-diffs-zero-pr-empty-state.png"), fullPage: false });
+
+          const form = "[data-add-pr-diff-form]";
+          await candidate.fill(`${form} input[name='url']`, "https://github.com/example/web/pull/123");
+          await candidate.click(`${form} button[type='submit']`);
+          await candidate.waitForSelector("[data-remove-pr-diff]", { state: "visible", timeout: 10_000 });
+          if (captureDir) await candidate.screenshot({ path: path.join(captureDir, "pr-diffs-zero-pr-attached-state.png"), fullPage: false });
+
+          await candidate.click("[data-remove-pr-diff]");
+          await candidate.click("[data-confirmation-accept]");
+          await candidate.waitForSelector(".agent-pr-diff-shell .empty-state", { state: "visible", timeout: 10_000 });
+          const finalCatalog = await candidate.evaluate(async (agentKey) => {
+            const response = await fetch(`/agents/${encodeURIComponent(agentKey)}/pull-requests`);
+            if (!response.ok) throw new Error(`Could not load final PR catalog: ${response.status}`);
+            return response.json();
+          }, key);
+          if (finalCatalog.pull_requests?.length !== 0 || Number(finalCatalog.catalog_revision) < 2) {
+            throw new Error(`PR removal did not persist safely: ${JSON.stringify(finalCatalog)}`);
+          }
+          if (captureDir) await candidate.screenshot({ path: path.join(captureDir, "pr-diffs-zero-pr-removed-state.png"), fullPage: false });
+        } finally {
+          await candidate.close();
+        }
+      }
+
       try {
+        if (prDiffManagementOnly) {
+          await assertPrDiffManagement();
+          if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
+          console.log("remote-ui-pr-diff-management-smoke: ok");
+          return;
+        }
         if (optimisticDetailFormsOnly) {
           await assertOptimisticDetailForms();
           if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
@@ -8258,7 +8318,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     send_agent_message(base_url, security_agent_key, "Take over this review directly.")
     associate_agent_schedule(fixture.fetch(:logs_dir), agent_key)
     associate_agent_pull_request(fixture.fetch(:logs_dir), agent_key)
-    associate_agent_pull_request(fixture.fetch(:logs_dir), unscheduled_agent_key)
+    associate_agent_pull_request(fixture.fetch(:logs_dir), unscheduled_agent_key) unless ENV["TYCHO_REMOTE_UI_PR_DIFF_MANAGEMENT_ONLY"] == "1"
     wait_for_resource_agents(
       base_url,
       [agent_key, unscheduled_agent_key, orchestrator_agent_key, delegated_agent_key, security_agent_key, mobile_agent_key, *switcher_agent_keys]
