@@ -4,6 +4,35 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.12.1 - 2026-09-30
+
+### Rollout improvements
+
+- Refresh an open stale Summary in place when newer Conversation activity or
+  a later run summary arrives, preserving the focused workspace on desktop and
+  mobile while showing a clear update notice.
+- Hide the QueueWork batch currently being processed from the pending queue so
+  active work appears once. Unresolved entries return after processing stops
+  or fails, while the durable batch and **Read queue** record remain intact.
+- Raise the per-attachment upload and workspace image-preview limit from 10 MB
+  to 20 MB. The existing five-file and 25 MB aggregate message limits remain.
+
+### Fixes
+
+- Replace Claude image tool-result base64 payloads with compact media labels in
+  projected conversation and memory content. Raw stream logs retain the full
+  payload for evidence and recovery.
+- Preserve the runner-published harness exit status during finalization instead
+  of replacing it with a later wrapper-process status after termination
+  escalation.
+
+### Compatibility
+
+- No manual migration is required. This patch does not change project, agent,
+  schedule, QueueWork, credential, or memory schemas.
+- v0.11.0 remains the final Intel macOS bottle. Current releases ship Apple
+  Silicon macOS and Linux bottles; Intel users can continue running from source.
+
 ## 0.12.0 - 2026-09-27
 
 ### Highlights

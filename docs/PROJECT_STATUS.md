@@ -101,6 +101,12 @@ Key references:
 
 ## Current Focus
 
+**v0.12.1 release**: improves rollout visibility by refreshing stale Summary
+workspaces in place and showing active QueueWork only in its canonical **Read
+queue** disclosure. It also compacts Claude image tool results before memory
+projection, preserves harness exit status through finalization, and raises the
+per-file attachment and workspace image-preview limit to 20 MB.
+
 **v0.12.0 release preparation**: consolidates durable QueueWork batching,
 structured Read queue disclosures, same-run inquiry/prompt ingestion, automatic
 successful settlement, stop-time dispatch, delayed continuations, sleep-loop
