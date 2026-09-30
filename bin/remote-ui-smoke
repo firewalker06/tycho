@@ -479,6 +479,7 @@ def write_smoke_script(path)
       const titleCopyOnly = process.env.TYCHO_REMOTE_UI_TITLE_COPY_ONLY === "1";
       const summaryAttachmentsOnly = process.env.TYCHO_REMOTE_UI_SUMMARY_ATTACHMENTS_ONLY === "1";
       const quickAgentsPriorityOnly = process.env.TYCHO_REMOTE_UI_QUICK_AGENTS_PRIORITY_ONLY === "1";
+      const optimisticDetailFormsOnly = process.env.TYCHO_REMOTE_UI_OPTIMISTIC_DETAIL_FORMS_ONLY === "1";
       const draft = "Remote UI smoke draft " + Date.now();
       const errors = [];
 
@@ -1801,7 +1802,111 @@ def write_smoke_script(path)
         }
       }
 
+      async function assertOptimisticDetailForms() {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
+        await page.waitForSelector("#composer", { state: "visible", timeout: 10_000 });
+        await page.evaluate((key) => {
+          const agent = findAgent(key);
+          Object.assign(agent, { running: false, status: "success", awaiting_input: false });
+          state.conversations[key] = {
+            blocks: [{
+              kind: "run_summary",
+              content: "Detail submission fixture summary.",
+              created_at: "2026-09-30T00:00:00Z",
+              metadata: { summary_id: "optimistic-detail-form", status: "success" },
+            }],
+            loaded: true,
+            loading: false,
+          };
+          history.replaceState(null, "", routeHash({ type: "agentSummary", key, summaryId: "optimistic-detail-form" }));
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          pendingAttachmentPayloads = async () => new Promise((resolve) => {
+            window.__releaseOptimisticDetailSuccess = () => resolve([]);
+          });
+          apiPost = async () => ({ agent: { ...agent, running: true, status: "running" }, conversation: [] });
+          refresh = async () => {};
+          render();
+        }, agentKey);
+        await page.click(".focused-composer > summary");
+        await page.fill("#prompt-input", "Continue from this summary.");
+        await page.evaluate(() => {
+          const form = document.querySelector("#composer");
+          const button = form.querySelector("button[type='submit']");
+          button.click();
+          button.click();
+        });
+        await page.waitForFunction((key) => (
+          location.hash === `#agent/${encodeURIComponent(key)}` &&
+          document.querySelectorAll(".message.user.pending").length === 1 &&
+          document.querySelector(".message.user.pending")?.getAttribute("aria-busy") === "true"
+        ), agentKey, { timeout: 2_000, polling: 25 });
+        const optimisticSummarySubmission = await page.evaluate((key) => ({
+          chainCount: state.composerSubmissionChains[key] ? 1 : 0,
+          pendingCount: document.querySelectorAll(".message.user.pending").length,
+          pendingStatusRole: document.querySelector(".message-send-status")?.getAttribute("role"),
+          route: location.hash,
+          action: document.querySelector("#composer button[type='submit']")?.textContent.trim(),
+        }), agentKey);
+        if (optimisticSummarySubmission.chainCount !== 1 || optimisticSummarySubmission.pendingCount !== 1 ||
+            optimisticSummarySubmission.pendingStatusRole !== "status" || optimisticSummarySubmission.action !== "Queue" ||
+            optimisticSummarySubmission.route !== `#agent/${encodeURIComponent(agentKey)}`) {
+          throw new Error(`Summary detail submission was not immediate, accessible, or duplicate-safe: ${JSON.stringify(optimisticSummarySubmission)}`);
+        }
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "optimistic-detail-submit-mobile.png"), fullPage: false });
+        await page.evaluate((key) => {
+          navigate({ type: "agentSummary", key, summaryId: "optimistic-detail-form" });
+          window.__releaseOptimisticDetailSuccess();
+        }, agentKey);
+        await page.waitForFunction((key) => (
+          !state.pendingComposerKeys.has(key) && location.hash.includes("/summary/optimistic-detail-form")
+        ), agentKey, { timeout: 2_000, polling: 25 });
+
+        await page.evaluate((key) => {
+          const agent = findAgent(key);
+          const attachment = {
+            id: "optimistic-detail-attachment",
+            agent_key: key,
+            type: "file",
+            format: "text",
+            title: "Detail fixture.txt",
+            path: "/tmp/detail-fixture.txt",
+            content: "Attachment detail fixture.",
+          };
+          agent.attachments = [...(agent.attachments || []), attachment];
+          state.attachmentDetails[attachment.id] = attachment;
+          Object.assign(agent, { running: false, status: "success" });
+          pendingAttachmentPayloads = async () => new Promise((_resolve, reject) => {
+            window.__releaseOptimisticDetailFailure = () => reject(new Error("fixture transport failed"));
+          });
+          navigate({ type: "agentAttachment", key, attachmentId: attachment.id });
+        }, agentKey);
+        await page.waitForSelector("[data-agent-attachment='optimistic-detail-attachment']", { state: "visible", timeout: 2_000 });
+        await page.click(".focused-composer > summary");
+        await page.fill("#prompt-input", "Retry from this attachment.");
+        await page.click("#composer button[type='submit']");
+        await page.waitForFunction((key) => location.hash === `#agent/${encodeURIComponent(key)}`, agentKey, { timeout: 2_000 });
+        await page.evaluate(() => window.__releaseOptimisticDetailFailure());
+        await page.waitForFunction((key) => {
+          const form = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"]`);
+          return location.hash.includes("/attachment/optimistic-detail-attachment") &&
+            form?.closest(".focused-composer")?.open &&
+            form.querySelector("[data-composer-submission-error]")?.textContent.includes("fixture transport failed") &&
+            form.querySelector("#prompt-input")?.value === "Retry from this attachment." &&
+            document.activeElement === form.querySelector("#prompt-input") &&
+            !document.querySelector(".message.user.pending");
+        }, agentKey, { timeout: 2_000, polling: 25 });
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "optimistic-detail-failure-mobile.png"), fullPage: false });
+      }
+
       try {
+        if (optimisticDetailFormsOnly) {
+          await assertOptimisticDetailForms();
+          if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
+          console.log("remote-ui-optimistic-detail-forms-smoke: ok");
+          return;
+        }
         if (quickAgentsPriorityOnly) {
           await assertQuickAgentPriority();
           if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);

@@ -4646,6 +4646,17 @@ details.queue-read-block:not([open]) > .queue-read-body {
   letter-spacing: 0;
 }
 
+.composer-submission-error {
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--danger) 55%, var(--border));
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--danger) 9%, var(--panel));
+  color: color-mix(in srgb, var(--danger) 82%, var(--text));
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .message-role {
   display: inline-flex;
   align-items: center;
