@@ -135,14 +135,43 @@ module UsageMetricsTest
 
     profiles.each_with_index do |profile, index|
       current = run("#{profile.adapter}-profile-metric", 16 + index,
-                    session_id: "#{profile.adapter}-profile-session", model: "gpt-5.5")
-      fixture_agent = agent(profile.key, "gpt-5.5", [current], session_id: current.session_id)
+                    session_id: "#{profile.adapter}-profile-session",
+                    model: profile.adapter == "codex" ? "openai.gpt-5.6-sol" : "gpt-5.5")
+      fixture_agent = agent(profile.key, current.model, [current], session_id: current.session_id)
       record = normalize(fixture_agent, current, usage_entries(fixture_lines.fetch(profile.adapter), profile.key))
 
       assert(HQ::UsageMetrics::ProviderTelemetry.for(profile.key).adapter == profile.adapter,
              "expected #{profile.key} telemetry provider to use #{profile.adapter}")
       assert(record["harness"] == profile.key && record["harness_adapter"] == profile.adapter,
              "expected #{profile.key} metrics to retain profile identity and native adapter")
+      next unless profile.adapter == "codex"
+
+      with_store do |store|
+        store.upsert(record)
+        stored = store.runs.fetch(0)
+        assert_close(stored.dig("estimated_cost", "amount_usd"), 0.00092)
+        assert(stored["configured_model"] == "openai.gpt-5.6-sol",
+               "expected custom Codex metrics to retain the qualified configured model")
+        assert(stored.dig("estimated_cost", "pricing", "model") == "gpt-5.6-sol",
+               "expected custom Codex metrics to attribute the canonical priced model")
+        assert(stored.dig("estimated_cost", "pricing", "source") == HQ::OpenAIModelPricing::SOURCE_URL,
+               "expected custom Codex metrics to retain the authoritative pricing source")
+      end
+    end
+
+    current = run("unknown-codex-profile-metric", 20,
+                  session_id: "unknown-codex-profile-session", model: "openai.private-model")
+    fixture_agent = agent("codex-wrapper", current.model, [current], session_id: current.session_id)
+    record = normalize(fixture_agent, current, usage_entries(fixture_lines.fetch("codex"), "codex-wrapper"))
+    with_store do |store|
+      store.upsert(record)
+      stored = store.runs.fetch(0)
+      assert(stored.dig("estimated_cost", "amount_usd").nil?,
+             "expected an unknown custom Codex model to remain unpriced")
+      assert(stored.dig("estimated_cost", "reason_unavailable").include?("openai.private-model"),
+             "expected custom Codex unknown-price attribution to name the configured model")
+      assert(stored.dig("tokens", "input_tokens") == 100,
+             "expected custom Codex tokens to remain available when pricing is unknown")
     end
   ensure
     HQ.custom_harnesses = previous if defined?(previous)

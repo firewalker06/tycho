@@ -142,6 +142,7 @@ module HQ
     PROCESS_OUTPUT_MARKER = "=== process output ==="
     STRUCTURED_OUTPUT_CORRECTION_LIMIT = 2
     MAX_STRUCTURED_OUTPUT_CORRECTION_LIMIT = 5
+    UNPROCESSED_QUEUE_WORK_STATUSES = %w[partial failed blocked input_required].freeze
 
     def self.with_final_output_checklist(prompt)
       text = prompt.to_s.rstrip
@@ -739,10 +740,33 @@ module HQ
       return entries unless batch
       return entries if running? && @prompt_queue_dispatch_error.nil?
 
-      state = @prompt_queue_dispatch_error ? "failed" : batch.fetch("state", "in_progress")
+      state = if @prompt_queue_dispatch_error
+                "failed"
+              else
+                queue_work_unprocessed_status || batch.fetch("state", "in_progress")
+              end
       Array(batch["entries"]).map do |entry|
         entry.merge("state" => state, "queue_work_batch_id" => batch["id"])
       end + entries
+    end
+
+    def queue_work_unprocessed_status
+      return nil unless active_queue_work
+      return nil if running?
+
+      result_status = effective_status.to_s
+      return nil unless UNPROCESSED_QUEUE_WORK_STATUSES.include?(result_status)
+
+      run_status = last_run&.status.to_s
+      return result_status if result_status == "input_required" && %w[input_required awaiting-input].include?(run_status)
+      return result_status if run_status == result_status
+
+      nil
+    end
+
+    def queue_work_unprocessed_reason
+      result_status = queue_work_unprocessed_status
+      "queue not processed since state is #{result_status}" if result_status
     end
 
     def prompt_queue_dispatchable?

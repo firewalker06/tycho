@@ -17,6 +17,7 @@ module PromptQueueTest
     assert_self_delayed_continuation_preserves_delegation_ownership
     assert_claim_race_drains_fifo_without_overlap
     assert_pending_queue_visibility_tracks_processing_state
+    assert_non_terminal_results_explain_unprocessed_queue_work
     assert_automatic_dispatch_records_one_structured_read_block
     assert_explicit_read_consumes_one_mixed_batch_and_records_conversation
     assert_explicit_read_failure_retains_queue
@@ -247,6 +248,50 @@ module PromptQueueTest
              "expected unresolved queue work to become visible as soon as processing fails")
     ensure
       stop_process(pid)
+    end
+  end
+
+  def assert_non_terminal_results_explain_unprocessed_queue_work
+    %w[partial failed blocked input_required].each do |result_status|
+      with_queue_store do |registry, workspace|
+        agent = terminal_agent(workspace, status: result_status, structured_result: {
+          "status" => result_status, "summary" => "Queue processing ended as #{result_status}"
+        })
+        agent.enqueue_prompt!(prompt: "first queued instruction", source: "user", id: "first-entry")
+        agent.enqueue_prompt!(prompt: "second queued instruction", source: "user", id: "second-entry")
+        batch = agent.open_queue_work_batch!
+        agent.record_queue_read!(batch)
+        agent.send(:gate_successful_queue_work!, agent.last_run)
+        HQ::AgentStore.new(registry.projects).save([agent])
+
+        payload = HQ::RemoteService.new(registry:).agent(agent.key).fetch(:prompt_queue)
+        visible_entries = payload.fetch("entries")
+        assert(payload["unprocessed_reason"] == "queue not processed since state is #{result_status}" &&
+               visible_entries.map { |entry| entry["id"] } == %w[first-entry second-entry] &&
+               visible_entries.all? { |entry| entry["state"] == result_status } &&
+               payload.dig("queue_work", "state") == "in_progress" &&
+               payload.dig("queue_work", "unresolved_entry_ids") == %w[first-entry second-entry],
+               "expected #{result_status} to preserve FIFO queue work with an exact result explanation")
+      end
+    end
+
+    %w[success no_action_needed].each do |result_status|
+      with_queue_store do |registry, workspace|
+        agent = terminal_agent(workspace, status: result_status, structured_result: {
+          "status" => result_status, "summary" => "Queue processed"
+        })
+        agent.enqueue_prompt!(prompt: "completed instruction", source: "user", id: "completed-entry")
+        batch = agent.open_queue_work_batch!
+        agent.record_queue_read!(batch)
+        agent.send(:gate_successful_queue_work!, agent.last_run)
+        HQ::AgentStore.new(registry.projects).save([agent])
+
+        payload = HQ::RemoteService.new(registry:).agent(agent.key).fetch(:prompt_queue)
+        assert(payload.fetch("entries").empty? && payload["pending_count"].zero? &&
+               payload["unprocessed_reason"].nil? && payload.dig("queue_work", "state") == "resolved" &&
+               payload.dig("queue_work", "unresolved_entry_ids").empty?,
+               "expected #{result_status} to auto-complete delivered queue work")
+      end
     end
   end
 

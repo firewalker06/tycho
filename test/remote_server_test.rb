@@ -7344,8 +7344,8 @@ module RemoteServerTest
            js[:body].include?("Loading PR diff") &&
            js[:body].include?("Loading diff"),
            "expected PR and local diff loading states to use the Tycho loading state")
-    assert(js[:body].include?('class="message-send-status">sending...</div>'),
-           "expected Remote UI pending chat status copy to stay concise")
+    assert(js[:body].include?('class="message-send-status" role="status" aria-live="polite" aria-atomic="true">sending...</div>'),
+           "expected Remote UI pending chat status copy to stay concise and announce progress")
     assert(js[:body].include?("clearFormDraft(form)"),
            "expected Remote UI to clear submitted or cancelled form drafts")
     assert(js[:body].include?("function syncMarkdownHeadingAnchors"),

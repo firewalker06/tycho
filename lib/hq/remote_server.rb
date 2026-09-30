@@ -4979,6 +4979,7 @@ module HQ
         end,
         "pending_count" => entries.length,
         "queue_work" => agent.queue_work_payload,
+        "unprocessed_reason" => agent.queue_work_unprocessed_reason,
         "dispatch_error" => agent.prompt_queue_dispatch_error,
         "blocked_by_inquiry" => agent.inquiry_blocking_prompt_queue?
       }

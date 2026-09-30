@@ -43,6 +43,7 @@ module HQ
     MODEL_ALIASES = {
       "gpt-5.6" => "gpt-5.6-sol"
     }.freeze
+    OPENAI_MODEL_PREFIX = "openai."
 
     module_function
 
@@ -90,6 +91,7 @@ module HQ
 
     def price_model_for(model)
       normalized = model.to_s.strip.downcase
+      normalized = normalized.delete_prefix(OPENAI_MODEL_PREFIX)
       normalized = MODEL_ALIASES.fetch(normalized, normalized)
       return normalized if PRICES_USD_PER_MILLION.key?(normalized)
 
