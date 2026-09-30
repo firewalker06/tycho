@@ -16,6 +16,7 @@ require_relative "domain/project_archiver"
 require_relative "domain/file_store"
 require_relative "domain/file_transaction"
 require_relative "domain/github_api_client"
+require_relative "domain/pull_request_diff"
 require_relative "domain/scheduler"
 require_relative "domain/agent_store"
 require_relative "domain/delegation_actor"
@@ -358,6 +359,42 @@ module HQ
         end
       end
 
+      class AgentPRDiff < Dry::CLI::Command
+        desc "Manage agent pull request diffs"
+
+        def call(**)
+          exit CLICommand.usage("Missing agent pr-diff command", err: err)
+        end
+      end
+
+      class AgentPRDiffAdd < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Attach a GitHub pull request diff to an agent"
+        argument :agent_key, required: true, desc: "Agent key"
+        argument :url, required: true, desc: "Exact GitHub pull request URL"
+        remote_options
+        usage_template "agent pr-diff add %{agent_key} %{url} [--server SERVER_KEY] [--json]"
+
+        def call(agent_key:, url:, **opts)
+          exit CLICommand.add_agent_pr_diff(agent_key, url, opts, out: out, err: err)
+        end
+      end
+
+      class AgentPRDiffRemove < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Remove a pull request diff from an agent"
+        argument :agent_key, required: true, desc: "Agent key"
+        argument :target, required: true, desc: "Exact GitHub pull request URL or PR diff ID"
+        remote_options
+        usage_template "agent pr-diff remove %{agent_key} %{target} [--server SERVER_KEY] [--json]"
+
+        def call(agent_key:, target:, **opts)
+          exit CLICommand.remove_agent_pr_diff(agent_key, target, opts, out: out, err: err)
+        end
+      end
+
       register "agent", Agent do |prefix|
         prefix.register "create", AgentCreate
         prefix.register "list", AgentList
@@ -372,6 +409,10 @@ module HQ
         prefix.register "store", AgentStore do |store|
           store.register "backups", AgentStoreBackups
           store.register "restore", AgentStoreRestore
+        end
+        prefix.register "pr-diff", AgentPRDiff do |pr_diff|
+          pr_diff.register "add", AgentPRDiffAdd
+          pr_diff.register "remove", AgentPRDiffRemove
         end
       end
 
@@ -1705,6 +1746,37 @@ module HQ
       failure("Failed to get agent status: #{e.message}", err: err)
     end
 
+    def add_agent_pr_diff(agent_key, url, opts = {}, out: $stdout, err: $stderr)
+      return remote_mutate_agent_pr_diff("POST", agent_key, url, opts, out:, err:) if remote_requested?(opts)
+
+      agent = active_agent_for_pr_diff(agent_key)
+      return failure("Unknown or archived agent: #{agent_key}", err: err) unless agent
+
+      reference = PullRequestDiff.manual_reference_from_url(url, agent_key: agent.key)
+      catalog = PullRequestDiff::Catalog.new(path: agent.pull_request_catalog_path)
+      catalog.add(reference, expected_revision: catalog.revision)
+      print_pr_diff_mutation("Attached", agent, reference, catalog, opts, out:)
+      0
+    rescue PullRequestDiff::Error => e
+      command_failure(e.message, opts, out:, err:)
+    end
+
+    def remove_agent_pr_diff(agent_key, target, opts = {}, out: $stdout, err: $stderr)
+      return remote_mutate_agent_pr_diff("DELETE", agent_key, target, opts, out:, err:) if remote_requested?(opts)
+
+      agent = active_agent_for_pr_diff(agent_key)
+      return failure("Unknown or archived agent: #{agent_key}", err: err) unless agent
+
+      catalog = PullRequestDiff::Catalog.new(path: agent.pull_request_catalog_path)
+      references = catalog.references(PullRequestDiff.references_for_agent(agent))
+      reference = resolve_pr_diff_target(target, references, agent_key: agent.key)
+      catalog.remove(reference.id, expected_revision: catalog.revision)
+      print_pr_diff_mutation("Removed", agent, reference, catalog, opts, out:)
+      0
+    rescue PullRequestDiff::Error => e
+      command_failure(e.message, opts, out:, err:)
+    end
+
     def memory_handoffs(opts = {}, out: $stdout, err: $stderr)
       return remote_memory_handoffs(opts, out:, err:) if remote_requested?(opts)
 
@@ -2244,6 +2316,40 @@ module HQ
       0
     rescue RemoteCLIClient::Error, KeyError => e
       failure(e.message, err: err)
+    end
+
+    def remote_mutate_agent_pr_diff(method, agent_key, target, opts, out:, err:)
+      client = remote_client(opts[:server])
+      base_path = "#{remote_resource_path("agents", agent_key)}/pull-requests"
+      listing = client.request("GET", base_path)
+      revision = listing.fetch("catalog_revision")
+      if method == "POST"
+        response = client.request("POST", base_path, body: { "url" => target, "catalog_revision" => revision })
+        reference = response.fetch("pull_requests").find { |item| item["id"] == response["pull_request_id"] }
+        action = "Attached"
+      else
+        reference = resolve_remote_pr_diff_target(target, listing.fetch("pull_requests"))
+        response = client.request(
+          "DELETE",
+          "#{base_path}/#{URI.encode_www_form_component(reference.fetch("id"))}",
+          body: { "catalog_revision" => revision }
+        )
+        action = "Removed"
+      end
+      payload = {
+        action: action.downcase,
+        agent_key: agent_key.to_s,
+        pull_request: reference,
+        catalog_revision: response.fetch("catalog_revision")
+      }
+      if opts[:json]
+        out.puts JSON.pretty_generate(payload)
+      else
+        out.puts "#{action} #{reference.fetch("url")} #{action == "Attached" ? "to" : "from"} #{agent_key}."
+      end
+      0
+    rescue PullRequestDiff::Error, RemoteCLIClient::Error, KeyError => e
+      command_failure(e.message, opts, out:, err:)
     end
 
     def remote_memory_handoffs(opts, out:, err:)
@@ -2960,6 +3066,46 @@ module HQ
       agent_store_for_all.load
     rescue StandardError
       []
+    end
+
+    def active_agent_for_pr_diff(agent_key)
+      load_all_agents.find { |agent| agent.key == agent_key.to_s && !agent.archived? }
+    end
+
+    def resolve_pr_diff_target(target, references, agent_key:)
+      value = target.to_s.strip
+      if value.match?(/\A[0-9a-f]{20}\z/)
+        reference = references.find { |item| item.id == value }
+      else
+        parsed = PullRequestDiff.manual_reference_from_url(value, agent_key:)
+        reference = references.find { |item| item.id == parsed.id }
+      end
+      reference || raise(PullRequestDiff::Error.new("Pull request is not attached to this agent", status: 404))
+    end
+
+    def resolve_remote_pr_diff_target(target, references)
+      value = target.to_s.strip
+      if value.match?(/\A[0-9a-f]{20}\z/)
+        reference = references.find { |item| item["id"] == value }
+      else
+        parsed = PullRequestDiff.manual_reference_from_url(value, agent_key: "remote")
+        reference = references.find { |item| item["id"] == parsed.id }
+      end
+      reference || raise(PullRequestDiff::Error.new("Pull request is not attached to this agent", status: 404))
+    end
+
+    def print_pr_diff_mutation(action, agent, reference, catalog, opts, out:)
+      payload = {
+        action: action.downcase,
+        agent_key: agent.key,
+        pull_request: reference.to_h,
+        catalog_revision: catalog.revision
+      }
+      if opts[:json]
+        out.puts JSON.pretty_generate(payload)
+      else
+        out.puts "#{action} #{reference.url} #{action == "Attached" ? "to" : "from"} #{agent.key}."
+      end
     end
 
     def agent_store_for_all

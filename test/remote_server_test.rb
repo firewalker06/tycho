@@ -1717,9 +1717,70 @@ module RemoteServerTest
       assert(reference["repository"] == "example/web", "expected GitHub repository to be parsed")
       assert(reference["number"] == 123, "expected GitHub PR number to be parsed")
       assert(reference["error"].nil?, "expected ordinary PR listing to avoid unavailable GitHub metadata")
+
+      listing_route = server.send(:route, service, "GET", "/agents/#{created[:key]}/pull-requests", {}, nil)
+      catalog_revision = listing_route.dig(:body, :catalog_revision)
+      added = server.send(
+        :route,
+        service,
+        "POST",
+        "/agents/#{created[:key]}/pull-requests",
+        { "url" => "https://github.com/example/other/pull/99", "catalog_revision" => catalog_revision },
+        nil
+      )
+      manual_id = added.dig(:body, :pull_request_id)
+      assert(added[:status] == 201 && added.dig(:body, :pull_requests).any? { |item| item["id"] == manual_id },
+             "expected the Remote API to attach an exact manual GitHub PR target")
+      begin
+        service.add_agent_pull_request(
+          created[:key],
+          "url" => "https://github.com/example/third/pull/7",
+          "catalog_revision" => catalog_revision
+        )
+        raise "expected stale PR catalog add to fail"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409, "expected concurrent PR catalog changes to return conflict")
+      end
+      begin
+        service.add_agent_pull_request(
+          created[:key],
+          "url" => "https://github.com/example/other/pull/99?diff=split",
+          "catalog_revision" => added.dig(:body, :catalog_revision)
+        )
+        raise "expected inexact PR target to fail"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 400, "expected inexact manual PR URLs to return bad request")
+      end
+      removed = server.send(
+        :route,
+        service,
+        "DELETE",
+        "/agents/#{created[:key]}/pull-requests/#{reference["id"]}",
+        { "catalog_revision" => added.dig(:body, :catalog_revision) },
+        nil
+      )
+      assert(removed.dig(:body, :removed) &&
+             removed.dig(:body, :pull_requests).none? { |item| item["id"] == reference["id"] },
+             "expected the Remote API to detach a PR from one agent")
+      assert(agent.attachments.any? { |item| item["url"].to_s.include?("/pull/123") },
+             "expected PR removal to preserve the source attachment")
+      begin
+        service.agent_pull_request_diff(created[:key], reference["id"])
+        raise "expected removed PR references to be unavailable"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 404, "expected removed PR references to be authorization-scoped away")
+      end
+
+      service.add_agent_pull_request(
+        created[:key],
+        "url" => "https://github.com/example/web/pull/123",
+        "catalog_revision" => removed.dig(:body, :catalog_revision)
+      )
       metadata_refresh = service.refresh_agent_pull_request_metadata(created[:key])
-      assert(metadata_refresh[:failed].length == 1,
-             "expected explicit metadata refresh errors to be reported without hiding PR references")
+      assert(metadata_refresh[:failed].length == 2,
+             "expected explicit metadata refresh errors to cover detected and manual PR references without hiding either")
+      assert(metadata_refresh[:catalog_revision].is_a?(Integer),
+             "expected metadata refreshes to preserve the optimistic catalog revision contract")
 
       snapshot = {
         "id" => reference["id"],
@@ -7344,6 +7405,16 @@ module RemoteServerTest
            js[:body].include?("Loading PR diff") &&
            js[:body].include?("Loading diff"),
            "expected PR and local diff loading states to use the Tycho loading state")
+    assert(js[:body].include?("data-add-pr-diff-form") &&
+           js[:body].include?("Attach your first PR diff") &&
+           js[:body].include?("https://github.com/owner/repo/pull/123") &&
+           !js[:body].include?('id="composer" data-add-pr-diff-form'),
+           "expected manual PR attachment to be discoverable on the PR Diffs empty page, outside the composer")
+    assert(js[:body].include?("data-remove-pr-diff") &&
+           js[:body].include?("keeps source attachments, GitHub data, and saved shared snapshots") &&
+           js[:body].include?("catalog_revision: current?.catalogRevision") &&
+           css[:body].include?(".pr-diff-add-form"),
+           "expected PR removal safety copy, optimistic state, revision guards, and responsive form styling")
     assert(js[:body].include?('class="message-send-status" role="status" aria-live="polite" aria-atomic="true">sending...</div>'),
            "expected Remote UI pending chat status copy to stay concise and announce progress")
     assert(js[:body].include?("clearFormDraft(form)"),

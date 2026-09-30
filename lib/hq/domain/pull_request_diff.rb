@@ -14,6 +14,7 @@ require_relative "github_api_client"
 module HQ
   class PullRequestDiff
     GITHUB_PR_URL = %r{\Ahttps?://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)(?:[/?#].*)?\z}i
+    MANUAL_GITHUB_PR_URL = %r{\Ahttps://github\.com/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))/([A-Za-z0-9._-]+)/pull/([1-9]\d*)(?:/files)?/?\z}i
     DIFF_FORMAT = "github_diff_v3"
     MAX_PATCH_BYTES = 768 * 1024
 
@@ -156,13 +157,42 @@ module HQ
       end
 
       def all
-        parsed = FileStore.read_json(@path, fallback: {})
-        return {} unless parsed.is_a?(Hash) && parsed["version"] == STORE_VERSION
-
-        parsed.fetch("entries", {})
+        document.fetch("entries")
       rescue StandardError => e
         HQ.logger.warn("PRCatalog") { "Failed to load PR catalog from #{@path}: #{e.class} - #{e.message}" }
         {}
+      end
+
+      def revision
+        document.fetch("revision")
+      end
+
+      def references(detected_references)
+        parsed = document
+        hidden = parsed.fetch("hidden", {})
+        detected = Array(detected_references).reject { |reference| hidden.key?(reference.id) }
+        manual = parsed.fetch("manual", {}).values.filter_map { |attrs| reference_from_entry(attrs) }
+        (detected + manual).uniq(&:id)
+      end
+
+      def add(reference, expected_revision:)
+        mutate(expected_revision:) do |parsed|
+          parsed.fetch("hidden").delete(reference.id)
+          parsed.fetch("manual")[reference.id] = reference_entry(reference, Time.now.iso8601)
+        end
+      end
+
+      def remove(reference_id, expected_revision:)
+        mutate(expected_revision:) do |parsed|
+          entries = parsed.fetch("entries")
+          manual = parsed.fetch("manual")
+          known = (entries.key?(reference_id) || manual.key?(reference_id)) &&
+                  !parsed.fetch("hidden").key?(reference_id)
+          raise Error.new("Pull request not found: #{reference_id}", status: 404) unless known
+
+          manual.delete(reference_id)
+          parsed.fetch("hidden")[reference_id] = { "removed_at" => Time.now.iso8601 }
+        end
       end
 
       def discover(references, metadata_by_id: {})
@@ -206,6 +236,22 @@ module HQ
 
       private
 
+      def document
+        parsed = FileStore.read_json(@path, fallback: {})
+        parsed = {} unless parsed.is_a?(Hash) && parsed["version"] == STORE_VERSION
+        {
+          "version" => STORE_VERSION,
+          "revision" => parsed.fetch("revision", 0).to_i,
+          "entries" => parsed.fetch("entries", {}),
+          "manual" => parsed.fetch("manual", {}),
+          "hidden" => parsed.fetch("hidden", {})
+        }
+      end
+
+      def reference_from_entry(entry)
+        PullRequestDiff.reference_from_url(entry["url"], agent_key: entry["agent_key"])
+      end
+
       def reference_entry(reference, discovered_at)
         {
           "id" => reference.id,
@@ -213,6 +259,7 @@ module HQ
           "repository" => reference.repository,
           "number" => reference.number,
           "url" => reference.url,
+          "agent_key" => reference.agent_key,
           "discovered_at" => discovered_at
         }.compact
       end
@@ -229,12 +276,33 @@ module HQ
         FileUtils.mkdir_p(File.dirname(@path))
         File.open("#{@path}.lock", File::RDWR | File::CREAT, 0o600) do |lock|
           lock.flock(File::LOCK_EX)
-          entries = all
+          parsed = document
+          entries = parsed.fetch("entries")
           changed = yield entries
           if changed
-            FileStore.write_json(@path, { "version" => STORE_VERSION, "entries" => entries })
+            parsed["revision"] += 1
+            FileStore.write_json(@path, parsed)
           end
           entries
+        ensure
+          lock.flock(File::LOCK_UN) rescue nil
+        end
+      end
+
+      def mutate(expected_revision:)
+        FileUtils.mkdir_p(File.dirname(@path))
+        File.open("#{@path}.lock", File::RDWR | File::CREAT, 0o600) do |lock|
+          lock.flock(File::LOCK_EX)
+          parsed = document
+          expected = Integer(expected_revision, exception: false)
+          if expected.nil? || expected != parsed.fetch("revision")
+            raise Error.new("Pull request list changed; reload it and try again", status: 409)
+          end
+
+          yield parsed
+          parsed["revision"] += 1
+          FileStore.write_json(@path, parsed)
+          parsed
         ensure
           lock.flock(File::LOCK_UN) rescue nil
         end
@@ -343,6 +411,16 @@ module HQ
           description: description.to_s.strip.empty? ? nil : description.to_s.strip,
           agent_key:
         )
+      end
+
+      def manual_reference_from_url(url, agent_key:)
+        value = url.to_s.strip
+        match = MANUAL_GITHUB_PR_URL.match(value)
+        unless match
+          raise Error.new("Use an exact GitHub pull request URL such as https://github.com/owner/repo/pull/123")
+        end
+
+        reference_from_url(canonical_url("#{match[1]}/#{match[2]}", match[3].to_i), agent_key:)
       end
 
       def parse_github_url(url)

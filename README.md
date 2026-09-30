@@ -149,7 +149,8 @@ Source-checkout users can replace `tycho` with `bin/tycho` in these examples.
 - [Upgrading](docs/UPGRADING.md) — version-specific command and skill migration
   notes.
 - Pull request diffs use an authenticated local `gh` CLI and provide read-only,
-  agent-scoped snapshots.
+  agent-scoped snapshots. Attach or detach catalog entries with
+  `tycho agent pr-diff add|remove` locally or through `--server`.
 - [Gotchas](docs/GOTCHAS.md) — known operational pitfalls.
 - [Project status](docs/PROJECT_STATUS.md) — roadmap and architectural
   decisions.

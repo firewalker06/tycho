@@ -432,7 +432,8 @@ module HQ
         if method == "POST" && tail == ["memory", "rebuild"]
           return ok(memory_rebuild: service.rebuild_agent_memory(key))
         end
-        return ok(pull_requests: service.agent_pull_requests(key)) if method == "GET" && tail == ["pull-requests"]
+        return ok(service.agent_pull_request_listing(key)) if method == "GET" && tail == ["pull-requests"]
+        return created(service.add_agent_pull_request(key, body)) if method == "POST" && tail == ["pull-requests"]
         if method == "POST" && tail == ["pull-requests", "metadata", "refresh"]
           return ok(service.refresh_agent_pull_request_metadata(key))
         end
@@ -442,6 +443,9 @@ module HQ
         end
         if tail.length == 3 && tail.first == "pull-requests" && tail[2] == "refresh"
           return ok(diff: service.refresh_agent_pull_request_diff(key, tail[1])) if method == "POST"
+        end
+        if tail.length == 2 && tail.first == "pull-requests" && method == "DELETE"
+          return ok(service.remove_agent_pull_request(key, tail[1], body))
         end
         return ok(agent: service.mark_agent_read(key)) if method == "PUT" && tail == ["reading"]
         if method == "POST" && tail.length == 3 && tail.first == "inquiries" && tail[2] == "answer"
@@ -2028,7 +2032,7 @@ module HQ
     def agent_pull_requests(key)
       ensure_github_enabled!
       agent = find_agent!(key)
-      references = PullRequestDiff.references_for_agent(agent)
+      references = agent_pull_request_references(agent)
       snapshots = @pull_request_diff_store.all
       catalog = pull_request_catalog(agent).discover(references, metadata_by_id: snapshots)
       references.map do |reference|
@@ -2036,10 +2040,44 @@ module HQ
       end
     end
 
+    def agent_pull_request_listing(key)
+      agent = find_agent!(key)
+      pull_requests = agent_pull_requests(key)
+      { pull_requests:, catalog_revision: pull_request_catalog(agent).revision }
+    end
+
+    def add_agent_pull_request(key, attrs)
+      agent = find_agent!(key)
+      ensure_github_enabled!
+      reference = PullRequestDiff.manual_reference_from_url(attrs["url"], agent_key: agent.key)
+      catalog = pull_request_catalog(agent)
+      catalog.add(reference, expected_revision: attrs["catalog_revision"])
+      listing = agent_pull_request_listing(key)
+      listing.merge(pull_request_id: reference.id)
+    rescue PullRequestDiff::Error => e
+      raise Error.new(e.message, status: e.status)
+    end
+
+    def remove_agent_pull_request(key, id, attrs)
+      agent = find_agent!(key)
+      ensure_github_enabled!
+      reference = pull_request_reference!(agent, id)
+      catalog = pull_request_catalog(agent)
+      catalog.remove(reference.id, expected_revision: attrs["catalog_revision"])
+      {
+        removed: true,
+        pull_request_id: id.to_s,
+        pull_requests: agent_pull_requests(key),
+        catalog_revision: catalog.revision
+      }
+    rescue PullRequestDiff::Error => e
+      raise Error.new(e.message, status: e.status)
+    end
+
     def refresh_agent_pull_request_metadata(key)
       agent = find_agent!(key)
       ensure_github_enabled!
-      references = PullRequestDiff.references_for_agent(agent)
+      references = agent_pull_request_references(agent)
       catalog_store = pull_request_catalog(agent)
       catalog_store.discover(references)
       refreshed = []
@@ -2060,6 +2098,7 @@ module HQ
         pull_requests: references.map do |reference|
           pull_request_reference_payload(reference, catalog[reference.id], snapshots[reference.id])
         end,
+        catalog_revision: catalog_store.revision,
         refreshed: refreshed.map { |reference, _metadata| reference.id },
         failed:
       }
@@ -2092,7 +2131,7 @@ module HQ
       ensure_github_enabled!
       refreshed = []
       failed = []
-      PullRequestDiff.references_for_agent(agent).each do |reference|
+      agent_pull_request_references(agent).each do |reference|
         refreshed << refresh_pull_request_snapshot(reference)
       rescue PullRequestDiff::Error => e
         failed << {
@@ -3865,8 +3904,12 @@ module HQ
     end
 
     def pull_request_reference!(agent, id)
-      PullRequestDiff.references_for_agent(agent).find { |reference| reference.id == id.to_s } ||
+      agent_pull_request_references(agent).find { |reference| reference.id == id.to_s } ||
         raise(Error.new("Pull request not found: #{id}", status: 404))
+    end
+
+    def agent_pull_request_references(agent)
+      pull_request_catalog(agent).references(PullRequestDiff.references_for_agent(agent))
     end
 
     def github_provider
@@ -4954,7 +4997,7 @@ module HQ
     end
 
     def agent_revision(agent)
-      paths = [agent.raw_log_path, agent.memory_path, agent.attachments_path]
+      paths = [agent.raw_log_path, agent.memory_path, agent.attachments_path, agent.pull_request_catalog_path]
       paths << HQ::AGENTS_FILE unless agent.archived?
       paths.filter_map do |path|
         File.mtime(path).to_f if path && File.exist?(path)

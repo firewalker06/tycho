@@ -4012,6 +4012,20 @@ def write_smoke_script(path)
         await prContextPage.click(`[data-open-agent-pr-diffs='${prContextAgentKey}']`);
         await prContextPage.waitForSelector(".agent-pr-diff-shell", { state: "visible", timeout: 10_000 });
         await prContextPage.waitForSelector(".agent-pr-diff-shell .empty-state", { state: "visible", timeout: 10_000 });
+        const manualPrForm = "[data-add-pr-diff-form]";
+        await prContextPage.fill(`${manualPrForm} input[name='url']`, "https://github.com/example/web/pull/123");
+        await prContextPage.click(`${manualPrForm} button[type='submit']`);
+        await prContextPage.waitForFunction(
+          () => document.querySelector("[data-add-pr-diff-form] input[name='url']")?.value === "",
+          null,
+          { timeout: 10_000 }
+        );
+        await prContextPage.click("[data-remove-pr-diff]");
+        await prContextPage.click("[data-confirmation-accept]");
+        await prContextPage.waitForSelector(".agent-pr-diff-shell .empty-state", { state: "visible", timeout: 10_000 });
+        await prContextPage.fill(`${manualPrForm} input[name='url']`, "https://github.com/example/web/pull/123");
+        await prContextPage.click(`${manualPrForm} button[type='submit']`);
+        await prContextPage.waitForSelector("[data-remove-pr-diff]", { state: "visible", timeout: 10_000 });
         await prContextPage.click("[data-refresh-pr-diff]");
         await prContextPage.waitForSelector("[data-select-pr-diff-line]", { state: "visible", timeout: 10_000 });
         const prOriginMetadata = await prContextPage.evaluate((key) => {
