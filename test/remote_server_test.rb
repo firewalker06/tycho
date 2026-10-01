@@ -7408,13 +7408,17 @@ module RemoteServerTest
     assert(js[:body].include?("data-add-pr-diff-form") &&
            js[:body].include?("Attach your first PR diff") &&
            js[:body].include?("https://github.com/owner/repo/pull/123") &&
+           js[:body].include?('<input class="ui-input" type="url" name="url"') &&
            !js[:body].include?('id="composer" data-add-pr-diff-form'),
            "expected manual PR attachment to be discoverable on the PR Diffs empty page, outside the composer")
     assert(js[:body].include?("data-remove-pr-diff") &&
+           js[:body].include?('class="icon-button ui-button ui-icon-button" href="${escapeAttr(item.url)}"') &&
+           js[:body].include?('aria-label="Open pull request" title="Open pull request"') &&
            js[:body].include?("keeps source attachments, GitHub data, and saved shared snapshots") &&
            js[:body].include?("catalog_revision: current?.catalogRevision") &&
-           css[:body].include?(".pr-diff-add-form"),
-           "expected PR removal safety copy, optimistic state, revision guards, and responsive form styling")
+           css[:body].include?(".pr-diff-add-form") &&
+           css[:body].match?(/\.pr-diff-title-actions\s*\{[^}]*flex-direction:\s*row;/m),
+           "expected aligned PR actions, removal safety copy, optimistic state, revision guards, and responsive form styling")
     assert(js[:body].include?('class="message-send-status" role="status" aria-live="polite" aria-atomic="true">sending...</div>'),
            "expected Remote UI pending chat status copy to stay concise and announce progress")
     assert(js[:body].include?("clearFormDraft(form)"),

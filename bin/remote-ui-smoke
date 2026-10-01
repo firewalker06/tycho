@@ -1932,12 +1932,52 @@ def write_smoke_script(path)
           await candidate.click(`[data-open-agent-pr-diffs='${key}']`);
           await candidate.waitForSelector(".agent-pr-diff-shell .empty-state", { state: "visible", timeout: 10_000 });
           await candidate.waitForSelector("[data-add-pr-diff-form]", { state: "visible", timeout: 10_000 });
+          const attachControlGeometry = await candidate.evaluate(() => {
+            const input = document.querySelector("[data-add-pr-diff-form] input[name='url']");
+            const button = document.querySelector("[data-add-pr-diff-form] button[type='submit']");
+            const inputRect = input?.getBoundingClientRect();
+            const buttonRect = button?.getBoundingClientRect();
+            return {
+              inputHeight: inputRect?.height,
+              buttonHeight: buttonRect?.height,
+              inputBottom: inputRect?.bottom,
+              buttonBottom: buttonRect?.bottom,
+            };
+          });
+          if (Math.abs(attachControlGeometry.inputHeight - attachControlGeometry.buttonHeight) > 1 ||
+              Math.abs(attachControlGeometry.inputBottom - attachControlGeometry.buttonBottom) > 1) {
+            throw new Error(`Attach controls are not aligned: ${JSON.stringify(attachControlGeometry)}`);
+          }
           if (captureDir) await candidate.screenshot({ path: path.join(captureDir, "pr-diffs-zero-pr-empty-state.png"), fullPage: false });
 
           const form = "[data-add-pr-diff-form]";
           await candidate.fill(`${form} input[name='url']`, "https://github.com/example/web/pull/123");
           await candidate.click(`${form} button[type='submit']`);
           await candidate.waitForSelector("[data-remove-pr-diff]", { state: "visible", timeout: 10_000 });
+          await candidate.waitForSelector("a[aria-label='Open pull request']", { state: "visible", timeout: 10_000 });
+          const prActionGeometry = await candidate.evaluate(() => {
+            const actions = document.querySelector(".pr-diff-title-actions");
+            const open = actions?.querySelector("a[aria-label='Open pull request']");
+            const remove = actions?.querySelector("[data-remove-pr-diff]");
+            const openRect = open?.getBoundingClientRect();
+            const removeRect = remove?.getBoundingClientRect();
+            return {
+              direction: actions ? getComputedStyle(actions).flexDirection : null,
+              openText: open?.textContent?.trim(),
+              openWidth: openRect?.width,
+              openHeight: openRect?.height,
+              openTop: openRect?.top,
+              removeWidth: removeRect?.width,
+              removeHeight: removeRect?.height,
+              removeTop: removeRect?.top,
+            };
+          });
+          if (prActionGeometry.direction !== "row" || prActionGeometry.openText ||
+              Math.abs(prActionGeometry.openWidth - prActionGeometry.removeWidth) > 1 ||
+              Math.abs(prActionGeometry.openHeight - prActionGeometry.removeHeight) > 1 ||
+              Math.abs(prActionGeometry.openTop - prActionGeometry.removeTop) > 1) {
+            throw new Error(`PR actions are not compact and aligned: ${JSON.stringify(prActionGeometry)}`);
+          }
           if (captureDir) await candidate.screenshot({ path: path.join(captureDir, "pr-diffs-zero-pr-attached-state.png"), fullPage: false });
 
           await candidate.click("[data-remove-pr-diff]");
