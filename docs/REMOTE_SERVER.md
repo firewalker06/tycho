@@ -279,6 +279,8 @@ tycho agent status <agent-key> --server office-mac [--json]
 tycho agent create <project-key> <prompt> --server office-mac [--run] [--json]
 tycho agent run <agent-key> --server office-mac [--json]
 tycho agent send <agent-key> <message> [--delay SECONDS] --server office-mac [--json]
+tycho agent pr-diff add <agent-key> <github-pr-url> --server office-mac [--json]
+tycho agent pr-diff remove <agent-key> <github-pr-url-or-id> --server office-mac [--json]
 tycho queue <agent-key> --server office-mac [--json]
 tycho agent stop <agent-key> --server office-mac [--json]
 tycho agent archive <agent-key> --server office-mac [--json]
@@ -459,8 +461,10 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `POST` | `/agents/archive` | Archive multiple idle managed agents from a `keys` array, returning archived, skipped, and failed keys. |
 | `GET` | `/agents/{key}/conversation` | Read the rendered conversation blocks for one agent. |
 | `GET` | `/agents/{key}/pull-requests` | List GitHub pull requests from that agent's persistent local catalog, including cached origin title and status, without waiting on GitHub. |
+| `POST` | `/agents/{key}/pull-requests` | Attach an exact GitHub PR URL to the agent; requires the current `catalog_revision`. |
 | `POST` | `/agents/{key}/pull-requests/metadata/refresh` | Explicitly refresh GitHub metadata for the agent's cataloged pull requests without fetching patches. |
 | `GET` | `/agents/{key}/pull-requests/{id}/diff` | Read one saved pull request diff snapshot. |
+| `DELETE` | `/agents/{key}/pull-requests/{id}` | Detach a PR from the agent without deleting its source attachment or shared snapshot; requires the current `catalog_revision`. |
 | `POST` | `/agents/{key}/pull-requests/{id}/refresh` | Fetch current PR metadata and patch content, then save a fresh diff snapshot. |
 | `POST` | `/agents/{key}/pull-requests/refresh` | Refresh every detected pull request diff for one agent. |
 | `PUT` | `/agents/{key}/reading` | Mark one agent as read after the user opens its conversation. |

@@ -26,12 +26,91 @@ module CLICommandTest
     assert_project_command_and_help_paths_do_not_create_projects
     assert_agent_queue_notice_and_read_outputs
     assert_failed_claim_cli_inspection_and_discard
+    assert_agent_pr_diff_cli_lifecycle
     assert_remote_server_commands_manage_full_agent_lifecycle
     assert_remote_client_reports_timeout_and_unsupported_operation
     assert_debug_claude_is_listed_in_usage
     assert_metrics_commands_are_listed_in_usage
     assert_debug_claude_run_agent_uses_claude_defaults
     puts "cli_command_test: ok"
+  end
+
+  def assert_agent_pr_diff_cli_lifecycle
+    Dir.mktmpdir("hq-cli-pr-diff-test") do |dir|
+      workspace = File.join(dir, "workspace")
+      logs_root = File.join(dir, "logs")
+      FileUtils.mkdir_p([workspace, File.join(logs_root, "agents")])
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      File.write(config_path, <<~YAML)
+        projects:
+          - key: demo
+            name: Demo
+            path: #{workspace}
+            agent: codex
+      YAML
+      File.write(prompts_path, "{}\n")
+      agent = HQ::ManagedAgent.new(
+        key: "pr-diff-cli-agent", name: "PR Diff CLI", project_key: "demo", template_key: "custom",
+        workspace:, prompt: "Work", agent: "codex", log_path: File.join(logs_root, "agents", "pr-diff-cli-agent.raw.log")
+      )
+      File.write(File.join(logs_root, "managed_agents.json"), JSON.pretty_generate([agent.to_hash]))
+      env = {
+        "TYCHO_CONFIG_PATH" => config_path,
+        "TYCHO_SYSTEM_PROMPTS_PATH" => prompts_path,
+        "TYCHO_LOGS_ROOT" => logs_root
+      }
+
+      added = run_tycho(
+        env, "agent", "pr-diff", "add", agent.key,
+        "https://github.com/example/web/pull/123", "--json"
+      )
+      added_payload = JSON.parse(added.fetch(:stdout))
+      assert(added.fetch(:status).success? && added_payload.dig("pull_request", "number") == 123,
+             "expected the CLI to attach an exact GitHub PR URL")
+      invalid = run_tycho(
+        env, "agent", "pr-diff", "add", agent.key,
+        "https://github.com/example/web/pull/123?diff=split"
+      )
+      assert(!invalid.fetch(:status).success? && invalid.fetch(:stderr).include?("exact GitHub pull request URL"),
+             "expected the CLI to reject an inexact PR target")
+      removed = run_tycho(
+        env, "agent", "pr-diff", "remove", agent.key,
+        added_payload.dig("pull_request", "id"), "--json"
+      )
+      assert(removed.fetch(:status).success? && JSON.parse(removed.fetch(:stdout))["action"] == "removed",
+             "expected the CLI to remove an attached PR by stable ID")
+      repeated = run_tycho(
+        env, "agent", "pr-diff", "remove", agent.key,
+        added_payload.dig("pull_request", "id")
+      )
+      assert(!repeated.fetch(:status).success? && repeated.fetch(:stderr).include?("not attached"),
+             "expected repeated CLI removal to fail safely")
+
+      archived_agent = HQ::ManagedAgent.new(
+        key: "archived-pr-diff-cli-agent", name: "Archived PR Diff CLI", project_key: "demo", template_key: "custom",
+        workspace:, prompt: "Done", agent: "codex", log_path: File.join(logs_root, "agents", "archived-pr-diff-cli-agent.raw.log")
+      )
+      archive_dir = File.join(logs_root, "agents", "archive", "20260930-120000-#{archived_agent.key}")
+      FileUtils.mkdir_p(archive_dir)
+      File.write(File.join(archive_dir, "agent_manifest.json"), JSON.pretty_generate(archived_agent.to_hash))
+
+      {
+        "unknown" => "missing-pr-diff-cli-agent",
+        "archived" => archived_agent.key
+      }.each do |state, key|
+        {
+          "add" => ["https://github.com/example/web/pull/456"],
+          "remove" => ["https://github.com/example/web/pull/456"]
+        }.each do |action, arguments|
+          result = run_tycho(env, "agent", "pr-diff", action, key, *arguments, "--json")
+          payload = JSON.parse(result.fetch(:stdout))
+          assert(!result.fetch(:status).success? && result.fetch(:stderr).empty? &&
+                 payload == { "ok" => false, "error" => "Unknown or archived agent: #{key}" },
+                 "expected #{action} --json to return a structured error for an #{state} agent")
+        end
+      end
+    end
   end
 
   def assert_version_output

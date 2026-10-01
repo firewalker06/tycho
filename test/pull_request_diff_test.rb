@@ -46,7 +46,65 @@ module PullRequestDiffTest
     assert_snapshot_identity_omits_agent_key
     assert_store_preserves_concurrent_snapshots
     assert_store_reuses_and_invalidates_document_cache
+    assert_manual_catalog_membership_is_safe_and_concurrent
+    assert_manual_target_validation_is_exact
     puts "pull_request_diff_test: ok"
+  end
+
+  def assert_manual_catalog_membership_is_safe_and_concurrent
+    Dir.mktmpdir("tycho-pr-catalog") do |dir|
+      catalog = HQ::PullRequestDiff::Catalog.new(path: File.join(dir, "catalog.json"))
+      detected = reference_for(agent_key: "agent-a")
+      catalog.discover([detected])
+      revision = catalog.revision
+      manual = HQ::PullRequestDiff.manual_reference_from_url(
+        "https://github.com/example/other/pull/99",
+        agent_key: "agent-a"
+      )
+      catalog.add(manual, expected_revision: revision)
+      assert(catalog.references([detected]).map(&:id).sort == [detected.id, manual.id].sort,
+             "expected manual and detected references to share one catalog")
+
+      stale_revision = revision
+      begin
+        catalog.remove(manual.id, expected_revision: stale_revision)
+        raise "expected stale catalog revision to fail"
+      rescue HQ::PullRequestDiff::Error => e
+        assert(e.status == 409, "expected stale catalog mutations to return conflict")
+      end
+
+      catalog.remove(detected.id, expected_revision: catalog.revision)
+      assert(catalog.references([detected]).none? { |item| item.id == detected.id },
+             "expected removal to hide a detected reference without changing its source")
+      assert(catalog.all.key?(detected.id), "expected safe removal to preserve discovered metadata")
+
+      catalog.add(detected, expected_revision: catalog.revision)
+      assert(catalog.references([detected]).any? { |item| item.id == detected.id },
+             "expected adding a removed reference to clear its tombstone")
+    end
+  end
+
+  def assert_manual_target_validation_is_exact
+    accepted = HQ::PullRequestDiff.manual_reference_from_url(
+      "https://github.com/example/web/pull/123/files",
+      agent_key: "agent-a"
+    )
+    assert(accepted.url == "https://github.com/example/web/pull/123",
+           "expected exact GitHub files URLs to canonicalize")
+
+    [
+      "http://github.com/example/web/pull/123",
+      "https://github.com/example/web/pull/0",
+      "https://github.com/example/web/pull/123?diff=split",
+      "https://gitlab.com/example/web/-/merge_requests/123"
+    ].each do |url|
+      begin
+        HQ::PullRequestDiff.manual_reference_from_url(url, agent_key: "agent-a")
+        raise "expected #{url} to be rejected"
+      rescue HQ::PullRequestDiff::Error => e
+        assert(e.status == 400, "expected invalid manual targets to return bad request")
+      end
+    end
   end
 
   def assert_github_provider_uses_direct_pr_endpoints
