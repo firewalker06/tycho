@@ -5042,6 +5042,62 @@ def write_smoke_script(path)
         ))) {
           throw new Error(`Combined PR comment was absent from the refreshed conversation: ${JSON.stringify(combinedConversationBlocks)}`);
         }
+        await prContextPage.waitForSelector(".message.user .pr-context", { state: "visible", timeout: 10_000 });
+        await prContextPage.setViewportSize({ width: 1280, height: 900 });
+        const structuredContextDesktop = await prContextPage.evaluate(() => {
+          const contexts = Array.from(document.querySelectorAll(".message.user .pr-context"));
+          const context = contexts.at(-1);
+          context?.closest(".message")?.scrollIntoView({ block: "center", inline: "nearest" });
+          return {
+            count: contexts.length,
+            href: context?.querySelector(".pr-context-header a")?.href,
+            lineKinds: Array.from(context?.querySelectorAll(".pr-context-line") || [], (line) => (
+              ["added", "removed", "context"].find((kind) => line.classList.contains(kind))
+            )).filter(Boolean),
+            comment: context?.querySelector(".pr-context-comment")?.innerText,
+            rawDelimiterVisible: context?.textContent.includes("TYCHO_PR_DIFF_CONTEXT"),
+            pageOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        });
+        if (!structuredContextDesktop.count ||
+            structuredContextDesktop.href !== "https://github.com/example/web/pull/123" ||
+            !structuredContextDesktop.lineKinds.includes("added") ||
+            !structuredContextDesktop.lineKinds.includes("removed") ||
+            !structuredContextDesktop.comment?.includes("Duplicate range check.") ||
+            structuredContextDesktop.rawDelimiterVisible || structuredContextDesktop.pageOverflow) {
+          throw new Error(`Structured PR context is incomplete on desktop: ${JSON.stringify(structuredContextDesktop)}`);
+        }
+        if (captureDir) {
+          const contextMessages = prContextPage.locator(".message.user:has(.pr-context)");
+          const contextMessageCount = await contextMessages.count();
+          await contextMessages.nth(contextMessageCount - 1).screenshot({
+            path: path.join(captureDir, "pr-context-comment-after-desktop.png"),
+          });
+        }
+        await prContextPage.setViewportSize({ width: 390, height: 844 });
+        const structuredContextMobile = await prContextPage.evaluate(() => {
+          const contexts = Array.from(document.querySelectorAll(".message.user .pr-context"));
+          const context = contexts.at(-1);
+          context?.closest(".message")?.scrollIntoView({ block: "center", inline: "nearest" });
+          const bounds = context?.getBoundingClientRect();
+          return {
+            insideViewport: Boolean(bounds && bounds.left >= 0 && bounds.right <= window.innerWidth),
+            pageOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+            linkVisible: Boolean(context?.querySelector(".pr-context-header a")?.getClientRects().length),
+            commentVisible: Boolean(context?.querySelector(".pr-context-comment")?.getClientRects().length),
+          };
+        });
+        if (!structuredContextMobile.insideViewport || structuredContextMobile.pageOverflow ||
+            !structuredContextMobile.linkVisible || !structuredContextMobile.commentVisible) {
+          throw new Error(`Structured PR context is unusable on mobile: ${JSON.stringify(structuredContextMobile)}`);
+        }
+        if (captureDir) {
+          const contextMessages = prContextPage.locator(".message.user:has(.pr-context)");
+          const contextMessageCount = await contextMessages.count();
+          await contextMessages.nth(contextMessageCount - 1).screenshot({
+            path: path.join(captureDir, "pr-context-comment-after-mobile.png"),
+          });
+        }
         await prContextPage.waitForFunction(
           (key) => location.hash === `#agent/${encodeURIComponent(key)}`,
           prContextAgentKey,
