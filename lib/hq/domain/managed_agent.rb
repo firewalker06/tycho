@@ -515,7 +515,8 @@ module HQ
 
         batch = open_queue_work_batch!(opened_at: claimed_at)
       end
-      entries = Array(batch["entries"])
+      delivery_ids = QueueWork.consume_manual_entry_ids!(batch)
+      entries = Array(batch["entries"]).select { |entry| delivery_ids.include?(entry["id"].to_s) }
       @prompt_queue_claim = {
         "id" => batch["id"],
         "entries" => entries,
@@ -535,7 +536,8 @@ module HQ
       entries = Array(claim["entries"])
       newest_entry = entries.last || {}
       batch = QueueWork.find(@queue_work, claim["id"])
-      prompt = batch ? QueueWork.contract(batch, agent_key: @key) : consolidated_prompt_queue_content(entries)
+      prompt = batch ? QueueWork.contract(batch, agent_key: @key, entry_ids: entries.map { |entry| entry["id"] }) :
+        consolidated_prompt_queue_content(entries)
       attachments = consolidated_prompt_queue_attachments(entries)
       metadata = newest_entry["message_metadata"].is_a?(Hash) ? newest_entry["message_metadata"].dup : {}
       metadata.merge!(consolidated_prompt_queue_metadata(entries))
@@ -651,6 +653,64 @@ module HQ
       @queue_work.delete("active_batch_id") if QueueWork.terminal?(batch)
       reconcile_prompt_queue_claim!
       result
+    end
+
+    def prepare_queue_entries_for_processing!(entry_ids)
+      ids = Array(entry_ids).map(&:to_s).uniq
+      raise ArgumentError, "Select at least one queue entry" if ids.empty?
+
+      batch = active_queue_work
+      unresolved = batch ? QueueWork.unresolved_ids(batch) : []
+      queued_by_id = @prompt_queue.to_h { |entry| [entry["id"].to_s, entry] }
+      unknown = ids.reject { |id| unresolved.include?(id) || queued_by_id.key?(id) }
+      raise ArgumentError, "Queue changed; refresh and try again (missing: #{unknown.join(', ')})" unless unknown.empty?
+
+      selected_queued = @prompt_queue.select { |entry| ids.include?(entry["id"].to_s) }
+      @prompt_queue.reject! { |entry| ids.include?(entry["id"].to_s) }
+      if batch
+        batch["entries"].concat(selected_queued)
+      else
+        batch = QueueWork.build_batch(selected_queued)
+        @queue_work["batches"] << batch
+        @queue_work["active_batch_id"] = batch["id"]
+      end
+      QueueWork.request_manual_delivery!(batch, ids)
+      ids
+    end
+
+    def remove_queue_entries!(entry_ids, reason:, removed_at: Time.now)
+      ids = Array(entry_ids).map(&:to_s).uniq
+      raise ArgumentError, "Select at least one queue entry" if ids.empty?
+
+      batch = active_queue_work
+      unresolved = batch ? QueueWork.unresolved_ids(batch) : []
+      queued_by_id = @prompt_queue.to_h { |entry| [entry["id"].to_s, entry] }
+      unknown = ids.reject { |id| unresolved.include?(id) || queued_by_id.key?(id) }
+      raise ArgumentError, "Queue changed; refresh and try again (missing: #{unknown.join(', ')})" unless unknown.empty?
+
+      selected_queued = @prompt_queue.select { |entry| ids.include?(entry["id"].to_s) }
+      @prompt_queue.reject! { |entry| ids.include?(entry["id"].to_s) }
+      removal_reason = reason.to_s.strip
+      removal_reason = "Removed from the queue by an operator" if removal_reason.empty?
+      results = []
+      [[batch, ids.select { |id| unresolved.include?(id) }],
+       [selected_queued.empty? ? nil : QueueWork.build_batch(selected_queued), selected_queued.map { |entry| entry["id"] }]].each do |target_batch, selected_ids|
+        next unless target_batch && selected_ids.any?
+
+        @queue_work["batches"] << target_batch unless target_batch.equal?(batch)
+        dispositions = Array(target_batch["entries"]).filter_map do |entry|
+          next unless selected_ids.include?(entry["id"].to_s)
+
+          outcome = QueueWork.entry_kind(entry) == "delegated_report" ? "superseded_with_reason" : "declined_with_reason"
+          { "entry_id" => entry["id"].to_s, "outcome" => outcome, "reason" => removal_reason }
+        end
+        results << QueueWork.apply_dispositions!(target_batch, dispositions, completed_at: removed_at)
+      end
+      if batch && QueueWork.terminal?(batch)
+        @queue_work.delete("active_batch_id")
+        reconcile_prompt_queue_claim!
+      end
+      { "removed_entry_ids" => ids, "results" => results }
     end
 
     def discard_failed_prompt_queue!(reason: "Discarded by operator after failed dispatch", discarded_at: Time.now)
@@ -773,16 +833,28 @@ module HQ
       entries = @prompt_queue.map { |entry| entry.merge("state" => "queued") }
       batch = active_queue_work
       return entries unless batch
-      return entries if running? && @prompt_queue_dispatch_error.nil?
+      unresolved = QueueWork.unresolved_ids(batch)
+      batch_entries = Array(batch["entries"]).select { |entry| unresolved.include?(entry["id"].to_s) }
+      if running? && @prompt_queue_dispatch_error.nil?
+        claimed_ids = if @prompt_queue_claim
+                        Array(@prompt_queue_claim["entries"]).map { |entry| entry["id"].to_s }
+                      else
+                        batch_entries.map { |entry| entry["id"].to_s }
+                      end
+        visible = batch_entries.reject { |entry| claimed_ids.include?(entry["id"].to_s) }
+                               .map { |entry| entry.merge("state" => "queued", "queue_work_batch_id" => batch["id"]) } + entries
+        return visible.each_with_index.sort_by { |(entry, index)| [entry["accepted_at"].to_s, index] }.map(&:first)
+      end
 
       state = if @prompt_queue_dispatch_error
                 "failed"
               else
                 queue_work_unprocessed_status || batch.fetch("state", "in_progress")
               end
-      Array(batch["entries"]).map do |entry|
+      visible = batch_entries.map do |entry|
         entry.merge("state" => state, "queue_work_batch_id" => batch["id"])
       end + entries
+      visible.each_with_index.sort_by { |(entry, index)| [entry["accepted_at"].to_s, index] }.map(&:first)
     end
 
     def queue_work_unprocessed_status
@@ -804,9 +876,16 @@ module HQ
       "queue not processed since state is #{result_status}" if result_status
     end
 
+    def prompt_queue_stopped_reason
+      return nil if visible_prompt_queue_entries.empty? || running? || prompt_queue_dispatchable?
+
+      "Automatic queue processing stopped because agent state is #{effective_status}"
+    end
+
     def prompt_queue_dispatchable?
       has_run_context = last_run || next_prompt_queue_entry&.fetch("source", nil) == "delegation_callback"
       !archived? && !running? && !blocked? && !inquiry_blocking_prompt_queue? &&
+        (!UNPROCESSED_QUEUE_WORK_STATUSES.include?(effective_status.to_s) || active_queue_work&.fetch("resume_pending", false)) &&
         @prompt_queue_dispatch_error.nil? && has_run_context &&
         ((@prompt_queue_claim && @prompt_queue_dispatch_error.nil?) ||
          (active_queue_work&.fetch("resume_pending", false) && !@prompt_queue_claim) ||
@@ -2016,7 +2095,9 @@ module HQ
       batch = active_queue_work || open_queue_work_batch!(opened_at: @finished_at || Time.now)
       return unless batch
 
+      delivered = Array(run.metadata&.fetch("prompt_queue_entry_ids", nil)).map(&:to_s)
       unresolved = QueueWork.unresolved_ids(batch)
+      unresolved &= delivered unless delivered.empty?
       return if unresolved.empty?
 
       if batch.fetch("delivery_count", 0).to_i.positive?

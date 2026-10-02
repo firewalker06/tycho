@@ -840,6 +840,32 @@ module CLICommandTest
              discarded_payload.dig("batch", "dispositions", "failed-cli-entry", "reason") ==
                "operator cancelled stale work",
              "expected queue-work discard to resolve an allowed failed claim with an inspectable reason")
+
+      persisted_path = File.join(logs_root, "managed_agents.json")
+      persisted = JSON.parse(File.read(persisted_path)).map { |attrs| HQ::ManagedAgent.from_hash(attrs) }
+      persisted_agent = persisted.find { |candidate| candidate.key == agent.key }
+      persisted_agent.enqueue_prompt!(prompt: "remove through CLI", id: "cli-remove-1")
+      persisted_agent.enqueue_prompt!(prompt: "keep through CLI", id: "cli-remove-2")
+      File.write(persisted_path, JSON.pretty_generate(persisted.map(&:to_hash)))
+
+      stale_process = run_tycho(
+        env, "queue-work", "process", agent.key, "--entry-ids", "cli-remove-1",
+        "--expected-entry-ids", "cli-remove-1,missing", "--json"
+      )
+      stale_payload = JSON.parse(stale_process.fetch(:stdout))
+      assert(!stale_process.fetch(:status).success? && stale_payload.fetch("status") == "stale" &&
+             stale_payload.fetch("processed_entry_ids").empty?,
+             "expected the queue-work process CLI to return a nonzero stale no-op")
+
+      removed = run_tycho(
+        env, "queue-work", "remove", agent.key, "--entry-ids", "cli-remove-1",
+        "--expected-entry-ids", "cli-remove-1,cli-remove-2", "--reason", "CLI confirmed one removal", "--json"
+      )
+      removed_payload = JSON.parse(removed.fetch(:stdout))
+      assert(removed.fetch(:status).success? && removed_payload.fetch("status") == "removed" &&
+             removed_payload.fetch("removed_entry_ids") == ["cli-remove-1"] &&
+             removed_payload.fetch("current_entry_ids") == ["cli-remove-2"],
+             "expected the queue-work remove CLI to act on stable IDs and report the remaining snapshot")
     end
   end
 

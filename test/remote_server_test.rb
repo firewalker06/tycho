@@ -6657,6 +6657,12 @@ module RemoteServerTest
     assert(js[:body].include?("data-edit-queued-prompt") && js[:body].include?("data-delete-queued-prompt") &&
            js[:body].include?("data-retry-prompt-queue") && js[:body].include?("data-discard-prompt-queue"),
            "expected queued prompts to expose Edit, Delete, retry, and safe failed-batch discard actions")
+    assert(js[:body].include?("data-select-queue-entry") && js[:body].include?('data-queue-action="process-selected"') &&
+           js[:body].include?('data-queue-action="remove-selected"') && js[:body].include?('data-queue-action="process-all"') &&
+           js[:body].include?('data-queue-action="remove-all"'),
+           "expected stopped queues to expose stable-ID selected and bulk controls")
+    assert(js[:body].include?("expected_entry_ids") && js[:body].include?("syncPendingPromptQueueActions"),
+           "expected queue actions to reject stale snapshots and remain hidden while pending")
     assert(js[:body].include?('enterkeyhint="enter"'),
            "expected Agent composer textarea to hint newline-capable keyboards")
     assert(js[:body].include?('event.target?.id === "prompt-input"'),

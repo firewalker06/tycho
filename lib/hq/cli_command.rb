@@ -468,9 +468,42 @@ module HQ
         end
       end
 
+      class QueueWorkProcess < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Process selected durable queue entries"
+        argument :agent_key, required: true, desc: "Agent key"
+        option :entry_ids, required: true, desc: "Comma-separated stable queue-entry IDs"
+        option :expected_entry_ids, required: true, desc: "Comma-separated FIFO snapshot IDs"
+        remote_options
+        usage_template "queue-work process %{agent_key} --entry-ids IDS --expected-entry-ids IDS [--server SERVER_KEY] [--json]"
+
+        def call(agent_key:, **opts)
+          exit CLICommand.process_agent_queue_work(agent_key, opts, out: out, err: err)
+        end
+      end
+
+      class QueueWorkRemove < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Remove selected durable queue entries with an audited disposition"
+        argument :agent_key, required: true, desc: "Agent key"
+        option :entry_ids, required: true, desc: "Comma-separated stable queue-entry IDs"
+        option :expected_entry_ids, required: true, desc: "Comma-separated FIFO snapshot IDs"
+        option :reason, desc: "Recorded removal reason"
+        remote_options
+        usage_template "queue-work remove %{agent_key} --entry-ids IDS --expected-entry-ids IDS [--reason REASON] [--server SERVER_KEY] [--json]"
+
+        def call(agent_key:, **opts)
+          exit CLICommand.remove_agent_queue_work(agent_key, opts, out: out, err: err)
+        end
+      end
+
       register "queue-work", QueueWorkCommand do |prefix|
         prefix.register "complete", QueueWorkComplete
         prefix.register "discard", QueueWorkDiscard
+        prefix.register "process", QueueWorkProcess
+        prefix.register "remove", QueueWorkRemove
       end
 
       class Memory < Dry::CLI::Command
@@ -1953,6 +1986,32 @@ module HQ
       failure("Failed to discard queue work: #{e.message}", err:)
     end
 
+    def process_agent_queue_work(agent_key, opts = {}, out: $stdout, err: $stderr)
+      return remote_queue_entry_action("process", agent_key, opts, out:, err:) if remote_requested?(opts)
+
+      result = agent_store_for_all.process_prompt_queue_entries!(
+        agent_key, entry_ids: queue_entry_ids_option(opts[:entry_ids]),
+        expected_entry_ids: queue_entry_ids_option(opts[:expected_entry_ids])
+      )
+      print_queue_entry_action(result, json: opts[:json], out:)
+      result.fetch("status") == "stale" ? 1 : 0
+    rescue StandardError => e
+      failure("Failed to process queue entries: #{e.message}", err:)
+    end
+
+    def remove_agent_queue_work(agent_key, opts = {}, out: $stdout, err: $stderr)
+      return remote_queue_entry_action("remove", agent_key, opts, out:, err:) if remote_requested?(opts)
+
+      result = agent_store_for_all.remove_prompt_queue_entries!(
+        agent_key, entry_ids: queue_entry_ids_option(opts[:entry_ids]),
+        expected_entry_ids: queue_entry_ids_option(opts[:expected_entry_ids]), reason: opts[:reason]
+      )
+      print_queue_entry_action(result, json: opts[:json], out:)
+      result.fetch("status") == "stale" ? 1 : 0
+    rescue StandardError => e
+      failure("Failed to remove queue entries: #{e.message}", err:)
+    end
+
     def list_agent_store_backups(opts = {}, out: $stdout, err: $stderr)
       backups = agent_store_for_all.backups
       if opts[:json]
@@ -2447,6 +2506,22 @@ module HQ
       failure(e.message, err: err)
     end
 
+    def remote_queue_entry_action(action, agent_key, opts, out:, err:)
+      payload = remote_client(opts[:server]).request(
+        "POST",
+        "#{remote_resource_path('agents', agent_key)}/prompt-queue/#{action}",
+        body: {
+          "entry_ids" => queue_entry_ids_option(opts[:entry_ids]),
+          "expected_entry_ids" => queue_entry_ids_option(opts[:expected_entry_ids]),
+          "reason" => opts[:reason]
+        }.compact
+      )
+      print_queue_entry_action(payload, json: opts[:json], out:)
+      payload["status"] == "stale" ? 1 : 0
+    rescue RemoteCLIClient::Error, KeyError, ArgumentError => e
+      failure(e.message, err:)
+    end
+
     def remote_archive_agent(agent_key, opts, out:, err:)
       payload = remote_client(opts[:server])
         .request("POST", "#{remote_resource_path("agents", agent_key)}/archive")
@@ -2749,6 +2824,25 @@ module HQ
       out.puts "Unresolved entries: #{unresolved.join(', ')}" unless unresolved.empty?
       Array(value["errors"]).each do |error|
         out.puts "- #{error["entry_id"]}: #{error["message"]}"
+      end
+    end
+
+    def queue_entry_ids_option(value)
+      ids = value.to_s.split(",").map(&:strip).reject(&:empty?)
+      raise ArgumentError, "Queue entry IDs are required" if ids.empty?
+      raise ArgumentError, "Queue entry IDs must not contain duplicates" if ids.uniq.length != ids.length
+
+      ids
+    end
+
+    def print_queue_entry_action(payload, json:, out:)
+      value = payload.transform_keys(&:to_s).reject { |key, _item| key == "agent" }
+      return out.puts(JSON.pretty_generate(value)) if json
+
+      ids = Array(value["processed_entry_ids"] || value["removed_entry_ids"])
+      out.puts "Queue action #{value.fetch('status')}: #{ids.length} #{ids.length == 1 ? 'entry' : 'entries'}"
+      if value["status"] == "stale"
+        out.puts "Queue changed; refresh and retry with current IDs: #{Array(value['current_entry_ids']).join(', ')}"
       end
     end
 

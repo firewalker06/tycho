@@ -6839,6 +6839,59 @@ details.queue-read-block:not([open]) > .queue-read-body {
   margin: 0;
 }
 
+.prompt-queue-management {
+  display: grid;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--warning) 7%, var(--panel));
+  padding: 8px;
+}
+
+.prompt-queue-stopped {
+  margin: 0;
+  color: var(--warning);
+  font-size: 12px;
+}
+
+.prompt-queue-selection-tools,
+.prompt-queue-management-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.prompt-queue-selection-tools {
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.prompt-queue-selection-tools label,
+.prompt-queue-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.prompt-queue-management-actions .ui-button {
+  min-height: 34px;
+}
+
+.prompt-queue-selector {
+  width: 22px;
+  height: 22px;
+  justify-content: center;
+}
+
+.prompt-queue-selector input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
 .inquiry-lifecycle-action {
   display: grid;
   min-width: 0;

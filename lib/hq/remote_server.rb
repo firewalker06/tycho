@@ -461,6 +461,8 @@ module HQ
           return ok(service.edit_queued_prompt(key, tail[1], body)) if %w[PATCH PUT].include?(method)
           return ok(service.delete_queued_prompt(key, tail[1])) if method == "DELETE"
         end
+        return ok(service.process_prompt_queue(key, body)) if method == "POST" && tail == ["prompt-queue", "process"]
+        return ok(service.remove_prompt_queue(key, body)) if method == "POST" && tail == ["prompt-queue", "remove"]
         return ok(service.prompt_queue_notice(key)) if method == "GET" && tail == ["prompt-queue", "notice"]
         return ok(service.read_prompt_queue(key)) if method == "POST" && tail == ["prompt-queue", "read"]
         return ok(service.retry_prompt_queue(key)) if method == "POST" && tail == ["prompt-queue", "retry"]
@@ -3220,6 +3222,32 @@ module HQ
       raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
     end
 
+    def process_prompt_queue(key, attrs = {})
+      entry_ids = queue_action_entry_ids(attrs, "entry_ids")
+      expected_entry_ids = queue_action_entry_ids(attrs, "expected_entry_ids", allow_empty: true)
+      result = @agent_store.process_prompt_queue_entries!(key, entry_ids:, expected_entry_ids:)
+      target = result.fetch("agent")
+      @conversation_blocks_cache&.delete(key.to_s)
+      @agent_activity_snapshot.upsert!(target)
+      result.reject { |name, _value| name == "agent" }.merge(agent: agent_payload(target))
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
+    end
+
+    def remove_prompt_queue(key, attrs = {})
+      entry_ids = queue_action_entry_ids(attrs, "entry_ids")
+      expected_entry_ids = queue_action_entry_ids(attrs, "expected_entry_ids", allow_empty: true)
+      result = @agent_store.remove_prompt_queue_entries!(
+        key, entry_ids:, expected_entry_ids:, reason: attrs["reason"]
+      )
+      target = result.fetch("agent")
+      @conversation_blocks_cache&.delete(key.to_s)
+      @agent_activity_snapshot.upsert!(target)
+      result.reject { |name, _value| name == "agent" }.merge(agent: agent_payload(target))
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
+    end
+
     def discard_prompt_queue(key, attrs = {})
       find_agent!(key)
       result = @agent_store.discard_prompt_queue!(key, reason: attrs["reason"])
@@ -5039,10 +5067,23 @@ module HQ
         end,
         "pending_count" => entries.length,
         "queue_work" => agent.queue_work_payload,
-        "unprocessed_reason" => agent.queue_work_unprocessed_reason,
+        "unprocessed_reason" => agent.queue_work_unprocessed_reason || agent.prompt_queue_stopped_reason,
+        "processing_stopped" => !agent.prompt_queue_stopped_reason.nil?,
         "dispatch_error" => agent.prompt_queue_dispatch_error,
         "blocked_by_inquiry" => agent.inquiry_blocking_prompt_queue?
       }
+    end
+
+    def queue_action_entry_ids(attrs, name, allow_empty: false)
+      value = attrs[name]
+      raise ArgumentError, "#{name} must be an array" unless value.is_a?(Array)
+
+      ids = value.map { |item| item.to_s.strip }
+      raise ArgumentError, "#{name} contains an empty queue entry ID" if ids.any?(&:empty?)
+      raise ArgumentError, "#{name} contains duplicate queue entry IDs" if ids.uniq.length != ids.length
+      raise ArgumentError, "#{name} must not be empty" if ids.empty? && !allow_empty
+
+      ids
     end
 
     def prompt_client_request_id(attrs)

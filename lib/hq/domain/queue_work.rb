@@ -64,6 +64,7 @@ module HQ
         "delivery_count" => [value["delivery_count"].to_i, 0].max,
         "automatic_continuation_count" => [value["automatic_continuation_count"].to_i, 0].max,
         "resume_pending" => value["resume_pending"] == true,
+        "manual_entry_ids" => normalize_manual_entry_ids(value["manual_entry_ids"], entries, dispositions),
         "read_id" => value["read_id"].to_s.empty? ? nil : value["read_id"].to_s,
         "resolved_at" => value["resolved_at"].to_s.empty? ? nil : value["resolved_at"].to_s,
         "legacy_prompt_queue_claim" => value["legacy_prompt_queue_claim"] == true
@@ -110,8 +111,8 @@ module HQ
       end
     end
 
-    def projection(batch)
-      entries = Array(batch&.fetch("entries", nil))
+    def projection(batch, entry_ids: nil)
+      entries = selected_entries(batch, entry_ids)
       instructions = entries.select { |entry| entry_kind(entry) == "user_instruction" }
       reports = entries.select { |entry| entry_kind(entry) == "delegated_report" }
       {
@@ -122,7 +123,9 @@ module HQ
         "required_actions" => instructions.map { |entry| projected_entry(entry, "required_instruction") },
         "contextual_reports" => reports.map { |entry| projected_entry(entry, "contextual_report") },
         "entry_ids" => entries.map { |entry| entry["id"].to_s },
-        "unresolved_entry_ids" => unresolved_ids(batch)
+        "unresolved_entry_ids" => entries.map { |entry| entry["id"].to_s }.reject do |id|
+          batch&.fetch("dispositions", {})&.key?(id)
+        end
       }
     end
 
@@ -136,8 +139,8 @@ module HQ
       ).compact
     end
 
-    def contract(batch, agent_key:)
-      projected = projection(batch)
+    def contract(batch, agent_key:, entry_ids: nil)
+      projected = projection(batch, entry_ids:)
       machine = {
         "protocol" => "tycho.queue_work/v1",
         "batch_id" => batch.fetch("id"),
@@ -244,6 +247,21 @@ module HQ
       true
     end
 
+    def request_manual_delivery!(batch, entry_ids)
+      unresolved = unresolved_ids(batch)
+      selected = Array(entry_ids).map(&:to_s).uniq.select { |id| unresolved.include?(id) }
+      raise ArgumentError, "No unresolved queue entries selected" if selected.empty?
+
+      batch["manual_entry_ids"] = selected
+      batch["resume_pending"] = true
+      selected
+    end
+
+    def consume_manual_entry_ids!(batch)
+      ids = Array(batch&.delete("manual_entry_ids")).map(&:to_s)
+      ids.empty? ? unresolved_ids(batch) : ids
+    end
+
     def entry_kind(entry)
       entry["source"].to_s == "delegation_callback" ? "delegated_report" : "user_instruction"
     end
@@ -258,6 +276,21 @@ module HQ
       end
     end
     private_class_method :normalize_entries
+
+    def normalize_manual_entry_ids(value, entries, dispositions)
+      known = entries.map { |entry| entry["id"].to_s }
+      Array(value).map(&:to_s).uniq.select { |id| known.include?(id) && !dispositions.key?(id) }
+    end
+    private_class_method :normalize_manual_entry_ids
+
+    def selected_entries(batch, entry_ids)
+      entries = Array(batch&.fetch("entries", nil))
+      return entries if entry_ids.nil?
+
+      selected = Array(entry_ids).map(&:to_s)
+      entries.select { |entry| selected.include?(entry["id"].to_s) }
+    end
+    private_class_method :selected_entries
 
     def normalize_stored_dispositions(value, entries)
       known = entries.to_h { |entry| [entry["id"].to_s, entry] }
