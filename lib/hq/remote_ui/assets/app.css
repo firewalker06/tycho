@@ -4331,28 +4331,33 @@ select {
   width: calc(100% - 28px);
   margin-right: 28px;
   overflow: visible;
-  border-color: color-mix(in srgb, var(--border) 76%, transparent);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   box-shadow: none;
 }
 
 .message-group > summary {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
   min-height: 38px;
   padding: 9px 12px;
-  color: var(--muted);
+  color: color-mix(in srgb, var(--muted) 78%, transparent);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .message-group > summary > span:last-child {
+  grid-column: 3;
+  justify-self: end;
   min-width: 0;
   overflow: hidden;
-  color: var(--text);
+  color: color-mix(in srgb, var(--muted) 76%, transparent);
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4364,8 +4369,8 @@ select {
 }
 
 .system-event-block.validation-retry-block {
-  border-color: color-mix(in srgb, var(--warning) 58%, var(--border));
-  background: color-mix(in srgb, var(--warning) 7%, var(--panel));
+  border: 0;
+  background: transparent;
 }
 
 .system-event-block.validation-retry-block > summary {
@@ -4424,8 +4429,12 @@ select {
 
 .message-group-label {
   display: inline-flex;
+  grid-column: 2;
+  justify-self: center;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .message-group-label .ui-icon {
@@ -4435,8 +4444,26 @@ select {
 
 .message-group-body {
   display: block;
-  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
-  padding: 0;
+  padding: 4px 0 0;
+}
+
+@media (max-width: 640px) {
+  .message-group > summary {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .message-group-label,
+  .message-group > summary > span:last-child {
+    grid-column: 1;
+    justify-self: center;
+    max-width: 100%;
+    text-align: center;
+  }
+
+  .message-group > summary > span:last-child {
+    grid-row: 2;
+  }
 }
 
 .queue-read-block {
@@ -4445,8 +4472,8 @@ select {
   max-width: calc(100% - 28px);
   margin-right: 0;
   margin-left: 28px;
-  border-color: color-mix(in srgb, var(--warning) 34%, var(--border));
-  background: color-mix(in srgb, var(--warning) 6%, var(--panel));
+  border: 0;
+  background: transparent;
   box-shadow: none;
 }
 
@@ -4523,8 +4550,8 @@ details.queue-read-block:not([open]) > .queue-read-body {
 }
 
 .circuit-breaker-recovery-block {
-  border-color: color-mix(in srgb, var(--success) 46%, var(--border));
-  background: color-mix(in srgb, var(--success) 6%, var(--panel));
+  border: 0;
+  background: transparent;
 }
 
 .circuit-breaker-recovery-block > summary {
