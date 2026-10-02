@@ -18,6 +18,10 @@ module PromptQueueTest
     assert_claim_race_drains_fifo_without_overlap
     assert_pending_queue_visibility_tracks_processing_state
     assert_non_terminal_results_explain_unprocessed_queue_work
+    assert_selected_processing_preserves_fifo_and_prevents_duplicate_dispatch
+    assert_stale_selected_process_preserves_inquiry
+    assert_bulk_removal_is_audited_and_stale_snapshots_do_nothing
+    assert_queue_action_routes_report_stale_and_selected_results
     assert_automatic_dispatch_records_one_structured_read_block
     assert_explicit_read_consumes_one_mixed_batch_and_records_conversation
     assert_explicit_read_failure_retains_queue
@@ -295,6 +299,140 @@ module PromptQueueTest
                payload.dig("queue_work", "unresolved_entry_ids").empty?,
                "expected #{result_status} to auto-complete delivered queue work")
       end
+    end
+  end
+
+  def assert_selected_processing_preserves_fifo_and_prevents_duplicate_dispatch
+    with_queue_store do |registry, workspace|
+      agent = terminal_agent(workspace, status: "blocked", structured_result: {
+        "status" => "blocked", "summary" => "Waiting for operator"
+      })
+      %w[first second third].each_with_index do |name, index|
+        agent.enqueue_prompt!(prompt: name, source: "user", id: "entry-#{index + 1}", accepted_at: Time.now + index)
+      end
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+      prompts = []
+
+      result = nil
+      with_stubbed_start(prompts:) do
+        result = store.process_prompt_queue_entries!(
+          agent.key, entry_ids: %w[entry-3 entry-1], expected_entry_ids: %w[entry-1 entry-2 entry-3]
+        )
+      end
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      batch = persisted.active_queue_work
+      assert(result.fetch("status") == "accepted" && result.fetch("processed_entry_ids") == %w[entry-3 entry-1] &&
+             prompts.length == 1 && prompts.first.index("[entry-1]") < prompts.first.index("[entry-3]") &&
+             batch["entries"].map { |entry| entry["id"] } == %w[entry-1 entry-3] &&
+             persisted.visible_prompt_queue_entries.map { |entry| entry["id"] } == %w[entry-1 entry-2 entry-3],
+             "expected selected processing to dispatch once in canonical FIFO while preserving unselected order")
+
+      stale = store.process_prompt_queue_entries!(
+        agent.key, entry_ids: ["entry-1"], expected_entry_ids: %w[entry-1 entry-2 entry-3 missing]
+      )
+      assert(stale.fetch("status") == "stale" && stale.fetch("processed_entry_ids").empty? && prompts.length == 1,
+             "expected a stale selected-process snapshot not to dispatch a duplicate run")
+    end
+  end
+
+  def assert_bulk_removal_is_audited_and_stale_snapshots_do_nothing
+    with_queue_store do |registry, workspace|
+      agent = terminal_agent(workspace, status: "failed", structured_result: {
+        "status" => "failed", "summary" => "Queue failed"
+      })
+      agent.enqueue_prompt!(prompt: "active user", source: "user", id: "active-user")
+      agent.enqueue_prompt!(prompt: "active report", source: "delegation_callback", id: "active-report")
+      batch = agent.open_queue_work_batch!
+      agent.record_queue_read!(batch)
+      agent.enqueue_prompt!(prompt: "newer user", source: "user", id: "newer-user")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+
+      stale = store.remove_prompt_queue_entries!(
+        agent.key, entry_ids: ["active-user"], expected_entry_ids: %w[active-user active-report]
+      )
+      after_stale = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      assert(stale.fetch("status") == "stale" && after_stale.visible_prompt_queue_entries.map { |entry| entry["id"] } ==
+             %w[active-user active-report newer-user],
+             "expected stale destructive snapshots to leave every queue entry intact")
+
+      removed = store.remove_prompt_queue_entries!(
+        agent.key, entry_ids: %w[active-user active-report newer-user],
+        expected_entry_ids: %w[active-user active-report newer-user], reason: "Operator confirmed removal of 3 entries"
+      )
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      dispositions = persisted.queue_work.fetch("batches").flat_map do |stored_batch|
+        stored_batch.fetch("dispositions", {}).values
+      end
+      assert(removed.fetch("status") == "removed" && removed.fetch("removed_entry_ids").length == 3 &&
+             persisted.visible_prompt_queue_entries.empty? && dispositions.map { |item| item["entry_id"] }.sort ==
+             %w[active-report active-user newer-user] &&
+             dispositions.find { |item| item["entry_id"] == "active-report" }.fetch("outcome") == "superseded_with_reason" &&
+             dispositions.all? { |item| item["reason"] == "Operator confirmed removal of 3 entries" },
+             "expected bulk removal to preserve source-appropriate durable audit dispositions")
+    end
+  end
+
+  def assert_stale_selected_process_preserves_inquiry
+    with_queue_store do |registry, workspace|
+      inquiry = { "message" => "Choose a release target", "fields" => [] }
+      agent = terminal_agent(workspace, status: "input_required", structured_result: {
+        "status" => "input_required", "summary" => "Needs input", "inquiry" => inquiry
+      })
+      memory = HQ::AgentMemory.new(agent)
+      memory.append_inquiry_request!(inquiry, inquiry_id: "atomic-stale-inquiry")
+      agent.enqueue_prompt!(prompt: "keep queued", id: "inquiry-entry")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+
+      stale = store.process_prompt_queue_entries!(
+        agent.key, entry_ids: ["inquiry-entry"], expected_entry_ids: %w[inquiry-entry missing]
+      )
+      selection_error = begin
+        store.process_prompt_queue_entries!(
+          agent.key, entry_ids: ["missing"], expected_entry_ids: ["inquiry-entry"]
+        )
+        nil
+      rescue ArgumentError => e
+        e
+      end
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      events = HQ::AgentMemory.new(persisted).events
+
+      assert(stale.fetch("status") == "stale" && stale.fetch("processed_entry_ids").empty? &&
+             selection_error&.message&.include?("missing: missing") &&
+             persisted.latest_inquiry_id == "atomic-stale-inquiry" &&
+             events.none? { |event| event["type"] == "inquiry_cancelled" } &&
+             persisted.visible_prompt_queue_entries.map { |entry| entry["id"] } == ["inquiry-entry"],
+             "expected stale snapshots and invalid selections to preserve the active inquiry and queue")
+    end
+  end
+
+  def assert_queue_action_routes_report_stale_and_selected_results
+    with_queue_store do |registry, workspace|
+      agent = terminal_agent(workspace, status: "input_required", structured_result: {
+        "status" => "input_required", "summary" => "Needs input"
+      })
+      agent.enqueue_prompt!(prompt: "remove me", id: "route-1")
+      agent.enqueue_prompt!(prompt: "keep me", id: "route-2")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+      service = HQ::RemoteService.new(registry:)
+
+      stale = HQ::RemoteServer.allocate.send(
+        :route, service, "POST", "/agents/#{agent.key}/prompt-queue/remove",
+        { "entry_ids" => ["route-1"], "expected_entry_ids" => ["route-1"] }, nil
+      )
+      removed = HQ::RemoteServer.allocate.send(
+        :route, service, "POST", "/agents/#{agent.key}/prompt-queue/remove",
+        { "entry_ids" => ["route-1"], "expected_entry_ids" => %w[route-1 route-2] }, nil
+      )
+      assert(stale.fetch(:status) == 200 && stale.dig(:body, "status") == "stale" &&
+             removed.fetch(:status) == 200 && removed.dig(:body, "status") == "removed" &&
+             removed.dig(:body, "removed_entry_ids") == ["route-1"] &&
+             removed.dig(:body, :agent, :prompt_queue, "entries").map { |entry| entry["id"] } == ["route-2"],
+             "expected queue action APIs to expose stale no-ops and stable-ID selected removal")
     end
   end
 

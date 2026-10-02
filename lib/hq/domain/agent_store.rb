@@ -475,6 +475,48 @@ module HQ
       end
     end
 
+    def process_prompt_queue_entries!(key, entry_ids:, expected_entry_ids:)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = find_agent_in!(agents, key)
+        raise ArgumentError, "Agent is running" if target.running?
+
+        current_ids = target.visible_prompt_queue_entries.map { |entry| entry["id"].to_s }
+        expected = Array(expected_entry_ids).map(&:to_s)
+        unless expected == current_ids
+          next({ "status" => "stale", "expected_entry_ids" => expected, "current_entry_ids" => current_ids,
+                 "processed_entry_ids" => [], "agent" => target })
+        end
+        selected_ids = target.validate_queue_entry_ids!(entry_ids)
+        target.cancel_pending_inquiry! if target.inquiry_blocking_prompt_queue?
+        selected = target.prepare_queue_entries_for_processing!(selected_ids)
+        dispatch_prompt_queue!(target, agents)
+        {
+          "status" => target.running? ? "started" : "accepted",
+          "processed_entry_ids" => selected,
+          "current_entry_ids" => target.visible_prompt_queue_entries.map { |entry| entry["id"].to_s },
+          "agent" => target
+        }
+      end
+    end
+
+    def remove_prompt_queue_entries!(key, entry_ids:, expected_entry_ids:, reason: nil)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = find_agent_in!(agents, key)
+        raise ArgumentError, "Agent is running" if target.running?
+
+        current_ids = target.visible_prompt_queue_entries.map { |entry| entry["id"].to_s }
+        expected = Array(expected_entry_ids).map(&:to_s)
+        unless expected == current_ids
+          next({ "status" => "stale", "expected_entry_ids" => expected, "current_entry_ids" => current_ids,
+                 "removed_entry_ids" => [], "agent" => target })
+        end
+        result = target.remove_queue_entries!(entry_ids, reason:)
+        result.merge("status" => "removed", "current_entry_ids" => target.visible_prompt_queue_entries.map do |entry|
+          entry["id"].to_s
+        end, "agent" => target)
+      end
+    end
+
     def read_prompt_queue!(key, read_at: Time.now)
       with_exclusive_lock do
         agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
@@ -795,7 +837,10 @@ module HQ
       end
 
       baseline = claim["baseline_run_count"].to_i
-      run_metadata = { "prompt_queue_claim_id" => claim["id"] }
+      run_metadata = {
+        "prompt_queue_claim_id" => claim["id"],
+        "prompt_queue_entry_ids" => Array(claim["entries"]).map { |entry| entry["id"].to_s }
+      }
       accepted = begin
         stamp = Array(claim["entries"]).last&.fetch("authority", nil)
         options = { run_metadata: }

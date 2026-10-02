@@ -261,9 +261,11 @@ module RemoteUIPromptQueueTest
       }
 
       const queueContext = {
+        state: { pendingPromptQueueActions: new Map(), promptQueueSelections: new Map() },
         escapeAttr: (value) => String(value),
         escapeHtml: (value) => String(value),
         iconSvg: () => "",
+        promptQueueSelection: () => new Set(),
         optimisticPromptQueueEntries: () => [{
           id: clientRequestId, prompt: "One queued prompt", state: "queued", attachments: []
         }],

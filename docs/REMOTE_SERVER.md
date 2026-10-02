@@ -771,6 +771,26 @@ A dispatch start failure remains readable through this endpoint even though its 
 curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/prompt-queue/read
 ```
 
+### `POST /agents/{key}/prompt-queue/process`
+
+Processes selected unresolved queue entries in canonical FIFO order. Send stable `entry_ids` plus the complete `expected_entry_ids` snapshot currently shown to the operator. If any concurrent add, removal, or resolution changed that snapshot, the server returns `status: "stale"`, the current IDs, and an empty `processed_entry_ids` list without dispatching work. An accepted request claims exactly the selected entries and cannot start a duplicate run.
+
+```bash
+curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/prompt-queue/process \
+  -H "Content-Type: application/json" \
+  -d '{"entry_ids":["ENTRY_ID"],"expected_entry_ids":["ENTRY_ID","OTHER_ID"]}'
+```
+
+### `POST /agents/{key}/prompt-queue/remove`
+
+Removes selected entries only when the same complete queue snapshot still applies. The operation records durable source-appropriate dispositions (`declined_with_reason` for user work and `superseded_with_reason` for delegated reports) instead of erasing audit history. A stale request returns no removed IDs and changes nothing.
+
+```bash
+curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/prompt-queue/remove \
+  -H "Content-Type: application/json" \
+  -d '{"entry_ids":["ENTRY_ID"],"expected_entry_ids":["ENTRY_ID","OTHER_ID"],"reason":"No longer needed"}'
+```
+
 ### `POST /agents/{key}/queue-work/{batch-id}/complete`
 
 Records source-appropriate entry dispositions without changing the general agent result schema. Valid progress is durable, identical completion is idempotent, and the response lists unresolved IDs until every entry has one outcome.

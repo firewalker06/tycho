@@ -66,10 +66,22 @@ def write_fixture(dir)
     #!/usr/bin/env ruby
     require "json"
     exit 0 if ARGV == ["auth", "status"]
+    arguments = ARGV.join(" ")
+    hold_marker = "#{__FILE__}.#{ENV.fetch("TYCHO_AGENT_KEY", "unknown")}.held"
+    prior_queue_smoke_runs = File.exist?(hold_marker) ? File.read(hold_marker).to_i : 0
+    queue_smoke_run = if arguments.include?("QUEUE_SMOKE_HOLD") || prior_queue_smoke_runs.positive?
+                        prior_queue_smoke_runs + 1
+                      else
+                        0
+                      end
+    File.write(hold_marker, queue_smoke_run.to_s) if queue_smoke_run.positive?
+    if queue_smoke_run == 1
+      sleep 30
+    end
     output_index = ARGV.index("-o")
     output = output_index ? ARGV[output_index + 1] : nil
     payload = {
-      "status" => "success",
+      "status" => queue_smoke_run == 2 ? "failed" : "success",
       "summary" => "## Completed the focused review\n\n- Returned the complete delegated result.\n- Preserved safe Markdown rendering.",
       "summary_sections" => [{ "type" => "text", "text" => "Rendered semantic run summary details.", "url" => nil, "attachment" => nil }],
       "inquiry" => nil,
@@ -337,6 +349,28 @@ def send_agent_message(base_url, agent_key, prompt, parent_agent_key: nil, start
   request.body = JSON.generate(body)
   response = Net::HTTP.start(uri.hostname, uri.port) { |http| http.request(request) }
   raise "Failed to message smoke agent: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
+
+  JSON.parse(response.body)
+end
+
+def stop_agent(base_url, agent_key)
+  uri = URI("#{base_url}/agents/#{agent_key}/stop")
+  request = Net::HTTP::Post.new(uri)
+  request["Content-Type"] = "application/json"
+  request.body = "{}"
+  response = Net::HTTP.start(uri.hostname, uri.port) { |http| http.request(request) }
+  raise "Failed to stop smoke agent: #{response.code} #{response.body}" unless response.is_a?(Net::HTTPSuccess)
+end
+
+def wait_for_agent_status(base_url, agent_key, status)
+  deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 15
+  loop do
+    agent = JSON.parse(Net::HTTP.get(URI("#{base_url}/agents/#{agent_key}"))).fetch("agent")
+    return if agent["status"] == status && agent["running"] != true
+    raise "Agent #{agent_key} did not reach #{status}" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+    sleep 0.05
+  end
 end
 
 def wait_for_delegation_callback(base_url, parent_key)
@@ -482,6 +516,12 @@ def write_smoke_script(path)
       const quickAgentsPriorityOnly = process.env.TYCHO_REMOTE_UI_QUICK_AGENTS_PRIORITY_ONLY === "1";
       const optimisticDetailFormsOnly = process.env.TYCHO_REMOTE_UI_OPTIMISTIC_DETAIL_FORMS_ONLY === "1";
       const prDiffManagementOnly = process.env.TYCHO_REMOTE_UI_PR_DIFF_MANAGEMENT_ONLY === "1";
+      const queueControlsOnly = process.env.TYCHO_REMOTE_UI_QUEUE_CONTROLS_ONLY === "1";
+      const queueAgentKey = process.env.TYCHO_REMOTE_UI_QUEUE_AGENT_KEY;
+      const queueBulkAgentKey = process.env.TYCHO_REMOTE_UI_QUEUE_BULK_AGENT_KEY;
+      const queueProcessAllAgentKey = process.env.TYCHO_REMOTE_UI_QUEUE_PROCESS_ALL_AGENT_KEY;
+      const queueEntryIds = (process.env.TYCHO_REMOTE_UI_QUEUE_ENTRY_IDS || "").split(",").filter(Boolean);
+      const queueBulkEntryIds = (process.env.TYCHO_REMOTE_UI_QUEUE_BULK_ENTRY_IDS || "").split(",").filter(Boolean);
       const draft = "Remote UI smoke draft " + Date.now();
       const errors = [];
 
@@ -801,7 +841,7 @@ def write_smoke_script(path)
         }
       }
 
-      if (!workspaceOnly && !delegationOnly && process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY !== "1") await assertInitialLoadingShell();
+      if (!workspaceOnly && !delegationOnly && !queueControlsOnly && process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY !== "1") await assertInitialLoadingShell();
 
       async function assertSummaryFreshness(candidate, viewport) {
         await candidate.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
@@ -1174,6 +1214,122 @@ def write_smoke_script(path)
         } finally {
           await failurePage.close();
         }
+      }
+
+      async function assertBlockedQueueControls() {
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(queueAgentKey)}`, { waitUntil: "networkidle" });
+        await page.waitForSelector("[data-prompt-queue]", { state: "visible", timeout: 10_000 });
+        await page.click("[data-prompt-queue] > summary");
+        await page.waitForSelector("[data-prompt-queue-management]", { state: "visible", timeout: 10_000 });
+        const initial = await page.evaluate(() => ({
+          reason: document.querySelector(".prompt-queue-stopped")?.textContent.trim(),
+          ids: Array.from(document.querySelectorAll("[data-prompt-queue] [data-prompt-queue-entry]")).map((row) => row.dataset.promptQueueEntry),
+          controls: Array.from(document.querySelectorAll("[data-queue-action]")).map((button) => button.textContent.trim()),
+          checkboxes: document.querySelectorAll("[data-select-queue-entry]").length,
+        }));
+        if (initial.reason !== "queue not processed since state is failed" || initial.ids.join(",") !== queueEntryIds.join(",") || initial.checkboxes !== 6 ||
+            initial.controls.join("|") !== "Process selected|Remove selected|Process all|Remove all") {
+          throw new Error(`Blocked queue controls are incomplete: ${JSON.stringify(initial)}`);
+        }
+        if (captureDir) await page.locator("[data-prompt-queue]").screenshot({ path: path.join(captureDir, "blocked-queue-controls-desktop.png") });
+
+        await page.setViewportSize({ width: 390, height: 844 });
+        const mobile = await page.locator("[data-prompt-queue]").evaluate((queue) => {
+          const rect = queue.getBoundingClientRect();
+          return { left: rect.left, right: rect.right, viewport: innerWidth, overflow: queue.scrollWidth > queue.clientWidth };
+        });
+        if (mobile.left < 0 || mobile.right > mobile.viewport || mobile.overflow) {
+          throw new Error(`Queue controls overflow on mobile: ${JSON.stringify(mobile)}`);
+        }
+        if (captureDir) await page.locator("[data-prompt-queue]").screenshot({ path: path.join(captureDir, "blocked-queue-controls-mobile.png") });
+        await page.setViewportSize({ width: 1440, height: 900 });
+
+        const stale = await page.evaluate(async ({ key, firstId }) => {
+          const response = await fetch(`/agents/${encodeURIComponent(key)}/prompt-queue/remove`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ entry_ids: [firstId], expected_entry_ids: [firstId] }),
+          });
+          return response.json();
+        }, { key: queueAgentKey, firstId: queueEntryIds[0] });
+        if (stale.status !== "stale" || stale.removed_entry_ids.length !== 0) {
+          throw new Error(`Concurrent stale queue action was not a no-op: ${JSON.stringify(stale)}`);
+        }
+
+        await page.locator(`[data-select-queue-entry='${queueEntryIds[1]}']`).focus();
+        await page.keyboard.press("Space");
+        const queueScrollTop = await page.locator("[data-prompt-queue] > .prompt-queue-body > .prompt-queue-list").evaluate((list) => {
+          list.scrollTop = 80;
+          return list.scrollTop;
+        });
+        if (queueScrollTop <= 0) throw new Error(`Queue list did not accept a nonzero scroll position: ${queueScrollTop}`);
+        await page.evaluate(async () => { await refresh(); });
+        const pollSelection = await page.evaluate((selectedId) => ({
+          open: document.querySelector("[data-prompt-queue]")?.open,
+          checked: document.querySelector(`[data-select-queue-entry='${selectedId}']`)?.checked,
+          focused: document.activeElement?.dataset?.selectQueueEntry,
+          scrollTop: document.querySelector("[data-prompt-queue] > .prompt-queue-body > .prompt-queue-list")?.scrollTop,
+          ids: Array.from(document.querySelectorAll("[data-prompt-queue] [data-prompt-queue-entry]")).map((row) => row.dataset.promptQueueEntry),
+        }), queueEntryIds[1]);
+        if (!pollSelection.open || !pollSelection.checked || pollSelection.focused !== queueEntryIds[1] ||
+            pollSelection.scrollTop !== queueScrollTop || pollSelection.ids.join(",") !== initial.ids.join(",")) {
+          throw new Error(`Polling disturbed queue selection, focus, scroll, or order: ${JSON.stringify({ ...pollSelection, expectedScrollTop: queueScrollTop })}`);
+        }
+        await page.click("[data-queue-action='remove-selected']");
+        const selectedConfirmation = await page.locator("#confirmation-description").textContent();
+        if (!selectedConfirmation.includes("1 queued entry")) throw new Error(`Selected removal confirmation lost its count: ${selectedConfirmation}`);
+        await page.click("[data-confirmation-accept]");
+        await page.waitForFunction((removedId) => !document.querySelector(`[data-prompt-queue] [data-prompt-queue-entry='${removedId}']`), queueEntryIds[1]);
+
+        await page.click("[data-queue-action='remove-all']");
+        const bulkConfirmation = await page.locator("#confirmation-description").textContent();
+        if (!bulkConfirmation.match(/5 queued entries/)) throw new Error(`Bulk removal confirmation lost its count: ${bulkConfirmation}`);
+        await page.click("[data-confirmation-accept]");
+        await page.waitForFunction(() => !document.querySelector("[data-prompt-queue]"));
+
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(queueBulkAgentKey)}`, { waitUntil: "networkidle" });
+        await page.click("[data-prompt-queue] > summary");
+        await page.check(`[data-select-queue-entry='${queueBulkEntryIds[0]}']`);
+        await page.check(`[data-select-queue-entry='${queueBulkEntryIds[2]}']`);
+        let releaseProcess;
+        const processGate = new Promise((resolve) => { releaseProcess = resolve; });
+        await page.route("**/prompt-queue/process", async (route) => {
+          await processGate;
+          await route.continue();
+        });
+        await page.click("[data-queue-action='process-selected']");
+        await page.waitForSelector("[data-prompt-queue-management][aria-busy='true']", { state: "visible" });
+        await page.evaluate(async () => { await refresh(); });
+        const pending = await page.evaluate(([firstId, thirdId]) => ({
+          resurrected1: Boolean(document.querySelector(`[data-prompt-queue] [data-prompt-queue-entry='${firstId}']`)),
+          resurrected3: Boolean(document.querySelector(`[data-prompt-queue] [data-prompt-queue-entry='${thirdId}']`)),
+          disabled: Array.from(document.querySelectorAll("[data-queue-action]")).every((button) => button.disabled),
+          actionIds: Array.from(state.pendingPromptQueueActions.values())[0]?.entryIds || [],
+          rowIds: Array.from(document.querySelectorAll("[data-prompt-queue] [data-prompt-queue-entry]")).map((row) => row.dataset.promptQueueEntry),
+        }), [queueBulkEntryIds[0], queueBulkEntryIds[2]]);
+        if (pending.resurrected1 || pending.resurrected3 || !pending.disabled) {
+          throw new Error(`Polling resurrected pending queue actions: ${JSON.stringify(pending)}`);
+        }
+        releaseProcess();
+        await page.waitForFunction(() => !document.querySelector("[data-prompt-queue-management]")?.matches("[aria-busy='true']"));
+        await page.unroute("**/prompt-queue/process");
+        await page.waitForFunction(() => !document.querySelector("[data-prompt-queue] [data-prompt-queue-entry]"));
+        await page.waitForFunction(async (agentKey) => {
+          const response = await fetch(`/agents/${encodeURIComponent(agentKey)}`);
+          const agent = (await response.json()).agent;
+          return agent?.running === false && agent?.prompt_queue?.pending_count === 0;
+        }, queueBulkAgentKey, { timeout: 10_000 });
+
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(queueProcessAllAgentKey)}`, { waitUntil: "networkidle" });
+        await page.click("[data-prompt-queue] > summary");
+        await page.click("[data-queue-action='process-all']");
+        await page.waitForFunction(() => !document.querySelector("[data-prompt-queue] [data-prompt-queue-entry]"));
+        await page.waitForFunction(async (agentKey) => {
+          const response = await fetch(`/agents/${encodeURIComponent(agentKey)}`);
+          const agent = (await response.json()).agent;
+          return agent?.running === false && agent?.prompt_queue?.pending_count === 0;
+        }, queueProcessAllAgentKey, { timeout: 10_000 });
       }
 
       if (process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY !== "1") await assertLoadingShellFailureRecovery();
@@ -1998,6 +2154,12 @@ def write_smoke_script(path)
       }
 
       try {
+        if (queueControlsOnly) {
+          await assertBlockedQueueControls();
+          if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
+          console.log("remote-ui-queue-controls-smoke: ok");
+          return;
+        }
         if (prDiffManagementOnly) {
           await assertPrDiffManagement();
           if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
@@ -8398,6 +8560,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       prompt: "Review mobile navigation and report concise findings.",
       parent_agent_key: orchestrator_agent_key
     )
+    queue_agent_key = create_agent(base_url, name: "Blocked Queue Controls", prompt: "QUEUE_SMOKE_HOLD")
+    queue_bulk_agent_key = create_agent(base_url, name: "Blocked Queue Bulk Process", prompt: "QUEUE_SMOKE_HOLD")
+    queue_process_all_agent_key = create_agent(base_url, name: "Blocked Queue Process All", prompt: "QUEUE_SMOKE_HOLD")
     switcher_agent_keys = 8.times.map do |index|
       create_agent(
         base_url,
@@ -8415,13 +8580,41 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     associate_agent_schedule(fixture.fetch(:logs_dir), agent_key)
     associate_agent_pull_request(fixture.fetch(:logs_dir), agent_key)
     associate_agent_pull_request(fixture.fetch(:logs_dir), unscheduled_agent_key) unless ENV["TYCHO_REMOTE_UI_PR_DIFF_MANAGEMENT_ONLY"] == "1"
-    wait_for_resource_agents(
-      base_url,
-      [agent_key, unscheduled_agent_key, orchestrator_agent_key, delegated_agent_key, security_agent_key, mobile_agent_key, *switcher_agent_keys]
-    )
+    begin
+      wait_for_resource_agents(
+        base_url,
+        [agent_key, unscheduled_agent_key, orchestrator_agent_key, delegated_agent_key, security_agent_key, mobile_agent_key,
+         queue_agent_key, queue_bulk_agent_key, queue_process_all_agent_key, *switcher_agent_keys]
+      )
+    rescue StandardError
+      warn File.read(log_path) if File.exist?(log_path)
+      raise
+    end
     archive_agent(base_url, archived_agent_key)
     start_agent(base_url, delegated_agent_key, parent_agent_key: orchestrator_agent_key)
     wait_for_delegation_callback(base_url, orchestrator_agent_key)
+    queue_entry_ids = []
+    start_agent(base_url, queue_agent_key)
+    6.times do |index|
+      response = send_agent_message(base_url, queue_agent_key, "Queued smoke instruction #{index + 1}")
+      queue_entry_ids << response.fetch("queue_entry").fetch("id")
+    end
+    stop_agent(base_url, queue_agent_key)
+    wait_for_agent_status(base_url, queue_agent_key, "failed")
+    queue_bulk_entry_ids = []
+    start_agent(base_url, queue_bulk_agent_key)
+    3.times do |index|
+      response = send_agent_message(base_url, queue_bulk_agent_key, "Bulk queued smoke instruction #{index + 1}")
+      queue_bulk_entry_ids << response.fetch("queue_entry").fetch("id")
+    end
+    stop_agent(base_url, queue_bulk_agent_key)
+    wait_for_agent_status(base_url, queue_bulk_agent_key, "failed")
+    start_agent(base_url, queue_process_all_agent_key)
+    3.times do |index|
+      send_agent_message(base_url, queue_process_all_agent_key, "Process-all queued smoke instruction #{index + 1}")
+    end
+    stop_agent(base_url, queue_process_all_agent_key)
+    wait_for_agent_status(base_url, queue_process_all_agent_key, "failed")
     node_dir = File.join(dir, "node")
     install_playwright!(node_dir)
     script = File.join(node_dir, "remote-ui-smoke.js")
@@ -8435,6 +8628,11 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       "TYCHO_REMOTE_UI_ORCHESTRATOR_AGENT_KEY" => orchestrator_agent_key,
       "TYCHO_REMOTE_UI_DELEGATED_AGENT_KEY" => delegated_agent_key,
       "TYCHO_REMOTE_UI_TAKEOVER_AGENT_KEY" => security_agent_key,
+      "TYCHO_REMOTE_UI_QUEUE_AGENT_KEY" => queue_agent_key,
+      "TYCHO_REMOTE_UI_QUEUE_BULK_AGENT_KEY" => queue_bulk_agent_key,
+      "TYCHO_REMOTE_UI_QUEUE_PROCESS_ALL_AGENT_KEY" => queue_process_all_agent_key,
+      "TYCHO_REMOTE_UI_QUEUE_ENTRY_IDS" => queue_entry_ids.join(","),
+      "TYCHO_REMOTE_UI_QUEUE_BULK_ENTRY_IDS" => queue_bulk_entry_ids.join(","),
       "CHROME_PATH" => browser
     }
     if ENV["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"].to_s == "1"
@@ -8454,6 +8652,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     end
     if ENV["TYCHO_REMOTE_UI_QUICK_AGENTS_PRIORITY_ONLY"].to_s == "1"
       smoke_env["TYCHO_REMOTE_UI_QUICK_AGENTS_PRIORITY_ONLY"] = "1"
+    end
+    if ENV["TYCHO_REMOTE_UI_QUEUE_CONTROLS_ONLY"].to_s == "1"
+      smoke_env["TYCHO_REMOTE_UI_QUEUE_CONTROLS_ONLY"] = "1"
     end
     capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
     unless capture_dir.empty?
