@@ -1308,11 +1308,21 @@ def write_smoke_script(path)
         await page.waitForFunction(() => !document.querySelector("[data-prompt-queue-management]")?.matches("[aria-busy='true']"));
         await page.unroute("**/prompt-queue/process");
         await page.waitForFunction(() => !document.querySelector("[data-prompt-queue] [data-prompt-queue-entry]"));
+        await page.waitForFunction(async (agentKey) => {
+          const response = await fetch(`/agents/${encodeURIComponent(agentKey)}`);
+          const agent = (await response.json()).agent;
+          return agent?.running === false && agent?.prompt_queue?.pending_count === 0;
+        }, queueBulkAgentKey, { timeout: 10_000 });
 
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(queueProcessAllAgentKey)}`, { waitUntil: "networkidle" });
         await page.click("[data-prompt-queue] > summary");
         await page.click("[data-queue-action='process-all']");
         await page.waitForFunction(() => !document.querySelector("[data-prompt-queue] [data-prompt-queue-entry]"));
+        await page.waitForFunction(async (agentKey) => {
+          const response = await fetch(`/agents/${encodeURIComponent(agentKey)}`);
+          const agent = (await response.json()).agent;
+          return agent?.running === false && agent?.prompt_queue?.pending_count === 0;
+        }, queueProcessAllAgentKey, { timeout: 10_000 });
       }
 
       if (process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY !== "1") await assertLoadingShellFailureRecovery();
