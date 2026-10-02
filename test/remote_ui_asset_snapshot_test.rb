@@ -25,6 +25,7 @@ module RemoteUIAssetSnapshotTest
     assert_fast_route_bootstrap_uses_cached_peer_activity
     assert_pull_request_comment_sections_are_unlimited
     assert_detail_composer_submissions_are_optimistic
+    assert_non_assistant_conversation_blocks_are_quiet
     puts "remote_ui_asset_snapshot_test: ok"
   end
 
@@ -50,6 +51,31 @@ module RemoteUIAssetSnapshotTest
     missing = required.reject { |fragment| javascript.include?(fragment) }
     raise "missing optimistic detail-composer contract: #{missing.join(", ")}" unless missing.empty?
     raise "missing detail-composer failure styling" unless css.include?(".composer-submission-error")
+  end
+
+  def assert_non_assistant_conversation_blocks_are_quiet
+    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
+
+    group_rule = css[/\.message-group \{.*?^\}/m].to_s
+    summary_rule = css[/\.message-group > summary \{.*?^\}/m].to_s
+    label_rule = css[/\.message-group-label \{.*?^\}/m].to_s
+    assistant_rule = css[/\.message\.run_summary \{.*?^\}/m].to_s
+
+    required_group = ["border: 0;", "border-radius: 0;", "background: transparent;", "box-shadow: none;"]
+    missing_group = required_group.reject { |fragment| group_rule.include?(fragment) }
+    raise "non-assistant conversation groups retained card styling: #{missing_group.join(', ')}" unless missing_group.empty?
+
+    required_summary = ["display: grid;", "grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);", "font-size: 10px;"]
+    missing_summary = required_summary.reject { |fragment| summary_rule.include?(fragment) }
+    raise "non-assistant conversation headers lost their centered subtle layout: #{missing_summary.join(', ')}" unless missing_summary.empty?
+    raise "conversation group labels are not centered" unless label_rule.include?("grid-column: 2;") && label_rule.include?("justify-self: center;")
+    raise "mobile conversation group headers must stack instead of colliding" unless css.include?(".message-group > summary > span:last-child {\n    grid-row: 2;")
+
+    %w[.system-event-block.validation-retry-block .queue-read-block .circuit-breaker-recovery-block].each do |selector|
+      rule = css[/#{Regexp.escape(selector)} \{.*?^\}/m].to_s
+      raise "#{selector} still restores a card-like surface" unless rule.include?("border: 0;") && rule.include?("background: transparent;")
+    end
+    raise "assistant Summary styling must remain visually distinct" unless assistant_rule.include?("border-color:") && assistant_rule.include?("background:")
   end
 
   def assert_pull_request_comment_sections_are_unlimited
