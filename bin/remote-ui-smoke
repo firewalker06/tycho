@@ -1259,15 +1259,22 @@ def write_smoke_script(path)
 
         await page.locator(`[data-select-queue-entry='${queueEntryIds[1]}']`).focus();
         await page.keyboard.press("Space");
+        const queueScrollTop = await page.locator("[data-prompt-queue] > .prompt-queue-body > .prompt-queue-list").evaluate((list) => {
+          list.scrollTop = 80;
+          return list.scrollTop;
+        });
+        if (queueScrollTop <= 0) throw new Error(`Queue list did not accept a nonzero scroll position: ${queueScrollTop}`);
         await page.evaluate(async () => { await refresh(); });
         const pollSelection = await page.evaluate((selectedId) => ({
           open: document.querySelector("[data-prompt-queue]")?.open,
           checked: document.querySelector(`[data-select-queue-entry='${selectedId}']`)?.checked,
           focused: document.activeElement?.dataset?.selectQueueEntry,
+          scrollTop: document.querySelector("[data-prompt-queue] > .prompt-queue-body > .prompt-queue-list")?.scrollTop,
           ids: Array.from(document.querySelectorAll("[data-prompt-queue] [data-prompt-queue-entry]")).map((row) => row.dataset.promptQueueEntry),
         }), queueEntryIds[1]);
-        if (!pollSelection.open || !pollSelection.checked || pollSelection.ids.join(",") !== initial.ids.join(",")) {
-          throw new Error(`Polling disturbed queue selection or order: ${JSON.stringify(pollSelection)}`);
+        if (!pollSelection.open || !pollSelection.checked || pollSelection.focused !== queueEntryIds[1] ||
+            pollSelection.scrollTop !== queueScrollTop || pollSelection.ids.join(",") !== initial.ids.join(",")) {
+          throw new Error(`Polling disturbed queue selection, focus, scroll, or order: ${JSON.stringify({ ...pollSelection, expectedScrollTop: queueScrollTop })}`);
         }
         await page.click("[data-queue-action='remove-selected']");
         const selectedConfirmation = await page.locator("#confirmation-description").textContent();

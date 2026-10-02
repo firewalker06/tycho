@@ -19,6 +19,7 @@ module PromptQueueTest
     assert_pending_queue_visibility_tracks_processing_state
     assert_non_terminal_results_explain_unprocessed_queue_work
     assert_selected_processing_preserves_fifo_and_prevents_duplicate_dispatch
+    assert_stale_selected_process_preserves_inquiry
     assert_bulk_removal_is_audited_and_stale_snapshots_do_nothing
     assert_queue_action_routes_report_stale_and_selected_results
     assert_automatic_dispatch_records_one_structured_read_block
@@ -370,6 +371,41 @@ module PromptQueueTest
              dispositions.find { |item| item["entry_id"] == "active-report" }.fetch("outcome") == "superseded_with_reason" &&
              dispositions.all? { |item| item["reason"] == "Operator confirmed removal of 3 entries" },
              "expected bulk removal to preserve source-appropriate durable audit dispositions")
+    end
+  end
+
+  def assert_stale_selected_process_preserves_inquiry
+    with_queue_store do |registry, workspace|
+      inquiry = { "message" => "Choose a release target", "fields" => [] }
+      agent = terminal_agent(workspace, status: "input_required", structured_result: {
+        "status" => "input_required", "summary" => "Needs input", "inquiry" => inquiry
+      })
+      memory = HQ::AgentMemory.new(agent)
+      memory.append_inquiry_request!(inquiry, inquiry_id: "atomic-stale-inquiry")
+      agent.enqueue_prompt!(prompt: "keep queued", id: "inquiry-entry")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+
+      stale = store.process_prompt_queue_entries!(
+        agent.key, entry_ids: ["inquiry-entry"], expected_entry_ids: %w[inquiry-entry missing]
+      )
+      selection_error = begin
+        store.process_prompt_queue_entries!(
+          agent.key, entry_ids: ["missing"], expected_entry_ids: ["inquiry-entry"]
+        )
+        nil
+      rescue ArgumentError => e
+        e
+      end
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      events = HQ::AgentMemory.new(persisted).events
+
+      assert(stale.fetch("status") == "stale" && stale.fetch("processed_entry_ids").empty? &&
+             selection_error&.message&.include?("missing: missing") &&
+             persisted.latest_inquiry_id == "atomic-stale-inquiry" &&
+             events.none? { |event| event["type"] == "inquiry_cancelled" } &&
+             persisted.visible_prompt_queue_entries.map { |entry| entry["id"] } == ["inquiry-entry"],
+             "expected stale snapshots and invalid selections to preserve the active inquiry and queue")
     end
   end
 

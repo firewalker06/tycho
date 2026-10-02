@@ -479,7 +479,6 @@ module HQ
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = find_agent_in!(agents, key)
         raise ArgumentError, "Agent is running" if target.running?
-        target.cancel_pending_inquiry! if target.inquiry_blocking_prompt_queue?
 
         current_ids = target.visible_prompt_queue_entries.map { |entry| entry["id"].to_s }
         expected = Array(expected_entry_ids).map(&:to_s)
@@ -487,7 +486,9 @@ module HQ
           next({ "status" => "stale", "expected_entry_ids" => expected, "current_entry_ids" => current_ids,
                  "processed_entry_ids" => [], "agent" => target })
         end
-        selected = target.prepare_queue_entries_for_processing!(entry_ids)
+        selected_ids = target.validate_queue_entry_ids!(entry_ids)
+        target.cancel_pending_inquiry! if target.inquiry_blocking_prompt_queue?
+        selected = target.prepare_queue_entries_for_processing!(selected_ids)
         dispatch_prompt_queue!(target, agents)
         {
           "status" => target.running? ? "started" : "accepted",

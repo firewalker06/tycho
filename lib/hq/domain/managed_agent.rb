@@ -656,14 +656,8 @@ module HQ
     end
 
     def prepare_queue_entries_for_processing!(entry_ids)
-      ids = Array(entry_ids).map(&:to_s).uniq
-      raise ArgumentError, "Select at least one queue entry" if ids.empty?
-
+      ids = validate_queue_entry_ids!(entry_ids)
       batch = active_queue_work
-      unresolved = batch ? QueueWork.unresolved_ids(batch) : []
-      queued_by_id = @prompt_queue.to_h { |entry| [entry["id"].to_s, entry] }
-      unknown = ids.reject { |id| unresolved.include?(id) || queued_by_id.key?(id) }
-      raise ArgumentError, "Queue changed; refresh and try again (missing: #{unknown.join(', ')})" unless unknown.empty?
 
       selected_queued = @prompt_queue.select { |entry| ids.include?(entry["id"].to_s) }
       @prompt_queue.reject! { |entry| ids.include?(entry["id"].to_s) }
@@ -678,7 +672,7 @@ module HQ
       ids
     end
 
-    def remove_queue_entries!(entry_ids, reason:, removed_at: Time.now)
+    def validate_queue_entry_ids!(entry_ids)
       ids = Array(entry_ids).map(&:to_s).uniq
       raise ArgumentError, "Select at least one queue entry" if ids.empty?
 
@@ -688,6 +682,13 @@ module HQ
       unknown = ids.reject { |id| unresolved.include?(id) || queued_by_id.key?(id) }
       raise ArgumentError, "Queue changed; refresh and try again (missing: #{unknown.join(', ')})" unless unknown.empty?
 
+      ids
+    end
+
+    def remove_queue_entries!(entry_ids, reason:, removed_at: Time.now)
+      ids = validate_queue_entry_ids!(entry_ids)
+      batch = active_queue_work
+      unresolved = batch ? QueueWork.unresolved_ids(batch) : []
       selected_queued = @prompt_queue.select { |entry| ids.include?(entry["id"].to_s) }
       @prompt_queue.reject! { |entry| ids.include?(entry["id"].to_s) }
       removal_reason = reason.to_s.strip
