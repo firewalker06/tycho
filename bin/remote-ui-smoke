@@ -3483,6 +3483,12 @@ def write_smoke_script(path)
               actionAtRight: Boolean(contentRect && openRect && Math.abs(contentRect.right - openRect.right) < 1),
               focus: document.activeElement === open,
               overflow: Boolean(content && content.scrollWidth > content.clientWidth),
+              validRepeat: runSummaryPreviewText("Repeat this sentence. Repeat this sentence.", {
+                metadata: { status: "success" },
+              }),
+              validStoppedRepeat: runSummaryPreviewText("stopped: Repeat this sentence. Repeat this sentence.", {
+                metadata: { status: "stopped" },
+              }),
             };
           });
           await installSummaryBlockFixture();
@@ -3490,6 +3496,8 @@ def write_smoke_script(path)
           if (!desktopSummaryBlock.header.toLowerCase().includes("summary #57") || desktopSummaryBlock.status !== "Stopped" ||
               desktopSummaryBlock.statusIntent !== "warning" ||
               desktopSummaryBlock.body !== "Tycho stopped this run after no structured agent output stayed idle for 300 seconds." ||
+              desktopSummaryBlock.validRepeat !== "Repeat this sentence. Repeat this sentence." ||
+              desktopSummaryBlock.validStoppedRepeat !== "Repeat this sentence. Repeat this sentence." ||
               desktopSummaryBlock.actionLabel !== "Open" || !desktopSummaryBlock.actionAtRight ||
               !desktopSummaryBlock.focus || desktopSummaryBlock.overflow) {
             throw new Error(`Desktop Summary block contract failed: ${JSON.stringify(desktopSummaryBlock)}`);

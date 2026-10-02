@@ -7146,8 +7146,9 @@ module RemoteServerTest
            "expected run summaries to render as compact Conversation blocks")
     assert(js[:body].include?("function runSummaryStatusBadge") &&
            js[:body].include?("function runSummaryPreviewText") &&
-           js[:body].include?("function collapseRepeatedSummaryText"),
-           "expected compact run summaries to separate their status label and collapse immediately repeated preview text")
+           js[:body].include?("function collapseKnownStoppedRunSummaryText") &&
+           js[:body].include?("removedStatusPrefix"),
+           "expected compact run summaries to limit duplicate cleanup to the known stopped-run producer shape")
     assert(js[:body].include?("summaryStatusHtml") &&
            js[:body].include?("summary-message-status"),
            "expected compact run summary statuses to render beside the Summary header")
