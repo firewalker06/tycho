@@ -5110,20 +5110,62 @@ details.queue-read-block:not([open]) > .queue-read-body {
 }
 
 .summary-message-content {
-  display: grid;
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
 .summary-message-actions {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   flex-wrap: nowrap;
   gap: 10px;
+  margin-left: auto;
   min-width: 0;
 }
 
 .summary-message-content p {
+  flex: 1 1 0;
+  min-width: 0;
   margin: 0;
+}
+
+.summary-message-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 6px;
+  background: color-mix(in srgb, currentColor 9%, var(--panel-soft));
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.summary-message-status.need {
+  color: var(--warning);
+}
+
+.summary-message-status.running {
+  color: var(--accent);
+}
+
+.summary-message-status.done {
+  color: var(--ok);
+}
+
+.summary-message-status.fail {
+  color: var(--danger);
+}
+
+.summary-message-status.info {
+  color: var(--info);
 }
 
 .summary-suppression-indicator {
@@ -5159,7 +5201,7 @@ details.queue-read-block:not([open]) > .queue-read-body {
 }
 
 .summary-message-open {
-  justify-self: start;
+  white-space: nowrap;
 }
 
 .turn-completed-message-content {

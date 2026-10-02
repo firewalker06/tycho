@@ -7144,6 +7144,13 @@ module RemoteServerTest
            "expected sandboxed HTML previews to include a restrictive content policy")
     assert(js[:body].include?("function renderRunSummaryMessageContent"),
            "expected run summaries to render as compact Conversation blocks")
+    assert(js[:body].include?("function runSummaryStatusBadge") &&
+           js[:body].include?("function runSummaryPreviewText") &&
+           js[:body].include?("function collapseRepeatedSummaryText"),
+           "expected compact run summaries to separate their status label and collapse immediately repeated preview text")
+    assert(js[:body].include?("summaryStatusHtml") &&
+           js[:body].include?("summary-message-status"),
+           "expected compact run summary statuses to render beside the Summary header")
     assert(js[:body].include?("function renderSummarySections") &&
            js[:body].include?('class="summary-sections" aria-label="Structured summary details"') &&
            js[:body].include?("if (normalizedSummarySections(sections).length) return renderSummarySections(sections, agent, menuScope);"),
@@ -7154,6 +7161,11 @@ module RemoteServerTest
            "expected compact Conversation summaries not to repeat rich summary sections")
     assert(css[:body].include?(".summary-section-text") && css[:body].include?(".summary-section-attachment"),
            "expected rich summary text and attachments to have focused styling")
+    assert(css[:body].include?(".summary-message-content {\n  display: flex;") &&
+           css[:body].include?(".summary-message-actions {") &&
+           css[:body].include?("margin-left: auto;") &&
+           css[:body].include?(".summary-message-status.need"),
+           "expected compact Summary content, actions, and status variants to use responsive focused styling")
     assert(js[:body].include?('data-open-agent-summary="${escapeAttr(agentKey)}"'),
            "expected compact run summaries to link to the full Summary page")
     assert(js[:body].include?('block.role === "assistant"'),

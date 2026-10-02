@@ -506,7 +506,7 @@ def write_smoke_script(path)
       const delegatedAgentKey = process.env.TYCHO_REMOTE_UI_DELEGATED_AGENT_KEY;
       const takeoverAgentKey = process.env.TYCHO_REMOTE_UI_TAKEOVER_AGENT_KEY;
       const chromePath = process.env.CHROME_PATH;
-      const captureDir = process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "";
+      const summaryCaptureDir = process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "";
       const beforeCapture = process.env.TYCHO_REMOTE_UI_BEFORE_CAPTURE || "";
       const skillsOnly = process.env.TYCHO_REMOTE_UI_SKILLS_ONLY === "1";
       const workspaceOnly = process.env.TYCHO_REMOTE_UI_WORKSPACE_ONLY === "1";
@@ -522,6 +522,7 @@ def write_smoke_script(path)
       const queueProcessAllAgentKey = process.env.TYCHO_REMOTE_UI_QUEUE_PROCESS_ALL_AGENT_KEY;
       const queueEntryIds = (process.env.TYCHO_REMOTE_UI_QUEUE_ENTRY_IDS || "").split(",").filter(Boolean);
       const queueBulkEntryIds = (process.env.TYCHO_REMOTE_UI_QUEUE_BULK_ENTRY_IDS || "").split(",").filter(Boolean);
+      const captureDir = process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY === "1" ? "" : summaryCaptureDir;
       const draft = "Remote UI smoke draft " + Date.now();
       const errors = [];
 
@@ -3042,6 +3043,7 @@ def write_smoke_script(path)
         if (activityLinkedContract.takeoverOwnerBefore !== "user" || activityLinkedContract.takeoverOwnerAfter !== "user") {
           throw new Error(`Activity topology refresh discarded delegation ownership metadata: ${JSON.stringify(activityLinkedContract)}`);
         }
+        if (process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY !== "1") {
         await page.waitForSelector(`[data-show-linked-agents='${orchestratorAgentKey}'][aria-label='Show linked agents']`, {
           state: "visible",
           timeout: 10_000,
@@ -3357,6 +3359,7 @@ def write_smoke_script(path)
             render();
           });
         }
+        }
         if (process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY === "1") {
           await page.setViewportSize({ width: 1440, height: 900 });
           const richSummaryContract = await page.evaluate((key) => {
@@ -3439,6 +3442,67 @@ def write_smoke_script(path)
               compactSummaryContract.sectionCount !== 0) {
             throw new Error(`Compact summary repeated rich details: ${JSON.stringify(compactSummaryContract)}`);
           }
+          const installSummaryBlockFixture = async () => page.evaluate((key) => {
+            clearTimeout(state.timer);
+            state.timer = null;
+            schedule = () => {};
+            closeUnreadPanel();
+            state.headerMoreOpen = false;
+            history.replaceState(null, "", routeHash({ type: "agent", key }));
+            state.renderedRouteKey = null;
+            state.renderedViewHtml = "";
+            render();
+            const fixture = document.createElement("div");
+            fixture.id = "summary-block-smoke-fixture";
+            fixture.style.width = "100%";
+            fixture.innerHTML = renderMessage({
+              kind: "run_summary",
+              content: "stopped: Tycho stopped this run after no structured agent output stayed idle for 300 seconds. Tycho stopped this run after no structured agent output stayed idle for 300 seconds.",
+              created_at: "2026-10-02T06:48:00Z",
+              metadata: { summary_id: "summary-block-smoke", run_number: 57, status: "stopped" },
+            }, { agent: findAgent(key) });
+            document.querySelector(".message-list")?.append(fixture);
+          }, agentKey);
+          const summaryBlockContract = async () => page.evaluate(() => {
+            const fixture = document.querySelector("#summary-block-smoke-fixture");
+            const summary = fixture?.querySelector(".message.run_summary");
+            const role = summary?.querySelector(".message-role");
+            const status = role?.querySelector(".summary-message-status");
+            const content = summary?.querySelector(".summary-message-content");
+            const text = content?.querySelector("p");
+            const open = content?.querySelector("[data-open-agent-summary]");
+            open?.focus();
+            const contentRect = content?.getBoundingClientRect();
+            const openRect = open?.getBoundingClientRect();
+            return {
+              header: role?.innerText.replace(/\s+/g, " ").trim() || "",
+              status: status?.innerText || "",
+              statusIntent: status?.dataset.intent || "",
+              body: text?.innerText || "",
+              actionLabel: open?.innerText.trim() || "",
+              actionAtRight: Boolean(contentRect && openRect && Math.abs(contentRect.right - openRect.right) < 1),
+              focus: document.activeElement === open,
+              overflow: Boolean(content && content.scrollWidth > content.clientWidth),
+            };
+          });
+          await installSummaryBlockFixture();
+          const desktopSummaryBlock = await summaryBlockContract();
+          if (!desktopSummaryBlock.header.toLowerCase().includes("summary #57") || desktopSummaryBlock.status !== "Stopped" ||
+              desktopSummaryBlock.statusIntent !== "warning" ||
+              desktopSummaryBlock.body !== "Tycho stopped this run after no structured agent output stayed idle for 300 seconds." ||
+              desktopSummaryBlock.actionLabel !== "Open" || !desktopSummaryBlock.actionAtRight ||
+              !desktopSummaryBlock.focus || desktopSummaryBlock.overflow) {
+            throw new Error(`Desktop Summary block contract failed: ${JSON.stringify(desktopSummaryBlock)}`);
+          }
+          if (summaryCaptureDir) await page.locator("#summary-block-smoke-fixture").screenshot({ path: path.join(summaryCaptureDir, "summary-block-desktop.png") });
+          await page.setViewportSize({ width: 390, height: 844 });
+          const mobileSummaryBlock = await summaryBlockContract();
+          if (!mobileSummaryBlock.actionAtRight || !mobileSummaryBlock.focus || mobileSummaryBlock.overflow) {
+            throw new Error(`Mobile Summary block contract failed: ${JSON.stringify(mobileSummaryBlock)}`);
+          }
+          if (summaryCaptureDir) await page.locator("#summary-block-smoke-fixture").screenshot({ path: path.join(summaryCaptureDir, "summary-block-mobile.png") });
+          await page.evaluate(() => document.querySelector("#summary-block-smoke-fixture")?.remove());
+          await page.setViewportSize({ width: 1440, height: 900 });
           if (captureDir) await page.screenshot({ path: path.join(captureDir, "rich-summary-blogpost.png"), fullPage: false });
           console.log("remote-ui-smoke: HTML, Mermaid, polling, schedule menu, sticky Agents toolbar, and Now hierarchy ok");
           return;
