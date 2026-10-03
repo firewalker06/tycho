@@ -621,7 +621,7 @@ module HQ
         next unless agent.last_run
 
         state.last_finished_at = agent.finished_at || now
-        if agent.status == "succeeded"
+        if %w[succeeded partial].include?(agent.status)
           handle_success(schedule, state, agent, now:)
         elsif agent_needs_operator?(agent)
           handle_input_required(schedule, state, agent, now:)
@@ -634,7 +634,7 @@ module HQ
     def handle_success(schedule, state, agent, now:)
       recovering = !!state.failure_started_at
       no_action = agent.no_action_needed?
-      state.last_status = no_action ? "no_action_needed" : "succeeded"
+      state.last_status = no_action ? "no_action_needed" : agent.effective_status == "partial" ? "partial" : "succeeded"
       state.last_error = nil
       if no_action
         state.failure_started_at = nil
@@ -709,9 +709,14 @@ module HQ
 
     def notify_schedule_first_success(schedule, state, agent, now:)
       id = ["schedule", schedule.key, "first-success"].join(":")
+      partial = agent.effective_status == "partial"
       payload = {
-        title: "Done",
-        body: "#{schedule.name}: first run succeeded. Next run: #{format_time(state.next_due_at)}.",
+        title: partial ? "Partial" : "Done",
+        body: if partial
+                "#{schedule.name}: first run completed with partial status. Next run: #{format_time(state.next_due_at)}."
+              else
+                "#{schedule.name}: first run succeeded. Next run: #{format_time(state.next_due_at)}."
+              end,
         tag: "hq:schedule:#{schedule.key}:first-success",
         url: "/#agent/#{agent.key}"
       }
@@ -720,9 +725,14 @@ module HQ
 
     def notify_schedule_recovery(schedule, state, agent, now:)
       id = ["schedule", schedule.key, "recovery", state.failure_started_at&.iso8601 || now.iso8601].join(":")
+      partial = agent.effective_status == "partial"
       payload = {
-        title: "Recovered",
-        body: "#{schedule.name}: succeeded after failure. Next run: #{format_time(state.next_due_at)}.",
+        title: partial ? "Partial" : "Recovered",
+        body: if partial
+                "#{schedule.name}: completed with partial status after failure. Next run: #{format_time(state.next_due_at)}."
+              else
+                "#{schedule.name}: succeeded after failure. Next run: #{format_time(state.next_due_at)}."
+              end,
         tag: "hq:schedule:#{schedule.key}:recovery",
         url: "/#agent/#{agent.key}"
       }

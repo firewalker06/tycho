@@ -40,6 +40,7 @@ module SchedulerTest
     assert_bin_hq_schedule_daemon_runs_once
     assert_bin_hq_schedule_resume_updates_next_run
     assert_no_action_scheduled_agent_stays_quiet
+    assert_partial_scheduled_agent_continues_and_keeps_status
     assert_failed_scheduled_agent_stops_and_notifies
     puts "scheduler_test: ok"
   end
@@ -870,6 +871,67 @@ module SchedulerTest
       assert(state.last_error.nil?, "expected no-action outcome to clear schedule errors")
       assert(state.failure_started_at.nil?, "expected no-action outcome to clear failure tracking")
       assert(notifier.payloads.empty?, "expected no-action outcome to avoid schedule push notifications")
+    end
+  end
+
+  def assert_partial_scheduled_agent_continues_and_keeps_status
+    with_temp_runtime do |dir|
+      registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: weekday
+            cron: "0 9 * * 1-5"
+            target:
+              type: agent
+              project_key: web
+              message: "Run maintenance."
+      YAML
+      projects = registry.projects.map { |config| HQ::Project.new(config) }
+      completed = HQ::ManagedAgent.new(
+        key: "web-agent-1", name: "Partial schedule", project_key: "web", template_key: "scheduled",
+        workspace: File.join(dir, "workspace"), prompt: "", started_at: Time.now - 120,
+        finished_at: Time.now - 60, last_exit_code: 0,
+        structured_result: { "status" => "partial", "summary" => "Some maintenance completed." },
+        runs: [HQ::ManagedAgent::AgentRun.new(
+          started_at: Time.now - 120, finished_at: Time.now - 60, exit_code: 0, status: "partial",
+          log_path: File.join(HQ::AGENT_LOGS_DIR, "partial.raw.log"), command: "test"
+        )]
+      )
+      HQ::AgentStore.new(projects).save([completed])
+
+      store = HQ::ScheduleStore.new
+      store.save(
+        "weekday" => HQ::ScheduleState.new(
+          key: "weekday", status: "scheduled", enabled: true, last_status: "started",
+          last_target_kind: "agent", last_target_key: completed.key, next_due_at: Time.now + 3600,
+          failure_started_at: Time.now - 300
+        )
+      )
+      notifier = FakeNotifier.new
+      scheduler = build_scheduler(registry, schedule_path, web_push_notifier: notifier)
+      scheduler.tick
+      state = store.load.fetch("weekday")
+
+      assert(state.scheduled? && state.last_status == "partial" && state.last_error.nil?,
+             "expected partial schedule outcome to keep its label and remain scheduled")
+      assert(state.failure_started_at.nil? && state.recovery_notified_at,
+             "expected partial schedule outcome to use success-like recovery state")
+      assert(notifier.payloads.any? { |payload| payload[:title] == "Partial" } &&
+             notifier.payloads.none? { |payload| payload[:title] == "Failed" },
+             "expected partial schedule outcome to keep its truthful notification label")
+
+      later = HQ::AgentStore.new(projects).load.find { |agent| agent.key == completed.key }
+      later.structured_result = { "status" => "success", "summary" => "Later maintenance completed." }
+      later.instance_variable_set(:@finished_at, Time.now)
+      later.last_run.status = "success"
+      later.last_run.finished_at = Time.now
+      HQ::AgentStore.new(projects).save([later])
+      state.last_status = "started"
+      store.save("weekday" => state)
+
+      scheduler.tick
+      later_state = store.load.fetch("weekday")
+      assert(later_state.scheduled? && later_state.last_status == "succeeded" && later_state.last_error.nil?,
+             "expected a later successful scheduled run to reconcile after partial")
     end
   end
 

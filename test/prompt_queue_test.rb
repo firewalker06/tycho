@@ -17,7 +17,8 @@ module PromptQueueTest
     assert_self_delayed_continuation_preserves_delegation_ownership
     assert_claim_race_drains_fifo_without_overlap
     assert_pending_queue_visibility_tracks_processing_state
-    assert_non_terminal_results_explain_unprocessed_queue_work
+    assert_result_statuses_apply_queue_release_policy
+    assert_partial_release_matrix_preserves_fifo_and_later_work
     assert_selected_processing_preserves_fifo_and_prevents_duplicate_dispatch
     assert_stale_selected_process_preserves_inquiry
     assert_bulk_removal_is_audited_and_stale_snapshots_do_nothing
@@ -258,8 +259,8 @@ module PromptQueueTest
     end
   end
 
-  def assert_non_terminal_results_explain_unprocessed_queue_work
-    %w[partial failed blocked input_required].each do |result_status|
+  def assert_result_statuses_apply_queue_release_policy
+    %w[failed blocked input_required].each do |result_status|
       with_queue_store do |registry, workspace|
         agent = terminal_agent(workspace, status: result_status, structured_result: {
           "status" => result_status, "summary" => "Queue processing ended as #{result_status}"
@@ -282,7 +283,7 @@ module PromptQueueTest
       end
     end
 
-    %w[success no_action_needed].each do |result_status|
+    %w[success no_action_needed partial].each do |result_status|
       with_queue_store do |registry, workspace|
         agent = terminal_agent(workspace, status: result_status, structured_result: {
           "status" => result_status, "summary" => "Queue processed"
@@ -298,6 +299,61 @@ module PromptQueueTest
                payload["unprocessed_reason"].nil? && payload.dig("queue_work", "state") == "resolved" &&
                payload.dig("queue_work", "unresolved_entry_ids").empty?,
                "expected #{result_status} to auto-complete delivered queue work")
+      end
+    end
+  end
+
+  def assert_partial_release_matrix_preserves_fifo_and_later_work
+    cases = {
+      "ordinary" => [["ordinary-first", "user", nil], ["ordinary-second", "user", nil]],
+      "delayed" => [["delayed-first", "user", Time.now - 2], ["delayed-second", "user", Time.now - 1]],
+      "delegated" => [["delegated-first", "delegation_callback", nil],
+                      ["delegated-second", "delegation_callback", nil]],
+      "mixed" => [["mixed-user", "user", nil], ["mixed-report", "delegation_callback", nil],
+                  ["mixed-later", "user", nil]]
+    }
+
+    cases.each do |name, entries|
+      with_queue_store do |registry, workspace|
+        agent = terminal_agent(workspace, status: "partial", structured_result: {
+          "status" => "partial", "summary" => "Partial progress"
+        })
+        first_entries = name == "mixed" ? entries.first(2) : entries.first(1)
+        later_entries = entries.drop(first_entries.length)
+        first_entries.each do |id, source, not_before|
+          agent.enqueue_prompt!(prompt: id, id:, source:, not_before:)
+        end
+        first_batch = agent.open_queue_work_batch!
+        agent.record_queue_read!(first_batch)
+        later_entries.each do |id, source, not_before|
+          agent.enqueue_prompt!(prompt: id, id:, source:, not_before:)
+        end
+
+        agent.send(:gate_successful_queue_work!, agent.last_run)
+        resolved_first = agent.queue_work_batch(first_batch["id"])
+        assert(agent.effective_status == "partial" && resolved_first["state"] == "resolved" &&
+               resolved_first["entries"].map { |entry| entry["id"] } == first_entries.map(&:first) &&
+               resolved_first["dispositions"].values.map { |item| item["outcome"] } ==
+                 first_entries.map { |_id, source, _due| source == "delegation_callback" ? "incorporated" : "completed" } &&
+               agent.queued_prompts.map { |entry| entry["id"] } == later_entries.map(&:first) &&
+               agent.prompt_queue_dispatchable?,
+               "expected partial #{name} work to resolve with stable FIFO IDs and release later work")
+
+        store = HQ::AgentStore.new(registry.projects)
+        store.save([agent])
+        with_stubbed_start { store.load }
+        later_run = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+                         .find { |candidate| candidate.key == agent.key }
+        later_batch = later_run.active_queue_work
+        assert(later_batch && later_batch["entries"].map { |entry| entry["id"] } == later_entries.map(&:first),
+               "expected later #{name} work to dispatch in FIFO order after partial")
+
+        later_run.structured_result = { "status" => "success", "summary" => "Later work completed" }
+        later_run.send(:gate_successful_queue_work!, later_run.last_run)
+        resolved_later = later_run.queue_work_batch(later_batch["id"])
+        assert(resolved_later["state"] == "resolved" && later_run.active_queue_work.nil? &&
+               resolved_later["entries"].map { |entry| entry["id"] } == later_entries.map(&:first),
+               "expected later successful #{name} work to resolve without duplicate delivery")
       end
     end
   end
