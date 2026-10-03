@@ -579,22 +579,25 @@ def write_smoke_script(path)
         });
         const loadingMobile = await page.evaluate(() => {
           const warning = document.querySelector("[data-context-pressure-warning]");
-          const archive = warning?.querySelector("[data-archive-agent]");
+          const actions = warning?.querySelector(".context-pressure-actions");
           const spinner = document.querySelector(".conversation-loading-logo");
-          const archiveRect = archive?.getBoundingClientRect();
+          const actionsRect = actions?.getBoundingClientRect();
           const spinnerRect = spinner?.getBoundingClientRect();
-          const overlaps = archiveRect && spinnerRect && !(
-            archiveRect.right <= spinnerRect.left || archiveRect.left >= spinnerRect.right ||
-            archiveRect.bottom <= spinnerRect.top || archiveRect.top >= spinnerRect.bottom
+          const overlaps = actionsRect && spinnerRect && !(
+            actionsRect.right <= spinnerRect.left || actionsRect.left >= spinnerRect.right ||
+            actionsRect.bottom <= spinnerRect.top || actionsRect.top >= spinnerRect.bottom
           );
           return {
-            archive: archiveRect?.toJSON(),
+            actions: actionsRect?.toJSON(),
             spinner: spinnerRect?.toJSON(),
             overlaps: Boolean(overlaps),
-            clearance: archiveRect && spinnerRect ? spinnerRect.top - archiveRect.bottom : null,
+            clearance: actionsRect && spinnerRect ? spinnerRect.top - actionsRect.bottom : null,
+            scrollWidth: document.documentElement.scrollWidth,
+            viewportWidth: innerWidth,
           };
         });
-        if (loadingMobile.overlaps || loadingMobile.clearance === null || loadingMobile.clearance < 16) {
+        if (loadingMobile.overlaps || loadingMobile.clearance === null || loadingMobile.clearance < 16 ||
+            loadingMobile.scrollWidth > loadingMobile.viewportWidth) {
           throw new Error(`Context pressure warning overlaps conversation loading state on mobile: ${JSON.stringify(loadingMobile)}`);
         }
         if (captureDir) {
@@ -614,36 +617,97 @@ def write_smoke_script(path)
           if (pane) pane.scrollTop = 0;
         });
         const loadedMobile = await page.evaluate(() => {
-          const archive = document.querySelector("[data-context-pressure-warning] [data-archive-agent]");
+          const actionsContainer = document.querySelector("[data-context-pressure-warning] .context-pressure-actions");
           const conversationState = document.querySelector(".message-list > .message-group");
-          const archiveRect = archive?.getBoundingClientRect();
+          const actionsRect = actionsContainer?.getBoundingClientRect();
           const stateRect = conversationState?.getBoundingClientRect();
           const warning = document.querySelector("[data-context-pressure-warning]");
-          const actions = Array.from(warning?.querySelectorAll("button") || []).map((button) => {
-            const rect = button.getBoundingClientRect();
-            return { label: button.textContent.trim(), width: rect.width, height: rect.height };
+          const primaryActions = Array.from(actionsContainer?.children || []).map((action) => {
+            const rect = action.getBoundingClientRect();
+            const trigger = action.matches("details") ? action.querySelector(":scope > summary") : action;
+            const triggerRect = trigger?.getBoundingClientRect();
+            return {
+              label: trigger?.textContent.trim() || trigger?.getAttribute("aria-label"),
+              width: triggerRect?.width,
+              height: triggerRect?.height,
+              brand: trigger?.matches("button.primary"),
+            };
           });
-          const overlaps = archiveRect && stateRect && !(
-            archiveRect.right <= stateRect.left || archiveRect.left >= stateRect.right ||
-            archiveRect.bottom <= stateRect.top || archiveRect.top >= stateRect.bottom
+          const overlaps = actionsRect && stateRect && !(
+            actionsRect.right <= stateRect.left || actionsRect.left >= stateRect.right ||
+            actionsRect.bottom <= stateRect.top || actionsRect.top >= stateRect.bottom
           );
           return {
-            archive: archiveRect?.toJSON(),
+            actionsRect: actionsRect?.toJSON(),
             conversationState: stateRect?.toJSON(),
             overlaps: Boolean(overlaps),
-            clearance: archiveRect && stateRect ? stateRect.top - archiveRect.bottom : null,
-            actions,
+            clearance: actionsRect && stateRect ? stateRect.top - actionsRect.bottom : null,
+            primaryActions,
             warningRole: warning?.getAttribute("role"),
+            warningIcon: warning?.querySelector("[data-context-pressure-icon]")?.dataset.contextPressureIcon,
             scrollWidth: document.documentElement.scrollWidth,
             viewportWidth: innerWidth,
           };
         });
         if (loadedMobile.overlaps || loadedMobile.clearance === null || loadedMobile.clearance < 16 ||
-            loadedMobile.actions.length !== 4 || loadedMobile.actions.some((action) => action.height < 44 || action.width < 44) ||
-            loadedMobile.warningRole !== "alert" ||
+            loadedMobile.primaryActions.length !== 3 ||
+            loadedMobile.primaryActions.map((action) => action.label).join("|") !== "Start New|Keep Going|More context pressure actions" ||
+            loadedMobile.primaryActions.some((action) => action.height < 44 || action.width < 44) ||
+            !loadedMobile.primaryActions.slice(0, 2).every((action) => action.brand) ||
+            loadedMobile.warningRole !== "alert" || loadedMobile.warningIcon !== "shield-alert" ||
             loadedMobile.scrollWidth > loadedMobile.viewportWidth) {
           throw new Error(`Context pressure warning overlaps conversation state on mobile: ${JSON.stringify(loadedMobile)}`);
         }
+        const moreActions = page.locator("[data-context-pressure-warning] .context-pressure-menu > summary");
+        await moreActions.focus();
+        await page.keyboard.press("Enter");
+        await page.waitForSelector("[data-context-pressure-warning] .context-pressure-menu[open]", { state: "visible" });
+        await page.waitForFunction(() => document.activeElement?.matches("[data-context-pressure-handoff]"));
+        const menuContract = await page.evaluate(() => {
+          const menu = document.querySelector("[data-context-pressure-warning] .context-pressure-menu");
+          const items = Array.from(menu?.querySelectorAll("[role='menuitem']") || []);
+          return {
+            labels: items.map((item) => item.textContent.trim()),
+            menuRole: menu?.querySelector(".more-menu")?.getAttribute("role"),
+            triggerHasPopup: menu?.querySelector(":scope > summary")?.getAttribute("aria-haspopup"),
+            focusedLabel: document.activeElement?.textContent.trim(),
+            archiveDisabled: items[1]?.disabled,
+            targets: items.map((item) => ({ width: item.getBoundingClientRect().width, height: item.getBoundingClientRect().height })),
+            scrollWidth: document.documentElement.scrollWidth,
+            viewportWidth: innerWidth,
+          };
+        });
+        if (menuContract.labels.join("|") !== "Start with Handoff|Archive" || menuContract.menuRole !== "menu" ||
+            menuContract.triggerHasPopup !== "menu" || menuContract.focusedLabel !== "Start with Handoff" ||
+            menuContract.archiveDisabled !== false || menuContract.targets.some((target) => target.height < 44 || target.width < 44) ||
+            menuContract.scrollWidth > menuContract.viewportWidth) {
+          throw new Error(`Context pressure menu contract failed on mobile: ${JSON.stringify(menuContract)}`);
+        }
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(() =>
+          document.activeElement?.getAttribute("aria-label") === "More context pressure actions"
+        );
+        const closedMenu = await page.evaluate(() => ({
+          open: document.querySelector("[data-context-pressure-warning] .context-pressure-menu")?.open,
+          focusLabel: document.activeElement?.getAttribute("aria-label"),
+        }));
+        if (closedMenu.open || closedMenu.focusLabel !== "More context pressure actions") {
+          throw new Error(`Context pressure menu did not restore focus: ${JSON.stringify(closedMenu)}`);
+        }
+        await moreActions.click();
+        await page.locator("[data-context-pressure-warning] [data-archive-agent]").click();
+        await page.waitForSelector(".archive-dialog", { state: "visible" });
+        const archiveConfirmation = await page.evaluate(() => ({
+          title: document.querySelector("#screen-title")?.textContent.trim(),
+          archiveTarget: document.querySelector(".archive-dialog [data-agent-action='archive']")?.getBoundingClientRect().height,
+          cancelTarget: document.querySelector(".archive-dialog [data-open-agent]")?.getBoundingClientRect().height,
+        }));
+        if (!archiveConfirmation.title?.includes("Archive agent") || archiveConfirmation.archiveTarget < 44 ||
+            archiveConfirmation.cancelTarget < 44) {
+          throw new Error(`Context pressure archive confirmation is not safe: ${JSON.stringify(archiveConfirmation)}`);
+        }
+        await page.locator(".archive-dialog [data-open-agent]").click();
+        await page.waitForSelector("[data-context-pressure-warning]", { state: "visible" });
         if (captureDir) {
           await page.screenshot({ path: path.join(captureDir, "context-pressure-mobile.png"), fullPage: false });
         }
@@ -653,9 +717,19 @@ def write_smoke_script(path)
           scrollWidth: document.documentElement.scrollWidth,
           viewportWidth: innerWidth,
           warningVisible: Boolean(document.querySelector("[data-context-pressure-warning]")),
+          actions: Array.from(document.querySelectorAll("[data-context-pressure-warning] .context-pressure-actions > *")).map((action) => {
+            const target = action.matches("details") ? action.querySelector(":scope > summary") : action;
+            const rect = target?.getBoundingClientRect();
+            return { width: rect?.width, height: rect?.height };
+          }),
         }));
-        if (!desktop.warningVisible || desktop.scrollWidth > desktop.viewportWidth) {
+        if (!desktop.warningVisible || desktop.actions.length !== 3 ||
+            desktop.actions.some((action) => action.height < 44 || action.width < 44) ||
+            desktop.scrollWidth > desktop.viewportWidth) {
           throw new Error(`Context pressure warning overflows on desktop: ${JSON.stringify(desktop)}`);
+        }
+        if (captureDir) {
+          await page.screenshot({ path: path.join(captureDir, "context-pressure-desktop.png"), fullPage: false });
         }
         await page.setViewportSize({ width: 390, height: 844 });
       }

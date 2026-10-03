@@ -23,6 +23,10 @@ module RemoteUIContextPressureTest
         escapeHtml: String,
         iconSvg: (name) => `<i>${name}</i>`,
         formatCompactMetricNumber: (value) => String(value),
+        moreMenuButton: ({ label, icon, attrs = "", danger = false, disabled = false }) =>
+          `<button role="menuitem" class="${danger ? "danger" : ""}" ${attrs} ${disabled ? "disabled" : ""}><i>${icon}</i>${label}</button>`,
+        moreMenuSeparator: () => '<span role="separator"></span>',
+        moreMenuHtml: (items) => `<div role="menu">${items.join("")}</div>`,
       };
       vm.createContext(context);
       vm.runInContext(`${source.slice(start, end)}\nthis.renderContextPressureWarning = renderContextPressureWarning;`, context);
@@ -33,16 +37,26 @@ module RemoteUIContextPressureTest
           used_tokens: 90, limit_tokens: 100, signal_id: "signal-1", actions: { archive: false },
         },
       });
-      for (const text of ["Keep going", "Clone fresh", "Clone with handoff", "Archive when safe", "90 of 100 active tokens reported"]) {
+      for (const text of ["Start New", "Keep Going", "Start with Handoff", "Archive", "90 of 100 active tokens reported"]) {
         if (!html.includes(text)) throw new Error(`missing warning action: ${text}`);
       }
-      if (!html.includes("data-context-pressure-ack") || !html.includes("disabled")) {
+      for (const icon of ["shieldAlert", "sportShoe", "thumbsUp", "ellipsis"]) {
+        if (!html.includes(`<i>${icon}</i>`)) throw new Error(`missing warning icon: ${icon}`);
+      }
+      if (!html.includes("data-context-pressure-ack") || !html.includes("disabled") ||
+          !html.includes('aria-label="More context pressure actions"') ||
+          !html.includes('aria-haspopup="menu"') || !html.includes('role="menu"')) {
         throw new Error("warning actions do not expose safe control state");
+      }
+      const topLevelActions = html.match(/data-context-pressure-(?:clone|ack)=/g) || [];
+      if (topLevelActions.length !== 2 || !html.includes('class="primary inline-icon-button ui-button"')) {
+        throw new Error("warning must expose exactly two primary actions before the menu");
       }
       if (context.renderContextPressureWarning({ key: "quiet", context_pressure: { warning: false } }) !== "") {
         throw new Error("unknown or acknowledged state must not show a warning");
       }
-      if (!source.includes("archive_source: false") || !styles.includes(".context-pressure-warning")) {
+      if (!source.includes("archive_source: false") || !source.includes("context_handoff: handoff") ||
+          !source.includes("start: handoff") || !styles.includes(".context-pressure-warning")) {
         throw new Error("clone safety or warning styles are missing");
       }
     JAVASCRIPT

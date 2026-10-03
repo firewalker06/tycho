@@ -473,7 +473,7 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `POST` | `/agents/{key}/start` | Start one agent run. |
 | `POST` | `/agents/{key}/stop` | Send `TERM` to one running agent. |
 | `POST` | `/agents/{key}/clone` | Clone one managed agent, optionally archiving the source. |
-| `POST` | `/agents/{key}/context-pressure/acknowledge` | Persist **Keep going** for the current context-pressure signal. |
+| `POST` | `/agents/{key}/context-pressure/acknowledge` | Persist **Keep Going** for the current context-pressure signal. |
 | `POST` | `/agents/{key}/archive` | Archive one idle managed agent. |
 | `POST` | `/agents/{key}/loop-schedule` | Adopt one idle agent as a temporary recurring schedule and run it immediately. |
 | `GET` | `/metrics` | Query normalized run and native-session metrics with inclusive `from`, exclusive `to`, timezone, and attribution filters. |
@@ -661,9 +661,22 @@ usage totals into a context percentage. A later valid measurement replaces an
 earlier one, and a later run without active-context telemetry makes an older
 measurement stale.
 
+The Remote UI gives the operator four named choices for a warning:
+
+- **Start New** makes a fresh clone and keeps the source. It maps to the clone
+  endpoint with `archive_source: false` and no context handoff.
+- **Keep Going** acknowledges only the current signal.
+- **Start with Handoff** makes and starts a fresh clone with a concise durable
+  handoff. It keeps the source.
+- **Archive** opens the normal confirmation flow. It stays disabled until the
+  archive-safety checks permit the operation.
+
+Start New and Keep Going are the primary actions. Start with Handoff and
+Archive are in the warning's additional-actions menu.
+
 ### `POST /agents/{key}/context-pressure/acknowledge`
 
-Persists **Keep going** for one exact context-pressure signal:
+Persists **Keep Going** for one exact context-pressure signal:
 
 ```bash
 curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/context-pressure/acknowledge \
@@ -947,11 +960,15 @@ Response:
 
 Creates a fresh managed agent from an existing one with a new key, empty logs, no runs, and no native session id. Form fields such as `name`, `template_key`, `agent`, `model`, `reasoning_effort`, `workspace`, `prompt`, and `sandbox_mode` may be supplied to edit the clone before it is saved.
 
+The Remote UI **Start New** action sends `archive_source: false` and
+`context_handoff: false`. It preserves the source and opens the new agent.
+
 Set `context_handoff: true` to add a durable first user message with the
 source agent's semantic handoff or latest summary, queued-work count, inquiry
 state, and schedule key. Tycho also copies the source PR catalog. Operational
 ownership, queued work, inquiries, schedules, logs, and audit history stay on
 the source agent. Set `start: true` to continue immediately in the clone.
+The Remote UI calls this operation **Start with Handoff**.
 
 The source stays active by default. Set `archive_source: true` only when the
 operator confirms archive. This option returns `409 Conflict` if the source is

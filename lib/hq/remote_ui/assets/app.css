@@ -1536,13 +1536,90 @@ select {
 }
 
 .context-pressure-actions {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, max-content) var(--ds-touch-target);
+  align-items: center;
   margin-top: 0.85rem;
+}
+
+.context-pressure-actions > button,
+.context-pressure-menu > summary {
+  min-height: var(--ds-touch-target);
+}
+
+.context-pressure-menu {
+  position: relative;
+}
+
+.context-pressure-menu > summary {
+  display: inline-grid;
+  width: var(--ds-touch-target);
+  min-width: var(--ds-touch-target);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+  place-items: center;
+}
+
+.context-pressure-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.context-pressure-menu[open] > summary,
+.context-pressure-menu > summary:hover,
+.context-pressure-menu > summary:focus-visible {
+  background: var(--panel-soft);
+}
+
+.context-pressure-menu > summary .ui-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.context-pressure-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 25;
+  width: max-content;
+  min-width: 210px;
+  max-width: min(75vw, 260px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 98%, transparent);
+  box-shadow: var(--shadow);
+  padding: 6px;
+}
+
+.context-pressure-popover .more-menu {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.context-pressure-popover .more-menu-item {
+  min-height: var(--ds-touch-target);
 }
 
 .context-pressure-warning + .message-list {
   position: relative;
   z-index: 0;
   margin-top: 1rem;
+}
+
+@media (max-width: 560px) {
+  .context-pressure-actions {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--touch-target);
+  }
+
+  .context-pressure-actions > button {
+    min-width: 0;
+    padding-inline: 8px;
+  }
 }
 
 .agent-workspace {
@@ -3001,6 +3078,7 @@ select {
 
 .archive-actions button {
   flex: 1 1 140px;
+  min-height: var(--ds-touch-target);
 }
 
 .bulk-action-bar {

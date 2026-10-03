@@ -242,6 +242,8 @@ module HQ
         clone_selected_agent
       when "g"
         acknowledge_selected_context_pressure
+      when "f"
+        clone_selected_agent_for_context_pressure
       when "G"
         clone_selected_agent_with_context_handoff
       when "s"
@@ -1069,6 +1071,34 @@ def selected_screen_items
       [self, Bubbletea.batch(*[schedule_action_poll, chat_command].compact)]
     rescue StandardError => e
       HQ.logger.error("Agent") { "Context handoff clone failed for #{source&.key}: #{e.class}: #{e.message}" }
+      [self, nil]
+    end
+
+    def clone_selected_agent_for_context_pressure
+      return [self, nil] unless @screen == :agents
+
+      source = selected_agent
+      pressure = source&.context_pressure
+      return [self, nil] unless pressure&.fetch("warning", false)
+
+      close_sidebar!
+      target = @agent_store.clone_agent(source, existing_agents: @all_agents)
+      @agents.unshift(target)
+      @agents = sort_agents(@agents)
+      @selected[:agents] = @agents.index(target) || 0
+      save_agents!
+      rebuild_agent_index!
+      HQ.hooks.publish("agent.cloned",
+                       agent_key: target.key,
+                       source_agent_key: source.key,
+                       project_key: target.project_key,
+                       name: target.name,
+                       agent: target.agent,
+                       model: target.model,
+                       reasoning_effort: target.reasoning_effort)
+      open_cloned_agent_chat(target)
+    rescue StandardError => e
+      HQ.logger.error("Agent") { "Context fresh clone failed for #{source&.key}: #{e.class}: #{e.message}" }
       [self, nil]
     end
 

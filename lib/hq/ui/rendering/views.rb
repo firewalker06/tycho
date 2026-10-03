@@ -939,7 +939,7 @@ module HQ
             lines << "  #{line}"
           end
           if pressure["warning"]
-            lines << warning_style.render("  g: Keep going  #{Styles::MARKERS[:bullet_sep]}  G: Clone with handoff")
+            lines << warning_style.render("  f: Start New  #{Styles::MARKERS[:bullet_sep]}  g: Keep Going  #{Styles::MARKERS[:bullet_sep]}  G: Start with Handoff")
           end
           lines
         end

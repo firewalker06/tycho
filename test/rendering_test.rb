@@ -2587,8 +2587,22 @@ module RenderingTest
 
     rendered = Bubbles::ANSI.strip(app.view)
     assert(rendered.include?("Context pressure is high"), "expected agent detail to show context pressure")
-    assert(rendered.include?("g: Keep going") && rendered.include?("G: Clone with handoff"),
+    assert(rendered.include?("f: Start New") && rendered.include?("g: Keep Going") &&
+           rendered.include?("G: Start with Handoff"),
            "expected agent detail to show context recovery actions")
+
+    app.update(key_message("f"))
+    fresh_agents = app.instance_variable_get(:@agents)
+    fresh_target = fresh_agents.find { |agent| agent.key != source.key }
+    assert(fresh_target, "expected Start New to create a fresh agent")
+    assert(fresh_agents.include?(source), "expected Start New to preserve the source agent")
+    assert(app.instance_variable_get(:@agent_chat_form)&.agent == fresh_target,
+           "expected Start New to open the fresh agent without a handoff")
+    fresh_events = File.exist?(fresh_target.memory_path) ? File.readlines(fresh_target.memory_path, chomp: true) : []
+    assert(fresh_events.none? { |line| JSON.parse(line).dig("metadata", "context_handoff") == true },
+           "expected Start New not to create a context handoff")
+    app.send(:close_sidebar!)
+    app.instance_variable_get(:@selected)[:agents] = app.instance_variable_get(:@agents).index(source)
 
     updates = 0
     store = app.instance_variable_get(:@agent_store)
@@ -2600,11 +2614,11 @@ module RenderingTest
     end
     app.update(key_message("g"))
     assert(updates == 1 && source.context_pressure["acknowledged"],
-           "expected Keep going to persist acknowledgement through the locked agent store path")
+           "expected Keep Going to persist acknowledgement through the locked agent store path")
     acknowledged = Bubbles::ANSI.strip(app.view)
     assert(acknowledged.include?("Context pressure is high (acknowledged)"),
            "expected acknowledged context pressure to stay visible")
-    assert(!acknowledged.include?("g: Keep going"), "expected acknowledged actions to hide for the current signal")
+    assert(!acknowledged.include?("g: Keep Going"), "expected acknowledged actions to hide for the current signal")
 
     File.open(source.raw_log_path, "a") do |file|
       file.puts({
@@ -2624,7 +2638,7 @@ module RenderingTest
     app.update(key_message("G"))
     agents = app.instance_variable_get(:@agents)
     target = agents.find { |agent| agent.key == started_key }
-    assert(target && target.key != source.key, "expected Clone with handoff to create and start a fresh agent")
+    assert(target && target.key != source.key, "expected Start with Handoff to create and start a fresh agent")
     assert(agents.include?(source), "expected context handoff clone to keep the source agent")
     handoff_events = File.readlines(target.memory_path, chomp: true).map { |line| JSON.parse(line) }
     assert(handoff_events.any? { |event| event.dig("metadata", "context_handoff") == true },
