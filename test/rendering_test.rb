@@ -105,7 +105,7 @@ module RenderingTest
     assert_create_and_run_raw_log_includes_project_tool_system_prompt
     assert_create_agent_starts_immediately_and_uses_selected_harness
     assert_create_agent_without_run_opens_chat_but_does_not_start
-    assert_clone_agent_uses_fresh_state_and_defaults_to_archive
+    assert_clone_agent_uses_fresh_state_and_defaults_to_keep
     assert_clone_agent_can_keep_old_agent
     assert_custom_claude_harness_builds_configured_command
     assert_claude_schema_is_compact_json
@@ -2485,7 +2485,7 @@ module RenderingTest
     _ = command
   end
 
-  def assert_clone_agent_uses_fresh_state_and_defaults_to_archive
+  def assert_clone_agent_uses_fresh_state_and_defaults_to_keep
     app = app_with_default_agent(width: 120, height: 30)
     app.define_singleton_method(:save_agents!) { nil }
     app.instance_variable_set(:@screen, :agents)
@@ -2520,7 +2520,7 @@ module RenderingTest
 
     confirm = app.instance_variable_get(:@clone_confirm)
     assert(!confirm.nil?, "expected clone flow to ask what to do with the old agent")
-    assert(confirm.archive_old?, "expected clone prompt to default to archiving the old agent")
+    assert(!confirm.archive_old?, "expected clone prompt to keep the old agent unless archive is explicit")
 
     new_agent = confirm.new_agent
     assert(new_agent.key != old_agent.key, "expected cloned agent to have a fresh key")
@@ -2542,15 +2542,14 @@ module RenderingTest
 
     agents = app.instance_variable_get(:@agents)
     assert(agents.include?(new_agent), "expected cloned agent to remain in the agent list")
-    assert(!agents.include?(old_agent), "expected default clone confirmation to archive the old agent")
+    assert(agents.include?(old_agent), "expected default clone confirmation to preserve the old agent")
     assert(app.instance_variable_get(:@selected)[:agents] == agents.index(new_agent),
            "expected cloned agent to stay selected after archive")
     assert(app.instance_variable_get(:@sidebar)&.fetch(:kind, nil) == :agent_chat,
            "expected clone flow to open chat for the cloned agent")
     assert(app.instance_variable_get(:@agent_chat_form)&.agent == new_agent,
            "expected chat form to target the cloned agent")
-    assert(Dir.glob(File.join(HQ::AGENT_ARCHIVE_DIR, "*#{old_agent.key}", "*.raw.log")).any?,
-           "expected old agent logs to be archived")
+    assert(File.exist?(old_agent.raw_log_path), "expected old agent logs to remain active")
   end
 
   def assert_clone_agent_can_keep_old_agent

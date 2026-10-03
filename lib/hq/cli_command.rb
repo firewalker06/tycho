@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "fileutils"
 require "io/console"
 require "open3"
 require "optparse"
@@ -319,7 +320,8 @@ module HQ
         desc "Clone an existing agent"
         argument :agent_key, required: true, desc: "Agent key to clone"
         option :run, type: :boolean, default: false, desc: "Start the cloned agent immediately"
-        usage_template "agent clone %{agent_key}"
+        option :handoff, type: :boolean, default: false, desc: "Continue with a concise source-agent handoff"
+        usage_template "agent clone %{agent_key} [--handoff] [--run]"
 
         def call(agent_key:, **opts)
           exit CLICommand.clone_agent(agent_key, opts, out: out, err: err)
@@ -2108,6 +2110,20 @@ module HQ
 
       project = registry.projects.find { |p| p.key == clone.project_key }
       store.ensure_project_context_prompt!(clone, project) if project
+      if opts[:handoff]
+        handoff = source.structured_result&.dig("memory_handoff")
+        semantic = handoff.is_a?(Hash) ? JSON.pretty_generate(handoff) : source.last_summary.to_s.strip
+        semantic = "No completed-run summary is available." if semantic.empty?
+        clone.add_user_message!(
+          "Continue from fresh context using this source-agent handoff:\n\n#{semantic}\n\n" \
+          "The source agent remains active with #{source.queued_prompts.length} queued items; review it before archive.",
+          metadata: { "context_handoff" => true, "source_agent_key" => source.key }
+        )
+        if File.file?(source.pull_request_catalog_path)
+          FileUtils.mkdir_p(File.dirname(clone.pull_request_catalog_path))
+          FileUtils.cp(source.pull_request_catalog_path, clone.pull_request_catalog_path)
+        end
+      end
 
       agents.unshift(clone)
       store.save(agents)
@@ -2651,7 +2667,8 @@ module HQ
         archive_path: agent.archive_path,
         delegation: delegation || agent_cli_delegation(agent),
         prompt_queue_count: agent.queued_prompts.length,
-        prompt_queue_dispatch_error: agent.prompt_queue_dispatch_error
+        prompt_queue_dispatch_error: agent.prompt_queue_dispatch_error,
+        context_pressure: agent.context_pressure
       }
       result[:archived_at] = agent.archived_at&.iso8601 if archive_fields
       result
@@ -2703,6 +2720,9 @@ module HQ
         ["Workspace", value["workspace"]],
         ["Log", value["log_path"] || "n/a"]
       ]
+      pressure = value["context_pressure"] || {}
+      rows << ["Context", pressure["summary"] || pressure[:summary] || "unknown"]
+      rows << ["Context evidence", pressure["basis"] || pressure[:basis] || "unknown"]
       rows.insert(5, ["Archived at", display_timestamp(value["archived_at"])]) if value["archived"]
       out.puts detail_table(rows)
       print_queue_notice(notice, out:)

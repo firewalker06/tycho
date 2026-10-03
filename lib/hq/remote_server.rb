@@ -58,7 +58,7 @@ module HQ
     ACTIVITY_AGENT_FIELDS = %i[
       key name project_key template_key scheduled schedule_key agent model reasoning_effort status running unread
       awaiting_input blocked run_count created_at started_at finished_at updated_at last_exit_code last_result summary
-      archived archived_at delegation
+      context_pressure archived archived_at delegation
     ].freeze
     REMOTE_DAEMON_LOG_FILE = File.join(LOGS_DIR, "remote_server_daemon.log")
     RESTART_CACHE_RESET_HEADERS = {
@@ -417,6 +417,9 @@ module HQ
         tail = parts.drop(2)
         return ok(agent: service.agent(key)) if method == "GET" && tail.empty?
         return ok(agent: service.update_agent(key, body)) if %w[PATCH PUT].include?(method) && tail.empty?
+        if method == "POST" && tail == ["context-pressure", "acknowledge"]
+          return ok(agent: service.acknowledge_context_pressure(key, body))
+        end
         return ok(service.update_agent_delegation(key, body)) if %w[PATCH PUT].include?(method) && tail == ["delegation"]
         return ok(service.archive_agent(key)) if method == "DELETE" && tail.empty?
         return created(service.create_agent_loop(key, body)) if method == "POST" && tail == ["loop-schedule"]
@@ -3468,11 +3471,22 @@ module HQ
       source = current.find { |agent| agent.key == key.to_s } || source
       archive_source = truthy?(attrs["archive_source"])
       raise Error.new("Agent is running", status: 409) if archive_source && source.running?
+      unsafe_queue = source.pending_prompts? && !source.delegation_callback_prompts_only?
+      if archive_source && (unsafe_queue || source.inquiry_blocking_prompt_queue?)
+        raise Error.new("Archive blocked to protect unresolved work. Keep the source agent active.", status: 409)
+      end
 
       project = find_project!(source.project_key)
       target = @agent_store.clone_agent(source, existing_agents: current)
       target.update!(**agent_attrs(target, attrs, project: project, creating: false))
       @agent_store.ensure_project_context_prompt!(target, project)
+      if truthy?(attrs["context_handoff"])
+        target.add_user_message!(context_handoff_prompt(source), metadata: {
+          "context_handoff" => true,
+          "source_agent_key" => source.key
+        })
+        copy_pull_request_catalog(source, target)
+      end
 
       archive_path = @agent_store.archive_agent!(source.key) if archive_source
       @agent_activity_snapshot.remove!(source.key) if archive_source
@@ -3498,6 +3512,15 @@ module HQ
         archive_path: archive_path,
         schedule_reconciled: schedule_reconciled
       }.compact
+    end
+
+    def acknowledge_context_pressure(key, attrs)
+      target = @agent_store.update_agent!(key) do |candidate, _agents, _events|
+        candidate.acknowledge_context_pressure!(attrs["signal_id"])
+      end
+      agent_payload(target)
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 409)
     end
 
     def archive_agent(key)
@@ -4595,6 +4618,7 @@ module HQ
         last_result: agent.last_result_label,
         summary: agent.last_summary,
         cost_snapshot: agent.cost_snapshot,
+        context_pressure: agent.context_pressure,
         latest_inquiry: inquiry,
         suspended_inquiry: suspended_inquiry_payload(agent),
         prompt_queue: prompt_queue_payload(agent),
@@ -4637,6 +4661,7 @@ module HQ
         last_exit_code: agent.last_exit_code,
         last_result: agent.last_result_label,
         summary: agent.last_summary,
+        context_pressure: agent.context_pressure,
         prompt_queue_count: visible_queue_entries.length,
         prompt_queue_delegation_callback_count: visible_queue_entries.count do |entry|
           entry["source"] == "delegation_callback"
@@ -4659,6 +4684,31 @@ module HQ
       parsed
     rescue ArgumentError
       raise Error.new("#{name} must be a positive integer", status: 400)
+    end
+
+    def context_handoff_prompt(source)
+      handoff = source.structured_result&.dig("memory_handoff")
+      semantic = handoff.is_a?(Hash) ? JSON.pretty_generate(handoff) : source.last_summary.to_s.strip
+      semantic = "No completed-run summary is available." if semantic.empty?
+      <<~PROMPT.strip
+        Continue from a fresh context. This handoff was copied from managed agent #{source.key}.
+
+        #{semantic}
+
+        Operational state remains on the source agent and was not discarded:
+        - queued work: #{source.queued_prompts.length}
+        - unresolved inquiry: #{source.inquiry_blocking_prompt_queue? ? "yes" : "no"}
+        - schedule: #{source.schedule_key || "none"}
+
+        Review the source agent before you resolve or archive any remaining work.
+      PROMPT
+    end
+
+    def copy_pull_request_catalog(source, target)
+      return unless File.file?(source.pull_request_catalog_path)
+
+      FileUtils.mkdir_p(File.dirname(target.pull_request_catalog_path))
+      FileUtils.cp(source.pull_request_catalog_path, target.pull_request_catalog_path)
     end
 
     def delegation_payload(agent, reference_context: nil, relationship_context: nil)

@@ -1513,6 +1513,29 @@ select {
   padding-bottom: calc(var(--agent-dock-height, 220px) + 8px + env(safe-area-inset-bottom, 0px));
 }
 
+.context-pressure-warning {
+  margin: 1rem;
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, var(--warning) 72%, var(--border));
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--warning) 12%, var(--panel));
+  color: var(--text);
+}
+
+.context-pressure-warning-copy {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.context-pressure-warning-copy p {
+  margin: 0.35rem 0;
+}
+
+.context-pressure-actions {
+  margin-top: 0.85rem;
+}
+
 .agent-workspace {
   display: grid;
   align-content: start;

@@ -1047,7 +1047,9 @@ def selected_screen_items
         @clone_confirm = nil
         open_cloned_agent_chat(confirm.new_agent)
       when "tab", "right", "l"
-        @clone_confirm.picker.value = UI::CloneAgentConfirm::ARCHIVE
+        if @clone_confirm.archive_available?
+          @clone_confirm.picker.value = UI::CloneAgentConfirm::ARCHIVE
+        end
         [self, nil]
       when "shift+tab", "left", "h"
         @clone_confirm.picker.value = UI::CloneAgentConfirm::KEEP
