@@ -1514,6 +1514,9 @@ select {
 }
 
 .context-pressure-warning {
+  position: relative;
+  z-index: 1;
+  isolation: isolate;
   margin: 1rem;
   padding: 1rem;
   border: 1px solid color-mix(in srgb, var(--warning) 72%, var(--border));
@@ -1534,6 +1537,12 @@ select {
 
 .context-pressure-actions {
   margin-top: 0.85rem;
+}
+
+.context-pressure-warning + .message-list {
+  position: relative;
+  z-index: 0;
+  margin-top: 1rem;
 }
 
 .agent-workspace {
