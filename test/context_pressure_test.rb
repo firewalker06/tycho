@@ -10,11 +10,33 @@ module ContextPressureTest
 
   def run!
     assert_codex_measured_warning_and_acknowledgement
+    assert_later_low_measurement_clears_warning
     assert_stale_measurement_does_not_warn
     assert_claude_compaction_is_reported_without_invented_limit
     assert_pi_compaction_is_reported
     assert_unsupported_harness_is_unknown
     puts "context_pressure_test: ok"
+  end
+
+  def assert_later_low_measurement_clears_warning
+    with_agent("codex") do |agent, log|
+      append(log, "type" => "event_msg", "payload" => {
+        "type" => "token_count", "info" => {
+          "last_token_usage" => { "total_tokens" => 90_000 }, "model_context_window" => 100_000
+        }
+      })
+      append(log, "type" => "event_msg", "payload" => {
+        "type" => "token_count", "info" => {
+          "last_token_usage" => { "total_tokens" => 10_000 }, "model_context_window" => 100_000
+        }
+      })
+
+      pressure = agent.context_pressure
+      assert(pressure["state"] == "normal" && !pressure["warning"],
+             "expected the latest valid low measurement to clear the earlier warning")
+      assert(pressure["used_tokens"] == 10_000 && pressure["utilization"] == 0.1,
+             "expected the latest measurement to define the current context state")
+    end
   end
 
   def assert_codex_measured_warning_and_acknowledgement
@@ -31,6 +53,9 @@ module ContextPressureTest
       agent.acknowledge_context_pressure!(pressure.fetch("signal_id"))
       assert(!agent.context_pressure["warning"] && agent.to_hash["context_pressure_acknowledged_signal"],
              "expected keep-going acknowledgement to persist")
+      reloaded = HQ::ManagedAgent.from_hash(agent.to_hash)
+      assert(reloaded.context_pressure["acknowledged"] && !reloaded.context_pressure["warning"],
+             "expected the persisted acknowledgement to survive agent reload")
     end
   end
 

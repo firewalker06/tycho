@@ -36,13 +36,13 @@ module HQ
       return [] unless File.file?(@agent.raw_log_path)
 
       run_index = -1
-      File.foreach(@agent.raw_log_path).filter_map do |line|
+      File.foreach(@agent.raw_log_path).each_with_index.filter_map do |line, event_index|
         run_index += 1 if line.start_with?("=== [") && line.include?(" start")
         text = line.to_s.strip
         next unless text.start_with?("{")
 
         event = JSON.parse(text)
-        { "event" => event, "run_index" => run_index }
+        { "event" => event, "run_index" => run_index, "event_index" => event_index }
       rescue JSON::ParserError
         nil
       end
@@ -51,12 +51,16 @@ module HQ
     def best_signal(evidence)
       signals = evidence.filter_map do |entry|
         event = entry.fetch("event")
-        measured_context_signal(event, entry.fetch("run_index")) ||
-          compaction_signal(event, entry.fetch("run_index")) ||
-          overflow_signal(event, entry.fetch("run_index"))
+        signal = measured_context_signal(event) || compaction_signal(event) || overflow_signal(event)
+        signal&.merge(
+          "run_index" => entry.fetch("run_index"),
+          "event_index" => entry.fetch("event_index")
+        )
       end
-      signal = signals.max_by { |candidate| [candidate.fetch("run_index", -1), candidate.fetch("priority", 0)] }
+      signal = signals.max_by { |candidate| candidate.fetch("event_index", -1) }
       return unless signal
+
+      signal = classify_measurement(signal) if signal["source"] == "harness_context_window"
 
       latest_run_index = evidence.map { |entry| entry.fetch("run_index", -1) }.max || -1
       if signal["source"] == "harness_context_window" && signal.fetch("run_index", -1) < latest_run_index
@@ -67,13 +71,13 @@ module HQ
           "detail" => "A later run did not report active-context telemetry. Tycho will not reuse the older percentage as a warning.",
           "stale" => true,
           "warning" => false
-        ).except("run_index", "priority")
+        ).except("run_index", "event_index")
       end
 
-      signal.merge("stale" => false).except("run_index", "priority")
+      signal.merge("stale" => false).except("run_index", "event_index")
     end
 
-    def measured_context_signal(event, run_index)
+    def measured_context_signal(event)
       info = if event["type"] == "event_msg" && event.dig("payload", "type") == "token_count"
                event.dig("payload", "info")
              elsif event["type"] == "token_count"
@@ -85,26 +89,41 @@ module HQ
       limit = number(info["model_context_window"] || info["context_window"])
       return unless used && limit&.positive?
 
-      ratio = used / limit
-      return if ratio < WARNING_RATIO
-
-      level = ratio >= CRITICAL_RATIO ? "critical" : "warning"
       {
-        "state" => level,
-        "level" => level,
         "basis" => "measured",
-        "summary" => level == "critical" ? "Context is almost full" : "Context pressure is high",
         "detail" => "The harness reported #{used.to_i} active tokens in a #{limit.to_i}-token window.",
         "used_tokens" => used.to_i,
         "limit_tokens" => limit.to_i,
-        "utilization" => ratio,
-        "source" => "harness_context_window",
-        "run_index" => run_index,
-        "priority" => level == "critical" ? 4 : 3
+        "utilization" => used / limit,
+        "source" => "harness_context_window"
       }
     end
 
-    def compaction_signal(event, run_index)
+    def classify_measurement(signal)
+      ratio = signal.fetch("utilization")
+      level = if ratio >= CRITICAL_RATIO
+                "critical"
+              elsif ratio >= WARNING_RATIO
+                "warning"
+              else
+                "none"
+              end
+      summary = if level == "critical"
+                  "Context is almost full"
+                elsif level == "warning"
+                  "Context pressure is high"
+                else
+                  "Context pressure is low"
+                end
+      signal.merge(
+        "state" => level == "none" ? "normal" : level,
+        "level" => level,
+        "summary" => summary,
+        "warning" => level != "none"
+      )
+    end
+
+    def compaction_signal(event)
       type = event["type"].to_s
       subtype = event["subtype"].to_s
       return unless subtype == "compact_boundary" || type == "compaction_end" || type == "session_compact"
@@ -126,13 +145,11 @@ module HQ
         "post_compaction_tokens" => post_tokens&.to_i,
         "limit_tokens" => nil,
         "utilization" => nil,
-        "source" => "harness_compaction",
-        "run_index" => run_index,
-        "priority" => 2
+        "source" => "harness_compaction"
       }
     end
 
-    def overflow_signal(event, run_index)
+    def overflow_signal(event)
       text = [event["message"], event["error"], event.dig("error", "message"),
               event.dig("message", "errorMessage")].compact.join(" ")
       return unless text.match?(OVERFLOW_PATTERN)
@@ -146,9 +163,7 @@ module HQ
         "used_tokens" => nil,
         "limit_tokens" => nil,
         "utilization" => nil,
-        "source" => "harness_overflow",
-        "run_index" => run_index,
-        "priority" => 5
+        "source" => "harness_overflow"
       }
     end
 

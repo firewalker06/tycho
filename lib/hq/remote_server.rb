@@ -25,6 +25,7 @@ require_relative "domain/agent_attachment_store"
 require_relative "domain/agent_activity_snapshot"
 require_relative "domain/agent_chat_log"
 require_relative "domain/agent_store"
+require_relative "domain/context_handoff"
 require_relative "domain/delegation_actor"
 require_relative "domain/agent_archive_store"
 require_relative "domain/executable_resolver"
@@ -3481,11 +3482,7 @@ module HQ
       target.update!(**agent_attrs(target, attrs, project: project, creating: false))
       @agent_store.ensure_project_context_prompt!(target, project)
       if truthy?(attrs["context_handoff"])
-        target.add_user_message!(context_handoff_prompt(source), metadata: {
-          "context_handoff" => true,
-          "source_agent_key" => source.key
-        })
-        copy_pull_request_catalog(source, target)
+        ContextHandoff.prepare!(source, target)
       end
 
       archive_path = @agent_store.archive_agent!(source.key) if archive_source
@@ -4684,31 +4681,6 @@ module HQ
       parsed
     rescue ArgumentError
       raise Error.new("#{name} must be a positive integer", status: 400)
-    end
-
-    def context_handoff_prompt(source)
-      handoff = source.structured_result&.dig("memory_handoff")
-      semantic = handoff.is_a?(Hash) ? JSON.pretty_generate(handoff) : source.last_summary.to_s.strip
-      semantic = "No completed-run summary is available." if semantic.empty?
-      <<~PROMPT.strip
-        Continue from a fresh context. This handoff was copied from managed agent #{source.key}.
-
-        #{semantic}
-
-        Operational state remains on the source agent and was not discarded:
-        - queued work: #{source.queued_prompts.length}
-        - unresolved inquiry: #{source.inquiry_blocking_prompt_queue? ? "yes" : "no"}
-        - schedule: #{source.schedule_key || "none"}
-
-        Review the source agent before you resolve or archive any remaining work.
-      PROMPT
-    end
-
-    def copy_pull_request_catalog(source, target)
-      return unless File.file?(source.pull_request_catalog_path)
-
-      FileUtils.mkdir_p(File.dirname(target.pull_request_catalog_path))
-      FileUtils.cp(source.pull_request_catalog_path, target.pull_request_catalog_path)
     end
 
     def delegation_payload(agent, reference_context: nil, relationship_context: nil)

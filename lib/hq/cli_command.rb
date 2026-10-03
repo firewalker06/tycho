@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "json"
-require "fileutils"
 require "io/console"
 require "open3"
 require "optparse"
@@ -20,6 +19,7 @@ require_relative "domain/github_api_client"
 require_relative "domain/pull_request_diff"
 require_relative "domain/scheduler"
 require_relative "domain/agent_store"
+require_relative "domain/context_handoff"
 require_relative "domain/delegation_actor"
 require_relative "domain/agent_archive_store"
 require_relative "domain/usage_metrics"
@@ -2110,20 +2110,7 @@ module HQ
 
       project = registry.projects.find { |p| p.key == clone.project_key }
       store.ensure_project_context_prompt!(clone, project) if project
-      if opts[:handoff]
-        handoff = source.structured_result&.dig("memory_handoff")
-        semantic = handoff.is_a?(Hash) ? JSON.pretty_generate(handoff) : source.last_summary.to_s.strip
-        semantic = "No completed-run summary is available." if semantic.empty?
-        clone.add_user_message!(
-          "Continue from fresh context using this source-agent handoff:\n\n#{semantic}\n\n" \
-          "The source agent remains active with #{source.queued_prompts.length} queued items; review it before archive.",
-          metadata: { "context_handoff" => true, "source_agent_key" => source.key }
-        )
-        if File.file?(source.pull_request_catalog_path)
-          FileUtils.mkdir_p(File.dirname(clone.pull_request_catalog_path))
-          FileUtils.cp(source.pull_request_catalog_path, clone.pull_request_catalog_path)
-        end
-      end
+      ContextHandoff.prepare!(source, clone) if opts[:handoff]
 
       agents.unshift(clone)
       store.save(agents)
