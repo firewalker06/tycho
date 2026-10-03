@@ -2590,14 +2590,17 @@ module RenderingTest
     assert(rendered.include?("g: Keep going") && rendered.include?("G: Clone with handoff"),
            "expected agent detail to show context recovery actions")
 
-    saves = 0
-    app.define_singleton_method(:save_agents!) do
-      saves += 1
-      @all_agents = @agents.dup
+    updates = 0
+    store = app.instance_variable_get(:@agent_store)
+    store.define_singleton_method(:update_agent!) do |key, &operation|
+      updates += 1
+      candidate = app.instance_variable_get(:@agents).find { |agent| agent.key == key }
+      operation.call(candidate)
+      candidate
     end
     app.update(key_message("g"))
-    assert(saves == 1 && source.context_pressure["acknowledged"],
-           "expected Keep going to persist acknowledgement through the agent store path")
+    assert(updates == 1 && source.context_pressure["acknowledged"],
+           "expected Keep going to persist acknowledgement through the locked agent store path")
     acknowledged = Bubbles::ANSI.strip(app.view)
     assert(acknowledged.include?("Context pressure is high (acknowledged)"),
            "expected acknowledged context pressure to stay visible")
@@ -2613,7 +2616,6 @@ module RenderingTest
       }.to_json)
     end
     started_key = nil
-    store = app.instance_variable_get(:@agent_store)
     store.define_singleton_method(:start_agent!) do |key|
       started_key = key
       app.instance_variable_get(:@agents).find { |agent| agent.key == key }

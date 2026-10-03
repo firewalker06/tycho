@@ -1026,8 +1026,11 @@ def selected_screen_items
       pressure = agent&.context_pressure
       return [self, nil] unless pressure&.fetch("warning", false)
 
-      agent.acknowledge_context_pressure!(pressure.fetch("signal_id"))
-      save_agents!
+      replacement = @agent_store.update_agent!(agent.key) do |candidate|
+        candidate.acknowledge_context_pressure!(pressure.fetch("signal_id"))
+      end
+      replace_agent_instance!(agent, replacement)
+      rebuild_agent_index!
       [self, nil]
     rescue ArgumentError => e
       HQ.logger.warn("Agent") { "Context acknowledgement failed for #{agent&.key}: #{e.message}" }
