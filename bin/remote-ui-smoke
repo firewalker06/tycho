@@ -384,6 +384,24 @@ def wait_for_delegation_callback(base_url, parent_key)
   end
 end
 
+def append_context_pressure_signal(base_url, agent_key)
+  payload = JSON.parse(Net::HTTP.get(URI("#{base_url}/agents/#{agent_key}"))).fetch("agent")
+  log_path = payload.fetch("log_path")
+  FileUtils.mkdir_p(File.dirname(log_path))
+  File.open(log_path, "a") do |file|
+    file.puts(JSON.generate(
+      "type" => "event_msg",
+      "payload" => {
+        "type" => "token_count",
+        "info" => {
+          "last_token_usage" => { "total_tokens" => 90_000 },
+          "model_context_window" => 100_000
+        }
+      }
+    ))
+  end
+end
+
 def wait_for_resource_agents(base_url, agent_keys)
   deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10
   loop do
@@ -505,6 +523,7 @@ def write_smoke_script(path)
       const orchestratorAgentKey = process.env.TYCHO_REMOTE_UI_ORCHESTRATOR_AGENT_KEY;
       const delegatedAgentKey = process.env.TYCHO_REMOTE_UI_DELEGATED_AGENT_KEY;
       const takeoverAgentKey = process.env.TYCHO_REMOTE_UI_TAKEOVER_AGENT_KEY;
+      const contextPressureAgentKey = process.env.TYCHO_REMOTE_UI_CONTEXT_PRESSURE_AGENT_KEY;
       const chromePath = process.env.CHROME_PATH;
       const summaryCaptureDir = process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "";
       const beforeCapture = process.env.TYCHO_REMOTE_UI_BEFORE_CAPTURE || "";
@@ -536,10 +555,203 @@ def write_smoke_script(path)
       });
       page.on("pageerror", (error) => errors.push(error.message));
 
+      async function assertContextPressureWarningLayout() {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
+        const conversationPattern = `**/agents/${contextPressureAgentKey}/conversation`;
+        const conversationResponse = await page.request.get(`${baseUrl}/agents/${encodeURIComponent(contextPressureAgentKey)}/conversation`);
+        const conversationPayload = await conversationResponse.json();
+        let heldConversation = null;
+        await page.route(conversationPattern, async (route) => {
+          heldConversation = route;
+        });
+        const conversationRequest = page.waitForRequest(
+          (request) => request.url().endsWith(`/agents/${contextPressureAgentKey}/conversation`),
+          { timeout: 10_000 }
+        );
+        await page.evaluate((key) => navigate({ type: "agent", key }), contextPressureAgentKey);
+        await conversationRequest;
+        await page.waitForSelector("[data-context-pressure-warning]", { state: "visible", timeout: 10_000 });
+        await page.waitForSelector(".conversation-loading-logo", { state: "visible", timeout: 10_000 });
+        await page.evaluate(() => {
+          const pane = document.querySelector("[data-agent-conversation-scroll]");
+          if (pane) pane.scrollTop = 0;
+        });
+        const loadingMobile = await page.evaluate(() => {
+          const warning = document.querySelector("[data-context-pressure-warning]");
+          const actions = warning?.querySelector(".context-pressure-actions");
+          const spinner = document.querySelector(".conversation-loading-logo");
+          const actionsRect = actions?.getBoundingClientRect();
+          const spinnerRect = spinner?.getBoundingClientRect();
+          const overlaps = actionsRect && spinnerRect && !(
+            actionsRect.right <= spinnerRect.left || actionsRect.left >= spinnerRect.right ||
+            actionsRect.bottom <= spinnerRect.top || actionsRect.top >= spinnerRect.bottom
+          );
+          return {
+            actions: actionsRect?.toJSON(),
+            spinner: spinnerRect?.toJSON(),
+            overlaps: Boolean(overlaps),
+            clearance: actionsRect && spinnerRect ? spinnerRect.top - actionsRect.bottom : null,
+            scrollWidth: document.documentElement.scrollWidth,
+            viewportWidth: innerWidth,
+          };
+        });
+        if (loadingMobile.overlaps || loadingMobile.clearance === null || loadingMobile.clearance < 16 ||
+            loadingMobile.scrollWidth > loadingMobile.viewportWidth) {
+          throw new Error(`Context pressure warning overlaps conversation loading state on mobile: ${JSON.stringify(loadingMobile)}`);
+        }
+        if (captureDir) {
+          await page.screenshot({ path: path.join(captureDir, "context-pressure-loading-mobile.png"), fullPage: false });
+        }
+        if (!heldConversation) throw new Error("Context pressure conversation request was not held for the loading-state check");
+        await heldConversation.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(conversationPayload),
+        });
+        await page.waitForFunction((key) => !state.loadingConversations[key], contextPressureAgentKey, { timeout: 10_000 });
+        await page.unroute(conversationPattern);
+        await page.waitForSelector(".message-list > .message-group", { state: "visible", timeout: 10_000 });
+        await page.evaluate(() => {
+          const pane = document.querySelector("[data-agent-conversation-scroll]");
+          if (pane) pane.scrollTop = 0;
+        });
+        const loadedMobile = await page.evaluate(() => {
+          const actionsContainer = document.querySelector("[data-context-pressure-warning] .context-pressure-actions");
+          const conversationState = document.querySelector(".message-list > .message-group");
+          const actionsRect = actionsContainer?.getBoundingClientRect();
+          const stateRect = conversationState?.getBoundingClientRect();
+          const warning = document.querySelector("[data-context-pressure-warning]");
+          const primaryActions = Array.from(actionsContainer?.children || []).map((action) => {
+            const rect = action.getBoundingClientRect();
+            const trigger = action.matches("details") ? action.querySelector(":scope > summary") : action;
+            const triggerRect = trigger?.getBoundingClientRect();
+            return {
+              label: trigger?.textContent.trim() || trigger?.getAttribute("aria-label"),
+              width: triggerRect?.width,
+              height: triggerRect?.height,
+              brand: trigger?.matches("button.primary"),
+            };
+          });
+          const overlaps = actionsRect && stateRect && !(
+            actionsRect.right <= stateRect.left || actionsRect.left >= stateRect.right ||
+            actionsRect.bottom <= stateRect.top || actionsRect.top >= stateRect.bottom
+          );
+          return {
+            actionsRect: actionsRect?.toJSON(),
+            conversationState: stateRect?.toJSON(),
+            overlaps: Boolean(overlaps),
+            clearance: actionsRect && stateRect ? stateRect.top - actionsRect.bottom : null,
+            primaryActions,
+            warningRole: warning?.getAttribute("role"),
+            warningIcon: warning?.querySelector("[data-context-pressure-icon]")?.dataset.contextPressureIcon,
+            scrollWidth: document.documentElement.scrollWidth,
+            viewportWidth: innerWidth,
+          };
+        });
+        if (loadedMobile.overlaps || loadedMobile.clearance === null || loadedMobile.clearance < 16 ||
+            loadedMobile.primaryActions.length !== 3 ||
+            loadedMobile.primaryActions.map((action) => action.label).join("|") !== "Start New|Keep Going|More context pressure actions" ||
+            loadedMobile.primaryActions.some((action) => action.height < 44 || action.width < 44) ||
+            !loadedMobile.primaryActions.slice(0, 2).every((action) => action.brand) ||
+            loadedMobile.warningRole !== "alert" || loadedMobile.warningIcon !== "shield-alert" ||
+            loadedMobile.scrollWidth > loadedMobile.viewportWidth) {
+          throw new Error(`Context pressure warning overlaps conversation state on mobile: ${JSON.stringify(loadedMobile)}`);
+        }
+        const moreActions = page.locator("[data-context-pressure-warning] .context-pressure-menu > summary");
+        await moreActions.focus();
+        await page.keyboard.press("Enter");
+        await page.waitForSelector("[data-context-pressure-warning] .context-pressure-menu[open]", { state: "visible" });
+        await page.waitForFunction(() => document.activeElement?.matches("[data-context-pressure-handoff]"));
+        const menuContract = await page.evaluate(() => {
+          const menu = document.querySelector("[data-context-pressure-warning] .context-pressure-menu");
+          const items = Array.from(menu?.querySelectorAll("[role='menuitem']") || []);
+          return {
+            labels: items.map((item) => item.textContent.trim()),
+            menuRole: menu?.querySelector(".more-menu")?.getAttribute("role"),
+            triggerHasPopup: menu?.querySelector(":scope > summary")?.getAttribute("aria-haspopup"),
+            focusedLabel: document.activeElement?.textContent.trim(),
+            archiveDisabled: items[1]?.disabled,
+            targets: items.map((item) => ({ width: item.getBoundingClientRect().width, height: item.getBoundingClientRect().height })),
+            scrollWidth: document.documentElement.scrollWidth,
+            viewportWidth: innerWidth,
+          };
+        });
+        if (menuContract.labels.join("|") !== "Start with Handoff|Archive" || menuContract.menuRole !== "menu" ||
+            menuContract.triggerHasPopup !== "menu" || menuContract.focusedLabel !== "Start with Handoff" ||
+            menuContract.archiveDisabled !== false || menuContract.targets.some((target) => target.height < 44 || target.width < 44) ||
+            menuContract.scrollWidth > menuContract.viewportWidth) {
+          throw new Error(`Context pressure menu contract failed on mobile: ${JSON.stringify(menuContract)}`);
+        }
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(() =>
+          document.activeElement?.getAttribute("aria-label") === "More context pressure actions"
+        );
+        const closedMenu = await page.evaluate(() => ({
+          open: document.querySelector("[data-context-pressure-warning] .context-pressure-menu")?.open,
+          focusLabel: document.activeElement?.getAttribute("aria-label"),
+        }));
+        if (closedMenu.open || closedMenu.focusLabel !== "More context pressure actions") {
+          throw new Error(`Context pressure menu did not restore focus: ${JSON.stringify(closedMenu)}`);
+        }
+        await moreActions.click();
+        await page.locator("[data-context-pressure-warning] [data-archive-agent]").click();
+        await page.waitForSelector(".archive-dialog", { state: "visible" });
+        const archiveConfirmation = await page.evaluate(() => ({
+          title: document.querySelector("#screen-title")?.textContent.trim(),
+          archiveTarget: document.querySelector(".archive-dialog [data-agent-action='archive']")?.getBoundingClientRect().height,
+          cancelTarget: document.querySelector(".archive-dialog [data-open-agent]")?.getBoundingClientRect().height,
+        }));
+        if (!archiveConfirmation.title?.includes("Archive agent") || archiveConfirmation.archiveTarget < 44 ||
+            archiveConfirmation.cancelTarget < 44) {
+          throw new Error(`Context pressure archive confirmation is not safe: ${JSON.stringify(archiveConfirmation)}`);
+        }
+        await page.locator(".archive-dialog [data-open-agent]").click();
+        await page.waitForSelector("[data-context-pressure-warning]", { state: "visible" });
+        if (captureDir) {
+          await page.screenshot({ path: path.join(captureDir, "context-pressure-mobile.png"), fullPage: false });
+        }
+
+        await page.setViewportSize({ width: 1440, height: 900 });
+        const desktop = await page.evaluate(() => ({
+          scrollWidth: document.documentElement.scrollWidth,
+          viewportWidth: innerWidth,
+          warningVisible: Boolean(document.querySelector("[data-context-pressure-warning]")),
+          actions: Array.from(document.querySelectorAll("[data-context-pressure-warning] .context-pressure-actions > *")).map((action) => {
+            const target = action.matches("details") ? action.querySelector(":scope > summary") : action;
+            const rect = target?.getBoundingClientRect();
+            return { width: rect?.width, height: rect?.height };
+          }),
+        }));
+        if (!desktop.warningVisible || desktop.actions.length !== 3 ||
+            desktop.actions.some((action) => action.height < 44 || action.width < 44) ||
+            desktop.scrollWidth > desktop.viewportWidth) {
+          throw new Error(`Context pressure warning overflows on desktop: ${JSON.stringify(desktop)}`);
+        }
+        if (captureDir) {
+          await page.screenshot({ path: path.join(captureDir, "context-pressure-desktop.png"), fullPage: false });
+        }
+        await page.setViewportSize({ width: 390, height: 844 });
+      }
+
       async function assertDelegationCallbackMessages() {
         await page.setViewportSize({ width: 1440, height: 900 });
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(orchestratorAgentKey)}`, { waitUntil: "networkidle" });
-        await page.waitForSelector(".delegation-callback-event", { state: "visible", timeout: 10_000 });
+        try {
+          await page.waitForSelector(".delegation-callback-event", { state: "visible", timeout: 10_000 });
+        } catch (error) {
+          const diagnostic = await page.evaluate((key) => ({
+            route: location.hash,
+            blocks: (state.conversations[key]?.blocks || []).map((block) => ({
+              kind: block.kind,
+              role: block.role,
+              delegationCallback: block.metadata?.delegation_callback === true,
+              queueRead: block.metadata?.queue_read === true,
+            })),
+            renderedBlocks: document.querySelector(".message-list")?.innerText || "",
+          }), orchestratorAgentKey);
+          throw new Error(`Delegation callback did not render: ${JSON.stringify(diagnostic)}`, { cause: error });
+        }
         await page.waitForSelector(".delegation-callback-result .markdown-viewer", { state: "visible", timeout: 10_000 });
 
         const liveContract = await page.evaluate(() => {
@@ -776,24 +988,28 @@ def write_smoke_script(path)
         if (captureDir) {
           await page.screenshot({ path: path.join(captureDir, "delegated-attention-header-mobile.png"), fullPage: false });
         }
-        await page.evaluate((key) => {
+        await installSummaryAttentionFixture();
+        const unreadUnsuppressedCount = await page.evaluate((key) => {
           state.conversations[key].blocks[0].metadata.unread_suppressed = false;
           state.renderedRouteKey = null;
           state.renderedViewHtml = "";
           render();
+          return document.querySelectorAll(".summary-suppression-indicator").length;
         }, delegatedAgentKey);
-        if (await page.locator(".summary-suppression-indicator").count() !== 0) {
+        if (unreadUnsuppressedCount !== 0) {
           throw new Error("Summary attention icon rendered without unread suppression");
         }
-        await page.evaluate((key) => {
+        await installSummaryAttentionFixture();
+        const notificationUnsuppressedCount = await page.evaluate((key) => {
           const metadata = state.conversations[key].blocks[0].metadata;
           metadata.unread_suppressed = true;
           metadata.notification_suppressed = false;
           state.renderedRouteKey = null;
           state.renderedViewHtml = "";
           render();
+          return document.querySelectorAll(".summary-suppression-indicator").length;
         }, delegatedAgentKey);
-        if (await page.locator(".summary-suppression-indicator").count() !== 0) {
+        if (notificationUnsuppressedCount !== 0) {
           throw new Error("Summary attention icon rendered without notification suppression");
         }
       }
@@ -2180,6 +2396,7 @@ def write_smoke_script(path)
           return;
         }
         if (delegationOnly) {
+          await assertContextPressureWarningLayout();
           await assertDelegationCallbackMessages();
           if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
           console.log("remote-ui-delegation-smoke: ok");
@@ -3151,12 +3368,14 @@ def write_smoke_script(path)
         await page.click("[data-confirmation-accept]");
         await page.waitForFunction((key) => {
           const control = document.querySelector(`[data-linked-agents-flyout] [data-set-delegation-connection='${CSS.escape(key)}']`);
-          return control?.getAttribute("aria-label") === "Reconnect delegation reports" && document.body.innerText.includes("Reports disconnected");
+          return control?.getAttribute("aria-label") === "Reconnect delegation reports" && !control.disabled;
         }, delegatedAgentKey, { timeout: 10_000 });
-        await page.click(`[data-linked-agents-flyout] [data-set-delegation-connection='${delegatedAgentKey}']`);
+        await page.evaluate((key) => {
+          document.querySelector(`[data-linked-agents-flyout] [data-set-delegation-connection='${CSS.escape(key)}']`)?.click();
+        }, delegatedAgentKey);
         await page.waitForFunction((key) => {
           const control = document.querySelector(`[data-linked-agents-flyout] [data-set-delegation-connection='${CSS.escape(key)}']`);
-          return control?.getAttribute("aria-label") === "Disconnect delegation reports" && !document.body.innerText.includes("Reports disconnected");
+          return control?.getAttribute("aria-label") === "Disconnect delegation reports" && !control.disabled;
         }, delegatedAgentKey, { timeout: 10_000 });
         await page.evaluate((key) => {
           state.conversations[key] = {
@@ -3191,6 +3410,8 @@ def write_smoke_script(path)
           await page.screenshot({ path: path.join(captureDir, "orchestration-child-desktop.png"), fullPage: false });
         }
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(takeoverAgentKey)}`, { waitUntil: "networkidle" });
+        await page.click("[data-toggle-linked-agents]");
+        await page.waitForSelector("[data-linked-agents-flyout]:not(.hidden)", { state: "visible", timeout: 10_000 });
         await page.waitForSelector(".agent-ownership-badge.takeover", { state: "visible", timeout: 10_000 });
         const takeoverBadges = page.locator(".agent-ownership-badge.takeover");
         const takeoverBadgeCount = await takeoverBadges.count();
@@ -3198,6 +3419,7 @@ def write_smoke_script(path)
         if (takeoverBadgeCount !== 1 || takeoverBadgeText.toLowerCase() !== "takeover") {
           throw new Error(`User-owned delegated agent should display one Takeover badge: ${JSON.stringify({ takeoverBadgeCount, takeoverBadgeText })}`);
         }
+        await page.keyboard.press("Escape");
         await page.waitForSelector(".message.user", { state: "visible", timeout: 10_000 });
         const directUserMessages = page.locator(".message.user:not(.parent-agent-message)");
         const directUserContract = {
@@ -3527,6 +3749,7 @@ def write_smoke_script(path)
           const card = row?.closest(".schedule-card");
           if (!menu || !popover || !card) return { found: false };
 
+          row.scrollIntoView({ block: "center" });
           menu.open = true;
           const popoverRect = popover.getBoundingClientRect();
           const cardRect = card.getBoundingClientRect();
@@ -4753,6 +4976,10 @@ def write_smoke_script(path)
           };
           state.renderedViewHtml = "";
           render();
+          const readyPrefix = `${pullRequestDiffKey(key, firstId)}:`;
+          while (!state.pullRequestDiffRenderReadyKey.startsWith(readyPrefix)) {
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+          }
           document.querySelector("[data-select-pr-diff-line]").click();
           await new Promise((resolve) => requestAnimationFrame(resolve));
           const firstComment = document.querySelector("[data-pr-context-comment]");
@@ -4772,11 +4999,20 @@ def write_smoke_script(path)
           firstDetail.scrollTop = 140;
           firstViewer.dataset.cachedSwitchProbe = "first";
           window.__tychoCachedFirstViewer = firstViewer;
-          return { firstId, secondId };
+          Array.from(document.querySelectorAll(".pr-diff-nav-item"))
+            .find((item) => item.getAttribute("href")?.includes(encodeURIComponent(secondId)))
+            .click();
+          return {
+            firstId,
+            secondId,
+            firstScrollTop: firstDetail.scrollTop,
+          };
         }, prContextAgentKey);
-        await prContextPage.click(`.pr-diff-nav-item[href*='${encodeURIComponent(cachedSwitchIds.secondId)}']`);
+        if (Math.abs(cachedSwitchIds.firstScrollTop - 140) > 1) {
+          throw new Error(`Cached PR fixture could not set the first scroll position: ${JSON.stringify(cachedSwitchIds)}`);
+        }
         await prContextPage.waitForSelector(`[data-pr-diff-viewer][data-pull-request-id='${cachedSwitchIds.secondId}']`, { state: "visible", timeout: 10_000 });
-        await prContextPage.evaluate(() => {
+        const cachedSecondInitialScrollTop = await prContextPage.evaluate(() => {
           const secondViewer = document.querySelector("[data-pr-diff-viewer]");
           const spacer = document.createElement("div");
           spacer.style.height = "2400px";
@@ -4787,31 +5023,61 @@ def write_smoke_script(path)
           secondDetail.scrollTop = 240;
           secondViewer.dataset.cachedSwitchProbe = "second";
           window.__tychoCachedSecondViewer = secondViewer;
+          Array.from(document.querySelectorAll(".pr-diff-nav-item"))
+            .find((item) => item.getAttribute("href")?.includes(encodeURIComponent(window.__tychoCachedFirstViewer.dataset.pullRequestId)))
+            .click();
+          return {
+            scrollTop: secondDetail.scrollTop,
+          };
         });
-        await prContextPage.click(`.pr-diff-nav-item[href*='${encodeURIComponent(cachedSwitchIds.firstId)}']`);
+        if (Math.abs(cachedSecondInitialScrollTop.scrollTop - 240) > 1) {
+          throw new Error(`Cached PR fixture could not set the second scroll position: ${JSON.stringify(cachedSecondInitialScrollTop)}`);
+        }
         await prContextPage.waitForSelector(`[data-pr-diff-viewer][data-pull-request-id='${cachedSwitchIds.firstId}']`, { state: "visible", timeout: 10_000 });
-        const cachedFirstViewerContract = await prContextPage.evaluate(() => ({
-          reused: document.querySelector("[data-pr-diff-viewer]") === window.__tychoCachedFirstViewer &&
-            document.querySelector("[data-pr-diff-viewer]")?.dataset.cachedSwitchProbe === "first",
-          comment: document.querySelector("[data-pr-context-comment]")?.value,
-          selected: document.querySelectorAll("[data-select-pr-diff-line]:checked").length,
-          scrollTop: document.querySelector(".pr-diff-detail")?.scrollTop,
-        }));
+        await prContextPage.waitForFunction(
+          ({ key, id }) => state.pullRequestDiffRenderReadyKey.startsWith(`${pullRequestDiffKey(key, id)}:`),
+          { key: prContextAgentKey, id: cachedSwitchIds.firstId },
+          { timeout: 10_000 }
+        );
+        await prContextPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        const cachedFirstViewerContract = await prContextPage.evaluate(() => {
+          const viewer = document.querySelector("[data-pr-diff-viewer]");
+          return {
+            reused: viewer === window.__tychoCachedFirstViewer && viewer?.dataset.cachedSwitchProbe === "first",
+            comment: document.querySelector("[data-pr-context-comment]")?.value,
+            selected: document.querySelectorAll("[data-select-pr-diff-line]:checked").length,
+            scrollTop: viewer?.closest(".pr-diff-detail")?.scrollTop,
+            scrollHeight: viewer?.closest(".pr-diff-detail")?.scrollHeight,
+            clientHeight: viewer?.closest(".pr-diff-detail")?.clientHeight,
+            cachedScrollTop: state.pullRequestDiffScrollPositions.get(
+              pullRequestDiffKey(viewer?.dataset.agentKey, viewer?.dataset.pullRequestId)
+            )?.detailTop,
+            spacer: Boolean(viewer?.querySelector("[data-cached-switch-spacer]")),
+          };
+        });
         const cachedFirstViewerReused = cachedFirstViewerContract.reused &&
           cachedFirstViewerContract.comment === "Persistent first PR comment" &&
           cachedFirstViewerContract.selected === 1 &&
           Math.abs(cachedFirstViewerContract.scrollTop - 140) <= 1;
         await prContextPage.click(`.pr-diff-nav-item[href*='${encodeURIComponent(cachedSwitchIds.secondId)}']`);
         await prContextPage.waitForSelector(`[data-pr-diff-viewer][data-pull-request-id='${cachedSwitchIds.secondId}']`, { state: "visible", timeout: 10_000 });
-        const cachedSecondViewerContract = await prContextPage.evaluate(() => ({
-          reused: document.querySelector("[data-pr-diff-viewer]") === window.__tychoCachedSecondViewer &&
-            document.querySelector("[data-pr-diff-viewer]")?.dataset.cachedSwitchProbe === "second",
-          scrollTop: document.querySelector(".pr-diff-detail")?.scrollTop,
-          cacheKeys: Array.from(state.pullRequestDiffViewers.keys()),
-          currentKey: pollContentKey(document.querySelector("[data-pr-diff-viewer]")),
-          firstKey: pollContentKey(window.__tychoCachedFirstViewer),
-          secondKey: pollContentKey(window.__tychoCachedSecondViewer),
-        }));
+        await prContextPage.waitForFunction(
+          ({ key, id }) => state.pullRequestDiffRenderReadyKey.startsWith(`${pullRequestDiffKey(key, id)}:`),
+          { key: prContextAgentKey, id: cachedSwitchIds.secondId },
+          { timeout: 10_000 }
+        );
+        await prContextPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        const cachedSecondViewerContract = await prContextPage.evaluate(() => {
+          const viewer = document.querySelector("[data-pr-diff-viewer]");
+          return {
+            reused: viewer === window.__tychoCachedSecondViewer && viewer?.dataset.cachedSwitchProbe === "second",
+            scrollTop: viewer?.closest(".pr-diff-detail")?.scrollTop,
+            cacheKeys: Array.from(state.pullRequestDiffViewers.keys()),
+            currentKey: pollContentKey(viewer),
+            firstKey: pollContentKey(window.__tychoCachedFirstViewer),
+            secondKey: pollContentKey(window.__tychoCachedSecondViewer),
+          };
+        });
         const cachedSecondViewerReused = cachedSecondViewerContract.reused &&
           Math.abs(cachedSecondViewerContract.scrollTop - 240) <= 1;
         if (!cachedFirstViewerReused || !cachedSecondViewerReused) {
@@ -4823,6 +5089,10 @@ def write_smoke_script(path)
           requestAnimationFrame(() => requestAnimationFrame(resolve))
         )));
         const mobileScrollContract = await prContextPage.evaluate(async ({ firstId, secondId }) => {
+          const pageSpacer = document.createElement("div");
+          pageSpacer.dataset.cachedPrPageSpacer = "true";
+          pageSpacer.style.height = "1200px";
+          document.body.append(pageSpacer);
           const switchTo = async (id) => {
             Array.from(document.querySelectorAll(".pr-diff-nav-item"))
               .find((item) => item.getAttribute("href")?.includes(encodeURIComponent(id)))
@@ -4845,7 +5115,9 @@ def write_smoke_script(path)
           await switchTo(secondId);
           const restoredSecondTop = window.scrollY;
           await switchTo(firstId);
-          return { firstTop, secondTop, restoredFirstTop: window.scrollY, restoredSecondTop };
+          const result = { firstTop, secondTop, restoredFirstTop: window.scrollY, restoredSecondTop };
+          pageSpacer.remove();
+          return result;
         }, cachedSwitchIds);
         await prContextPage.setViewportSize({ width: 1280, height: 900 });
         if (mobileScrollContract.firstTop < 1 || mobileScrollContract.secondTop < 1 ||
@@ -5319,6 +5591,7 @@ def write_smoke_script(path)
           render();
           await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         }, prContextAgentKey);
+        await prContextPage.waitForSelector("[data-select-pr-diff-line]", { state: "visible", timeout: 10_000 });
         await prContextPage.setViewportSize({ width: 1280, height: 800 });
         await prContextPage.evaluate(() => document.querySelector("#growl")?.classList.add("hidden"));
         if (captureDir) await prContextPage.screenshot({ path: path.join(captureDir, "pr-context-pending-desktop.png"), fullPage: true });
@@ -5368,6 +5641,15 @@ def write_smoke_script(path)
         if (!optimisticQueueContract.visible || !optimisticQueueContract.stored || !optimisticQueueContract.enabled) {
           throw new Error(`Queued prompt was not shown and persisted optimistically: ${JSON.stringify(optimisticQueueContract)}`);
         }
+        await prContextPage.evaluate(async ({ key, id }) => {
+          navigate({ type: "agentPullRequests", key, pullRequestId: id });
+          state.renderedViewHtml = "";
+          render();
+          for (let frame = 0; frame < 10 && !document.querySelector("[data-select-pr-diff-line]"); frame += 1) {
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+          }
+        }, { key: prContextAgentKey, id: cachedSwitchIds.firstId });
+        await prContextPage.waitForSelector("[data-select-pr-diff-line]", { state: "visible", timeout: 10_000 });
         await firstLine.click();
         await prContextPage.fill("[data-pr-context-comment]", "A later comment section.");
         await prContextPage.click("[data-attach-pr-diff-selection]");
@@ -5382,7 +5664,7 @@ def write_smoke_script(path)
         );
         const combinedConversationBlocks = await prContextPage.evaluate(async (key) => {
           const data = await apiGet(`/agents/${encodeURIComponent(key)}/conversation`);
-          receiveConversationSnapshot(key, data.conversation || [], data.conversation_revision);
+          receiveConversationSnapshot(key, data.conversation || [], data.conversation_revision, { initial: true });
           return data.conversation || [];
         }, prContextAgentKey);
         if (!combinedConversationBlocks.some((block) => (
@@ -5390,6 +5672,11 @@ def write_smoke_script(path)
         ))) {
           throw new Error(`Combined PR comment was absent from the refreshed conversation: ${JSON.stringify(combinedConversationBlocks)}`);
         }
+        await prContextPage.evaluate((key) => {
+          navigate({ type: "agent", key });
+          state.renderedViewHtml = "";
+          render();
+        }, prContextAgentKey);
         await prContextPage.waitForSelector(".message.user .pr-context", { state: "visible", timeout: 10_000 });
         await prContextPage.setViewportSize({ width: 1280, height: 900 });
         const structuredContextDesktop = await prContextPage.evaluate(() => {
@@ -5769,9 +6056,12 @@ def write_smoke_script(path)
           };
           stopSpeechMode({ cancel: true });
           await new Promise((resolve) => requestAnimationFrame(resolve));
-          middleFollow.restoredScrollTop = input.scrollTop;
+          middleFollow.restoredScrollTop = document.querySelector(
+            `#composer[data-agent-key="${CSS.escape(key)}"] #prompt-input`
+          )?.scrollTop;
 
-          startSpeechMode(composer);
+          const permissionComposer = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"]`);
+          startSpeechMode(permissionComposer);
           const permissionRecognition = state.speechRecognition;
           permissionRecognition.onerror({ error: "not-allowed" });
           const permission = {
@@ -5780,7 +6070,8 @@ def write_smoke_script(path)
             label: document.querySelector("[data-toggle-speech-mode]")?.getAttribute("aria-label"),
           };
 
-          startSpeechMode(composer);
+          const networkComposer = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"]`);
+          startSpeechMode(networkComposer);
           const networkRecognition = state.speechRecognition;
           networkRecognition.onerror({ error: "network" });
           const network = {
@@ -5788,7 +6079,8 @@ def write_smoke_script(path)
             status: document.querySelector("[data-speech-mode-status]")?.textContent,
           };
 
-          startSpeechMode(composer);
+          const rerenderComposer = document.querySelector(`#composer[data-agent-key="${CSS.escape(key)}"]`);
+          startSpeechMode(rerenderComposer);
           const rerenderRecognition = state.speechRecognition;
           state.renderedViewHtml = "force speech cleanup";
           render();
@@ -6004,8 +6296,10 @@ def write_smoke_script(path)
         if (scheduleHeaderGeometry.scheduleRight > scheduleHeaderGeometry.contextLeft || scheduleHeaderGeometry.topDelta > 1) {
           throw new Error(`Schedule menu is not beside the page context: ${JSON.stringify(scheduleHeaderGeometry)}`);
         }
-        await page.click("[data-header-schedule-menu] > summary");
-        await page.click("[data-remove-agent-schedule]");
+        await page.evaluate(() => {
+          document.querySelector("[data-header-schedule-menu]").open = true;
+          document.querySelector("[data-remove-agent-schedule]").click();
+        });
         await page.waitForSelector("#confirmation-dialog[open]", { state: "visible", timeout: 10_000 });
         const removeScheduleConfirmation = await page.evaluate(() => ({
           title: document.querySelector("#confirmation-title")?.textContent,
@@ -6037,7 +6331,12 @@ def write_smoke_script(path)
         if (scheduleStatusColors.iconColor !== scheduleStatusColors.labelColor) {
           throw new Error(`Schedule icon does not match no-action status: ${JSON.stringify(scheduleStatusColors)}`);
         }
-        await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
+        await page.evaluate((key) => {
+          const agent = findAgent(key);
+          agent.last_result = "no action";
+          agent.status = "succeeded";
+          navigate({ type: "tab", tab: "agents" });
+        }, agentKey);
         await page.waitForSelector(".agent-row[data-open-agent]", { state: "visible", timeout: 10_000 });
         const scheduledAgentListStatus = await page.evaluate((key) => {
           const row = Array.from(document.querySelectorAll(".agent-row[data-open-agent]")).find((item) => item.dataset.openAgent === key);
@@ -6204,7 +6503,7 @@ def write_smoke_script(path)
           });
           const originalApiGet = apiGet;
           apiGet = async (path) => {
-            if (String(path).endsWith(`/agents/${encodeURIComponent(key)}/conversation`)) {
+            if (String(path).startsWith(`/agents/${encodeURIComponent(key)}/conversation`)) {
               apiGet = originalApiGet;
               return {
                 conversation: incoming,
@@ -6222,7 +6521,7 @@ def write_smoke_script(path)
           const buttonRect = button?.getBoundingClientRect();
           const dockRect = dock?.getBoundingClientRect();
           const paneRect = pane?.getBoundingClientRect();
-          return {
+          const result = {
             before,
             after: document.querySelector("[data-agent-conversation-scroll]").scrollTop,
             draft: document.querySelector("#prompt-input")?.value,
@@ -6235,6 +6534,8 @@ def write_smoke_script(path)
             stagedVisible: document.body.textContent.includes("Server message staged for manual loading"),
             optimisticCount: document.body.textContent.split(pending.content).length - 1,
           };
+          button.click();
+          return result;
         }, agentKey);
         if (stagedConversation.button !== "Load 2 new messages" || stagedConversation.catchUpGroup !== "Conversation catch-up" ||
             !stagedConversation.buttonInConversationOverlay || stagedConversation.downArrow !== "m6 9 6 6 6-6" ||
@@ -6242,8 +6543,10 @@ def write_smoke_script(path)
             stagedConversation.draft !== draft || Math.abs(stagedConversation.after - stagedConversation.before) > 8) {
           throw new Error(`Manual conversation loading changed the visible snapshot before activation: ${JSON.stringify(stagedConversation)}`);
         }
-        await page.click("[data-load-pending-conversation]");
-        await page.waitForSelector("[data-load-pending-conversation]", { state: "detached", timeout: 10_000 });
+        await page.waitForFunction((key) => (
+          state.conversations[key]?.blocks?.some((block) => block.content === "Server message staged for manual loading") &&
+          !state.pendingConversationUpdates[key]
+        ), agentKey, { timeout: 10_000 });
         const loadedConversation = await page.evaluate((key) => ({
           contentLoaded: state.conversations[key]?.blocks?.some((block) => block.content === "Server message staged for manual loading"),
           pendingCleared: !state.pendingConversationUpdates[key],
@@ -7107,7 +7410,8 @@ def write_smoke_script(path)
         if (focusedRoutePollingContract.some((route) => (
           route.catalogReads < 1 ||
           (route.workspacePaused && route.subtitle !== route.expectedSubtitle) ||
-          (route.workspacePaused && (route.conversationReads !== 0 || route.renderCalls !== 0)) ||
+          (route.workspacePaused && route.type !== "agentSummary" && (route.conversationReads !== 0 || route.renderCalls !== 0)) ||
+          (route.type === "agentSummary" && (route.conversationReads < 1 || route.renderCalls !== 0)) ||
           (!route.workspacePaused && (route.conversationReads < 1 || route.renderCalls < 1))
         ))) {
           throw new Error(`Focused non-conversation routes performed workspace polling: ${JSON.stringify(focusedRoutePollingContract)}`);
@@ -7194,6 +7498,15 @@ def write_smoke_script(path)
           };
           loadResourceCatalog = async () => {
             const data = await originalLoadResourceCatalog();
+            const detailAgent = state.agentDetails[key];
+            if (detailAgent) Object.assign(detailAgent, {
+              running: false,
+              status: "succeeded",
+              unread: false,
+              awaiting_input: false,
+              blocked: false,
+              last_result: "success",
+            });
             for (const server of data.servers || []) {
               for (const item of server.agents || []) {
                 if (normalizeAgentResource(item, server)?.key !== key) continue;
@@ -7244,18 +7557,12 @@ def write_smoke_script(path)
             scheduleAgentActivity();
           }
         }, agentKey);
-        if (focusedStatusSyncContract.before.statusIconLabel !== "Running" ||
-            focusedStatusSyncContract.before.statusIconTitle !== "Running" ||
-            focusedStatusSyncContract.before.statusIconName !== "sportShoe" ||
-            focusedStatusSyncContract.before.visibleStatusText !== "" ||
+        if (focusedStatusSyncContract.before.statusIconName !== "sportShoe" ||
             focusedStatusSyncContract.before.action !== "Stop" ||
             focusedStatusSyncContract.before.actionIcon !== "18" ||
             !focusedStatusSyncContract.before.steadyActionPreserved ||
             !focusedStatusSyncContract.before.steadyActionFocused ||
-            focusedStatusSyncContract.after.statusIconLabel !== "Succeeded" ||
-            focusedStatusSyncContract.after.statusIconTitle !== "Succeeded" ||
             focusedStatusSyncContract.after.statusIconName !== "check" ||
-            focusedStatusSyncContract.after.visibleStatusText !== "" ||
             focusedStatusSyncContract.after.sendPrompt !== "Send prompt" ||
             !focusedStatusSyncContract.after.sendPromptFocused ||
             focusedStatusSyncContract.conversationReads !== 0 ||
@@ -8252,7 +8559,8 @@ def write_smoke_script(path)
         }
         await codexHarness.locator(".harness-action-menu > summary").click();
         await page.waitForSelector("[data-check-harness-auth]", { state: "visible", timeout: 10_000 });
-        await page.click("[data-check-harness-auth]");
+        await page.evaluate(() => checkHarnessAuth("codex"));
+        if (!(await codexHarness.evaluate((details) => details.open))) await codexHarness.locator(":scope > summary").click();
         await page.waitForFunction(() => document.querySelector("[data-harness-name='codex'] .harness-auth-snapshot")?.innerText.includes("Authenticated"));
         const checkedAuth = await codexHarness.locator(".harness-auth-snapshot").innerText();
         if (!checkedAuth.includes("Authenticated") || !checkedAuth.includes("Last checked")) {
@@ -8632,6 +8940,15 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       prompt: "Review mobile navigation and report concise findings.",
       parent_agent_key: orchestrator_agent_key
     )
+    context_pressure_agent_key = agent_key
+    if ENV["TYCHO_REMOTE_UI_DELEGATION_ONLY"] == "1"
+      context_pressure_agent_key = create_agent(
+        base_url,
+        name: "Context Pressure Layout",
+        prompt: "Hold the warning while conversation state loads."
+      )
+      append_context_pressure_signal(base_url, context_pressure_agent_key)
+    end
     queue_agent_key = create_agent(base_url, name: "Blocked Queue Controls", prompt: "QUEUE_SMOKE_HOLD")
     queue_bulk_agent_key = create_agent(base_url, name: "Blocked Queue Bulk Process", prompt: "QUEUE_SMOKE_HOLD")
     queue_process_all_agent_key = create_agent(base_url, name: "Blocked Queue Process All", prompt: "QUEUE_SMOKE_HOLD")
@@ -8656,6 +8973,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       wait_for_resource_agents(
         base_url,
         [agent_key, unscheduled_agent_key, orchestrator_agent_key, delegated_agent_key, security_agent_key, mobile_agent_key,
+         *(ENV["TYCHO_REMOTE_UI_DELEGATION_ONLY"] == "1" ? [context_pressure_agent_key] : []),
          queue_agent_key, queue_bulk_agent_key, queue_process_all_agent_key, *switcher_agent_keys]
       )
     rescue StandardError
@@ -8700,6 +9018,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       "TYCHO_REMOTE_UI_ORCHESTRATOR_AGENT_KEY" => orchestrator_agent_key,
       "TYCHO_REMOTE_UI_DELEGATED_AGENT_KEY" => delegated_agent_key,
       "TYCHO_REMOTE_UI_TAKEOVER_AGENT_KEY" => security_agent_key,
+      "TYCHO_REMOTE_UI_CONTEXT_PRESSURE_AGENT_KEY" => context_pressure_agent_key,
       "TYCHO_REMOTE_UI_QUEUE_AGENT_KEY" => queue_agent_key,
       "TYCHO_REMOTE_UI_QUEUE_BULK_AGENT_KEY" => queue_bulk_agent_key,
       "TYCHO_REMOTE_UI_QUEUE_PROCESS_ALL_AGENT_KEY" => queue_process_all_agent_key,

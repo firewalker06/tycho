@@ -25,6 +25,7 @@ require_relative "domain/agent_attachment_store"
 require_relative "domain/agent_activity_snapshot"
 require_relative "domain/agent_chat_log"
 require_relative "domain/agent_store"
+require_relative "domain/context_handoff"
 require_relative "domain/delegation_actor"
 require_relative "domain/agent_archive_store"
 require_relative "domain/executable_resolver"
@@ -58,7 +59,7 @@ module HQ
     ACTIVITY_AGENT_FIELDS = %i[
       key name project_key template_key scheduled schedule_key agent model reasoning_effort status running unread
       awaiting_input blocked run_count created_at started_at finished_at updated_at last_exit_code last_result summary
-      archived archived_at delegation
+      context_pressure archived archived_at delegation
     ].freeze
     REMOTE_DAEMON_LOG_FILE = File.join(LOGS_DIR, "remote_server_daemon.log")
     RESTART_CACHE_RESET_HEADERS = {
@@ -417,6 +418,9 @@ module HQ
         tail = parts.drop(2)
         return ok(agent: service.agent(key)) if method == "GET" && tail.empty?
         return ok(agent: service.update_agent(key, body)) if %w[PATCH PUT].include?(method) && tail.empty?
+        if method == "POST" && tail == ["context-pressure", "acknowledge"]
+          return ok(agent: service.acknowledge_context_pressure(key, body))
+        end
         return ok(service.update_agent_delegation(key, body)) if %w[PATCH PUT].include?(method) && tail == ["delegation"]
         return ok(service.archive_agent(key)) if method == "DELETE" && tail.empty?
         return created(service.create_agent_loop(key, body)) if method == "POST" && tail == ["loop-schedule"]
@@ -3468,11 +3472,18 @@ module HQ
       source = current.find { |agent| agent.key == key.to_s } || source
       archive_source = truthy?(attrs["archive_source"])
       raise Error.new("Agent is running", status: 409) if archive_source && source.running?
+      unsafe_queue = source.pending_prompts? && !source.delegation_callback_prompts_only?
+      if archive_source && (unsafe_queue || source.inquiry_blocking_prompt_queue?)
+        raise Error.new("Archive blocked to protect unresolved work. Keep the source agent active.", status: 409)
+      end
 
       project = find_project!(source.project_key)
       target = @agent_store.clone_agent(source, existing_agents: current)
       target.update!(**agent_attrs(target, attrs, project: project, creating: false))
       @agent_store.ensure_project_context_prompt!(target, project)
+      if truthy?(attrs["context_handoff"])
+        ContextHandoff.prepare!(source, target)
+      end
 
       archive_path = @agent_store.archive_agent!(source.key) if archive_source
       @agent_activity_snapshot.remove!(source.key) if archive_source
@@ -3498,6 +3509,15 @@ module HQ
         archive_path: archive_path,
         schedule_reconciled: schedule_reconciled
       }.compact
+    end
+
+    def acknowledge_context_pressure(key, attrs)
+      target = @agent_store.update_agent!(key) do |candidate, _agents, _events|
+        candidate.acknowledge_context_pressure!(attrs["signal_id"])
+      end
+      agent_payload(target)
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 409)
     end
 
     def archive_agent(key)
@@ -4595,6 +4615,7 @@ module HQ
         last_result: agent.last_result_label,
         summary: agent.last_summary,
         cost_snapshot: agent.cost_snapshot,
+        context_pressure: agent.context_pressure,
         latest_inquiry: inquiry,
         suspended_inquiry: suspended_inquiry_payload(agent),
         prompt_queue: prompt_queue_payload(agent),
@@ -4637,6 +4658,7 @@ module HQ
         last_exit_code: agent.last_exit_code,
         last_result: agent.last_result_label,
         summary: agent.last_summary,
+        context_pressure: agent.context_pressure,
         prompt_queue_count: visible_queue_entries.length,
         prompt_queue_delegation_callback_count: visible_queue_entries.count do |entry|
           entry["source"] == "delegation_callback"

@@ -19,6 +19,7 @@ require_relative "domain/github_api_client"
 require_relative "domain/pull_request_diff"
 require_relative "domain/scheduler"
 require_relative "domain/agent_store"
+require_relative "domain/context_handoff"
 require_relative "domain/delegation_actor"
 require_relative "domain/agent_archive_store"
 require_relative "domain/usage_metrics"
@@ -319,7 +320,8 @@ module HQ
         desc "Clone an existing agent"
         argument :agent_key, required: true, desc: "Agent key to clone"
         option :run, type: :boolean, default: false, desc: "Start the cloned agent immediately"
-        usage_template "agent clone %{agent_key}"
+        option :handoff, type: :boolean, default: false, desc: "Continue with a concise source-agent handoff"
+        usage_template "agent clone %{agent_key} [--handoff] [--run]"
 
         def call(agent_key:, **opts)
           exit CLICommand.clone_agent(agent_key, opts, out: out, err: err)
@@ -2108,6 +2110,7 @@ module HQ
 
       project = registry.projects.find { |p| p.key == clone.project_key }
       store.ensure_project_context_prompt!(clone, project) if project
+      ContextHandoff.prepare!(source, clone) if opts[:handoff]
 
       agents.unshift(clone)
       store.save(agents)
@@ -2651,7 +2654,8 @@ module HQ
         archive_path: agent.archive_path,
         delegation: delegation || agent_cli_delegation(agent),
         prompt_queue_count: agent.queued_prompts.length,
-        prompt_queue_dispatch_error: agent.prompt_queue_dispatch_error
+        prompt_queue_dispatch_error: agent.prompt_queue_dispatch_error,
+        context_pressure: agent.context_pressure
       }
       result[:archived_at] = agent.archived_at&.iso8601 if archive_fields
       result
@@ -2703,6 +2707,9 @@ module HQ
         ["Workspace", value["workspace"]],
         ["Log", value["log_path"] || "n/a"]
       ]
+      pressure = value["context_pressure"] || {}
+      rows << ["Context", pressure["summary"] || pressure[:summary] || "unknown"]
+      rows << ["Context evidence", pressure["basis"] || pressure[:basis] || "unknown"]
       rows.insert(5, ["Archived at", display_timestamp(value["archived_at"])]) if value["archived"]
       out.puts detail_table(rows)
       print_queue_notice(notice, out:)

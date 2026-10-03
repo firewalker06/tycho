@@ -24,6 +24,7 @@ require_relative "process_liveness"
 require_relative "agent_cost_snapshot"
 require_relative "file_store"
 require_relative "usage_metrics"
+require_relative "context_pressure"
 require "digest"
 require "securerandom"
 require "shellwords"
@@ -158,6 +159,7 @@ module HQ
                 :structured_result, :schedule_key, :cost_snapshot, :project_group, :delegation_parent, :archive_path,
                 :archived_at, :project_hidden_at_archive, :prompt_queue, :prompt_queue_claim, :queue_work,
                 :prompt_queue_dispatch_error
+    attr_reader :context_pressure_acknowledged_signal
     attr_writer :summary, :structured_result, :cost_snapshot
 
     def usage_metrics_store=(store)
@@ -171,7 +173,8 @@ module HQ
                    session_bootstrapped: nil, color_index: nil, summary: nil, structured_result: nil, schedule_key: nil,
                    cost_snapshot: nil, total_run_count: nil, project_group: nil, delegation_parent: nil,
                    archived: false, archive_path: nil, archived_at: nil, project_hidden_at_archive: nil,
-                   prompt_queue: nil, prompt_queue_claim: nil, prompt_queue_dispatch_error: nil, queue_work: nil, role: nil)
+                   prompt_queue: nil, prompt_queue_claim: nil, prompt_queue_dispatch_error: nil, queue_work: nil, role: nil,
+                   context_pressure_acknowledged_signal: nil)
       @key = key
       @name = name
       @project_key = project_key
@@ -219,6 +222,7 @@ module HQ
       )
       @prompt_queue_dispatch_error = normalize_prompt_queue_dispatch_error(prompt_queue_dispatch_error)
       reconcile_prompt_queue_claim!
+      @context_pressure_acknowledged_signal = context_pressure_acknowledged_signal.to_s
     end
 
     def color_index=(value)
@@ -323,7 +327,8 @@ module HQ
         prompt_queue_claim: hash["prompt_queue_claim"],
         prompt_queue_dispatch_error: hash["prompt_queue_dispatch_error"],
         queue_work: hash["queue_work"],
-        role: hash["role"]
+        role: hash["role"],
+        context_pressure_acknowledged_signal: hash["context_pressure_acknowledged_signal"]
       )
     end
 
@@ -458,7 +463,29 @@ module HQ
       result["prompt_queue_claim"] = @prompt_queue_claim if @prompt_queue_claim
       result["prompt_queue_dispatch_error"] = @prompt_queue_dispatch_error if @prompt_queue_dispatch_error
       result["queue_work"] = @queue_work if Array(@queue_work["batches"]).any?
+      unless @context_pressure_acknowledged_signal.empty?
+        result["context_pressure_acknowledged_signal"] = @context_pressure_acknowledged_signal
+      end
       result
+    end
+
+    def context_pressure
+      stat = File.stat(raw_log_path) if File.file?(raw_log_path)
+      cache_key = [stat&.size, stat&.mtime&.to_f, @context_pressure_acknowledged_signal]
+      return @context_pressure_cache if @context_pressure_cache_key == cache_key && @context_pressure_cache
+
+      @context_pressure_cache_key = cache_key
+      @context_pressure_cache = ContextPressure.new(self).snapshot
+    end
+
+    def acknowledge_context_pressure!(signal_id)
+      current = context_pressure
+      expected = current["signal_id"].to_s
+      raise ArgumentError, "Context pressure signal has changed; refresh and try again" if expected.empty? || signal_id.to_s != expected
+
+      @context_pressure_acknowledged_signal = expected
+      @context_pressure_cache_key = nil
+      context_pressure
     end
 
     def enqueue_prompt!(prompt:, attachments: nil, accepted_at: Time.now, not_before: nil, id: SecureRandom.uuid,

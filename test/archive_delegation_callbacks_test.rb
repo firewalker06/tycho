@@ -21,6 +21,7 @@ module ArchiveDelegationCallbacksTest
     Dir.mktmpdir("tycho-archive-callbacks") do |dir|
       with_paths(dir) do
         assert_ordinary_queue_is_protected(dir)
+        assert_unresolved_inquiry_is_protected(dir)
         assert_callback_queue_archives_with_history(dir)
         assert_mixed_queue_is_protected(dir)
         assert_cli_reports_preserved_callbacks(dir)
@@ -68,6 +69,22 @@ module ArchiveDelegationCallbacksTest
            preserved.first["content"].include?("Delegated callback 2"),
            "expected the full consolidated callback batch in read-only archived history")
     assert(File.directory?(archive_path), "expected archive artifacts to be durable")
+  end
+
+  def assert_unresolved_inquiry_is_protected(dir)
+    store, agent = stored_agent(dir, "inquiry")
+    agent.send(:memory_store).append_inquiry_request!(
+      { "message" => "Choose a release target", "fields" => [] },
+      inquiry_id: "release-target"
+    )
+    store.save([agent])
+
+    error = capture_error { store.archive_agent!(agent.key) }
+    assert(error.message.include?("unresolved inquiry"),
+           "expected archive to protect an unresolved inquiry")
+    current, = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false)
+    restored = current.find { |item| item.key == agent.key }
+    assert(restored&.latest_inquiry, "expected the unresolved inquiry to remain active")
   end
 
   def assert_mixed_queue_is_protected(dir)

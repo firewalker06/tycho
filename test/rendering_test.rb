@@ -105,8 +105,9 @@ module RenderingTest
     assert_create_and_run_raw_log_includes_project_tool_system_prompt
     assert_create_agent_starts_immediately_and_uses_selected_harness
     assert_create_agent_without_run_opens_chat_but_does_not_start
-    assert_clone_agent_uses_fresh_state_and_defaults_to_archive
+    assert_clone_agent_uses_fresh_state_and_defaults_to_keep
     assert_clone_agent_can_keep_old_agent
+    assert_context_pressure_tui_actions
     assert_custom_claude_harness_builds_configured_command
     assert_claude_schema_is_compact_json
     assert_agent_session_id_persists_and_renders
@@ -2485,7 +2486,7 @@ module RenderingTest
     _ = command
   end
 
-  def assert_clone_agent_uses_fresh_state_and_defaults_to_archive
+  def assert_clone_agent_uses_fresh_state_and_defaults_to_keep
     app = app_with_default_agent(width: 120, height: 30)
     app.define_singleton_method(:save_agents!) { nil }
     app.instance_variable_set(:@screen, :agents)
@@ -2520,7 +2521,7 @@ module RenderingTest
 
     confirm = app.instance_variable_get(:@clone_confirm)
     assert(!confirm.nil?, "expected clone flow to ask what to do with the old agent")
-    assert(confirm.archive_old?, "expected clone prompt to default to archiving the old agent")
+    assert(!confirm.archive_old?, "expected clone prompt to keep the old agent unless archive is explicit")
 
     new_agent = confirm.new_agent
     assert(new_agent.key != old_agent.key, "expected cloned agent to have a fresh key")
@@ -2542,15 +2543,14 @@ module RenderingTest
 
     agents = app.instance_variable_get(:@agents)
     assert(agents.include?(new_agent), "expected cloned agent to remain in the agent list")
-    assert(!agents.include?(old_agent), "expected default clone confirmation to archive the old agent")
+    assert(agents.include?(old_agent), "expected default clone confirmation to preserve the old agent")
     assert(app.instance_variable_get(:@selected)[:agents] == agents.index(new_agent),
            "expected cloned agent to stay selected after archive")
     assert(app.instance_variable_get(:@sidebar)&.fetch(:kind, nil) == :agent_chat,
            "expected clone flow to open chat for the cloned agent")
     assert(app.instance_variable_get(:@agent_chat_form)&.agent == new_agent,
            "expected chat form to target the cloned agent")
-    assert(Dir.glob(File.join(HQ::AGENT_ARCHIVE_DIR, "*#{old_agent.key}", "*.raw.log")).any?,
-           "expected old agent logs to be archived")
+    assert(File.exist?(old_agent.raw_log_path), "expected old agent logs to remain active")
   end
 
   def assert_clone_agent_can_keep_old_agent
@@ -2572,6 +2572,79 @@ module RenderingTest
     assert(agents.include?(new_agent), "expected keep choice to leave the cloned agent in the list")
     assert(app.instance_variable_get(:@agent_chat_form)&.agent == new_agent,
            "expected keep choice to open chat for the cloned agent")
+  end
+
+  def assert_context_pressure_tui_actions
+    app = app_with_default_agent(width: 120, height: 40)
+    app.instance_variable_set(:@screen, :agents)
+    source = app.instance_variable_get(:@agents).first
+    app.instance_variable_set(:@all_agents, [source])
+    FileUtils.mkdir_p(File.dirname(source.raw_log_path))
+    File.write(source.raw_log_path, <<~LOG)
+      === [2026-10-03 06:00:00] start ===
+      {"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":90000},"model_context_window":100000}}}
+    LOG
+
+    rendered = Bubbles::ANSI.strip(app.view)
+    assert(rendered.include?("Context pressure is high"), "expected agent detail to show context pressure")
+    assert(rendered.include?("f: Start New") && rendered.include?("g: Keep Going") &&
+           rendered.include?("G: Start with Handoff"),
+           "expected agent detail to show context recovery actions")
+
+    app.update(key_message("f"))
+    fresh_agents = app.instance_variable_get(:@agents)
+    fresh_target = fresh_agents.find { |agent| agent.key != source.key }
+    assert(fresh_target, "expected Start New to create a fresh agent")
+    assert(fresh_agents.include?(source), "expected Start New to preserve the source agent")
+    assert(app.instance_variable_get(:@agent_chat_form)&.agent == fresh_target,
+           "expected Start New to open the fresh agent without a handoff")
+    fresh_events = File.exist?(fresh_target.memory_path) ? File.readlines(fresh_target.memory_path, chomp: true) : []
+    assert(fresh_events.none? { |line| JSON.parse(line).dig("metadata", "context_handoff") == true },
+           "expected Start New not to create a context handoff")
+    app.send(:close_sidebar!)
+    app.instance_variable_get(:@selected)[:agents] = app.instance_variable_get(:@agents).index(source)
+
+    updates = 0
+    store = app.instance_variable_get(:@agent_store)
+    store.define_singleton_method(:update_agent!) do |key, &operation|
+      updates += 1
+      candidate = app.instance_variable_get(:@agents).find { |agent| agent.key == key }
+      operation.call(candidate)
+      candidate
+    end
+    app.update(key_message("g"))
+    assert(updates == 1 && source.context_pressure["acknowledged"],
+           "expected Keep Going to persist acknowledgement through the locked agent store path")
+    acknowledged = Bubbles::ANSI.strip(app.view)
+    assert(acknowledged.include?("Context pressure is high (acknowledged)"),
+           "expected acknowledged context pressure to stay visible")
+    assert(!acknowledged.include?("g: Keep Going"), "expected acknowledged actions to hide for the current signal")
+
+    File.open(source.raw_log_path, "a") do |file|
+      file.puts({
+        "type" => "event_msg", "payload" => {
+          "type" => "token_count", "info" => {
+            "last_token_usage" => { "total_tokens" => 96_000 }, "model_context_window" => 100_000
+          }
+        }
+      }.to_json)
+    end
+    started_key = nil
+    store.define_singleton_method(:start_agent!) do |key|
+      started_key = key
+      app.instance_variable_get(:@agents).find { |agent| agent.key == key }
+    end
+
+    app.update(key_message("G"))
+    agents = app.instance_variable_get(:@agents)
+    target = agents.find { |agent| agent.key == started_key }
+    assert(target && target.key != source.key, "expected Start with Handoff to create and start a fresh agent")
+    assert(agents.include?(source), "expected context handoff clone to keep the source agent")
+    handoff_events = File.readlines(target.memory_path, chomp: true).map { |line| JSON.parse(line) }
+    assert(handoff_events.any? { |event| event.dig("metadata", "context_handoff") == true },
+           "expected the TUI clone to store a durable context handoff")
+    assert(app.instance_variable_get(:@agent_chat_form)&.agent&.key == target.key,
+           "expected the TUI to continue in the fresh handoff agent")
   end
 
   def assert_custom_claude_harness_builds_configured_command

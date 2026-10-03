@@ -248,6 +248,11 @@ tycho agent clone my-project-agent-3          # clone only
 tycho agent clone my-project-agent-3 --run    # clone and start immediately
 ```
 
+In the context-pressure controls, a fresh clone that preserves the source is
+named **Start New**. A clone that starts with a concise context handoff is
+named **Start with Handoff**. The Remote API uses `context_handoff: true` for
+the second operation.
+
 ---
 
 ## `tycho schedule` — Schedule Management

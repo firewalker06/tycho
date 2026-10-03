@@ -904,6 +904,8 @@ module HQ
           lines << ""
           lines.concat(detail_run_result_block(agent))
           lines << ""
+          lines.concat(detail_context_pressure_block(agent))
+          lines << ""
           lines.concat(detail_prose_block(:summary, agent.last_summary)) if agent.last_summary.to_s.strip != ""
           lines << "" if agent.last_summary.to_s.strip != ""
           lines.concat(detail_prose_block(:prompt, agent.prompt)) if agent.prompt.to_s.strip != ""
@@ -916,6 +918,30 @@ module HQ
           lines << ""
           lines << footer_style.render("c: chat  #{Styles::MARKERS[:bullet_sep]}  C: clone  #{Styles::MARKERS[:bullet_sep]}  s: start  #{Styles::MARKERS[:bullet_sep]}  R: rerun  #{Styles::MARKERS[:bullet_sep]}  t: stop  #{Styles::MARKERS[:bullet_sep]}  #{Styles::KEYS[:ctrl]}T: agent term  #{Styles::MARKERS[:bullet_sep]}  e: edit  #{Styles::MARKERS[:bullet_sep]}  x: delete  #{Styles::MARKERS[:bullet_sep]}  l: chat log  #{Styles::MARKERS[:bullet_sep]}  L: raw log")
           lines.join("\n")
+        end
+
+        def detail_context_pressure_block(agent)
+          pressure = agent.context_pressure
+          basis = pressure.fetch("basis", "unknown")
+          summary = pressure.fetch("summary", "Context pressure is unknown")
+          summary += " (acknowledged)" if pressure["acknowledged"]
+          heading = pressure["warning"] ? warning_style.render("Context warning") : title_mini("Context")
+          icon_key = if pressure["warning"]
+                       :warning
+                     elsif pressure["state"] == "normal"
+                       :healthy
+                     else
+                       :unknown
+                     end
+          lines = ["#{Styles::STATUS_ICONS.fetch(icon_key)} #{heading}"]
+          lines << "  #{summary}  #{Styles::MARKERS[:bullet_sep]}  #{basis}"
+          wrap_text(pressure.fetch("detail", ""), detail_content_width - 2).split("\n").each do |line|
+            lines << "  #{line}"
+          end
+          if pressure["warning"]
+            lines << warning_style.render("  f: Start New  #{Styles::MARKERS[:bullet_sep]}  g: Keep Going  #{Styles::MARKERS[:bullet_sep]}  G: Start with Handoff")
+          end
+          lines
         end
 
         def empty_agent_detail_text

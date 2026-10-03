@@ -633,9 +633,14 @@ module HQ
           agents.find { |agent| agent.key == key } || raise(ArgumentError, "Unknown agent: #{key}")
         end
         raise ArgumentError, "Agent is running" if targets.any?(&:running?)
-        blocked = targets.select { |target| target.pending_prompts? && !target.delegation_callback_prompts_only? }
+        blocked = targets.select do |target|
+          (target.pending_prompts? && !target.delegation_callback_prompts_only?) || target.inquiry_blocking_prompt_queue?
+        end
         unless blocked.empty?
           descriptions = blocked.map do |target|
+            if target.inquiry_blocking_prompt_queue? && !target.pending_prompts?
+              next "#{target.key}: unresolved inquiry"
+            end
             entries = target.queued_prompts
             ordinary = entries.count { |entry| entry["source"] != "delegation_callback" }
             callbacks = entries.length - ordinary
@@ -648,8 +653,8 @@ module HQ
             "#{target.key}: #{queue}"
           end
           raise ArgumentError,
-                "Archive blocked to protect queued user work (#{descriptions.join("; ")}). " \
-                "Run or delete the ordinary queued prompts before archiving."
+                "Archive blocked to protect queued user work or unresolved inquiries (#{descriptions.join("; ")}). " \
+                "Resolve the inquiry and run or remove ordinary queued prompts before archiving."
         end
 
         source_paths = targets.flat_map(&:log_files)

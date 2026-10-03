@@ -16,6 +16,7 @@ require_relative "domain/project"
 require_relative "domain/project_archiver"
 require_relative "domain/managed_agent"
 require_relative "domain/agent_store"
+require_relative "domain/context_handoff"
 require_relative "domain/visibility"
 require_relative "domain/scheduler"
 require_relative "domain/skill_discovery"
@@ -239,6 +240,12 @@ module HQ
         open_agent_chat_form
       when "C"
         clone_selected_agent
+      when "g"
+        acknowledge_selected_context_pressure
+      when "f"
+        clone_selected_agent_for_context_pressure
+      when "G"
+        clone_selected_agent_with_context_handoff
       when "s"
         start_selected_agent
       when "R"
@@ -1014,6 +1021,94 @@ def selected_screen_items
       [self, nil]
     end
 
+    def acknowledge_selected_context_pressure
+      return [self, nil] unless @screen == :agents
+
+      agent = selected_agent
+      pressure = agent&.context_pressure
+      return [self, nil] unless pressure&.fetch("warning", false)
+
+      replacement = @agent_store.update_agent!(agent.key) do |candidate|
+        candidate.acknowledge_context_pressure!(pressure.fetch("signal_id"))
+      end
+      replace_agent_instance!(agent, replacement)
+      rebuild_agent_index!
+      [self, nil]
+    rescue ArgumentError => e
+      HQ.logger.warn("Agent") { "Context acknowledgement failed for #{agent&.key}: #{e.message}" }
+      [self, nil]
+    end
+
+    def clone_selected_agent_with_context_handoff
+      return [self, nil] unless @screen == :agents
+
+      source = selected_agent
+      pressure = source&.context_pressure
+      return [self, nil] unless pressure&.fetch("warning", false)
+
+      close_sidebar!
+      target = @agent_store.clone_agent(source, existing_agents: @all_agents)
+      project = @registry.projects.find { |candidate| candidate.key == target.project_key }
+      @agent_store.ensure_project_context_prompt!(target, project) if project
+      ContextHandoff.prepare!(source, target)
+      @agents.unshift(target)
+      @agents = sort_agents(@agents)
+      @selected[:agents] = @agents.index(target) || 0
+      save_agents!
+      replacement = @agent_store.start_agent!(target.key)
+      replace_agent_instance!(target, replacement)
+      @selected[:agents] = @agents.index(replacement) || 0
+      rebuild_agent_index!
+      HQ.hooks.publish("agent.cloned",
+                       agent_key: replacement.key,
+                       source_agent_key: source.key,
+                       project_key: replacement.project_key,
+                       name: replacement.name,
+                       agent: replacement.agent,
+                       model: replacement.model,
+                       reasoning_effort: replacement.reasoning_effort)
+      _, chat_command = open_cloned_agent_chat(replacement)
+      [self, Bubbletea.batch(*[schedule_action_poll, chat_command].compact)]
+    rescue StandardError => e
+      HQ.logger.error("Agent") { "Context handoff clone failed for #{source&.key}: #{e.class}: #{e.message}" }
+      [self, nil]
+    end
+
+    def clone_selected_agent_for_context_pressure
+      return [self, nil] unless @screen == :agents
+
+      source = selected_agent
+      pressure = source&.context_pressure
+      return [self, nil] unless pressure&.fetch("warning", false)
+
+      close_sidebar!
+      target = @agent_store.clone_agent(source, existing_agents: @all_agents)
+      @agents.unshift(target)
+      @agents = sort_agents(@agents)
+      @selected[:agents] = @agents.index(target) || 0
+      save_agents!
+      rebuild_agent_index!
+      HQ.hooks.publish("agent.cloned",
+                       agent_key: target.key,
+                       source_agent_key: source.key,
+                       project_key: target.project_key,
+                       name: target.name,
+                       agent: target.agent,
+                       model: target.model,
+                       reasoning_effort: target.reasoning_effort)
+      open_cloned_agent_chat(target)
+    rescue StandardError => e
+      HQ.logger.error("Agent") { "Context fresh clone failed for #{source&.key}: #{e.class}: #{e.message}" }
+      [self, nil]
+    end
+
+    def replace_agent_instance!(current, replacement)
+      visible_index = @agents.index { |agent| agent.key == current.key }
+      @agents[visible_index] = replacement if visible_index
+      all_index = @all_agents.index { |agent| agent.key == current.key }
+      @all_agents[all_index] = replacement if all_index
+    end
+
     def handle_delete_confirm(message)
       return [self, nil] unless message.is_a?(Bubbletea::KeyMessage)
 
@@ -1047,7 +1142,9 @@ def selected_screen_items
         @clone_confirm = nil
         open_cloned_agent_chat(confirm.new_agent)
       when "tab", "right", "l"
-        @clone_confirm.picker.value = UI::CloneAgentConfirm::ARCHIVE
+        if @clone_confirm.archive_available?
+          @clone_confirm.picker.value = UI::CloneAgentConfirm::ARCHIVE
+        end
         [self, nil]
       when "shift+tab", "left", "h"
         @clone_confirm.picker.value = UI::CloneAgentConfirm::KEEP
