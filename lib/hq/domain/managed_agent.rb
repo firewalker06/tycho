@@ -25,6 +25,7 @@ require_relative "agent_cost_snapshot"
 require_relative "file_store"
 require_relative "usage_metrics"
 require_relative "context_pressure"
+require_relative "project_workspace"
 require "digest"
 require "securerandom"
 require "shellwords"
@@ -32,6 +33,8 @@ require "rbconfig"
 
 module HQ
   class ManagedAgent
+    FALLBACK_SUMMARY_CONTEXT_MAX_CHARS = 800
+    FALLBACK_SUMMARY_CONTEXT_MAX_LINES = 12
     AgentMessage = Struct.new(:role, :content, :created_at, :streaming, :kind, :tool_name, :tool_use_id, :metadata,
                               keyword_init: true) do
       def self.from_hash(hash)
@@ -2103,17 +2106,36 @@ module HQ
       summary = structured&.dig("summary").to_s.strip
       return summary unless summary.empty?
 
-      log_summary = summarize_from_log
-      return log_summary unless log_summary.to_s.empty?
+      fallback_summary_text
+    end
 
-      case status
-      when "succeeded" then "Completed successfully"
-      when "stopped" then "Stopped by user"
-      when "failed"
-        code = @last_exit_code.nil? ? "unknown" : @last_exit_code
-        "Exited with code #{code}"
+    def fallback_summary_text(context: nil, context_label: "Last assistant message")
+      context ||= safe_assistant_context_from_log
+      if context.to_s.empty? && (operator_context = safe_operator_context_from_log)
+        context = operator_context
+        context_label = "Run context"
+      end
+      lines = [
+        "## Summary unavailable",
+        "",
+        "This run returned without a usable structured summary."
+      ]
+      if context.to_s.empty?
+        lines.concat(["", fallback_no_context_message])
       else
-        "Run finished"
+        lines.concat(["", "### #{context_label}", "", markdown_quote(context)])
+      end
+      lines.join("\n")
+    end
+
+    def fallback_no_context_message
+      case status
+      when "stopped"
+        "The run was interrupted before it produced a usable assistant message."
+      when "failed"
+        "The run ended before it produced a usable assistant message."
+      else
+        "No usable assistant message is available."
       end
     end
 
@@ -2178,87 +2200,141 @@ module HQ
       nil
     end
 
-    def summarize_from_log
+    def safe_assistant_context_from_log
       return nil unless File.exist?(@log_path)
 
-      tail = LogFileReader.tail_lines(@log_path, 60).map(&:strip)
-      relevant = tail.reject do |line|
-        line.empty? ||
-          line.start_with?("===") ||
-          line.start_with?("workspace=") ||
-          line.start_with?("prompt=")
-      end
-      return nil if relevant.empty?
-
-      relevant.reverse_each do |line|
-        event = parse_json_line(line)
+      last_run_log_lines.last(120).reverse_each do |line|
+        event = parse_json_line(line.to_s.strip)
         next unless event.is_a?(Hash)
 
-        message = error_summary_from_event(event)
-        return truncate_log_summary(message) unless message.to_s.empty?
-      end
+        text = raw_assistant_text_from_event(event)
+        next if text.to_s.empty?
 
-      relevant.reverse_each do |line|
-        event = parse_json_line(line)
-        if event.is_a?(Hash)
-          message = assistant_summary_from_event(event)
-          return truncate_log_summary(message) unless message.to_s.empty?
-        elsif !line.start_with?("{")
-          return truncate_log_summary(line)
-        end
+        context = safe_assistant_context_text(text)
+        return bounded_fallback_context(context) unless context.to_s.empty?
       end
-
       nil
     rescue StandardError
       nil
+    end
+
+    def safe_operator_context_from_log
+      return nil unless File.exist?(@log_path)
+
+      marker = last_run_log_lines.last(20).reverse.find do |line|
+        line.to_s.match?(/\ATycho stopped this run after no structured agent output stayed idle for \d+ seconds\.\s*\z/)
+      end
+      bounded_fallback_context(marker)
+    rescue StandardError
+      nil
+    end
+
+    def raw_assistant_text_from_event(event)
+      case event["type"]
+      when "item.completed"
+        item = event["item"]
+        return "" unless item.is_a?(Hash) && item["type"] == "agent_message"
+
+        item["text"].to_s.strip
+      when "assistant"
+        Array(event.dig("message", "content")).filter_map do |item|
+          item["text"].to_s.strip if item.is_a?(Hash) && item["type"] == "text"
+        end.join("\n").strip
+      when "text"
+        part = event["part"]
+        return "" unless part.is_a?(Hash) && part["type"] == "text"
+
+        part["text"].to_s.strip
+      when "message_end"
+        message = event["message"]
+        return "" unless message.is_a?(Hash) && message["role"] == "assistant"
+
+        Array(message["content"]).filter_map do |item|
+          item["text"].to_s.strip if item.is_a?(Hash) && item["type"] == "text"
+        end.join("\n").strip
+      else
+        ""
+      end
+    end
+
+    def safe_assistant_context_text(text)
+      original = text.to_s.strip
+      return nil if original.empty?
+
+      candidate, fenced = unwrap_fallback_fence(original)
+      return nil if fenced && fallback_record_signature?(candidate, fenced: true)
+
+      parsed = JSON.parse(candidate)
+      return original unless parsed.is_a?(Hash) || parsed.is_a?(Array)
+      return nil unless parsed.is_a?(Hash)
+      return nil unless parsed.keys.any? { |key| structured_fallback_key?(key) }
+
+      summary = parsed["summary"]
+      return summary.strip if summary.is_a?(String) && !summary.strip.empty?
+
+      inquiry = parsed["inquiry"]
+      message = inquiry["message"] if inquiry.is_a?(Hash)
+      message.is_a?(String) && !message.strip.empty? ? message.strip : nil
+    rescue JSON::ParserError
+      fallback_record_signature?(candidate || original, fenced:) ? nil : original
+    end
+
+    def unwrap_fallback_fence(text)
+      value = text.to_s.strip
+      return [value, false] unless value.start_with?("```")
+
+      body = value.sub(/\A```[^\r\n]*[\r\n]?/, "").sub(/[\r\n]?```\s*\z/, "").strip
+      [body, true]
+    end
+
+    def structured_fallback_key?(key)
+      %w[status summary inquiry attachments summary_sections].include?(key.to_s)
+    end
+
+    def fallback_record_signature?(text, fenced: false)
+      value = text.to_s.strip
+      return false if value.empty?
+      return true if value.start_with?("{", "[")
+      return true if fenced && value.match?(/[\[{]/)
+      return true if value.match?(/\A(?:prompt|analysis|reasoning|tool(?:_(?:use|call|result|payload))?|function_call|metadata)\s*[:=]/i)
+
+      value.match?(/(?:\A|[\s{,])["']?(?:status|summary|inquiry|attachments|memory_handoff|summary_sections|type|role|tool|tool_use|tool_call|tool_result|tool_payload|function_call|prompt|analysis|reasoning|metadata)["']?\s*[:=]/i)
+    end
+
+    def bounded_fallback_context(text)
+      redacted = redact_fallback_context(text)
+      lines = redacted.lines(chomp: true).first(FALLBACK_SUMMARY_CONTEXT_MAX_LINES)
+      value = lines.join("\n").strip
+      return nil if value.empty?
+
+      truncated = redacted.lines(chomp: true).length > FALLBACK_SUMMARY_CONTEXT_MAX_LINES
+      if value.length > FALLBACK_SUMMARY_CONTEXT_MAX_CHARS
+        value = value.each_char.take(FALLBACK_SUMMARY_CONTEXT_MAX_CHARS - 1).join.rstrip
+        truncated = true
+      end
+      truncated ? "#{value}…" : value
+    end
+
+    def redact_fallback_context(text)
+      value = text.to_s
+      return "[REDACTED]" if value.match?(ProjectWorkspace::PRIVATE_KEY_MARKER)
+
+      value = value
+        .gsub(/github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]+/i, "[REDACTED]")
+        .gsub(/(Bearer\s+)[^\s]+/i, "\\1[REDACTED]")
+      ProjectWorkspace::SECRET_VALUE_PATTERNS.each { |pattern| value = value.gsub(pattern, "[REDACTED]") }
+      value.gsub(/((?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|secret|token)\s*[:=]\s*)\S+/i,
+                 "\\1[REDACTED]")
+    end
+
+    def markdown_quote(text)
+      text.to_s.lines(chomp: true).map { |line| "> #{line}" }.join("\n")
     end
 
     def parse_json_line(line)
       JSON.parse(line)
     rescue JSON::ParserError
       nil
-    end
-
-    def error_summary_from_event(event)
-      case event["type"]
-      when "error"
-        event["message"].to_s.strip
-      when "turn.failed"
-        error = event["error"]
-        error.is_a?(Hash) ? error["message"].to_s.strip : error.to_s.strip
-      else
-        ""
-      end
-    end
-
-    def assistant_summary_from_event(event)
-      case event["type"]
-      when "item.completed"
-        item = event["item"]
-        return "" unless item.is_a?(Hash) && item["type"] == "agent_message"
-
-        Parser.assistant_display_text(item["text"].to_s.strip).to_s.strip
-      when "assistant"
-        Array(event.dig("message", "content")).filter_map do |item|
-          next unless item.is_a?(Hash) && item["type"] == "text"
-
-          item["text"].to_s.strip
-        end.join("\n").strip
-      when "text"
-        part = event["part"]
-        return "" unless part.is_a?(Hash) && part["type"] == "text"
-
-        Parser.assistant_display_text(part["text"].to_s.strip).to_s.strip
-      else
-        ""
-      end
-    end
-
-    def truncate_log_summary(text, limit = 180)
-      value = text.to_s.gsub(/\s+/, " ").strip
-      return nil if value.empty?
-
-      value.length > limit ? "#{value[0, limit - 3]}..." : value
     end
 
     def stopped_exit_code?
@@ -3059,6 +3135,7 @@ module HQ
 
     def run_summary_metadata(run)
       metadata = @structured_result.is_a?(Hash) ? @structured_result.dup : {}
+      metadata["summary_fallback"] = true unless @structured_result.is_a?(Hash)
       attachments = current_structured_attachments
       attachments.empty? ? metadata.delete("attachments") : metadata["attachments"] = attachments
       metadata["run_number"] = run_count

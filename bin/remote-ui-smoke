@@ -3670,6 +3670,198 @@ def write_smoke_script(path)
               compactSummaryContract.sectionCount !== 0) {
             throw new Error(`Compact summary repeated rich details: ${JSON.stringify(compactSummaryContract)}`);
           }
+          const emptySummarySafetyMatrix = await page.evaluate((key) => {
+            const rejected = [
+              '{"status":"success","summary":[],"attachments":[{"description":"SECRET_TOOL_PAYLOAD"}]',
+              '```json\\n{"status":"success","summary":"FENCED_STRUCTURED_OUTPUT"}\\n```',
+              'status=success\\nsummary=unsafe',
+              '  status   =   success\\n  summary = unsafe',
+              '"summary" = unsafe',
+              "'inquiry'=unsafe",
+              'attachments = [unsafe',
+              'memory_handoff=unsafe',
+              'summary_sections = [unsafe',
+              'status: success\\nsummary = "truncated',
+              'status = success\\nsummary: unsafe\\nattachments = [unsafe',
+              '```text\\nstatus = success\\nsummary = unsafe\\n```',
+              '{"type":"tool_result","result":"SECRET_TOOL_RESULT"}',
+              'tool_payload=SECRET_TOOL_PAYLOAD',
+              'function_call: SECRET_TOOL_ARGUMENTS',
+              '{"type":"analysis","content":"SECRET_ANALYSIS"}',
+              'prompt=SECRET_PROMPT',
+              'analysis: SECRET_REASONING',
+            ];
+            const benignEquals = [
+              'The equation x = y is safe operator prose.',
+              'Build output says a=b, with no structured record key.',
+              'The values are equal = true in this explanation.',
+            ];
+            const credentials = [
+              `AKIA${"A".repeat(16)}`,
+              `ASIA${"A".repeat(16)}`,
+              `AIza${"a".repeat(30)}`,
+              `ghp_${"a".repeat(20)}`,
+              `github_pat_${"a".repeat(24)}`,
+              `glpat-${"a".repeat(16)}`,
+              `pypi-${"a".repeat(16)}`,
+              `npm_${"a".repeat(16)}`,
+              `hf_${"a".repeat(16)}`,
+              `sk-proj-${"a".repeat(24)}`,
+              `sk_live_${"a".repeat(16)}`,
+              `xoxb-${"a".repeat(12)}`,
+              "postgresql://user:password@example.test/db",
+              "mysql://user:password@example.test/db",
+              "mongodb+srv://user:password@example.test/db",
+              "redis://user:password@example.test/0",
+              "rediss://user:password@example.test/0",
+              "amqp://user:password@example.test/vhost",
+              "amqps://user:password@example.test/vhost",
+              `{"api_key":"${"a".repeat(16)}"}`,
+              `const client_secret = "${"a".repeat(16)}"`,
+              `export TOKEN=${"a".repeat(16)}`,
+              `Bearer ${"a".repeat(24)}`,
+              `-----BEGIN PRIVATE KEY-----\n${"a".repeat(32)}\n-----END PRIVATE KEY-----`,
+            ];
+            const rejectedSafely = rejected.every((content) => safeAssistantContextText(content) === "");
+            const benignEqualsPreserved = benignEquals.every((content) => safeAssistantContextText(content) === content);
+            const credentialsRedacted = credentials.every((secret) => {
+              const redacted = redactSummaryFallbackContext(`prefix\n${secret}\nsuffix`);
+              return redacted.includes("[REDACTED]") && !redacted.includes(secret);
+            });
+
+            const agent = findAgent(key);
+            agent.run_count = 2;
+            agent.running = false;
+            agent.status = "stopped";
+            agent.current_run_id = "run-current";
+            state.conversations[key] = {
+              blocks: [
+                { kind: "message", role: "assistant", content: "PRIOR_RUN_MESSAGE_MUST_NOT_APPEAR", metadata: { run_id: "run-prior" } },
+                { kind: "run_summary", content: "Prior summary", metadata: { summary_id: "prior-summary", run_id: "run-prior", status: "success" } },
+                { kind: "run_summary", content: "", metadata: { summary_id: "current-summary", run_id: "run-current", status: "stopped" } },
+              ],
+            };
+            const current = agentSummaryDetail(agent, "current-summary");
+            state.conversations[key] = {
+              blocks: [{ kind: "message", role: "assistant", content: "PRIOR_RUN_MESSAGE_MUST_NOT_APPEAR", metadata: { run_id: "run-prior" } }],
+            };
+            agent.summary = "";
+            const missing = agentSummaryDetail(agent);
+            return {
+              rejectedSafely,
+              benignEqualsPreserved,
+              credentialsRedacted,
+              currentRunIsolated: !current.content.includes("PRIOR_RUN_MESSAGE_MUST_NOT_APPEAR") && current.content.includes("interrupted"),
+              missingRunIsolated: !missing.content.includes("PRIOR_RUN_MESSAGE_MUST_NOT_APPEAR") && missing.content.includes("interrupted"),
+            };
+          }, agentKey);
+          if (!emptySummarySafetyMatrix.rejectedSafely || !emptySummarySafetyMatrix.benignEqualsPreserved || !emptySummarySafetyMatrix.credentialsRedacted ||
+              !emptySummarySafetyMatrix.currentRunIsolated || !emptySummarySafetyMatrix.missingRunIsolated) {
+            throw new Error(`Empty Summary safety matrix failed: ${JSON.stringify(emptySummarySafetyMatrix)}`);
+          }
+          const installEmptySummaryFixture = async () => page.evaluate((key) => {
+            closeUnreadPanel();
+            closeHeaderMore();
+            const agent = findAgent(key);
+            agent.run_count = 1;
+            agent.running = false;
+            agent.status = "stopped";
+            agent.current_run_id = "run-current";
+            const longContext = ["## Last safe update", "", "- Kept **rich** assistant Markdown.", "token=do-not-show-this-value", "<script>window.FALLBACK_INJECTION = true</script>", "[unsafe](javascript:window.FALLBACK_INJECTION=true)", ...Array.from({ length: 20 }, (_, index) => `Context ${index + 1}: ${"x".repeat(90)}`)].join("\\n");
+            state.conversations[key] = {
+              blocks: [
+                { kind: "message", role: "assistant", content: longContext, created_at: "2026-10-04T00:00:00Z", metadata: { run_id: "run-current" } },
+                { kind: "message", role: "assistant", content: JSON.stringify({ status: "success", summary: [], attachments: [{ description: "SECRET_TOOL_PAYLOAD" }] }), created_at: "2026-10-04T00:00:01Z", metadata: { run_id: "run-current" } },
+                {
+                  kind: "run_summary",
+                  content: "",
+                  created_at: "2026-10-04T00:00:02Z",
+                  metadata: {
+                    summary_id: "empty-summary-smoke",
+                    run_id: "run-current",
+                    run_number: 1,
+                    status: "stopped",
+                    summary_sections: [{ type: "text", text: "" }, { type: "link", text: "Broken", url: "javascript:bad" }],
+                  },
+                },
+              ],
+            };
+            history.replaceState(null, "", routeHash({ type: "agentSummary", key, summaryId: "empty-summary-smoke" }));
+            state.renderedRouteKey = null;
+            state.renderedViewHtml = "";
+            render();
+          }, agentKey);
+          const emptySummaryContract = async () => page.evaluate(() => {
+            const fallback = document.querySelector("[data-summary-fallback]");
+            const body = document.querySelector("[data-agent-summary-page] .agent-attachment-body");
+            const text = fallback?.innerText || "";
+            const summaryColorProbe = document.createElement("article");
+            summaryColorProbe.className = "message run_summary";
+            document.body.append(summaryColorProbe);
+            const fallbackStyle = fallback ? getComputedStyle(fallback) : null;
+            const normalStyle = getComputedStyle(summaryColorProbe);
+            const normalColors = {
+              background: normalStyle.backgroundColor,
+              border: normalStyle.borderTopColor,
+            };
+            summaryColorProbe.remove();
+            return {
+              exists: Boolean(fallback),
+              role: fallback?.getAttribute("role"),
+              label: fallback?.getAttribute("aria-label"),
+              text,
+              bounded: text.length < 1_100 && text.endsWith("…"),
+              noSecret: !text.includes("SECRET_TOOL_PAYLOAD"),
+              redacted: text.includes("[REDACTED]") && !text.includes("do-not-show-this-value"),
+              rich: Boolean(fallback?.querySelector("strong")),
+              sanitized: !window.FALLBACK_INJECTION && !fallback?.querySelector("script") &&
+                !fallback?.querySelector("[onerror]") && !fallback?.querySelector('a[href^="javascript:"]'),
+              overflow: Boolean(fallback && fallback.scrollWidth > fallback.clientWidth),
+              insideBody: Boolean(fallback && body?.contains(fallback)),
+              normalColors: Boolean(fallbackStyle &&
+                fallbackStyle.backgroundColor === normalColors.background &&
+                fallbackStyle.borderTopColor === normalColors.border),
+            };
+          });
+          await installEmptySummaryFixture();
+          const desktopEmptySummary = await emptySummaryContract();
+          if (!desktopEmptySummary.exists || desktopEmptySummary.role !== "status" || desktopEmptySummary.label !== "Summary unavailable" ||
+              !desktopEmptySummary.text.includes("This run returned without a usable structured summary.") ||
+              !desktopEmptySummary.text.includes("Last safe update") || !desktopEmptySummary.bounded || !desktopEmptySummary.noSecret || !desktopEmptySummary.redacted ||
+              !desktopEmptySummary.rich || !desktopEmptySummary.sanitized || desktopEmptySummary.overflow || !desktopEmptySummary.insideBody || !desktopEmptySummary.normalColors) {
+            throw new Error(`Desktop empty Summary fallback failed: ${JSON.stringify(desktopEmptySummary)}`);
+          }
+          if (summaryCaptureDir) await page.locator("[data-agent-summary-page]").screenshot({ path: path.join(summaryCaptureDir, "empty-summary-desktop.png") });
+          await page.setViewportSize({ width: 390, height: 844 });
+          const mobileEmptySummary = await emptySummaryContract();
+          if (!mobileEmptySummary.exists || mobileEmptySummary.overflow || !mobileEmptySummary.bounded || !mobileEmptySummary.insideBody) {
+            throw new Error(`Mobile empty Summary fallback failed: ${JSON.stringify(mobileEmptySummary)}`);
+          }
+          if (summaryCaptureDir) {
+            await page.evaluate((key) => {
+              state.conversations[key].blocks[0].content = "## Last safe update\\n\\n- Kept **rich** assistant Markdown.\\n- The context is bounded for the operator.";
+              state.renderedViewHtml = "";
+              render();
+            }, agentKey);
+            await page.locator("[data-summary-fallback]").screenshot({ path: path.join(summaryCaptureDir, "empty-summary-mobile.png") });
+          }
+          const noAssistantSummary = await page.evaluate((key) => {
+            const agent = findAgent(key);
+            state.conversations[key] = {
+              blocks: [{
+                kind: "run_summary",
+                content: "",
+                created_at: "2026-10-04T00:00:02Z",
+                metadata: { summary_id: "empty-no-assistant", run_id: "run-current", run_number: 1, status: "stopped" },
+              }],
+            };
+            const detail = agentSummaryDetail(agent, "empty-no-assistant");
+            return { fallback: detail.fallback, content: detail.content };
+          }, agentKey);
+          if (!noAssistantSummary.fallback || !noAssistantSummary.content.includes("interrupted before it produced a usable assistant message")) {
+            throw new Error(`Empty Summary without assistant context was unclear: ${JSON.stringify(noAssistantSummary)}`);
+          }
+          await page.setViewportSize({ width: 1440, height: 900 });
           const installSummaryBlockFixture = async () => page.evaluate((key) => {
             clearTimeout(state.timer);
             state.timer = null;
@@ -3685,9 +3877,15 @@ def write_smoke_script(path)
             fixture.style.width = "100%";
             fixture.innerHTML = renderMessage({
               kind: "run_summary",
-              content: "stopped: Tycho stopped this run after no structured agent output stayed idle for 300 seconds. Tycho stopped this run after no structured agent output stayed idle for 300 seconds.",
+              content: "## Summary unavailable\\n\\nThis run returned without a usable structured summary.\\n\\n### Last assistant message\\n\\n> PRIVATE_CARD_CONTEXT_MUST_NOT_APPEAR",
               created_at: "2026-10-02T06:48:00Z",
-              metadata: { summary_id: "summary-block-smoke", run_number: 57, status: "stopped" },
+              metadata: {
+                summary_id: "summary-block-smoke",
+                run_number: 57,
+                status: "stopped",
+                summary_fallback: true,
+                attachments: [{ type: "link", title: "Run report", url: "https://example.test/run-report" }],
+              },
             }, { agent: findAgent(key) });
             document.querySelector(".message-list")?.append(fixture);
           }, agentKey);
@@ -3699,41 +3897,62 @@ def write_smoke_script(path)
             const content = summary?.querySelector(".summary-message-content");
             const text = content?.querySelector("p");
             const open = content?.querySelector("[data-open-agent-summary]");
+            const attachment = content?.querySelector("[data-toggle-summary-attachment-menu]");
+            const actions = content?.querySelector(".summary-message-actions");
             open?.focus();
             const contentRect = content?.getBoundingClientRect();
-            const openRect = open?.getBoundingClientRect();
+            const actionsRect = actions?.getBoundingClientRect();
+            const validFixture = document.createElement("div");
+            validFixture.innerHTML = renderRunSummaryMessageContent(
+              "A normal valid summary remains unchanged.",
+              null,
+              { metadata: { status: "success" } }
+            );
+            const validContent = validFixture.querySelector(".summary-message-content");
             return {
               header: role?.innerText.replace(/\s+/g, " ").trim() || "",
               status: status?.innerText || "",
               statusIntent: status?.dataset.intent || "",
               body: text?.innerText || "",
+              detailedContextHidden: !content?.innerText.includes("PRIVATE_CARD_CONTEXT_MUST_NOT_APPEAR"),
+              unavailableLabelHidden: !content?.innerText.includes("Summary unavailable"),
+              fallbackPreview: content?.hasAttribute("data-summary-fallback-preview") || false,
               actionLabel: open?.innerText.trim() || "",
-              actionAtRight: Boolean(contentRect && openRect && Math.abs(contentRect.right - openRect.right) < 1),
+              attachmentLabel: attachment?.getAttribute("aria-label") || "",
+              attachmentCount: attachment?.querySelector(".attachment-count")?.innerText || "",
+              actionAtRight: Boolean(contentRect && actionsRect && Math.abs(contentRect.right - actionsRect.right) < 1),
               focus: document.activeElement === open,
-              overflow: Boolean(content && content.scrollWidth > content.clientWidth),
+              overflow: Boolean(content && content.scrollWidth - content.clientWidth > 4),
+              geometry: content ? { clientWidth: content.clientWidth, scrollWidth: content.scrollWidth, actionsWidth: actionsRect?.width || 0 } : null,
               validRepeat: runSummaryPreviewText("Repeat this sentence. Repeat this sentence.", {
                 metadata: { status: "success" },
               }),
               validStoppedRepeat: runSummaryPreviewText("stopped: Repeat this sentence. Repeat this sentence.", {
                 metadata: { status: "stopped" },
               }),
+              validSummaryBody: validContent?.innerText.trim() || "",
+              validSummaryMarkedFallback: validContent?.hasAttribute("data-summary-fallback-preview") || false,
             };
           });
           await installSummaryBlockFixture();
           const desktopSummaryBlock = await summaryBlockContract();
           if (!desktopSummaryBlock.header.toLowerCase().includes("summary #57") || desktopSummaryBlock.status !== "Stopped" ||
               desktopSummaryBlock.statusIntent !== "warning" ||
-              desktopSummaryBlock.body !== "Tycho stopped this run after no structured agent output stayed idle for 300 seconds." ||
+              desktopSummaryBlock.body !== "This run returned without a usable structured summary." ||
+              !desktopSummaryBlock.detailedContextHidden || !desktopSummaryBlock.unavailableLabelHidden || !desktopSummaryBlock.fallbackPreview ||
               desktopSummaryBlock.validRepeat !== "Repeat this sentence. Repeat this sentence." ||
               desktopSummaryBlock.validStoppedRepeat !== "Repeat this sentence. Repeat this sentence." ||
-              desktopSummaryBlock.actionLabel !== "Open" || !desktopSummaryBlock.actionAtRight ||
+              desktopSummaryBlock.validSummaryBody !== "A normal valid summary remains unchanged." || desktopSummaryBlock.validSummaryMarkedFallback ||
+              desktopSummaryBlock.actionLabel !== "Open" || desktopSummaryBlock.attachmentLabel !== "Choose summary attachment" || desktopSummaryBlock.attachmentCount !== "1" || !desktopSummaryBlock.actionAtRight ||
               !desktopSummaryBlock.focus || desktopSummaryBlock.overflow) {
             throw new Error(`Desktop Summary block contract failed: ${JSON.stringify(desktopSummaryBlock)}`);
           }
           if (summaryCaptureDir) await page.locator("#summary-block-smoke-fixture").screenshot({ path: path.join(summaryCaptureDir, "summary-block-desktop.png") });
           await page.setViewportSize({ width: 390, height: 844 });
           const mobileSummaryBlock = await summaryBlockContract();
-          if (!mobileSummaryBlock.actionAtRight || !mobileSummaryBlock.focus || mobileSummaryBlock.overflow) {
+          if (!mobileSummaryBlock.actionAtRight || !mobileSummaryBlock.focus || mobileSummaryBlock.overflow ||
+              !mobileSummaryBlock.detailedContextHidden || !mobileSummaryBlock.unavailableLabelHidden ||
+              mobileSummaryBlock.attachmentCount !== "1") {
             throw new Error(`Mobile Summary block contract failed: ${JSON.stringify(mobileSummaryBlock)}`);
           }
           if (summaryCaptureDir) await page.locator("#summary-block-smoke-fixture").screenshot({ path: path.join(summaryCaptureDir, "summary-block-mobile.png") });

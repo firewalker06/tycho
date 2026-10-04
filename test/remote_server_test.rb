@@ -1133,7 +1133,7 @@ module RemoteServerTest
         workspace: workspace,
         prompt: "Prompt",
         total_run_count: 2,
-        runs: [HQ::ManagedAgent::AgentRun.new(status: "running")]
+        runs: [HQ::ManagedAgent::AgentRun.new(status: "running", run_id: "current-run-2")]
       )
       running.define_singleton_method(:running?) { true }
       never_run = HQ::ManagedAgent.new(
@@ -1147,6 +1147,8 @@ module RemoteServerTest
 
       assert(service.send(:agent_payload, running)[:summary] == "Run in progress",
              "expected Remote UI payload to show a running summary for recorded history")
+      assert(service.send(:agent_payload, running)[:current_run_id] == "current-run-2",
+             "expected Remote UI payload to expose the current run boundary")
       assert(service.send(:agent_payload, never_run)[:summary] == "No runs yet",
              "expected Remote UI payload to preserve the never-run empty state")
     end
@@ -7164,7 +7166,7 @@ module RemoteServerTest
            "expected compact run summary statuses to render beside the Summary header")
     assert(js[:body].include?("function renderSummarySections") &&
            js[:body].include?('class="summary-sections" aria-label="Structured summary details"') &&
-           js[:body].include?("if (normalizedSummarySections(sections).length) return renderSummarySections(sections, agent, menuScope);"),
+           js[:body].include?("? renderSummarySections(sections, agent, menuScope)"),
            "expected full Summary pages to prefer ordered rich blocks over the compact summary")
     assert(js[:body].include?("renderMarkdown(section.text"),
            "expected rich summary text blocks to preserve Markdown rendering")

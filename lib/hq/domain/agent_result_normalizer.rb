@@ -5,6 +5,7 @@ require_relative "memory_handoff"
 
 module HQ
   class AgentResultNormalizer
+    VALID_STATUSES = %w[success no_action_needed partial failed blocked input_required].freeze
     NO_ACTION_COMPLETED_WORK_PATTERN = /(?:\A|^\s*(?:[-*]\s+)?)(?:implemented|committed|created|generated|fixed|updated|changed|added|removed|wrote|answered|delivered|published|deployed)\b/i
 
     def initialize(workspace:)
@@ -14,8 +15,13 @@ module HQ
     def normalize_structured_result(parsed)
       return nil unless parsed.is_a?(Hash)
 
-      status = parsed["status"].to_s
-      summary = parsed["summary"].to_s.strip
+      status = parsed["status"]
+      summary = parsed["summary"]
+      return nil unless status.is_a?(String) && VALID_STATUSES.include?(status)
+      return nil unless summary.is_a?(String)
+
+      status = status.strip
+      summary = summary.strip
       return nil if status.empty? || summary.empty?
 
       inquiry = normalize_inquiry(parsed["inquiry"])

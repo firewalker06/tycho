@@ -5795,6 +5795,32 @@ details.queue-read-block:not([open]) > .queue-read-body {
   font-size: 12px;
 }
 
+.summary-fallback-block {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--accent-alt) 60%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-alt) 12%, var(--panel));
+  padding: 12px;
+}
+
+.summary-fallback-block > .status-mark {
+  margin-top: 2px;
+  color: var(--accent-alt);
+}
+
+.summary-fallback-content {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.summary-fallback-content .agent-summary-markdown-viewer > :last-child {
+  margin-bottom: 0;
+}
+
 .agent-attachment-body {
   position: relative;
   display: grid;
