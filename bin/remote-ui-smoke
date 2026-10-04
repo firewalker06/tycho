@@ -3670,6 +3670,92 @@ def write_smoke_script(path)
               compactSummaryContract.sectionCount !== 0) {
             throw new Error(`Compact summary repeated rich details: ${JSON.stringify(compactSummaryContract)}`);
           }
+          const installEmptySummaryFixture = async () => page.evaluate((key) => {
+            closeUnreadPanel();
+            closeHeaderMore();
+            const agent = findAgent(key);
+            agent.run_count = 1;
+            agent.running = false;
+            agent.status = "stopped";
+            const longContext = ["## Last safe update", "", "- Kept **rich** assistant Markdown.", "token=do-not-show-this-value", ...Array.from({ length: 20 }, (_, index) => `Context ${index + 1}: ${"x".repeat(90)}`)].join("\\n");
+            state.conversations[key] = {
+              blocks: [
+                { kind: "message", role: "assistant", content: longContext, created_at: "2026-10-04T00:00:00Z" },
+                { kind: "message", role: "assistant", content: JSON.stringify({ status: "success", summary: [], attachments: [{ description: "SECRET_TOOL_PAYLOAD" }] }), created_at: "2026-10-04T00:00:01Z" },
+                {
+                  kind: "run_summary",
+                  content: "",
+                  created_at: "2026-10-04T00:00:02Z",
+                  metadata: {
+                    summary_id: "empty-summary-smoke",
+                    run_number: 1,
+                    status: "stopped",
+                    summary_sections: [{ type: "text", text: "" }, { type: "link", text: "Broken", url: "javascript:bad" }],
+                  },
+                },
+              ],
+            };
+            history.replaceState(null, "", routeHash({ type: "agentSummary", key, summaryId: "empty-summary-smoke" }));
+            state.renderedRouteKey = null;
+            state.renderedViewHtml = "";
+            render();
+          }, agentKey);
+          const emptySummaryContract = async () => page.evaluate(() => {
+            const fallback = document.querySelector("[data-summary-fallback]");
+            const body = document.querySelector("[data-agent-summary-page] .agent-attachment-body");
+            const text = fallback?.innerText || "";
+            return {
+              exists: Boolean(fallback),
+              role: fallback?.getAttribute("role"),
+              label: fallback?.getAttribute("aria-label"),
+              text,
+              bounded: text.length < 1_100 && text.endsWith("…"),
+              noSecret: !text.includes("SECRET_TOOL_PAYLOAD"),
+              redacted: text.includes("token=[REDACTED]") && !text.includes("do-not-show-this-value"),
+              rich: Boolean(fallback?.querySelector("strong")),
+              overflow: Boolean(fallback && fallback.scrollWidth > fallback.clientWidth),
+              insideBody: Boolean(fallback && body?.contains(fallback)),
+            };
+          });
+          await installEmptySummaryFixture();
+          const desktopEmptySummary = await emptySummaryContract();
+          if (!desktopEmptySummary.exists || desktopEmptySummary.role !== "status" || desktopEmptySummary.label !== "Summary unavailable" ||
+              !desktopEmptySummary.text.includes("This run returned without a usable structured summary.") ||
+              !desktopEmptySummary.text.includes("Last safe update") || !desktopEmptySummary.bounded || !desktopEmptySummary.noSecret || !desktopEmptySummary.redacted ||
+              !desktopEmptySummary.rich || desktopEmptySummary.overflow || !desktopEmptySummary.insideBody) {
+            throw new Error(`Desktop empty Summary fallback failed: ${JSON.stringify(desktopEmptySummary)}`);
+          }
+          if (summaryCaptureDir) await page.locator("[data-agent-summary-page]").screenshot({ path: path.join(summaryCaptureDir, "empty-summary-desktop.png") });
+          await page.setViewportSize({ width: 390, height: 844 });
+          const mobileEmptySummary = await emptySummaryContract();
+          if (!mobileEmptySummary.exists || mobileEmptySummary.overflow || !mobileEmptySummary.bounded || !mobileEmptySummary.insideBody) {
+            throw new Error(`Mobile empty Summary fallback failed: ${JSON.stringify(mobileEmptySummary)}`);
+          }
+          if (summaryCaptureDir) {
+            await page.evaluate((key) => {
+              state.conversations[key].blocks[0].content = "## Last safe update\\n\\n- Kept **rich** assistant Markdown.\\n- The context is bounded for the operator.";
+              state.renderedViewHtml = "";
+              render();
+            }, agentKey);
+            await page.locator("[data-summary-fallback]").screenshot({ path: path.join(summaryCaptureDir, "empty-summary-mobile.png") });
+          }
+          const noAssistantSummary = await page.evaluate((key) => {
+            const agent = findAgent(key);
+            state.conversations[key] = {
+              blocks: [{
+                kind: "run_summary",
+                content: "",
+                created_at: "2026-10-04T00:00:02Z",
+                metadata: { summary_id: "empty-no-assistant", run_number: 1, status: "stopped" },
+              }],
+            };
+            const detail = agentSummaryDetail(agent, "empty-no-assistant");
+            return { fallback: detail.fallback, content: detail.content };
+          }, agentKey);
+          if (!noAssistantSummary.fallback || !noAssistantSummary.content.includes("interrupted before it produced a usable assistant message")) {
+            throw new Error(`Empty Summary without assistant context was unclear: ${JSON.stringify(noAssistantSummary)}`);
+          }
+          await page.setViewportSize({ width: 1440, height: 900 });
           const installSummaryBlockFixture = async () => page.evaluate((key) => {
             clearTimeout(state.timer);
             state.timer = null;

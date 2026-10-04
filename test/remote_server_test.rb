@@ -7164,7 +7164,7 @@ module RemoteServerTest
            "expected compact run summary statuses to render beside the Summary header")
     assert(js[:body].include?("function renderSummarySections") &&
            js[:body].include?('class="summary-sections" aria-label="Structured summary details"') &&
-           js[:body].include?("if (normalizedSummarySections(sections).length) return renderSummarySections(sections, agent, menuScope);"),
+           js[:body].include?("? renderSummarySections(sections, agent, menuScope)"),
            "expected full Summary pages to prefer ordered rich blocks over the compact summary")
     assert(js[:body].include?("renderMarkdown(section.text"),
            "expected rich summary text blocks to preserve Markdown rendering")

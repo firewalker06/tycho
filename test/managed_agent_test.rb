@@ -24,6 +24,7 @@ module ManagedAgentTest
     assert_start_reconciles_session_after_restart
     assert_pi_session_identity_is_captured_and_resumed
     assert_fallback_summary_uses_assistant_message_not_tool_json
+    assert_unusable_structured_summaries_use_bounded_safe_fallbacks
     assert_utf8_raw_log_captures_memory_under_ascii_default_external
     assert_opencode_fallback_summary_uses_text_event_not_prompt
     assert_structured_output_summary_beats_later_agent_message
@@ -987,13 +988,108 @@ module ManagedAgentTest
       )
 
       summary = agent.build_summary!
-      assert(summary == "Finished useful work.",
-             "fallback summary should prefer assistant message, got #{summary.inspect}")
+      assert(summary.include?("## Summary unavailable") && summary.include?("> Finished useful work."),
+             "fallback summary should explain the problem and include the assistant message, got #{summary.inspect}")
 
       agent.send(:capture_run_memory!, run)
       run_summary = HQ::AgentMemory.new(agent).events.reverse.find { |event| event["type"] == "run_summary" }
-      assert(run_summary["content"] == "Finished useful work.",
+      assert(run_summary["content"] == summary && run_summary.dig("metadata", "summary_fallback") == true,
              "memory run_summary should not contain raw item.completed JSON, got #{run_summary.inspect}")
+    end
+  end
+
+  def assert_unusable_structured_summaries_use_bounded_safe_fallbacks
+    Dir.mktmpdir("hq-managed-agent-empty-summary-test") do |dir|
+      normalizer = HQ::AgentResultNormalizer.new(workspace: dir)
+      invalid_results = [
+        { "status" => "success" },
+        { "status" => "success", "summary" => "  " },
+        { "status" => "success", "summary" => ["not", "text"] },
+        { "status" => { "unexpected" => true }, "summary" => "Wrong status type" },
+        { "status" => "unknown", "summary" => "Wrong status value" },
+        { "status" => "success", "summary" => "", "summary_sections" => [{ "type" => "text", "text" => "Rich detail" }] }
+      ]
+      invalid_results.each do |payload|
+        assert(normalizer.normalize_structured_result(payload).nil?,
+               "expected unusable structured result to stay invalid: #{payload.inspect}")
+      end
+
+      started_at = Time.utc(2026, 10, 4, 8, 0, 0)
+      log_path = File.join(dir, "fallback.raw.log")
+      rich_lines = ["## Work in progress", "", "- Kept a safe Markdown list.", "token=do-not-show-this-value"] +
+                   15.times.map { |index| "Context line #{index + 1}: #{"x" * 90}" }
+      File.open(log_path, "w") do |file|
+        file.puts "=== [#{started_at.strftime("%Y-%m-%d %H:%M:%S")}] start ==="
+        file.puts JSON.generate(
+          "type" => "item.completed",
+          "item" => { "type" => "command_execution", "aggregated_output" => "SECRET_TOOL_PAYLOAD" }
+        )
+        file.puts JSON.generate(
+          "type" => "item.completed",
+          "item" => { "type" => "agent_message", "text" => rich_lines.join("\n") }
+        )
+        file.puts JSON.generate(
+          "type" => "item.completed",
+          "item" => {
+            "type" => "agent_message",
+            "text" => JSON.generate(
+              "status" => "success",
+              "summary" => [],
+              "attachments" => [{ "description" => "SECRET_STRUCTURED_PAYLOAD" }]
+            )
+          }
+        )
+      end
+      run = HQ::ManagedAgent::AgentRun.new(
+        started_at: started_at,
+        finished_at: started_at + 5,
+        exit_code: 0,
+        status: "succeeded",
+        log_path: log_path,
+        command: "codex test"
+      )
+      agent = HQ::ManagedAgent.new(
+        key: "empty-summary-demo",
+        name: "Empty Summary Demo",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "Return structured output.",
+        agent: "codex",
+        started_at: started_at,
+        finished_at: started_at + 5,
+        last_exit_code: 0,
+        runs: [run],
+        log_path: log_path
+      )
+
+      summary = agent.build_summary!
+      assert(summary.include?("This run returned without a usable structured summary."),
+             "expected an explicit fallback explanation")
+      assert(summary.include?("> ## Work in progress") && summary.include?("> - Kept a safe Markdown list."),
+             "expected rich assistant content to stay readable in the bounded quote")
+      assert(summary.end_with?("…"), "expected long assistant context to be visibly truncated")
+      assert(!summary.include?("SECRET_TOOL_PAYLOAD") && !summary.include?("SECRET_STRUCTURED_PAYLOAD"),
+             "expected fallback context to exclude tool and invalid structured payload data")
+      assert(summary.include?("token=[REDACTED]") && !summary.include?("do-not-show-this-value"),
+             "expected fallback context to redact common secret assignments")
+      assert(summary.length < 1_100, "expected fallback summary to stay bounded, got #{summary.length} characters")
+
+      stopped = HQ::ManagedAgent.new(
+        key: "interrupted-summary-demo",
+        name: "Interrupted Summary Demo",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "Stop early.",
+        agent: "codex",
+        last_exit_code: 143,
+        runs: [HQ::ManagedAgent::AgentRun.new(status: "stopped")],
+        log_path: File.join(dir, "missing.log")
+      )
+      stopped_summary = stopped.build_summary!
+      assert(stopped_summary.include?("interrupted") && stopped_summary.include?("usable assistant message"),
+             "expected interrupted runs with no assistant message to explain the missing context")
     end
   end
 
@@ -1055,8 +1151,8 @@ module ManagedAgentTest
       )
 
       summary = agent.build_summary!
-      assert(summary == "OK",
-             "OpenCode fallback summary should prefer text event, got #{summary.inspect}")
+      assert(summary.include?("## Summary unavailable") && summary.include?("> OK"),
+             "OpenCode fallback summary should explain and quote the text event, got #{summary.inspect}")
     end
   end
 
@@ -1110,7 +1206,8 @@ module ManagedAgentTest
       )
 
       summary = agent.build_summary!
-      assert(summary == "Résumé captured", "expected UTF-8 assistant summary, got #{summary.inspect}")
+      assert(summary.include?("## Summary unavailable") && summary.include?("> Résumé captured"),
+             "expected UTF-8 assistant context in fallback summary, got #{summary.inspect}")
 
       agent.send(:capture_run_memory!, run)
       assistant = HQ::AgentMemory.new(agent).events.find { |event| event["type"] == "assistant_message" }

@@ -20,6 +20,7 @@ module RemoteUIAssetSnapshotTest
     assert_archived_agents_are_reference_only_and_read_only
     assert_agent_status_icons_use_lucide_without_badges
     assert_summary_outcome_has_visible_status_and_no_session_header
+    assert_empty_summary_fallback_contract
     assert_agent_filter_and_sort_use_requested_lucide_icons
     assert_peer_update_ui_is_homebrew_gated
     assert_fast_route_bootstrap_uses_cached_peer_activity
@@ -315,6 +316,31 @@ module RemoteUIAssetSnapshotTest
     unless css.include?(".summary-outcome-value") && css.include?("align-items: center;")
       raise "Summary Outcome status identifier must preserve icon and text alignment"
     end
+  end
+
+  def assert_empty_summary_fallback_contract
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
+    required_javascript = [
+      "function fallbackRunSummaryContent",
+      "function lastSafeAssistantMessage",
+      "function safeAssistantContextText",
+      "function boundedSummaryFallbackContext",
+      "function redactSummaryFallbackContext",
+      'role="status" aria-label="Summary unavailable" data-summary-fallback',
+      "This run returned without a usable structured summary.",
+      "The run was interrupted before it produced a usable assistant message.",
+    ]
+    missing = required_javascript.reject { |fragment| javascript.include?(fragment) }
+    raise "missing empty Summary fallback contract: #{missing.join(", ")}" unless missing.empty?
+
+    required_css = [
+      ".summary-fallback-block {",
+      "grid-template-columns: auto minmax(0, 1fr);",
+      "overflow-wrap: anywhere;",
+    ]
+    missing = required_css.reject { |fragment| css.include?(fragment) }
+    raise "missing empty Summary fallback styling: #{missing.join(", ")}" unless missing.empty?
   end
 
   def assert_agent_filter_and_sort_use_requested_lucide_icons
