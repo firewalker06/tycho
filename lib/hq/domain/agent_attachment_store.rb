@@ -7,6 +7,7 @@ require "securerandom"
 require "time"
 
 require_relative "constants"
+require_relative "attachment_normalizer"
 
 module HQ
   class AgentAttachmentStore
@@ -90,7 +91,9 @@ module HQ
     private
 
     def prepare_remote_upload!(attrs, created_at:, index:, dedupe_key: nil)
-      filename = safe_filename(attrs["filename"] || attrs["name"] || "attachment")
+      filename = AttachmentNormalizer.safe_filename(attrs["filename"] || attrs["name"] || "attachment")
+      title = attrs["title"].to_s.strip
+      title = filename if title.empty?
       content_type = attrs["mime_type"].to_s.strip
       content_type = attrs["content_type"].to_s.strip if content_type.empty?
       declared_type = attrs["type"].to_s.strip
@@ -109,7 +112,8 @@ module HQ
         "id" => id,
         "type" => "file",
         "kind" => legacy_file_kind(attrs["kind"], filename, normalized_type),
-        "title" => filename,
+        "title" => title,
+        "filename" => filename,
         "path" => path,
         "mime_type" => normalized_type,
         "size_bytes" => bytes.bytesize,
@@ -134,12 +138,6 @@ module HQ
       Base64.strict_decode64(text)
     rescue ArgumentError
       raise ArgumentError, "#{filename} is not valid base64"
-    end
-
-    def safe_filename(value)
-      basename = File.basename(value.to_s.tr("\\", "/")).strip
-      basename = "attachment" if basename.empty? || basename == "." || basename == ".."
-      basename.gsub(/[^A-Za-z0-9._ -]/, "_")[0, 120]
     end
 
     def legacy_file_kind(value, filename, content_type)

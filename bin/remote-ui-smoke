@@ -146,7 +146,8 @@ def write_fixture(dir)
     fake_gh_path: fake_gh_path,
     home_dir: home_dir,
     tycho_home_dir: tycho_home_dir,
-    logs_dir: File.join(dir, "logs")
+    logs_dir: File.join(dir, "logs"),
+    workspace: workspace
   }
 end
 
@@ -452,6 +453,29 @@ def associate_agent_pull_request(logs_dir, agent_key)
   )
 end
 
+def associate_agent_download_fixture(logs_dir, agent_key, workspace)
+  agents = JSON.parse(File.read(File.join(logs_dir, "managed_agents.json")))
+  agent = agents.find { |item| item["key"] == agent_key }
+  raise "Failed to find smoke agent #{agent_key.inspect}" unless agent
+
+  path = File.join(workspace, "downloads", "out.mp4")
+  FileUtils.mkdir_p(File.dirname(path))
+  File.binwrite(path, "original filename download fixture\n")
+  attachments_path = agent.fetch("log_path").sub(/\.raw\.log\z/, ".attachments.json")
+  records = File.exist?(attachments_path) ? JSON.parse(File.read(attachments_path)) : { "attachments" => [] }
+  records["attachments"] ||= []
+  records["attachments"] << {
+    "type" => "file",
+    "kind" => "document",
+    "title" => "Factorio Space Age (out.mp4)",
+    "filename" => "out.mp4",
+    "path" => path,
+    "mime_type" => "video/mp4",
+    "created_at" => Time.now.iso8601
+  }
+  File.write(attachments_path, JSON.pretty_generate(records))
+end
+
 def mark_schedule_daemon_running(logs_dir, pid)
   FileUtils.mkdir_p(logs_dir)
   now = Time.now.iso8601
@@ -532,6 +556,7 @@ def write_smoke_script(path)
       const delegationOnly = process.env.TYCHO_REMOTE_UI_DELEGATION_ONLY === "1";
       const titleCopyOnly = process.env.TYCHO_REMOTE_UI_TITLE_COPY_ONLY === "1";
       const summaryAttachmentsOnly = process.env.TYCHO_REMOTE_UI_SUMMARY_ATTACHMENTS_ONLY === "1";
+      const attachmentDownloadOnly = process.env.TYCHO_REMOTE_UI_ATTACHMENT_DOWNLOAD_ONLY === "1";
       const quickAgentsPriorityOnly = process.env.TYCHO_REMOTE_UI_QUICK_AGENTS_PRIORITY_ONLY === "1";
       const optimisticDetailFormsOnly = process.env.TYCHO_REMOTE_UI_OPTIMISTIC_DETAIL_FORMS_ONLY === "1";
       const prDiffManagementOnly = process.env.TYCHO_REMOTE_UI_PR_DIFF_MANAGEMENT_ONLY === "1";
@@ -554,6 +579,39 @@ def write_smoke_script(path)
         if (message.type() === "error") errors.push(message.text());
       });
       page.on("pageerror", (error) => errors.push(error.message));
+
+      async function assertAttachmentOriginalFilenameDownload() {
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
+        const response = await page.request.get(`${baseUrl}/agents/${encodeURIComponent(agentKey)}`);
+        const payload = await response.json();
+        const attachment = payload.agent.attachments.find((item) => item.title === "Factorio Space Age (out.mp4)");
+        if (!attachment || attachment.filename !== "out.mp4") {
+          throw new Error(`Attachment API lost the original filename: ${JSON.stringify(attachment)}`);
+        }
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}/attachment/${encodeURIComponent(attachment.id)}`, { waitUntil: "networkidle" });
+        await page.click("[data-attachment-viewer-menu] > summary");
+        await page.waitForSelector(`.agent-attachment-body [data-download-attachment="${attachment.id}"]`, { state: "visible" });
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "attachment-original-filename.png"), fullPage: false });
+        const [download] = await Promise.all([
+          page.waitForEvent("download"),
+          page.click(`.agent-attachment-body [data-download-attachment="${attachment.id}"]`),
+        ]);
+        if (download.suggestedFilename() !== "out.mp4") {
+          throw new Error(`Chrome suggested ${download.suggestedFilename()} instead of out.mp4`);
+        }
+        const downloadedPath = await download.path();
+        if (fs.readFileSync(downloadedPath, "utf8") !== "original filename download fixture\\n") {
+          throw new Error("Chrome download bytes did not match the source attachment");
+        }
+      }
+
+      if (attachmentDownloadOnly) {
+        await assertAttachmentOriginalFilenameDownload();
+        console.log("remote-ui-smoke: original attachment filename download ok");
+        await browser.close();
+        return;
+      }
 
       async function assertContextPressureWarningLayout() {
         await page.setViewportSize({ width: 390, height: 844 });
@@ -8974,6 +9032,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     send_agent_message(base_url, security_agent_key, "Take over this review directly.")
     associate_agent_schedule(fixture.fetch(:logs_dir), agent_key)
     associate_agent_pull_request(fixture.fetch(:logs_dir), agent_key)
+    if ENV["TYCHO_REMOTE_UI_ATTACHMENT_DOWNLOAD_ONLY"] == "1"
+      associate_agent_download_fixture(fixture.fetch(:logs_dir), agent_key, fixture.fetch(:workspace))
+    end
     associate_agent_pull_request(fixture.fetch(:logs_dir), unscheduled_agent_key) unless ENV["TYCHO_REMOTE_UI_PR_DIFF_MANAGEMENT_ONLY"] == "1"
     begin
       wait_for_resource_agents(
@@ -9037,6 +9098,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     end
     if ENV["TYCHO_REMOTE_UI_SUMMARY_ATTACHMENTS_ONLY"].to_s == "1"
       smoke_env["TYCHO_REMOTE_UI_SUMMARY_ATTACHMENTS_ONLY"] = "1"
+    end
+    if ENV["TYCHO_REMOTE_UI_ATTACHMENT_DOWNLOAD_ONLY"].to_s == "1"
+      smoke_env["TYCHO_REMOTE_UI_ATTACHMENT_DOWNLOAD_ONLY"] = "1"
     end
     if ENV["TYCHO_REMOTE_UI_SKILLS_ONLY"].to_s == "1"
       smoke_env["TYCHO_REMOTE_UI_SKILLS_ONLY"] = "1"

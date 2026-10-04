@@ -36,6 +36,7 @@ module RemoteServerTest
     assert_remote_inquiry_dismiss_restore_and_retirement_lifecycle
     assert_remote_agent_payload_includes_attachments
     assert_json_attachment_download_preserves_raw_bytes
+    assert_attachment_download_uses_original_filename
     assert_remote_agent_pull_request_diff_payload
     assert_agent_pull_request_listing_avoids_eager_metadata_requests
     assert_concurrent_pull_request_diff_refreshes_are_coalesced
@@ -1417,6 +1418,75 @@ module RemoteServerTest
              "expected JSON download to retain its object structure")
       assert(parsed["message"].include?("\\temp\\source") && parsed["unicode"].include?("☃"),
              "expected JSON download to retain quotes, backslashes, and Unicode")
+    end
+  end
+
+  def assert_attachment_download_uses_original_filename
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      created = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Filename Agent",
+        "prompt" => "Verify filenames.", "agent" => "codex"
+      )
+
+      result = service.submit_prompt(
+        created[:key],
+        "prompt" => "Store these files.",
+        "attachments" => [
+          {
+            "filename" => "../../映像:final?.mp4",
+            "title" => "Factorio Space Age",
+            "mime_type" => "video/mp4",
+            "content_base64" => Base64.strict_encode64("first")
+          },
+          {
+            "filename" => "../../映像:final?.mp4",
+            "title" => "Second display title",
+            "mime_type" => "video/mp4",
+            "content_base64" => Base64.strict_encode64("second")
+          }
+        ]
+      )
+      uploads = result[:agent][:attachments].select { |item| item["source"] == "remote_upload" }
+      assert(uploads.map { |item| item["title"] }.sort == ["Factorio Space Age", "Second display title"],
+             "expected display titles to stay independent from download filenames")
+      assert(uploads.map { |item| item["filename"] }.uniq == ["映像_final_.mp4"],
+             "expected uploaded filenames to keep Unicode while removing traversal and invalid characters")
+      assert(uploads.map { |item| item["id"] }.uniq.length == 2,
+             "expected duplicate original filenames to remain separate attachments")
+      agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+      persisted = JSON.parse(File.read(agent.attachments_path)).fetch("attachments")
+      assert(persisted.count { |item| item["filename"] == "映像_final_.mp4" } == 2,
+             "expected original filenames to persist with duplicate uploads")
+
+      upload = uploads.find { |item| item["title"] == "Factorio Space Age" }
+      blob = service.attachment_blob(upload.fetch("id"))
+      disposition = blob.dig(:headers, "Content-Disposition")
+      assert(disposition.include?('filename="___final_.mp4"'),
+             "expected a safe ASCII Content-Disposition fallback")
+      assert(disposition.include?("filename*=UTF-8''%E6%98%A0%E5%83%8F_final_.mp4"),
+             "expected Content-Disposition to preserve the UTF-8 original filename")
+      assert(!disposition.include?("Factorio") && !disposition.include?("../"),
+             "expected Content-Disposition not to use the display title or unsafe path segments")
+
+      old_path = File.join(workspace, "exports", "out.mp4")
+      FileUtils.mkdir_p(File.dirname(old_path))
+      File.binwrite(old_path, "legacy")
+      HQ::AgentMemory.new(agent).append_attachment!(
+        { "type" => "file", "title" => "Human readable title", "path" => old_path },
+        created_at: Time.parse("2026-10-04 12:00:00")
+      )
+      old_records = JSON.parse(File.read(agent.attachments_path))
+      old_records.fetch("attachments").find { |item| item["title"] == "Human readable title" }.delete("filename")
+      File.write(agent.attachments_path, JSON.pretty_generate(old_records))
+      legacy = service.agent(created[:key])[:attachments].find { |item| item["title"] == "Human readable title" }
+      assert(legacy["filename"] == "out.mp4",
+             "expected old attachment records to fall back to the source path basename")
+      assert(service.attachment_blob(legacy.fetch("id")).dig(:headers, "Content-Disposition").include?('filename="out.mp4"'),
+             "expected old attachments to download with their source filename")
     end
   end
 
@@ -7283,8 +7353,12 @@ module RemoteServerTest
     assert(js[:body].include?("renderSummaryAttachmentList"),
            "expected detailed Summary pages to render attachment list blocks")
     assert(js[:body].include?('class="summary-attachment-download icon-button ui-button ui-icon-button"') &&
-           js[:body].include?('data-download-filename="${escapeAttr(title || "attachment")}"'),
+           js[:body].include?('data-download-filename="${escapeAttr(attachmentDownloadFilename(current))}"'),
            "expected detailed Summary pages to download files without replacing their detail links")
+    assert(js[:body].include?("function attachmentDownloadFilename") &&
+           js[:body].include?('attachment?.filename || attachment?.original_filename') &&
+           js[:body].include?('target.split(/[\\\\/]/).filter(Boolean).pop()'),
+           "expected Remote UI downloads to prefer original filenames over display titles")
     assert(js[:body].include?('kv("Est. Cost", sessionCostSnapshotText(summary.costSnapshot))'),
            "expected detailed Summary pages to render the finalized session-cost snapshot")
     assert(!js[:body].include?('kv("Completed", timeShort(summary.createdAt'),
