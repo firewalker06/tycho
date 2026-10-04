@@ -323,6 +323,7 @@ module RemoteUIAssetSnapshotTest
     css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
     required_javascript = [
       "function fallbackRunSummaryContent",
+      "function runSummaryFallbackConversationCard",
       "function lastSafeAssistantMessage",
       "function safeAssistantContextText",
       "function fallbackRecordSignature",
@@ -339,10 +340,23 @@ module RemoteUIAssetSnapshotTest
     missing = required_javascript.reject { |fragment| javascript.include?(fragment) }
     raise "missing empty Summary fallback contract: #{missing.join(", ")}" unless missing.empty?
 
+    conversation_renderer = javascript[/function renderRunSummaryMessageContent.*?^}/m].to_s
+    unless conversation_renderer.include?('data-summary-fallback-preview') &&
+           conversation_renderer.include?('This run returned without a usable structured summary.') &&
+           conversation_renderer.include?('data-open-agent-summary') &&
+           conversation_renderer.include?('renderSummaryAttachmentMenu')
+      raise "empty Summary conversation card must stay concise and retain Open and attachment actions"
+    end
+    if conversation_renderer.include?("fallbackRunSummaryContent") || conversation_renderer.include?("Last assistant message")
+      raise "empty Summary conversation card must not include detailed fallback context"
+    end
+
     required_css = [
       ".summary-fallback-block {",
       "grid-template-columns: auto minmax(0, 1fr);",
       "overflow-wrap: anywhere;",
+      "border: 1px solid color-mix(in srgb, var(--accent-alt) 60%, var(--border));",
+      "background: color-mix(in srgb, var(--accent-alt) 12%, var(--panel));",
     ]
     missing = required_css.reject { |fragment| css.include?(fragment) }
     raise "missing empty Summary fallback styling: #{missing.join(", ")}" unless missing.empty?

@@ -5801,14 +5801,15 @@ details.queue-read-block:not([open]) > .queue-read-body {
   align-items: start;
   gap: 10px;
   min-width: 0;
-  border: 1px solid color-mix(in srgb, var(--warning) 44%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--accent-alt) 60%, var(--border));
   border-radius: 8px;
-  background: color-mix(in srgb, var(--warning) 8%, var(--panel));
+  background: color-mix(in srgb, var(--accent-alt) 12%, var(--panel));
   padding: 12px;
 }
 
 .summary-fallback-block > .status-mark {
   margin-top: 2px;
+  color: var(--accent-alt);
 }
 
 .summary-fallback-content {

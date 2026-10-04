@@ -3778,6 +3778,16 @@ def write_smoke_script(path)
             const fallback = document.querySelector("[data-summary-fallback]");
             const body = document.querySelector("[data-agent-summary-page] .agent-attachment-body");
             const text = fallback?.innerText || "";
+            const summaryColorProbe = document.createElement("article");
+            summaryColorProbe.className = "message run_summary";
+            document.body.append(summaryColorProbe);
+            const fallbackStyle = fallback ? getComputedStyle(fallback) : null;
+            const normalStyle = getComputedStyle(summaryColorProbe);
+            const normalColors = {
+              background: normalStyle.backgroundColor,
+              border: normalStyle.borderTopColor,
+            };
+            summaryColorProbe.remove();
             return {
               exists: Boolean(fallback),
               role: fallback?.getAttribute("role"),
@@ -3791,6 +3801,9 @@ def write_smoke_script(path)
                 !fallback?.querySelector("[onerror]") && !fallback?.querySelector('a[href^="javascript:"]'),
               overflow: Boolean(fallback && fallback.scrollWidth > fallback.clientWidth),
               insideBody: Boolean(fallback && body?.contains(fallback)),
+              normalColors: Boolean(fallbackStyle &&
+                fallbackStyle.backgroundColor === normalColors.background &&
+                fallbackStyle.borderTopColor === normalColors.border),
             };
           });
           await installEmptySummaryFixture();
@@ -3798,7 +3811,7 @@ def write_smoke_script(path)
           if (!desktopEmptySummary.exists || desktopEmptySummary.role !== "status" || desktopEmptySummary.label !== "Summary unavailable" ||
               !desktopEmptySummary.text.includes("This run returned without a usable structured summary.") ||
               !desktopEmptySummary.text.includes("Last safe update") || !desktopEmptySummary.bounded || !desktopEmptySummary.noSecret || !desktopEmptySummary.redacted ||
-              !desktopEmptySummary.rich || !desktopEmptySummary.sanitized || desktopEmptySummary.overflow || !desktopEmptySummary.insideBody) {
+              !desktopEmptySummary.rich || !desktopEmptySummary.sanitized || desktopEmptySummary.overflow || !desktopEmptySummary.insideBody || !desktopEmptySummary.normalColors) {
             throw new Error(`Desktop empty Summary fallback failed: ${JSON.stringify(desktopEmptySummary)}`);
           }
           if (summaryCaptureDir) await page.locator("[data-agent-summary-page]").screenshot({ path: path.join(summaryCaptureDir, "empty-summary-desktop.png") });
@@ -3847,9 +3860,15 @@ def write_smoke_script(path)
             fixture.style.width = "100%";
             fixture.innerHTML = renderMessage({
               kind: "run_summary",
-              content: "stopped: Tycho stopped this run after no structured agent output stayed idle for 300 seconds. Tycho stopped this run after no structured agent output stayed idle for 300 seconds.",
+              content: "## Summary unavailable\\n\\nThis run returned without a usable structured summary.\\n\\n### Last assistant message\\n\\n> PRIVATE_CARD_CONTEXT_MUST_NOT_APPEAR",
               created_at: "2026-10-02T06:48:00Z",
-              metadata: { summary_id: "summary-block-smoke", run_number: 57, status: "stopped" },
+              metadata: {
+                summary_id: "summary-block-smoke",
+                run_number: 57,
+                status: "stopped",
+                summary_fallback: true,
+                attachments: [{ type: "link", title: "Run report", url: "https://example.test/run-report" }],
+              },
             }, { agent: findAgent(key) });
             document.querySelector(".message-list")?.append(fixture);
           }, agentKey);
@@ -3861,41 +3880,62 @@ def write_smoke_script(path)
             const content = summary?.querySelector(".summary-message-content");
             const text = content?.querySelector("p");
             const open = content?.querySelector("[data-open-agent-summary]");
+            const attachment = content?.querySelector("[data-toggle-summary-attachment-menu]");
+            const actions = content?.querySelector(".summary-message-actions");
             open?.focus();
             const contentRect = content?.getBoundingClientRect();
-            const openRect = open?.getBoundingClientRect();
+            const actionsRect = actions?.getBoundingClientRect();
+            const validFixture = document.createElement("div");
+            validFixture.innerHTML = renderRunSummaryMessageContent(
+              "A normal valid summary remains unchanged.",
+              null,
+              { metadata: { status: "success" } }
+            );
+            const validContent = validFixture.querySelector(".summary-message-content");
             return {
               header: role?.innerText.replace(/\s+/g, " ").trim() || "",
               status: status?.innerText || "",
               statusIntent: status?.dataset.intent || "",
               body: text?.innerText || "",
+              detailedContextHidden: !content?.innerText.includes("PRIVATE_CARD_CONTEXT_MUST_NOT_APPEAR"),
+              unavailableLabelHidden: !content?.innerText.includes("Summary unavailable"),
+              fallbackPreview: content?.hasAttribute("data-summary-fallback-preview") || false,
               actionLabel: open?.innerText.trim() || "",
-              actionAtRight: Boolean(contentRect && openRect && Math.abs(contentRect.right - openRect.right) < 1),
+              attachmentLabel: attachment?.getAttribute("aria-label") || "",
+              attachmentCount: attachment?.querySelector(".attachment-count")?.innerText || "",
+              actionAtRight: Boolean(contentRect && actionsRect && Math.abs(contentRect.right - actionsRect.right) < 1),
               focus: document.activeElement === open,
-              overflow: Boolean(content && content.scrollWidth > content.clientWidth),
+              overflow: Boolean(content && content.scrollWidth - content.clientWidth > 4),
+              geometry: content ? { clientWidth: content.clientWidth, scrollWidth: content.scrollWidth, actionsWidth: actionsRect?.width || 0 } : null,
               validRepeat: runSummaryPreviewText("Repeat this sentence. Repeat this sentence.", {
                 metadata: { status: "success" },
               }),
               validStoppedRepeat: runSummaryPreviewText("stopped: Repeat this sentence. Repeat this sentence.", {
                 metadata: { status: "stopped" },
               }),
+              validSummaryBody: validContent?.innerText.trim() || "",
+              validSummaryMarkedFallback: validContent?.hasAttribute("data-summary-fallback-preview") || false,
             };
           });
           await installSummaryBlockFixture();
           const desktopSummaryBlock = await summaryBlockContract();
           if (!desktopSummaryBlock.header.toLowerCase().includes("summary #57") || desktopSummaryBlock.status !== "Stopped" ||
               desktopSummaryBlock.statusIntent !== "warning" ||
-              desktopSummaryBlock.body !== "Tycho stopped this run after no structured agent output stayed idle for 300 seconds." ||
+              desktopSummaryBlock.body !== "This run returned without a usable structured summary." ||
+              !desktopSummaryBlock.detailedContextHidden || !desktopSummaryBlock.unavailableLabelHidden || !desktopSummaryBlock.fallbackPreview ||
               desktopSummaryBlock.validRepeat !== "Repeat this sentence. Repeat this sentence." ||
               desktopSummaryBlock.validStoppedRepeat !== "Repeat this sentence. Repeat this sentence." ||
-              desktopSummaryBlock.actionLabel !== "Open" || !desktopSummaryBlock.actionAtRight ||
+              desktopSummaryBlock.validSummaryBody !== "A normal valid summary remains unchanged." || desktopSummaryBlock.validSummaryMarkedFallback ||
+              desktopSummaryBlock.actionLabel !== "Open" || desktopSummaryBlock.attachmentLabel !== "Choose summary attachment" || desktopSummaryBlock.attachmentCount !== "1" || !desktopSummaryBlock.actionAtRight ||
               !desktopSummaryBlock.focus || desktopSummaryBlock.overflow) {
             throw new Error(`Desktop Summary block contract failed: ${JSON.stringify(desktopSummaryBlock)}`);
           }
           if (summaryCaptureDir) await page.locator("#summary-block-smoke-fixture").screenshot({ path: path.join(summaryCaptureDir, "summary-block-desktop.png") });
           await page.setViewportSize({ width: 390, height: 844 });
           const mobileSummaryBlock = await summaryBlockContract();
-          if (!mobileSummaryBlock.actionAtRight || !mobileSummaryBlock.focus || mobileSummaryBlock.overflow) {
+          if (!mobileSummaryBlock.actionAtRight || !mobileSummaryBlock.focus || mobileSummaryBlock.overflow ||
+              !mobileSummaryBlock.detailedContextHidden || !mobileSummaryBlock.unavailableLabelHidden ||
+              mobileSummaryBlock.attachmentCount !== "1") {
             throw new Error(`Mobile Summary block contract failed: ${JSON.stringify(mobileSummaryBlock)}`);
           }
           if (summaryCaptureDir) await page.locator("#summary-block-smoke-fixture").screenshot({ path: path.join(summaryCaptureDir, "summary-block-mobile.png") });
