@@ -987,6 +987,60 @@ module ManagedAgentTest
         log_path: log_path
       )
 
+      rejected_contexts = [
+        '{"status":"success","summary":[],"attachments":[{"description":"SECRET_TOOL_PAYLOAD"}]',
+        "```json\n{\"status\":\"success\",\"summary\":\"Do not use fenced output\"}\n```",
+        '{"type":"tool_result","result":"SECRET_TOOL_RESULT"}',
+        "tool_payload=SECRET_TOOL_PAYLOAD",
+        "function_call: SECRET_TOOL_ARGUMENTS",
+        '{"type":"analysis","content":"SECRET_REASONING"}',
+        "prompt=SECRET_PROMPT",
+        "analysis: SECRET_ANALYSIS"
+      ]
+      rejected_contexts.each do |content|
+        assert(agent.send(:safe_assistant_context_text, content).nil?,
+               "expected structured, raw, prompt, and analysis records to be rejected: #{content.inspect}")
+      end
+
+      pi_event = {
+        "type" => "message_end",
+        "message" => {
+          "role" => "assistant",
+          "content" => [
+            { "type" => "thinking", "thinking" => "SECRET_PI_REASONING" },
+            { "type" => "text", "text" => "Visible Pi assistant text." },
+            { "type" => "toolCall", "name" => "read", "arguments" => { "secret" => "SECRET_PI_TOOL" } }
+          ],
+          "errorMessage" => "SECRET_PI_ERROR",
+          "provider" => "SECRET_PI_METADATA"
+        },
+        "metadata" => { "secret" => "SECRET_EVENT_METADATA" }
+      }
+      pi_text = agent.send(:raw_assistant_text_from_event, pi_event)
+      assert(pi_text == "Visible Pi assistant text.", "expected Pi message_end to select only visible assistant text")
+      assert(!pi_text.match?(/SECRET_PI|SECRET_EVENT/), "expected Pi reasoning, tools, errors, and metadata to stay excluded")
+
+      shared_secret_samples = [
+        "AKIAABCDEFGHIJKLMNOP",
+        "AIza#{"a" * 30}",
+        "ghp_#{"a" * 20}",
+        "glpat-#{"a" * 16}",
+        "npm_#{"a" * 16}",
+        "sk-proj-#{"a" * 24}",
+        "sk_live_#{"a" * 16}",
+        "xoxb-#{"a" * 12}",
+        "postgresql://user:password@example.test/db",
+        "{\"api_key\":\"#{"a" * 16}\"}",
+        "const client_secret = \"#{"a" * 16}\"",
+        "export TOKEN=#{"a" * 16}",
+        "-----BEGIN PRIVATE KEY-----\n#{"a" * 32}\n-----END PRIVATE KEY-----"
+      ]
+      shared_secret_samples.each do |secret|
+        redacted = agent.send(:redact_fallback_context, "Safe prefix\n#{secret}\nSafe suffix")
+        assert(redacted.include?("[REDACTED]") && !redacted.include?(secret),
+               "expected shared credential pattern to be redacted: #{secret.inspect}")
+      end
+
       summary = agent.build_summary!
       assert(summary.include?("## Summary unavailable") && summary.include?("> Finished useful work."),
              "fallback summary should explain the problem and include the assistant message, got #{summary.inspect}")
@@ -1071,7 +1125,7 @@ module ManagedAgentTest
       assert(summary.end_with?("…"), "expected long assistant context to be visibly truncated")
       assert(!summary.include?("SECRET_TOOL_PAYLOAD") && !summary.include?("SECRET_STRUCTURED_PAYLOAD"),
              "expected fallback context to exclude tool and invalid structured payload data")
-      assert(summary.include?("token=[REDACTED]") && !summary.include?("do-not-show-this-value"),
+      assert(summary.include?("[REDACTED]") && !summary.include?("do-not-show-this-value"),
              "expected fallback context to redact common secret assignments")
       assert(summary.length < 1_100, "expected fallback summary to stay bounded, got #{summary.length} characters")
 
@@ -1090,6 +1144,31 @@ module ManagedAgentTest
       stopped_summary = stopped.build_summary!
       assert(stopped_summary.include?("interrupted") && stopped_summary.include?("usable assistant message"),
              "expected interrupted runs with no assistant message to explain the missing context")
+
+      prior_run_log = File.join(dir, "prior-run.raw.log")
+      File.open(prior_run_log, "w") do |file|
+        file.puts "=== [2026-10-04 07:00:00] start ==="
+        file.puts JSON.generate("type" => "item.completed", "item" => {
+          "type" => "agent_message", "text" => "PRIOR_RUN_MESSAGE_MUST_NOT_APPEAR"
+        })
+        file.puts "=== [2026-10-04 08:00:00] start ==="
+        file.puts JSON.generate("type" => "turn.completed", "usage" => {})
+      end
+      current_run_only = HQ::ManagedAgent.new(
+        key: "current-run-only-summary-demo",
+        name: "Current Run Only Summary Demo",
+        project_key: "demo",
+        template_key: "custom",
+        workspace: dir,
+        prompt: "Stop without a message.",
+        agent: "codex",
+        last_exit_code: 143,
+        runs: [HQ::ManagedAgent::AgentRun.new(status: "stopped", log_path: prior_run_log)],
+        log_path: prior_run_log
+      )
+      current_summary = current_run_only.build_summary!
+      assert(current_summary.include?("interrupted") && !current_summary.include?("PRIOR_RUN_MESSAGE_MUST_NOT_APPEAR"),
+             "expected fallback context to stay inside the current run")
     end
   end
 

@@ -3670,6 +3670,78 @@ def write_smoke_script(path)
               compactSummaryContract.sectionCount !== 0) {
             throw new Error(`Compact summary repeated rich details: ${JSON.stringify(compactSummaryContract)}`);
           }
+          const emptySummarySafetyMatrix = await page.evaluate((key) => {
+            const rejected = [
+              '{"status":"success","summary":[],"attachments":[{"description":"SECRET_TOOL_PAYLOAD"}]',
+              '```json\\n{"status":"success","summary":"FENCED_STRUCTURED_OUTPUT"}\\n```',
+              '{"type":"tool_result","result":"SECRET_TOOL_RESULT"}',
+              'tool_payload=SECRET_TOOL_PAYLOAD',
+              'function_call: SECRET_TOOL_ARGUMENTS',
+              '{"type":"analysis","content":"SECRET_ANALYSIS"}',
+              'prompt=SECRET_PROMPT',
+              'analysis: SECRET_REASONING',
+            ];
+            const credentials = [
+              `AKIA${"A".repeat(16)}`,
+              `ASIA${"A".repeat(16)}`,
+              `AIza${"a".repeat(30)}`,
+              `ghp_${"a".repeat(20)}`,
+              `github_pat_${"a".repeat(24)}`,
+              `glpat-${"a".repeat(16)}`,
+              `pypi-${"a".repeat(16)}`,
+              `npm_${"a".repeat(16)}`,
+              `hf_${"a".repeat(16)}`,
+              `sk-proj-${"a".repeat(24)}`,
+              `sk_live_${"a".repeat(16)}`,
+              `xoxb-${"a".repeat(12)}`,
+              "postgresql://user:password@example.test/db",
+              "mysql://user:password@example.test/db",
+              "mongodb+srv://user:password@example.test/db",
+              "redis://user:password@example.test/0",
+              "rediss://user:password@example.test/0",
+              "amqp://user:password@example.test/vhost",
+              "amqps://user:password@example.test/vhost",
+              `{"api_key":"${"a".repeat(16)}"}`,
+              `const client_secret = "${"a".repeat(16)}"`,
+              `export TOKEN=${"a".repeat(16)}`,
+              `Bearer ${"a".repeat(24)}`,
+              `-----BEGIN PRIVATE KEY-----\n${"a".repeat(32)}\n-----END PRIVATE KEY-----`,
+            ];
+            const rejectedSafely = rejected.every((content) => safeAssistantContextText(content) === "");
+            const credentialsRedacted = credentials.every((secret) => {
+              const redacted = redactSummaryFallbackContext(`prefix\n${secret}\nsuffix`);
+              return redacted.includes("[REDACTED]") && !redacted.includes(secret);
+            });
+
+            const agent = findAgent(key);
+            agent.run_count = 2;
+            agent.running = false;
+            agent.status = "stopped";
+            agent.current_run_id = "run-current";
+            state.conversations[key] = {
+              blocks: [
+                { kind: "message", role: "assistant", content: "PRIOR_RUN_MESSAGE_MUST_NOT_APPEAR", metadata: { run_id: "run-prior" } },
+                { kind: "run_summary", content: "Prior summary", metadata: { summary_id: "prior-summary", run_id: "run-prior", status: "success" } },
+                { kind: "run_summary", content: "", metadata: { summary_id: "current-summary", run_id: "run-current", status: "stopped" } },
+              ],
+            };
+            const current = agentSummaryDetail(agent, "current-summary");
+            state.conversations[key] = {
+              blocks: [{ kind: "message", role: "assistant", content: "PRIOR_RUN_MESSAGE_MUST_NOT_APPEAR", metadata: { run_id: "run-prior" } }],
+            };
+            agent.summary = "";
+            const missing = agentSummaryDetail(agent);
+            return {
+              rejectedSafely,
+              credentialsRedacted,
+              currentRunIsolated: !current.content.includes("PRIOR_RUN_MESSAGE_MUST_NOT_APPEAR") && current.content.includes("interrupted"),
+              missingRunIsolated: !missing.content.includes("PRIOR_RUN_MESSAGE_MUST_NOT_APPEAR") && missing.content.includes("interrupted"),
+            };
+          }, agentKey);
+          if (!emptySummarySafetyMatrix.rejectedSafely || !emptySummarySafetyMatrix.credentialsRedacted ||
+              !emptySummarySafetyMatrix.currentRunIsolated || !emptySummarySafetyMatrix.missingRunIsolated) {
+            throw new Error(`Empty Summary safety matrix failed: ${JSON.stringify(emptySummarySafetyMatrix)}`);
+          }
           const installEmptySummaryFixture = async () => page.evaluate((key) => {
             closeUnreadPanel();
             closeHeaderMore();
@@ -3677,17 +3749,19 @@ def write_smoke_script(path)
             agent.run_count = 1;
             agent.running = false;
             agent.status = "stopped";
-            const longContext = ["## Last safe update", "", "- Kept **rich** assistant Markdown.", "token=do-not-show-this-value", ...Array.from({ length: 20 }, (_, index) => `Context ${index + 1}: ${"x".repeat(90)}`)].join("\\n");
+            agent.current_run_id = "run-current";
+            const longContext = ["## Last safe update", "", "- Kept **rich** assistant Markdown.", "token=do-not-show-this-value", "<script>window.FALLBACK_INJECTION = true</script>", "[unsafe](javascript:window.FALLBACK_INJECTION=true)", ...Array.from({ length: 20 }, (_, index) => `Context ${index + 1}: ${"x".repeat(90)}`)].join("\\n");
             state.conversations[key] = {
               blocks: [
-                { kind: "message", role: "assistant", content: longContext, created_at: "2026-10-04T00:00:00Z" },
-                { kind: "message", role: "assistant", content: JSON.stringify({ status: "success", summary: [], attachments: [{ description: "SECRET_TOOL_PAYLOAD" }] }), created_at: "2026-10-04T00:00:01Z" },
+                { kind: "message", role: "assistant", content: longContext, created_at: "2026-10-04T00:00:00Z", metadata: { run_id: "run-current" } },
+                { kind: "message", role: "assistant", content: JSON.stringify({ status: "success", summary: [], attachments: [{ description: "SECRET_TOOL_PAYLOAD" }] }), created_at: "2026-10-04T00:00:01Z", metadata: { run_id: "run-current" } },
                 {
                   kind: "run_summary",
                   content: "",
                   created_at: "2026-10-04T00:00:02Z",
                   metadata: {
                     summary_id: "empty-summary-smoke",
+                    run_id: "run-current",
                     run_number: 1,
                     status: "stopped",
                     summary_sections: [{ type: "text", text: "" }, { type: "link", text: "Broken", url: "javascript:bad" }],
@@ -3711,8 +3785,10 @@ def write_smoke_script(path)
               text,
               bounded: text.length < 1_100 && text.endsWith("…"),
               noSecret: !text.includes("SECRET_TOOL_PAYLOAD"),
-              redacted: text.includes("token=[REDACTED]") && !text.includes("do-not-show-this-value"),
+              redacted: text.includes("[REDACTED]") && !text.includes("do-not-show-this-value"),
               rich: Boolean(fallback?.querySelector("strong")),
+              sanitized: !window.FALLBACK_INJECTION && !fallback?.querySelector("script") &&
+                !fallback?.querySelector("[onerror]") && !fallback?.querySelector('a[href^="javascript:"]'),
               overflow: Boolean(fallback && fallback.scrollWidth > fallback.clientWidth),
               insideBody: Boolean(fallback && body?.contains(fallback)),
             };
@@ -3722,7 +3798,7 @@ def write_smoke_script(path)
           if (!desktopEmptySummary.exists || desktopEmptySummary.role !== "status" || desktopEmptySummary.label !== "Summary unavailable" ||
               !desktopEmptySummary.text.includes("This run returned without a usable structured summary.") ||
               !desktopEmptySummary.text.includes("Last safe update") || !desktopEmptySummary.bounded || !desktopEmptySummary.noSecret || !desktopEmptySummary.redacted ||
-              !desktopEmptySummary.rich || desktopEmptySummary.overflow || !desktopEmptySummary.insideBody) {
+              !desktopEmptySummary.rich || !desktopEmptySummary.sanitized || desktopEmptySummary.overflow || !desktopEmptySummary.insideBody) {
             throw new Error(`Desktop empty Summary fallback failed: ${JSON.stringify(desktopEmptySummary)}`);
           }
           if (summaryCaptureDir) await page.locator("[data-agent-summary-page]").screenshot({ path: path.join(summaryCaptureDir, "empty-summary-desktop.png") });
@@ -3746,7 +3822,7 @@ def write_smoke_script(path)
                 kind: "run_summary",
                 content: "",
                 created_at: "2026-10-04T00:00:02Z",
-                metadata: { summary_id: "empty-no-assistant", run_number: 1, status: "stopped" },
+                metadata: { summary_id: "empty-no-assistant", run_id: "run-current", run_number: 1, status: "stopped" },
               }],
             };
             const detail = agentSummaryDetail(agent, "empty-no-assistant");

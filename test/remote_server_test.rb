@@ -1133,7 +1133,7 @@ module RemoteServerTest
         workspace: workspace,
         prompt: "Prompt",
         total_run_count: 2,
-        runs: [HQ::ManagedAgent::AgentRun.new(status: "running")]
+        runs: [HQ::ManagedAgent::AgentRun.new(status: "running", run_id: "current-run-2")]
       )
       running.define_singleton_method(:running?) { true }
       never_run = HQ::ManagedAgent.new(
@@ -1147,6 +1147,8 @@ module RemoteServerTest
 
       assert(service.send(:agent_payload, running)[:summary] == "Run in progress",
              "expected Remote UI payload to show a running summary for recorded history")
+      assert(service.send(:agent_payload, running)[:current_run_id] == "current-run-2",
+             "expected Remote UI payload to expose the current run boundary")
       assert(service.send(:agent_payload, never_run)[:summary] == "No runs yet",
              "expected Remote UI payload to preserve the never-run empty state")
     end

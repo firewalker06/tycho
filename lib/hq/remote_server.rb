@@ -4607,6 +4607,7 @@ module HQ
         awaiting_input: status == "awaiting-input" && !inquiry.nil?,
         blocked: status == "blocked",
         run_count: agent.run_count,
+        current_run_id: agent.last_run&.run_id,
         created_at: agent.created_at&.iso8601,
         started_at: agent.started_at&.iso8601,
         finished_at: agent.finished_at&.iso8601,

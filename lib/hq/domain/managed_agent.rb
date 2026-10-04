@@ -25,6 +25,7 @@ require_relative "agent_cost_snapshot"
 require_relative "file_store"
 require_relative "usage_metrics"
 require_relative "context_pressure"
+require_relative "project_workspace"
 require "digest"
 require "securerandom"
 require "shellwords"
@@ -2202,7 +2203,7 @@ module HQ
     def safe_assistant_context_from_log
       return nil unless File.exist?(@log_path)
 
-      LogFileReader.tail_lines(@log_path, 120).reverse_each do |line|
+      last_run_log_lines.last(120).reverse_each do |line|
         event = parse_json_line(line.to_s.strip)
         next unless event.is_a?(Hash)
 
@@ -2220,7 +2221,7 @@ module HQ
     def safe_operator_context_from_log
       return nil unless File.exist?(@log_path)
 
-      marker = LogFileReader.tail_lines(@log_path, 20).reverse.find do |line|
+      marker = last_run_log_lines.last(20).reverse.find do |line|
         line.to_s.match?(/\ATycho stopped this run after no structured agent output stayed idle for \d+ seconds\.\s*\z/)
       end
       bounded_fallback_context(marker)
@@ -2244,6 +2245,13 @@ module HQ
         return "" unless part.is_a?(Hash) && part["type"] == "text"
 
         part["text"].to_s.strip
+      when "message_end"
+        message = event["message"]
+        return "" unless message.is_a?(Hash) && message["role"] == "assistant"
+
+        Array(message["content"]).filter_map do |item|
+          item["text"].to_s.strip if item.is_a?(Hash) && item["type"] == "text"
+        end.join("\n").strip
       else
         ""
       end
@@ -2253,12 +2261,13 @@ module HQ
       original = text.to_s.strip
       return nil if original.empty?
 
-      candidate = original
-      fenced = candidate.match(/\A```(?:json)?\s*(?<json>.*?)\s*```\z/m)
-      candidate = fenced[:json].strip if fenced
+      candidate, fenced = unwrap_fallback_fence(original)
+      return nil if fenced && fallback_record_signature?(candidate, fenced: true)
+
       parsed = JSON.parse(candidate)
-      return original unless parsed.is_a?(Hash)
-      return original unless parsed.keys.any? { |key| %w[status summary inquiry attachments summary_sections].include?(key.to_s) }
+      return original unless parsed.is_a?(Hash) || parsed.is_a?(Array)
+      return nil unless parsed.is_a?(Hash)
+      return nil unless parsed.keys.any? { |key| structured_fallback_key?(key) }
 
       summary = parsed["summary"]
       return summary.strip if summary.is_a?(String) && !summary.strip.empty?
@@ -2267,7 +2276,29 @@ module HQ
       message = inquiry["message"] if inquiry.is_a?(Hash)
       message.is_a?(String) && !message.strip.empty? ? message.strip : nil
     rescue JSON::ParserError
-      original
+      fallback_record_signature?(candidate || original, fenced:) ? nil : original
+    end
+
+    def unwrap_fallback_fence(text)
+      value = text.to_s.strip
+      return [value, false] unless value.start_with?("```")
+
+      body = value.sub(/\A```[^\r\n]*[\r\n]?/, "").sub(/[\r\n]?```\s*\z/, "").strip
+      [body, true]
+    end
+
+    def structured_fallback_key?(key)
+      %w[status summary inquiry attachments summary_sections].include?(key.to_s)
+    end
+
+    def fallback_record_signature?(text, fenced: false)
+      value = text.to_s.strip
+      return false if value.empty?
+      return true if value.start_with?("{", "[")
+      return true if fenced && value.match?(/[\[{]/)
+      return true if value.match?(/\A(?:prompt|analysis|reasoning|tool(?:_(?:use|call|result|payload))?|function_call|metadata)\s*[:=]/i)
+
+      value.match?(/["']?(?:status|summary|inquiry|attachments|summary_sections|type|role|tool|tool_use|tool_call|tool_result|tool_payload|function_call|prompt|analysis|reasoning)["']?\s*:/i)
     end
 
     def bounded_fallback_context(text)
@@ -2286,13 +2317,14 @@ module HQ
 
     def redact_fallback_context(text)
       value = text.to_s
-      return "[REDACTED]" if value.match?(/-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/i)
+      return "[REDACTED]" if value.match?(ProjectWorkspace::PRIVATE_KEY_MARKER)
 
-      value
+      value = value
         .gsub(/github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]+/i, "[REDACTED]")
         .gsub(/(Bearer\s+)[^\s]+/i, "\\1[REDACTED]")
-        .gsub(/((?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|secret|token)\s*[:=]\s*)\S+/i,
-              "\\1[REDACTED]")
+      ProjectWorkspace::SECRET_VALUE_PATTERNS.each { |pattern| value = value.gsub(pattern, "[REDACTED]") }
+      value.gsub(/((?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|secret|token)\s*[:=]\s*)\S+/i,
+                 "\\1[REDACTED]")
     end
 
     def markdown_quote(text)
