@@ -39,11 +39,11 @@ module HQ
 
     class << self
       def safe_filename(value, fallback: "attachment")
-        text = value.to_s.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: "_")
-        basename = File.basename(text.tr("\\", "/")).strip
-        basename = basename.gsub(/[<>:"|?*\x00-\x1f\x7f]/, "_").sub(/[. ]+\z/, "")
-        basename = fallback if basename.empty? || basename == "." || basename == ".."
-        basename[0, 120]
+        basename = safe_filename_segment(value)
+        return basename unless basename.empty?
+
+        fallback_name = safe_filename_segment(fallback)
+        fallback_name.empty? ? "attachment" : fallback_name
       end
 
       def normalize(value, workspace: nil, require_existing_file: true)
@@ -121,6 +121,12 @@ module HQ
       end
 
       private
+
+      def safe_filename_segment(value)
+        text = value.to_s.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: "_")
+        basename = File.basename(text.tr("\\", "/")).strip
+        basename.gsub(/[<>:"|?*\x00-\x1f\x7f]/, "_")[0, 120].sub(/[. ]+\z/, "")
+      end
 
       def normalize_string(value, workspace:, require_existing_file:)
         text = value.to_s.strip

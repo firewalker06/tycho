@@ -14,6 +14,7 @@ module AttachmentNormalizationTest
     assert_only_identical_attachment_records_are_deduped
     assert_new_attachment_records_preserve_distinct_metadata
     assert_legacy_kind_attachments_remain_supported
+    assert_long_safe_filenames_do_not_end_with_windows_unsafe_characters
     assert_invalid_attachments_are_dropped
     puts "attachment_normalization_test: ok"
   end
@@ -230,6 +231,23 @@ module AttachmentNormalizationTest
              "expected legacy file:// URLs to become paths")
       assert(attachments[2]["kind"] == "link", "expected legacy kind to remain available")
     end
+  end
+
+  def assert_long_safe_filenames_do_not_end_with_windows_unsafe_characters
+    filenames = [
+      HQ::AttachmentNormalizer.safe_filename(("a" * 119) + ".truncated.txt"),
+      HQ::AttachmentNormalizer.safe_filename(("b" * 119) + " truncated.txt"),
+      HQ::AttachmentNormalizer.safe_filename("." * 120, fallback: ("c" * 119) + ".fallback")
+    ]
+
+    filenames.each do |filename|
+      assert(!filename.empty?, "expected a long safe filename not to become empty")
+      assert(filename.length <= 120, "expected a long safe filename not to exceed 120 characters")
+      assert(!filename.end_with?(".", " "),
+             "expected truncation not to expose a trailing Windows-unsafe dot or space")
+    end
+    assert(filenames == [("a" * 119), ("b" * 119), ("c" * 119)],
+           "expected final cleanup to run before and after the filename fallback")
   end
 
   def assert_invalid_attachments_are_dropped
