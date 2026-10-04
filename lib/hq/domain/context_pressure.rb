@@ -89,12 +89,14 @@ module HQ
       limit = number(info["model_context_window"] || info["context_window"])
       return unless used && limit&.positive?
 
+      utilization = used / limit
+
       {
         "basis" => "measured",
-        "detail" => "The harness reported #{used.to_i} active tokens in a #{limit.to_i}-token window.",
+        "detail" => "The harness reported #{format_percentage(utilization)} active-context usage.",
         "used_tokens" => used.to_i,
         "limit_tokens" => limit.to_i,
-        "utilization" => used / limit,
+        "utilization" => utilization,
         "source" => "harness_context_window"
       }
     end
@@ -208,6 +210,12 @@ module HQ
       result if result.finite? && result >= 0
     rescue ArgumentError, TypeError
       nil
+    end
+
+    def format_percentage(ratio)
+      rounded = (ratio * 100).round(1)
+      value = rounded == rounded.to_i ? rounded.to_i : rounded
+      "#{value}%"
     end
   end
 end

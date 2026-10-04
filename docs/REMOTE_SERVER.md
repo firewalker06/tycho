@@ -634,7 +634,7 @@ Agent list, detail, and compact activity payloads include `context_pressure`:
     "level": "warning",
     "basis": "measured",
     "summary": "Context pressure is high",
-    "detail": "The harness reported 90000 active tokens in a 100000-token window.",
+    "detail": "The harness reported 90% active-context usage.",
     "warning": true,
     "acknowledged": false,
     "signal_id": "sha256-signal-id",
@@ -660,6 +660,14 @@ compaction, or an explicit context overflow. It does not convert cumulative
 usage totals into a context percentage. A later valid measurement replaces an
 earlier one, and a later run without active-context telemetry makes an older
 measurement stale.
+
+For reliable measured usage with a reliable active-context limit, the
+user-facing `detail` uses a percentage rounded to at most one decimal. The
+exact `used_tokens`, `limit_tokens`, and `utilization` fields remain available
+for machine use.
+Reported compaction, overflow, stale telemetry, and unknown or unsupported
+harness states do not get a calculated percentage when a reliable limit is
+not available.
 
 The Remote UI gives the operator four named choices for a warning:
 

@@ -22,7 +22,6 @@ module RemoteUIContextPressureTest
         escapeAttr: String,
         escapeHtml: String,
         iconSvg: (name) => `<i>${name}</i>`,
-        formatCompactMetricNumber: (value) => String(value),
         moreMenuButton: ({ label, icon, attrs = "", danger = false, disabled = false }) =>
           `<button role="menuitem" class="${danger ? "danger" : ""}" ${attrs} ${disabled ? "disabled" : ""}><i>${icon}</i>${label}</button>`,
         moreMenuSeparator: () => '<span role="separator"></span>',
@@ -37,8 +36,11 @@ module RemoteUIContextPressureTest
           used_tokens: 90, limit_tokens: 100, signal_id: "signal-1", actions: { archive: false },
         },
       });
-      for (const text of ["Start New", "Keep Going", "Start with Handoff", "Archive", "90 of 100 active tokens reported"]) {
+      for (const text of ["Start New", "Keep Going", "Start with Handoff", "Archive", "90% active-context usage"]) {
         if (!html.includes(text)) throw new Error(`missing warning action: ${text}`);
+      }
+      if (html.includes("90 of 100") || html.includes("active tokens reported")) {
+        throw new Error("measured warning must not render an x-of-y token count");
       }
       for (const icon of ["shieldAlert", "sportShoe", "thumbsUp", "ellipsis"]) {
         if (!html.includes(`<i>${icon}</i>`)) throw new Error(`missing warning icon: ${icon}`);
@@ -54,6 +56,16 @@ module RemoteUIContextPressureTest
       }
       if (context.renderContextPressureWarning({ key: "quiet", context_pressure: { warning: false } }) !== "") {
         throw new Error("unknown or acknowledged state must not show a warning");
+      }
+      const compactionHtml = context.renderContextPressureWarning({
+        key: "compacted",
+        context_pressure: {
+          warning: true, basis: "reported", summary: "The harness compacted this session",
+          detail: "The harness reported a compaction.", signal_id: "signal-2", actions: { archive: true },
+        },
+      });
+      if (!compactionHtml.includes("No context percentage is shown") || compactionHtml.includes("NaN%")) {
+        throw new Error("reported-only warning must explain that no percentage is available");
       }
       if (!source.includes("archive_source: false") || !source.includes("context_handoff: handoff") ||
           !source.includes("start: handoff") || !styles.includes(".context-pressure-warning")) {

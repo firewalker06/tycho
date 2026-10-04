@@ -645,6 +645,7 @@ def write_smoke_script(path)
             primaryActions,
             warningRole: warning?.getAttribute("role"),
             warningIcon: warning?.querySelector("[data-context-pressure-icon]")?.dataset.contextPressureIcon,
+            warningText: warning?.innerText || "",
             scrollWidth: document.documentElement.scrollWidth,
             viewportWidth: innerWidth,
           };
@@ -655,6 +656,8 @@ def write_smoke_script(path)
             loadedMobile.primaryActions.some((action) => action.height < 44 || action.width < 44) ||
             !loadedMobile.primaryActions.slice(0, 2).every((action) => action.brand) ||
             loadedMobile.warningRole !== "alert" || loadedMobile.warningIcon !== "shield-alert" ||
+            !loadedMobile.warningText.includes("90% active-context usage") ||
+            loadedMobile.warningText.includes("90K of 100K") || loadedMobile.warningText.includes("90000 active tokens") ||
             loadedMobile.scrollWidth > loadedMobile.viewportWidth) {
           throw new Error(`Context pressure warning overlaps conversation state on mobile: ${JSON.stringify(loadedMobile)}`);
         }
@@ -717,13 +720,16 @@ def write_smoke_script(path)
           scrollWidth: document.documentElement.scrollWidth,
           viewportWidth: innerWidth,
           warningVisible: Boolean(document.querySelector("[data-context-pressure-warning]")),
+          warningText: document.querySelector("[data-context-pressure-warning]")?.innerText || "",
           actions: Array.from(document.querySelectorAll("[data-context-pressure-warning] .context-pressure-actions > *")).map((action) => {
             const target = action.matches("details") ? action.querySelector(":scope > summary") : action;
             const rect = target?.getBoundingClientRect();
             return { width: rect?.width, height: rect?.height };
           }),
         }));
-        if (!desktop.warningVisible || desktop.actions.length !== 3 ||
+        if (!desktop.warningVisible || !desktop.warningText.includes("90% active-context usage") ||
+            desktop.warningText.includes("90K of 100K") || desktop.warningText.includes("90000 active tokens") ||
+            desktop.actions.length !== 3 ||
             desktop.actions.some((action) => action.height < 44 || action.width < 44) ||
             desktop.scrollWidth > desktop.viewportWidth) {
           throw new Error(`Context pressure warning overflows on desktop: ${JSON.stringify(desktop)}`);

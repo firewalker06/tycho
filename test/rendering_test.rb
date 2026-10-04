@@ -2587,6 +2587,8 @@ module RenderingTest
 
     rendered = Bubbles::ANSI.strip(app.view)
     assert(rendered.include?("Context pressure is high"), "expected agent detail to show context pressure")
+    assert(rendered.include?("90% active-context usage") && !rendered.include?("90000 active tokens"),
+           "expected the TUI measured report to show a percentage instead of an x-of-y count")
     assert(rendered.include?("f: Start New") && rendered.include?("g: Keep Going") &&
            rendered.include?("G: Start with Handoff"),
            "expected agent detail to show context recovery actions")

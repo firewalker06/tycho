@@ -36,6 +36,8 @@ module ContextPressureTest
              "expected the latest valid low measurement to clear the earlier warning")
       assert(pressure["used_tokens"] == 10_000 && pressure["utilization"] == 0.1,
              "expected the latest measurement to define the current context state")
+      assert(pressure["detail"] == "The harness reported 10% active-context usage.",
+             "expected the normal measured report to use a percentage")
     end
   end
 
@@ -50,6 +52,9 @@ module ContextPressureTest
       assert(pressure["warning"] && pressure["basis"] == "measured", "expected measured Codex warning")
       assert(pressure["used_tokens"] == 90_000 && pressure["limit_tokens"] == 100_000,
              "expected exact harness values")
+      assert(pressure["detail"] == "The harness reported 90% active-context usage." &&
+             !pressure["detail"].include?("90000"),
+             "expected the measured report to show a percentage instead of an x-of-y count")
       agent.acknowledge_context_pressure!(pressure.fetch("signal_id"))
       assert(!agent.context_pressure["warning"] && agent.to_hash["context_pressure_acknowledged_signal"],
              "expected keep-going acknowledgement to persist")
@@ -71,6 +76,8 @@ module ContextPressureTest
       pressure = agent.context_pressure
       assert(pressure["state"] == "stale" && !pressure["warning"],
              "expected a later run without context telemetry to make the old percentage stale")
+      assert(!pressure["detail"].match?(/\d+(?:\.\d+)?%/),
+             "expected stale telemetry not to reuse a measured percentage")
     end
   end
 
@@ -83,6 +90,8 @@ module ContextPressureTest
       assert(pressure["warning"] && pressure["source"] == "harness_compaction", "expected Claude compaction warning")
       assert(pressure["basis"] == "measured" && pressure["limit_tokens"].nil?,
              "expected measured before/after values without an invented limit")
+      assert(!pressure["detail"].include?("%"),
+             "expected compaction-only evidence without a limit not to invent a percentage")
     end
   end
 
@@ -91,6 +100,7 @@ module ContextPressureTest
       append(log, "type" => "compaction_end", "reason" => "threshold")
       pressure = agent.context_pressure
       assert(pressure["warning"] && pressure["basis"] == "reported", "expected Pi compaction warning")
+      assert(!pressure["detail"].include?("%"), "expected reported compaction not to invent a percentage")
     end
   end
 
@@ -100,6 +110,7 @@ module ContextPressureTest
       pressure = agent.context_pressure
       assert(pressure["state"] == "unknown" && !pressure["warning"],
              "expected token totals without a context limit to stay unknown")
+      assert(!pressure["detail"].include?("%"), "expected unsupported harness state not to invent a percentage")
     end
   end
 
