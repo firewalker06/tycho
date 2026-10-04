@@ -124,8 +124,11 @@ module HQ
 
       def safe_filename_segment(value)
         text = value.to_s.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: "_")
-        basename = File.basename(text.tr("\\", "/")).strip
-        basename.gsub(/[<>:"|?*\x00-\x1f\x7f]/, "_")[0, 120].sub(/[. ]+\z/, "")
+        path = text.gsub(/[\x00-\x1f\x7f]/, "_").tr("\\", "/")
+        basename = File.basename(path).strip
+        return "" if basename.match?(%r{\A/+\z})
+
+        basename.gsub(/[<>:"|?*]/, "_")[0, 120].sub(/[. ]+\z/, "")
       end
 
       def normalize_string(value, workspace:, require_existing_file:)

@@ -15,6 +15,7 @@ module AttachmentNormalizationTest
     assert_new_attachment_records_preserve_distinct_metadata
     assert_legacy_kind_attachments_remain_supported
     assert_long_safe_filenames_do_not_end_with_windows_unsafe_characters
+    assert_safe_filenames_handle_hostile_and_unusable_names
     assert_invalid_attachments_are_dropped
     puts "attachment_normalization_test: ok"
   end
@@ -248,6 +249,29 @@ module AttachmentNormalizationTest
     end
     assert(filenames == [("a" * 119), ("b" * 119), ("c" * 119)],
            "expected final cleanup to run before and after the filename fallback")
+  end
+
+  def assert_safe_filenames_handle_hostile_and_unusable_names
+    cases = {
+      "report\0final.txt" => "report_final.txt",
+      "/" => "attachment",
+      "\\" => "attachment",
+      "/\\//\\/" => "attachment",
+      "" => "attachment",
+      "   " => "attachment",
+      "../../report.txt" => "report.txt",
+      "..\\..\\report.txt" => "report.txt",
+      "../.." => "attachment",
+      "résumé 雪.pdf" => "résumé 雪.pdf",
+      "report-final_2026.txt" => "report-final_2026.txt"
+    }
+
+    cases.each do |input, expected|
+      actual = HQ::AttachmentNormalizer.safe_filename(input)
+      assert(actual == expected, "expected #{input.inspect} to normalize to #{expected.inspect}, got #{actual.inspect}")
+    end
+    assert(HQ::AttachmentNormalizer.safe_filename("/", fallback: "\\") == "attachment",
+           "expected separator-only primary and fallback names to use the safe default")
   end
 
   def assert_invalid_attachments_are_dropped
