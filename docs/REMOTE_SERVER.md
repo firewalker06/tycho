@@ -473,6 +473,7 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `POST` | `/agents/{key}/start` | Start one agent run. |
 | `POST` | `/agents/{key}/stop` | Send `TERM` to one running agent. |
 | `POST` | `/agents/{key}/clone` | Clone one managed agent, optionally archiving the source. |
+| `POST` | `/agents/{key}/context-pressure/acknowledge` | Persist **Keep Going** for the current context-pressure signal. |
 | `POST` | `/agents/{key}/archive` | Archive one idle managed agent. |
 | `POST` | `/agents/{key}/loop-schedule` | Adopt one idle agent as a temporary recurring schedule and run it immediately. |
 | `GET` | `/metrics` | Query normalized run and native-session metrics with inclusive `from`, exclusive `to`, timezone, and attribution filters. |
@@ -623,6 +624,78 @@ Returns the agent payload:
 ```bash
 curl http://127.0.0.1:7373/agents/web-charlie-agent-8
 ```
+
+Agent list, detail, and compact activity payloads include `context_pressure`:
+
+```json
+{
+  "context_pressure": {
+    "state": "warning",
+    "level": "warning",
+    "basis": "measured",
+    "summary": "Context pressure is high",
+    "detail": "The harness reported 90% active-context usage.",
+    "warning": true,
+    "acknowledged": false,
+    "signal_id": "sha256-signal-id",
+    "used_tokens": 90000,
+    "limit_tokens": 100000,
+    "utilization": 0.9,
+    "source": "harness_context_window",
+    "stale": false,
+    "actions": {
+      "keep_going": true,
+      "clone_fresh": true,
+      "clone_with_handoff": true,
+      "archive": true
+    }
+  }
+}
+```
+
+`basis` is `measured`, `reported`, or `unknown`. `state` can also be
+`critical`, `normal`, `stale`, or `unknown`. Tycho shows a warning only for a
+current active-window measurement at or above the threshold, a reported
+compaction, or an explicit context overflow. It does not convert cumulative
+usage totals into a context percentage. A later valid measurement replaces an
+earlier one, and a later run without active-context telemetry makes an older
+measurement stale.
+
+For reliable measured usage with a reliable active-context limit, the
+user-facing `detail` uses a percentage rounded to at most one decimal. The
+exact `used_tokens`, `limit_tokens`, and `utilization` fields remain available
+for machine use.
+Reported compaction, overflow, stale telemetry, and unknown or unsupported
+harness states do not get a calculated percentage when a reliable limit is
+not available.
+
+The Remote UI gives the operator four named choices for a warning:
+
+- **Start New** makes a fresh clone and keeps the source. It maps to the clone
+  endpoint with `archive_source: false` and no context handoff.
+- **Keep Going** acknowledges only the current signal.
+- **Start with Handoff** makes and starts a fresh clone with a concise durable
+  handoff. It keeps the source.
+- **Archive** opens the normal confirmation flow. It stays disabled until the
+  archive-safety checks permit the operation.
+
+Start New and Keep Going are the primary actions. Start with Handoff and
+Archive are in the warning's additional-actions menu.
+
+### `POST /agents/{key}/context-pressure/acknowledge`
+
+Persists **Keep Going** for one exact context-pressure signal:
+
+```bash
+curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/context-pressure/acknowledge \
+  -H 'Content-Type: application/json' \
+  -d '{"signal_id":"sha256-signal-id"}'
+```
+
+The response contains the updated `agent` payload. The current warning is then
+false and `acknowledged` is true. A new signal has a new ID and can warn again.
+An empty, unknown, or changed signal returns `409 Conflict`; the client must
+refresh the agent before it tries again.
 
 ### `PATCH /agents/{key}`
 
@@ -862,7 +935,7 @@ The response contains `agents` plus `pagination.page`, `per_page`, `total`, `tot
 
 ### `POST /agents/archive`
 
-Archives multiple idle agents from a `keys` array. Callback-only queues use the same archive-with-history behavior. Running agents are skipped; missing keys and ordinary or mixed pending queues are reported per agent without blocking safe archives in the same request. Peer-server proxy requests preserve these payload and conflict semantics.
+Archives multiple idle agents from a `keys` array. Callback-only queues use the same archive-with-history behavior. Running agents are skipped; missing keys, unresolved active or suspended inquiries, and ordinary or mixed pending queues are reported per agent without blocking safe archives in the same request. Single-agent archive routes return `409 Conflict` for the same unsafe states. Peer-server proxy requests preserve these payload and conflict semantics.
 
 ```bash
 curl -X POST http://127.0.0.1:7373/agents/archive \
@@ -893,12 +966,28 @@ Response:
 
 ### `POST /agents/{key}/clone`
 
-Creates a fresh managed agent from an existing one with a new key, empty logs, no runs, and no native session id. Form fields such as `name`, `template_key`, `agent`, `model`, `reasoning_effort`, `workspace`, `prompt`, and `sandbox_mode` may be supplied to edit the clone before it is saved. Set `archive_source: true` to archive the source agent after the clone is created.
+Creates a fresh managed agent from an existing one with a new key, empty logs, no runs, and no native session id. Form fields such as `name`, `template_key`, `agent`, `model`, `reasoning_effort`, `workspace`, `prompt`, and `sandbox_mode` may be supplied to edit the clone before it is saved.
+
+The Remote UI **Start New** action sends `archive_source: false` and
+`context_handoff: false`. It preserves the source and opens the new agent.
+
+Set `context_handoff: true` to add a durable first user message with the
+source agent's semantic handoff or latest summary, queued-work count, inquiry
+state, and schedule key. Tycho also copies the source PR catalog. Operational
+ownership, queued work, inquiries, schedules, logs, and audit history stay on
+the source agent. Set `start: true` to continue immediately in the clone.
+The Remote UI calls this operation **Start with Handoff**.
+
+The source stays active by default. Set `archive_source: true` only when the
+operator confirms archive. This option returns `409 Conflict` if the source is
+running, has an unresolved active or suspended inquiry, or has ordinary or
+mixed queued work. Callback-only queued work can use the documented
+archive-with-history path.
 
 ```bash
 curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/clone \
   -H 'Content-Type: application/json' \
-  -d '{"name":"Web agent","archive_source":true}'
+  -d '{"name":"Web agent","context_handoff":true,"start":true,"archive_source":false}'
 ```
 
 Response:
@@ -910,8 +999,7 @@ Response:
     "name": "Web agent"
   },
   "source_agent_key": "web-charlie-agent-8",
-  "archived": true,
-  "archive_path": "/Users/example/Code/hq/~/.tycho/logs/agents/archive/20260508-001431-web-charlie-agent-8"
+  "archived": false
 }
 ```
 

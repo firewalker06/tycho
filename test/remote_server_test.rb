@@ -1059,6 +1059,16 @@ module RemoteServerTest
       assert(default_clone[:agent][:name] == source[:name], "expected default clone name to match source without copy suffix")
       service.archive_agent(default_clone[:agent][:key])
 
+      handoff_clone = service.clone_agent(source[:key], "context_handoff" => true)
+      handoff_agent = service.send(:load_all_agents).find { |agent| agent.key == handoff_clone.dig(:agent, :key) }
+      handoff_messages = File.readlines(handoff_agent.memory_path, chomp: true).map { |line| JSON.parse(line) }
+      handoff_event = handoff_messages.find { |event| event.dig("metadata", "context_handoff") == true }
+      assert(handoff_event&.fetch("content", "")&.include?(source[:key]),
+             "expected a durable source-agent handoff message")
+      assert(service.agents.any? { |agent| agent[:key] == source[:key] },
+             "expected handoff cloning to preserve the source and its operational state")
+      service.archive_agent(handoff_clone.dig(:agent, :key))
+
       cloned = service.clone_agent(
         source[:key],
         "name" => "Replacement Agent",

@@ -55,7 +55,28 @@ module RemoteUIPromptQueueTest
       };
       vm.createContext(context);
       vm.runInContext(extractFunction("renderQueueWorkAttachments"), context);
+      Object.assign(context, {
+        primaryConversationBlock: () => true,
+        circuitBreakerRecoveryConversationBlock: () => false,
+        renderCircuitBreakerRecoveryConversationBlock: () => "circuit-breaker",
+        systemEventBlock: (block) => block?.metadata?.delegation_callback === true,
+        renderSystemEventBlock: () => "delegation-callback",
+        queueReadConversationBlock: (block) => block?.metadata?.queue_read === true,
+        renderQueueReadConversationBlock: () => "read-queue",
+        renderMessage: () => "message",
+        renderMessageGroup: () => "group",
+        blockStateToken: () => "state",
+      });
+      vm.runInContext(`${extractFunction("renderConversationBlocks")}\nthis.renderConversationBlocks = renderConversationBlocks;`, context);
       vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\n${extractFunction("parseDelegatedAgentReply")}\n${extractFunction("delegatedAgentReportPayload")}\n${extractFunction("renderDelegatedAgentReply")}\n${extractFunction("renderDelegatedAgentReport")}\n${extractFunction("renderDelegatedAgentRecovery")}\n${extractFunction("renderDelegatedAgentReportInquiry")}\n${extractFunction("renderDelegatedAgentReportInquiryField")}\n${extractFunction("delegatedAgentReportStatusLabel")}\n${extractFunction("delegatedAgentReportAttachments")}\n${extractFunction("renderDelegatedAgentReportAttachment")}\n${extractFunction("blockStateToken")}\n${extractFunction("queueReadConversationBlock")}\n${extractFunction("renderQueueReadConversationBlock")}\n${extractFunction("circuitBreakerRecoveryConversationBlock")}\n${extractFunction("renderCircuitBreakerRecoveryConversationBlock")}\nthis.renderPromptQueueEntry = renderPromptQueueEntry;\nthis.parseDelegatedAgentReply = parseDelegatedAgentReply;\nthis.renderDelegatedAgentRecovery = renderDelegatedAgentRecovery;\nthis.renderQueueReadConversationBlock = renderQueueReadConversationBlock;\nthis.renderCircuitBreakerRecoveryConversationBlock = renderCircuitBreakerRecoveryConversationBlock;`, context);
+
+      const combinedCallback = context.renderConversationBlocks([{
+        kind: "message", role: "user", content: "Delegated result",
+        metadata: { delegation_callback: true, queue_read: true },
+      }]);
+      if (combinedCallback !== "delegation-callback") {
+        throw new Error("a delivered queue callback must use the delegation callback presentation");
+      }
 
       const agent = { key: "queue-agent" };
       const legacy = context.renderPromptQueueEntry(agent, { id: "legacy", prompt: "Queued before state" }, 0);
