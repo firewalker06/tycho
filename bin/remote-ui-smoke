@@ -3674,12 +3674,27 @@ def write_smoke_script(path)
             const rejected = [
               '{"status":"success","summary":[],"attachments":[{"description":"SECRET_TOOL_PAYLOAD"}]',
               '```json\\n{"status":"success","summary":"FENCED_STRUCTURED_OUTPUT"}\\n```',
+              'status=success\\nsummary=unsafe',
+              '  status   =   success\\n  summary = unsafe',
+              '"summary" = unsafe',
+              "'inquiry'=unsafe",
+              'attachments = [unsafe',
+              'memory_handoff=unsafe',
+              'summary_sections = [unsafe',
+              'status: success\\nsummary = "truncated',
+              'status = success\\nsummary: unsafe\\nattachments = [unsafe',
+              '```text\\nstatus = success\\nsummary = unsafe\\n```',
               '{"type":"tool_result","result":"SECRET_TOOL_RESULT"}',
               'tool_payload=SECRET_TOOL_PAYLOAD',
               'function_call: SECRET_TOOL_ARGUMENTS',
               '{"type":"analysis","content":"SECRET_ANALYSIS"}',
               'prompt=SECRET_PROMPT',
               'analysis: SECRET_REASONING',
+            ];
+            const benignEquals = [
+              'The equation x = y is safe operator prose.',
+              'Build output says a=b, with no structured record key.',
+              'The values are equal = true in this explanation.',
             ];
             const credentials = [
               `AKIA${"A".repeat(16)}`,
@@ -3708,6 +3723,7 @@ def write_smoke_script(path)
               `-----BEGIN PRIVATE KEY-----\n${"a".repeat(32)}\n-----END PRIVATE KEY-----`,
             ];
             const rejectedSafely = rejected.every((content) => safeAssistantContextText(content) === "");
+            const benignEqualsPreserved = benignEquals.every((content) => safeAssistantContextText(content) === content);
             const credentialsRedacted = credentials.every((secret) => {
               const redacted = redactSummaryFallbackContext(`prefix\n${secret}\nsuffix`);
               return redacted.includes("[REDACTED]") && !redacted.includes(secret);
@@ -3733,12 +3749,13 @@ def write_smoke_script(path)
             const missing = agentSummaryDetail(agent);
             return {
               rejectedSafely,
+              benignEqualsPreserved,
               credentialsRedacted,
               currentRunIsolated: !current.content.includes("PRIOR_RUN_MESSAGE_MUST_NOT_APPEAR") && current.content.includes("interrupted"),
               missingRunIsolated: !missing.content.includes("PRIOR_RUN_MESSAGE_MUST_NOT_APPEAR") && missing.content.includes("interrupted"),
             };
           }, agentKey);
-          if (!emptySummarySafetyMatrix.rejectedSafely || !emptySummarySafetyMatrix.credentialsRedacted ||
+          if (!emptySummarySafetyMatrix.rejectedSafely || !emptySummarySafetyMatrix.benignEqualsPreserved || !emptySummarySafetyMatrix.credentialsRedacted ||
               !emptySummarySafetyMatrix.currentRunIsolated || !emptySummarySafetyMatrix.missingRunIsolated) {
             throw new Error(`Empty Summary safety matrix failed: ${JSON.stringify(emptySummarySafetyMatrix)}`);
           }

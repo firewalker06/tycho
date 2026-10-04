@@ -327,6 +327,8 @@ module RemoteUIAssetSnapshotTest
       "function lastSafeAssistantMessage",
       "function safeAssistantContextText",
       "function fallbackRecordSignature",
+      "memory_handoff|summary_sections",
+      '\\s*[:=]',
       "function boundedSummaryFallbackContext",
       "function redactSummaryFallbackContext",
       '"run_count", "current_run_id", "created_at"',

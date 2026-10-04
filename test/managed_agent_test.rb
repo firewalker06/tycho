@@ -990,6 +990,16 @@ module ManagedAgentTest
       rejected_contexts = [
         '{"status":"success","summary":[],"attachments":[{"description":"SECRET_TOOL_PAYLOAD"}]',
         "```json\n{\"status\":\"success\",\"summary\":\"Do not use fenced output\"}\n```",
+        "status=success\nsummary=unsafe",
+        "  status   =   success\n  summary = unsafe",
+        "\"summary\" = unsafe",
+        "'inquiry'=unsafe",
+        "attachments = [unsafe",
+        "memory_handoff=unsafe",
+        "summary_sections = [unsafe",
+        "status: success\nsummary = \"truncated",
+        "status = success\nsummary: unsafe\nattachments = [unsafe",
+        "```text\nstatus = success\nsummary = unsafe\n```",
         '{"type":"tool_result","result":"SECRET_TOOL_RESULT"}',
         "tool_payload=SECRET_TOOL_PAYLOAD",
         "function_call: SECRET_TOOL_ARGUMENTS",
@@ -1000,6 +1010,14 @@ module ManagedAgentTest
       rejected_contexts.each do |content|
         assert(agent.send(:safe_assistant_context_text, content).nil?,
                "expected structured, raw, prompt, and analysis records to be rejected: #{content.inspect}")
+      end
+      [
+        "The equation x = y is safe operator prose.",
+        "Build output says a=b, with no structured record key.",
+        "The values are equal = true in this explanation."
+      ].each do |content|
+        assert(agent.send(:safe_assistant_context_text, content) == content,
+               "expected benign equals prose to remain available: #{content.inspect}")
       end
 
       pi_event = {

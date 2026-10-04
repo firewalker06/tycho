@@ -2298,7 +2298,7 @@ module HQ
       return true if fenced && value.match?(/[\[{]/)
       return true if value.match?(/\A(?:prompt|analysis|reasoning|tool(?:_(?:use|call|result|payload))?|function_call|metadata)\s*[:=]/i)
 
-      value.match?(/["']?(?:status|summary|inquiry|attachments|summary_sections|type|role|tool|tool_use|tool_call|tool_result|tool_payload|function_call|prompt|analysis|reasoning)["']?\s*:/i)
+      value.match?(/(?:\A|[\s{,])["']?(?:status|summary|inquiry|attachments|memory_handoff|summary_sections|type|role|tool|tool_use|tool_call|tool_result|tool_payload|function_call|prompt|analysis|reasoning|metadata)["']?\s*[:=]/i)
     end
 
     def bounded_fallback_context(text)
