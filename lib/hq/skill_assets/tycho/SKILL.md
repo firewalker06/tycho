@@ -215,7 +215,7 @@ tycho queue-work complete my-project-agent-3 BATCH_ID \
   --dispositions-json '[{"entry_id":"USER_ID","outcome":"completed"},{"entry_id":"REPORT_ID","outcome":"incorporated"}]'
 ```
 
-User outcomes are `completed`, `needs_input`, or `declined_with_reason`; delegated callback outcomes are `incorporated` or `superseded_with_reason`. The two `*_with_reason` outcomes require a non-empty `reason`. Missing, duplicate, unknown, conflicting, or invalid explicit outcomes leave the batch open. An identical completion is idempotent. Failed, partial, blocked, and input-required runs never auto-complete queue work. Work that arrived but was not delivered remains gated and resumes the same native session once.
+User outcomes are `completed`, `needs_input`, or `declined_with_reason`; delegated callback outcomes are `incorporated` or `superseded_with_reason`. The two `*_with_reason` outcomes require a non-empty `reason`. Missing, duplicate, unknown, conflicting, or invalid explicit outcomes leave the batch open. An identical completion is idempotent. Success, no-action-needed, and partial runs auto-complete delivered queue work with source-appropriate default outcomes; partial keeps its truthful result label. Failed, blocked, and input-required runs never auto-complete queue work. Work that arrived but was not delivered remains gated and resumes the same native session once.
 
 Failed dispatch claims remain inspectable with `tycho queue`. Retry from the Remote UI when the work should still run, or discard an allowed failed batch explicitly:
 

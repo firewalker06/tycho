@@ -276,10 +276,10 @@ module RemoteUIPromptQueueTest
         key: "queue-agent",
         prompt_queue: { entries: [{
           id: requestBody.client_request_id, prompt: requestBody.prompt, state: "queued", source: "user"
-        }], unprocessed_reason: "queue not processed since state is partial" },
+        }], unprocessed_reason: "queue not processed since state is failed" },
       });
       if ((queueHtml.match(/data-prompt-queue-entry=/g) || []).length !== 1 || !queueHtml.includes("1 queued") ||
-          !queueHtml.includes("queue not processed since state is partial")) {
+          !queueHtml.includes("queue not processed since state is failed")) {
         throw new Error("one accepted queued submission must reconcile with its result explanation");
       }
     JAVASCRIPT
