@@ -328,7 +328,7 @@ remain rejected until explicit verification. The CLI exits nonzero for each fail
 
 The current grouping, silent-notification, and PWA badge behavior is summarized in [WEB_PUSH_BEHAVIOR.md](./WEB_PUSH_BEHAVIOR.md). Push can use a Tailscale MagicDNS domain when it is served over HTTPS, preferably with Tailscale Serve or Tailscale Funnel. Plain HTTP MagicDNS URLs show a soft warning, but the UI still lets the user try enabling notifications when the browser exposes the required push APIs.
 
-The Remote server polls managed-agent state while it is running and sends one push notification when an agent requires response or finishes. Structured `no_action_needed` outcomes stay quiet and do not mark the agent unread. Agent notifications share the `hq:agents` browser notification tag so repeated agent updates replace the previous Tycho agent notification instead of piling up; input-required notifications renotify audibly, while routine finish notifications are marked silent. Agent payloads also carry the current unread-agent count so browsers with the Badging API can show the count on the installed PWA app icon. Agent notification clicks open `/#agent/{key}`.
+The Remote server polls managed-agent state while it is running and sends one push notification when an agent requires response or finishes. Structured `no_action_needed` outcomes stay quiet and do not mark the agent unread. Agent notifications share the `hq:agents` browser notification tag so repeated agent updates replace the previous Tycho agent notification instead of piling up; input-required notifications renotify audibly, while routine finish notifications are marked silent. Agent payloads also carry the current unread-agent count so browsers with the Badging API can show the count on the installed PWA app icon. Notification clicks open a durable `/#notification/{id}` route that can resolve an active or archived agent and show retained fallback detail if the original target is absent.
 
 Use `.env.sample` as the template for local runtime environment values such as `TYCHO_WEB_PUSH_VAPID_SUBJECT`. Real `.env` files are gitignored. `tycho serve` loads both the install/repo `.env` and `~/.tycho/.env` automatically on startup, with `~/.tycho/.env` taking precedence over the install/repo file. Values already set in the process environment take precedence over both files; public runtime overrides use the `TYCHO_*` prefix.
 
@@ -485,6 +485,9 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `POST` | `/push/subscriptions` | Save or refresh one browser push subscription. |
 | `DELETE` | `/push/subscriptions` | Disable one browser push subscription. |
 | `POST` | `/push/test` | Send a test notification to an enabled subscription. |
+| `GET` | `/notifications` | List retained push notification records with current target state. |
+| `GET` | `/notifications/{id}` | Read one retained notification and its active, archived, or missing target state. |
+| `POST` | `/notifications/{id}/read` | Persist the read time for one retained notification. |
 | `POST` | `/server/restart` | Restart the `tycho serve` Remote server process when restart is available. |
 | `POST` | `/update` | Update the UI-serving Homebrew Tycho installation; unavailable for source installs and peers. |
 | `GET` | `/servers` | List the local server and configured broker targets. |

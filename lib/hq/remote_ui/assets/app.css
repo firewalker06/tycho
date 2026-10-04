@@ -3155,6 +3155,28 @@ select {
   scroll-margin-top: calc(var(--safe-area-top) + 76px);
 }
 
+.notification-detail .detail-card-body {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.notification-detail h2,
+.notification-detail p {
+  margin-top: 0;
+}
+
+.notification-detail .read-only-project-fields {
+  margin-top: 16px;
+}
+
+@media (max-width: 640px) {
+  .notification-detail .detail-card-body {
+    grid-template-columns: 1fr;
+  }
+}
+
 .detail-card > summary {
   min-height: 42px;
   padding: 11px 12px;
