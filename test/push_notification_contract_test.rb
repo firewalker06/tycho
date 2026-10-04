@@ -41,7 +41,7 @@ module PushNotificationContractTest
   Schedule = Struct.new(:key, :name, keyword_init: true)
   ScheduleState = Struct.new(:last_target_key, :last_finished_at, :last_error, :next_due_at, :failure_started_at,
                              keyword_init: true)
-  ScheduleAgent = Struct.new(:key, :last_summary, keyword_init: true)
+  ScheduleAgent = Struct.new(:key, :last_summary, :effective_status, keyword_init: true)
 
   def run!
     assert_agent_payload_contract
@@ -55,6 +55,7 @@ module PushNotificationContractTest
     expected_titles = {
       "awaiting-input" => "Input needed",
       "succeeded" => "Done",
+      "partial" => "Partial",
       "failed" => "Failed",
       "stopped" => "Stopped",
       "blocked" => "Blocked"
@@ -109,6 +110,13 @@ module PushNotificationContractTest
     scheduler.send(:notify_schedule_input_required, schedule, state, agent, now: Time.utc(2026, 9, 13, 12, 0, 0))
     scheduler.send(:notify_schedule_first_success, schedule, state, agent, now: Time.utc(2026, 9, 13, 12, 0, 0))
     scheduler.send(:notify_schedule_recovery, schedule, state, agent, now: Time.utc(2026, 9, 13, 12, 0, 0))
+    partial_agent = ScheduleAgent.new(
+      key: "memory-agent", last_summary: "Some archive work completed.", effective_status: "partial"
+    )
+    scheduler.send(:notify_schedule_first_success, schedule, state, partial_agent,
+                   now: Time.utc(2026, 9, 13, 12, 0, 0))
+    scheduler.send(:notify_schedule_recovery, schedule, state, partial_agent,
+                   now: Time.utc(2026, 9, 13, 12, 0, 0))
 
     assert(notifier.payloads == [
       [{ title: "Failed", body: "Daily Memory: Confirm archive retention. Schedule stopped.",
@@ -118,7 +126,13 @@ module PushNotificationContractTest
       [{ title: "Done", body: "Daily Memory: first run succeeded. Next run: 2026-09-14 09:30.",
          tag: "hq:schedule:daily-memory:first-success", url: "/#agent/memory-agent" }, { urgency: "normal", ttl: 900 }],
       [{ title: "Recovered", body: "Daily Memory: succeeded after failure. Next run: 2026-09-14 09:30.",
-         tag: "hq:schedule:daily-memory:recovery", url: "/#agent/memory-agent" }, { urgency: "normal", ttl: 900 }]
+         tag: "hq:schedule:daily-memory:recovery", url: "/#agent/memory-agent" }, { urgency: "normal", ttl: 900 }],
+      [{ title: "Partial", body: "Daily Memory: first run completed with partial status. Next run: 2026-09-14 09:30.",
+         tag: "hq:schedule:daily-memory:first-success", url: "/#agent/memory-agent" },
+       { urgency: "normal", ttl: 900 }],
+      [{ title: "Partial", body: "Daily Memory: completed with partial status after failure. Next run: 2026-09-14 09:30.",
+         tag: "hq:schedule:daily-memory:recovery", url: "/#agent/memory-agent" },
+       { urgency: "normal", ttl: 900 }]
     ], "expected concise schedule notification title and body contracts")
   end
 

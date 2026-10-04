@@ -143,7 +143,7 @@ module HQ
     PROCESS_OUTPUT_MARKER = "=== process output ==="
     STRUCTURED_OUTPUT_CORRECTION_LIMIT = 2
     MAX_STRUCTURED_OUTPUT_CORRECTION_LIMIT = 5
-    UNPROCESSED_QUEUE_WORK_STATUSES = %w[partial failed blocked input_required].freeze
+    UNPROCESSED_QUEUE_WORK_STATUSES = %w[failed blocked input_required].freeze
 
     def self.with_final_output_checklist(prompt)
       text = prompt.to_s.rstrip
@@ -2118,7 +2118,7 @@ module HQ
     end
 
     def gate_successful_queue_work!(run)
-      return unless %w[success no_action_needed].include?(@structured_result&.fetch("status", nil).to_s)
+      return unless %w[success no_action_needed partial].include?(@structured_result&.fetch("status", nil).to_s)
 
       batch = active_queue_work || open_queue_work_batch!(opened_at: @finished_at || Time.now)
       return unless batch

@@ -14,8 +14,9 @@ migration.
 Tycho now claims queued user prompts and delegated reports into a durable
 QueueWork batch. A due batch joins the inquiry answer or ordinary prompt that
 starts the next run; successful processing records default per-entry outcomes
-and clears the batch automatically. Partial, failed, blocked, and
-input-required runs retain unresolved work.
+and clears the batch automatically. Partial runs keep their truthful result
+label, but now use the same work-release behavior and default outcomes as
+success. Failed, blocked, and input-required runs retain unresolved work.
 
 Conversation shows this work as one right-aligned **Read queue** disclosure.
 Its compact state contains the instruction snippet and lifecycle status; open

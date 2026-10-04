@@ -4108,10 +4108,11 @@ module HQ
       if status == "awaiting-input"
         event = "input_required"
         title = "Input needed"
-      elsif %w[succeeded failed stopped blocked].include?(status)
+      elsif %w[succeeded partial failed stopped blocked].include?(status)
         event = "finished"
         title = {
           "succeeded" => "Done",
+          "partial" => "Partial",
           "failed" => "Failed",
           "stopped" => "Stopped",
           "blocked" => "Blocked"
