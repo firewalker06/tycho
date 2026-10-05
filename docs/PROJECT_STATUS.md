@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-10-03
+2026-10-05
 
 ## Strategic Direction
 
@@ -103,6 +103,14 @@ Key references:
 | Pull-request test attestation | Enforced GitHub `signoff` ruleset requiring `signoff/tycho-bin-test`, posted locally with pinned `basecamp/gh-signoff` v0.4.1 after `bin/test` passes on the pushed head | Keep test execution local while retaining a branch-protected, commit-specific merge gate; document repeatable success, failure, and cross-clone attestation workflows |
 
 ## Current Focus
+
+**v0.13.0 release preparation**: adds safe context-pressure guidance, blocked
+queue controls, failed-batch recovery, Partial QueueWork settlement, recurring
+schedule continuation after Partial, stale Ruby-path recovery, and manual
+pull-request diff catalog management. It also improves Remote UI performance,
+Summary and Conversation rendering, attachment download names, durable failure
+notifications, and custom Codex cost attribution. No manual data migration is
+required; installed Tycho-owned skills must be updated after upgrade.
 
 **v0.12.1 release**: improves rollout visibility by refreshing stale Summary
 workspaces in place and showing active QueueWork only in its canonical **Read

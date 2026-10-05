@@ -4,6 +4,66 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.13.0 - 2026-10-05
+
+### Agent workflow improvements
+
+- Add measured context-pressure warnings to the Remote UI and TUI, with safe
+  actions to continue, clone, create a concise handoff, or archive. Unknown,
+  stale, and compaction-only evidence does not show a calculated percentage.
+- Add local, remote, and Remote UI controls to process or remove stable-ID
+  queue entries when agent state blocks automatic dispatch. Mutations require
+  an exact queue snapshot and preserve FIFO order and delegation safeguards.
+- Keep failed queue claims inspectable and recoverable. Operators can retry
+  valid work or discard an allowed failed batch with audited dispositions.
+- Treat `partial` as a consuming QueueWork result while retaining the truthful
+  Partial label. Later ordinary, delayed, delegated, and mixed work is released
+  in source-aware FIFO order.
+- Keep recurring schedules active after a Partial result. Record Partial as the
+  last outcome, clear failure state, and allow the next scheduled run.
+- Recover agent launches when a versioned Ruby executable path disappears after
+  an update. Tycho resolves the current `ruby` on `PATH`; if none exists, it
+  reports how to restore Ruby, restart Tycho, and retry queued work.
+- Add local and remote `agent pr-diff add|remove` commands and matching Remote
+  UI controls. Removal preserves source attachments and shared snapshots.
+
+### Remote UI and reliability
+
+- Render trusted pull-request context as structured, validated Conversation
+  cards and keep malformed input escaped as plain text.
+- Submit prompts from Summary, attachment, pull-request, and project-diff detail
+  views optimistically, with duplicate protection and exact form restoration
+  after failure.
+- Reduce navigation latency by removing peer head-of-line blocking, deferring
+  cold discovery, caching archive-local reads, and adding an opt-in deterministic
+  route profiler.
+- Simplify Conversation activity and Summary cards, remove duplicate Summary
+  text, show explicit outcome labels, and use a bounded mobile Summary layout.
+- Render a safe Summary fallback when structured output is missing or invalid;
+  detailed fallback context stays bounded and redacted.
+- Preserve each attachment's original safe filename for downloads, with secure
+  normalization and legacy fallback behavior.
+- Make the push-notification ledger process-safe and retain durable queue-failure
+  targets, read and recovery state, archive routing, and missing-target fallback.
+
+### Metrics and maintainer workflow
+
+- Price `openai.`-qualified custom Codex models through the canonical OpenAI
+  table while retaining the configured model and explicit price provenance.
+  Unknown models remain unpriced and keep their token telemetry.
+- Document the required exact-head local CI signoff and keep the
+  `signoff/tycho-bin-test` merge gate tied to the final pushed commit.
+
+### Compatibility
+
+- No manual migration is required for projects, schedules, agents, delegation,
+  QueueWork, notifications, pull-request catalogs, attachments, or memory.
+- Update Tycho-owned installed skills after upgrading. The packaged skill adds
+  failed-batch discard guidance, partial-result settlement, and context-pressure
+  handoff controls.
+- v0.11.0 remains the final Intel macOS bottle. v0.13.0 ships Apple Silicon
+  macOS and Linux bottles; Intel users can continue running from source.
+
 ## 0.12.1 - 2026-09-30
 
 ### Rollout improvements

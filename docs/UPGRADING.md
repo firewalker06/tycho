@@ -2,6 +2,72 @@
 
 ## Unreleased
 
+## 0.13.0
+
+Upgrade normally through Homebrew, or update a source checkout with Git and
+rerun `bin/setup` when requested. No manual migration is required for projects,
+schedules, agents, delegation, QueueWork, notifications, pull-request catalogs,
+attachments, credentials, or memory.
+
+### QueueWork behavior
+
+A Partial result now settles delivered QueueWork with source-appropriate default
+outcomes and releases later FIFO work. Failed, blocked, and input-required runs
+still retain unresolved work. New queue controls can process stable-ID selections
+or all pending entries when agent state blocks dispatch. Removal requires an
+exact queue snapshot and confirmation; protected delegation callbacks cannot be
+discarded.
+
+Failed dispatch claims remain inspectable. Retry work that is still valid, or
+discard an allowed failed batch with an audited reason. Existing queue and batch
+records need no conversion.
+
+A scheduled run that returns Partial now records that outcome, clears its
+failure state, and stays scheduled for its next run. Partial does not use the
+stopped or failure notification path.
+
+If a Homebrew update removes the Ruby executable path held by a running Tycho
+process, agent launches use the current `ruby` on `PATH`. If no replacement is
+available, install or activate Ruby, restart Tycho, then retry the failed queue
+batch. The failed claim remains available for inspection and safe recovery.
+
+### Context pressure and pull-request diffs
+
+Context-pressure warnings use only reliable active-context evidence. **Start
+New** preserves the source and creates a fresh clone. **Start with Handoff**
+adds a concise continuity record. **Keep Going** acknowledges the warning, and
+**Archive** retains the existing confirmation and safety checks.
+
+Pull-request diff catalogs now support explicit add and remove actions in the
+CLI and Remote UI. Removal creates a safe catalog tombstone but does not delete
+source attachments or shared immutable snapshots.
+
+### Skills and compatibility
+
+The packaged `tycho` skill changed. In **Settings → Skills**, update each
+Tycho-owned installation and restart a harness if it does not discover the new
+version. The new guidance covers failed-batch discard, Partial settlement, and
+context-pressure handoffs.
+
+Existing notification ledgers, attachment records, and run summaries remain
+valid. Legacy attachments use a safe download-name fallback. Missing or invalid
+structured run summaries now use a bounded and redacted fallback instead of a
+blank detail view.
+
+Homebrew bottles are available for Apple Silicon macOS and Linux. v0.11.0
+remains the final Intel macOS bottle; Intel users can continue from source.
+
+### Verify
+
+Run these checks after upgrading:
+
+```bash
+tycho --version
+tycho doctor
+tycho agent list
+tycho schedule list
+```
+
 ## 0.12.0
 
 Upgrade normally through Homebrew, or update a source checkout with Git and
