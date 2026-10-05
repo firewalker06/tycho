@@ -2435,7 +2435,7 @@ module HQ
         content_type: attachment_content_type(attachment, path),
         headers: {
           "Cache-Control" => "private, max-age=60",
-          "Content-Disposition" => "attachment; filename=\"#{http_quoted_filename(File.basename(path))}\"",
+          "Content-Disposition" => attachment_content_disposition(attachment, path),
           "X-Content-Type-Options" => "nosniff"
         },
         raw_body: true,
@@ -5161,6 +5161,25 @@ module HQ
     def http_quoted_filename(value)
       name = value.to_s.empty? ? "attachment" : value.to_s
       name.gsub(/[\\"]/, "_").gsub(/[\x00-\x1f\x7f]/, "_")
+    end
+
+    def attachment_content_disposition(attachment, path)
+      filename = AttachmentNormalizer.safe_filename(
+        attachment["filename"].to_s.empty? ? legacy_attachment_filename(attachment, path) : attachment["filename"]
+      )
+      ascii = filename.encode(Encoding::US_ASCII, invalid: :replace, undef: :replace, replace: "_")
+      encoded = filename.encode(Encoding::UTF_8).bytes.map do |byte|
+        byte.between?(0x30, 0x39) || byte.between?(0x41, 0x5a) || byte.between?(0x61, 0x7a) || "!#$&+-.^_`|~".include?(byte.chr) ? byte.chr : format("%%%02X", byte)
+      end.join
+      "attachment; filename=\"#{http_quoted_filename(ascii)}\"; filename*=UTF-8''#{encoded}"
+    end
+
+    def legacy_attachment_filename(attachment, path)
+      if attachment["source"].to_s == "remote_upload" && !attachment["title"].to_s.strip.empty?
+        attachment["title"]
+      else
+        File.basename(path)
+      end
     end
 
     def cleanup_uploaded_attachment_file(agent, attachment)

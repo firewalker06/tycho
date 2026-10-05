@@ -38,6 +38,14 @@ module HQ
     }.freeze
 
     class << self
+      def safe_filename(value, fallback: "attachment")
+        basename = safe_filename_segment(value)
+        return basename unless basename.empty?
+
+        fallback_name = safe_filename_segment(fallback)
+        fallback_name.empty? ? "attachment" : fallback_name
+      end
+
       def normalize(value, workspace: nil, require_existing_file: true)
         items = value.is_a?(Array) ? value : [value]
         dedupe(items.filter_map do |item|
@@ -114,6 +122,15 @@ module HQ
 
       private
 
+      def safe_filename_segment(value)
+        text = value.to_s.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: "_")
+        path = text.gsub(/[\x00-\x1f\x7f]/, "_").tr("\\", "/")
+        basename = File.basename(path).strip
+        return "" if basename.match?(%r{\A/+\z})
+
+        basename.gsub(/[<>:"|?*]/, "_")[0, 120].sub(/[. ]+\z/, "")
+      end
+
       def normalize_string(value, workspace:, require_existing_file:)
         text = value.to_s.strip
         return nil if text.empty?
@@ -156,6 +173,7 @@ module HQ
           "type" => "file",
           "kind" => legacy_file_kind(value["kind"], target, mime_type),
           "title" => display_title(title, target, title_is_target:),
+          "filename" => original_filename(value, title, target),
           "path" => target,
           "mime_type" => mime_type
         }
@@ -174,6 +192,13 @@ module HQ
         %w[id source created_at].each do |key|
           result[key] = value[key] if value.key?(key) && !value[key].to_s.empty?
         end
+      end
+
+      def original_filename(value, title, target)
+        supplied = first_present(value, %w[filename original_filename originalFilename])
+        supplied = title if supplied.empty? && value["source"].to_s == "remote_upload"
+        supplied = File.basename(target.to_s) if supplied.empty?
+        safe_filename(supplied)
       end
 
       def attachment_type(type, kind, path:, url:)
