@@ -3993,23 +3993,43 @@ def write_smoke_script(path)
             const fixture = document.createElement("div");
             fixture.id = "summary-block-smoke-fixture";
             fixture.style.width = "100%";
-            fixture.innerHTML = renderMessage({
+            const agent = findAgent(key);
+            const summary = (id, content, attachments = []) => renderMessage({
               kind: "run_summary",
-              content: "## Summary unavailable\\n\\nThis run returned without a usable structured summary.\\n\\n### Last assistant message\\n\\n> PRIVATE_CARD_CONTEXT_MUST_NOT_APPEAR",
+              content,
               created_at: "2026-10-02T06:48:00Z",
-              metadata: {
-                summary_id: "summary-block-smoke",
-                run_number: 57,
-                status: "stopped",
-                summary_fallback: true,
-                attachments: [{ type: "link", title: "Run report", url: "https://example.test/run-report" }],
-              },
-            }, { agent: findAgent(key) });
+              metadata: { summary_id: id, run_number: 57, status: "success", attachments },
+            }, { agent });
+            fixture.innerHTML = [
+              summary(
+                "summary-block-smoke",
+                "PR #19 is at exact head 2418a4a. All five GitHub checks pass. The independent reviewer is still working, so the task is not complete. The next operator must confirm the final review, preserve the exact head, and keep the release blocked until approval and merge are complete.",
+                [
+                  { type: "link", title: "Run report", url: "https://example.test/run-report" },
+                  { type: "link", title: "Test evidence", url: "https://example.test/test-evidence" },
+                  { type: "link", title: "Review record", url: "https://example.test/review-record" },
+                ]
+              ),
+              summary("summary-short-smoke", "Short summary.", []),
+              summary("summary-empty-smoke", "", []),
+              renderMessage({
+                kind: "run_summary",
+                content: "## Summary unavailable\\n\\nThis run returned without a usable structured summary.\\n\\n### Last assistant message\\n\\n> PRIVATE_CARD_CONTEXT_MUST_NOT_APPEAR",
+                created_at: "2026-10-02T06:48:00Z",
+                metadata: {
+                  summary_id: "summary-fallback-smoke",
+                  run_number: 58,
+                  status: "stopped",
+                  summary_fallback: true,
+                },
+              }, { agent }),
+            ].join("");
             document.querySelector(".message-list")?.append(fixture);
           }, agentKey);
           const summaryBlockContract = async () => page.evaluate(() => {
             const fixture = document.querySelector("#summary-block-smoke-fixture");
-            const summary = fixture?.querySelector(".message.run_summary");
+            const summary = fixture?.querySelector("[data-run-summary-id='summary-block-smoke']");
+            const fallbackSummary = fixture?.querySelector("[data-run-summary-id='summary-fallback-smoke']");
             const role = summary?.querySelector(".message-role");
             const status = role?.querySelector(".summary-message-status");
             const content = summary?.querySelector(".summary-message-content");
@@ -4020,6 +4040,18 @@ def write_smoke_script(path)
             open?.focus();
             const contentRect = content?.getBoundingClientRect();
             const actionsRect = actions?.getBoundingClientRect();
+            const textStyle = text ? getComputedStyle(text) : null;
+            const lineHeight = Number.parseFloat(textStyle?.lineHeight || "0");
+            const actionStyle = actions ? getComputedStyle(actions) : null;
+            const openLabel = open?.querySelector("span");
+            const openLabelStyle = openLabel ? getComputedStyle(openLabel) : null;
+            const shortText = fixture?.querySelector("[data-run-summary-id='summary-short-smoke'] .summary-message-content p");
+            const emptyText = fixture?.querySelector("[data-run-summary-id='summary-empty-smoke'] .summary-message-content p");
+            const shortRect = shortText?.getBoundingClientRect();
+            const emptyRect = emptyText?.getBoundingClientRect();
+            const longAriaLabel = "Open the complete localized run summary with all implementation and verification details";
+            open?.setAttribute("aria-label", longAriaLabel);
+            open?.setAttribute("title", longAriaLabel);
             const validFixture = document.createElement("div");
             validFixture.innerHTML = renderRunSummaryMessageContent(
               "A normal valid summary remains unchanged.",
@@ -4032,13 +4064,25 @@ def write_smoke_script(path)
               status: status?.innerText || "",
               statusIntent: status?.dataset.intent || "",
               body: text?.innerText || "",
-              detailedContextHidden: !content?.innerText.includes("PRIVATE_CARD_CONTEXT_MUST_NOT_APPEAR"),
-              unavailableLabelHidden: !content?.innerText.includes("Summary unavailable"),
-              fallbackPreview: content?.hasAttribute("data-summary-fallback-preview") || false,
+              detailedContextHidden: !fallbackSummary?.innerText.includes("PRIVATE_CARD_CONTEXT_MUST_NOT_APPEAR"),
+              unavailableLabelHidden: !fallbackSummary?.innerText.includes("Summary unavailable"),
+              fallbackPreview: fallbackSummary?.querySelector(".summary-message-content")?.hasAttribute("data-summary-fallback-preview") || false,
               actionLabel: open?.innerText.trim() || "",
+              actionAccessibleName: open?.getAttribute("aria-label") || "",
+              actionTooltip: open?.getAttribute("title") || "",
+              actionTag: open?.tagName || "",
+              actionType: open?.getAttribute("type") || "",
               attachmentLabel: attachment?.getAttribute("aria-label") || "",
               attachmentCount: attachment?.querySelector(".attachment-count")?.innerText || "",
               actionAtRight: Boolean(contentRect && actionsRect && Math.abs(contentRect.right - actionsRect.right) < 1),
+              actionDirection: actionStyle?.flexDirection || "",
+              actionTouchTarget: open ? { width: open.getBoundingClientRect().width, height: open.getBoundingClientRect().height } : null,
+              visibleOpenLabel: Boolean(openLabelStyle && (Number.parseFloat(openLabelStyle.width) > 1 || Number.parseFloat(openLabelStyle.height) > 1)),
+              renderedLines: lineHeight > 0 && text ? text.clientHeight / lineHeight : 0,
+              textClamped: Boolean(text && text.scrollHeight > text.clientHeight),
+              shortUnclamped: Boolean(shortText && shortText.scrollHeight <= shortText.clientHeight && shortRect?.height > 0),
+              emptyFallbackVisible: Boolean(emptyText?.innerText.trim() && emptyRect?.height),
+              zeroAttachmentMenus: fixture?.querySelectorAll("[data-run-summary-id='summary-short-smoke'] [data-summary-attachment-menu]").length || 0,
               focus: document.activeElement === open,
               overflow: Boolean(content && content.scrollWidth - content.clientWidth > 4),
               geometry: content ? { clientWidth: content.clientWidth, scrollWidth: content.scrollWidth, actionsWidth: actionsRect?.width || 0 } : null,
@@ -4054,26 +4098,69 @@ def write_smoke_script(path)
           });
           await installSummaryBlockFixture();
           const desktopSummaryBlock = await summaryBlockContract();
-          if (!desktopSummaryBlock.header.toLowerCase().includes("summary #57") || desktopSummaryBlock.status !== "Stopped" ||
-              desktopSummaryBlock.statusIntent !== "warning" ||
-              desktopSummaryBlock.body !== "This run returned without a usable structured summary." ||
+          if (!desktopSummaryBlock.header.toLowerCase().includes("summary #57") || desktopSummaryBlock.status !== "Success" ||
+              desktopSummaryBlock.statusIntent !== "success" ||
               !desktopSummaryBlock.detailedContextHidden || !desktopSummaryBlock.unavailableLabelHidden || !desktopSummaryBlock.fallbackPreview ||
               desktopSummaryBlock.validRepeat !== "Repeat this sentence. Repeat this sentence." ||
               desktopSummaryBlock.validStoppedRepeat !== "Repeat this sentence. Repeat this sentence." ||
               desktopSummaryBlock.validSummaryBody !== "A normal valid summary remains unchanged." || desktopSummaryBlock.validSummaryMarkedFallback ||
-              desktopSummaryBlock.actionLabel !== "Open" || desktopSummaryBlock.attachmentLabel !== "Choose summary attachment" || desktopSummaryBlock.attachmentCount !== "1" || !desktopSummaryBlock.actionAtRight ||
+              desktopSummaryBlock.actionLabel !== "Open" || desktopSummaryBlock.attachmentLabel !== "Choose summary attachment" || desktopSummaryBlock.attachmentCount !== "3" || !desktopSummaryBlock.actionAtRight ||
+              desktopSummaryBlock.actionDirection !== "row" || !desktopSummaryBlock.visibleOpenLabel || desktopSummaryBlock.textClamped ||
+              !desktopSummaryBlock.shortUnclamped || !desktopSummaryBlock.emptyFallbackVisible || desktopSummaryBlock.zeroAttachmentMenus !== 0 ||
+              desktopSummaryBlock.actionTag !== "BUTTON" || desktopSummaryBlock.actionType !== "button" ||
               !desktopSummaryBlock.focus || desktopSummaryBlock.overflow) {
             throw new Error(`Desktop Summary block contract failed: ${JSON.stringify(desktopSummaryBlock)}`);
           }
-          if (summaryCaptureDir) await page.locator("#summary-block-smoke-fixture").screenshot({ path: path.join(summaryCaptureDir, "summary-block-desktop.png") });
+          if (summaryCaptureDir) await page.locator("[data-run-summary-id='summary-block-smoke']").screenshot({ path: path.join(summaryCaptureDir, "summary-block-desktop.png") });
           await page.setViewportSize({ width: 390, height: 844 });
           const mobileSummaryBlock = await summaryBlockContract();
           if (!mobileSummaryBlock.actionAtRight || !mobileSummaryBlock.focus || mobileSummaryBlock.overflow ||
               !mobileSummaryBlock.detailedContextHidden || !mobileSummaryBlock.unavailableLabelHidden ||
-              mobileSummaryBlock.attachmentCount !== "1") {
+              mobileSummaryBlock.attachmentCount !== "3" || mobileSummaryBlock.actionDirection !== "column" ||
+              mobileSummaryBlock.visibleOpenLabel || !mobileSummaryBlock.textClamped || mobileSummaryBlock.renderedLines > 5.05 || mobileSummaryBlock.renderedLines < 4.5 ||
+              mobileSummaryBlock.actionTouchTarget?.width < 44 || mobileSummaryBlock.actionTouchTarget?.height < 44 ||
+              mobileSummaryBlock.actionAccessibleName !== mobileSummaryBlock.actionTooltip || !mobileSummaryBlock.shortUnclamped ||
+              !mobileSummaryBlock.emptyFallbackVisible || mobileSummaryBlock.zeroAttachmentMenus !== 0) {
             throw new Error(`Mobile Summary block contract failed: ${JSON.stringify(mobileSummaryBlock)}`);
           }
-          if (summaryCaptureDir) await page.locator("#summary-block-smoke-fixture").screenshot({ path: path.join(summaryCaptureDir, "summary-block-mobile.png") });
+          if (summaryCaptureDir) await page.locator("[data-run-summary-id='summary-block-smoke']").screenshot({ path: path.join(summaryCaptureDir, "summary-block-mobile.png") });
+          await page.setViewportSize({ width: 320, height: 720 });
+          const narrowSummaryBlock = await summaryBlockContract();
+          if (narrowSummaryBlock.overflow || narrowSummaryBlock.actionDirection !== "column" ||
+              !narrowSummaryBlock.textClamped || narrowSummaryBlock.renderedLines > 5.05 || narrowSummaryBlock.visibleOpenLabel) {
+            throw new Error(`Narrow mobile Summary block contract failed: ${JSON.stringify(narrowSummaryBlock)}`);
+          }
+          await page.evaluate(() => { document.documentElement.style.zoom = "200%"; });
+          const zoomedSummaryBlock = await summaryBlockContract();
+          if (zoomedSummaryBlock.overflow || zoomedSummaryBlock.actionDirection !== "column" ||
+              zoomedSummaryBlock.renderedLines > 5.05 || zoomedSummaryBlock.visibleOpenLabel) {
+            throw new Error(`Zoomed mobile Summary block contract failed: ${JSON.stringify(zoomedSummaryBlock)}`);
+          }
+          await page.evaluate(() => { document.documentElement.style.zoom = ""; });
+          await page.emulateMedia({ reducedMotion: "reduce" });
+          const reducedMotionSummary = await page.evaluate(() => ({
+            preference: matchMedia("(prefers-reduced-motion: reduce)").matches,
+            overflow: document.querySelector("[data-run-summary-id='summary-block-smoke'] .summary-message-content")?.scrollWidth -
+              document.querySelector("[data-run-summary-id='summary-block-smoke'] .summary-message-content")?.clientWidth > 4,
+          }));
+          if (!reducedMotionSummary.preference || reducedMotionSummary.overflow) {
+            throw new Error(`Reduced-motion Summary block contract failed: ${JSON.stringify(reducedMotionSummary)}`);
+          }
+          await page.emulateMedia({ reducedMotion: "no-preference", forcedColors: "active" });
+          const contrastSummary = await page.evaluate(() => {
+            const open = document.querySelector("[data-run-summary-id='summary-block-smoke'] [data-open-agent-summary]");
+            open?.focus();
+            const style = open ? getComputedStyle(open) : null;
+            return {
+              preference: matchMedia("(forced-colors: active)").matches,
+              border: style?.borderStyle || "",
+              outline: style?.outlineStyle || "",
+            };
+          });
+          if (!contrastSummary.preference || contrastSummary.border === "none" || contrastSummary.outline === "none") {
+            throw new Error(`High-contrast Summary block contract failed: ${JSON.stringify(contrastSummary)}`);
+          }
+          await page.emulateMedia({ forcedColors: "none" });
           await page.evaluate(() => document.querySelector("#summary-block-smoke-fixture")?.remove());
           await page.setViewportSize({ width: 1440, height: 900 });
           if (captureDir) await page.screenshot({ path: path.join(captureDir, "rich-summary-blogpost.png"), fullPage: false });
