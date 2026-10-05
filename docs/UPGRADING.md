@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.12.2
+## 0.13.0
 
 Upgrade normally through Homebrew, or update a source checkout with Git and
 rerun `bin/setup` when requested. No manual migration is required for projects,
@@ -21,6 +21,15 @@ discarded.
 Failed dispatch claims remain inspectable. Retry work that is still valid, or
 discard an allowed failed batch with an audited reason. Existing queue and batch
 records need no conversion.
+
+A scheduled run that returns Partial now records that outcome, clears its
+failure state, and stays scheduled for its next run. Partial does not use the
+stopped or failure notification path.
+
+If a Homebrew update removes the Ruby executable path held by a running Tycho
+process, agent launches use the current `ruby` on `PATH`. If no replacement is
+available, install or activate Ruby, restart Tycho, then retry the failed queue
+batch. The failed claim remains available for inspection and safe recovery.
 
 ### Context pressure and pull-request diffs
 

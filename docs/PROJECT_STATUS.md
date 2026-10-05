@@ -104,8 +104,9 @@ Key references:
 
 ## Current Focus
 
-**v0.12.2 release preparation**: adds safe context-pressure guidance, blocked
-queue controls, failed-batch recovery, Partial QueueWork settlement, and manual
+**v0.13.0 release preparation**: adds safe context-pressure guidance, blocked
+queue controls, failed-batch recovery, Partial QueueWork settlement, recurring
+schedule continuation after Partial, stale Ruby-path recovery, and manual
 pull-request diff catalog management. It also improves Remote UI performance,
 Summary and Conversation rendering, attachment download names, durable failure
 notifications, and custom Codex cost attribution. No manual data migration is

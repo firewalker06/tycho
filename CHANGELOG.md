@@ -4,7 +4,7 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
-## 0.12.2 - 2026-10-05
+## 0.13.0 - 2026-10-05
 
 ### Agent workflow improvements
 
@@ -19,6 +19,11 @@ All notable changes to Tycho will be documented in this file.
 - Treat `partial` as a consuming QueueWork result while retaining the truthful
   Partial label. Later ordinary, delayed, delegated, and mixed work is released
   in source-aware FIFO order.
+- Keep recurring schedules active after a Partial result. Record Partial as the
+  last outcome, clear failure state, and allow the next scheduled run.
+- Recover agent launches when a versioned Ruby executable path disappears after
+  an update. Tycho resolves the current `ruby` on `PATH`; if none exists, it
+  reports how to restore Ruby, restart Tycho, and retry queued work.
 - Add local and remote `agent pr-diff add|remove` commands and matching Remote
   UI controls. Removal preserves source attachments and shared snapshots.
 
@@ -56,7 +61,7 @@ All notable changes to Tycho will be documented in this file.
 - Update Tycho-owned installed skills after upgrading. The packaged skill adds
   failed-batch discard guidance, partial-result settlement, and context-pressure
   handoff controls.
-- v0.11.0 remains the final Intel macOS bottle. v0.12.2 ships Apple Silicon
+- v0.11.0 remains the final Intel macOS bottle. v0.13.0 ships Apple Silicon
   macOS and Linux bottles; Intel users can continue running from source.
 
 ## 0.12.1 - 2026-09-30
