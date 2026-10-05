@@ -509,6 +509,32 @@ def install_playwright!(node_dir)
   raise "Failed to install Playwright for Remote UI smoke check:\n#{out}\n#{err}"
 end
 
+def write_notification_smoke_fixture(logs_dir, agent_key)
+  FileUtils.mkdir_p(logs_dir)
+  now = Time.now.utc.iso8601
+  records = [
+    {
+      "id" => "notification-active", "kind" => "queue_process_failed", "target_type" => "queue_work",
+      "target_state" => "active", "agent_key" => agent_key, "agent_name" => "Notification Smoke Agent",
+      "project_key" => "web", "queue_work_batch_id" => "queue-work-active", "queue_entry_ids" => ["entry-active"],
+      "event" => "queue_process_failed", "status" => "failed", "title" => "Queue processing failed",
+      "body" => "Notification Smoke Agent: The harness was unavailable.",
+      "detail" => "The harness was unavailable. Queued work is retained.",
+      "url" => "/#notification/notification-active", "created_at" => now, "read_at" => nil
+    },
+    {
+      "id" => "notification-missing", "kind" => "queue_process_failed", "target_type" => "queue_work",
+      "target_state" => "archived", "agent_key" => "removed-queue-agent", "agent_name" => "Removed queue agent",
+      "project_key" => "web", "queue_work_batch_id" => "queue-work-missing", "queue_entry_ids" => ["entry-missing"],
+      "event" => "queue_process_failed", "status" => "failed", "title" => "Queue processing failed",
+      "body" => "Removed queue agent: The original target was removed.",
+      "detail" => "The original target was removed. Queued work was retained for operator review.",
+      "url" => "/#notification/notification-missing", "created_at" => now, "read_at" => nil
+    }
+  ]
+  File.write(File.join(logs_dir, "push_notifications.json"), JSON.pretty_generate(records))
+end
+
 def write_smoke_script(path)
   File.write(path, <<~JS)
     const { chromium } = require("playwright");
@@ -536,6 +562,7 @@ def write_smoke_script(path)
       const optimisticDetailFormsOnly = process.env.TYCHO_REMOTE_UI_OPTIMISTIC_DETAIL_FORMS_ONLY === "1";
       const prDiffManagementOnly = process.env.TYCHO_REMOTE_UI_PR_DIFF_MANAGEMENT_ONLY === "1";
       const queueControlsOnly = process.env.TYCHO_REMOTE_UI_QUEUE_CONTROLS_ONLY === "1";
+      const notificationOnly = process.env.TYCHO_REMOTE_UI_NOTIFICATION_ONLY === "1";
       const queueAgentKey = process.env.TYCHO_REMOTE_UI_QUEUE_AGENT_KEY;
       const queueBulkAgentKey = process.env.TYCHO_REMOTE_UI_QUEUE_BULK_AGENT_KEY;
       const queueProcessAllAgentKey = process.env.TYCHO_REMOTE_UI_QUEUE_PROCESS_ALL_AGENT_KEY;
@@ -2377,6 +2404,39 @@ def write_smoke_script(path)
       }
 
       try {
+        if (notificationOnly) {
+          await page.goto(`${baseUrl}/ui#notification/notification-missing`, { waitUntil: "networkidle" });
+          await page.waitForSelector(".notification-detail", { state: "visible", timeout: 10_000 });
+          const missing = await page.evaluate(() => ({
+            text: document.querySelector(".notification-detail")?.innerText || "",
+            width: document.documentElement.scrollWidth,
+            viewport: window.innerWidth,
+          }));
+          if (!missing.text.includes("Original agent is not available") ||
+              !missing.text.includes("Queued work was retained for operator review") ||
+              missing.width > missing.viewport) {
+            throw new Error(`Missing-target notification fallback is not usable on mobile: ${JSON.stringify(missing)}`);
+          }
+          if (captureDir) await page.screenshot({ path: path.join(captureDir, "queue-notification-missing-mobile.png"), fullPage: false });
+
+          await page.setViewportSize({ width: 1440, height: 900 });
+          await page.goto(`${baseUrl}/ui#notification/notification-active`, { waitUntil: "networkidle" });
+          await page.waitForSelector(".notification-detail", { state: "visible", timeout: 10_000 });
+          const active = await page.evaluate(() => ({
+            text: document.querySelector(".notification-detail")?.innerText || "",
+            href: document.querySelector(".notification-detail .form-actions a")?.getAttribute("href") || "",
+          }));
+          if (!active.text.includes("Agent is active") || !active.text.includes("queue-work-active") ||
+              !active.href.includes(`#agent/${agentKey}`)) {
+            throw new Error(`Active notification target is not openable: ${JSON.stringify(active)}`);
+          }
+          const readState = await page.evaluate(async () => (await (await fetch("/notifications/notification-active")).json()).notification.read_at);
+          if (!readState) throw new Error("Opening a notification did not persist read state");
+          if (captureDir) await page.screenshot({ path: path.join(captureDir, "queue-notification-active-desktop.png"), fullPage: false });
+          if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
+          console.log("remote-ui-notification-smoke: ok");
+          return;
+        }
         if (queueControlsOnly) {
           await assertBlockedQueueControls();
           if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
@@ -9140,6 +9200,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     wait_for_remote(base_url, log_path)
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key = create_agent(base_url)
+    write_notification_smoke_fixture(fixture.fetch(:logs_dir), agent_key) if ENV["TYCHO_REMOTE_UI_NOTIFICATION_ONLY"] == "1"
     unscheduled_agent_key = create_agent(base_url, name: "Unscheduled Smoke Agent")
     archived_agent_key = create_agent(base_url, name: "Archived Smoke Agent")
     orchestrator_agent_key = create_agent(
@@ -9271,6 +9332,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     end
     if ENV["TYCHO_REMOTE_UI_QUEUE_CONTROLS_ONLY"].to_s == "1"
       smoke_env["TYCHO_REMOTE_UI_QUEUE_CONTROLS_ONLY"] = "1"
+    end
+    if ENV["TYCHO_REMOTE_UI_NOTIFICATION_ONLY"].to_s == "1"
+      smoke_env["TYCHO_REMOTE_UI_NOTIFICATION_ONLY"] = "1"
     end
     capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
     unless capture_dir.empty?

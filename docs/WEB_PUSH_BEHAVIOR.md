@@ -10,7 +10,9 @@ This note explains how Tycho Remote UI uses browser push notifications, notifica
 4. `WebPushNotifier#send_payload!` sends that payload to every enabled browser subscription with VAPID authentication.
 5. `/service-worker.js` receives the push event, updates the installed-app badge when a `badge_count` is present, and calls `registration.showNotification(title, options)`.
 6. When the Remote UI page is open, a compact activity poll reads the server-owned snapshot and calls `syncUnreadAlert()` to mirror the unread-agent count into the logo and app badge. Lifecycle mutations update that snapshot immediately, while the existing notification reconciliation pass catches external process completion; no additional server loop is created.
-7. Notification clicks focus an existing Tycho Remote tab when possible, otherwise they open the payload URL, usually `/#agent/{key}`.
+7. Notification clicks focus an existing Tycho Remote tab when possible, otherwise they open `/#notification/{id}`. The notification route marks the retained event read, opens its active or archived agent target when available, and keeps a bounded failure detail plus an Agents fallback when the original target is absent.
+
+Queue dispatch failures use the same durable path. Their records include the agent key, queue-work batch ID, queue-entry IDs, failure time, resolution time, and read time. One unresolved failure generation produces one push. A retry failure has a new failure time and can produce a new push, while repeated polls cannot repeat the same alert. Recovery or discard settles the retained notification without deleting its diagnostic context.
 
 ## Deployment Coherence
 
@@ -42,11 +44,13 @@ Tycho uses this replacement model for agent pushes:
 {
   "tag": "hq:agents",
   "renotify": true,
-  "url": "/#agent/smoke-agent-1"
+  "url": "/#notification/NOTIFICATION_ID"
 }
 ```
 
 All agent transition notifications share the `hq:agents` tag. That means repeated agent updates collapse into one visible Tycho agent notification instead of piling up. The newest notification wins, and when more than one unread agent exists Tycho appends the unread count to the notification body.
+
+Queue failure notifications use a stable `hq:queue-failure:{id}` tag. The ID is derived from the durable queue target and failure generation. This keeps one genuine unresolved failure visible without creating a new native notification on every poll.
 
 This is intentionally coarse-grained. A future improvement could split tags by priority, for example `hq:agents:input-required` and `hq:agents:finished`, if replacing finished notifications with input-required notifications feels too aggressive.
 
@@ -88,7 +92,7 @@ Example agent payload:
   "renotify": true,
   "silent": false,
   "badge_count": 2,
-  "url": "/#agent/smoke-agent-1"
+  "url": "/#notification/NOTIFICATION_ID"
 }
 ```
 

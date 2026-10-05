@@ -404,6 +404,13 @@ module HQ
       return accepted(schedule_restart!, headers: RESTART_CACHE_RESET_HEADERS) if method == "POST" && parts == ["server", "restart"]
       return ok(service.push_config) if method == "GET" && parts == ["push", "config"]
       return ok(service.push_status(body)) if method == "POST" && parts == ["push", "status"]
+      return ok(notifications: service.notifications) if method == "GET" && parts == ["notifications"]
+      if parts.length == 2 && parts.first == "notifications" && method == "GET"
+        return ok(notification: service.notification(parts[1]))
+      end
+      if parts.length == 3 && parts.first == "notifications" && parts[2] == "read" && method == "POST"
+        return ok(notification: service.mark_notification_read(parts[1]))
+      end
       return service.attachment_blob(parts[1]) if method == "GET" && parts.length == 3 && parts.first == "attachments" && parts[2] == "blob"
       return ok(service.delete_attachment(parts[1])) if method == "DELETE" && parts.length == 2 && parts.first == "attachments"
       return ok(attachment: service.attachment(parts[1])) if method == "GET" && parts.length == 2 && parts.first == "attachments"
@@ -1690,8 +1697,8 @@ module HQ
     attr_reader :registry, :server_url
 
     def initialize(registry: Registry.new, server_url: nil, public_url: nil, auth_required: false,
-                   push_subscription_store: PushSubscriptionStore.new,
-                   push_notification_store: PushNotificationStore.new,
+                   push_subscription_store: nil,
+                   push_notification_store: nil,
                    web_push_notifier: nil,
                    schedule_daemon_supervisor: nil,
                    restartable: false,
@@ -1706,9 +1713,17 @@ module HQ
       @projects = registry.projects.map { |config| Project.new(config) }
       @agent_store = AgentStore.new(@projects)
       @agent_archive_store = AgentArchiveStore.new
-      @push_subscription_store = push_subscription_store
-      @push_notification_store = push_notification_store
-      @web_push_notifier = web_push_notifier || WebPushNotifier.new(subscription_store: @push_subscription_store)
+      state_root = File.dirname(AGENTS_FILE)
+      @push_subscription_store = push_subscription_store || PushSubscriptionStore.new(
+        path: File.join(state_root, File.basename(PUSH_SUBSCRIPTIONS_FILE))
+      )
+      @push_notification_store = push_notification_store || PushNotificationStore.new(
+        path: File.join(state_root, File.basename(PUSH_NOTIFICATIONS_FILE))
+      )
+      @web_push_notifier = web_push_notifier || WebPushNotifier.new(
+        subscription_store: @push_subscription_store,
+        vapid_path: File.join(state_root, File.basename(WEB_PUSH_VAPID_FILE))
+      )
       @schedule_daemon_supervisor = schedule_daemon_supervisor
       @server_url = server_url.to_s
       @public_url = public_url.to_s
@@ -2847,10 +2862,34 @@ module HQ
 
     def dispatch_agent_push_notifications!
       agents, events = load_agents_with_events
+      @push_notification_store.reconcile_queue_failures!(active_queue_failure_notification_ids(agents))
       notification_candidates = notification_agents(agents)
       replace_agent_activity_snapshot!(agents)
       notification_keys = notification_candidates.map(&:key)
-      dispatch_agent_push_events(events.select { |event| notification_keys.include?(event.agent_key) }, agents: notification_candidates)
+      totals = dispatch_agent_push_events(
+        events.select { |event| notification_keys.include?(event.agent_key) },
+        agents: notification_candidates
+      )
+      merge_push_totals(totals, dispatch_queue_failure_pushes(notification_candidates))
+    end
+
+    def notifications
+      agents, = @agent_store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false)
+      @push_notification_store.all.map { |event| notification_payload(event, agents:) }
+    end
+
+    def notification(id)
+      event = @push_notification_store.find(id)
+      raise Error.new("Unknown notification: #{id}", status: 404) unless event
+
+      notification_payload(event)
+    end
+
+    def mark_notification_read(id)
+      event = @push_notification_store.mark_read!(id)
+      raise Error.new("Unknown notification: #{id}", status: 404) unless event
+
+      notification_payload(event)
     end
 
     def metrics_query(filters = {})
@@ -3487,6 +3526,7 @@ module HQ
 
       archive_path = @agent_store.archive_agent!(source.key) if archive_source
       @agent_activity_snapshot.remove!(source.key) if archive_source
+      @push_notification_store.reconcile_agent!(source.key, state: "archived", archived_at: Time.now) if archive_source
       schedule_reconciled = reconcile_archived_schedule_agent(source) if archive_source
       next_agents = current.reject { |agent| agent.key == target.key || (archive_source && agent.key == source.key) }
       next_agents.unshift(target)
@@ -3527,6 +3567,7 @@ module HQ
       archived_callback_count = target.queued_prompts.count { |entry| entry["source"] == "delegation_callback" }
       archive_path = @agent_store.archive_agent!(target.key)
       @agent_activity_snapshot.remove!(target.key)
+      @push_notification_store.reconcile_agent!(target.key, state: "archived", archived_at: Time.now)
       schedule_reconciled = reconcile_archived_schedule_agent(target)
       {
         archived: true,
@@ -3565,6 +3606,7 @@ module HQ
         archived_callback_count = target.queued_prompts.count { |entry| entry["source"] == "delegation_callback" }
         archive_path = @agent_store.archive_agent!(target.key)
         @agent_activity_snapshot.remove!(target.key)
+        @push_notification_store.reconcile_agent!(target.key, state: "archived", archived_at: Time.now)
         archived << {
           agent_key: target.key,
           archive_path: archive_path,
@@ -3769,9 +3811,12 @@ module HQ
     def load_all_agents
       agents, events = load_agents_with_events
       notification_candidates = notification_agents(agents)
+      @push_notification_store.reconcile_queue_failures!(active_queue_failure_notification_ids(agents))
       replace_agent_activity_snapshot!(agents)
       notification_keys = notification_candidates.map(&:key)
-      dispatch_agent_push_events(events.select { |event| notification_keys.include?(event.agent_key) }, agents: notification_candidates)
+      dispatch_agent_push_events(events.select { |event| notification_keys.include?(event.agent_key) },
+                                 agents: notification_candidates)
+      dispatch_queue_failure_pushes(notification_candidates)
       agents
     end
 
@@ -4073,17 +4118,26 @@ module HQ
         next unless payload
 
         notification_id = agent_push_notification_id(agent, payload.fetch(:event))
-        next if @push_notification_store.recorded?(notification_id)
-
-        @push_notification_store.record!(
+        push_payload = payload.fetch(:payload).merge(url: "/#notification/#{URI.encode_www_form_component(notification_id)}")
+        recorded = @push_notification_store.record!(
           notification_id,
+          kind: "agent",
+          target_type: "agent",
+          target_state: "active",
           agent_key: agent.key,
+          agent_name: agent.display_name,
+          project_key: agent.respond_to?(:project_key) ? agent.project_key : nil,
           event: payload.fetch(:event),
           status: agent.status,
-          run_count: agent.run_count
+          run_count: agent.run_count,
+          title: push_payload.fetch(:title),
+          body: push_payload.fetch(:body),
+          url: push_payload.fetch(:url)
         )
+        next unless recorded
+
         result = @web_push_notifier.send_payload!(
-          payload.fetch(:payload),
+          push_payload,
           urgency: payload.fetch(:event) == "input_required" ? "high" : "normal",
           ttl: payload.fetch(:event) == "input_required" ? 3600 : 900
         )
@@ -4093,6 +4147,116 @@ module HQ
         totals[:attempted] += result.fetch(:attempted, 0)
       end
       totals
+    end
+
+    def dispatch_queue_failure_pushes(agents)
+      totals = { events: 0, sent: 0, failed: 0, attempted: 0 }
+      agents.each do |agent|
+        error = agent.prompt_queue_dispatch_error
+        batch = agent.active_queue_work
+        claim = agent.prompt_queue_claim
+        next unless error && (batch || claim)
+
+        batch_id = batch&.fetch("id", nil) || claim&.fetch("id", nil)
+        entry_ids = if batch
+                      QueueWork.unresolved_ids(batch)
+                    else
+                      Array(claim&.fetch("entries", nil)).map { |entry| entry["id"].to_s }
+                    end
+        notification_id = queue_failure_notification_id(agent)
+        url = "/#notification/#{notification_id}"
+        title = "Queue processing failed"
+        detail = error["message"].to_s.strip
+        body = "#{agent.display_name}: #{truncate(detail.empty? ? "Queued work is retained." : detail, 120)}"
+        recorded = @push_notification_store.record!(
+          notification_id,
+          kind: "queue_process_failed",
+          target_type: "queue_work",
+          target_state: "active",
+          agent_key: agent.key,
+          agent_name: agent.display_name,
+          project_key: agent.project_key,
+          queue_work_batch_id: batch_id,
+          queue_entry_ids: entry_ids,
+          event: "queue_process_failed",
+          status: "failed",
+          title: title,
+          body: body,
+          detail: detail,
+          url: url
+        )
+        next unless recorded
+
+        result = @web_push_notifier.send_payload!(
+          {
+            title: title,
+            body: body,
+            tag: "hq:queue-failure:#{notification_id}",
+            renotify: false,
+            silent: false,
+            badge_count: [agents.count(&:unread?), 1].max,
+            url: url
+          },
+          urgency: "high",
+          ttl: 3600
+        )
+        totals[:events] += 1
+        totals[:sent] += result.fetch(:sent, 0)
+        totals[:failed] += result.fetch(:failed, 0)
+        totals[:attempted] += result.fetch(:attempted, 0)
+      end
+      totals
+    end
+
+    def merge_push_totals(left, right)
+      left.keys.to_h { |key| [key, left.fetch(key, 0) + right.fetch(key, 0)] }
+    end
+
+    def active_queue_failure_notification_ids(agents)
+      Array(agents).filter_map do |agent|
+        queue_failure_notification_id(agent) if agent.prompt_queue_dispatch_error &&
+                                                (agent.active_queue_work || agent.prompt_queue_claim)
+      end
+    end
+
+    def queue_failure_notification_id(agent)
+      batch = agent.active_queue_work
+      claim = agent.prompt_queue_claim
+      return nil unless agent.prompt_queue_dispatch_error && (batch || claim)
+
+      batch_id = batch&.fetch("id", nil) || claim&.fetch("id", nil)
+      entry_ids = if batch
+                    QueueWork.unresolved_ids(batch)
+                  else
+                    Array(claim&.fetch("entries", nil)).map { |entry| entry["id"].to_s }
+                  end
+      failed_at = agent.prompt_queue_dispatch_error["failed_at"].to_s
+      Digest::SHA256.hexdigest(["queue-failure", agent.key, batch_id, failed_at, *entry_ids.sort].join(":"))
+    end
+
+    def notification_payload(event, agents: nil)
+      payload = event.slice(
+        "id", "kind", "target_type", "target_state", "agent_key", "agent_name", "project_key",
+        "queue_work_batch_id", "queue_entry_ids", "event", "status", "run_count", "title", "body", "detail",
+        "url", "created_at", "read_at", "resolved_at", "target_archived_at"
+      )
+      agent_key = event["agent_key"].to_s
+      active = nil
+      archived = nil
+      unless agent_key.empty?
+        agents ||= @agent_store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+        active = agents.find { |agent| agent.key == agent_key }
+        archived = @agent_archive_store.find(agent_key) unless active
+      end
+      payload["target_state"] = if active
+                                  "active"
+                                elsif archived
+                                  "archived"
+                                else
+                                  event["target_state"] == "archived" ? "archived_missing" : "missing"
+                                end
+      payload["target_url"] = "/#agent/#{URI.encode_www_form_component(agent_key)}" if active || archived
+      payload
     end
 
     def agent_push_payload(agent, unread_count:)

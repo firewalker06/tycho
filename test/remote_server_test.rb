@@ -81,6 +81,7 @@ module RemoteServerTest
     assert_serve_command_accepts_daemon_mode
     assert_remote_push_subscription_lifecycle
     assert_remote_agent_push_notifications
+    assert_queue_failure_notification_lifecycle
     assert_remote_search_index_includes_agents_and_projects
     assert_remote_skills_payload_uses_discovery
     assert_remote_ui_routes_load_without_auth
@@ -4810,8 +4811,8 @@ module RemoteServerTest
              "expected requires-response notification")
       assert(notifier.payloads.any? { |payload| payload[:title] == "Done" },
              "expected finished notification")
-      assert(notifier.payloads.all? { |payload| payload[:url].start_with?("/#agent/") },
-             "expected notification click URLs to target agent detail")
+      assert(notifier.payloads.all? { |payload| payload[:url].start_with?("/#notification/") },
+             "expected notification click URLs to use durable notification targets")
       assert(notifier.payloads.all? { |payload| payload[:tag] == "hq:agents" },
              "expected agent notifications to share a group tag")
       assert(notifier.payloads.any? { |payload| payload[:renotify] == true && payload[:silent] == false },
@@ -4896,6 +4897,70 @@ module RemoteServerTest
 
       service.dispatch_agent_push_notifications!
       assert(notifier.payloads.length == 2, "expected duplicate agent push events to be suppressed")
+    end
+  end
+
+  def assert_queue_failure_notification_lifecycle
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      notifier = RecordingPushNotifier.new
+      service = HQ::RemoteService.new(registry:, web_push_notifier: notifier)
+      agent = HQ::ManagedAgent.new(
+        key: "durable-queue-agent",
+        name: "Durable queue agent",
+        project_key: "web",
+        template_key: "custom",
+        workspace: workspace,
+        prompt: "Work",
+        agent: "codex",
+        finished_at: Time.now,
+        last_exit_code: 0,
+        summary: "Ready"
+      )
+      agent.enqueue_prompt!(prompt: "Retain this work", id: "queue-entry-1")
+      agent.claim_pending_prompts!
+      agent.prepare_prompt_queue_claim!
+      agent.fail_prompt_queue_dispatch!("The harness was unavailable.")
+      HQ::AgentStore.new(registry.projects).save([agent])
+
+      agents = HQ::AgentStore.new(registry.projects)
+                             .load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+      first = service.send(:dispatch_queue_failure_pushes, agents)
+      repeated = service.send(:dispatch_queue_failure_pushes, agents)
+      assert(first[:events] == 1 && repeated[:events].zero? && notifier.payloads.length == 1,
+             "expected one durable push for one unresolved queue-work failure")
+      pushed = notifier.payloads.first
+      assert(pushed[:title] == "Queue processing failed" && pushed[:url].start_with?("/#notification/"),
+             "expected queue failure push to use the durable notification route")
+
+      notification_id = pushed[:url].split("/").last
+      server = HQ::RemoteServer.allocate
+      active_response = server.send(:route, service, "GET", "/notifications/#{notification_id}", {}, nil)
+      active = active_response.dig(:body, :notification)
+      assert(active["target_state"] == "active" && active["queue_work_batch_id"] &&
+             active["queue_entry_ids"] == ["queue-entry-1"],
+             "expected notification API to retain its durable queue-work target")
+      read_response = server.send(:route, service, "POST", "/notifications/#{notification_id}/read", {}, nil)
+      read = read_response.dig(:body, :notification)
+      assert(!read["read_at"].to_s.empty?, "expected notification read state to persist")
+
+      service.discard_prompt_queue(agent.key, "reason" => "Resolved in notification lifecycle test")
+      service.dispatch_agent_push_notifications!
+      resolved = service.notification(notification_id)
+      assert(!resolved["resolved_at"].to_s.empty?,
+             "expected queue recovery to settle the durable failure notification")
+      service.archive_agent(agent.key)
+      archived = service.notification(notification_id)
+      assert(archived["target_state"] == "archived" && archived["target_url"] == "/#agent/#{agent.key}",
+             "expected archived notification targets to remain openable")
+
+      FileUtils.rm_rf(HQ::AGENT_ARCHIVE_DIR)
+      missing = service.notification(notification_id)
+      assert(missing["target_state"] == "archived_missing" && missing["target_url"].nil? &&
+             missing["detail"] == "The harness was unavailable.",
+             "expected removed archive targets to retain a useful notification fallback")
     end
   end
 

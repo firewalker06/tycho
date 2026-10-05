@@ -1336,6 +1336,11 @@ module PromptQueueTest
       old_logs = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
       old_usage = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
       old_schedules = replace_constant(HQ, :SCHEDULES_STATE_FILE, File.join(dir, "schedules.json"))
+      old_push_subscriptions = replace_constant(HQ, :PUSH_SUBSCRIPTIONS_FILE,
+                                                File.join(dir, "push_subscriptions.json"))
+      old_push_notifications = replace_constant(HQ, :PUSH_NOTIFICATIONS_FILE,
+                                                File.join(dir, "push_notifications.json"))
+      old_vapid = replace_constant(HQ, :WEB_PUSH_VAPID_FILE, File.join(dir, "web_push_vapid.json"))
       workspace = File.join(dir, "workspace")
       FileUtils.mkdir_p(workspace)
       FileUtils.mkdir_p(HQ::AGENT_LOGS_DIR)
@@ -1347,6 +1352,9 @@ module PromptQueueTest
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs) if old_logs
       replace_constant(HQ, :USAGE_METRICS_FILE, old_usage) if old_usage
       replace_constant(HQ, :SCHEDULES_STATE_FILE, old_schedules) if old_schedules
+      replace_constant(HQ, :PUSH_SUBSCRIPTIONS_FILE, old_push_subscriptions) if old_push_subscriptions
+      replace_constant(HQ, :PUSH_NOTIFICATIONS_FILE, old_push_notifications) if old_push_notifications
+      replace_constant(HQ, :WEB_PUSH_VAPID_FILE, old_vapid) if old_vapid
     end
   end
 
