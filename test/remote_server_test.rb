@@ -5514,6 +5514,12 @@ module RemoteServerTest
            "expected Agent detail composer to reveal the drag-and-drop attachment overlay while active")
     assert(css[:body].include?(".message-attachments"), "expected chat messages to style attached prompt files")
     assert(css[:body].include?(".summary-attachment-menu"), "expected Conversation summaries to style attachment menus")
+    assert(css[:body].include?(".summary-message-content p {\n    display: -webkit-box;") &&
+           css[:body].include?("-webkit-line-clamp: 5;") &&
+           css[:body].include?(".summary-message-actions {\n    flex-direction: column;") &&
+           css[:body].include?(".summary-message-open {\n    width: var(--touch-target);") &&
+           css[:body].include?(".summary-message-open span {\n    position: absolute;"),
+           "expected mobile Summary cards to clamp previews and stack icon-only touch actions")
     assert(css[:body].include?(".summary-attachment-menu-popover"),
            "expected Conversation summary attachments to open as a menu")
     assert(css[:body].include?("touch-action: pan-y;"),
@@ -7387,8 +7393,9 @@ module RemoteServerTest
            "expected Agent detail summary routes to support per-summary pages")
     assert(js[:body].include?("data-open-agent-summary-id"),
            "expected run summary rows to open their own full summary")
-    assert(js[:body].include?("<span>Open</span>"),
-           "expected run summary rows to use a compact Open label")
+    assert(js[:body].include?('aria-label="Open full summary" title="Open full summary"') &&
+           js[:body].include?("<span>Open</span>"),
+           "expected run summary rows to keep an accessible Open label and tooltip")
     assert(js[:body].include?("queueRunSummaryConversationScroll"),
            "expected per-summary pages to scroll the conversation to the opened summary")
     assert(js[:body].include?("pendingSummaryScrollId"),

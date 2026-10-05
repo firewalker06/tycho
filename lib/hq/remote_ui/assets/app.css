@@ -5336,6 +5336,51 @@ details.queue-read-block:not([open]) > .queue-read-body {
   white-space: nowrap;
 }
 
+@media (max-width: 640px) {
+  .summary-message-content {
+    flex-wrap: nowrap;
+  }
+
+  .summary-message-content p {
+    display: -webkit-box;
+    max-height: calc(1.4em * 5);
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    text-overflow: ellipsis;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 5;
+  }
+
+  .summary-message-actions {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .summary-message-open {
+    width: var(--touch-target);
+    min-width: var(--touch-target);
+    height: var(--touch-target);
+    min-height: var(--touch-target);
+    padding: 0;
+  }
+
+  .summary-message-open .ui-icon {
+    width: 20px;
+    height: 20px;
+  }
+
+  .summary-message-open span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
 .turn-completed-message-content {
   display: block;
   white-space: normal;
