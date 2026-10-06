@@ -96,7 +96,7 @@ module RemoteUIMarkdownFrontmatterTest
       const hostile = parse("---\ntitle: <img src=x onerror=alert(1)>\n---\n- body\n");
       equal(hostile.metadata.length, 1, "hostile HTML is scalar text, not executable input");
       equal(hostile.metadata[0].value, "<img src=x onerror=alert(1)>", "hostile HTML must remain text for later escaping");
-      const hostileHtml = context.renderMetadata(hostile.metadata);
+      const hostileHtml = render(hostile.source);
       truthy(hostileHtml.includes("&lt;img"), "metadata renderer must escape hostile HTML");
       truthy(!hostileHtml.includes("<img"), "metadata renderer must not emit hostile HTML");
 
@@ -115,8 +115,8 @@ module RemoteUIMarkdownFrontmatterTest
         "nested: value: child",
         "comment: text # comment",
         "comment: # only a comment",
-        "sequence: - item",
-        "mapping: ? item",
+        "sequence: -item",
+        "mapping: ?item",
         "reserved: @value",
         "reserved: " + String.fromCharCode(96) + "value",
         "reserved: ,value",
