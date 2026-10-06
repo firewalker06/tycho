@@ -30,14 +30,6 @@ module HQ
                    @agent_store.load
                  end
       project_agents = agents.select { |agent| agent.project_key == project.key }
-      running = project_agents.select(&:running?)
-      message = "Project #{project.key} has running agents: #{running.map(&:key).join(", ")}"
-      raise ArgumentError, message unless running.empty?
-      pending = project_agents.select(&:pending_prompts?)
-      unless pending.empty?
-        raise ArgumentError, "Project #{project.key} has agents with queued prompts: #{pending.map(&:key).join(", ")}"
-      end
-
       FileTransaction.run(transaction_paths) do |transaction|
         project_archive = project.archive_logs!(now:)
         restore_project_logs(transaction, project, project_archive)

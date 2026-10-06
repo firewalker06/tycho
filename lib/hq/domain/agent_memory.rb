@@ -503,13 +503,13 @@ module HQ
       event_id.to_s.strip.empty? ? append_event!(event) : append_unique_event!(event_id, event)
     end
 
-    def append_inquiry_cancelled!(created_at: Time.now, inquiry_id: nil)
+    def append_inquiry_cancelled!(created_at: Time.now, inquiry_id: nil, message: nil)
       id = inquiry_id.to_s.strip
       return if id.empty?
 
       append_event!(
         "type" => "inquiry_cancelled",
-        "content" => "Inquiry cancelled by a new parent prompt",
+        "content" => message.to_s.strip.empty? ? "Inquiry cancelled by a new parent prompt" : message.to_s.strip,
         "created_at" => created_at.iso8601,
         "metadata" => { "inquiry_id" => id }
       )

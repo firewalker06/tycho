@@ -137,19 +137,6 @@ module HQ
       target = last_agent(schedule, state, load_agents(dispatch_prompt_queues: false))
       return archive_no_session_result(schedule, state) unless target
 
-      if target.running?
-        raise ArchiveError.new(
-          "Scheduled session #{target.key.inspect} is running; wait for it to finish or stop it before archiving",
-          reason: "running"
-        )
-      end
-      if target.pending_prompts? && !target.delegation_callback_prompts_only?
-        raise ArchiveError.new(
-          "Scheduled session #{target.key.inspect} has queued prompts; run or delete them before archiving",
-          reason: "queued_prompts"
-        )
-      end
-
       archive_path = @agent_store.archive_agent!(target.key)
       reconcile_archived_agent!(target.key, archived_agent: target, now:, preserve_schedule_status: true)
       {

@@ -909,13 +909,12 @@ module RemoteServerTest
       )
 
       archived_keys = response.dig(:body, :archived).map { |item| item[:agent_key] }
-      assert(archived_keys == [archive_one[:key], archive_two[:key]], "expected bulk archive to archive unique idle agents")
-      assert(response.dig(:body, :skipped).map { |item| item[:agent_key] } == [running[:key]],
-             "expected bulk archive to skip running agents")
+      assert(archived_keys == [archive_one[:key], running[:key], archive_two[:key]],
+             "expected bulk archive to stop and archive each unique target")
+      assert(response.dig(:body, :skipped).empty?, "expected bulk archive to stop active agents instead of skipping them")
       assert(response.dig(:body, :failed).map { |item| item[:agent_key] } == ["missing-agent"],
              "expected bulk archive to report missing agents")
-      assert(service.agents.map { |agent| agent[:key] } == [running[:key]],
-             "expected only running agent to remain active")
+      assert(service.agents.empty?, "expected bulk archive to remove every selected agent from active state")
       assert(response.dig(:body, :archived).all? { |item| item[:archive_path].nil? || Dir.exist?(item[:archive_path]) },
              "expected archived agents to report archive destinations when logs existed")
     ensure
@@ -923,7 +922,7 @@ module RemoteServerTest
         begin
           Process.kill("TERM", -running_pid)
           Process.wait(running_pid)
-        rescue Errno::ESRCH, Errno::ECHILD
+        rescue Errno::ESRCH, Errno::EPERM, Errno::ECHILD
           nil
         end
       end
@@ -1002,33 +1001,28 @@ module RemoteServerTest
       end
       File.write(HQ::AGENTS_FILE, JSON.pretty_generate(stored))
 
-      begin
-        server.send(:route, service, "POST", "/schedules/running/archive-session", {}, nil)
-        raise "expected running schedule archive to be rejected"
-      rescue HQ::RemoteServer::Error => e
-        assert(e.status == 409 && e.message.include?("is running"),
-               "expected individual archive to protect a running session")
-      end
+      running_archive = server.send(:route, service, "POST", "/schedules/running/archive-session", {}, nil)
+      assert(running_archive.dig(:body, :archived) && running_archive.dig(:body, :agent_key) == started["running"],
+             "expected running schedule archive to stop and archive its session")
 
       bulk = server.send(:route, service, "POST", "/schedules/archive-sessions", {}, nil)
       assert(bulk.dig(:body, :archived).map { |item| item[:schedule_key] } == ["bulk-idle"],
-             "expected bulk archive to archive every idle current session")
+             "expected bulk archive to archive its remaining current session")
       skipped = bulk.dig(:body, :skipped).to_h { |item| [item[:schedule_key], item[:reason]] }
-      assert(skipped == { "individual" => "no_session", "running" => "running", "empty" => "no_session" },
-             "expected bulk archive to report no-session and running skips")
+      assert(skipped == { "individual" => "no_session", "running" => "no_session", "empty" => "no_session" },
+             "expected bulk archive to report sessions that are already archived")
       assert(bulk.dig(:body, :failed).empty?, "expected bulk archive to avoid false failures")
       configured = YAML.safe_load_file(HQ::SCHEDULES_FILE).fetch("schedules").map { |item| item.fetch("key") }
       assert(configured == %w[individual bulk-idle running empty],
              "expected bulk session archive to preserve every schedule definition")
       active_keys = service.agents.map { |agent| agent[:key] }
-      assert(active_keys == [started["running"]],
-             "expected only the protected running schedule session to remain active")
+      assert(active_keys.empty?, "expected no archived schedule session to remain active")
     ensure
       if running_pid
         begin
           Process.kill("TERM", -running_pid)
           Process.wait(running_pid)
-        rescue Errno::ESRCH, Errno::ECHILD
+        rescue Errno::ESRCH, Errno::EPERM, Errno::ECHILD
           nil
         end
       end
@@ -6494,7 +6488,7 @@ module RemoteServerTest
            js[:body].include?('attrs: "data-archive-all-schedule-sessions"') &&
            js[:body].include?('apiPost("/schedules/archive-sessions")') &&
            js[:body].include?("Every schedule stays configured") &&
-           js[:body].include?("Running sessions and sessions with queued prompts are skipped and reported"),
+           js[:body].include?("Active work stops and queued work is recorded as unperformed"),
            "expected the schedule-list menu to confirm and report safe bulk session archive")
     assert(js[:body].include?('folderDown: `') &&
            js[:body].include?('M12 10v6') &&

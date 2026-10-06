@@ -144,6 +144,7 @@ module HQ
     LEGACY_SCHEDULED_NAME_PREFIX = "[Scheduled]"
     DIRECT_OUTPUT_IDLE_TIMEOUT_SECONDS = 5 * 60
     PROCESS_OUTPUT_MARKER = "=== process output ==="
+    ARCHIVE_ABORT_MESSAGE = "Run aborted since agent already archived"
     STRUCTURED_OUTPUT_CORRECTION_LIMIT = 2
     MAX_STRUCTURED_OUTPUT_CORRECTION_LIMIT = 5
     UNPROCESSED_QUEUE_WORK_STATUSES = %w[failed blocked input_required].freeze
@@ -952,37 +953,60 @@ module HQ
       !entries.empty? && entries.all? { |entry| entry["source"] == "delegation_callback" }
     end
 
-    def archive_delegation_callback_prompts!(archived_at: Time.now)
-      return [] unless delegation_callback_prompts_only?
-
-      entries = queued_prompts
-      claimed_already_in_history = @prompt_queue_claim&.fetch("message_appended", false)
-      if claimed_already_in_history
-        claimed_entry = entries.find { |entry| entry["state"] != "queued" }
-        marked = AgentMemory.new(self).mark_user_message_archived_without_run!(
-          { "prompt_queue_claim_id" => @prompt_queue_claim.fetch("id") },
-          queued_at: claimed_entry&.fetch("accepted_at", nil)
-        )
-        raise IOError, "Prepared delegation callback is missing from durable history" unless marked
+    def archive_pending_work!(archived_at: Time.now, reason: ARCHIVE_ABORT_MESSAGE, run_aborted: false)
+      message = reason.to_s.strip
+      message = ARCHIVE_ABORT_MESSAGE if message.empty?
+      inquiry_cancelled = cancel_pending_inquiry!(
+        created_at: archived_at,
+        message: "Inquiry cancelled because agent was archived"
+      )
+      batches = [active_queue_work].compact
+      unless @prompt_queue.empty?
+        batch = QueueWork.build_batch(@prompt_queue, opened_at: archived_at)
+        @queue_work["batches"] << batch
+        batches << batch
       end
-      entries.each do |entry|
-        next if claimed_already_in_history && entry["state"] != "queued"
 
-        metadata = entry["message_metadata"].is_a?(Hash) ? entry["message_metadata"].dup : {}
-        metadata["archived_without_run"] = true
-        metadata["queued_at"] = entry["accepted_at"] unless entry["accepted_at"].to_s.empty?
-        AgentMemory.new(self).append_delegation_report!(
-          entry.fetch("prompt"),
-          report_id: "archived-queue:#{entry.fetch("id")}",
-          created_at: archived_at,
-          metadata:
-        )
+      memory = AgentMemory.new(self)
+      archived_entries = []
+      batches.each do |batch|
+        unresolved = QueueWork.unresolved_ids(batch)
+        next if unresolved.empty?
+
+        entries = Array(batch["entries"]).select { |entry| unresolved.include?(entry["id"].to_s) }
+        entries.each do |entry|
+          metadata = entry["message_metadata"].is_a?(Hash) ? entry["message_metadata"].dup : {}
+          metadata.merge!(
+            "archived_without_run" => true,
+            "queue_work_batch_id" => batch["id"],
+            "queue_work_state" => "archived",
+            "queue_work_abort_message" => message,
+            "queue_work_entry_id" => entry["id"].to_s
+          )
+          metadata["queued_at"] = entry["accepted_at"] unless entry["accepted_at"].to_s.empty?
+          marked = memory.mark_user_message_archived_without_run!(
+            { "queue_work_batch_id" => batch["id"] }, queued_at: entry["accepted_at"]
+          )
+          memory.append_user_message!(entry.fetch("prompt"), created_at: archived_at,
+                                      attachments: entry["attachments"], metadata:) unless marked
+        end
+        dispositions = entries.map do |entry|
+          outcome = QueueWork.entry_kind(entry) == "delegated_report" ? "superseded_with_reason" : "declined_with_reason"
+          { "entry_id" => entry.fetch("id").to_s, "outcome" => outcome, "reason" => message }
+        end
+        QueueWork.apply_dispositions!(batch, dispositions, completed_at: archived_at)
+        archived_entries.concat(entries)
       end
+
       @prompt_queue = []
       @prompt_queue_claim = nil
-      @queue_work = QueueWork.normalize(nil)
       @prompt_queue_dispatch_error = nil
-      entries
+      @queue_work.delete("active_batch_id") unless active_queue_work
+      if run_aborted || archived_entries.any?
+        memory.append_assistant_message!(message, created_at: archived_at,
+                                         metadata: { "archive_aborted_run" => true, "archived_queue_entry_count" => archived_entries.length })
+      end
+      { entries: archived_entries, inquiry_cancelled: inquiry_cancelled }
     end
 
     def unread?
@@ -1475,11 +1499,11 @@ module HQ
       { "message_author" => author }
     end
 
-    def cancel_pending_inquiry!(created_at: Time.now)
+    def cancel_pending_inquiry!(created_at: Time.now, message: nil)
       inquiry_id = (latest_inquiry_id || suspended_inquiry_id).to_s
       return false if inquiry_id.empty?
 
-      memory_store.append_inquiry_cancelled!(created_at:, inquiry_id:)
+      memory_store.append_inquiry_cancelled!(created_at:, inquiry_id:, message:)
       true
     end
 

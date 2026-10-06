@@ -3510,11 +3510,6 @@ module HQ
       current = load_all_agents
       source = current.find { |agent| agent.key == key.to_s } || source
       archive_source = truthy?(attrs["archive_source"])
-      raise Error.new("Agent is running", status: 409) if archive_source && source.running?
-      unsafe_queue = source.pending_prompts? && !source.delegation_callback_prompts_only?
-      if archive_source && (unsafe_queue || source.inquiry_blocking_prompt_queue?)
-        raise Error.new("Archive blocked to protect unresolved work. Keep the source agent active.", status: 409)
-      end
 
       project = find_project!(source.project_key)
       target = @agent_store.clone_agent(source, existing_agents: current)
@@ -3562,7 +3557,6 @@ module HQ
 
     def archive_agent(key)
       target = find_agent!(key)
-      raise Error.new("Agent is running", status: 409) if target.running?
 
       archived_callback_count = target.queued_prompts.count { |entry| entry["source"] == "delegation_callback" }
       archive_path = @agent_store.archive_agent!(target.key)
@@ -3595,11 +3589,6 @@ module HQ
         target = agents_by_key[key]
         unless target
           failed << { agent_key: key, error: "Agent not found" }
-          next
-        end
-
-        if target.running?
-          skipped << { agent_key: key, reason: "running" }
           next
         end
 

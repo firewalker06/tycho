@@ -632,39 +632,16 @@ module HQ
         targets = requested.map do |key|
           agents.find { |agent| agent.key == key } || raise(ArgumentError, "Unknown agent: #{key}")
         end
-        raise ArgumentError, "Agent is running" if targets.any?(&:running?)
-        blocked = targets.select do |target|
-          (target.pending_prompts? && !target.delegation_callback_prompts_only?) || target.inquiry_blocking_prompt_queue?
-        end
-        unless blocked.empty?
-          descriptions = blocked.map do |target|
-            if target.inquiry_blocking_prompt_queue? && !target.pending_prompts?
-              next "#{target.key}: unresolved inquiry"
-            end
-            entries = target.queued_prompts
-            ordinary = entries.count { |entry| entry["source"] != "delegation_callback" }
-            callbacks = entries.length - ordinary
-            queue = if callbacks.positive?
-                      "mixed queue (#{ordinary} ordinary, #{callbacks} delegation callbacks)"
-                    else
-                      noun = ordinary == 1 ? "prompt" : "prompts"
-                      "#{ordinary} ordinary queued #{noun}"
-                    end
-            "#{target.key}: #{queue}"
-          end
-          raise ArgumentError,
-                "Archive blocked to protect queued user work or unresolved inquiries (#{descriptions.join("; ")}). " \
-                "Resolve the inquiry and run or remove ordinary queued prompts before archiving."
-        end
-
         source_paths = targets.flat_map(&:log_files)
         transaction = FileTransaction.new([AGENTS_FILE, DELEGATIONS_FILE, *source_paths])
         destinations = targets.to_h do |target|
-          callbacks = target.archive_delegation_callback_prompts!
+          run_aborted = target.running?
+          target.retire_for_archive!
+          archived_work = target.archive_pending_work!(run_aborted:)
           target.mark_archived_visibility!(!HQ::Visibility.agent_visible?(target, @projects))
           destination = target.archive_logs!(root)
           transaction.on_rollback { remove_failed_archive(destination) }
-          reconcile_archived_callbacks(callbacks)
+          reconcile_archived_callbacks(archived_work.fetch(:entries))
           [target.key, destination]
         end
         save_unlocked(
