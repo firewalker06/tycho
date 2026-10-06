@@ -1191,7 +1191,6 @@ def selected_screen_items
 
     def perform_delete_agent(agent)
       return [self, nil] unless agent
-      return [self, nil] if agent.running?
 
       @agent_store.archive_agent!(agent.key)
       reconcile_archived_schedule_agent(agent)

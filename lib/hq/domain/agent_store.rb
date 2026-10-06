@@ -4,6 +4,7 @@ require_relative "constants"
 require_relative "file_transaction"
 require_relative "file_store"
 require_relative "agent_store_recovery"
+require_relative "agent_archive_store"
 require_relative "managed_agent"
 require_relative "delegation_coordinator"
 require_relative "schedule_store"
@@ -326,6 +327,44 @@ module HQ
       end
     end
 
+    # Run schedule acceptance and process start under one AgentStore lock.
+    # Archive removes the target under this same lock, so an archived target
+    # cannot receive a stale schedule message or start a harness.
+    def dispatch_scheduled_message!(key, schedule_key:, message:, due_at: nil)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = find_agent_in!(agents, key)
+        add_scheduled_message!(target, schedule_key:, message:, due_at:)
+        start_target!(target, agents, run_metadata: nil) unless target.running?
+        target
+      end
+    end
+
+    # The active-store lookup and archived evidence write use the archive lock.
+    # This makes an arrival either normal active work or one durable terminal
+    # abort event. It cannot become both across an archive race.
+    def record_archived_prompt_attempt!(key, prompt:, actor:, event_id:, metadata: {})
+      with_exclusive_lock do
+        current, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
+        return :active if current.any? { |agent| agent.key == key.to_s }
+
+        record = AgentArchiveStore.new.find(key)
+        raise ArgumentError, "Unknown agent: #{key}" unless record
+
+        agent = record.agent
+        if actor&.parent? && agent.delegation_parent&.fetch("agent_key", nil) != actor.agent_key
+          raise DelegationStore::Error, "Parent is not authorized for archived agent: #{key}"
+        end
+        memory = AgentMemory.new(agent)
+        added = memory.append_user_message!(prompt, metadata: metadata, event_id: event_id)
+        if added
+          memory.append_assistant_message!(ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+                                           metadata: { "archive_aborted_arrival" => true, "event_id" => event_id })
+          AgentArchiveStore.new.save(record)
+        end
+        :archived
+      end
+    end
+
     def start_target!(target, agents, run_metadata:)
       options = {}
       stamp = @delegation_coordinator.ownership_stamp(target.key)
@@ -632,39 +671,16 @@ module HQ
         targets = requested.map do |key|
           agents.find { |agent| agent.key == key } || raise(ArgumentError, "Unknown agent: #{key}")
         end
-        raise ArgumentError, "Agent is running" if targets.any?(&:running?)
-        blocked = targets.select do |target|
-          (target.pending_prompts? && !target.delegation_callback_prompts_only?) || target.inquiry_blocking_prompt_queue?
-        end
-        unless blocked.empty?
-          descriptions = blocked.map do |target|
-            if target.inquiry_blocking_prompt_queue? && !target.pending_prompts?
-              next "#{target.key}: unresolved inquiry"
-            end
-            entries = target.queued_prompts
-            ordinary = entries.count { |entry| entry["source"] != "delegation_callback" }
-            callbacks = entries.length - ordinary
-            queue = if callbacks.positive?
-                      "mixed queue (#{ordinary} ordinary, #{callbacks} delegation callbacks)"
-                    else
-                      noun = ordinary == 1 ? "prompt" : "prompts"
-                      "#{ordinary} ordinary queued #{noun}"
-                    end
-            "#{target.key}: #{queue}"
-          end
-          raise ArgumentError,
-                "Archive blocked to protect queued user work or unresolved inquiries (#{descriptions.join("; ")}). " \
-                "Resolve the inquiry and run or remove ordinary queued prompts before archiving."
-        end
-
         source_paths = targets.flat_map(&:log_files)
         transaction = FileTransaction.new([AGENTS_FILE, DELEGATIONS_FILE, *source_paths])
         destinations = targets.to_h do |target|
-          callbacks = target.archive_delegation_callback_prompts!
+          run_aborted = target.running?
+          target.retire_for_archive!
+          archived_work = target.archive_pending_work!(run_aborted:)
           target.mark_archived_visibility!(!HQ::Visibility.agent_visible?(target, @projects))
           destination = target.archive_logs!(root)
           transaction.on_rollback { remove_failed_archive(destination) }
-          reconcile_archived_callbacks(callbacks)
+          reconcile_archived_callbacks(archived_work.fetch(:entries))
           [target.key, destination]
         end
         save_unlocked(

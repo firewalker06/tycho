@@ -20,10 +20,10 @@ module ArchiveDelegationCallbacksTest
   def run!
     Dir.mktmpdir("tycho-archive-callbacks") do |dir|
       with_paths(dir) do
-        assert_ordinary_queue_is_protected(dir)
-        assert_unresolved_inquiry_is_protected(dir)
+        assert_ordinary_queue_archives_with_history(dir)
+        assert_unresolved_inquiry_archives_with_history(dir)
         assert_callback_queue_archives_with_history(dir)
-        assert_mixed_queue_is_protected(dir)
+        assert_mixed_queue_archives_with_history(dir)
         assert_cli_reports_preserved_callbacks(dir)
         assert_remote_conflict_is_not_internal_server_error(dir)
       end
@@ -32,16 +32,19 @@ module ArchiveDelegationCallbacksTest
     puts "archive_delegation_callbacks_test: ok"
   end
 
-  def assert_ordinary_queue_is_protected(dir)
+  def assert_ordinary_queue_archives_with_history(dir)
     store, agent = stored_agent(dir, "ordinary")
     agent.enqueue_prompt!(prompt: "Keep this user request", source: "user")
     store.save([agent])
 
-    error = capture_error { store.archive_agent!(agent.key) }
-    assert(error.message.include?("protect queued user work") && error.message.include?("1 ordinary queued prompt"),
-           "expected an actionable ordinary-work conflict")
+    archive_path = store.archive_agent!(agent.key)
     current, = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false)
-    assert(current.any? { |item| item.key == agent.key }, "expected ordinary queued work to remain active")
+    manifest = JSON.parse(File.read(File.join(archive_path, "agent_manifest.json")))
+    disposition = manifest.dig("queue_work", "batches", 0, "dispositions").values.first
+    assert(current.none? { |item| item.key == agent.key } &&
+             disposition["outcome"] == "declined_with_reason" &&
+             disposition["reason"] == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+           "expected ordinary work to become durable aborted archive history")
   end
 
   def assert_callback_queue_archives_with_history(dir)
@@ -63,15 +66,16 @@ module ArchiveDelegationCallbacksTest
     archived = HQ::AgentArchiveStore.new(root: HQ::AGENT_ARCHIVE_DIR).find(agent.key)&.agent
     assert(archived && archived.queued_prompts.empty?, "expected callbacks to leave the executable queue")
     events = File.readlines(archived.memory_path, chomp: true).reject(&:empty?).map { |line| JSON.parse(line) }
-    preserved = events.select { |event| event.dig("metadata", "archived_without_run") == true }
-    assert(preserved.length == 1 && preserved.first["content"].include?("TYCHO QUEUE WORK CONTRACT") &&
+    preserved = events.select { |event| event.dig("metadata", "queue_work_delivery_state") == "delivered_or_in_flight" }
+    assert(preserved.length == 1 && preserved.first.dig("metadata", "archived_without_run") == false &&
+           preserved.first["content"].include?("TYCHO QUEUE WORK CONTRACT") &&
            preserved.first["content"].include?("Delegated callback 1") &&
            preserved.first["content"].include?("Delegated callback 2"),
            "expected the full consolidated callback batch in read-only archived history")
     assert(File.directory?(archive_path), "expected archive artifacts to be durable")
   end
 
-  def assert_unresolved_inquiry_is_protected(dir)
+  def assert_unresolved_inquiry_archives_with_history(dir)
     store, agent = stored_agent(dir, "inquiry")
     agent.send(:memory_store).append_inquiry_request!(
       { "message" => "Choose a release target", "fields" => [] },
@@ -79,26 +83,26 @@ module ArchiveDelegationCallbacksTest
     )
     store.save([agent])
 
-    error = capture_error { store.archive_agent!(agent.key) }
-    assert(error.message.include?("unresolved inquiry"),
-           "expected archive to protect an unresolved inquiry")
+    archive_path = store.archive_agent!(agent.key)
     current, = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false)
-    restored = current.find { |item| item.key == agent.key }
-    assert(restored&.latest_inquiry, "expected the unresolved inquiry to remain active")
+    events = File.readlines(File.join(archive_path, "agent-inquiry.memory.jsonl"), chomp: true).map { |line| JSON.parse(line) }
+    assert(current.none? { |item| item.key == agent.key } &&
+             events.any? { |event| event["type"] == "inquiry_cancelled" && event["content"].include?("archived") },
+           "expected an unresolved inquiry to remain in the archived history as cancelled")
   end
 
-  def assert_mixed_queue_is_protected(dir)
+  def assert_mixed_queue_archives_with_history(dir)
     store, agent = stored_agent(dir, "mixed")
     agent.enqueue_prompt!(prompt: "Delegated result", source: "delegation_callback")
     agent.enqueue_prompt!(prompt: "User follow-up", source: "user")
     store.save([agent])
 
-    error = capture_error { store.archive_agent!(agent.key) }
-    assert(error.message.include?("mixed queue (1 ordinary, 1 delegation callbacks)"),
-           "expected a specific mixed-queue conflict")
+    archive_path = store.archive_agent!(agent.key)
     current, = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false)
-    restored = current.find { |item| item.key == agent.key }
-    assert(restored&.queued_prompts&.length == 2, "expected every mixed-queue entry to remain durable")
+    manifest = JSON.parse(File.read(File.join(archive_path, "agent_manifest.json")))
+    outcomes = manifest.dig("queue_work", "batches", 0, "dispositions").values.map { |item| item["outcome"] }.sort
+    assert(current.none? { |item| item.key == agent.key } && outcomes == %w[declined_with_reason superseded_with_reason],
+           "expected every mixed queue entry to remain in truthful archive history")
   end
 
   def assert_remote_conflict_is_not_internal_server_error(dir)

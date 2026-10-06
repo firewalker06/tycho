@@ -3152,6 +3152,9 @@ module HQ
       if attrs.key?("delay") && attrs["parent_agent_key"].to_s.empty? && attrs["sender_agent_key"].to_s == key.to_s
         actor = DelegationActor.internal_actor(key)
       end
+      if record_archived_prompt_attempt!(key, attrs, actor:) == :archived
+        raise Error.new(ManagedAgent::ARCHIVE_ABORT_MESSAGE, status: 409)
+      end
       target = find_agent!(key)
       target = associate_delegation_from_attrs!(target, attrs, actor:)
       pull_request_context = render_prompt_pull_request_contexts(target, attrs)
@@ -3510,11 +3513,6 @@ module HQ
       current = load_all_agents
       source = current.find { |agent| agent.key == key.to_s } || source
       archive_source = truthy?(attrs["archive_source"])
-      raise Error.new("Agent is running", status: 409) if archive_source && source.running?
-      unsafe_queue = source.pending_prompts? && !source.delegation_callback_prompts_only?
-      if archive_source && (unsafe_queue || source.inquiry_blocking_prompt_queue?)
-        raise Error.new("Archive blocked to protect unresolved work. Keep the source agent active.", status: 409)
-      end
 
       project = find_project!(source.project_key)
       target = @agent_store.clone_agent(source, existing_agents: current)
@@ -3562,7 +3560,6 @@ module HQ
 
     def archive_agent(key)
       target = find_agent!(key)
-      raise Error.new("Agent is running", status: 409) if target.running?
 
       archived_callback_count = target.queued_prompts.count { |entry| entry["source"] == "delegation_callback" }
       archive_path = @agent_store.archive_agent!(target.key)
@@ -3595,11 +3592,6 @@ module HQ
         target = agents_by_key[key]
         unless target
           failed << { agent_key: key, error: "Agent not found" }
-          next
-        end
-
-        if target.running?
-          skipped << { agent_key: key, reason: "running" }
           next
         end
 
@@ -3974,6 +3966,28 @@ module HQ
       end
 
       raise Error.new("Unknown agent: #{key}", status: 404)
+    end
+
+    def record_archived_prompt_attempt!(key, attrs, actor:)
+      text = attrs["prompt"] || attrs["message"] || attrs["content"]
+      text = text.to_s.strip
+      return :active if text.empty?
+
+      request_id = prompt_client_request_id(attrs).to_s
+      event_id = request_id.empty? ? "archived-arrival:#{SecureRandom.uuid}" : "archived-arrival:#{request_id}"
+      metadata = {
+        "archived_arrival" => true,
+        "archive_abort_message" => ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+        "source" => actor&.parent? ? "parent" : "user",
+        "authority" => actor&.parent? ? { "owner" => actor.agent_key } : nil
+      }.compact
+      @agent_store.record_archived_prompt_attempt!(key, prompt: text, actor:, event_id:, metadata:)
+    rescue DelegationStore::Error => e
+      raise Error.new(e.message, status: 403)
+    rescue ArgumentError => e
+      return :active if e.message.start_with?("Unknown agent") && !visible_archived_agent(key)
+
+      raise
     end
 
     def find_agent_reference!(key)
@@ -5295,7 +5309,7 @@ module HQ
 
     def prompt_client_request_id(attrs)
       value = attrs["client_request_id"].to_s.strip
-      return nil unless value.match?(/\Aclient-[a-zA-Z0-9-]{1,100}\z/)
+      return nil unless value.match?(/\A(?:client-[a-zA-Z0-9-]{1,100}|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\z/i)
 
       value
     end

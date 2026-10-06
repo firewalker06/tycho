@@ -38,6 +38,8 @@ module PromptQueueTest
     assert_normal_stop_dispatches_pending_work
     assert_idle_agent_without_live_pid_dispatches_pending_work
     assert_ineligible_agents_do_not_dispatch_pending_work
+    assert_archive_stops_run_and_preserves_unperformed_queue_work
+    assert_archive_marks_delivered_queue_work_uncertain
     assert_legacy_entries_load_without_authority
     assert_success_auto_completes_delivered_queue_work
     assert_success_finish_gate_resumes_once_in_same_session
@@ -993,6 +995,73 @@ module PromptQueueTest
     end
   end
 
+  def assert_archive_stops_run_and_preserves_unperformed_queue_work
+    with_queue_store do |registry, workspace|
+      agent, pid = running_agent(workspace)
+      agent.enqueue_prompt!(prompt: "Do not run this user work", id: "archive-user")
+      agent.enqueue_prompt!(prompt: "Do not run this delegated report", id: "archive-report", source: "delegation_callback")
+      HQ::AgentMemory.new(agent).append_inquiry_request!(
+        { "message" => "Choose a target", "fields" => [] }, inquiry_id: "archive-inquiry"
+      )
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+
+      original = HQ::ManagedAgent.instance_method(:start!)
+      starts = 0
+      HQ::ManagedAgent.define_method(:start!) do |**_options|
+        starts += 1
+        raise "Archived queue work must not start"
+      end
+      destination = store.archive_agent!(agent.key)
+      pid = nil
+
+      manifest = JSON.parse(File.read(File.join(destination, "agent_manifest.json")))
+      batches = manifest.dig("queue_work", "batches")
+      dispositions = batches.flat_map { |batch| batch.fetch("dispositions").values }
+      memory_events = File.readlines(File.join(destination, "raw.memory.jsonl"), chomp: true).map { |line| JSON.parse(line) }
+      assert(starts.zero?, "expected archive to never launch queued harness work")
+      assert(batches.length == 1 && batches.first["state"] == "resolved" &&
+             dispositions.map { |item| item["reason"] }.uniq == [HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE] &&
+             dispositions.map { |item| item["outcome"] }.sort == %w[declined_with_reason superseded_with_reason],
+             "expected each archived queue entry to retain a truthful terminal outcome")
+      assert(memory_events.any? { |event| event["type"] == "inquiry_cancelled" } &&
+             memory_events.any? { |event| event["content"] == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE },
+             "expected archive history to preserve inquiry cancellation and the visible abort message")
+      never_delivered = memory_events.find { |event| event["content"] == "Do not run this user work" }
+      assert(never_delivered.dig("metadata", "archived_without_run") == true &&
+             never_delivered.dig("metadata", "queue_work_delivery_state") == "not_delivered",
+             "expected never-delivered evidence to state that no execution occurred")
+      assert(!agent.running?, "expected archive to stop the active process group")
+    ensure
+      HQ::ManagedAgent.define_method(:start!, original) if defined?(original) && original
+      stop_process(pid)
+    end
+  end
+
+  def assert_archive_marks_delivered_queue_work_uncertain
+    with_queue_store do |registry, workspace|
+      agent = terminal_agent(workspace)
+      agent.enqueue_prompt!(prompt: "Already delivered", id: "delivered-entry")
+      batch = agent.open_queue_work_batch!
+      agent.record_queue_read!(batch)
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+
+      destination = store.archive_agent!(agent.key)
+      manifest = JSON.parse(File.read(File.join(destination, "agent_manifest.json")))
+      disposition = manifest.dig("queue_work", "batches", 0, "dispositions", "delivered-entry")
+      event = File.readlines(File.join(destination, "raw.memory.jsonl"), chomp: true).map { |line| JSON.parse(line) }
+                  .find { |item| item.dig("metadata", "queue_work_batch_id") == manifest.dig("queue_work", "batches", 0, "id") }
+      assert(disposition["outcome"] == "aborted_with_uncertainty" &&
+             disposition["reason"] == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+             "expected delivered queue work to preserve side-effect uncertainty")
+      assert(event.dig("metadata", "archived_without_run") == false &&
+             event.dig("metadata", "queue_work_delivery_state") == "delivered_or_in_flight" &&
+             event.dig("metadata", "queue_work_abort_message") == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+             "expected delivered evidence to preserve uncertainty without claiming no execution")
+    end
+  end
+
   def assert_explicit_read_consumes_one_mixed_batch_and_records_conversation
     with_queue_store do |registry, workspace|
       agent, pid = running_agent(workspace)
@@ -1334,6 +1403,7 @@ module PromptQueueTest
       old_agents = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
       old_delegations = replace_constant(HQ, :DELEGATIONS_FILE, File.join(dir, "agent_delegations.json"))
       old_logs = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
+      old_archive = replace_constant(HQ, :AGENT_ARCHIVE_DIR, File.join(dir, "agents", "archive"))
       old_usage = replace_constant(HQ, :USAGE_METRICS_FILE, File.join(dir, "usage_metrics.json"))
       old_schedules = replace_constant(HQ, :SCHEDULES_STATE_FILE, File.join(dir, "schedules.json"))
       old_push_subscriptions = replace_constant(HQ, :PUSH_SUBSCRIPTIONS_FILE,
@@ -1344,12 +1414,14 @@ module PromptQueueTest
       workspace = File.join(dir, "workspace")
       FileUtils.mkdir_p(workspace)
       FileUtils.mkdir_p(HQ::AGENT_LOGS_DIR)
+      FileUtils.mkdir_p(HQ::AGENT_ARCHIVE_DIR)
       registry = queue_registry(dir, workspace)
       yield registry, workspace
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents) if old_agents
       replace_constant(HQ, :DELEGATIONS_FILE, old_delegations) if old_delegations
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs) if old_logs
+      replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive) if old_archive
       replace_constant(HQ, :USAGE_METRICS_FILE, old_usage) if old_usage
       replace_constant(HQ, :SCHEDULES_STATE_FILE, old_schedules) if old_schedules
       replace_constant(HQ, :PUSH_SUBSCRIPTIONS_FILE, old_push_subscriptions) if old_push_subscriptions

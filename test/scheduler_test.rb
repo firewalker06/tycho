@@ -34,6 +34,7 @@ module SchedulerTest
       assert_expired_refresh_preserves_current_session
       assert_schedule_waits_for_human_input
       assert_schedule_auto_resumes_only_after_awaiting_input_reply
+      assert_scheduler_persist_keeps_unrelated_concurrent_agent_updates
     end
     assert_schedule_daemon_supervisor_spawns_external_daemon
     assert_bin_schedule_list_lists_configured_schedules
@@ -104,6 +105,26 @@ module SchedulerTest
       assert(expired.stopped?, "expected an ended loop schedule to stop")
       assert(expired.last_status == "expired", "expected an ended loop to record expiry")
       assert(expired.next_due_at.nil?, "expected an ended loop to clear its next run")
+    end
+  end
+
+  def assert_scheduler_persist_keeps_unrelated_concurrent_agent_updates
+    with_temp_runtime do |dir|
+      registry, schedule_path = write_registry_and_schedule(dir, "schedules: []\n", suffix: "concurrent")
+      project = HQ::Project.new(registry.projects.fetch(0))
+      first = HQ::ManagedAgent.new(key: "scheduler-one", name: "Scheduler one", project_key: "web",
+                                   template_key: "custom", workspace: project.path, prompt: "One", agent: "codex")
+      second = HQ::ManagedAgent.new(key: "scheduler-two", name: "Scheduler two", project_key: "web",
+                                    template_key: "custom", workspace: project.path, prompt: "Two", agent: "codex")
+      agent_store = HQ::AgentStore.new([project])
+      agent_store.save([first, second])
+      stale = agent_store.load
+      agent_store.update_agent!(second.key) { |agent| agent.add_user_message!("Concurrent prompt") }
+
+      build_scheduler(registry, schedule_path).send(:persist, stale, {}, dry_run: false)
+      current = agent_store.load.find { |agent| agent.key == second.key }
+      assert(HQ::AgentMemory.new(current).conversation_messages.any? { |message| message[:content] == "Concurrent prompt" },
+             "expected scheduler state persistence to keep an unrelated concurrent prompt")
     end
   end
 
