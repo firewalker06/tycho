@@ -1050,11 +1050,8 @@ def selected_screen_items
       target = @agent_store.clone_agent(source, existing_agents: @all_agents)
       project = @registry.projects.find { |candidate| candidate.key == target.project_key }
       @agent_store.ensure_project_context_prompt!(target, project) if project
-      ContextHandoff.prepare!(source, target)
-      @agents.unshift(target)
-      @agents = sort_agents(@agents)
+      target = persist_context_pressure_clone!(source, target, handoff: true)
       @selected[:agents] = @agents.index(target) || 0
-      save_agents!
       replacement = @agent_store.start_agent!(target.key)
       replace_agent_instance!(target, replacement)
       @selected[:agents] = @agents.index(replacement) || 0
@@ -1083,10 +1080,8 @@ def selected_screen_items
 
       close_sidebar!
       target = @agent_store.clone_agent(source, existing_agents: @all_agents)
-      @agents.unshift(target)
-      @agents = sort_agents(@agents)
+      target = persist_context_pressure_clone!(source, target, handoff: false)
       @selected[:agents] = @agents.index(target) || 0
-      save_agents!
       rebuild_agent_index!
       HQ.hooks.publish("agent.cloned",
                        agent_key: target.key,
@@ -1100,6 +1095,26 @@ def selected_screen_items
     rescue StandardError => e
       HQ.logger.error("Agent") { "Context fresh clone failed for #{source&.key}: #{e.class}: #{e.message}" }
       [self, nil]
+    end
+
+    def persist_context_pressure_clone!(source, target, handoff:)
+      if source.scheduled?
+        result = Scheduler.new(registry: @registry).replace_session_target!(
+          source_key: source.key,
+          target: target
+        ) do |current_source, candidate|
+          ContextHandoff.prepare!(current_source, candidate, schedule_replacement: true) if handoff
+        end
+        load_agents!
+        load_schedules!
+        return @agents.find { |agent| agent.key == result.dig(:agent)&.key } || result.fetch(:agent)
+      end
+
+      ContextHandoff.prepare!(source, target) if handoff
+      @agents.unshift(target)
+      @agents = sort_agents(@agents)
+      save_agents!
+      target
     end
 
     def replace_agent_instance!(current, replacement)

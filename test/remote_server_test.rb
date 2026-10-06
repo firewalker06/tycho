@@ -26,6 +26,7 @@ module RemoteServerTest
     assert_remote_agent_bulk_archive
     assert_remote_schedule_session_archive_routes
     assert_remote_agent_clone_archives_source_with_editable_name
+    assert_remote_context_pressure_clone_replaces_schedule_target
     assert_remote_agent_payload_has_revision
     assert_remote_agent_payload_distinguishes_running_history_from_never_run
     assert_remote_agent_activity_snapshot
@@ -1128,6 +1129,82 @@ module RemoteServerTest
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
       replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+    end
+  end
+
+  def assert_remote_context_pressure_clone_replaces_schedule_target
+    [false, true].each do |handoff|
+      Dir.mktmpdir("hq-remote-schedule-clone-test") do |dir|
+        old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+        old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
+        old_archive_dir = replace_constant(HQ, :AGENT_ARCHIVE_DIR, File.join(dir, "agents", "archive"))
+        old_schedules_file = replace_constant(HQ, :SCHEDULES_FILE, File.join(dir, "schedules.yml"))
+        old_schedule_state = replace_constant(HQ, :SCHEDULES_STATE_FILE, File.join(dir, "schedules.json"))
+
+        FileUtils.mkdir_p(HQ::AGENT_LOGS_DIR)
+        FileUtils.mkdir_p(HQ::AGENT_ARCHIVE_DIR)
+        workspace = File.join(dir, "workspace")
+        FileUtils.mkdir_p(workspace)
+        registry = registry_for(dir, workspace)
+        service = HQ::RemoteService.new(registry: registry)
+        source_payload = service.create_agent(
+          "project_key" => "web",
+          "template_key" => "custom",
+          "name" => "Scheduled warning",
+          "prompt" => "Keep schedule context.",
+          "agent" => "codex"
+        )
+        source = service.send(:load_all_agents).find { |agent| agent.key == source_payload[:key] }
+        source.associate_schedule!("warning-loop")
+        HQ::AgentStore.new(registry.projects.map { |config| HQ::Project.new(config) }).save([source])
+        File.write(HQ::SCHEDULES_FILE, <<~YAML)
+          schedules:
+            - key: warning-loop
+              cron: "*/19 * * * *"
+              target:
+                type: agent
+                project_key: web
+                agent_key: #{source.key}
+                name: Scheduled warning
+                message: "Run the next check."
+        YAML
+        state = HQ::ScheduleStore.new.state_for({}, "warning-loop")
+        state.last_target_key = source.key
+        state.last_target_kind = "agent"
+        state.mark_paused!
+        HQ::ScheduleStore.new.save("warning-loop" => state)
+
+        response = service.clone_agent(
+          source.key,
+          "replace_schedule_target" => true,
+          "context_handoff" => handoff
+        )
+        replacement_key = response.dig(:agent, :key)
+        agents = service.send(:load_all_agents).to_h { |agent| [agent.key, agent] }
+        stored_state = HQ::ScheduleStore.new.load.fetch("warning-loop")
+        stored_config = YAML.safe_load_file(HQ::SCHEDULES_FILE).fetch("schedules").fetch(0)
+        handoff_events = HQ::AgentMemory.new(agents.fetch(replacement_key)).events.select do |event|
+          event.dig("metadata", "context_handoff") == true
+        end
+
+        assert(response.dig(:schedule_replacement, :last_target_key) == replacement_key,
+               "expected Remote context clone to report the schedule replacement")
+        assert(agents.fetch(source.key).schedule_key.nil? && agents.fetch(replacement_key).schedule_key == "warning-loop",
+               "expected Remote context clone to preserve source history and move schedule identity")
+        assert(stored_state.paused? && stored_state.previous_target_key == source.key &&
+               stored_state.last_target_key == replacement_key,
+               "expected Remote context clone to preserve schedule state and target history")
+        assert(stored_config.dig("target", "agent_key") == replacement_key,
+               "expected Remote context clone to persist the future loop target")
+        assert(handoff_events.empty? != handoff,
+               "expected only the Remote Start with Handoff mode to add handoff memory")
+      ensure
+        replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+        replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
+        replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+        replace_constant(HQ, :SCHEDULES_FILE, old_schedules_file) if old_schedules_file
+        replace_constant(HQ, :SCHEDULES_STATE_FILE, old_schedule_state) if old_schedule_state
+      end
     end
   end
 
@@ -6945,6 +7022,8 @@ module RemoteServerTest
            "expected archive choices to expose clone instead")
     assert(js[:body].include?("mode === \"clone\""),
            "expected Remote UI agent form to support clone mode")
+    assert(js[:body].include?("replace_schedule_target: true"),
+           "expected context-pressure cloning to request one coherent schedule target replacement")
     assert(js[:body].include?("els.headerMorePanel.addEventListener"),
            "expected Agent More menu actions to work from the fixed header panel")
     assert(js[:body].include?('route.type === "project" && route.backTo'),

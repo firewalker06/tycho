@@ -431,6 +431,15 @@ def associate_agent_schedule(logs_dir, agent_key)
   agent["schedule_key"] = "smoke"
   agent["template_key"] = "scheduled"
   File.write(agents_path, JSON.pretty_generate(agents))
+  File.write(File.join(logs_dir, "schedules.json"), JSON.pretty_generate([{
+    "key" => "smoke",
+    "status" => "scheduled",
+    "enabled" => true,
+    "last_target_kind" => "agent",
+    "last_target_key" => agent_key,
+    "run_count" => 3,
+    "skip_count" => 1
+  }]))
 end
 
 def associate_agent_pull_request(logs_dir, agent_key)
@@ -589,6 +598,7 @@ def write_smoke_script(path)
       const queueControlsOnly = process.env.TYCHO_REMOTE_UI_QUEUE_CONTROLS_ONLY === "1";
       const notificationOnly = process.env.TYCHO_REMOTE_UI_NOTIFICATION_ONLY === "1";
       const markdownFrontmatterOnly = process.env.TYCHO_REMOTE_UI_MARKDOWN_FRONTMATTER_ONLY === "1";
+      const scheduleReplacementMode = process.env.TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE || "";
       const markdownFixturePath = process.env.TYCHO_REMOTE_UI_MARKDOWN_FIXTURE;
       const queueAgentKey = process.env.TYCHO_REMOTE_UI_QUEUE_AGENT_KEY;
       const queueBulkAgentKey = process.env.TYCHO_REMOTE_UI_QUEUE_BULK_AGENT_KEY;
@@ -757,6 +767,62 @@ title: !123 value
       if (attachmentDownloadOnly) {
         await assertAttachmentOriginalFilenameDownload();
         console.log("remote-ui-smoke: original attachment filename download ok");
+        await browser.close();
+        return;
+      }
+
+      async function assertScheduleReplacement() {
+        const mobile = scheduleReplacementMode === "handoff";
+        await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 });
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
+        await page.waitForSelector("[data-context-pressure-warning]", { state: "visible", timeout: 10_000 });
+        if (captureDir) {
+          await page.screenshot({
+            path: path.join(captureDir, `schedule-replacement-${scheduleReplacementMode}-before.png`),
+            fullPage: false,
+          });
+        }
+
+        if (scheduleReplacementMode === "handoff") {
+          await page.locator("[data-context-pressure-warning] .context-pressure-menu > summary").click();
+          await page.locator("[data-context-pressure-handoff]").click();
+        } else {
+          await page.locator("[data-context-pressure-clone]").click();
+        }
+        await page.waitForFunction((sourceKey) => location.hash.startsWith("#agent/") && !location.hash.includes(sourceKey), agentKey);
+        const replacementKey = await page.evaluate(() => decodeURIComponent(location.hash.split("/")[1] || ""));
+        await page.waitForSelector("[data-header-schedule-menu]", { state: "visible", timeout: 10_000 });
+
+        const [sourceResponse, replacementResponse, schedulesResponse] = await Promise.all([
+          page.request.get(`${baseUrl}/agents/${encodeURIComponent(agentKey)}`),
+          page.request.get(`${baseUrl}/agents/${encodeURIComponent(replacementKey)}`),
+          page.request.get(`${baseUrl}/schedules`),
+        ]);
+        const source = (await sourceResponse.json()).agent;
+        const replacement = (await replacementResponse.json()).agent;
+        const schedules = (await schedulesResponse.json()).schedules;
+        const schedule = schedules.find((item) => item.key === "smoke");
+        if (source.schedule_key || replacement.schedule_key !== "smoke" || replacement.scheduled !== true ||
+            schedule?.last_target_key !== replacementKey || schedule?.run_count !== 3 || schedule?.skip_count !== 1) {
+          throw new Error(`Schedule replacement did not preserve authoritative state: ${JSON.stringify({ source, replacement, schedule })}`);
+        }
+        if (scheduleReplacementMode === "handoff") {
+          const conversation = await (await page.request.get(`${baseUrl}/agents/${encodeURIComponent(replacementKey)}/conversation`)).json();
+          if (!conversation.conversation.some((block) => block.metadata?.context_handoff === true)) {
+            throw new Error("Start with Handoff did not preserve handoff memory on the scheduled replacement");
+          }
+        }
+        if (captureDir) {
+          await page.screenshot({
+            path: path.join(captureDir, `schedule-replacement-${scheduleReplacementMode}-after.png`),
+            fullPage: false,
+          });
+        }
+      }
+
+      if (scheduleReplacementMode) {
+        await assertScheduleReplacement();
+        console.log(`remote-ui-smoke: schedule replacement ${scheduleReplacementMode} ok`);
         await browser.close();
         return;
       }
@@ -9501,6 +9567,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       )
       append_context_pressure_signal(base_url, context_pressure_agent_key)
     end
+    if ENV["TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE"].to_s != ""
+      append_context_pressure_signal(base_url, context_pressure_agent_key)
+    end
     queue_agent_key = create_agent(base_url, name: "Blocked Queue Controls", prompt: "QUEUE_SMOKE_HOLD")
     queue_bulk_agent_key = create_agent(base_url, name: "Blocked Queue Bulk Process", prompt: "QUEUE_SMOKE_HOLD")
     queue_process_all_agent_key = create_agent(base_url, name: "Blocked Queue Process All", prompt: "QUEUE_SMOKE_HOLD")
@@ -9593,6 +9662,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     end
     if ENV["TYCHO_REMOTE_UI_ATTACHMENT_DOWNLOAD_ONLY"].to_s == "1"
       smoke_env["TYCHO_REMOTE_UI_ATTACHMENT_DOWNLOAD_ONLY"] = "1"
+    end
+    if ENV["TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE"].to_s != ""
+      smoke_env["TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE"] = ENV.fetch("TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE")
     end
     if ENV["TYCHO_REMOTE_UI_SKILLS_ONLY"].to_s == "1"
       smoke_env["TYCHO_REMOTE_UI_SKILLS_ONLY"] = "1"

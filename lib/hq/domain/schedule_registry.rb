@@ -242,6 +242,30 @@ module HQ
       true
     end
 
+    def replace_agent_target(key, expected_agent_key:, replacement_agent_key:)
+      data = load_yaml
+      entries = schedule_entries(data)
+      index = entries.index { |entry| entry.is_a?(Hash) && entry["key"].to_s == key.to_s }
+      raise Error, "Unknown schedule: #{key}" unless index
+
+      entry = entries.fetch(index)
+      target = stringify_keys(entry["target"] || {})
+      current = target["agent_key"].to_s
+      return false if current.empty?
+      unless current == expected_agent_key.to_s
+        raise Error, "Schedule #{key.inspect} no longer targets agent #{expected_agent_key.inspect}"
+      end
+
+      target["agent_key"] = replacement_agent_key.to_s
+      entry["target"] = target
+      entries[index] = entry
+      validated = validate_entries!(entries)
+      data["schedules"] = entries
+      write_yaml(data)
+      @schedules = validated
+      true
+    end
+
     private
 
     def load_schedules

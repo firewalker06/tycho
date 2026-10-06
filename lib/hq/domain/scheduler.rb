@@ -132,6 +132,27 @@ module HQ
       resume_and_run_now(schedule.key, now:)
     end
 
+    def replace_session_target!(source_key:, target:, &prepare)
+      source, replacement, state = @agent_store.replace_scheduled_target!(
+        source_key,
+        target,
+        schedule_registry: schedule_registry,
+        schedule_store: store,
+        &prepare
+      )
+      schedule = find_schedule!(state.key)
+      publish("schedule.agent_replaced", schedule, state,
+              agent_key: replacement.key,
+              source_agent_key: source.key,
+              target_key: replacement.key,
+              reason: "context_pressure")
+      {
+        source: source,
+        agent: replacement,
+        schedule: schedule_payload(schedule, state, agent: replacement)
+      }
+    end
+
     def archive_session(key, now: Time.now)
       schedule, states, state = schedule_state_for(key)
       target = last_agent(schedule, state, load_agents(dispatch_prompt_queues: false))
@@ -464,6 +485,14 @@ module HQ
         schedule: schedule_payload(schedule, state, agent: agent),
         agent: agent
       }
+    rescue AgentStore::StaleScheduleTarget => e
+      refresh_schedule_state!(state, store.load[schedule.key])
+      {
+        status: :skipped,
+        schedule: schedule_payload(schedule, state),
+        reason: "target_replaced",
+        error: e.message
+      }
     rescue StandardError => e
       if agent
         state.last_target_kind = "agent"
@@ -552,6 +581,13 @@ module HQ
       schedule_registry.persist_system_message(schedule.key, archived_agent.prompt)
     rescue ScheduleRegistry::Error
       false
+    end
+
+    def refresh_schedule_state!(state, fresh)
+      return state unless fresh
+
+      ScheduleState.members.each { |member| state[member] = fresh[member] }
+      state
     end
 
     def last_agent(schedule, state, agents)

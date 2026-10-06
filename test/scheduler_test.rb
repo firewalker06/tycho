@@ -27,6 +27,8 @@ module SchedulerTest
       assert_archived_schedule_session_promotes_prompt_to_schedule
       assert_scheduler_stops_interactive_scheduled_agent_until_resume
       assert_schedule_session_refresh_starts_fresh_agent
+      assert_context_pressure_replacements_preserve_schedule_connection
+      assert_context_pressure_replacement_rejects_stale_or_unsafe_sources
       assert_schedule_list_uses_current_agent_run_count
       assert_refresh_stops_running_session
       assert_refresh_refuses_queued_work
@@ -569,6 +571,146 @@ module SchedulerTest
 
       row = scheduler.list.find { |schedule| schedule[:key] == "weekday" }
       assert(row[:session_run_count] == 2, "expected the list to use an adopted session's actual run count")
+    end
+  end
+
+  def assert_context_pressure_replacements_preserve_schedule_connection
+    [false, true].each do |handoff|
+      with_temp_runtime do |dir|
+        now = Time.at(Time.now.to_i)
+        state_name = handoff ? "stopped" : "paused"
+        registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+          schedules:
+            - key: warning-loop
+              name: Warning loop
+              cron: "*/17 * * * *"
+              timezone: local
+              target:
+                type: agent
+                project_key: web
+                agent_key: scheduled-source
+                name: Scheduled source
+                agent: codex
+                model: gpt-test
+                reasoning_effort: high
+                system_message: "Keep this schedule context."
+                message: "Run the next scheduled check."
+        YAML
+        project = HQ::Project.new(registry.projects.fetch(0))
+        source = HQ::ManagedAgent.new(
+          key: "scheduled-source", name: "Scheduled source", project_key: "web", template_key: "scheduled",
+          workspace: project.path, prompt: "Keep this schedule context.", agent: "codex", model: "gpt-test",
+          reasoning_effort: "high", schedule_key: "warning-loop"
+        )
+        HQ::AgentStore.new([project]).save([source])
+        state = HQ::ScheduleStore.new.state_for({}, "warning-loop")
+        state.last_target_kind = "agent"
+        state.last_target_key = source.key
+        state.previous_target_key = "older-session"
+        state.next_due_at = now + 600
+        state.last_due_at = now - 420
+        state.run_count = 7
+        state.skip_count = 2
+        handoff ? state.mark_stopped!(now:, reason: "awaiting_input") : state.mark_paused!(now:)
+        HQ::ScheduleStore.new.save("warning-loop" => state)
+
+        agent_store = HQ::AgentStore.new([project])
+        target = agent_store.clone_agent(source, existing_agents: [source])
+        scheduler = build_scheduler(registry, schedule_path)
+        result = scheduler.replace_session_target!(source_key: source.key, target: target) do |current, replacement|
+          HQ::ContextHandoff.prepare!(current, replacement, schedule_replacement: true) if handoff
+        end
+        replacement = result.fetch(:agent)
+        persisted = read_agents.to_h { |agent| [agent.key, agent] }
+        replaced_state = HQ::ScheduleStore.new.load.fetch("warning-loop")
+        stored_schedule = YAML.safe_load_file(schedule_path).fetch("schedules").fetch(0)
+
+        assert(persisted.fetch(source.key).schedule_key.nil?, "expected #{state_name} source history to detach")
+        assert(persisted.fetch(replacement.key).schedule_key == "warning-loop",
+               "expected #{state_name} replacement to own the schedule")
+        assert(replaced_state.status == state_name && replaced_state.next_due_at == now + 600,
+               "expected #{state_name} status and timing to remain unchanged")
+        assert(replaced_state.run_count == 7 && replaced_state.skip_count == 2,
+               "expected #{state_name} schedule counters to remain unchanged")
+        assert(replaced_state.previous_target_key == source.key && replaced_state.last_target_key == replacement.key,
+               "expected truthful source and replacement schedule history")
+        assert(stored_schedule.dig("target", "agent_key") == replacement.key,
+               "expected authoritative loop target configuration to move to the replacement")
+        assert(stored_schedule.dig("target", "model") == "gpt-test" &&
+               stored_schedule.dig("target", "reasoning_effort") == "high" &&
+               stored_schedule["cron"] == "*/17 * * * *",
+               "expected schedule execution configuration to remain unchanged")
+        handoff_events = HQ::AgentMemory.new(persisted.fetch(replacement.key)).events.select do |event|
+          event.dig("metadata", "context_handoff") == true
+        end
+        assert(handoff_events.empty? != handoff, "expected only Start with Handoff to add handoff memory")
+        if handoff
+          assert(handoff_events.fetch(0).fetch("content").include?("schedule connection moves to this replacement agent"),
+                 "expected the handoff to describe transferred schedule ownership truthfully")
+        end
+
+        future = scheduler.resume_and_run_now("warning-loop", now: now + 30)
+        assert(future.fetch(:agent).key == replacement.key,
+               "expected the next scheduled run to use the replacement session")
+        assert(HQ::ScheduleStore.new.load.fetch("warning-loop").run_count == 8,
+               "expected one future scheduled run without a duplicate session")
+        assert(read_agents.count { |agent| agent.schedule_key == "warning-loop" } == 1,
+               "expected exactly one schedule-connected session")
+      end
+    end
+  end
+
+  def assert_context_pressure_replacement_rejects_stale_or_unsafe_sources
+    with_temp_runtime do |dir|
+      registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: guarded
+            cron: "0 9 * * *"
+            target:
+              type: agent
+              project_key: web
+              name: Guarded schedule
+              message: "Run safely."
+      YAML
+      project = HQ::Project.new(registry.projects.fetch(0))
+      source = HQ::ManagedAgent.new(
+        key: "guarded-source", name: "Guarded source", project_key: "web", template_key: "scheduled",
+        workspace: project.path, prompt: "Guarded schedule", agent: "codex", schedule_key: "guarded"
+      )
+      agent_store = HQ::AgentStore.new([project])
+      agent_store.save([source])
+      state = HQ::ScheduleStore.new.state_for({}, "guarded")
+      state.last_target_key = "newer-target"
+      HQ::ScheduleStore.new.save("guarded" => state)
+      target = agent_store.clone_agent(source, existing_agents: [source])
+      scheduler = build_scheduler(registry, schedule_path)
+
+      assert_raises(HQ::AgentStore::StaleScheduleTarget,
+                    "expected a concurrent target replacement to reject the stale action") do
+        scheduler.replace_session_target!(source_key: source.key, target: target)
+      end
+      assert(read_agents.map(&:key) == [source.key] && read_agents.fetch(0).schedule_key == "guarded",
+             "expected stale replacement rejection to preserve the source and omit the clone")
+
+      state.last_target_key = source.key
+      HQ::ScheduleStore.new.save("guarded" => state)
+      source.enqueue_prompt!(prompt: "Do not lose this queued request")
+      agent_store.save([source])
+      assert_raises(ArgumentError, "expected queued work to block schedule replacement") do
+        scheduler.replace_session_target!(source_key: source.key, target: target)
+      end
+      assert(read_agents.fetch(0).queued_prompts.length == 1,
+             "expected rejected replacement to retain queued work")
+
+      source = read_agents.fetch(0)
+      source.instance_variable_set(:@prompt_queue, [])
+      agent_store.save([source])
+      scheduler.schedule_registry.delete("guarded")
+      assert_raises(ArgumentError, "expected an absent schedule to block replacement") do
+        scheduler.replace_session_target!(source_key: source.key, target: target)
+      end
+      assert(read_agents.fetch(0).schedule_key == "guarded",
+             "expected an absent schedule rejection to preserve the source identity")
     end
   end
 
