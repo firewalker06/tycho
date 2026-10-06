@@ -127,8 +127,10 @@ module RemoteUIMarkdownFrontmatterTest
         const input = "---\n" + line + "\n---\n- body\n";
         const parsed = parse(input);
         equal(parsed.metadata.length, 0, "unsupported value must not become metadata: " + line);
+        equal(parsed.frontmatterRejected, true, "unsupported frontmatter must use the plain-text fallback: " + line);
         equal(parsed.body, input, "unsupported value must retain full body: " + line);
         equal(parsed.source, input, "unsupported value must retain full source: " + line);
+        equal(render(input), "plain:" + input, "unsupported value must render as complete plain text: " + line);
       });
     JAVASCRIPT
   end
