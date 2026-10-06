@@ -155,7 +155,8 @@ module HQ
           AgentMemory.new(parent).append_assistant_message!(
             ManagedAgent::ARCHIVE_ABORT_MESSAGE,
             created_at: now,
-            metadata: { "archive_aborted_arrival" => true, "delegation_report_id" => entry_id }
+            metadata: { "archive_aborted_arrival" => true, "delegation_report_id" => entry_id },
+            event_id: "#{entry_id}:archive-abort"
           )
           @archive_store.save(archived)
         end

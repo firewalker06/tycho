@@ -399,10 +399,17 @@ class DelegationTest
                           parent_key: archived_parent.key)
       archive_path = archived_parent.archive_logs!(File.join(dir, "archive"))
       coordinator.process!([archived_child])
+      coordinator.process!([archived_child])
       archived_events = File.readlines(File.join(archive_path, File.basename(archived_parent.memory_path)))
         .map { |line| JSON.parse(line) }
-      assert(archived_events.any? { |event| event.dig("metadata", "delegation_callback") },
-             "expected callback delivery after parent archival")
+      assert(archived_events.count { |event| event.dig("metadata", "delegation_callback") } == 1,
+             "expected repeated callback polling to keep one archived callback event")
+      archived_abort_count = archived_events.count do |event|
+        event["content"] == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE &&
+          event.dig("metadata", "archive_aborted_arrival") == true
+      end
+      assert(archived_abort_count == 1,
+             "expected repeated callback polling to keep one exact archived abort event")
       archived_report = store.reports.find { |item| item["child_run_id"] == archived_child.last_run.run_id }
       assert(archived_report["resume_state"] == "parent_archived", "expected archived parent to remain stopped")
     end

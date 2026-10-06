@@ -363,16 +363,17 @@ module HQ
       )
     end
 
-    def append_assistant_message!(content, created_at: Time.now, metadata: nil)
+    def append_assistant_message!(content, created_at: Time.now, metadata: nil, event_id: nil)
       text = content.to_s.strip
       return if text.empty?
 
-      append_event!(
+      event = {
         "type" => "assistant_message",
         "content" => text,
         "created_at" => created_at.iso8601,
         "metadata" => metadata.is_a?(Hash) && !metadata.empty? ? metadata : nil
-      )
+      }
+      event_id.to_s.strip.empty? ? append_event!(event) : append_unique_event!(event_id, event)
     end
 
     def append_tool_summary!(content, tool_name:, created_at: Time.now, metadata: nil)

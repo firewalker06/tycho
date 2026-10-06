@@ -1915,45 +1915,33 @@ module HQ
       return remote_send_agent_message(agent_key, message, opts, out:, err:) if remote_requested?(opts)
 
       store = agent_store_for_all
-      agents = store.load
-      agent = agents.find { |a| a.key == agent_key.to_s }
-      unless agent
-        event_id = "archived-arrival:#{SecureRandom.uuid}"
-        metadata = {
-          "archived_arrival" => true,
-          "archive_abort_message" => ManagedAgent::ARCHIVE_ABORT_MESSAGE,
-          "source" => opts.fetch(:actor).parent? ? "parent" : "user"
-        }
-        metadata["authority"] = { "owner" => opts.fetch(:actor).agent_key } if opts.fetch(:actor).parent?
-        if store.record_archived_prompt_attempt!(agent_key, prompt: message, actor: opts.fetch(:actor), event_id:, metadata:) == :archived
-          return failure(ManagedAgent::ARCHIVE_ABORT_MESSAGE, err:)
-        end
-      end
-      return failure("Unknown agent: #{agent_key}", err: err) unless agent
-      agent = persist_agents_with_parent!(store, agents, agent, opts)
-      unless opts[:delay].nil?
-        agent, entry = store.enqueue_delayed_prompt_from!(
-          agent.key, prompt: message, actor: opts.fetch(:actor), delay: opts[:delay]
-        )
-        scheduler.resume_after_user_message(agent.key) if opts.fetch(:actor).user? && agent.scheduled?
+      actor = opts.fetch(:actor)
+      event_id = "prompt-arrival:#{SecureRandom.uuid}"
+      source = actor.internal? ? "internal_continuation" : actor.parent? ? "parent" : "user"
+      archive_metadata = {
+        "archived_arrival" => true,
+        "archive_abort_message" => ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+        "prompt_arrival_event_id" => event_id,
+        "source" => source
+      }
+      archive_metadata["authority"] = { "owner" => actor.agent_key } if actor.parent?
+      result = store.accept_or_abort_prompt!(
+        agent_key, prompt: message, actor:, event_id:, archive_metadata:,
+        delayed: !opts[:delay].nil?, delay: opts[:delay], source:, start: opts[:delay].nil?
+      )
+      return failure(ManagedAgent::ARCHIVE_ABORT_MESSAGE, err:) if result.fetch(:status) == :archived
+
+      agent = result.fetch(:agent)
+      scheduler.resume_after_user_message(agent.key) if opts.fetch(:actor).user? && agent.scheduled?
+      if result.fetch(:status) == :queued
+        entry = result.fetch(:entry)
         position = agent.queued_prompts.index { |candidate| candidate["id"] == entry["id"] }.to_i + 1
-        print_queued_agent(agent_cli_payload(agent), entry, position:, json: opts[:json], out: out)
-        return 0
-      end
-      if agent.running?
-        agent, entry = store.enqueue_prompt_from!(
-          agent.key, prompt: message, actor: opts.fetch(:actor), source: opts.fetch(:actor).parent? ? "parent" : "user"
-        )
-        scheduler.resume_after_user_message(agent.key) if opts.fetch(:actor).user? && agent.scheduled?
-        print_queued_agent(agent_cli_payload(agent), entry, json: opts[:json], out: out)
+        options = { json: opts[:json], out: }
+        options[:position] = position unless opts[:delay].nil?
+        print_queued_agent(agent_cli_payload(agent), entry, **options)
         return 0
       end
 
-      store.accept_prompt_from!(agent, actor: opts.fetch(:actor), agents: agents)
-      agent.add_user_message!(message, metadata: agent.message_author_metadata(opts.fetch(:actor)))
-      store.save(agents)
-      scheduler.resume_after_user_message(agent.key) if opts.fetch(:actor).user? && agent.scheduled?
-      agent = store.start_agent!(agent.key)
       if agent.running?
         print_sent_agent(agent_cli_payload(agent), json: opts[:json], out: out)
       else

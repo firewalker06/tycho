@@ -244,6 +244,9 @@ module RemoteServerTest
       parent = service.create_agent(
         "project_key" => "web", "name" => "Parent <script>", "prompt" => "Coordinate", "agent" => "codex"
       )
+      other_parent = service.create_agent(
+        "project_key" => "web", "name" => "Other parent", "prompt" => "Do not own child", "agent" => "codex"
+      )
       child = service.create_agent(
         "project_key" => "web", "name" => "Child", "prompt" => "Work", "agent" => "codex",
         "parent_agent_key" => parent[:key]
@@ -332,6 +335,17 @@ module RemoteServerTest
       assert(archived_conversation.any? { |event| event[:content] == "Late archived arrival" } &&
              archived_conversation.any? { |event| event[:content] == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE },
              "expected archived arrival evidence without a harness start")
+      begin
+        service.submit_prompt(
+          child[:key], "prompt" => "Unauthorized archived arrival", "parent_agent_key" => other_parent[:key]
+        )
+        raise "expected archived parent authority rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 403 && e.message.include?("not authorized"),
+               "expected normal parent authority checks before archived evidence")
+      end
+      assert(service.conversation(child[:key]).none? { |event| event[:content] == "Unauthorized archived arrival" },
+             "expected rejected archived parent input to leave no evidence")
       begin
         service.submit_prompt(child[:key], {
           "prompt" => "Late archived arrival", "client_request_id" => "550e8400-e29b-41d4-a716-446655440000"

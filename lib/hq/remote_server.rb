@@ -3152,30 +3152,49 @@ module HQ
       if attrs.key?("delay") && attrs["parent_agent_key"].to_s.empty? && attrs["sender_agent_key"].to_s == key.to_s
         actor = DelegationActor.internal_actor(key)
       end
-      if record_archived_prompt_attempt!(key, attrs, actor:) == :archived
-        raise Error.new(ManagedAgent::ARCHIVE_ABORT_MESSAGE, status: 409)
-      end
-      target = find_agent!(key)
-      target = associate_delegation_from_attrs!(target, attrs, actor:)
-      pull_request_context = render_prompt_pull_request_contexts(target, attrs)
-      attachments = import_prompt_attachments(target, attrs)
+      reference = find_agent_reference!(key)
+      pull_request_context = render_prompt_pull_request_contexts(reference, attrs)
+      attachments = import_prompt_attachments(reference, attrs)
       text = prompt_text(attrs, attachments:)
       text = [text, pull_request_context].reject(&:empty?).join("\n")
-      if attrs.key?("delay")
-        target, entry = @agent_store.enqueue_delayed_prompt_from!(
-          target.key,
-          prompt: text,
-          actor:,
-          delay: attrs["delay"],
-          id: prompt_client_request_id(attrs)
-        )
-        resumed_schedules = actor.user? && target.scheduled? ? scheduler.resume_after_user_message(target.key) : []
-        @agent_activity_snapshot.upsert!(target)
+      request_id = prompt_client_request_id(attrs)
+      event_id = request_id ? "prompt-arrival:#{request_id}" : "prompt-arrival:#{SecureRandom.uuid}"
+      source = if actor&.internal?
+                 "internal_continuation"
+               elsif actor&.parent?
+                 "parent"
+               else
+                 "user"
+               end
+      archive_metadata = {
+        "archived_arrival" => true,
+        "archive_abort_message" => ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+        "prompt_arrival_event_id" => event_id,
+        "client_request_id" => request_id,
+        "source" => source,
+        "authority" => actor&.parent? ? { "owner" => actor.agent_key } : nil
+      }.compact
+      result = @agent_store.accept_or_abort_prompt!(
+        key, prompt: text, attachments:, actor:, event_id:, archive_metadata:,
+        delayed: attrs.key?("delay"), delay: attrs["delay"], client_request_id: request_id,
+        source:, retire_inquiry_id: attrs["retire_inquiry_id"],
+        start: truthy?(attrs["start"]), parent_server_id: attrs["parent_server_id"]
+      )
+      if result.fetch(:status) == :archived
+        raise Error.new(ManagedAgent::ARCHIVE_ABORT_MESSAGE, status: 409)
+      end
+
+      target = result.fetch(:agent)
+      resumed_schedules = actor.user? && target.scheduled? ? scheduler.resume_after_user_message(target.key) : []
+      @agent_activity_snapshot.upsert!(target)
+      if result.fetch(:status) == :queued
+        entry = result.fetch(:entry)
         visible_entries = target.queued_prompts
         return {
           accepted: true,
           queued: true,
           started: false,
+          replayed: result.fetch(:replayed),
           queue_position: visible_entries.index { |candidate| candidate["id"] == entry["id"] }.to_i + 1,
           queue_entry: prompt_queue_entry_payload(target, entry),
           agent: agent_payload(target),
@@ -3183,56 +3202,22 @@ module HQ
           resumed_schedules: resumed_schedules
         }
       end
-      if target.running?
-        begin
-          target, entry = @agent_store.enqueue_prompt_from!(
-            target.key,
-            prompt: text,
-            attachments:,
-            actor:,
-            id: prompt_client_request_id(attrs),
-            source: actor.parent? ? "parent" : "user"
-          )
-          resumed_schedules = actor.user? && target.scheduled? ? scheduler.resume_after_user_message(target.key) : []
-          @agent_activity_snapshot.upsert!(target)
-          visible_entries = target.queued_prompts
-          return {
-            accepted: true,
-            queued: true,
-            started: false,
-            queue_position: visible_entries.index { |candidate| candidate["id"] == entry["id"] }.to_i + 1,
-            queue_entry: prompt_queue_entry_payload(target, entry),
-            agent: agent_payload(target),
-            conversation: conversation(target.key),
-            resumed_schedules: resumed_schedules
-          }
-        rescue ArgumentError => e
-          raise unless e.message == "Agent is no longer running"
 
-          target = find_agent!(key)
-        end
-      end
-
-      if actor.parent?
-        @agent_store.accept_prompt_from!(target, actor:)
-        target.cancel_pending_inquiry! if target.inquiry_blocking_prompt_queue?
-        target.add_user_message!(text, attachments:, metadata: target.message_author_metadata(actor))
-        save_agent(target)
-      else
-        target = @agent_store.accept_ordinary_prompt!(
-          target.key,
-          text:,
-          attachments:,
-          actor:,
-          retire_inquiry_id: attrs["retire_inquiry_id"]
-        )
-      end
-      target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"]) && !target.running?
-      resumed_schedules = actor.user? && target.scheduled? ? scheduler.resume_after_user_message(target.key) : []
-      @agent_activity_snapshot.upsert!(target)
-      { agent: agent_payload(target), conversation: conversation(target.key), resumed_schedules: resumed_schedules }
+      {
+        agent: agent_payload(target),
+        conversation: conversation(target.key),
+        resumed_schedules: resumed_schedules,
+        replayed: result.fetch(:replayed)
+      }
     rescue DelegationStore::Error => e
-      raise Error.new(e.message, status: actor&.parent? ? 403 : 409)
+      status = if e.message.start_with?("Unknown parent agent")
+                 404
+               elsif e.message.include?("cannot delegate to itself") || e.message.include?("different parent")
+                 409
+               else
+                 actor&.parent? ? 403 : 409
+               end
+      raise Error.new(e.message, status:)
     rescue ArgumentError => e
       raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
     end
