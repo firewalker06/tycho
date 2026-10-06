@@ -66,8 +66,9 @@ module ArchiveDelegationCallbacksTest
     archived = HQ::AgentArchiveStore.new(root: HQ::AGENT_ARCHIVE_DIR).find(agent.key)&.agent
     assert(archived && archived.queued_prompts.empty?, "expected callbacks to leave the executable queue")
     events = File.readlines(archived.memory_path, chomp: true).reject(&:empty?).map { |line| JSON.parse(line) }
-    preserved = events.select { |event| event.dig("metadata", "archived_without_run") == true }
-    assert(preserved.length == 1 && preserved.first["content"].include?("TYCHO QUEUE WORK CONTRACT") &&
+    preserved = events.select { |event| event.dig("metadata", "queue_work_delivery_state") == "delivered_or_in_flight" }
+    assert(preserved.length == 1 && preserved.first.dig("metadata", "archived_without_run") == false &&
+           preserved.first["content"].include?("TYCHO QUEUE WORK CONTRACT") &&
            preserved.first["content"].include?("Delegated callback 1") &&
            preserved.first["content"].include?("Delegated callback 2"),
            "expected the full consolidated callback batch in read-only archived history")
