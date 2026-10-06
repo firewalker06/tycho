@@ -765,56 +765,76 @@ module HQ
       ))
     end
 
-    def replace_scheduled_target!(source_key, target, schedule_registry:, schedule_store:, &prepare)
-      with_exclusive_lock do
-        agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
-        source = find_agent_in!(agents, source_key)
-        schedule_key = source.schedule_key.to_s
-        raise ArgumentError, "Agent #{source.key} is not connected to a schedule" if schedule_key.empty?
-        raise ArgumentError, "Stop the running scheduled agent before starting a replacement" if source.running?
-        if source.pending_prompts?
-          raise ArgumentError, "Scheduled session #{source.key.inspect} has queued work; let it drain before replacing it"
-        end
-        if source.inquiry_blocking_prompt_queue?
-          raise ArgumentError, "Scheduled session #{source.key.inspect} has an unresolved inquiry; answer it before replacing it"
-        end
+    def replace_scheduled_target!(source_key, target, schedule_registry:, schedule_store:,
+                                  expected_schedule_key: nil, &prepare)
+      schedule_store.with_lock do
+        with_exclusive_lock do
+          agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
+          source = find_agent_in!(agents, source_key)
+          schedule_key = source.schedule_key.to_s
+          raise ArgumentError, "Agent #{source.key} is not connected to a schedule" if schedule_key.empty?
+          if expected_schedule_key && schedule_key != expected_schedule_key.to_s
+            raise StaleScheduleTarget,
+                  "Agent #{source.key} now belongs to schedule #{schedule_key.inspect}, not #{expected_schedule_key.inspect}"
+          end
+          raise ArgumentError, "Stop the running scheduled agent before starting a replacement" if source.running?
+          if source.pending_prompts?
+            raise ArgumentError, "Scheduled session #{source.key.inspect} has queued work; let it drain before replacing it"
+          end
+          if source.inquiry_blocking_prompt_queue?
+            raise ArgumentError, "Scheduled session #{source.key.inspect} has an unresolved inquiry; answer it before replacing it"
+          end
 
-        schedule = schedule_registry.find(schedule_key)
-        raise ArgumentError, "Schedule #{schedule_key.inspect} no longer exists" unless schedule
+          schedule = schedule_registry.find(schedule_key)
+          raise ArgumentError, "Schedule #{schedule_key.inspect} no longer exists" unless schedule
 
-        states = schedule_store.load
-        state = states[schedule_key]
-        unless state && state.last_target_key.to_s == source.key
-          actual = state&.last_target_key.to_s
-          detail = actual.empty? ? "has no current target" : "now targets agent #{actual.inspect}"
-          raise StaleScheduleTarget, "Schedule #{schedule_key.inspect} #{detail}"
-        end
+          states = schedule_store.load
+          state = states[schedule_key]
+          unless state && state.last_target_key.to_s == source.key
+            actual = state&.last_target_key.to_s
+            detail = actual.empty? ? "has no current target" : "now targets agent #{actual.inspect}"
+            raise StaleScheduleTarget, "Schedule #{schedule_key.inspect} #{detail}"
+          end
 
-        configured_target = schedule.agent_key.to_s
-        unless configured_target.empty? || configured_target == source.key
-          raise StaleScheduleTarget,
-                "Schedule #{schedule_key.inspect} configuration now targets agent #{configured_target.inspect}"
-        end
+          configured_target = schedule.agent_key.to_s
+          unless configured_target.empty? || configured_target == source.key
+            raise StaleScheduleTarget,
+                  "Schedule #{schedule_key.inspect} configuration now targets agent #{configured_target.inspect}"
+          end
 
-        project = project_for(source.project_key)
-        paths = [AGENTS_FILE, schedule_store.path, schedule_registry.path, target.memory_path]
-        FileTransaction.run(paths) do
-          prepare&.call(source, target)
-          source.detach_schedule!(template_key: project&.agent_templates&.first&.key)
-          target.associate_schedule!(schedule_key)
-          state.previous_target_key = source.key
-          state.last_target_key = target.key
-          state.last_target_kind = "agent"
-          schedule_registry.replace_agent_target(
-            schedule_key,
-            expected_agent_key: source.key,
-            replacement_agent_key: target.key
-          ) unless configured_target.empty?
-          agents.unshift(target)
-          save_unlocked(agents)
-          schedule_store.save(states)
+          project = project_for(source.project_key)
+          paths = [
+            AGENTS_FILE,
+            schedule_store.path,
+            schedule_registry.path,
+            target.memory_path,
+            target.pull_request_catalog_path
+          ]
+          FileTransaction.run(paths) do
+            ensure_project_context_prompt!(target, project) if project
+            prepare&.call(source, target)
+            source.detach_schedule!(template_key: project&.agent_templates&.first&.key)
+            adopt_schedule!(
+              target,
+              schedule_key:,
+              name: schedule.name,
+              system_message: schedule.system_message,
+              created_at: target.created_at || Time.now
+            )
+            state.previous_target_key = source.key
+            state.last_target_key = target.key
+            state.last_target_kind = "agent"
+            schedule_registry.replace_agent_target(
+              schedule_key,
+              expected_agent_key: source.key,
+              replacement_agent_key: target.key
+            ) unless configured_target.empty?
+            agents.unshift(target)
+            save_unlocked(agents)
+            schedule_store.save(states)
+          end
+          [source, target, state]
         end
-        [source, target, state]
       end
     end
 

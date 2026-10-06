@@ -1174,9 +1174,25 @@ module RemoteServerTest
         state.mark_paused!
         HQ::ScheduleStore.new.save("warning-loop" => state)
 
+        mismatched_error = begin
+          service.clone_agent(
+            source.key,
+            "replace_schedule_target" => true,
+            "expected_schedule_key" => "different-loop",
+            "context_handoff" => true,
+            "start" => true
+          )
+          nil
+        rescue HQ::RemoteServer::Error => e
+          e
+        end
+        assert(mismatched_error&.status == 409 && service.send(:load_all_agents).length == 1,
+               "expected mismatched Remote replacement intent to return HTTP 409 without cloning")
+
         response = service.clone_agent(
           source.key,
           "replace_schedule_target" => true,
+          "expected_schedule_key" => "warning-loop",
           "context_handoff" => handoff
         )
         replacement_key = response.dig(:agent, :key)
@@ -1198,6 +1214,28 @@ module RemoteServerTest
                "expected Remote context clone to persist the future loop target")
         assert(handoff_events.empty? != handoff,
                "expected only the Remote Start with Handoff mode to add handoff memory")
+
+        artifact_snapshot = Dir.glob(File.join(HQ::AGENT_LOGS_DIR, "**", "*"), File::FNM_DOTMATCH).sort
+        stale_error = begin
+          service.clone_agent(
+            source.key,
+            "replace_schedule_target" => true,
+            "expected_schedule_key" => "warning-loop",
+            "context_handoff" => true,
+            "start" => true
+          )
+          nil
+        rescue HQ::RemoteServer::Error => e
+          e
+        end
+        assert(stale_error&.status == 409,
+               "expected a stale Remote replacement request to return HTTP 409")
+        assert(service.send(:load_all_agents).length == 2,
+               "expected stale Remote replacement intent not to create or start an unscheduled clone")
+        artifact_after = Dir.glob(File.join(HQ::AGENT_LOGS_DIR, "**", "*"), File::FNM_DOTMATCH).sort
+        assert(artifact_after == artifact_snapshot,
+               "expected stale Remote replacement rejection not to leave target artifacts: " \
+               "#{(artifact_after - artifact_snapshot).inspect}")
       ensure
         replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
         replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
@@ -7022,7 +7060,8 @@ module RemoteServerTest
            "expected archive choices to expose clone instead")
     assert(js[:body].include?("mode === \"clone\""),
            "expected Remote UI agent form to support clone mode")
-    assert(js[:body].include?("replace_schedule_target: true"),
+    assert(js[:body].include?("replace_schedule_target: true") &&
+           js[:body].include?("expected_schedule_key: expectedScheduleKey"),
            "expected context-pressure cloning to request one coherent schedule target replacement")
     assert(js[:body].include?("els.headerMorePanel.addEventListener"),
            "expected Agent More menu actions to work from the fixed header panel")

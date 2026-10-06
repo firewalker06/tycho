@@ -9498,6 +9498,40 @@ end
 
 browser = ensure_browser_prerequisites!
 
+def run_schedule_replacement_smoke!(dir:, base_url:, agent_key:, browser:)
+  node_dir = File.join(dir, "node")
+  install_playwright!(node_dir)
+  script = File.join(node_dir, "remote-ui-smoke.js")
+  write_smoke_script(script)
+  smoke_env = {
+    "TYCHO_REMOTE_UI_URL" => base_url,
+    "TYCHO_REMOTE_UI_AGENT_KEY" => agent_key,
+    "TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE" => ENV.fetch("TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE"),
+    "CHROME_PATH" => browser
+  }
+  capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
+  unless capture_dir.empty?
+    expanded_capture_dir = File.expand_path(capture_dir, ROOT)
+    if expanded_capture_dir == ROOT || expanded_capture_dir.start_with?("#{ROOT}/")
+      raise "TYCHO_REMOTE_UI_CAPTURE_DIR must be outside the repository"
+    end
+    smoke_env["TYCHO_REMOTE_UI_CAPTURE_DIR"] = expanded_capture_dir
+  end
+  out, err, status = Open3.capture3(smoke_env, "node", script, chdir: node_dir)
+  puts out unless out.empty?
+  warn err unless err.empty?
+  raise "Schedule replacement browser smoke failed with exit #{status.exitstatus || 1}" unless status.success?
+end
+
+def stop_fixture_server(pid)
+  return unless pid && process_alive?(pid)
+
+  Process.kill("TERM", -pid)
+  Process.wait(pid)
+rescue Errno::ESRCH, Errno::ECHILD
+  nil
+end
+
 Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   fixture = write_fixture(dir)
   github_server, github_thread = start_fake_github_api
@@ -9532,6 +9566,13 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     wait_for_remote(base_url, log_path)
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key = create_agent(base_url)
+    if ENV["TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE"].to_s != ""
+      associate_agent_schedule(fixture.fetch(:logs_dir), agent_key)
+      append_context_pressure_signal(base_url, agent_key)
+      wait_for_resource_agents(base_url, [agent_key])
+      run_schedule_replacement_smoke!(dir:, base_url:, agent_key:, browser:)
+      next
+    end
     write_notification_smoke_fixture(fixture.fetch(:logs_dir), agent_key) if ENV["TYCHO_REMOTE_UI_NOTIFICATION_ONLY"] == "1"
     unscheduled_agent_key = create_agent(base_url, name: "Unscheduled Smoke Agent")
     archived_agent_key = create_agent(base_url, name: "Archived Smoke Agent")
@@ -9565,9 +9606,6 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
         name: "Context Pressure Layout",
         prompt: "Hold the warning while conversation state loads."
       )
-      append_context_pressure_signal(base_url, context_pressure_agent_key)
-    end
-    if ENV["TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE"].to_s != ""
       append_context_pressure_signal(base_url, context_pressure_agent_key)
     end
     queue_agent_key = create_agent(base_url, name: "Blocked Queue Controls", prompt: "QUEUE_SMOKE_HOLD")
@@ -9701,10 +9739,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       exit(status.exitstatus || 1)
     end
   ensure
-    if @server_pid && process_alive?(@server_pid)
-      Process.kill("TERM", -@server_pid)
-      Process.wait(@server_pid)
-    end
+    stop_fixture_server(@server_pid)
     github_server&.close
     github_thread&.join
   end
