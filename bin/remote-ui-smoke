@@ -1117,6 +1117,48 @@ title: !123 value
         }
         await page.setViewportSize({ width: 1440, height: 900 });
 
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(orchestratorAgentKey)}`, { waitUntil: "networkidle" });
+        await page.evaluate(async ({ childKey, parentKey }) => {
+          await apiPost(`/agents/${encodeURIComponent(childKey)}/messages`, {
+            prompt: "Verify line one\\n<script>not markup</script>",
+            parent_agent_key: parentKey,
+            client_request_id: "550e8400-e29b-41d4-a716-446655440010",
+            start: false,
+          });
+        }, { childKey: delegatedAgentKey, parentKey: orchestratorAgentKey });
+        await page.reload({ waitUntil: "networkidle" });
+        await page.waitForFunction(() => Array.from(document.querySelectorAll(".delegation-send-event .delegation-send-message pre"))
+          .some((message) => message.textContent === "Verify line one\\n<script>not markup</script>"), null, { timeout: 10_000 });
+        const sendDesktop = await page.evaluate(() => {
+          const event = Array.from(document.querySelectorAll(".delegation-send-event"))
+            .find((candidate) => candidate.querySelector(".delegation-send-message pre")?.textContent === "Verify line one\\n<script>not markup</script>");
+          return {
+            label: event?.querySelector("strong")?.textContent || "",
+            message: event?.querySelector(".delegation-send-message pre")?.textContent || "",
+            link: event?.querySelector(".agent-reference[href]")?.getAttribute("href") || "",
+            scripts: event?.querySelectorAll("script").length || 0,
+          };
+        });
+        if (sendDesktop.label !== "Message sent" ||
+            sendDesktop.message !== "Verify line one\\n<script>not markup</script>" ||
+            !sendDesktop.link.includes(delegatedAgentKey) || sendDesktop.scripts !== 0) {
+          throw new Error(`Accepted agent-send event did not render safely after reload: ${JSON.stringify(sendDesktop)}`);
+        }
+        if (captureDir) await page.locator(".delegation-send-event").filter({ hasText: "Verify line one" }).screenshot({ path: path.join(captureDir, "agent-send-conversation-desktop.png") });
+        await page.setViewportSize({ width: 390, height: 844 });
+        const sendMobile = await page.evaluate(() => {
+          const event = Array.from(document.querySelectorAll(".delegation-send-event"))
+            .find((candidate) => candidate.querySelector(".delegation-send-message pre")?.textContent === "Verify line one\\n<script>not markup</script>");
+          event?.scrollIntoView({ block: "center" });
+          const rect = event?.getBoundingClientRect();
+          return { left: rect?.left || 0, right: rect?.right || 0, width: rect?.width || 0, viewportWidth: innerWidth };
+        });
+        if (sendMobile.left <= 0 || sendMobile.right > sendMobile.viewportWidth || sendMobile.width >= sendMobile.viewportWidth) {
+          throw new Error(`Accepted agent-send event overflows mobile: ${JSON.stringify(sendMobile)}`);
+        }
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "agent-send-conversation-mobile.png"), fullPage: false });
+        await page.setViewportSize({ width: 1440, height: 900 });
+
         const longMarkdown = [
           "# Complete delegated result",
           "",
