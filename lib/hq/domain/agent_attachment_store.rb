@@ -67,8 +67,11 @@ module HQ
     end
 
     def import_remote_uploads!(uploads, created_at: Time.now, dedupe_key: nil)
-      items = Array(uploads).select { |item| item.is_a?(Hash) }
+      items = Array(uploads)
       return [] if items.empty?
+      unless items.all? { |item| item.is_a?(Hash) }
+        raise ArgumentError, "Attachments must be objects"
+      end
 
       if items.length > MAX_ATTACHMENTS_PER_MESSAGE
         raise ArgumentError, "At most #{MAX_ATTACHMENTS_PER_MESSAGE} attachments can be sent at once"

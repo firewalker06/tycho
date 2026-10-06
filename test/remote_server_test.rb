@@ -2352,6 +2352,71 @@ module RemoteServerTest
         "project_key" => "web", "template_key" => "custom", "name" => "Upload child",
         "prompt" => "Review uploads.", "agent" => "codex", "parent_agent_key" => parent[:key]
       )
+      store = service.instance_variable_get(:@agent_store)
+      start_calls = 0
+      store.define_singleton_method(:start_target!) do |target, _agents, run_metadata:|
+        start_calls += 1
+        target
+      end
+
+      malformed_requests = [
+        {
+          "prompt" => "Malformed non-array upload",
+          "attachments" => "not-an-array",
+          "parent_agent_key" => parent[:key],
+          "start" => true
+        },
+        {
+          "attachments" => ["not-an-object"],
+          "parent_agent_key" => parent[:key],
+          "start" => true
+        },
+        {
+          "prompt" => "Malformed mixed upload",
+          "attachments" => [remote_upload("valid-before-invalid.txt", "must not be written"), "not-an-object"],
+          "parent_agent_key" => parent[:key],
+          "delay" => 60
+        },
+        {
+          "prompt" => "Malformed content upload",
+          "attachments" => [{
+            "filename" => "invalid.txt", "mime_type" => "text/plain", "content_base64" => "not base64"
+          }],
+          "parent_agent_key" => parent[:key],
+          "delay" => 60
+        }
+      ]
+      malformed_requests.each do |request|
+        begin
+          service.submit_prompt(child[:key], request)
+          raise "expected malformed upload rejection"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 400, "expected malformed upload input to return a bad request")
+        end
+      end
+      begin
+        store.accept_or_abort_prompt!(
+          child[:key], prompt: "Upload importer stored no files",
+          actor: HQ::DelegationActor.parent_actor(parent[:key]), event_id: "prompt-arrival:empty-import",
+          start: true, attachment_importer: ->(_target) { [] }
+        )
+        raise "expected empty attachment import rejection"
+      rescue ArgumentError => e
+        assert(e.message.include?("At least one attachment must be stored"),
+               "expected acceptance to require a stored attachment")
+      end
+      rejected_payload = service.agent(child[:key])
+      rejected_conversation = service.conversation(child[:key])
+      assert(start_calls.zero? && Array(rejected_payload[:queued_prompts]).empty?,
+             "expected malformed uploads not to start a harness or queue work")
+      assert(remote_upload_files(child[:key]).empty?,
+             "expected malformed uploads not to create asset files")
+      rejected_text = malformed_requests.filter_map { |request| request["prompt"] }
+      rejected_text << "Upload importer stored no files"
+      assert(rejected_conversation.none? { |event| rejected_text.include?(event[:content]) } &&
+             rejected_conversation.none? { |event| event[:content] == "Please review the attached files." },
+             "expected malformed uploads not to create prompt evidence")
+
       unauthorized_upload = remote_upload("unauthorized.txt", "must not be written")
 
       begin
@@ -2372,6 +2437,23 @@ module RemoteServerTest
       )
       files_after_accept = remote_upload_files(child[:key])
       bytes_after_accept = files_after_accept.to_h { |path| [path, File.binread(path)] }
+      attachment_only_message = first[:conversation].reverse.find do |event|
+        event[:content] == "Please review the attached files."
+      end
+      assert(files_after_accept.length == 1 && attachment_only_message &&
+             Array(attachment_only_message.dig(:metadata, "attachments")).length == 1,
+             "expected valid attachment-only input to store a file before acceptance")
+
+      valid_text = service.submit_prompt(
+        child[:key], "prompt" => "Valid text without attachments", "parent_agent_key" => parent[:key]
+      )
+      text_message = valid_text[:conversation].reverse.find do |event|
+        event[:content] == "Valid text without attachments"
+      end
+      assert(text_message && Array(text_message.dig(:metadata, "attachments")).empty? &&
+             remote_upload_files(child[:key]) == files_after_accept,
+             "expected valid text-only input to remain accepted without file side effects")
+
       replay = service.submit_prompt(
         child[:key], "attachments" => [remote_upload("changed.txt", "replay bytes")],
         "parent_agent_key" => parent[:key], "client_request_id" => request_id

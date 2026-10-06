@@ -776,10 +776,11 @@ module HQ
                                        parent_server_id:, attachment_importer:, transaction:)
       ensure_prompt_delegation_unlocked!(target, agents, actor:, parent_server_id:)
       if attachment_importer
-        attachments = attachment_importer.call(target)
+        attachments = Array(attachment_importer.call(target))
         transaction.on_rollback do
           AgentAttachmentStore.new(target).remove_remote_uploads!(attachments)
         end
+        raise ArgumentError, "At least one attachment must be stored" if attachments.empty?
       end
       metadata = message_metadata.is_a?(Hash) ? message_metadata.dup : {}
       metadata["prompt_arrival_event_id"] = event_id unless event_id.to_s.empty?

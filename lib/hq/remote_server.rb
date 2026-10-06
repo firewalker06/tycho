@@ -3155,7 +3155,7 @@ module HQ
       reference = find_agent_reference!(key)
       pull_request_context = render_prompt_pull_request_contexts(reference, attrs)
       request_id = prompt_client_request_id(attrs)
-      uploads = attrs["attachments"].is_a?(Array) ? attrs["attachments"] : []
+      uploads = prompt_uploads(attrs)
       text = prompt_text(attrs, attachments: uploads)
       text = [text, pull_request_context].reject(&:empty?).join("\n")
       event_id = request_id ? "prompt-arrival:#{request_id}" : "prompt-arrival:#{SecureRandom.uuid}"
@@ -4699,6 +4699,18 @@ module HQ
       return "Please review the attached files." if attachments.any?
 
       raise Error.new("prompt is required")
+    end
+
+    def prompt_uploads(attrs)
+      return [] unless attrs.key?("attachments")
+
+      uploads = attrs["attachments"]
+      raise Error.new("attachments must be an array", status: 400) unless uploads.is_a?(Array)
+      unless uploads.all? { |upload| upload.is_a?(Hash) }
+        raise Error.new("attachments must contain only objects", status: 400)
+      end
+
+      uploads
     end
 
     def render_prompt_pull_request_contexts(target, attrs)
