@@ -27,7 +27,32 @@ module RemoteUIAssetSnapshotTest
     assert_pull_request_comment_sections_are_unlimited
     assert_detail_composer_submissions_are_optimistic
     assert_non_assistant_conversation_blocks_are_quiet
+    assert_markdown_frontmatter_preserves_document_body
     puts "remote_ui_asset_snapshot_test: ok"
+  end
+
+  def assert_markdown_frontmatter_preserves_document_body
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
+
+    required = [
+      "function splitMarkdownFrontmatter(text)",
+      'source.startsWith("---\n")',
+      'lines[index] === "---" || lines[index] === "..."',
+      "if (metadata.length !== closingIndex - 1 || metadata.length === 0) return { source, metadata: [] };",
+      "if (!value || /^[!&*]/.test(value)",
+      "function renderMarkdownFrontmatter(metadata)",
+      'aria-label="Document metadata"',
+      "window.marked.parse(document.source",
+      "renderMarkdownFrontmatter(document.metadata)",
+    ]
+    missing = required.reject { |fragment| javascript.include?(fragment) }
+    raise "missing safe Markdown frontmatter contract: #{missing.join(', ')}" unless missing.empty?
+
+    %w[.markdown-frontmatter .markdown-frontmatter-row .markdown-frontmatter\ dd].each do |selector|
+      raise "missing Markdown frontmatter styling for #{selector}" unless css.include?(selector)
+    end
+    raise "frontmatter metadata must stack on narrow screens" unless css.include?("@media (max-width: 520px)")
   end
 
   def assert_detail_composer_submissions_are_optimistic
