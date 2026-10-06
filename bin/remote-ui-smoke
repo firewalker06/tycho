@@ -588,6 +588,8 @@ def write_smoke_script(path)
       const prDiffManagementOnly = process.env.TYCHO_REMOTE_UI_PR_DIFF_MANAGEMENT_ONLY === "1";
       const queueControlsOnly = process.env.TYCHO_REMOTE_UI_QUEUE_CONTROLS_ONLY === "1";
       const notificationOnly = process.env.TYCHO_REMOTE_UI_NOTIFICATION_ONLY === "1";
+      const markdownFrontmatterOnly = process.env.TYCHO_REMOTE_UI_MARKDOWN_FRONTMATTER_ONLY === "1";
+      const markdownFixturePath = process.env.TYCHO_REMOTE_UI_MARKDOWN_FIXTURE;
       const queueAgentKey = process.env.TYCHO_REMOTE_UI_QUEUE_AGENT_KEY;
       const queueBulkAgentKey = process.env.TYCHO_REMOTE_UI_QUEUE_BULK_AGENT_KEY;
       const queueProcessAllAgentKey = process.env.TYCHO_REMOTE_UI_QUEUE_PROCESS_ALL_AGENT_KEY;
@@ -606,6 +608,87 @@ def write_smoke_script(path)
         if (message.type() === "error") errors.push(message.text());
       });
       page.on("pageerror", (error) => errors.push(error.message));
+
+      async function assertMarkdownFrontmatterRendering() {
+        const fixture = fs.readFileSync(markdownFixturePath, "utf8");
+        const rejectedSource = `---
+title: !123 value
+---`;
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
+        await page.evaluate(async () => { await ensureMarkdownParserLoaded(); });
+        const contract = await page.evaluate((trackedFixture) => {
+          const fence = String.fromCharCode(96).repeat(3);
+          const accepted = `---\ntitle: "Safe punctuation, ] } @ ? - # !"\ncount: 42\n---\n# Heading\n\n- outer\n  - nested\n\n1. first\n\n---\n\n${fence}ruby\nputs :safe\n${fence}\n`;
+          const rejectedSource = `---
+title: !123 value
+---`;
+          const rejected = `${rejectedSource}\n## Formatted body\n\n- outer\n  - nested\n\n1. first\n\n---\n\n${fence}ruby\nputs :safe\n${fence}\n`;
+          const hostile = `# Safe heading
+
+<img src=x onerror=alert(1)>
+<script>window.SMOKE_XSS = true</script>
+`;
+          const parsedFixture = splitMarkdownFrontmatter(trackedFixture);
+          const acceptedHtml = renderMarkdown(accepted);
+          const rejectedHtml = renderMarkdown(rejected);
+          const hostileHtml = renderMarkdown(hostile);
+          const acceptedDocument = new DOMParser().parseFromString(acceptedHtml, "text/html");
+          const rejectedDocument = new DOMParser().parseFromString(rejectedHtml, "text/html");
+          const hostileDocument = new DOMParser().parseFromString(hostileHtml, "text/html");
+          return {
+            fixture: {
+              metadata: parsedFixture.metadata.length,
+              list: new DOMParser().parseFromString(renderMarkdown(trackedFixture), "text/html").querySelectorAll("ul > li").length,
+            },
+            accepted: {
+              metadata: acceptedDocument.querySelectorAll(".markdown-frontmatter-row").length,
+              heading: acceptedDocument.querySelectorAll("h1").length,
+              unordered: acceptedDocument.querySelectorAll("ul").length,
+              nested: acceptedDocument.querySelectorAll("ul ul").length,
+              ordered: acceptedDocument.querySelectorAll("ol").length,
+              rule: acceptedDocument.querySelectorAll("hr").length,
+              code: acceptedDocument.querySelectorAll("pre > code.language-ruby").length,
+            },
+            rejected: {
+              metadata: rejectedDocument.querySelectorAll(".markdown-frontmatter-row").length,
+              source: rejectedDocument.querySelector(".markdown-frontmatter-rejected")?.textContent,
+              heading: rejectedDocument.querySelectorAll("h2").length,
+              unordered: rejectedDocument.querySelectorAll("ul").length,
+              nested: rejectedDocument.querySelectorAll("ul ul").length,
+              ordered: rejectedDocument.querySelectorAll("ol").length,
+              rule: rejectedDocument.querySelectorAll("hr").length,
+              code: rejectedDocument.querySelectorAll("pre > code.language-ruby").length,
+            },
+            hostile: {
+              image: hostileDocument.querySelectorAll("img").length,
+              script: hostileDocument.querySelectorAll("script").length,
+              executed: window.SMOKE_XSS === true,
+            },
+            unsupported: ["!", "&", "*", "%TAG ! tag:example.test,2026:"].map((value) =>
+              splitMarkdownFrontmatter(`---\ntitle: ${value}\n---\n# Body\n`).frontmatterRejected
+            ),
+          };
+        }, fixture);
+        if (contract.fixture.metadata !== 9 || contract.fixture.list < 2 ||
+            contract.accepted.metadata !== 2 || contract.accepted.heading !== 1 ||
+            contract.accepted.unordered < 2 || contract.accepted.nested !== 1 ||
+            contract.accepted.ordered !== 1 || contract.accepted.rule !== 1 || contract.accepted.code !== 1 ||
+            contract.rejected.metadata !== 0 || contract.rejected.source !== rejectedSource ||
+            contract.rejected.heading !== 1 || contract.rejected.unordered < 2 || contract.rejected.nested !== 1 ||
+            contract.rejected.ordered !== 1 || contract.rejected.rule !== 1 || contract.rejected.code !== 1 ||
+            contract.hostile.image !== 0 || contract.hostile.script !== 0 || contract.hostile.executed ||
+            contract.unsupported.some((rejected) => !rejected)) {
+          throw new Error(`Markdown frontmatter browser contract failed: ${JSON.stringify(contract)}`);
+        }
+      }
+
+      if (markdownFrontmatterOnly) {
+        await assertMarkdownFrontmatterRendering();
+        console.log("remote-ui-smoke: markdown frontmatter ok");
+        await browser.close();
+        return;
+      }
 
       async function assertAttachmentOriginalFilenameDownload() {
         await page.setViewportSize({ width: 1440, height: 900 });
@@ -9462,6 +9545,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     }
     if ENV["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"].to_s == "1"
       smoke_env["TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY"] = "1"
+    end
+    if ENV["TYCHO_REMOTE_UI_MARKDOWN_FRONTMATTER_ONLY"].to_s == "1"
+      smoke_env["TYCHO_REMOTE_UI_MARKDOWN_FRONTMATTER_ONLY"] = "1"
+      smoke_env["TYCHO_REMOTE_UI_MARKDOWN_FIXTURE"] = File.join(ROOT, "test", "fixtures", "markdown", "pr-review-frontmatter.md")
     end
     if ENV["TYCHO_REMOTE_UI_SUMMARY_ATTACHMENTS_ONLY"].to_s == "1"
       smoke_env["TYCHO_REMOTE_UI_SUMMARY_ATTACHMENTS_ONLY"] = "1"

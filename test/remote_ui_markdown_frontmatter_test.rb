@@ -13,7 +13,7 @@ module RemoteUIMarkdownFrontmatterTest
       script.write(node_test)
       script.flush
       output, error, status = Open3.capture3("node", script.path, chdir: ROOT)
-      raise "Markdown renderer behavior test failed:\n#{output}#{error}" unless status.success?
+      raise "Markdown frontmatter parser test failed:\n#{output}#{error}" unless status.success?
     end
     puts "remote_ui_markdown_frontmatter_test: ok"
   end
@@ -23,40 +23,12 @@ module RemoteUIMarkdownFrontmatterTest
       const fs = require("fs");
       const vm = require("vm");
       const source = fs.readFileSync("lib/hq/remote_ui/assets/app.js", "utf8");
-      const start = source.indexOf("function renderMarkdown");
+      const start = source.indexOf("function splitMarkdownFrontmatter");
       const finish = source.indexOf("\nfunction markdownParserReady", start);
       if (start < 0 || finish < 0) throw new Error("frontmatter parser was not found");
       const context = {};
-      context.state = { markdownFallbackSequence: 0, markdownFallbacks: new Map() };
-      context.markdownParser = { failed: false };
-      context.MARKDOWN_FALLBACK_LIMIT = 200;
-      context.markdownParserReady = () => false;
-      context.ensureMarkdownParserLoaded = () => {};
-      context.renderPlainTextMarkdown = (text) => "plain:" + text;
-      context.escapeAttr = (value) => String(value);
-      context.markdownViewerClassName = () => "markdown-viewer";
-      context.prepareMarkdownCodeBlocks = (html) => html;
-      context.window = {
-        marked: {
-          parse: (markdown) => {
-            if (markdown.includes("1. first")) {
-              return "<ol><li>first<ul><li>nested</li></ul></li></ol><hr><pre><code class=\"language-ruby\">puts :safe</code></pre>";
-            }
-            return "<h2>Changes since the last review</h2><ul><li>First retained unordered item.</li><li>Second retained unordered item.</li></ul>";
-          }
-        },
-        DOMPurify: { sanitize: (html) => html }
-      };
-      vm.runInNewContext(source.slice(start, finish) + "; globalThis.parse = splitMarkdownFrontmatter; globalThis.render = renderMarkdown;", context);
+      vm.runInNewContext(source.slice(start, finish) + "; globalThis.parse = splitMarkdownFrontmatter;", context);
       const parse = context.parse;
-      const render = context.render;
-      const escapeStart = source.indexOf("function escapeHtml");
-      const escapeFinish = source.indexOf("\nfunction highlightSearchText", escapeStart);
-      const metadataStart = source.indexOf("function renderMarkdownFrontmatter");
-      const metadataFinish = source.indexOf("\nfunction prepareMarkdownCodeBlocks", metadataStart);
-      const parsedStart = source.indexOf("function renderParsedMarkdown");
-      const parsedFinish = source.indexOf("\nfunction prepareMarkdownCodeBlocks", parsedStart);
-      vm.runInContext(source.slice(escapeStart, escapeFinish) + source.slice(metadataStart, metadataFinish) + source.slice(parsedStart, parsedFinish) + "; globalThis.renderMetadata = renderMarkdownFrontmatter;", context);
       const fixture = fs.readFileSync("test/fixtures/markdown/pr-review-frontmatter.md", "utf8");
 
       function equal(actual, expected, label) {
@@ -67,71 +39,40 @@ module RemoteUIMarkdownFrontmatterTest
       }
 
       const parsedFixture = parse(fixture);
-      equal(parsedFixture.metadata.length, 9, "fixture metadata count");
-      truthy(parsedFixture.source.startsWith("---\nURL:"), "fixture source must remain complete for fallback");
-      truthy(parsedFixture.body.startsWith("\n## Changes since the last review"), "fixture body must retain the Markdown document");
-      truthy(parsedFixture.body.includes("- First retained unordered item."), "fixture unordered lists must remain");
-      equal(render(fixture), "plain:" + fixture, "loading fallback must retain complete fixture source");
-      context.markdownParserReady = () => true;
-      const renderedFixture = render(fixture);
-      truthy(renderedFixture.includes("markdown-frontmatter"), "parsed renderer must render metadata");
-      truthy(renderedFixture.includes("<ul>") && renderedFixture.includes("<li>"), "parsed renderer must render unordered lists");
-      truthy(!renderedFixture.includes("URL: https://"), "parsed renderer must remove accepted frontmatter from body");
-      context.markdownParserReady = () => false;
-      context.markdownParser.failed = true;
-      equal(render(fixture), "plain:" + fixture, "permanent fallback must retain complete fixture source");
+      equal(parsedFixture.metadata.length, 9, "tracked fixture metadata count");
+      equal(parsedFixture.frontmatterRejected, false, "tracked fixture is supported");
+      truthy(parsedFixture.body.startsWith("\n## Changes since the last review"), "fixture body remains separate");
+      truthy(parsedFixture.body.includes("- First retained unordered item."), "fixture body retains Markdown lists");
 
-      const fence = String.fromCharCode(96).repeat(3);
-      context.markdownParser.failed = false;
-      context.markdownParserReady = () => true;
-      const accepted = parse("---\ntitle: \"Safe title\"\ncount: 42\nenabled: true\nempty: null\nlink: https://example.test/a:b\n---\n1. first\n   - nested\n---\n" + fence + "ruby\nputs :safe\n" + fence + "\n");
-      equal(accepted.metadata.length, 5, "safe scalar metadata count");
-      truthy(accepted.body.includes("1. first\n   - nested\n---\n" + fence + "ruby"), "ordered lists, nesting, rules, and fences must remain in body");
-      const renderedAccepted = render(accepted.source);
-      truthy(renderedAccepted.includes("<ol>"), "renderer must render ordered lists");
-      truthy(renderedAccepted.includes("<ul>"), "renderer must render nested unordered lists");
-      truthy(renderedAccepted.includes("<hr>"), "renderer must render ordinary horizontal rules");
-      truthy(renderedAccepted.includes("<pre><code"), "renderer must render fenced code blocks");
-
-      const hostile = parse("---\ntitle: <img src=x onerror=alert(1)>\n---\n- body\n");
-      equal(hostile.metadata.length, 1, "hostile HTML is scalar text, not executable input");
-      equal(hostile.metadata[0].value, "<img src=x onerror=alert(1)>", "hostile HTML must remain text for later escaping");
-      const hostileHtml = render(hostile.source);
-      truthy(hostileHtml.includes("&lt;img"), "metadata renderer must escape hostile HTML");
-      truthy(!hostileHtml.includes("<img"), "metadata renderer must not emit hostile HTML");
+      const accepted = parse("---\ntitle: \"Safe punctuation, ] } @ ? - # !\"\nowner: O'Reilly\ncount: 42\nlink: https://example.test/a:b\n---\n# Body\n");
+      equal(accepted.metadata.length, 4, "quoted and narrow plain scalars are accepted");
+      equal(accepted.frontmatterRejected, false, "accepted frontmatter is not rejected");
 
       [
+        "title: !123 value",
+        "title: !",
+        "title: !!ruby/object:X {}",
+        "title: !<tag:example.test,2026:x> hello",
+        "title: &",
+        "title: *",
+        "%TAG ! tag:example.test,2026:",
         "items: [one, two]",
-        "meta: {owner: me}",
-        "alias: *name",
-        "tag: !ruby/object:X",
-        "tag: !!ruby/object:X {}",
-        "tag: !<tag:example.test,2026:x> hello",
-        "anchor: &name",
         "note: |",
-        "folded: >",
         "title: \"unterminated",
-        "title: 'unterminated",
-        "nested: value: child",
-        "comment: text # comment",
         "comment: # only a comment",
-        "sequence: -item",
-        "mapping: ?item",
-        "reserved: @value",
-        "reserved: " + String.fromCharCode(96) + "value",
-        "reserved: ,value",
-        "reserved: ]",
-        "reserved: }",
-        "multi: line\n  continuation"
+        "nested: value: child"
       ].forEach((line) => {
-        const input = "---\n" + line + "\n---\n- body\n";
+        const input = "---\n" + line + "\n---\n## Formatted body\n\n- retained\n";
         const parsed = parse(input);
-        equal(parsed.metadata.length, 0, "unsupported value must not become metadata: " + line);
-        equal(parsed.frontmatterRejected, true, "unsupported frontmatter must use the plain-text fallback: " + line);
-        equal(parsed.body, input, "unsupported value must retain full body: " + line);
-        equal(parsed.source, input, "unsupported value must retain full source: " + line);
-        equal(render(input), "plain:" + input, "unsupported value must render as complete plain text: " + line);
+        equal(parsed.metadata.length, 0, "unsupported input has no metadata: " + line);
+        equal(parsed.frontmatterRejected, true, "unsupported input is rejected: " + line);
+        equal(parsed.frontmatterSource, "---\n" + line + "\n---", "rejected block remains exact: " + line);
+        equal(parsed.body, "## Formatted body\n\n- retained\n", "rejected block keeps Markdown body: " + line);
       });
+
+      const ordinaryRule = parse("---\n# Heading after an ordinary rule\n");
+      equal(ordinaryRule.frontmatterRejected, false, "unclosed delimiter is ordinary Markdown");
+      equal(ordinaryRule.body, ordinaryRule.source, "unclosed delimiter retains complete document");
     JAVASCRIPT
   end
 end

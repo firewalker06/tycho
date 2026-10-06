@@ -6274,6 +6274,19 @@ details.queue-read-block:not([open]) > .queue-read-body {
   overflow-wrap: anywhere;
 }
 
+.markdown-frontmatter-rejected {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0 0 16px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, var(--panel-soft));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-soft) 42%, transparent);
+  padding: 10px;
+  color: var(--text);
+  font: 12px/1.5 ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 520px) {
   .markdown-frontmatter-row {
     grid-template-columns: 1fr;
