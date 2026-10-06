@@ -37,6 +37,23 @@ brew tap firewalker06/tycho
 brew install tycho
 ```
 
+## Internal agent runners must not activate user gems
+
+Clearing `GEM_HOME`, `GEM_PATH`, and Bundler loader settings does not stop
+RubyGems from searching its default user directory. When mise and Homebrew
+Rubies share a Ruby API version, that directory can contain a JSON native
+extension linked to the other Ruby's library. The Tycho stream recorder then
+fails with `LoadError: linked to incompatible ... libruby ... parser.bundle`
+before the agent harness starts, even when the Bundler-loaded server works.
+
+Launch both the stream recorder and structured-output correction runner with
+`--disable-gems`. These internal processes use Ruby's shipped libraries and
+Tycho code. Keep the option in their command arguments, not `RUBYOPT`, so the
+actual harness and its subprocesses retain normal gem activation and explicit
+profile environment overrides. Regression coverage lives in
+`assert_internal_runners_ignore_incompatible_json_gems` in
+`test/managed_agent_test.rb`.
+
 ## Charm Ruby textarea cursor
 
 `Bubbles::TextArea` uses a `Bubbles::Cursor` internally.

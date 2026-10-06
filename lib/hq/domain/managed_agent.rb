@@ -1133,7 +1133,7 @@ module HQ
           "TYCHO_RUN_ID" => run.run_id,
           "TYCHO_SLEEP_INCIDENT_PATH" => sleep_incident_file_path(run.run_id)
         ),
-        current_ruby_executable, "-e", agent_runner_script, *launch.fetch(:command),
+        current_ruby_executable, "--disable-gems", "-e", agent_runner_script, *launch.fetch(:command),
         chdir: @workspace, out: log_file, err: %i[child out], pgroup: true
       )
       log_file.close
@@ -1797,6 +1797,7 @@ module HQ
       }
       runner_command = [
         current_ruby_executable,
+        "--disable-gems",
         "-I", File.expand_path("../..", __dir__),
         "-r", "hq/domain/agent_correction_runner",
         "-e", "HQ::AgentCorrectionRunner.run_from_environment!"

@@ -58,6 +58,7 @@ module ManagedAgentTest
     assert_poll_stops_stale_unstructured_output
     assert_poll_preserves_stale_structured_output
     assert_external_process_environment_removes_ruby_loader_state
+    assert_internal_runners_ignore_incompatible_json_gems
     assert_start_spawns_harness_through_validation_runner
     assert_running_harness_persists_assistant_messages_incrementally
     assert_started_agent_persists_status_after_launcher_exits
@@ -2278,6 +2279,7 @@ module ManagedAgentTest
       agent.send(:external_process_environment, {}),
       [
         RbConfig.ruby,
+        "--disable-gems",
         "-I", File.expand_path("../lib", __dir__),
         "-r", "hq/domain/agent_correction_runner",
         "-e", 'STDOUT.write("runner-loaded")'
@@ -2287,6 +2289,81 @@ module ManagedAgentTest
     )
     assert($?.success? && runner_output == "runner-loaded",
            "expected sanitized environment to execute the correction runner, got #{runner_output.inspect}")
+  end
+
+  def assert_internal_runners_ignore_incompatible_json_gems
+    old_harnesses = HQ.custom_harnesses
+    Dir.mktmpdir("hq-incompatible-json-test") do |dir|
+      gem_home = File.join(dir, "gems")
+      { "json" => "raise LoadError, \"linked to incompatible libruby - json/ext/parser.bundle\"",
+        "runner_probe" => "RUNNER_PROBE = \"harness gems loaded\"" }.each do |name, source|
+        library = File.join(gem_home, "gems", "#{name}-999.0.0", "lib")
+        FileUtils.mkdir_p(library)
+        FileUtils.mkdir_p(File.join(gem_home, "specifications"))
+        File.write(File.join(library, "#{name}.rb"), source)
+        File.write(File.join(gem_home, "specifications", "#{name}-999.0.0.gemspec"), <<~RUBY)
+          Gem::Specification.new do |spec|
+            spec.name = #{name.inspect}
+            spec.version = "999.0.0"
+            spec.summary = "Runner isolation regression fixture"
+            spec.authors = ["Tycho test"]
+            spec.files = ["lib/#{name}.rb"]
+            spec.require_paths = ["lib"]
+          end
+        RUBY
+      end
+
+      env = { "GEM_HOME" => gem_home, "GEM_PATH" => gem_home }
+      output = IO.popen(
+        HQ::HarnessExecution.environment(env),
+        [RbConfig.ruby, "-rjson", "-e", "exit 0"], err: %i[child out], &:read
+      )
+      assert(!$?.success? && output.include?("linked to incompatible libruby"),
+             "expected fixture to reproduce the incompatible JSON LoadError, got #{output.inspect}")
+
+      event = JSON.generate(
+        "type" => "assistant", "session_id" => "isolated-json-session",
+        "message" => { "role" => "assistant", "content" => [
+          { "type" => "tool_use", "name" => "StructuredOutput", "input" => {
+            "status" => "success", "summary" => "Harness gems loaded through both isolated runners.",
+            "summary_sections_json" => "null", "inquiry_json" => "null",
+            "attachments_json" => "null", "memory_handoff" => nil
+          } }
+        ] }
+      )
+      harness = File.join(dir, "harness.rb")
+      File.write(harness, <<~RUBY)
+        require "runner_probe"
+        abort "harness lost RubyGems" unless defined?(Gem) && RUNNER_PROBE == "harness gems loaded"
+        abort "server credentials leaked" if ENV["TYCHO_GITHUB_TOKEN"] || ENV["TYCHO_REMOTE_TOKEN"]
+        STDOUT.puts(#{event.inspect})
+      RUBY
+      HQ.custom_harnesses = [HQ::HarnessConfig.new(
+        key: "isolated-json", adapter: "claude",
+        execution_command: ["env", "GEM_HOME=#{gem_home}", "GEM_PATH=#{gem_home}", RbConfig.ruby, harness]
+      )]
+      agent = HQ::ManagedAgent.new(
+        key: "isolated-json-agent", name: "Isolated JSON", project_key: "demo", template_key: "custom",
+        workspace: dir, prompt: "Test runner isolation", agent: "isolated-json",
+        log_path: File.join(dir, "agent.raw.log")
+      )
+      agent.start!
+      50.times do
+        break unless agent.running?
+
+        sleep 0.1
+        agent.poll!
+      end
+      agent.poll!
+      log = File.read(agent.log_path)
+      assert(agent.last_exit_code == 0, "expected both runners to ignore incompatible JSON, log: #{log}")
+      assert(agent.structured_result&.fetch("status") == "success",
+             "expected correction runner to validate harness output")
+      assert(agent.messages.any? { |message| message.content.include?("Harness gems loaded") },
+             "expected stream recorder to persist harness output")
+    end
+  ensure
+    HQ.custom_harnesses = old_harnesses if defined?(old_harnesses)
   end
 
   def assert_start_spawns_harness_through_validation_runner
