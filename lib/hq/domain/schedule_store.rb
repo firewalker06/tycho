@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "fileutils"
 require "time"
 
 require_relative "constants"
@@ -186,10 +187,45 @@ module HQ
 
     attr_reader :path
 
+    class << self
+      def lock_mutex_for(path)
+        @lock_registry_mutex ||= Mutex.new
+        @lock_registry_mutex.synchronize do
+          @lock_mutexes ||= {}
+          @lock_mutexes[path] ||= Mutex.new
+        end
+      end
+    end
+
     def initialize(path: SCHEDULES_STATE_FILE, daemon_path: SCHEDULER_DAEMON_FILE, process_detector: nil)
       @path = path
       @daemon_path = daemon_path
       @process_detector = process_detector
+    end
+
+    def with_lock
+      lock_path = "#{File.expand_path(@path)}.lock"
+      depths = Thread.current[:hq_schedule_store_lock_depths] ||= Hash.new(0)
+      if depths[lock_path].positive?
+        depths[lock_path] += 1
+        begin
+          return yield
+        ensure
+          depths[lock_path] -= 1
+        end
+      end
+
+      self.class.lock_mutex_for(lock_path).synchronize do
+        FileUtils.mkdir_p(File.dirname(lock_path))
+        File.open(lock_path, File::RDWR | File::CREAT, 0o600) do |file|
+          file.flock(File::LOCK_EX)
+          depths[lock_path] = 1
+          yield
+        ensure
+          depths.delete(lock_path)
+          file&.flock(File::LOCK_UN)
+        end
+      end
     end
 
     def load

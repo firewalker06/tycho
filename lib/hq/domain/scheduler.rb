@@ -33,9 +33,13 @@ module HQ
                    push_notification_store: PushNotificationStore.new, web_push_notifier: nil)
       @registry = registry
       @projects = registry.projects.map { |config| Project.new(config) }
-      @agent_store = AgentStore.new(@projects)
-      @schedule_registry = schedule_registry || ScheduleRegistry.new(projects: @projects, harness_catalogs: registry.harness_catalogs)
       @store = store
+      @agent_store = AgentStore.new(@projects)
+      @schedule_registry = schedule_registry || ScheduleRegistry.new(
+        projects: @projects,
+        harness_catalogs: registry.harness_catalogs,
+        store:
+      )
       @push_notification_store = push_notification_store
       @web_push_notifier = web_push_notifier || WebPushNotifier.new
     end
@@ -46,21 +50,23 @@ module HQ
     end
 
     def list(now: Time.now)
-      schedules = schedule_registry.schedules
-      states = store.load
-      agents = load_agents
-      changed = false
-      rows = schedules.map do |schedule|
-        state = store.state_for(states, schedule.key)
-        changed = if expire_schedule!(schedule, state, now:)
-                    true
-                  else
-                    ensure_next_due!(schedule, state, now:) || changed
-                  end
-        schedule_payload(schedule, state, agent: last_agent(schedule, state, agents))
+      store.with_lock do
+        schedules = schedule_registry.schedules
+        states = store.load
+        agents = load_agents
+        changed = false
+        rows = schedules.map do |schedule|
+          state = store.state_for(states, schedule.key)
+          changed = if expire_schedule!(schedule, state, now:)
+                      true
+                    else
+                      ensure_next_due!(schedule, state, now:) || changed
+                    end
+          schedule_payload(schedule, state, agent: last_agent(schedule, state, agents))
+        end
+        store.save(states) if changed
+        rows
       end
-      store.save(states) if changed
-      rows
     end
 
     def daemon_state(now: Time.now)
@@ -68,22 +74,26 @@ module HQ
     end
 
     def pause(key, now: Time.now)
-      schedule = find_schedule!(key)
-      states = store.load
-      state = store.state_for(states, schedule.key)
-      state.mark_paused!(now:)
-      store.save(states)
-      schedule_payload(schedule, state)
+      store.with_lock do
+        schedule = find_schedule!(key)
+        states = store.load
+        state = store.state_for(states, schedule.key)
+        state.mark_paused!(now:)
+        store.save(states)
+        schedule_payload(schedule, state)
+      end
     end
 
     def resume(key, now: Time.now)
-      schedule = find_schedule!(key)
-      states = store.load
-      state = store.state_for(states, schedule.key)
-      ensure_not_expired!(schedule, state, states, now:)
-      resume_state!(schedule, state, now:)
-      store.save(states)
-      { status: :resumed, schedule: schedule_payload(schedule, state) }
+      store.with_lock do
+        schedule = find_schedule!(key)
+        states = store.load
+        state = store.state_for(states, schedule.key)
+        ensure_not_expired!(schedule, state, states, now:)
+        resume_state!(schedule, state, now:)
+        store.save(states)
+        { status: :resumed, schedule: schedule_payload(schedule, state) }
+      end
     end
 
     # Re-enable only schedules that this scheduler explicitly stopped while their
@@ -93,59 +103,91 @@ module HQ
       key = agent_key.to_s
       return [] if key.empty?
 
-      states = store.load
-      resumed = schedule_registry.schedules.filter_map do |schedule|
-        state = states[schedule.key]
-        next unless state&.stopped_for_awaiting_input?
-        next unless state.last_target_key.to_s == key
+      store.with_lock do
+        states = store.load
+        resumed = schedule_registry.schedules.filter_map do |schedule|
+          state = states[schedule.key]
+          next unless state&.stopped_for_awaiting_input?
+          next unless state.last_target_key.to_s == key
 
-        resume_state!(schedule, state, now:, reason: "user_message")
-        schedule_payload(schedule, state)
+          resume_state!(schedule, state, now:, reason: "user_message")
+          schedule_payload(schedule, state)
+        end
+        store.save(states) if resumed.any?
+        resumed
       end
-      store.save(states) if resumed.any?
-      resumed
     rescue ScheduleRegistry::Error => e
       HQ.logger.warn("Scheduler") { "Skipped auto-resume after user message: #{e.message}" }
       []
     end
 
     def resume_and_run_now(key, now: Time.now, dry_run: false)
-      schedule, states, state = schedule_state_for(key)
-      ensure_not_expired!(schedule, state, states, now:)
-      resume_state!(schedule, state, now:)
-      dispatch_and_persist_schedule(schedule, states, state, now:, dry_run:)
+      store.with_lock do
+        schedule, states, state = schedule_state_for(key)
+        ensure_not_expired!(schedule, state, states, now:)
+        resume_state!(schedule, state, now:)
+        dispatch_and_persist_schedule(schedule, states, state, now:, dry_run:)
+      end
     end
 
     def refresh_session(key, now: Time.now)
-      schedule, states, state = schedule_state_for(key)
-      ensure_not_expired!(schedule, state, states, now:)
-      target = last_agent(schedule, state, load_agents(dispatch_prompt_queues: false))
-      if target
-        if target.pending_prompts?
-          raise RefreshError, "Scheduled session #{target.key.inspect} has queued prompts; let them drain before refreshing"
+      store.with_lock do
+        schedule, states, state = schedule_state_for(key)
+        ensure_not_expired!(schedule, state, states, now:)
+        target = last_agent(schedule, state, load_agents(dispatch_prompt_queues: false))
+        if target
+          if target.pending_prompts?
+            raise RefreshError, "Scheduled session #{target.key.inspect} has queued prompts; let them drain before refreshing"
+          end
+          stop_scheduled_session!(target) if target.running?
+          @agent_store.archive_agent!(target.key)
+          reconcile_archived_agent!(target.key, archived_agent: target, now:)
         end
-        stop_scheduled_session!(target) if target.running?
-        @agent_store.archive_agent!(target.key)
-        reconcile_archived_agent!(target.key, archived_agent: target, now:)
-      end
 
-      resume_and_run_now(schedule.key, now:)
+        resume_and_run_now(schedule.key, now:)
+      end
+    end
+
+    def replace_session_target!(source_key:, target:, expected_schedule_key: nil, &prepare)
+      store.with_lock do
+        source, replacement, state = @agent_store.replace_scheduled_target!(
+          source_key,
+          target,
+          schedule_registry: schedule_registry,
+          schedule_store: store,
+          expected_schedule_key:,
+          &prepare
+        )
+        schedule = find_schedule!(state.key)
+        publish("schedule.agent_replaced", schedule, state,
+                agent_key: replacement.key,
+                source_agent_key: source.key,
+                target_key: replacement.key,
+                reason: "context_pressure")
+        {
+          source: source,
+          agent: replacement,
+          schedule: schedule_payload(schedule, state, agent: replacement)
+        }
+      end
     end
 
     def archive_session(key, now: Time.now)
-      schedule, states, state = schedule_state_for(key)
-      target = last_agent(schedule, state, load_agents(dispatch_prompt_queues: false))
-      return archive_no_session_result(schedule, state) unless target
+      store.with_lock do
+        schedule, states, state = schedule_state_for(key)
+        target = last_agent(schedule, state, load_agents(dispatch_prompt_queues: false))
+        next archive_no_session_result(schedule, state) unless target
 
-      archive_path = @agent_store.archive_agent!(target.key)
-      reconcile_archived_agent!(target.key, archived_agent: target, now:, preserve_schedule_status: true)
-      {
-        archived: true,
-        schedule_key: schedule.key,
-        agent_key: target.key,
-        archive_path: archive_path,
-        schedule: schedule_payload(schedule, store.load.fetch(schedule.key))
-      }
+        archive_path = @agent_store.archive_agent!(target.key)
+        reconcile_archived_agent!(target.key, archived_agent: target, now:, preserve_schedule_status: true)
+        {
+          archived: true,
+          schedule_key: schedule.key,
+          agent_key: target.key,
+          archive_path: archive_path,
+          schedule: schedule_payload(schedule, store.load.fetch(schedule.key))
+        }
+      end
     rescue ArgumentError => e
       raise ArchiveError.new(e.message, reason: "archive_blocked")
     end
@@ -177,33 +219,37 @@ module HQ
     end
 
     def run_now(key, now: Time.now, dry_run: false)
-      schedule, states, state = schedule_state_for(key)
-      if expire_schedule!(schedule, state, now:)
-        store.save(states)
-        return { status: :skipped, schedule: schedule_payload(schedule, state) }
+      store.with_lock do
+        schedule, states, state = schedule_state_for(key)
+        if expire_schedule!(schedule, state, now:)
+          store.save(states)
+          next({ status: :skipped, schedule: schedule_payload(schedule, state) })
+        end
+        dispatch_and_persist_schedule(schedule, states, state, now:, dry_run:)
       end
-      dispatch_and_persist_schedule(schedule, states, state, now:, dry_run:)
     end
 
     def remove(key)
-      schedule = find_schedule!(key)
-      agents = load_agents
-      detached = agents.select { |agent| agent.schedule_key.to_s == schedule.key }
-      state = store.load[schedule.key]
+      store.with_lock do
+        schedule = find_schedule!(key)
+        agents = load_agents
+        detached = agents.select { |agent| agent.schedule_key.to_s == schedule.key }
+        state = store.load[schedule.key]
 
-      FileTransaction.run([schedule_registry.path, store.path, AGENTS_FILE]) do
-        schedule_registry.delete(schedule.key)
-        store.delete(schedule.key)
-        detached.each do |agent|
-          project = @projects.find { |candidate| candidate.key == agent.project_key }
-          agent.detach_schedule!(template_key: project&.agent_templates&.first&.key)
+        FileTransaction.run([schedule_registry.path, store.path, AGENTS_FILE]) do
+          schedule_registry.delete(schedule.key)
+          store.delete(schedule.key)
+          detached.each do |agent|
+            project = @projects.find { |candidate| candidate.key == agent.project_key }
+            agent.detach_schedule!(template_key: project&.agent_templates&.first&.key)
+          end
+          @agent_store.save(agents) if detached.any?
         end
-        @agent_store.save(agents) if detached.any?
-      end
 
-      publish("schedule.removed", schedule, state || ScheduleState.new(key: schedule.key),
-              agent_keys: detached.map(&:key))
-      { schedule: schedule_payload(schedule, state || ScheduleState.new(key: schedule.key)), agents: detached }
+        publish("schedule.removed", schedule, state || ScheduleState.new(key: schedule.key),
+                agent_keys: detached.map(&:key))
+        { schedule: schedule_payload(schedule, state || ScheduleState.new(key: schedule.key)), agents: detached }
+      end
     end
 
     def create_agent_loop!(agent:, agents:, schedule_key:, name:, interval_minutes:, ends_at:, message:, now: Time.now)
@@ -216,9 +262,10 @@ module HQ
       raise ArgumentError, "Loop interval must be between 1 and 59 minutes" unless interval.between?(1, 59)
       raise ArgumentError, "Loop end time must be in the future" unless ends_at > now
 
-      prompt = AgentStore.schedule_system_prompt(schedule_key:, name:)
-      FileTransaction.run([schedule_registry.path, store.path, AGENTS_FILE, agent.memory_path]) do
-        created = schedule_registry.create(
+      store.with_lock do
+        prompt = AgentStore.schedule_system_prompt(schedule_key:, name:)
+        FileTransaction.run([schedule_registry.path, store.path, AGENTS_FILE, agent.memory_path]) do
+          created = schedule_registry.create(
           "key" => schedule_key,
           "name" => name,
           "cron" => "*/#{interval} * * * *",
@@ -231,28 +278,29 @@ module HQ
           "message_source" => "inline",
           "message" => message
         )
-        @agent_store.adopt_schedule!(
-          agent, schedule_key:, name:, system_message: prompt, created_at: now
-        )
-        states = store.load
-        state = store.state_for(states, created.key)
-        state.mark_scheduled!
-        state.last_target_kind = "agent"
-        state.last_target_key = agent.key
-        state.next_due_at = now
-        state.resumed_at = now
-        store.save(states)
-        @agent_store.save(agents)
+          @agent_store.adopt_schedule!(
+            agent, schedule_key:, name:, system_message: prompt, created_at: now
+          )
+          states = store.load
+          state = store.state_for(states, created.key)
+          state.mark_scheduled!
+          state.last_target_kind = "agent"
+          state.last_target_key = agent.key
+          state.next_due_at = now
+          state.resumed_at = now
+          store.save(states)
+          @agent_store.save(agents)
 
-        result = run_now(created.key, now:)
-        if result.fetch(:status) == :failed
-          raise LoopStartError, result.fetch(:error)
-        end
-        unless result.fetch(:status) == :started
-          raise LoopStartError, "Loop schedule did not start: #{result.fetch(:status)}"
-        end
+          result = run_now(created.key, now:)
+          if result.fetch(:status) == :failed
+            raise LoopStartError, result.fetch(:error)
+          end
+          unless result.fetch(:status) == :started
+            raise LoopStartError, "Loop schedule did not start: #{result.fetch(:status)}"
+          end
 
-        result
+          result
+        end
       end
     end
 
@@ -260,43 +308,47 @@ module HQ
       key = agent_key.to_s
       return false if key.empty?
 
-      schedules = schedule_registry.schedules
-      states = store.load
-      changed = false
-      schedules.each do |schedule|
-        state = store.state_for(states, schedule.key)
-        next unless state.last_target_key.to_s == key
+      store.with_lock do
+        schedules = schedule_registry.schedules
+        states = store.load
+        changed = false
+        schedules.each do |schedule|
+          state = store.state_for(states, schedule.key)
+          next unless state.last_target_key.to_s == key
 
-        preserve_archived_agent_system_message!(schedule, archived_agent)
-        reconcile_archived_agent_state!(schedule, state, key, now:, preserve_schedule_status:)
-        changed = true
+          preserve_archived_agent_system_message!(schedule, archived_agent)
+          reconcile_archived_agent_state!(schedule, state, key, now:, preserve_schedule_status:)
+          changed = true
+        end
+        store.save(states) if changed
+        changed
       end
-      store.save(states) if changed
-      changed
     end
 
     def tick(now: Time.now, dry_run: false)
-      schedules = schedule_registry.schedules
-      states = store.load
-      agents = load_agents
-      totals = { started: 0, skipped: 0, queued: 0, completed: 0, failed: 0, dry_run: dry_run }
+      store.with_lock do
+        schedules = schedule_registry.schedules
+        states = store.load
+        agents = load_agents
+        totals = { started: 0, skipped: 0, queued: 0, completed: 0, failed: 0, dry_run: dry_run }
 
-      reconcile_completed_runs!(schedules, states, agents, now:)
+        reconcile_completed_runs!(schedules, states, agents, now:)
 
-      schedules.each do |schedule|
-        state = store.state_for(states, schedule.key)
-        next if expire_schedule!(schedule, state, now:)
+        schedules.each do |schedule|
+          state = store.state_for(states, schedule.key)
+          next if expire_schedule!(schedule, state, now:)
 
-        ensure_next_due!(schedule, state, now:)
-        next unless runnable?(schedule, state)
-        next unless state.next_due_at && state.next_due_at <= now
+          ensure_next_due!(schedule, state, now:)
+          next unless runnable?(schedule, state)
+          next unless state.next_due_at && state.next_due_at <= now
 
-        result = dispatch_schedule(schedule, state, agents, now:, dry_run:)
-        totals[result.fetch(:status)] += 1 if totals.key?(result.fetch(:status))
+          result = dispatch_schedule(schedule, state, agents, now:, dry_run:)
+          totals[result.fetch(:status)] += 1 if totals.key?(result.fetch(:status))
+        end
+
+        persist(agents, states, dry_run:)
+        totals
       end
-
-      persist(agents, states, dry_run:)
-      totals
     end
 
     private
@@ -464,6 +516,14 @@ module HQ
         schedule: schedule_payload(schedule, state, agent: agent),
         agent: agent
       }
+    rescue AgentStore::StaleScheduleTarget => e
+      refresh_schedule_state!(state, store.load[schedule.key])
+      {
+        status: :skipped,
+        schedule: schedule_payload(schedule, state),
+        reason: "target_replaced",
+        error: e.message
+      }
     rescue StandardError => e
       if agent
         state.last_target_kind = "agent"
@@ -552,6 +612,13 @@ module HQ
       schedule_registry.persist_system_message(schedule.key, archived_agent.prompt)
     rescue ScheduleRegistry::Error
       false
+    end
+
+    def refresh_schedule_state!(state, fresh)
+      return state unless fresh
+
+      ScheduleState.members.each { |member| state[member] = fresh[member] }
+      state
     end
 
     def last_agent(schedule, state, agents)
