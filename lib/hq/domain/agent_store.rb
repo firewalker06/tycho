@@ -785,6 +785,7 @@ module HQ
             raise ArgumentError, "Scheduled session #{source.key.inspect} has an unresolved inquiry; answer it before replacing it"
           end
 
+          schedule_registry.reload!
           schedule = schedule_registry.find(schedule_key)
           raise ArgumentError, "Schedule #{schedule_key.inspect} no longer exists" unless schedule
 
@@ -810,28 +811,33 @@ module HQ
             target.memory_path,
             target.pull_request_catalog_path
           ]
-          FileTransaction.run(paths) do
-            ensure_project_context_prompt!(target, project) if project
-            prepare&.call(source, target)
-            source.detach_schedule!(template_key: project&.agent_templates&.first&.key)
-            adopt_schedule!(
-              target,
-              schedule_key:,
-              name: schedule.name,
-              system_message: schedule.system_message,
-              created_at: target.created_at || Time.now
-            )
-            state.previous_target_key = source.key
-            state.last_target_key = target.key
-            state.last_target_kind = "agent"
-            schedule_registry.replace_agent_target(
-              schedule_key,
-              expected_agent_key: source.key,
-              replacement_agent_key: target.key
-            ) unless configured_target.empty?
-            agents.unshift(target)
-            save_unlocked(agents)
-            schedule_store.save(states)
+          begin
+            FileTransaction.run(paths) do
+              ensure_project_context_prompt!(target, project) if project
+              prepare&.call(source, target)
+              source.detach_schedule!(template_key: project&.agent_templates&.first&.key)
+              adopt_schedule!(
+                target,
+                schedule_key:,
+                name: schedule.name,
+                system_message: schedule.system_message,
+                created_at: target.created_at || Time.now
+              )
+              state.previous_target_key = source.key
+              state.last_target_key = target.key
+              state.last_target_kind = "agent"
+              schedule_registry.replace_agent_target(
+                schedule_key,
+                expected_agent_key: source.key,
+                replacement_agent_key: target.key
+              ) unless configured_target.empty?
+              agents.unshift(target)
+              save_unlocked(agents)
+              schedule_store.save(states)
+            end
+          rescue StandardError
+            schedule_registry.reload!
+            raise
           end
           [source, target, state]
         end

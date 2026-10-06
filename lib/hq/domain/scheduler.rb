@@ -33,9 +33,13 @@ module HQ
                    push_notification_store: PushNotificationStore.new, web_push_notifier: nil)
       @registry = registry
       @projects = registry.projects.map { |config| Project.new(config) }
-      @agent_store = AgentStore.new(@projects)
-      @schedule_registry = schedule_registry || ScheduleRegistry.new(projects: @projects, harness_catalogs: registry.harness_catalogs)
       @store = store
+      @agent_store = AgentStore.new(@projects)
+      @schedule_registry = schedule_registry || ScheduleRegistry.new(
+        projects: @projects,
+        harness_catalogs: registry.harness_catalogs,
+        store:
+      )
       @push_notification_store = push_notification_store
       @web_push_notifier = web_push_notifier || WebPushNotifier.new
     end

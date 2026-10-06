@@ -7060,9 +7060,12 @@ module RemoteServerTest
            "expected archive choices to expose clone instead")
     assert(js[:body].include?("mode === \"clone\""),
            "expected Remote UI agent form to support clone mode")
-    assert(js[:body].include?("replace_schedule_target: true") &&
-           js[:body].include?("expected_schedule_key: expectedScheduleKey"),
+    assert(js[:body].include?("payload.replace_schedule_target = true") &&
+           js[:body].include?("payload.expected_schedule_key = expectedScheduleKey"),
            "expected context-pressure cloning to request one coherent schedule target replacement")
+    assert(js[:body].include?("if (expectedScheduleKey)") &&
+           !js[:body].include?("if (!expectedScheduleKey) return;"),
+           "expected unscheduled context-pressure actions to retain ordinary clone behavior")
     assert(js[:body].include?("els.headerMorePanel.addEventListener"),
            "expected Agent More menu actions to work from the fixed header panel")
     assert(js[:body].include?('route.type === "project" && route.backTo'),

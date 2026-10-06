@@ -5,6 +5,7 @@ require "yaml"
 
 require_relative "constants"
 require_relative "file_store"
+require_relative "schedule_store"
 require_relative "../harness_registry"
 
 module HQ
@@ -157,13 +158,14 @@ module HQ
   class ScheduleRegistry
     Error = Class.new(StandardError)
 
-    attr_reader :path, :projects, :schedules_root
+    attr_reader :path, :projects, :schedules_root, :store
 
-    def initialize(path: SCHEDULES_FILE, projects:, schedules_root: nil, harness_catalogs: {})
+    def initialize(path: SCHEDULES_FILE, projects:, schedules_root: nil, harness_catalogs: {}, store: ScheduleStore.new)
       @path = File.expand_path(path)
       @projects = projects
       @schedules_root = File.expand_path(schedules_root || USER_SCHEDULES_DIR)
       @harness_catalogs = harness_catalogs || {}
+      @store = store
     end
 
     def schedules
@@ -175,95 +177,111 @@ module HQ
     end
 
     def create(attrs)
-      data = load_yaml
-      entries = schedule_entries(data)
-      entry = schedule_entry_from_attrs(attrs)
-      entries << entry
-      validated = validate_entries!(entries)
-      data["schedules"] = entries
-      write_yaml(data)
-      @schedules = validated
-      find(entry.fetch("key"))
+      store.with_lock do
+        data = load_yaml
+        entries = schedule_entries(data)
+        entry = schedule_entry_from_attrs(attrs)
+        entries << entry
+        validated = validate_entries!(entries)
+        data["schedules"] = entries
+        write_yaml(data)
+        @schedules = validated
+        find(entry.fetch("key"))
+      end
     end
 
     def update(key, attrs)
-      values = stringify_keys(attrs || {})
-      data = load_yaml
-      entries = schedule_entries(data)
-      index = entries.index { |entry| entry.is_a?(Hash) && entry["key"].to_s == key.to_s }
-      raise Error, "Unknown schedule: #{key}" unless index
+      store.with_lock do
+        values = stringify_keys(attrs || {})
+        data = load_yaml
+        entries = schedule_entries(data)
+        index = entries.index { |entry| entry.is_a?(Hash) && entry["key"].to_s == key.to_s }
+        raise Error, "Unknown schedule: #{key}" unless index
 
-      if values.key?("key") && values["key"].to_s.strip != key.to_s
-        raise Error, "Schedule key cannot be changed"
+        if values.key?("key") && values["key"].to_s.strip != key.to_s
+          raise Error, "Schedule key cannot be changed"
+        end
+
+        entries[index] = schedule_entry_from_attrs(values, existing: entries[index], key: key)
+        validated = validate_entries!(entries)
+        data["schedules"] = entries
+        write_yaml(data)
+        @schedules = validated
+        find(key)
       end
-
-      entries[index] = schedule_entry_from_attrs(values, existing: entries[index], key: key)
-      validated = validate_entries!(entries)
-      data["schedules"] = entries
-      write_yaml(data)
-      @schedules = validated
-      find(key)
     end
 
     def delete(key)
-      data = load_yaml
-      entries = schedule_entries(data)
-      original_count = entries.length
-      entries = entries.reject { |entry| entry.is_a?(Hash) && entry["key"].to_s == key.to_s }
-      raise Error, "Unknown schedule: #{key}" if entries.length == original_count
+      store.with_lock do
+        data = load_yaml
+        entries = schedule_entries(data)
+        original_count = entries.length
+        entries = entries.reject { |entry| entry.is_a?(Hash) && entry["key"].to_s == key.to_s }
+        raise Error, "Unknown schedule: #{key}" if entries.length == original_count
 
-      validated = validate_entries!(entries)
-      data["schedules"] = entries
-      write_yaml(data)
-      @schedules = validated
-      true
+        validated = validate_entries!(entries)
+        data["schedules"] = entries
+        write_yaml(data)
+        @schedules = validated
+        true
+      end
     end
 
     def persist_system_message(key, system_message)
       message = system_message.to_s.strip
       return false if message.empty?
 
-      data = load_yaml
-      entries = schedule_entries(data)
-      index = entries.index { |entry| entry.is_a?(Hash) && entry["key"].to_s == key.to_s }
-      raise Error, "Unknown schedule: #{key}" unless index
+      store.with_lock do
+        data = load_yaml
+        entries = schedule_entries(data)
+        index = entries.index { |entry| entry.is_a?(Hash) && entry["key"].to_s == key.to_s }
+        raise Error, "Unknown schedule: #{key}" unless index
 
-      entry = entries[index]
-      target = stringify_keys(entry["target"] || {})
-      return false if target["system_message"].to_s.strip == message
+        entry = entries[index]
+        target = stringify_keys(entry["target"] || {})
+        next false if target["system_message"].to_s.strip == message
 
-      target["system_message"] = message
-      entry["target"] = target
-      entries[index] = entry
-      validated = validate_entries!(entries)
-      data["schedules"] = entries
-      write_yaml(data)
-      @schedules = validated
-      true
+        target["system_message"] = message
+        entry["target"] = target
+        entries[index] = entry
+        validated = validate_entries!(entries)
+        data["schedules"] = entries
+        write_yaml(data)
+        @schedules = validated
+        true
+      end
     end
 
     def replace_agent_target(key, expected_agent_key:, replacement_agent_key:)
-      data = load_yaml
-      entries = schedule_entries(data)
-      index = entries.index { |entry| entry.is_a?(Hash) && entry["key"].to_s == key.to_s }
-      raise Error, "Unknown schedule: #{key}" unless index
+      store.with_lock do
+        data = load_yaml
+        entries = schedule_entries(data)
+        index = entries.index { |entry| entry.is_a?(Hash) && entry["key"].to_s == key.to_s }
+        raise Error, "Unknown schedule: #{key}" unless index
 
-      entry = entries.fetch(index)
-      target = stringify_keys(entry["target"] || {})
-      current = target["agent_key"].to_s
-      return false if current.empty?
-      unless current == expected_agent_key.to_s
-        raise Error, "Schedule #{key.inspect} no longer targets agent #{expected_agent_key.inspect}"
+        entry = entries.fetch(index)
+        target = stringify_keys(entry["target"] || {})
+        current = target["agent_key"].to_s
+        next false if current.empty?
+        unless current == expected_agent_key.to_s
+          raise Error, "Schedule #{key.inspect} no longer targets agent #{expected_agent_key.inspect}"
+        end
+
+        target["agent_key"] = replacement_agent_key.to_s
+        entry["target"] = target
+        entries[index] = entry
+        validated = validate_entries!(entries)
+        data["schedules"] = entries
+        write_yaml(data)
+        @schedules = validated
+        true
       end
+    end
 
-      target["agent_key"] = replacement_agent_key.to_s
-      entry["target"] = target
-      entries[index] = entry
-      validated = validate_entries!(entries)
-      data["schedules"] = entries
-      write_yaml(data)
-      @schedules = validated
-      true
+    def reload!
+      store.with_lock do
+        @schedules = load_schedules
+      end
     end
 
     private

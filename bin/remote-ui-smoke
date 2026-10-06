@@ -772,7 +772,9 @@ title: !123 value
       }
 
       async function assertScheduleReplacement() {
-        const mobile = scheduleReplacementMode === "handoff";
+        const scheduled = !scheduleReplacementMode.startsWith("unscheduled-");
+        const handoff = scheduleReplacementMode.endsWith("handoff");
+        const mobile = handoff;
         await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 });
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector("[data-context-pressure-warning]", { state: "visible", timeout: 10_000 });
@@ -783,15 +785,32 @@ title: !123 value
           });
         }
 
-        if (scheduleReplacementMode === "handoff") {
+        const cloneRequestPromise = page.waitForRequest((request) => (
+          request.method() === "POST" && request.url().endsWith(`/agents/${encodeURIComponent(agentKey)}/clone`)
+        ));
+        if (handoff) {
           await page.locator("[data-context-pressure-warning] .context-pressure-menu > summary").click();
           await page.locator("[data-context-pressure-handoff]").click();
         } else {
           await page.locator("[data-context-pressure-clone]").click();
         }
+        const cloneRequest = await cloneRequestPromise;
+        const clonePayload = cloneRequest.postDataJSON();
+        if (clonePayload.archive_source !== false || clonePayload.context_handoff !== handoff || clonePayload.start !== handoff) {
+          throw new Error(`Context-pressure request lost ordinary clone fields: ${JSON.stringify(clonePayload)}`);
+        }
+        if (scheduled) {
+          if (clonePayload.replace_schedule_target !== true || clonePayload.expected_schedule_key !== "smoke") {
+            throw new Error(`Scheduled context-pressure request lost replacement intent: ${JSON.stringify(clonePayload)}`);
+          }
+        } else if (Object.hasOwn(clonePayload, "replace_schedule_target") || Object.hasOwn(clonePayload, "expected_schedule_key")) {
+          throw new Error(`Unscheduled context-pressure request added schedule replacement fields: ${JSON.stringify(clonePayload)}`);
+        }
         await page.waitForFunction((sourceKey) => location.hash.startsWith("#agent/") && !location.hash.includes(sourceKey), agentKey);
         const replacementKey = await page.evaluate(() => decodeURIComponent(location.hash.split("/")[1] || ""));
-        await page.waitForSelector("[data-header-schedule-menu]", { state: "visible", timeout: 10_000 });
+        if (scheduled) {
+          await page.waitForSelector("[data-header-schedule-menu]", { state: "visible", timeout: 10_000 });
+        }
 
         const [sourceResponse, replacementResponse, schedulesResponse] = await Promise.all([
           page.request.get(`${baseUrl}/agents/${encodeURIComponent(agentKey)}`),
@@ -802,15 +821,23 @@ title: !123 value
         const replacement = (await replacementResponse.json()).agent;
         const schedules = (await schedulesResponse.json()).schedules;
         const schedule = schedules.find((item) => item.key === "smoke");
-        if (source.schedule_key || replacement.schedule_key !== "smoke" || replacement.scheduled !== true ||
-            schedule?.last_target_key !== replacementKey || schedule?.run_count !== 3 || schedule?.skip_count !== 1) {
-          throw new Error(`Schedule replacement did not preserve authoritative state: ${JSON.stringify({ source, replacement, schedule })}`);
-        }
-        if (scheduleReplacementMode === "handoff") {
-          const conversation = await (await page.request.get(`${baseUrl}/agents/${encodeURIComponent(replacementKey)}/conversation`)).json();
-          if (!conversation.conversation.some((block) => block.metadata?.context_handoff === true)) {
-            throw new Error("Start with Handoff did not preserve handoff memory on the scheduled replacement");
+        if (scheduled) {
+          if (source.schedule_key || replacement.schedule_key !== "smoke" || replacement.scheduled !== true ||
+              schedule?.last_target_key !== replacementKey || schedule?.run_count !== 3 || schedule?.skip_count !== 1) {
+            throw new Error(`Schedule replacement did not preserve authoritative state: ${JSON.stringify({ source, replacement, schedule })}`);
           }
+        } else if (source.schedule_key || replacement.schedule_key || replacement.scheduled === true ||
+                   await page.locator("[data-header-schedule-menu]").count() !== 0) {
+          throw new Error(`Unscheduled context-pressure action created a schedule connection: ${JSON.stringify({ source, replacement })}`);
+        }
+        const conversation = await (await page.request.get(`${baseUrl}/agents/${encodeURIComponent(replacementKey)}/conversation`)).json();
+        const hasHandoff = conversation.conversation.some((block) => block.metadata?.context_handoff === true);
+        if (handoff) {
+          if (!hasHandoff) {
+            throw new Error("Start with Handoff did not preserve handoff memory on the replacement");
+          }
+        } else if (hasHandoff) {
+          throw new Error("Start New unexpectedly added handoff memory");
         }
         if (captureDir) {
           await page.screenshot({
@@ -822,7 +849,7 @@ title: !123 value
 
       if (scheduleReplacementMode) {
         await assertScheduleReplacement();
-        console.log(`remote-ui-smoke: schedule replacement ${scheduleReplacementMode} ok`);
+        console.log(`remote-ui-smoke: context-pressure action ${scheduleReplacementMode} ok`);
         await browser.close();
         return;
       }
@@ -9567,7 +9594,8 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key = create_agent(base_url)
     if ENV["TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE"].to_s != ""
-      associate_agent_schedule(fixture.fetch(:logs_dir), agent_key)
+      mode = ENV.fetch("TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE")
+      associate_agent_schedule(fixture.fetch(:logs_dir), agent_key) unless mode.start_with?("unscheduled-")
       append_context_pressure_signal(base_url, agent_key)
       wait_for_resource_agents(base_url, [agent_key])
       run_schedule_replacement_smoke!(dir:, base_url:, agent_key:, browser:)
