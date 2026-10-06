@@ -954,14 +954,17 @@ module HQ
 
     # A parent-declared prompt is a durable operator action. Keep this event on
     # the parent transcript only after the target has accepted or queued it.
-    # The prompt-arrival id also makes a transport retry idempotent.
+    # The target key scopes the parent event to the same child as prompt replay.
+    # This preserves a distinct event when one transport request ID reaches two
+    # children, while retries for one child remain idempotent. Older unscoped
+    # event IDs stay readable; replay prevents a new event for their old send.
     def record_accepted_agent_send!(parent:, target:, prompt:, event_id:, result:)
       return unless parent
 
       queued = result.fetch(:status) == :queued
       AgentMemory.new(parent).append_delegation_event!(
         queued ? "Queued message for #{target.display_name}" : "Sent message to #{target.display_name}",
-        event_id: "agent-send:#{event_id}",
+        event_id: "agent-send:#{target.key}:#{event_id}",
         metadata: {
           "event" => "agent_message_sent",
           "delivery_status" => queued ? "queued" : "accepted",

@@ -25,6 +25,7 @@ module CLICommandTest
     assert_project_commands_manage_full_lifecycle
     assert_project_command_and_help_paths_do_not_create_projects
     assert_agent_queue_notice_and_read_outputs
+    assert_local_parent_send_conversation_events
     assert_failed_claim_cli_inspection_and_discard
     assert_agent_pr_diff_cli_lifecycle
     assert_remote_server_commands_manage_full_agent_lifecycle
@@ -33,6 +34,71 @@ module CLICommandTest
     assert_metrics_commands_are_listed_in_usage
     assert_debug_claude_run_agent_uses_claude_defaults
     puts "cli_command_test: ok"
+  end
+
+  def assert_local_parent_send_conversation_events
+    Dir.mktmpdir("hq-cli-parent-send-events") do |dir|
+      workspace = File.join(dir, "workspace")
+      logs_root = File.join(dir, "logs")
+      FileUtils.mkdir_p([workspace, File.join(logs_root, "agents")])
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      runner = File.join(dir, "fake-codex")
+      File.write(config_path, <<~YAML)
+        projects:
+          - key: demo
+            name: Demo
+            path: #{workspace}
+            agent: codex
+      YAML
+      File.write(prompts_path, "{}\n")
+      File.write(runner, "#!/bin/sh\nsleep 60\n")
+      FileUtils.chmod(0o755, runner)
+      env = {
+        "TYCHO_CONFIG_PATH" => config_path,
+        "TYCHO_SYSTEM_PROMPTS_PATH" => prompts_path,
+        "TYCHO_LOGS_ROOT" => logs_root,
+        "TYCHO_CODEX_BIN" => runner
+      }
+
+      parent = JSON.parse(run_tycho(env, "agent", "create", "demo", "Coordinate", "--name", "Parent", "--json").fetch(:stdout))
+      child = JSON.parse(run_tycho(env, "agent", "create", "demo", "Work", "--name", "Child",
+                                   "--parent-agent", parent.fetch("key"), "--json").fetch(:stdout))
+      accepted_text = "Accepted line one\nAccepted line two"
+      accepted = run_tycho(env, "agent", "send", child.fetch("key"), accepted_text,
+                           "--parent-agent", parent.fetch("key"), "--json")
+      assert(accepted.fetch(:status).success? && JSON.parse(accepted.fetch(:stdout)).fetch("running"),
+             "expected local parent CLI send to accept and start an idle child")
+      queued_text = "Queued line one\nQueued line two"
+      queued = run_tycho(env, "agent", "send", child.fetch("key"), queued_text,
+                         "--parent-agent", parent.fetch("key"), "--json")
+      assert(queued.fetch(:status).success? && JSON.parse(queued.fetch(:stdout)).fetch("queued"),
+             "expected local parent CLI send to report queued state for a running child")
+
+      persisted_agents = JSON.parse(File.read(File.join(logs_root, "managed_agents.json")))
+      parent_memory = HQ::LogPaths.derived_agent_log_path(
+        persisted_agents.find { |agent| agent.fetch("key") == parent.fetch("key") }.fetch("log_path"), "memory.jsonl"
+      )
+      events = File.readlines(parent_memory, chomp: true).map { |line| JSON.parse(line) }
+                   .select { |event| event.dig("metadata", "event") == "agent_message_sent" }
+      assert(events.map { |event| [event.dig("metadata", "message"), event.dig("metadata", "delivery_status")] } ==
+             [[accepted_text, "accepted"], [queued_text, "queued"]],
+             "expected local parent sends to retain multiline accepted and queued Conversation evidence")
+
+      other = JSON.parse(run_tycho(env, "agent", "create", "demo", "Other", "--name", "Other", "--json").fetch(:stdout))
+      rejected = run_tycho(env, "agent", "send", child.fetch("key"), "Rejected", "--parent-agent", other.fetch("key"), "--json")
+      assert(!rejected.fetch(:status).success?, "expected an unauthorized local parent CLI send to fail")
+      persisted_other = JSON.parse(File.read(File.join(logs_root, "managed_agents.json"))).find do |agent|
+        agent.fetch("key") == other.fetch("key")
+      end
+      other_memory = HQ::LogPaths.derived_agent_log_path(
+        persisted_other.fetch("log_path"), "memory.jsonl"
+      )
+      rejected_events = File.readlines(other_memory, chomp: true).map { |line| JSON.parse(line) }
+      assert(rejected_events.none? { |event| event.dig("metadata", "event") == "agent_message_sent" },
+             "expected a rejected parent send to leave no misleading Conversation event")
+      run_tycho(env, "agent", "stop", child.fetch("key"), "--json")
+    end
   end
 
   def assert_agent_pr_diff_cli_lifecycle
