@@ -974,10 +974,13 @@ module HQ
         next if unresolved.empty?
 
         entries = Array(batch["entries"]).select { |entry| unresolved.include?(entry["id"].to_s) }
+        delivered = batch.fetch("delivery_count", 0).to_i.positive? || @prompt_queue_claim&.fetch("id", nil) == batch["id"]
+        delivery_state = delivered ? "delivered_or_in_flight" : "not_delivered"
         entries.each do |entry|
           metadata = entry["message_metadata"].is_a?(Hash) ? entry["message_metadata"].dup : {}
           metadata.merge!(
-            "archived_without_run" => true,
+            "archived_without_run" => !delivered,
+            "queue_work_delivery_state" => delivery_state,
             "queue_work_batch_id" => batch["id"],
             "queue_work_state" => "archived",
             "queue_work_abort_message" => message,
@@ -985,12 +988,12 @@ module HQ
           )
           metadata["queued_at"] = entry["accepted_at"] unless entry["accepted_at"].to_s.empty?
           marked = memory.mark_user_message_archived_without_run!(
-            { "queue_work_batch_id" => batch["id"] }, queued_at: entry["accepted_at"]
+            { "queue_work_batch_id" => batch["id"] }, queued_at: entry["accepted_at"],
+            delivery_state:, abort_message: message
           )
           memory.append_user_message!(entry.fetch("prompt"), created_at: archived_at,
                                       attachments: entry["attachments"], metadata:) unless marked
         end
-        delivered = batch.fetch("delivery_count", 0).to_i.positive? || @prompt_queue_claim&.fetch("id", nil) == batch["id"]
         dispositions = entries.map do |entry|
           outcome = if delivered
                       "aborted_with_uncertainty"

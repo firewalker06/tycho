@@ -1027,6 +1027,10 @@ module PromptQueueTest
       assert(memory_events.any? { |event| event["type"] == "inquiry_cancelled" } &&
              memory_events.any? { |event| event["content"] == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE },
              "expected archive history to preserve inquiry cancellation and the visible abort message")
+      never_delivered = memory_events.find { |event| event["content"] == "Do not run this user work" }
+      assert(never_delivered.dig("metadata", "archived_without_run") == true &&
+             never_delivered.dig("metadata", "queue_work_delivery_state") == "not_delivered",
+             "expected never-delivered evidence to state that no execution occurred")
       assert(!agent.running?, "expected archive to stop the active process group")
     ensure
       HQ::ManagedAgent.define_method(:start!, original) if defined?(original) && original
@@ -1046,9 +1050,15 @@ module PromptQueueTest
       destination = store.archive_agent!(agent.key)
       manifest = JSON.parse(File.read(File.join(destination, "agent_manifest.json")))
       disposition = manifest.dig("queue_work", "batches", 0, "dispositions", "delivered-entry")
+      event = File.readlines(File.join(destination, "raw.memory.jsonl"), chomp: true).map { |line| JSON.parse(line) }
+                  .find { |item| item.dig("metadata", "queue_work_batch_id") == manifest.dig("queue_work", "batches", 0, "id") }
       assert(disposition["outcome"] == "aborted_with_uncertainty" &&
              disposition["reason"] == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE,
              "expected delivered queue work to preserve side-effect uncertainty")
+      assert(event.dig("metadata", "archived_without_run") == false &&
+             event.dig("metadata", "queue_work_delivery_state") == "delivered_or_in_flight" &&
+             event.dig("metadata", "queue_work_abort_message") == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+             "expected delivered evidence to preserve uncertainty without claiming no execution")
     end
   end
 

@@ -147,6 +147,7 @@ module HQ
       metadata["delegation_report"] = reports.first if reports.length == 1
       metadata["agent_reference"] = reports.first.fetch("child") if reports.length == 1
       if archived
+        metadata["archive_abort_message"] = ManagedAgent::ARCHIVE_ABORT_MESSAGE
         added = AgentMemory.new(parent).append_delegation_report!(
           reports_message(reports), report_id: entry_id, created_at: now, metadata:
         )

@@ -332,6 +332,26 @@ module RemoteServerTest
       assert(archived_conversation.any? { |event| event[:content] == "Late archived arrival" } &&
              archived_conversation.any? { |event| event[:content] == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE },
              "expected archived arrival evidence without a harness start")
+      begin
+        service.submit_prompt(child[:key], {
+          "prompt" => "Late archived arrival", "client_request_id" => "550e8400-e29b-41d4-a716-446655440000"
+        })
+        raise "expected archived UUID arrival to remain terminal"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+               "expected exact archived UUID abort")
+      end
+      begin
+        service.submit_prompt(child[:key], {
+          "prompt" => "Late archived arrival", "client_request_id" => "550e8400-e29b-41d4-a716-446655440000"
+        })
+        raise "expected repeated archived UUID arrival to remain terminal"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+               "expected idempotent archived UUID abort")
+      end
+      uuid_events = service.conversation(child[:key]).count { |event| event[:content] == "Late archived arrival" }
+      assert(uuid_events == 2, "expected duplicate archived UUID arrival to retain one durable event")
 
       archive_index = service.archived_agents("page" => "1", "per_page" => "1", "q" => "Child")
       assert(archive_index.dig(:pagination, :total) == 1 && archive_index.dig(:pagination, :page) == 1,

@@ -4,6 +4,7 @@ require_relative "constants"
 require_relative "file_transaction"
 require_relative "file_store"
 require_relative "agent_store_recovery"
+require_relative "agent_archive_store"
 require_relative "managed_agent"
 require_relative "delegation_coordinator"
 require_relative "schedule_store"
@@ -137,17 +138,6 @@ module HQ
 
     def save(agents)
       with_exclusive_lock { save_unlocked(agents) }
-    end
-
-    # Scheduler snapshots can become stale while another request archives an
-    # agent. Merge only still-active records so a later tick cannot resurrect
-    # an archived key.
-    def save_existing!(agents)
-      with_exclusive_lock do
-        current, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
-        replacements = Array(agents).to_h { |agent| [agent.key, agent] }
-        save_unlocked(current.map { |agent| replacements.fetch(agent.key, agent) })
-      end
     end
 
     def save_unlocked(agents, allow_retired_keys: false, allow_large_reduction: false)
@@ -346,6 +336,32 @@ module HQ
         add_scheduled_message!(target, schedule_key:, message:, due_at:)
         start_target!(target, agents, run_metadata: nil) unless target.running?
         target
+      end
+    end
+
+    # The active-store lookup and archived evidence write use the archive lock.
+    # This makes an arrival either normal active work or one durable terminal
+    # abort event. It cannot become both across an archive race.
+    def record_archived_prompt_attempt!(key, prompt:, actor:, event_id:, metadata: {})
+      with_exclusive_lock do
+        current, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
+        return :active if current.any? { |agent| agent.key == key.to_s }
+
+        record = AgentArchiveStore.new.find(key)
+        raise ArgumentError, "Unknown agent: #{key}" unless record
+
+        agent = record.agent
+        if actor&.parent? && agent.delegation_parent&.fetch("agent_key", nil) != actor.agent_key
+          raise DelegationStore::Error, "Parent is not authorized for archived agent: #{key}"
+        end
+        memory = AgentMemory.new(agent)
+        added = memory.append_user_message!(prompt, metadata: metadata, event_id: event_id)
+        if added
+          memory.append_assistant_message!(ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+                                           metadata: { "archive_aborted_arrival" => true, "event_id" => event_id })
+          AgentArchiveStore.new.save(record)
+        end
+        :archived
       end
     end
 

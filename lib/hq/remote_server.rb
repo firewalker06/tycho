@@ -3152,8 +3152,7 @@ module HQ
       if attrs.key?("delay") && attrs["parent_agent_key"].to_s.empty? && attrs["sender_agent_key"].to_s == key.to_s
         actor = DelegationActor.internal_actor(key)
       end
-      if (archived = visible_archived_agent(key))
-        record_archived_prompt_attempt!(archived, attrs, actor:)
+      if record_archived_prompt_attempt!(key, attrs, actor:) == :archived
         raise Error.new(ManagedAgent::ARCHIVE_ABORT_MESSAGE, status: 409)
       end
       target = find_agent!(key)
@@ -3969,10 +3968,10 @@ module HQ
       raise Error.new("Unknown agent: #{key}", status: 404)
     end
 
-    def record_archived_prompt_attempt!(agent, attrs, actor:)
+    def record_archived_prompt_attempt!(key, attrs, actor:)
       text = attrs["prompt"] || attrs["message"] || attrs["content"]
       text = text.to_s.strip
-      return if text.empty?
+      return :active if text.empty?
 
       request_id = prompt_client_request_id(attrs).to_s
       event_id = request_id.empty? ? "archived-arrival:#{SecureRandom.uuid}" : "archived-arrival:#{request_id}"
@@ -3982,15 +3981,13 @@ module HQ
         "source" => actor&.parent? ? "parent" : "user",
         "authority" => actor&.parent? ? { "owner" => actor.agent_key } : nil
       }.compact
-      memory = AgentMemory.new(agent)
-      before = memory.events.length
-      memory.append_user_message!(text, metadata:, event_id:)
-      if memory.events.length > before
-        memory.append_assistant_message!(ManagedAgent::ARCHIVE_ABORT_MESSAGE,
-                                         metadata: { "archive_aborted_arrival" => true, "event_id" => event_id })
-      end
-      record = @agent_archive_store.find(agent.key)
-      @agent_archive_store.save(record) if record
+      @agent_store.record_archived_prompt_attempt!(key, prompt: text, actor:, event_id:, metadata:)
+    rescue DelegationStore::Error => e
+      raise Error.new(e.message, status: 403)
+    rescue ArgumentError => e
+      return :active if e.message.start_with?("Unknown agent") && !visible_archived_agent(key)
+
+      raise
     end
 
     def find_agent_reference!(key)
@@ -5312,7 +5309,7 @@ module HQ
 
     def prompt_client_request_id(attrs)
       value = attrs["client_request_id"].to_s.strip
-      return nil unless value.match?(/\Aclient-[a-zA-Z0-9-]{1,100}\z/)
+      return nil unless value.match?(/\A(?:client-[a-zA-Z0-9-]{1,100}|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\z/i)
 
       value
     end

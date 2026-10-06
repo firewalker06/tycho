@@ -309,7 +309,6 @@ module HQ
     def persist(agents, states, dry_run:)
       return if dry_run
 
-      @agent_store.save_existing!(agents)
       store.save(states)
     end
 
@@ -605,7 +604,8 @@ module HQ
         agent = last_agent(schedule, state, agents)
         next unless agent
 
-        agent.poll!
+        # load_agents already polled and persisted this record under the
+        # AgentStore lock. Do not save this stale scheduler snapshot later.
         if agent.running?
           state.last_status = "running" if state.last_status == "started"
           next

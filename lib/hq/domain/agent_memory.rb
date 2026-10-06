@@ -220,14 +220,18 @@ module HQ
       nil
     end
 
-    def mark_user_message_archived_without_run!(expected, queued_at: nil)
+    def mark_user_message_archived_without_run!(expected, queued_at: nil, delivery_state: "not_delivered", abort_message: nil)
       events = journal.events!
       event = events.reverse_each.find do |candidate|
         candidate["type"] == "user_message" && metadata_matches?(candidate["metadata"], expected)
       end
       return false unless event
 
-      event["metadata"] = event.fetch("metadata", {}).merge("archived_without_run" => true)
+      event["metadata"] = event.fetch("metadata", {}).merge(
+        "archived_without_run" => delivery_state == "not_delivered",
+        "queue_work_delivery_state" => delivery_state
+      )
+      event["metadata"]["queue_work_abort_message"] = abort_message unless abort_message.to_s.empty?
       event["metadata"]["queued_at"] = queued_at unless queued_at.to_s.empty?
       journal.replace(events)
       true
