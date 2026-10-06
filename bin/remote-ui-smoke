@@ -616,7 +616,40 @@ title: !123 value
 ---`;
         await page.setViewportSize({ width: 1440, height: 900 });
         await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
-        await page.evaluate(async () => { await ensureMarkdownParserLoaded(); });
+        const coldLoad = await page.evaluate(async () => {
+          if (markdownParserReady()) throw new Error("Markdown parser unexpectedly loaded before the cold-load check");
+          const fence = String.fromCharCode(96).repeat(3);
+          const source = ["---", "title: !123 value", "---", "## Formatted body", "", "- outer", "  - nested", "", "1. first", "", "---", "", `${fence}ruby`, "puts :safe", fence, ""].join("\\n");
+          const holder = document.createElement("div");
+          els.view.appendChild(holder);
+          holder.innerHTML = renderMarkdown(source, { menuScope: "smoke-cold-rejected" });
+          const fallback = holder.querySelector("[data-markdown-fallback-key]");
+          const before = { source: fallback?.textContent, stored: state.markdownFallbacks.size };
+          await markdownParser.promise;
+          const after = {
+            source: holder.querySelector(".markdown-frontmatter-rejected")?.textContent,
+            heading: holder.querySelectorAll("h2").length,
+            unordered: holder.querySelectorAll("ul").length,
+            nested: holder.querySelectorAll("ul ul").length,
+            ordered: holder.querySelectorAll("ol").length,
+            rule: holder.querySelectorAll("hr").length,
+            code: holder.querySelectorAll("pre > code.language-ruby").length,
+            stored: state.markdownFallbacks.size,
+          };
+          const originalFailed = markdownParser.failed;
+          const originalMarked = window.marked;
+          const originalPurify = window.DOMPurify;
+          markdownParser.failed = true;
+          window.marked = null;
+          window.DOMPurify = null;
+          const failed = renderMarkdown(source);
+          markdownParser.failed = originalFailed;
+          window.marked = originalMarked;
+          window.DOMPurify = originalPurify;
+          const failedSource = new DOMParser().parseFromString(failed, "text/html").body.textContent;
+          holder.remove();
+          return { before, after, failedSource };
+        });
         const contract = await page.evaluate((trackedFixture) => {
           const fence = String.fromCharCode(96).repeat(3);
           const accepted = `---\ntitle: "Safe punctuation, ] } @ ? - # !"\ncount: 42\n---\n# Heading\n\n- outer\n  - nested\n\n1. first\n\n---\n\n${fence}ruby\nputs :safe\n${fence}\n`;
@@ -670,7 +703,12 @@ title: !123 value
             ),
           };
         }, fixture);
-        if (contract.fixture.metadata !== 9 || contract.fixture.list < 2 ||
+        if (!coldLoad.before.source?.startsWith(rejectedSource) || coldLoad.before.stored < 1 ||
+            coldLoad.after.source !== rejectedSource || coldLoad.after.heading !== 1 ||
+            coldLoad.after.unordered < 2 || coldLoad.after.nested !== 1 || coldLoad.after.ordered !== 1 ||
+            coldLoad.after.rule !== 1 || coldLoad.after.code !== 1 || coldLoad.after.stored !== 0 ||
+            coldLoad.failedSource !== coldLoad.before.source ||
+            contract.fixture.metadata !== 9 || contract.fixture.list < 2 ||
             contract.accepted.metadata !== 2 || contract.accepted.heading !== 1 ||
             contract.accepted.unordered < 2 || contract.accepted.nested !== 1 ||
             contract.accepted.ordered !== 1 || contract.accepted.rule !== 1 || contract.accepted.code !== 1 ||
@@ -679,7 +717,7 @@ title: !123 value
             contract.rejected.ordered !== 1 || contract.rejected.rule !== 1 || contract.rejected.code !== 1 ||
             contract.hostile.image !== 0 || contract.hostile.script !== 0 || contract.hostile.executed ||
             contract.unsupported.some((rejected) => !rejected)) {
-          throw new Error(`Markdown frontmatter browser contract failed: ${JSON.stringify(contract)}`);
+          throw new Error(`Markdown frontmatter browser contract failed: ${JSON.stringify({ coldLoad, contract })}`);
         }
       }
 
