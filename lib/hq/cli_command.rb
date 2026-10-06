@@ -1852,18 +1852,7 @@ module HQ
       store = agent_store_for_all
       agents = store.load
       agent = agents.find { |a| a.key == agent_key.to_s }
-      unless agent
-        event_id = "archived-arrival:#{SecureRandom.uuid}"
-        metadata = {
-          "archived_arrival" => true,
-          "archive_abort_message" => ManagedAgent::ARCHIVE_ABORT_MESSAGE,
-          "source" => opts.fetch(:actor).parent? ? "parent" : "user"
-        }
-        metadata["authority"] = { "owner" => opts.fetch(:actor).agent_key } if opts.fetch(:actor).parent?
-        if store.record_archived_prompt_attempt!(agent_key, prompt: message, actor: opts.fetch(:actor), event_id:, metadata:) == :archived
-          return failure(ManagedAgent::ARCHIVE_ABORT_MESSAGE, err:)
-        end
-      end
+      return archived_agent_failure(agent_key, err:) if !agent && archived_agent?(agent_key)
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
       return failure("Agent #{agent_key} is already running", err: err) if agent.running?
 
@@ -1928,7 +1917,18 @@ module HQ
       store = agent_store_for_all
       agents = store.load
       agent = agents.find { |a| a.key == agent_key.to_s }
-      return archived_agent_failure(agent_key, err:) if !agent && archived_agent?(agent_key)
+      unless agent
+        event_id = "archived-arrival:#{SecureRandom.uuid}"
+        metadata = {
+          "archived_arrival" => true,
+          "archive_abort_message" => ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+          "source" => opts.fetch(:actor).parent? ? "parent" : "user"
+        }
+        metadata["authority"] = { "owner" => opts.fetch(:actor).agent_key } if opts.fetch(:actor).parent?
+        if store.record_archived_prompt_attempt!(agent_key, prompt: message, actor: opts.fetch(:actor), event_id:, metadata:) == :archived
+          return failure(ManagedAgent::ARCHIVE_ABORT_MESSAGE, err:)
+        end
+      end
       return failure("Unknown agent: #{agent_key}", err: err) unless agent
       agent = persist_agents_with_parent!(store, agents, agent, opts)
       unless opts[:delay].nil?
