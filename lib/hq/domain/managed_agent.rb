@@ -991,8 +991,10 @@ module HQ
             { "queue_work_batch_id" => batch["id"] }, queued_at: entry["accepted_at"],
             delivery_state:, abort_message: message
           )
-          memory.append_user_message!(entry.fetch("prompt"), created_at: archived_at,
-                                      attachments: entry["attachments"], metadata:) unless marked
+          memory.append_user_message!(
+            entry.fetch("prompt"), created_at: archived_at, attachments: entry["attachments"], metadata:,
+            event_id: metadata["prompt_arrival_event_id"]
+          ) unless marked
         end
         dispositions = entries.map do |entry|
           outcome = if delivered

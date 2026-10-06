@@ -5,6 +5,7 @@ require_relative "file_transaction"
 require_relative "file_store"
 require_relative "agent_store_recovery"
 require_relative "agent_archive_store"
+require_relative "agent_attachment_store"
 require_relative "managed_agent"
 require_relative "delegation_coordinator"
 require_relative "schedule_store"
@@ -339,28 +340,70 @@ module HQ
       end
     end
 
-    # The active-store lookup and archived evidence write use the archive lock.
-    # This makes an arrival either normal active work or one durable terminal
-    # abort event. It cannot become both across an archive race.
+    # Create, record, and start a new scheduled session from the current store
+    # state. A scheduler tick must never save its old agent snapshot here.
+    def create_and_dispatch_scheduled!(project, schedule_key:, name:, message:, due_at: nil,
+                                       system_message: nil, execution_overrides: {})
+      start_error = nil
+      target = mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = create_scheduled(
+          project, schedule_key:, name:, system_message:, execution_overrides:, existing_agents: agents
+        )
+        agents.unshift(target)
+        add_scheduled_message!(target, schedule_key:, message:, due_at:)
+        yield target if block_given?
+        begin
+          start_target!(target, agents, run_metadata: nil)
+        rescue StandardError => e
+          start_error = e
+        end
+        target
+      end
+      raise start_error if start_error
+
+      target
+    end
+
+    # Accept active work or record its terminal archive result while holding the
+    # same lock used by archive. Every active mutation stays inside this method
+    # so callers cannot keep and later save a stale agent snapshot.
+    def accept_or_abort_prompt!(key, prompt:, actor:, event_id:, archive_metadata: {}, message_metadata: {},
+                                attachments: nil, delayed: false, delay: nil, client_request_id: nil,
+                                source: nil, retire_inquiry_id: nil, start: false, parent_server_id: nil,
+                                attachment_importer: nil)
+      with_exclusive_lock do
+        agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
+        target = agents.find { |agent| agent.key == key.to_s }
+        unless target
+          return record_archived_prompt_unlocked!(
+            key, prompt:, attachments:, actor:, event_id:, metadata: archive_metadata, active_agents: agents
+          )
+        end
+
+        paths = [AGENTS_FILE, DELEGATIONS_FILE, target.memory_path, target.attachments_path]
+        parent = active_prompt_parent_unlocked!(target, agents, actor:)
+        paths << parent.memory_path if parent
+        FileTransaction.run(paths.compact) do |transaction|
+          replay = prompt_replay_unlocked(target, event_id)
+          result = replay || accept_active_prompt_unlocked!(
+            target, agents, prompt:, actor:, event_id:, message_metadata:, attachments:,
+            delayed:, delay:, client_request_id:, source:, retire_inquiry_id:, start:, parent_server_id:,
+            attachment_importer:, transaction:
+          )
+          save_unlocked(agents)
+          result
+        end
+      end
+    end
+
     def record_archived_prompt_attempt!(key, prompt:, actor:, event_id:, metadata: {})
       with_exclusive_lock do
-        current, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
-        return :active if current.any? { |agent| agent.key == key.to_s }
+        agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
+        return :active if agents.any? { |agent| agent.key == key.to_s }
 
-        record = AgentArchiveStore.new.find(key)
-        raise ArgumentError, "Unknown agent: #{key}" unless record
-
-        agent = record.agent
-        if actor&.parent? && agent.delegation_parent&.fetch("agent_key", nil) != actor.agent_key
-          raise DelegationStore::Error, "Parent is not authorized for archived agent: #{key}"
-        end
-        memory = AgentMemory.new(agent)
-        added = memory.append_user_message!(prompt, metadata: metadata, event_id: event_id)
-        if added
-          memory.append_assistant_message!(ManagedAgent::ARCHIVE_ABORT_MESSAGE,
-                                           metadata: { "archive_aborted_arrival" => true, "event_id" => event_id })
-          AgentArchiveStore.new.save(record)
-        end
+        record_archived_prompt_unlocked!(
+          key, prompt:, attachments: nil, actor:, event_id:, metadata:, active_agents: agents
+        )
         :archived
       end
     end
@@ -382,14 +425,12 @@ module HQ
 
     def accept_prompt_from!(child, actor:, agents: nil, now: Time.now)
       if agents
-        child.cancel_pending_sleep_recovery! unless actor&.internal?
-        return @delegation_coordinator.accept_prompt_from!(child:, actor:, now:)
+        return accept_prompt_from_unlocked!(child, actor:, now:)
       end
 
       mutate(dispatch_prompt_queues: false) do |current, _events|
         target = find_agent_in!(current, child.key)
-        target.cancel_pending_sleep_recovery! unless actor&.internal?
-        @delegation_coordinator.accept_prompt_from!(child: target, actor:, now:)
+        accept_prompt_from_unlocked!(target, actor:, now:)
       end
     end
 
@@ -427,21 +468,10 @@ module HQ
         raise ArgumentError, "Agent is no longer running" if require_running && !target.running?
 
         FileTransaction.run([AGENTS_FILE, DELEGATIONS_FILE, target.memory_path]) do
-          accept_prompt_from!(target, actor:, agents:)
-          metadata = target.message_author_metadata(actor) || {}
-          metadata.merge!(message_metadata) if message_metadata.is_a?(Hash)
-          attributes = {
-            prompt:,
-            attachments:,
-            accepted_at: accepted_at || Time.now,
-            not_before:,
-            authority: @delegation_coordinator.ownership_stamp(target.key),
-            message_metadata: metadata,
-            source: source || (actor&.parent? ? "parent" : "user")
-          }
-          attributes[:id] = id if id
-          attributes[:client_request_id] = client_request_id if client_request_id
-          entry = target.enqueue_prompt!(**attributes)
+          entry = enqueue_prompt_from_unlocked!(
+            target, prompt:, attachments:, actor:, accepted_at:, id:, client_request_id:,
+            message_metadata:, source:, not_before:
+          )
           save_unlocked(agents)
           [target, entry]
         end
@@ -613,29 +643,9 @@ module HQ
     def accept_ordinary_prompt!(key, text:, attachments:, actor:, retire_inquiry_id: nil, metadata: nil, event_id: nil)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = find_agent_in!(agents, key)
-        target.cancel_pending_sleep_recovery!
-        active_id = target.latest_inquiry_id.to_s
-        suspended_id = target.suspended_inquiry_id.to_s
-        supplied_id = retire_inquiry_id.to_s
-        unless active_id.empty?
-          raise ArgumentError, "Inquiry has changed; refresh and try again" unless supplied_id.empty?
-
-          target.cancel_pending_inquiry!
-        end
-        if suspended_id.empty?
-          raise ArgumentError, "Inquiry is no longer restorable; refresh and try again" unless supplied_id.empty?
-        elsif supplied_id.empty? || supplied_id != suspended_id
-          raise ArgumentError, "Inquiry has changed; refresh and try again"
-        else
-          target.retire_suspended_inquiry!(suspended_id)
-        end
-
-        accept_prompt_from!(target, actor:, agents:)
-        author_metadata = target.message_author_metadata(actor)
-        message_metadata = [author_metadata, metadata].select { |value| value.is_a?(Hash) }.reduce({}) { |result, value| result.merge(value) }
-        target.add_user_message!(text, attachments:, metadata: message_metadata, event_id:)
-        include_pending_queue_work_with_user_input!(target)
-        target
+        accept_ordinary_prompt_unlocked!(
+          target, text:, attachments:, actor:, retire_inquiry_id:, metadata:, event_id:
+        )
       end
     end
 
@@ -760,6 +770,185 @@ module HQ
     end
 
     private
+
+    def accept_active_prompt_unlocked!(target, agents, prompt:, actor:, event_id:, message_metadata:, attachments:,
+                                       delayed:, delay:, client_request_id:, source:, retire_inquiry_id:, start:,
+                                       parent_server_id:, attachment_importer:, transaction:)
+      ensure_prompt_delegation_unlocked!(target, agents, actor:, parent_server_id:)
+      if attachment_importer
+        attachments = Array(attachment_importer.call(target))
+        transaction.on_rollback do
+          AgentAttachmentStore.new(target).remove_remote_uploads!(attachments)
+        end
+        raise ArgumentError, "At least one attachment must be stored" if attachments.empty?
+      end
+      metadata = message_metadata.is_a?(Hash) ? message_metadata.dup : {}
+      metadata["prompt_arrival_event_id"] = event_id unless event_id.to_s.empty?
+      metadata["client_request_id"] = client_request_id unless client_request_id.to_s.empty?
+
+      if delayed
+        seconds = prompt_delay_seconds!(delay)
+        accepted_at = Time.now
+        entry = enqueue_prompt_from_unlocked!(
+          target, prompt:, attachments:, actor:, accepted_at:, not_before: accepted_at + seconds,
+          id: client_request_id, client_request_id:, message_metadata: metadata,
+          source: source || (actor&.internal? ? "internal_continuation" : actor&.parent? ? "parent" : "user")
+        )
+        return { status: :queued, agent: target, entry:, replayed: false }
+      end
+
+      if target.running?
+        entry = enqueue_prompt_from_unlocked!(
+          target, prompt:, attachments:, actor:, id: client_request_id, client_request_id:,
+          message_metadata: metadata, source: source || (actor&.parent? ? "parent" : "user")
+        )
+        return { status: :queued, agent: target, entry:, replayed: false }
+      end
+
+      accept_ordinary_prompt_unlocked!(
+        target, text: prompt, attachments:, actor:, retire_inquiry_id:, metadata:, event_id:
+      )
+      start_target!(target, agents, run_metadata: nil) if start && !target.running?
+      { status: :accepted, agent: target, entry: nil, replayed: false }
+    end
+
+    def accept_prompt_from_unlocked!(target, actor:, now: Time.now)
+      target.cancel_pending_sleep_recovery! unless actor&.internal?
+      @delegation_coordinator.accept_prompt_from!(child: target, actor:, now:)
+    end
+
+    def enqueue_prompt_from_unlocked!(target, prompt:, attachments:, actor:, accepted_at: nil, id: nil,
+                                      client_request_id: nil, message_metadata: nil, source: nil, not_before: nil)
+      accept_prompt_from_unlocked!(target, actor:)
+      metadata = target.message_author_metadata(actor) || {}
+      metadata.merge!(message_metadata) if message_metadata.is_a?(Hash)
+      attributes = {
+        prompt:,
+        attachments:,
+        accepted_at: accepted_at || Time.now,
+        not_before:,
+        authority: @delegation_coordinator.ownership_stamp(target.key),
+        message_metadata: metadata,
+        source: source || (actor&.parent? ? "parent" : "user")
+      }
+      attributes[:id] = id if id
+      attributes[:client_request_id] = client_request_id if client_request_id
+      target.enqueue_prompt!(**attributes)
+    end
+
+    def accept_ordinary_prompt_unlocked!(target, text:, attachments:, actor:, retire_inquiry_id:, metadata:, event_id:)
+      target.cancel_pending_sleep_recovery!
+      active_id = target.latest_inquiry_id.to_s
+      suspended_id = target.suspended_inquiry_id.to_s
+      supplied_id = retire_inquiry_id.to_s
+      unless active_id.empty?
+        raise ArgumentError, "Inquiry has changed; refresh and try again" unless supplied_id.empty?
+
+        target.cancel_pending_inquiry!
+      end
+      if suspended_id.empty?
+        raise ArgumentError, "Inquiry is no longer restorable; refresh and try again" unless supplied_id.empty?
+      elsif supplied_id.empty? || supplied_id != suspended_id
+        raise ArgumentError, "Inquiry has changed; refresh and try again"
+      else
+        target.retire_suspended_inquiry!(suspended_id)
+      end
+
+      accept_prompt_from_unlocked!(target, actor:)
+      author_metadata = target.message_author_metadata(actor)
+      merged = [author_metadata, metadata].select { |value| value.is_a?(Hash) }
+                                          .reduce({}) { |result, value| result.merge(value) }
+      target.add_user_message!(text, attachments:, metadata: merged, event_id:)
+      include_pending_queue_work_with_user_input!(target)
+      target
+    end
+
+    def active_prompt_parent_unlocked!(target, agents, actor:)
+      return nil unless actor&.parent?
+
+      parent = agents.find { |agent| agent.key == actor.agent_key }
+      unless parent && HQ::Visibility.agent_visible?(parent, @projects)
+        raise DelegationStore::Error, "Unknown parent agent: #{actor.agent_key}"
+      end
+      if target.delegation_parent && target.delegation_parent.fetch("agent_key", nil) != actor.agent_key
+        raise DelegationStore::Error, "Only the recorded parent can prompt a delegated child"
+      end
+      parent
+    end
+
+    def ensure_prompt_delegation_unlocked!(target, agents, actor:, parent_server_id:)
+      return unless actor&.parent?
+
+      relation = @delegation_coordinator.delegation_store.relation_for_child(target.key)
+      if relation
+        unless relation.dig("parent", "agent_key") == actor.agent_key
+          raise DelegationStore::Error, "Only the recorded parent can prompt a delegated child"
+        end
+      else
+        @delegation_coordinator.attach!(
+          agents:, child: target, parent_key: actor.agent_key, parent_server_id:
+        )
+      end
+    end
+
+    def validate_archived_prompt_actor_unlocked!(agent, active_agents, actor:)
+      return unless actor&.parent?
+
+      parent_key = agent.delegation_parent&.fetch("agent_key", nil)
+      unless parent_key == actor.agent_key
+        raise DelegationStore::Error, "Parent is not authorized for archived agent: #{agent.key}"
+      end
+      parent = active_agents.find { |candidate| candidate.key == actor.agent_key }
+      unless parent && HQ::Visibility.agent_visible?(parent, @projects)
+        raise DelegationStore::Error, "Unknown parent agent: #{actor.agent_key}"
+      end
+      @delegation_coordinator.delegation_store.validate_agent_prompt!(
+        source_key: actor.agent_key, target_key: agent.key
+      )
+    end
+
+    def record_archived_prompt_unlocked!(key, prompt:, attachments:, actor:, event_id:, metadata:, active_agents:)
+      record = AgentArchiveStore.new.find(key)
+      raise ArgumentError, "Unknown agent: #{key}" unless record
+
+      agent = record.agent
+      validate_archived_prompt_actor_unlocked!(agent, active_agents, actor:)
+      memory = AgentMemory.new(agent)
+      user_added = memory.append_user_message!(
+        prompt, attachments:, metadata:, event_id:
+      )
+      abort_added = memory.append_assistant_message!(
+        ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+        metadata: { "archive_aborted_arrival" => true, "event_id" => event_id },
+        event_id: "#{event_id}:archive-abort"
+      )
+      if user_added || abort_added
+        AgentArchiveStore.new.save(record)
+      end
+      { status: :archived, agent:, entry: nil, replayed: !user_added && !abort_added }
+    end
+
+    def prompt_replay_unlocked(target, event_id)
+      id = event_id.to_s
+      return nil if id.empty?
+
+      entry = target.queued_prompts.find { |candidate| candidate.dig("message_metadata", "prompt_arrival_event_id") == id }
+      return { status: :queued, agent: target, entry:, replayed: true } if entry
+
+      recorded = AgentMemory.new(target).events.any? { |event| event["event_id"].to_s == id }
+      { status: :accepted, agent: target, entry: nil, replayed: true } if recorded
+    end
+
+    def prompt_delay_seconds!(delay)
+      seconds = begin
+        Float(delay)
+      rescue ArgumentError, TypeError
+        raise ArgumentError, "Delay must be a non-negative number"
+      end
+      raise ArgumentError, "Delay must be zero or greater" if seconds.negative?
+
+      seconds
+    end
 
     def materialize_sleep_recovery!(agent, delay: 60, now: Time.now)
       run = agent.last_run

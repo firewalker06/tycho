@@ -437,11 +437,11 @@ module HQ
           target.key, schedule_key: schedule.key, message:, due_at:
         )
       else
-        agent = build_scheduled_agent(schedule, agents)
-        agents.unshift(agent)
-        @agent_store.save(agents)
-        @agent_store.add_scheduled_message!(agent, schedule_key: schedule.key, message:, due_at: due_at)
-        agent = @agent_store.start_agent!(agent.key)
+        project = project_for(schedule)
+        agent = @agent_store.create_and_dispatch_scheduled!(
+          project, schedule_key: schedule.key, name: schedule.agent_name, message:, due_at:,
+          system_message: schedule.system_message, execution_overrides: schedule.execution_overrides
+        ) { |created| agent = created }
       end
       index = agents.index { |candidate| candidate.key == agent.key }
       agents[index] = agent if index

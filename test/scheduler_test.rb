@@ -35,6 +35,7 @@ module SchedulerTest
       assert_schedule_waits_for_human_input
       assert_schedule_auto_resumes_only_after_awaiting_input_reply
       assert_scheduler_persist_keeps_unrelated_concurrent_agent_updates
+      assert_new_schedule_creation_preserves_concurrent_archive
     end
     assert_schedule_daemon_supervisor_spawns_external_daemon
     assert_bin_schedule_list_lists_configured_schedules
@@ -125,6 +126,48 @@ module SchedulerTest
       current = agent_store.load.find { |agent| agent.key == second.key }
       assert(HQ::AgentMemory.new(current).conversation_messages.any? { |message| message[:content] == "Concurrent prompt" },
              "expected scheduler state persistence to keep an unrelated concurrent prompt")
+    end
+  end
+
+  def assert_new_schedule_creation_preserves_concurrent_archive
+    with_temp_runtime do |dir|
+      registry, schedule_path = write_registry_and_schedule(dir, <<~YAML, suffix: "new-session-race")
+        schedules:
+          - key: fresh-session
+            cron: "0 9 * * *"
+            target:
+              type: agent
+              project_key: web
+              name: Fresh scheduled session
+              message: "Run scheduled work."
+      YAML
+      project = HQ::Project.new(registry.projects.fetch(0))
+      unrelated = HQ::ManagedAgent.new(
+        key: "unrelated-archive-race", name: "Unrelated archive race", project_key: "web",
+        template_key: "custom", workspace: project.path, prompt: "Unrelated", agent: "codex"
+      )
+      base_store = HQ::AgentStore.new([project])
+      base_store.save([unrelated])
+      interleaving_store = HQ::AgentStore.new([project])
+      original_create = interleaving_store.method(:create_and_dispatch_scheduled!)
+      interleaved = false
+      interleaving_store.define_singleton_method(:create_and_dispatch_scheduled!) do |*args, **kwargs, &block|
+        unless interleaved
+          interleaved = true
+          HQ::AgentStore.new([project]).archive_agent!(unrelated.key)
+        end
+        original_create.call(*args, **kwargs, &block)
+      end
+
+      scheduler = build_scheduler(registry, schedule_path)
+      scheduler.instance_variable_set(:@agent_store, interleaving_store)
+      result = scheduler.run_now("fresh-session")
+      active = base_store.load
+      archived = HQ::AgentArchiveStore.new(root: HQ::AGENT_ARCHIVE_DIR).find(unrelated.key)
+      assert(result[:status] == :started && active.any? { |agent| agent.key == result.fetch(:agent).key },
+             "expected no-target schedule creation to persist its new session")
+      assert(active.none? { |agent| agent.key == unrelated.key } && archived,
+             "expected no-target schedule creation not to restore a concurrently archived agent")
     end
   end
 

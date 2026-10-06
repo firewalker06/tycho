@@ -42,6 +42,7 @@ module RemoteServerTest
     assert_concurrent_pull_request_diff_refreshes_are_coalesced
     assert_remote_prompt_accepts_pull_request_context
     assert_remote_prompt_accepts_uploaded_attachments
+    assert_remote_prompt_uploads_follow_atomic_acceptance
     assert_remote_queue_read_preserves_canonical_attachments
     assert_remote_prompt_start_accepts_dash_prefixed_message
     assert_remote_agent_conversation_includes_run_summary
@@ -244,6 +245,9 @@ module RemoteServerTest
       parent = service.create_agent(
         "project_key" => "web", "name" => "Parent <script>", "prompt" => "Coordinate", "agent" => "codex"
       )
+      other_parent = service.create_agent(
+        "project_key" => "web", "name" => "Other parent", "prompt" => "Do not own child", "agent" => "codex"
+      )
       child = service.create_agent(
         "project_key" => "web", "name" => "Child", "prompt" => "Work", "agent" => "codex",
         "parent_agent_key" => parent[:key]
@@ -332,6 +336,17 @@ module RemoteServerTest
       assert(archived_conversation.any? { |event| event[:content] == "Late archived arrival" } &&
              archived_conversation.any? { |event| event[:content] == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE },
              "expected archived arrival evidence without a harness start")
+      begin
+        service.submit_prompt(
+          child[:key], "prompt" => "Unauthorized archived arrival", "parent_agent_key" => other_parent[:key]
+        )
+        raise "expected archived parent authority rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 403 && e.message.include?("not authorized"),
+               "expected normal parent authority checks before archived evidence")
+      end
+      assert(service.conversation(child[:key]).none? { |event| event[:content] == "Unauthorized archived arrival" },
+             "expected rejected archived parent input to leave no evidence")
       begin
         service.submit_prompt(child[:key], {
           "prompt" => "Late archived arrival", "client_request_id" => "550e8400-e29b-41d4-a716-446655440000"
@@ -2317,6 +2332,181 @@ module RemoteServerTest
         assert(e.status == 400, "expected invalid uploads to return a bad request")
       end
     end
+  end
+
+  def assert_remote_prompt_uploads_follow_atomic_acceptance
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      parent = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Upload parent",
+        "prompt" => "Coordinate uploads.", "agent" => "codex"
+      )
+      other_parent = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Other upload parent",
+        "prompt" => "Do not own the child.", "agent" => "codex"
+      )
+      child = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Upload child",
+        "prompt" => "Review uploads.", "agent" => "codex", "parent_agent_key" => parent[:key]
+      )
+      store = service.instance_variable_get(:@agent_store)
+      start_calls = 0
+      store.define_singleton_method(:start_target!) do |target, _agents, run_metadata:|
+        start_calls += 1
+        target
+      end
+
+      malformed_requests = [
+        {
+          "prompt" => "Malformed non-array upload",
+          "attachments" => "not-an-array",
+          "parent_agent_key" => parent[:key],
+          "start" => true
+        },
+        {
+          "attachments" => ["not-an-object"],
+          "parent_agent_key" => parent[:key],
+          "start" => true
+        },
+        {
+          "prompt" => "Malformed mixed upload",
+          "attachments" => [remote_upload("valid-before-invalid.txt", "must not be written"), "not-an-object"],
+          "parent_agent_key" => parent[:key],
+          "delay" => 60
+        },
+        {
+          "prompt" => "Malformed content upload",
+          "attachments" => [{
+            "filename" => "invalid.txt", "mime_type" => "text/plain", "content_base64" => "not base64"
+          }],
+          "parent_agent_key" => parent[:key],
+          "delay" => 60
+        }
+      ]
+      malformed_requests.each do |request|
+        begin
+          service.submit_prompt(child[:key], request)
+          raise "expected malformed upload rejection"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 400, "expected malformed upload input to return a bad request")
+        end
+      end
+      begin
+        store.accept_or_abort_prompt!(
+          child[:key], prompt: "Upload importer stored no files",
+          actor: HQ::DelegationActor.parent_actor(parent[:key]), event_id: "prompt-arrival:empty-import",
+          start: true, attachment_importer: ->(_target) { [] }
+        )
+        raise "expected empty attachment import rejection"
+      rescue ArgumentError => e
+        assert(e.message.include?("At least one attachment must be stored"),
+               "expected acceptance to require a stored attachment")
+      end
+      rejected_payload = service.agent(child[:key])
+      rejected_conversation = service.conversation(child[:key])
+      assert(start_calls.zero? && Array(rejected_payload[:queued_prompts]).empty?,
+             "expected malformed uploads not to start a harness or queue work")
+      assert(remote_upload_files(child[:key]).empty?,
+             "expected malformed uploads not to create asset files")
+      rejected_text = malformed_requests.filter_map { |request| request["prompt"] }
+      rejected_text << "Upload importer stored no files"
+      assert(rejected_conversation.none? { |event| rejected_text.include?(event[:content]) } &&
+             rejected_conversation.none? { |event| event[:content] == "Please review the attached files." },
+             "expected malformed uploads not to create prompt evidence")
+
+      unauthorized_upload = remote_upload("unauthorized.txt", "must not be written")
+
+      begin
+        service.submit_prompt(
+          child[:key], "attachments" => [unauthorized_upload], "parent_agent_key" => other_parent[:key]
+        )
+        raise "expected unauthorized upload rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 403, "expected unauthorized parent upload to be forbidden")
+      end
+      assert(remote_upload_files(child[:key]).empty?,
+             "expected unauthorized upload rejection to leave no asset files")
+
+      request_id = "550e8400-e29b-41d4-a716-446655440010"
+      first = service.submit_prompt(
+        child[:key], "attachments" => [remote_upload("accepted.txt", "accepted bytes")],
+        "parent_agent_key" => parent[:key], "client_request_id" => request_id
+      )
+      files_after_accept = remote_upload_files(child[:key])
+      bytes_after_accept = files_after_accept.to_h { |path| [path, File.binread(path)] }
+      attachment_only_message = first[:conversation].reverse.find do |event|
+        event[:content] == "Please review the attached files."
+      end
+      assert(files_after_accept.length == 1 && attachment_only_message &&
+             Array(attachment_only_message.dig(:metadata, "attachments")).length == 1,
+             "expected valid attachment-only input to store a file before acceptance")
+
+      valid_text = service.submit_prompt(
+        child[:key], "prompt" => "Valid text without attachments", "parent_agent_key" => parent[:key]
+      )
+      text_message = valid_text[:conversation].reverse.find do |event|
+        event[:content] == "Valid text without attachments"
+      end
+      assert(text_message && Array(text_message.dig(:metadata, "attachments")).empty? &&
+             remote_upload_files(child[:key]) == files_after_accept,
+             "expected valid text-only input to remain accepted without file side effects")
+
+      replay = service.submit_prompt(
+        child[:key], "attachments" => [remote_upload("changed.txt", "replay bytes")],
+        "parent_agent_key" => parent[:key], "client_request_id" => request_id
+      )
+      assert(first[:replayed] == false && replay[:replayed] == true,
+             "expected the repeated upload UUID to report a replay")
+      assert(remote_upload_files(child[:key]) == files_after_accept &&
+             files_after_accept.all? { |path| File.binread(path) == bytes_after_accept.fetch(path) },
+             "expected an upload replay not to add or replace asset files")
+
+      begin
+        service.submit_prompt(
+          child[:key], "attachments" => [remote_upload("invalid-delay.txt", "must be rolled back")],
+          "parent_agent_key" => parent[:key], "delay" => -1
+        )
+        raise "expected invalid delayed upload rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("zero or greater"),
+               "expected invalid delayed upload to return a conflict")
+      end
+      assert(remote_upload_files(child[:key]) == files_after_accept,
+             "expected a rejection after upload import to remove its asset files")
+
+      archived = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Archived upload target",
+        "prompt" => "Archive before upload.", "agent" => "codex"
+      )
+      service.archive_agent(archived[:key])
+      begin
+        service.submit_prompt(
+          archived[:key], "attachments" => [remote_upload("archived.txt", "must stay absent")]
+        )
+        raise "expected archived upload rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+               "expected archived upload rejection to return the exact abort")
+      end
+      assert(remote_upload_files(archived[:key]).empty?,
+             "expected archived upload rejection to leave no asset files")
+    end
+  end
+
+  def remote_upload(filename, content)
+    {
+      "filename" => filename,
+      "mime_type" => "text/plain",
+      "content_base64" => Base64.strict_encode64(content)
+    }
+  end
+
+  def remote_upload_files(agent_key)
+    pattern = File.join(HQ::AGENT_LOGS_DIR, "assets", agent_key, "**", "*")
+    Dir.glob(pattern).select { |path| File.file?(path) }.sort
   end
 
   def assert_remote_prompt_start_accepts_dash_prefixed_message
