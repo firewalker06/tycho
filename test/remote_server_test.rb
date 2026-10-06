@@ -42,6 +42,7 @@ module RemoteServerTest
     assert_concurrent_pull_request_diff_refreshes_are_coalesced
     assert_remote_prompt_accepts_pull_request_context
     assert_remote_prompt_accepts_uploaded_attachments
+    assert_remote_prompt_uploads_follow_atomic_acceptance
     assert_remote_queue_read_preserves_canonical_attachments
     assert_remote_prompt_start_accepts_dash_prefixed_message
     assert_remote_agent_conversation_includes_run_summary
@@ -2331,6 +2332,99 @@ module RemoteServerTest
         assert(e.status == 400, "expected invalid uploads to return a bad request")
       end
     end
+  end
+
+  def assert_remote_prompt_uploads_follow_atomic_acceptance
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      parent = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Upload parent",
+        "prompt" => "Coordinate uploads.", "agent" => "codex"
+      )
+      other_parent = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Other upload parent",
+        "prompt" => "Do not own the child.", "agent" => "codex"
+      )
+      child = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Upload child",
+        "prompt" => "Review uploads.", "agent" => "codex", "parent_agent_key" => parent[:key]
+      )
+      unauthorized_upload = remote_upload("unauthorized.txt", "must not be written")
+
+      begin
+        service.submit_prompt(
+          child[:key], "attachments" => [unauthorized_upload], "parent_agent_key" => other_parent[:key]
+        )
+        raise "expected unauthorized upload rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 403, "expected unauthorized parent upload to be forbidden")
+      end
+      assert(remote_upload_files(child[:key]).empty?,
+             "expected unauthorized upload rejection to leave no asset files")
+
+      request_id = "550e8400-e29b-41d4-a716-446655440010"
+      first = service.submit_prompt(
+        child[:key], "attachments" => [remote_upload("accepted.txt", "accepted bytes")],
+        "parent_agent_key" => parent[:key], "client_request_id" => request_id
+      )
+      files_after_accept = remote_upload_files(child[:key])
+      bytes_after_accept = files_after_accept.to_h { |path| [path, File.binread(path)] }
+      replay = service.submit_prompt(
+        child[:key], "attachments" => [remote_upload("changed.txt", "replay bytes")],
+        "parent_agent_key" => parent[:key], "client_request_id" => request_id
+      )
+      assert(first[:replayed] == false && replay[:replayed] == true,
+             "expected the repeated upload UUID to report a replay")
+      assert(remote_upload_files(child[:key]) == files_after_accept &&
+             files_after_accept.all? { |path| File.binread(path) == bytes_after_accept.fetch(path) },
+             "expected an upload replay not to add or replace asset files")
+
+      begin
+        service.submit_prompt(
+          child[:key], "attachments" => [remote_upload("invalid-delay.txt", "must be rolled back")],
+          "parent_agent_key" => parent[:key], "delay" => -1
+        )
+        raise "expected invalid delayed upload rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message.include?("zero or greater"),
+               "expected invalid delayed upload to return a conflict")
+      end
+      assert(remote_upload_files(child[:key]) == files_after_accept,
+             "expected a rejection after upload import to remove its asset files")
+
+      archived = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Archived upload target",
+        "prompt" => "Archive before upload.", "agent" => "codex"
+      )
+      service.archive_agent(archived[:key])
+      begin
+        service.submit_prompt(
+          archived[:key], "attachments" => [remote_upload("archived.txt", "must stay absent")]
+        )
+        raise "expected archived upload rejection"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+               "expected archived upload rejection to return the exact abort")
+      end
+      assert(remote_upload_files(archived[:key]).empty?,
+             "expected archived upload rejection to leave no asset files")
+    end
+  end
+
+  def remote_upload(filename, content)
+    {
+      "filename" => filename,
+      "mime_type" => "text/plain",
+      "content_base64" => Base64.strict_encode64(content)
+    }
+  end
+
+  def remote_upload_files(agent_key)
+    pattern = File.join(HQ::AGENT_LOGS_DIR, "assets", agent_key, "**", "*")
+    Dir.glob(pattern).select { |path| File.file?(path) }.sort
   end
 
   def assert_remote_prompt_start_accepts_dash_prefixed_message

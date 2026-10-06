@@ -3154,10 +3154,10 @@ module HQ
       end
       reference = find_agent_reference!(key)
       pull_request_context = render_prompt_pull_request_contexts(reference, attrs)
-      attachments = import_prompt_attachments(reference, attrs)
-      text = prompt_text(attrs, attachments:)
-      text = [text, pull_request_context].reject(&:empty?).join("\n")
       request_id = prompt_client_request_id(attrs)
+      uploads = attrs["attachments"].is_a?(Array) ? attrs["attachments"] : []
+      text = prompt_text(attrs, attachments: uploads)
+      text = [text, pull_request_context].reject(&:empty?).join("\n")
       event_id = request_id ? "prompt-arrival:#{request_id}" : "prompt-arrival:#{SecureRandom.uuid}"
       source = if actor&.internal?
                  "internal_continuation"
@@ -3175,10 +3175,13 @@ module HQ
         "authority" => actor&.parent? ? { "owner" => actor.agent_key } : nil
       }.compact
       result = @agent_store.accept_or_abort_prompt!(
-        key, prompt: text, attachments:, actor:, event_id:, archive_metadata:,
+        key, prompt: text, actor:, event_id:, archive_metadata:,
         delayed: attrs.key?("delay"), delay: attrs["delay"], client_request_id: request_id,
         source:, retire_inquiry_id: attrs["retire_inquiry_id"],
-        start: truthy?(attrs["start"]), parent_server_id: attrs["parent_server_id"]
+        start: truthy?(attrs["start"]), parent_server_id: attrs["parent_server_id"],
+        attachment_importer: uploads.empty? ? nil : lambda { |target|
+          import_prompt_attachments(target, attrs, dedupe_key: request_id)
+        }
       )
       if result.fetch(:status) == :archived
         raise Error.new(ManagedAgent::ARCHIVE_ABORT_MESSAGE, status: 409)

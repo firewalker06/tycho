@@ -84,8 +84,28 @@ module HQ
         upload
       end
 
-      prepared.each { |upload| write_upload!(upload) }
+      written = []
+      prepared.each do |upload|
+        written << upload.fetch(:attachment)
+        write_upload!(upload)
+      end
       prepared.map { |upload| upload.fetch(:attachment) }
+    rescue StandardError
+      remove_remote_uploads!(written) if defined?(written)
+      raise
+    end
+
+    def remove_remote_uploads!(attachments)
+      asset_root = File.expand_path(File.join(AGENT_LOGS_DIR, "assets", @agent.key.to_s))
+      Array(attachments).each do |attachment|
+        next unless attachment.is_a?(Hash) && attachment["source"] == "remote_upload"
+
+        path = File.expand_path(attachment["path"].to_s)
+        next unless path.start_with?("#{asset_root}#{File::SEPARATOR}")
+
+        FileUtils.rm_f(path)
+        remove_empty_directory(File.dirname(path), stop_at: File.dirname(asset_root))
+      end
     end
 
     private
@@ -128,6 +148,16 @@ module HQ
       path = attachment.fetch("path")
       FileUtils.mkdir_p(File.dirname(path))
       File.binwrite(path, upload.fetch(:bytes))
+    end
+
+    def remove_empty_directory(path, stop_at:)
+      current = File.expand_path(path)
+      while current.start_with?("#{stop_at}#{File::SEPARATOR}") && File.directory?(current) && Dir.empty?(current)
+        Dir.rmdir(current)
+        current = File.dirname(current)
+      end
+    rescue Errno::ENOENT, Errno::ENOTEMPTY
+      nil
     end
 
     def decode_content(value, filename)

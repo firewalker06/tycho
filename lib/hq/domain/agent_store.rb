@@ -5,6 +5,7 @@ require_relative "file_transaction"
 require_relative "file_store"
 require_relative "agent_store_recovery"
 require_relative "agent_archive_store"
+require_relative "agent_attachment_store"
 require_relative "managed_agent"
 require_relative "delegation_coordinator"
 require_relative "schedule_store"
@@ -368,7 +369,8 @@ module HQ
     # so callers cannot keep and later save a stale agent snapshot.
     def accept_or_abort_prompt!(key, prompt:, actor:, event_id:, archive_metadata: {}, message_metadata: {},
                                 attachments: nil, delayed: false, delay: nil, client_request_id: nil,
-                                source: nil, retire_inquiry_id: nil, start: false, parent_server_id: nil)
+                                source: nil, retire_inquiry_id: nil, start: false, parent_server_id: nil,
+                                attachment_importer: nil)
       with_exclusive_lock do
         agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
         target = agents.find { |agent| agent.key == key.to_s }
@@ -378,14 +380,15 @@ module HQ
           )
         end
 
-        paths = [AGENTS_FILE, DELEGATIONS_FILE, target.memory_path]
+        paths = [AGENTS_FILE, DELEGATIONS_FILE, target.memory_path, target.attachments_path]
         parent = active_prompt_parent_unlocked!(target, agents, actor:)
         paths << parent.memory_path if parent
-        FileTransaction.run(paths.compact) do
+        FileTransaction.run(paths.compact) do |transaction|
           replay = prompt_replay_unlocked(target, event_id)
           result = replay || accept_active_prompt_unlocked!(
             target, agents, prompt:, actor:, event_id:, message_metadata:, attachments:,
-            delayed:, delay:, client_request_id:, source:, retire_inquiry_id:, start:, parent_server_id:
+            delayed:, delay:, client_request_id:, source:, retire_inquiry_id:, start:, parent_server_id:,
+            attachment_importer:, transaction:
           )
           save_unlocked(agents)
           result
@@ -770,8 +773,14 @@ module HQ
 
     def accept_active_prompt_unlocked!(target, agents, prompt:, actor:, event_id:, message_metadata:, attachments:,
                                        delayed:, delay:, client_request_id:, source:, retire_inquiry_id:, start:,
-                                       parent_server_id:)
+                                       parent_server_id:, attachment_importer:, transaction:)
       ensure_prompt_delegation_unlocked!(target, agents, actor:, parent_server_id:)
+      if attachment_importer
+        attachments = attachment_importer.call(target)
+        transaction.on_rollback do
+          AgentAttachmentStore.new(target).remove_remote_uploads!(attachments)
+        end
+      end
       metadata = message_metadata.is_a?(Hash) ? message_metadata.dup : {}
       metadata["prompt_arrival_event_id"] = event_id unless event_id.to_s.empty?
       metadata["client_request_id"] = client_request_id unless client_request_id.to_s.empty?

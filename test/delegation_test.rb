@@ -398,6 +398,30 @@ class DelegationTest
       coordinator.attach!(agents: [archived_parent, archived_child], child: archived_child,
                           parent_key: archived_parent.key)
       archive_path = archived_parent.archive_logs!(File.join(dir, "archive"))
+      original_append = HQ::AgentMemory.instance_method(:append_assistant_message!)
+      failed_once = false
+      begin
+        HQ::AgentMemory.define_method(:append_assistant_message!) do |content, **kwargs|
+          if !failed_once && content == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE &&
+             kwargs.dig(:metadata, "archive_aborted_arrival") == true
+            failed_once = true
+            raise IOError, "injected abort append failure"
+          end
+
+          original_append.bind_call(self, content, **kwargs)
+        end
+        assert_raises_io("archived callback abort append failure") { coordinator.process!([archived_child]) }
+        partial_events = File.readlines(File.join(archive_path, File.basename(archived_parent.memory_path)))
+          .map { |line| JSON.parse(line) }
+        assert(partial_events.count { |event| event.dig("metadata", "delegation_callback") } == 1,
+               "expected failure injection after the archived callback write")
+        assert(partial_events.none? { |event| event["content"] == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE },
+               "expected failure injection to leave the terminal abort missing")
+        partial_report = store.reports.find { |item| item["child_run_id"] == archived_child.last_run.run_id }
+        assert(partial_report["delivered_at"].nil?, "expected a partial archived callback write to remain retryable")
+      ensure
+        HQ::AgentMemory.define_method(:append_assistant_message!, original_append)
+      end
       coordinator.process!([archived_child])
       coordinator.process!([archived_child])
       archived_events = File.readlines(File.join(archive_path, File.basename(archived_parent.memory_path)))
