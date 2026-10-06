@@ -321,6 +321,17 @@ module RemoteServerTest
       assert(!archived_payload[:archived_at].to_s.empty?, "expected immutable archive time in detail")
       assert(archived_payload.dig(:delegation, :parent, :agent_key) == parent[:key],
              "expected archived child to retain parent link")
+      begin
+        service.submit_prompt(child[:key], { "prompt" => "Late archived arrival", "client_request_id" => "late-arrival" })
+        raise "expected archived arrival to remain terminal"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409 && e.message == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+               "expected archived arrival to return the exact abort result")
+      end
+      archived_conversation = service.conversation(child[:key])
+      assert(archived_conversation.any? { |event| event[:content] == "Late archived arrival" } &&
+             archived_conversation.any? { |event| event[:content] == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE },
+             "expected archived arrival evidence without a harness start")
 
       archive_index = service.archived_agents("page" => "1", "per_page" => "1", "q" => "Child")
       assert(archive_index.dig(:pagination, :total) == 1 && archive_index.dig(:pagination, :page) == 1,

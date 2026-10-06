@@ -309,7 +309,7 @@ module HQ
     def persist(agents, states, dry_run:)
       return if dry_run
 
-      @agent_store.save(agents)
+      @agent_store.save_existing!(agents)
       store.save(states)
     end
 
@@ -432,12 +432,18 @@ module HQ
       message = schedule.message_text.to_s.strip
       raise ScheduleRegistry::Error, "Schedule #{schedule.key.inspect} has empty message" if message.empty?
 
-      agent = target || build_scheduled_agent(schedule, agents)
       due_at = state.next_due_at || now
-      @agent_store.add_scheduled_message!(agent, schedule_key: schedule.key, message: message, due_at: due_at)
-      agents.unshift(agent) unless target
-      @agent_store.save(agents)
-      agent = @agent_store.start_agent!(agent.key)
+      if target
+        agent = @agent_store.dispatch_scheduled_message!(
+          target.key, schedule_key: schedule.key, message:, due_at:
+        )
+      else
+        agent = build_scheduled_agent(schedule, agents)
+        agents.unshift(agent)
+        @agent_store.save(agents)
+        @agent_store.add_scheduled_message!(agent, schedule_key: schedule.key, message:, due_at: due_at)
+        agent = @agent_store.start_agent!(agent.key)
+      end
       index = agents.index { |candidate| candidate.key == agent.key }
       agents[index] = agent if index
 

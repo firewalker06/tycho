@@ -990,8 +990,15 @@ module HQ
           memory.append_user_message!(entry.fetch("prompt"), created_at: archived_at,
                                       attachments: entry["attachments"], metadata:) unless marked
         end
+        delivered = batch.fetch("delivery_count", 0).to_i.positive? || @prompt_queue_claim&.fetch("id", nil) == batch["id"]
         dispositions = entries.map do |entry|
-          outcome = QueueWork.entry_kind(entry) == "delegated_report" ? "superseded_with_reason" : "declined_with_reason"
+          outcome = if delivered
+                      "aborted_with_uncertainty"
+                    elsif QueueWork.entry_kind(entry) == "delegated_report"
+                      "superseded_with_reason"
+                    else
+                      "declined_with_reason"
+                    end
           { "entry_id" => entry.fetch("id").to_s, "outcome" => outcome, "reason" => message }
         end
         QueueWork.apply_dispositions!(batch, dispositions, completed_at: archived_at)
@@ -1210,9 +1217,10 @@ module HQ
     end
 
     def retire_for_archive!(timeout: 1.0)
-      if running?
+      if @pid && process_group_alive?
         @stop_requested_at ||= Time.now
         terminate_process_group!(term_timeout: timeout)
+        raise IOError, "Agent process group did not stop" if process_group_alive?
       end
 
       finalize_retired_run!

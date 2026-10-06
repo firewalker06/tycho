@@ -3152,6 +3152,10 @@ module HQ
       if attrs.key?("delay") && attrs["parent_agent_key"].to_s.empty? && attrs["sender_agent_key"].to_s == key.to_s
         actor = DelegationActor.internal_actor(key)
       end
+      if (archived = visible_archived_agent(key))
+        record_archived_prompt_attempt!(archived, attrs, actor:)
+        raise Error.new(ManagedAgent::ARCHIVE_ABORT_MESSAGE, status: 409)
+      end
       target = find_agent!(key)
       target = associate_delegation_from_attrs!(target, attrs, actor:)
       pull_request_context = render_prompt_pull_request_contexts(target, attrs)
@@ -3963,6 +3967,30 @@ module HQ
       end
 
       raise Error.new("Unknown agent: #{key}", status: 404)
+    end
+
+    def record_archived_prompt_attempt!(agent, attrs, actor:)
+      text = attrs["prompt"] || attrs["message"] || attrs["content"]
+      text = text.to_s.strip
+      return if text.empty?
+
+      request_id = prompt_client_request_id(attrs).to_s
+      event_id = request_id.empty? ? "archived-arrival:#{SecureRandom.uuid}" : "archived-arrival:#{request_id}"
+      metadata = {
+        "archived_arrival" => true,
+        "archive_abort_message" => ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+        "source" => actor&.parent? ? "parent" : "user",
+        "authority" => actor&.parent? ? { "owner" => actor.agent_key } : nil
+      }.compact
+      memory = AgentMemory.new(agent)
+      before = memory.events.length
+      memory.append_user_message!(text, metadata:, event_id:)
+      if memory.events.length > before
+        memory.append_assistant_message!(ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+                                         metadata: { "archive_aborted_arrival" => true, "event_id" => event_id })
+      end
+      record = @agent_archive_store.find(agent.key)
+      @agent_archive_store.save(record) if record
     end
 
     def find_agent_reference!(key)

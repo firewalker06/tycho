@@ -139,6 +139,17 @@ module HQ
       with_exclusive_lock { save_unlocked(agents) }
     end
 
+    # Scheduler snapshots can become stale while another request archives an
+    # agent. Merge only still-active records so a later tick cannot resurrect
+    # an archived key.
+    def save_existing!(agents)
+      with_exclusive_lock do
+        current, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
+        replacements = Array(agents).to_h { |agent| [agent.key, agent] }
+        save_unlocked(current.map { |agent| replacements.fetch(agent.key, agent) })
+      end
+    end
+
     def save_unlocked(agents, allow_retired_keys: false, allow_large_reduction: false)
       current = File.exist?(AGENTS_FILE) ? Array(FileStore.read_json(AGENTS_FILE, fallback: [])) : []
       records = @recovery.prepare(
@@ -322,6 +333,18 @@ module HQ
             start_target!(target, agents, run_metadata:)
           end
         end
+        target
+      end
+    end
+
+    # Run schedule acceptance and process start under one AgentStore lock.
+    # Archive removes the target under this same lock, so an archived target
+    # cannot receive a stale schedule message or start a harness.
+    def dispatch_scheduled_message!(key, schedule_key:, message:, due_at: nil)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = find_agent_in!(agents, key)
+        add_scheduled_message!(target, schedule_key:, message:, due_at:)
+        start_target!(target, agents, run_metadata: nil) unless target.running?
         target
       end
     end

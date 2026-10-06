@@ -7,9 +7,9 @@ require "time"
 module HQ
   module QueueWork
     VERSION = 1
-    USER_OUTCOMES = %w[completed needs_input declined_with_reason].freeze
-    REPORT_OUTCOMES = %w[incorporated superseded_with_reason].freeze
-    REASON_OUTCOMES = %w[declined_with_reason superseded_with_reason].freeze
+    USER_OUTCOMES = %w[completed needs_input declined_with_reason aborted_with_uncertainty].freeze
+    REPORT_OUTCOMES = %w[incorporated superseded_with_reason aborted_with_uncertainty].freeze
+    REASON_OUTCOMES = %w[declined_with_reason superseded_with_reason aborted_with_uncertainty].freeze
     TERMINAL_STATES = %w[resolved blocked].freeze
     MAX_AUTOMATIC_CONTINUATIONS = 1
 

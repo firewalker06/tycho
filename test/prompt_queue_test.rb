@@ -39,6 +39,7 @@ module PromptQueueTest
     assert_idle_agent_without_live_pid_dispatches_pending_work
     assert_ineligible_agents_do_not_dispatch_pending_work
     assert_archive_stops_run_and_preserves_unperformed_queue_work
+    assert_archive_marks_delivered_queue_work_uncertain
     assert_legacy_entries_load_without_authority
     assert_success_auto_completes_delivered_queue_work
     assert_success_finish_gate_resumes_once_in_same_session
@@ -1030,6 +1031,24 @@ module PromptQueueTest
     ensure
       HQ::ManagedAgent.define_method(:start!, original) if defined?(original) && original
       stop_process(pid)
+    end
+  end
+
+  def assert_archive_marks_delivered_queue_work_uncertain
+    with_queue_store do |registry, workspace|
+      agent = terminal_agent(workspace)
+      agent.enqueue_prompt!(prompt: "Already delivered", id: "delivered-entry")
+      batch = agent.open_queue_work_batch!
+      agent.record_queue_read!(batch)
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+
+      destination = store.archive_agent!(agent.key)
+      manifest = JSON.parse(File.read(File.join(destination, "agent_manifest.json")))
+      disposition = manifest.dig("queue_work", "batches", 0, "dispositions", "delivered-entry")
+      assert(disposition["outcome"] == "aborted_with_uncertainty" &&
+             disposition["reason"] == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+             "expected delivered queue work to preserve side-effect uncertainty")
     end
   end
 
