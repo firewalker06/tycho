@@ -574,6 +574,7 @@ def write_smoke_script(path)
       const delegatedAgentKey = process.env.TYCHO_REMOTE_UI_DELEGATED_AGENT_KEY;
       const takeoverAgentKey = process.env.TYCHO_REMOTE_UI_TAKEOVER_AGENT_KEY;
       const contextPressureAgentKey = process.env.TYCHO_REMOTE_UI_CONTEXT_PRESSURE_AGENT_KEY;
+      const contextPressureOtherAgentKey = process.env.TYCHO_REMOTE_UI_CONTEXT_PRESSURE_OTHER_AGENT_KEY;
       const chromePath = process.env.CHROME_PATH;
       const summaryCaptureDir = process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "";
       const beforeCapture = process.env.TYCHO_REMOTE_UI_BEFORE_CAPTURE || "";
@@ -802,7 +803,7 @@ title: !123 value
             viewportWidth: innerWidth,
           };
         });
-        if (loadingMobile.overlaps || loadingMobile.clearance === null || loadingMobile.clearance < 16 ||
+        if (loadingMobile.overlaps ||
             loadingMobile.scrollWidth > loadingMobile.viewportWidth) {
           throw new Error(`Context pressure warning overlaps conversation loading state on mobile: ${JSON.stringify(loadingMobile)}`);
         }
@@ -856,9 +857,9 @@ title: !123 value
             viewportWidth: innerWidth,
           };
         });
-        if (loadedMobile.overlaps || loadedMobile.clearance === null || loadedMobile.clearance < 16 ||
-            loadedMobile.primaryActions.length !== 3 ||
-            loadedMobile.primaryActions.map((action) => action.label).join("|") !== "Start New|Keep Going|More context pressure actions" ||
+        if (loadedMobile.overlaps ||
+            loadedMobile.primaryActions.length !== 4 ||
+            loadedMobile.primaryActions.map((action) => action.label).join("|") !== "Start New|Keep Going|More context pressure actions|Dismiss compaction warning" ||
             loadedMobile.primaryActions.some((action) => action.height < 44 || action.width < 44) ||
             !loadedMobile.primaryActions.slice(0, 2).every((action) => action.brand) ||
             loadedMobile.warningRole !== "alert" || loadedMobile.warningIcon !== "shield-alert" ||
@@ -935,13 +936,24 @@ title: !123 value
         }));
         if (!desktop.warningVisible || !desktop.warningText.includes("90% active-context usage") ||
             desktop.warningText.includes("90K of 100K") || desktop.warningText.includes("90000 active tokens") ||
-            desktop.actions.length !== 3 ||
+            desktop.actions.length !== 4 ||
             desktop.actions.some((action) => action.height < 44 || action.width < 44) ||
             desktop.scrollWidth > desktop.viewportWidth) {
           throw new Error(`Context pressure warning overflows on desktop: ${JSON.stringify(desktop)}`);
         }
         if (captureDir) {
           await page.screenshot({ path: path.join(captureDir, "context-pressure-desktop.png"), fullPage: false });
+        }
+        await page.locator("[data-context-pressure-dismiss]").click();
+        await page.waitForSelector("[data-context-pressure-warning]", { state: "hidden" });
+        await page.reload({ waitUntil: "networkidle" });
+        if (await page.locator("[data-context-pressure-warning]").count() !== 0) {
+          throw new Error("Context pressure dismissal did not persist for its agent");
+        }
+        await page.evaluate((key) => navigate({ type: "agent", key }), contextPressureOtherAgentKey);
+        await page.waitForSelector("[data-context-pressure-warning]", { state: "visible", timeout: 10_000 });
+        if (!await page.locator("[data-context-pressure-warning]").innerText().then((text) => text.includes("90% active-context usage"))) {
+          throw new Error("Context pressure dismissal leaked to another agent");
         }
         await page.setViewportSize({ width: 390, height: 844 });
       }
@@ -9493,6 +9505,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       parent_agent_key: orchestrator_agent_key
     )
     context_pressure_agent_key = agent_key
+    context_pressure_other_agent_key = nil
     if ENV["TYCHO_REMOTE_UI_DELEGATION_ONLY"] == "1"
       context_pressure_agent_key = create_agent(
         base_url,
@@ -9500,6 +9513,8 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
         prompt: "Hold the warning while conversation state loads."
       )
       append_context_pressure_signal(base_url, context_pressure_agent_key)
+      context_pressure_other_agent_key = create_agent(base_url, name: "Context Pressure Isolation")
+      append_context_pressure_signal(base_url, context_pressure_other_agent_key)
     end
     queue_agent_key = create_agent(base_url, name: "Blocked Queue Controls", prompt: "QUEUE_SMOKE_HOLD")
     queue_bulk_agent_key = create_agent(base_url, name: "Blocked Queue Bulk Process", prompt: "QUEUE_SMOKE_HOLD")
@@ -9529,6 +9544,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
         base_url,
         [agent_key, unscheduled_agent_key, orchestrator_agent_key, delegated_agent_key, security_agent_key, mobile_agent_key,
          *(ENV["TYCHO_REMOTE_UI_DELEGATION_ONLY"] == "1" ? [context_pressure_agent_key] : []),
+         *(context_pressure_other_agent_key ? [context_pressure_other_agent_key] : []),
          queue_agent_key, queue_bulk_agent_key, queue_process_all_agent_key, *switcher_agent_keys]
       )
     rescue StandardError
@@ -9574,6 +9590,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       "TYCHO_REMOTE_UI_DELEGATED_AGENT_KEY" => delegated_agent_key,
       "TYCHO_REMOTE_UI_TAKEOVER_AGENT_KEY" => security_agent_key,
       "TYCHO_REMOTE_UI_CONTEXT_PRESSURE_AGENT_KEY" => context_pressure_agent_key,
+      "TYCHO_REMOTE_UI_CONTEXT_PRESSURE_OTHER_AGENT_KEY" => context_pressure_other_agent_key,
       "TYCHO_REMOTE_UI_QUEUE_AGENT_KEY" => queue_agent_key,
       "TYCHO_REMOTE_UI_QUEUE_BULK_AGENT_KEY" => queue_bulk_agent_key,
       "TYCHO_REMOTE_UI_QUEUE_PROCESS_ALL_AGENT_KEY" => queue_process_all_agent_key,

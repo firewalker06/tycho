@@ -10,6 +10,7 @@ module ContextPressureTest
 
   def run!
     assert_codex_measured_warning_and_acknowledgement
+    assert_dismissal_is_permanent_for_one_agent
     assert_later_low_measurement_clears_warning
     assert_stale_measurement_does_not_warn
     assert_claude_compaction_is_reported_without_invented_limit
@@ -61,6 +62,20 @@ module ContextPressureTest
       reloaded = HQ::ManagedAgent.from_hash(agent.to_hash)
       assert(reloaded.context_pressure["acknowledged"] && !reloaded.context_pressure["warning"],
              "expected the persisted acknowledgement to survive agent reload")
+    end
+  end
+
+  def assert_dismissal_is_permanent_for_one_agent
+    with_agent("claude") do |agent, log|
+      append(log, "type" => "system", "subtype" => "compact_boundary", "compact_metadata" => { "trigger" => "auto" })
+      agent.dismiss_context_pressure!
+      assert(agent.context_pressure["dismissed"] && !agent.context_pressure["warning"], "expected dismissal to hide this agent warning")
+      append(log, "type" => "compaction_end", "reason" => "threshold")
+      assert(!agent.context_pressure["warning"], "expected later compaction to stay dismissed for this agent")
+      reloaded = HQ::ManagedAgent.from_hash(agent.to_hash)
+      assert(reloaded.context_pressure["dismissed"] && !reloaded.context_pressure["warning"], "expected dismissal to persist")
+      other = HQ::ManagedAgent.new(key: "other", name: "Other", project_key: "demo", template_key: "custom", workspace: File.dirname(log), prompt: "Prompt", agent: "claude", log_path: log)
+      assert(other.context_pressure["warning"], "expected a separate agent to retain its own warning")
     end
   end
 
