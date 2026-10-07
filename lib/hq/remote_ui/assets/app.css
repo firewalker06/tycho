@@ -1525,6 +1525,13 @@ select {
   color: var(--text);
 }
 
+.context-pressure-dismiss {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 1;
+}
+
 .context-pressure-warning-copy {
   display: flex;
   gap: 0.75rem;
@@ -1537,7 +1544,7 @@ select {
 
 .context-pressure-actions {
   display: grid;
-  grid-template-columns: minmax(0, max-content) minmax(0, max-content) var(--ds-touch-target) var(--ds-touch-target);
+  grid-template-columns: minmax(0, max-content) minmax(0, max-content) var(--ds-touch-target);
   align-items: center;
   margin-top: 0.85rem;
 }
@@ -1613,7 +1620,7 @@ select {
 
 @media (max-width: 560px) {
   .context-pressure-actions {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--touch-target) var(--touch-target);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--touch-target);
   }
 
   .context-pressure-actions > button {

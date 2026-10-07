@@ -786,6 +786,9 @@ title: !123 value
         });
         const loadingMobile = await page.evaluate(() => {
           const warning = document.querySelector("[data-context-pressure-warning]");
+          const dismiss = warning?.querySelector("[data-context-pressure-dismiss]");
+          const dismissRect = dismiss?.getBoundingClientRect();
+          const warningRect = warning?.getBoundingClientRect();
           const actions = warning?.querySelector(".context-pressure-actions");
           const spinner = document.querySelector(".conversation-loading-logo");
           const actionsRect = actions?.getBoundingClientRect();
@@ -829,6 +832,8 @@ title: !123 value
           const actionsRect = actionsContainer?.getBoundingClientRect();
           const stateRect = conversationState?.getBoundingClientRect();
           const warning = document.querySelector("[data-context-pressure-warning]");
+          const dismissRect = warning?.querySelector("[data-context-pressure-dismiss]")?.getBoundingClientRect();
+          const warningRect = warning?.getBoundingClientRect();
           const primaryActions = Array.from(actionsContainer?.children || []).map((action) => {
             const rect = action.getBoundingClientRect();
             const trigger = action.matches("details") ? action.querySelector(":scope > summary") : action;
@@ -853,15 +858,22 @@ title: !123 value
             warningRole: warning?.getAttribute("role"),
             warningIcon: warning?.querySelector("[data-context-pressure-icon]")?.dataset.contextPressureIcon,
             warningText: warning?.innerText || "",
+            dismissRect: dismissRect?.toJSON(),
+            warningRect: warningRect?.toJSON(),
             scrollWidth: document.documentElement.scrollWidth,
             viewportWidth: innerWidth,
           };
         });
         if (loadedMobile.overlaps ||
-            loadedMobile.primaryActions.length !== 4 ||
-            loadedMobile.primaryActions.map((action) => action.label).join("|") !== "Start New|Keep Going|More context pressure actions|Dismiss compaction warning" ||
+            loadedMobile.primaryActions.length !== 3 ||
+            loadedMobile.primaryActions.map((action) => action.label).join("|") !== "Start New|Keep Going|More context pressure actions" ||
             loadedMobile.primaryActions.some((action) => action.height < 44 || action.width < 44) ||
             !loadedMobile.primaryActions.slice(0, 2).every((action) => action.brand) ||
+            !loadedMobile.dismissRect || !loadedMobile.warningRect ||
+            loadedMobile.dismissRect.top < loadedMobile.warningRect.top ||
+            loadedMobile.dismissRect.right > loadedMobile.warningRect.right ||
+            loadedMobile.dismissRect.top > loadedMobile.warningRect.top + 16 ||
+            loadedMobile.dismissRect.right < loadedMobile.warningRect.right - 16 ||
             loadedMobile.warningRole !== "alert" || loadedMobile.warningIcon !== "shield-alert" ||
             !loadedMobile.warningText.includes("90% active-context usage") ||
             loadedMobile.warningText.includes("90K of 100K") || loadedMobile.warningText.includes("90000 active tokens") ||
@@ -933,10 +945,17 @@ title: !123 value
             const rect = target?.getBoundingClientRect();
             return { width: rect?.width, height: rect?.height };
           }),
+          dismiss: (() => {
+            const warning = document.querySelector("[data-context-pressure-warning]");
+            const button = warning?.querySelector("[data-context-pressure-dismiss]");
+            return { warning: warning?.getBoundingClientRect().toJSON(), button: button?.getBoundingClientRect().toJSON() };
+          })(),
         }));
         if (!desktop.warningVisible || !desktop.warningText.includes("90% active-context usage") ||
             desktop.warningText.includes("90K of 100K") || desktop.warningText.includes("90000 active tokens") ||
-            desktop.actions.length !== 4 ||
+            desktop.actions.length !== 3 || !desktop.dismiss.warning || !desktop.dismiss.button ||
+            desktop.dismiss.button.top < desktop.dismiss.warning.top || desktop.dismiss.button.right > desktop.dismiss.warning.right ||
+            desktop.dismiss.button.top > desktop.dismiss.warning.top + 16 || desktop.dismiss.button.right < desktop.dismiss.warning.right - 16 ||
             desktop.actions.some((action) => action.height < 44 || action.width < 44) ||
             desktop.scrollWidth > desktop.viewportWidth) {
           throw new Error(`Context pressure warning overflows on desktop: ${JSON.stringify(desktop)}`);

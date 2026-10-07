@@ -51,7 +51,7 @@ module RemoteUIContextPressureTest
         throw new Error("warning actions do not expose safe control state");
       }
       const topLevelActions = html.match(/data-context-pressure-(?:clone|ack)=/g) || [];
-      if (topLevelActions.length !== 2 || !html.includes('aria-label="Dismiss compaction warning"') || !html.includes('class="primary inline-icon-button ui-button"')) {
+      if (topLevelActions.length !== 2 || !html.includes('class="context-pressure-dismiss inline-icon-button ui-button"') || !html.includes('class="primary inline-icon-button ui-button"')) {
         throw new Error("warning must expose exactly two primary actions before the menu");
       }
       if (context.renderContextPressureWarning({ key: "quiet", context_pressure: { warning: false } }) !== "") {
@@ -68,7 +68,8 @@ module RemoteUIContextPressureTest
         throw new Error("reported-only warning must explain that no percentage is available");
       }
       if (!source.includes("archive_source: false") || !source.includes("context_handoff: handoff") ||
-          !source.includes("start: handoff") || !styles.includes(".context-pressure-warning")) {
+          !source.includes("start: handoff") || !styles.includes(".context-pressure-warning") ||
+          !styles.includes(".context-pressure-dismiss") || !styles.includes("position: absolute")) {
         throw new Error("clone safety or warning styles are missing");
       }
     JAVASCRIPT
