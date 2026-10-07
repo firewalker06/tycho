@@ -4348,11 +4348,15 @@ select {
 }
 
 .delegation-send-message pre {
-  overflow-x: auto;
+  display: -webkit-box;
+  overflow: hidden;
   margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font: inherit;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .delegation-event-brand {

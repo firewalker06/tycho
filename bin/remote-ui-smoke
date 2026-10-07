@@ -1120,40 +1120,54 @@ title: !123 value
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(orchestratorAgentKey)}`, { waitUntil: "networkidle" });
         await page.evaluate(async ({ childKey, parentKey }) => {
           await apiPost(`/agents/${encodeURIComponent(childKey)}/messages`, {
-            prompt: "Verify line one\\n<script>not markup</script>",
+            prompt: "Verify line one has enough words to wrap on a narrow viewport safely.\\nVerify line two has enough words to wrap on a narrow viewport safely.\\nVerify line three has enough words to wrap on a narrow viewport safely.\\n<script>not markup</script>",
             parent_agent_key: parentKey,
             client_request_id: "550e8400-e29b-41d4-a716-446655440010",
             start: false,
           });
         }, { childKey: delegatedAgentKey, parentKey: orchestratorAgentKey });
         await page.reload({ waitUntil: "networkidle" });
-        await page.waitForFunction(() => Array.from(document.querySelectorAll(".delegation-send-event .delegation-send-message pre"))
-          .some((message) => message.textContent === "Verify line one\\n<script>not markup</script>"), null, { timeout: 10_000 });
+        const sendText = "Verify line one has enough words to wrap on a narrow viewport safely.\\nVerify line two has enough words to wrap on a narrow viewport safely.\\nVerify line three has enough words to wrap on a narrow viewport safely.\\n<script>not markup</script>";
+        await page.waitForFunction((text) => Array.from(document.querySelectorAll(".delegation-send-event .delegation-send-message pre"))
+          .some((message) => message.textContent === text), sendText, { timeout: 10_000 });
+        await page.evaluate((text) => { window.__tychoSmokeSendText = text; }, sendText);
         const sendDesktop = await page.evaluate(() => {
           const event = Array.from(document.querySelectorAll(".delegation-send-event"))
-            .find((candidate) => candidate.querySelector(".delegation-send-message pre")?.textContent === "Verify line one\\n<script>not markup</script>");
+            .find((candidate) => candidate.querySelector(".delegation-send-message pre")?.textContent === window.__tychoSmokeSendText);
+          const message = event?.querySelector(".delegation-send-message pre");
+          const style = message ? getComputedStyle(message) : null;
           return {
             label: event?.querySelector("strong")?.textContent || "",
-            message: event?.querySelector(".delegation-send-message pre")?.textContent || "",
+            message: message?.textContent || "",
             link: event?.querySelector(".agent-reference[href]")?.getAttribute("href") || "",
             scripts: event?.querySelectorAll("script").length || 0,
+            lineHeight: Number.parseFloat(style?.lineHeight || "0"),
+            messageHeight: message?.getBoundingClientRect().height || 0,
           };
         });
-        if (sendDesktop.label !== "Message sent" ||
-            sendDesktop.message !== "Verify line one\\n<script>not markup</script>" ||
+        if (sendDesktop.label !== "Message sent" || sendDesktop.message !== sendText ||
             !sendDesktop.link.includes(delegatedAgentKey) || sendDesktop.scripts !== 0) {
           throw new Error(`Accepted agent-send event did not render safely after reload: ${JSON.stringify(sendDesktop)}`);
+        }
+        if (!sendDesktop.lineHeight || sendDesktop.messageHeight > sendDesktop.lineHeight * 3 + 1) {
+          throw new Error(`Accepted agent-send message exceeds three desktop lines: ${JSON.stringify(sendDesktop)}`);
         }
         if (captureDir) await page.locator(".delegation-send-event").filter({ hasText: "Verify line one" }).screenshot({ path: path.join(captureDir, "agent-send-conversation-desktop.png") });
         await page.setViewportSize({ width: 390, height: 844 });
         const sendMobile = await page.evaluate(() => {
           const event = Array.from(document.querySelectorAll(".delegation-send-event"))
-            .find((candidate) => candidate.querySelector(".delegation-send-message pre")?.textContent === "Verify line one\\n<script>not markup</script>");
+            .find((candidate) => candidate.querySelector(".delegation-send-message pre")?.textContent === window.__tychoSmokeSendText);
           event?.scrollIntoView({ block: "center" });
           const rect = event?.getBoundingClientRect();
-          return { left: rect?.left || 0, right: rect?.right || 0, width: rect?.width || 0, viewportWidth: innerWidth };
+          const message = event?.querySelector(".delegation-send-message pre");
+          const style = message ? getComputedStyle(message) : null;
+          return {
+            left: rect?.left || 0, right: rect?.right || 0, width: rect?.width || 0, viewportWidth: innerWidth,
+            lineHeight: Number.parseFloat(style?.lineHeight || "0"), messageHeight: message?.getBoundingClientRect().height || 0,
+          };
         });
-        if (sendMobile.left <= 0 || sendMobile.right > sendMobile.viewportWidth || sendMobile.width >= sendMobile.viewportWidth) {
+        if (sendMobile.left <= 0 || sendMobile.right > sendMobile.viewportWidth || sendMobile.width >= sendMobile.viewportWidth ||
+            !sendMobile.lineHeight || sendMobile.messageHeight > sendMobile.lineHeight * 3 + 1) {
           throw new Error(`Accepted agent-send event overflows mobile: ${JSON.stringify(sendMobile)}`);
         }
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "agent-send-conversation-mobile.png"), fullPage: false });
