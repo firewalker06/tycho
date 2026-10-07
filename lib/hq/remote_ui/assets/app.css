@@ -4345,6 +4345,36 @@ select {
   min-height: 34px;
 }
 
+.delegation-send-event {
+  gap: 10px;
+}
+
+.delegation-send-message {
+  display: grid;
+  gap: 4px;
+  color: var(--text);
+}
+
+.delegation-send-message > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.delegation-send-message pre {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
 .delegation-event-brand {
   color: var(--accent);
   font-size: 10px;

@@ -397,6 +397,9 @@ module HQ
             delayed:, delay:, client_request_id:, source:, retire_inquiry_id:, start:, parent_server_id:,
             attachment_importer:, transaction:
           )
+          record_accepted_agent_send!(
+            parent:, target:, prompt:, event_id:, result:
+          ) if actor&.parent? && !result.fetch(:replayed)
           save_unlocked(agents)
           result
         end
@@ -947,6 +950,28 @@ module HQ
       target.add_user_message!(text, attachments:, metadata: merged, event_id:)
       include_pending_queue_work_with_user_input!(target)
       target
+    end
+
+    # A parent-declared prompt is a durable operator action. Keep this event on
+    # the parent transcript only after the target has accepted or queued it.
+    # The target key scopes the parent event to the same child as prompt replay.
+    # This preserves a distinct event when one transport request ID reaches two
+    # children, while retries for one child remain idempotent. Older unscoped
+    # event IDs stay readable; replay prevents a new event for their old send.
+    def record_accepted_agent_send!(parent:, target:, prompt:, event_id:, result:)
+      return unless parent
+
+      queued = result.fetch(:status) == :queued
+      AgentMemory.new(parent).append_delegation_event!(
+        queued ? "Queued message for #{target.display_name}" : "Sent message to #{target.display_name}",
+        event_id: "agent-send:#{target.key}:#{event_id}",
+        metadata: {
+          "event" => "agent_message_sent",
+          "delivery_status" => queued ? "queued" : "accepted",
+          "agent_reference" => @delegation_coordinator.delegation_store.relation_for_child(target.key)&.fetch("child", nil),
+          "message" => prompt.to_s
+        }.compact
+      )
     end
 
     def active_prompt_parent_unlocked!(target, agents, actor:)

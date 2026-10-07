@@ -290,6 +290,42 @@ module RemoteServerTest
              signed_prompt.dig(:metadata, "message_author", "agent_key") == parent[:key] &&
              signed_prompt.dig(:metadata, "message_author", "name") == "Parent <script>",
              "expected a parent-declared prompt to persist its agent signature")
+      sent_event = service.conversation(parent[:key]).find do |block|
+        block.dig(:metadata, "event") == "agent_message_sent" && block.dig(:metadata, "message") == "Continue"
+      end
+      assert(sent_event&.dig(:metadata, "delivery_status") == "accepted" &&
+             sent_event.dig(:metadata, "agent_reference", "agent_key") == child[:key],
+             "expected an accepted parent send to record a typed parent Conversation event")
+
+      retry_attrs = {
+        "prompt" => "Retry-safe\nplain <script>message</script>",
+        "parent_agent_key" => parent[:key], "client_request_id" => "550e8400-e29b-41d4-a716-446655440001"
+      }
+      service.submit_prompt(child[:key], retry_attrs)
+      service.submit_prompt(child[:key], retry_attrs)
+      retry_events = service.conversation(parent[:key]).select do |block|
+        block.dig(:metadata, "message") == retry_attrs.fetch("prompt")
+      end
+      assert(retry_events.length == 1 && retry_events.first.dig(:metadata, "delivery_status") == "accepted",
+             "expected an accepted send retry to keep one durable plain-text Conversation event")
+
+      second_child = service.create_agent(
+        "project_key" => "web", "name" => "Second child", "prompt" => "Work", "agent" => "codex",
+        "parent_agent_key" => parent[:key]
+      )
+      shared_retry = {
+        "prompt" => "Shared request id", "parent_agent_key" => parent[:key],
+        "client_request_id" => "550e8400-e29b-41d4-a716-446655440002"
+      }
+      2.times { service.submit_prompt(child[:key], shared_retry) }
+      2.times { service.submit_prompt(second_child[:key], shared_retry) }
+      shared_events = service.conversation(parent[:key]).select do |block|
+        block.dig(:metadata, "message") == shared_retry.fetch("prompt")
+      end
+      assert(shared_events.length == 2 && shared_events.map { |block| block.dig(:metadata, "agent_reference", "agent_key") }.sort ==
+             [child[:key], second_child[:key]].sort &&
+             shared_events.all? { |block| block.dig(:metadata, "delivery_status") == "accepted" },
+             "expected one accepted parent event for each child sharing a retry request ID")
 
       taken_over = service.submit_prompt(child[:key], "prompt" => "I will handle this directly")
       assert(taken_over[:agent].dig(:delegation, :parent, :owner) == "user" &&
