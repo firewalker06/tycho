@@ -69,7 +69,8 @@ module RemoteUIContextPressureTest
       }
       if (!source.includes("archive_source: false") || !source.includes("context_handoff: handoff") ||
           !source.includes("start: handoff") || !styles.includes(".context-pressure-warning") ||
-          !styles.includes(".context-pressure-dismiss") || !styles.includes("position: absolute")) {
+          !styles.includes(".context-pressure-dismiss") || !styles.includes("position: absolute") ||
+          !styles.includes(".context-pressure-warning-copy > div") || !styles.includes("padding-right")) {
         throw new Error("clone safety or warning styles are missing");
       }
     JAVASCRIPT

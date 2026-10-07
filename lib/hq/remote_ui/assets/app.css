@@ -1538,6 +1538,10 @@ select {
   align-items: flex-start;
 }
 
+.context-pressure-warning-copy > div {
+  padding-right: calc(var(--ds-touch-target) + 0.5rem);
+}
+
 .context-pressure-warning-copy p {
   margin: 0.35rem 0;
 }

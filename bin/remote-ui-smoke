@@ -827,6 +827,10 @@ title: !123 value
           if (pane) pane.scrollTop = 0;
         });
         const loadedMobile = await page.evaluate(() => {
+          const rectanglesIntersect = (first, second) => first && second && !(
+            first.right <= second.left || first.left >= second.right ||
+            first.bottom <= second.top || first.top >= second.bottom
+          );
           const actionsContainer = document.querySelector("[data-context-pressure-warning] .context-pressure-actions");
           const conversationState = document.querySelector(".message-list > .message-group");
           const actionsRect = actionsContainer?.getBoundingClientRect();
@@ -834,6 +838,8 @@ title: !123 value
           const warning = document.querySelector("[data-context-pressure-warning]");
           const dismissRect = warning?.querySelector("[data-context-pressure-dismiss]")?.getBoundingClientRect();
           const warningRect = warning?.getBoundingClientRect();
+          const titleRect = warning?.querySelector(".context-pressure-warning-copy strong")?.getBoundingClientRect();
+          const detailRect = warning?.querySelector(".context-pressure-warning-copy p")?.getBoundingClientRect();
           const primaryActions = Array.from(actionsContainer?.children || []).map((action) => {
             const rect = action.getBoundingClientRect();
             const trigger = action.matches("details") ? action.querySelector(":scope > summary") : action;
@@ -860,6 +866,10 @@ title: !123 value
             warningText: warning?.innerText || "",
             dismissRect: dismissRect?.toJSON(),
             warningRect: warningRect?.toJSON(),
+            titleRect: titleRect?.toJSON(),
+            detailRect: detailRect?.toJSON(),
+            titleOverlapsDismiss: Boolean(rectanglesIntersect(titleRect, dismissRect)),
+            detailOverlapsDismiss: Boolean(rectanglesIntersect(detailRect, dismissRect)),
             scrollWidth: document.documentElement.scrollWidth,
             viewportWidth: innerWidth,
           };
@@ -870,6 +880,8 @@ title: !123 value
             loadedMobile.primaryActions.some((action) => action.height < 44 || action.width < 44) ||
             !loadedMobile.primaryActions.slice(0, 2).every((action) => action.brand) ||
             !loadedMobile.dismissRect || !loadedMobile.warningRect ||
+            !loadedMobile.titleRect || !loadedMobile.detailRect ||
+            loadedMobile.titleOverlapsDismiss || loadedMobile.detailOverlapsDismiss ||
             loadedMobile.dismissRect.top < loadedMobile.warningRect.top ||
             loadedMobile.dismissRect.right > loadedMobile.warningRect.right ||
             loadedMobile.dismissRect.top > loadedMobile.warningRect.top + 16 ||
@@ -948,12 +960,30 @@ title: !123 value
           dismiss: (() => {
             const warning = document.querySelector("[data-context-pressure-warning]");
             const button = warning?.querySelector("[data-context-pressure-dismiss]");
-            return { warning: warning?.getBoundingClientRect().toJSON(), button: button?.getBoundingClientRect().toJSON() };
+            const title = warning?.querySelector(".context-pressure-warning-copy strong");
+            const detail = warning?.querySelector(".context-pressure-warning-copy p");
+            const titleRect = title?.getBoundingClientRect();
+            const detailRect = detail?.getBoundingClientRect();
+            const buttonRect = button?.getBoundingClientRect();
+            const intersects = (first, second) => first && second && !(
+              first.right <= second.left || first.left >= second.right ||
+              first.bottom <= second.top || first.top >= second.bottom
+            );
+            return {
+              warning: warning?.getBoundingClientRect().toJSON(),
+              button: buttonRect?.toJSON(),
+              title: titleRect?.toJSON(),
+              detail: detailRect?.toJSON(),
+              titleOverlapsButton: Boolean(intersects(titleRect, buttonRect)),
+              detailOverlapsButton: Boolean(intersects(detailRect, buttonRect)),
+            };
           })(),
         }));
         if (!desktop.warningVisible || !desktop.warningText.includes("90% active-context usage") ||
             desktop.warningText.includes("90K of 100K") || desktop.warningText.includes("90000 active tokens") ||
             desktop.actions.length !== 3 || !desktop.dismiss.warning || !desktop.dismiss.button ||
+            !desktop.dismiss.title || !desktop.dismiss.detail ||
+            desktop.dismiss.titleOverlapsButton || desktop.dismiss.detailOverlapsButton ||
             desktop.dismiss.button.top < desktop.dismiss.warning.top || desktop.dismiss.button.right > desktop.dismiss.warning.right ||
             desktop.dismiss.button.top > desktop.dismiss.warning.top + 16 || desktop.dismiss.button.right < desktop.dismiss.warning.right - 16 ||
             desktop.actions.some((action) => action.height < 44 || action.width < 44) ||
