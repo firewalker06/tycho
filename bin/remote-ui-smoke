@@ -791,6 +791,7 @@ title: !123 value
           const warningRect = warning?.getBoundingClientRect();
           const actions = warning?.querySelector(".context-pressure-actions");
           const spinner = document.querySelector(".conversation-loading-logo");
+          const messageList = warning?.previousElementSibling;
           const actionsRect = actions?.getBoundingClientRect();
           const spinnerRect = spinner?.getBoundingClientRect();
           const overlaps = actionsRect && spinnerRect && !(
@@ -802,11 +803,16 @@ title: !123 value
             spinner: spinnerRect?.toJSON(),
             overlaps: Boolean(overlaps),
             clearance: actionsRect && spinnerRect ? spinnerRect.top - actionsRect.bottom : null,
+            dismiss: dismissRect?.toJSON(),
+            warning: warningRect?.toJSON(),
+            followsMessageList: Boolean(messageList?.matches(".message-list")),
             scrollWidth: document.documentElement.scrollWidth,
             viewportWidth: innerWidth,
           };
         });
-        if (loadingMobile.overlaps ||
+        if (loadingMobile.overlaps || !loadingMobile.dismiss || !loadingMobile.warning ||
+            loadingMobile.dismiss.width < 44 || loadingMobile.dismiss.height < 44 ||
+            !loadingMobile.followsMessageList ||
             loadingMobile.scrollWidth > loadingMobile.viewportWidth) {
           throw new Error(`Context pressure warning overlaps conversation loading state on mobile: ${JSON.stringify(loadingMobile)}`);
         }
@@ -836,6 +842,7 @@ title: !123 value
           const actionsRect = actionsContainer?.getBoundingClientRect();
           const stateRect = conversationState?.getBoundingClientRect();
           const warning = document.querySelector("[data-context-pressure-warning]");
+          const messageList = warning?.previousElementSibling;
           const dismissRect = warning?.querySelector("[data-context-pressure-dismiss]")?.getBoundingClientRect();
           const warningRect = warning?.getBoundingClientRect();
           const titleRect = warning?.querySelector(".context-pressure-warning-copy strong")?.getBoundingClientRect();
@@ -866,6 +873,7 @@ title: !123 value
             warningText: warning?.innerText || "",
             dismissRect: dismissRect?.toJSON(),
             warningRect: warningRect?.toJSON(),
+            followsMessageList: Boolean(messageList?.matches(".message-list")),
             titleRect: titleRect?.toJSON(),
             detailRect: detailRect?.toJSON(),
             titleOverlapsDismiss: Boolean(rectanglesIntersect(titleRect, dismissRect)),
@@ -880,6 +888,8 @@ title: !123 value
             loadedMobile.primaryActions.some((action) => action.height < 44 || action.width < 44) ||
             !loadedMobile.primaryActions.slice(0, 2).every((action) => action.brand) ||
             !loadedMobile.dismissRect || !loadedMobile.warningRect ||
+            loadedMobile.dismissRect.width < 44 || loadedMobile.dismissRect.height < 44 ||
+            !loadedMobile.followsMessageList ||
             !loadedMobile.titleRect || !loadedMobile.detailRect ||
             loadedMobile.titleOverlapsDismiss || loadedMobile.detailOverlapsDismiss ||
             loadedMobile.dismissRect.top < loadedMobile.warningRect.top ||
@@ -976,12 +986,15 @@ title: !123 value
               detail: detailRect?.toJSON(),
               titleOverlapsButton: Boolean(intersects(titleRect, buttonRect)),
               detailOverlapsButton: Boolean(intersects(detailRect, buttonRect)),
+              followsMessageList: Boolean(warning?.previousElementSibling?.matches(".message-list")),
             };
           })(),
         }));
         if (!desktop.warningVisible || !desktop.warningText.includes("90% active-context usage") ||
             desktop.warningText.includes("90K of 100K") || desktop.warningText.includes("90000 active tokens") ||
             desktop.actions.length !== 3 || !desktop.dismiss.warning || !desktop.dismiss.button ||
+            desktop.dismiss.button.width < 44 || desktop.dismiss.button.height < 44 ||
+            !desktop.dismiss.followsMessageList ||
             !desktop.dismiss.title || !desktop.dismiss.detail ||
             desktop.dismiss.titleOverlapsButton || desktop.dismiss.detailOverlapsButton ||
             desktop.dismiss.button.top < desktop.dismiss.warning.top || desktop.dismiss.button.right > desktop.dismiss.warning.right ||
