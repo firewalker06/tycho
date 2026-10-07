@@ -1525,10 +1525,26 @@ select {
   color: var(--text);
 }
 
+.context-pressure-dismiss {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 1;
+  width: var(--ds-touch-target);
+  min-width: var(--ds-touch-target);
+  height: var(--ds-touch-target);
+  min-height: var(--ds-touch-target);
+  padding: 0;
+}
+
 .context-pressure-warning-copy {
   display: flex;
   gap: 0.75rem;
   align-items: flex-start;
+}
+
+.context-pressure-warning-copy > div {
+  padding-right: calc(var(--ds-touch-target) + 0.5rem);
 }
 
 .context-pressure-warning-copy p {

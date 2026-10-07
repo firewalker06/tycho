@@ -20,10 +20,12 @@ module HQ
 
       signal_id = Digest::SHA256.hexdigest(JSON.generate(signal))
       acknowledged = @agent.context_pressure_acknowledged_signal.to_s == signal_id
+      dismissed = @agent.context_pressure_dismissed
       signal.merge(
         "signal_id" => signal_id,
         "acknowledged" => acknowledged,
-        "warning" => signal.fetch("warning", true) && !acknowledged,
+        "dismissed" => dismissed,
+        "warning" => signal.fetch("warning", true) && !acknowledged && !dismissed,
         "actions" => available_actions
       )
     rescue StandardError => error

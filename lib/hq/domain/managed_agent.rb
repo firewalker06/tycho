@@ -163,7 +163,7 @@ module HQ
                 :structured_result, :schedule_key, :cost_snapshot, :project_group, :delegation_parent, :archive_path,
                 :archived_at, :project_hidden_at_archive, :prompt_queue, :prompt_queue_claim, :queue_work,
                 :prompt_queue_dispatch_error
-    attr_reader :context_pressure_acknowledged_signal
+    attr_reader :context_pressure_acknowledged_signal, :context_pressure_dismissed
     attr_writer :summary, :structured_result, :cost_snapshot
 
     def usage_metrics_store=(store)
@@ -178,7 +178,7 @@ module HQ
                    cost_snapshot: nil, total_run_count: nil, project_group: nil, delegation_parent: nil,
                    archived: false, archive_path: nil, archived_at: nil, project_hidden_at_archive: nil,
                    prompt_queue: nil, prompt_queue_claim: nil, prompt_queue_dispatch_error: nil, queue_work: nil, role: nil,
-                   context_pressure_acknowledged_signal: nil)
+                   context_pressure_acknowledged_signal: nil, context_pressure_dismissed: false)
       @key = key
       @name = name
       @project_key = project_key
@@ -227,6 +227,7 @@ module HQ
       @prompt_queue_dispatch_error = normalize_prompt_queue_dispatch_error(prompt_queue_dispatch_error)
       reconcile_prompt_queue_claim!
       @context_pressure_acknowledged_signal = context_pressure_acknowledged_signal.to_s
+      @context_pressure_dismissed = context_pressure_dismissed == true
     end
 
     def color_index=(value)
@@ -332,7 +333,8 @@ module HQ
         prompt_queue_dispatch_error: hash["prompt_queue_dispatch_error"],
         queue_work: hash["queue_work"],
         role: hash["role"],
-        context_pressure_acknowledged_signal: hash["context_pressure_acknowledged_signal"]
+        context_pressure_acknowledged_signal: hash["context_pressure_acknowledged_signal"],
+        context_pressure_dismissed: hash["context_pressure_dismissed"]
       )
     end
 
@@ -470,6 +472,7 @@ module HQ
       unless @context_pressure_acknowledged_signal.empty?
         result["context_pressure_acknowledged_signal"] = @context_pressure_acknowledged_signal
       end
+      result["context_pressure_dismissed"] = true if @context_pressure_dismissed
       result
     end
 
@@ -488,6 +491,12 @@ module HQ
       raise ArgumentError, "Context pressure signal has changed; refresh and try again" if expected.empty? || signal_id.to_s != expected
 
       @context_pressure_acknowledged_signal = expected
+      @context_pressure_cache_key = nil
+      context_pressure
+    end
+
+    def dismiss_context_pressure!
+      @context_pressure_dismissed = true
       @context_pressure_cache_key = nil
       context_pressure
     end

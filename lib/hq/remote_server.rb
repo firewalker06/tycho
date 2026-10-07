@@ -428,6 +428,7 @@ module HQ
         if method == "POST" && tail == ["context-pressure", "acknowledge"]
           return ok(agent: service.acknowledge_context_pressure(key, body))
         end
+        return ok(agent: service.dismiss_context_pressure(key)) if method == "POST" && tail == ["context-pressure", "dismiss"]
         return ok(service.update_agent_delegation(key, body)) if %w[PATCH PUT].include?(method) && tail == ["delegation"]
         return ok(service.archive_agent(key)) if method == "DELETE" && tail.empty?
         return created(service.create_agent_loop(key, body)) if method == "POST" && tail == ["loop-schedule"]
@@ -3573,6 +3574,11 @@ module HQ
       agent_payload(target)
     rescue ArgumentError => e
       raise Error.new(e.message, status: 409)
+    end
+
+    def dismiss_context_pressure(key)
+      target = @agent_store.update_agent!(key) { |candidate, _agents, _events| candidate.dismiss_context_pressure! }
+      agent_payload(target)
     end
 
     def archive_agent(key)

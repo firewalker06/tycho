@@ -45,13 +45,13 @@ module RemoteUIContextPressureTest
       for (const icon of ["shieldAlert", "sportShoe", "thumbsUp", "ellipsis"]) {
         if (!html.includes(`<i>${icon}</i>`)) throw new Error(`missing warning icon: ${icon}`);
       }
-      if (!html.includes("data-context-pressure-ack") || !html.includes("disabled") ||
+      if (!html.includes("data-context-pressure-ack") || !html.includes("data-context-pressure-dismiss") || !html.includes("disabled") ||
           !html.includes('aria-label="More context pressure actions"') ||
           !html.includes('aria-haspopup="menu"') || !html.includes('role="menu"')) {
         throw new Error("warning actions do not expose safe control state");
       }
       const topLevelActions = html.match(/data-context-pressure-(?:clone|ack)=/g) || [];
-      if (topLevelActions.length !== 2 || !html.includes('class="primary inline-icon-button ui-button"')) {
+      if (topLevelActions.length !== 2 || !html.includes('class="context-pressure-dismiss inline-icon-button ui-button"') || !html.includes('class="primary inline-icon-button ui-button"')) {
         throw new Error("warning must expose exactly two primary actions before the menu");
       }
       if (context.renderContextPressureWarning({ key: "quiet", context_pressure: { warning: false } }) !== "") {
@@ -68,7 +68,10 @@ module RemoteUIContextPressureTest
         throw new Error("reported-only warning must explain that no percentage is available");
       }
       if (!source.includes("archive_source: false") || !source.includes("context_handoff: handoff") ||
-          !source.includes("start: handoff") || !styles.includes(".context-pressure-warning")) {
+          !source.includes("start: handoff") || !styles.includes(".context-pressure-warning") ||
+          !styles.includes(".context-pressure-dismiss") || !styles.includes("position: absolute") ||
+          !styles.includes("width: var(--ds-touch-target)") || !styles.includes("height: var(--ds-touch-target)") ||
+          !styles.includes(".context-pressure-warning-copy > div") || !styles.includes("padding-right")) {
         throw new Error("clone safety or warning styles are missing");
       }
     JAVASCRIPT
