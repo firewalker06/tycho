@@ -7691,6 +7691,7 @@ title: !123 value
         }
         await page.setViewportSize({ width: 1280, height: 800 });
         await page.evaluate(() => syncFullScreenComposerViewport());
+        await assertEditorExcludedFromRefresh("#inquiry-form:not(.inquiry-form-full-screen)", "Inline inquiry form", "#inquiry-feedback");
         await page.evaluate(() => { location.hash = routeHash({ type: "agents" }); });
         await page.waitForSelector("#inquiry-form", { state: "detached", timeout: 10_000 });
         await page.evaluate((key) => { location.hash = routeHash({ type: "agent", key }); }, agentKey);
@@ -7721,7 +7722,6 @@ title: !123 value
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "inquiry-autosave-desktop.png") });
         await page.setViewportSize({ width: 390, height: 844 });
         await page.evaluate(() => syncFullScreenComposerViewport());
-        await assertEditorExcludedFromRefresh("#inquiry-form:not(.inquiry-form-full-screen)", "Inline inquiry form", "#inquiry-feedback");
         const inlineInquiryPollContract = await page.evaluate(async (key) => {
           clearTimeout(state.timer);
           state.timer = null;
