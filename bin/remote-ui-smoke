@@ -7743,7 +7743,9 @@ title: !123 value
           state.renderedViewHtml = "";
           render();
         });
-        await page.click(".mobile-inquiry > summary");
+        if ((await page.locator(".mobile-inquiry").getAttribute("open")) === null) {
+          await page.click(".mobile-inquiry > summary");
+        }
         await page.waitForSelector("#inquiry-form", { state: "visible", timeout: 10_000 });
         const inlineInquiryPollContract = await page.evaluate(async (key) => {
           clearTimeout(state.timer);
