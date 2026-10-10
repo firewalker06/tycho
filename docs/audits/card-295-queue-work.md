@@ -1,7 +1,9 @@
 # Card 295 Queue Work Audit
 
-Audit date: 2026-10-10  
-Audit branch: `audit/card-295-queue-work`  
+Audit date: 2026-10-10
+
+Audit branch: `audit/card-295-queue-work`
+
 Scope: queue acceptance, durable batches, dispatch, contract injection, Conversation visibility, completion, retry, stop/restart, archive, takeover, and delegated callbacks.
 
 ## Result
