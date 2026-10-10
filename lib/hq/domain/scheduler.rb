@@ -148,7 +148,7 @@ module HQ
       end
     end
 
-    def replace_session_target!(source_key:, target:, expected_schedule_key: nil, &prepare)
+    def replace_session_target!(source_key:, target:, expected_schedule_key: nil, archive_source: false, &prepare)
       store.with_lock do
         source, replacement, state = @agent_store.replace_scheduled_target!(
           source_key,
@@ -156,6 +156,7 @@ module HQ
           schedule_registry: schedule_registry,
           schedule_store: store,
           expected_schedule_key:,
+          archive_source:,
           &prepare
         )
         schedule = find_schedule!(state.key)

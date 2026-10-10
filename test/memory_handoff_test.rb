@@ -153,6 +153,19 @@ module MemoryHandoffTest
     source.structured_result = { "memory_handoff" => { "outcome" => "Incomplete" } }
     assert(HQ::ContextHandoff.prompt(source).include?("Previous summary:\nIgnored summary"),
            "expected an invalid legacy handoff to use the readable summary fallback")
+
+    source.structured_result = { "memory_handoff" => handoff }
+    source.queued_prompts = [{ "source" => "delegation_callback" }]
+    archived_prompt = HQ::ContextHandoff.prompt(source, schedule_replacement: true, archive_source: true)
+    [
+      "The source agent will be archived after this replacement starts.",
+      "1 callback-only report preserved in archived history",
+      "unresolved inquiry: none",
+      "replaced schedule: none",
+      "If this replacement does not start, the source stays active with its current state.",
+      "Inspect the archived source record when you need prior context.",
+      "Do not try to resolve or archive the source again."
+    ].each { |text| assert(archived_prompt.include?(text), "expected archived handoff to include #{text.inspect}") }
   end
 
   def assert(condition, message)

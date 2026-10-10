@@ -108,6 +108,8 @@ module RenderingTest
     assert_clone_agent_uses_fresh_state_and_defaults_to_keep
     assert_clone_agent_can_keep_old_agent
     assert_context_pressure_tui_actions
+    assert_context_pressure_tui_follow_ups_continue_after_hook_failure
+    assert_context_pressure_tui_rejects_unsafe_source
     assert_custom_claude_harness_builds_configured_command
     assert_claude_schema_is_compact_json
     assert_agent_session_id_persists_and_renders
@@ -2579,6 +2581,14 @@ module RenderingTest
     app.instance_variable_set(:@screen, :agents)
     source = app.instance_variable_get(:@agents).first
     app.instance_variable_set(:@all_agents, [source])
+    app.instance_variable_get(:@agent_store).define_singleton_method(:assert_context_replacement_archive_safe!) do |key|
+      raise "unexpected source validation" unless key == source.key
+    end
+    app.instance_variable_get(:@agent_store).define_singleton_method(:archive_context_replacement_source!) do |key|
+      raise "unexpected source archive" unless key == source.key
+
+      "/tmp/#{key}"
+    end
     FileUtils.mkdir_p(File.dirname(source.raw_log_path))
     File.write(source.raw_log_path, <<~LOG)
       === [2026-10-03 06:00:00] start ===
@@ -2597,56 +2607,80 @@ module RenderingTest
     fresh_agents = app.instance_variable_get(:@agents)
     fresh_target = fresh_agents.find { |agent| agent.key != source.key }
     assert(fresh_target, "expected Start New to create a fresh agent")
-    assert(fresh_agents.include?(source), "expected Start New to preserve the source agent")
+    assert(!fresh_agents.include?(source), "expected Start New to archive the source agent after creating the replacement")
     assert(app.instance_variable_get(:@agent_chat_form)&.agent == fresh_target,
            "expected Start New to open the fresh agent without a handoff")
     fresh_events = File.exist?(fresh_target.memory_path) ? File.readlines(fresh_target.memory_path, chomp: true) : []
     assert(fresh_events.none? { |line| JSON.parse(line).dig("metadata", "context_handoff") == true },
            "expected Start New not to create a context handoff")
-    app.send(:close_sidebar!)
-    app.instance_variable_get(:@selected)[:agents] = app.instance_variable_get(:@agents).index(source)
-
-    updates = 0
-    store = app.instance_variable_get(:@agent_store)
-    store.define_singleton_method(:update_agent!) do |key, &operation|
-      updates += 1
-      candidate = app.instance_variable_get(:@agents).find { |agent| agent.key == key }
-      operation.call(candidate)
-      candidate
+    handoff_app = app_with_default_agent(width: 120, height: 40)
+    handoff_app.instance_variable_set(:@screen, :agents)
+    handoff_source = handoff_app.instance_variable_get(:@agents).first
+    handoff_app.instance_variable_set(:@all_agents, [handoff_source])
+    handoff_app.instance_variable_get(:@agent_store).define_singleton_method(:assert_context_replacement_archive_safe!) do |key|
+      raise "unexpected handoff source validation" unless key == handoff_source.key
     end
-    app.update(key_message("g"))
-    assert(updates == 1 && source.context_pressure["acknowledged"],
-           "expected Keep Going to persist acknowledgement through the locked agent store path")
-    acknowledged = Bubbles::ANSI.strip(app.view)
-    assert(acknowledged.include?("Context pressure is high (acknowledged)"),
-           "expected acknowledged context pressure to stay visible")
-    assert(!acknowledged.include?("g: Keep Going"), "expected acknowledged actions to hide for the current signal")
+    handoff_app.instance_variable_get(:@agent_store).define_singleton_method(:archive_context_replacement_source!) do |key|
+      raise "unexpected handoff source archive" unless key == handoff_source.key
 
-    File.open(source.raw_log_path, "a") do |file|
-      file.puts({
-        "type" => "event_msg", "payload" => {
-          "type" => "token_count", "info" => {
-            "last_token_usage" => { "total_tokens" => 96_000 }, "model_context_window" => 100_000
-          }
-        }
-      }.to_json)
+      "/tmp/#{key}"
     end
+    FileUtils.mkdir_p(File.dirname(handoff_source.raw_log_path))
+    File.write(handoff_source.raw_log_path, <<~LOG)
+      === [2026-10-03 06:00:00] start ===
+      {"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":96000},"model_context_window":100000}}}
+    LOG
+
+    store = handoff_app.instance_variable_get(:@agent_store)
     started_key = nil
     store.define_singleton_method(:start_agent!) do |key|
       started_key = key
-      app.instance_variable_get(:@agents).find { |agent| agent.key == key }
+      handoff_app.instance_variable_get(:@agents).find { |agent| agent.key == key }
     end
 
-    app.update(key_message("G"))
-    agents = app.instance_variable_get(:@agents)
+    handoff_app.update(key_message("G"))
+    agents = handoff_app.instance_variable_get(:@agents)
     target = agents.find { |agent| agent.key == started_key }
-    assert(target && target.key != source.key, "expected Start with Handoff to create and start a fresh agent")
-    assert(agents.include?(source), "expected context handoff clone to keep the source agent")
+    assert(target && target.key != handoff_source.key, "expected Start with Handoff to create and start a fresh agent")
+    assert(!agents.include?(handoff_source), "expected context handoff clone to archive the source after starting the replacement")
     handoff_events = File.readlines(target.memory_path, chomp: true).map { |line| JSON.parse(line) }
     assert(handoff_events.any? { |event| event.dig("metadata", "context_handoff") == true },
            "expected the TUI clone to store a durable context handoff")
-    assert(app.instance_variable_get(:@agent_chat_form)&.agent&.key == target.key,
+    assert(handoff_app.instance_variable_get(:@agent_chat_form)&.agent&.key == target.key,
            "expected the TUI to continue in the fresh handoff agent")
+  end
+
+  def assert_context_pressure_tui_rejects_unsafe_source
+    app = app_with_default_agent(width: 120, height: 40)
+    app.instance_variable_set(:@screen, :agents)
+    source = app.instance_variable_get(:@agents).first
+    app.instance_variable_set(:@all_agents, [source])
+    FileUtils.mkdir_p(File.dirname(source.raw_log_path))
+    File.write(source.raw_log_path, "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"total_tokens\":90000},\"model_context_window\":100000}}}\n")
+    store = app.instance_variable_get(:@agent_store)
+    store.define_singleton_method(:assert_context_replacement_archive_safe!) { |_key| raise ArgumentError, "queued user work" }
+    store.define_singleton_method(:clone_agent) { |_agent, **_| raise "unsafe source created a replacement" }
+
+    app.update(key_message("f"))
+    assert(app.instance_variable_get(:@agents) == [source],
+           "expected TUI context replacement rejection to preserve the unsafe source")
+  end
+
+  def assert_context_pressure_tui_follow_ups_continue_after_hook_failure
+    app = app_with_default_agent(width: 120, height: 40)
+    source = app.instance_variable_get(:@agents).first
+    target = app.instance_variable_get(:@agent_store).clone_agent(source, existing_agents: [source])
+    app.instance_variable_set(:@agents, [source, target])
+    app.instance_variable_set(:@all_agents, [source, target])
+    hooks = HQ.hooks
+    hooks.define_singleton_method(:publish) { |*_args| raise "hook failure" }
+
+    app.send(:finalize_context_pressure_replacement!, source, target)
+
+    assert(app.instance_variable_get(:@agent_chat_form)&.agent == target,
+           "expected TUI chat follow-up to continue after clone-hook failure")
+  ensure
+    hooks.singleton_class.send(:remove_method, :publish) if hooks&.singleton_class&.method_defined?(:publish)
   end
 
   def assert_custom_claude_harness_builds_configured_command

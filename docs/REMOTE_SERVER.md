@@ -674,11 +674,12 @@ not available.
 
 The Remote UI gives the operator four named choices for a warning:
 
-- **Start New** makes a fresh clone and keeps the source. It maps to the clone
-  endpoint with `archive_source: false` and no context handoff.
+- **Start New** makes a fresh clone, then archives the source after the clone
+  is saved. It maps to the clone endpoint with `archive_source: true` and no
+  context handoff.
 - **Keep Going** acknowledges only the current signal.
 - **Start with Handoff** makes and starts a fresh clone with a concise durable
-  handoff. It keeps the source.
+  handoff, then archives the source after the replacement starts.
 - **Archive** opens the normal confirmation flow. It stays disabled until the
   archive-safety checks permit the operation.
 
@@ -971,18 +972,21 @@ Response:
 
 Creates a fresh managed agent from an existing one with a new key, empty logs, no runs, and no native session id. Form fields such as `name`, `template_key`, `agent`, `model`, `reasoning_effort`, `workspace`, `prompt`, and `sandbox_mode` may be supplied to edit the clone before it is saved.
 
-The Remote UI **Start New** action sends `archive_source: false` and
-`context_handoff: false`. It preserves the source and opens the new agent.
+The Remote UI **Start New** action sends `archive_source: true` and
+`context_handoff: false`. It archives the source only after the new agent is
+saved and opens the new agent.
 
 Set `context_handoff: true` to add a durable first user message with the
 source agent's semantic handoff or latest summary, queued-work count, inquiry
-state, and schedule key. Tycho also copies the source PR catalog. Operational
-ownership, queued work, inquiries, schedules, logs, and audit history stay on
-the source agent. Set `start: true` to continue immediately in the clone.
+state, and schedule key. Tycho also copies the source PR catalog. For a
+compaction replacement, the handoff records that the source becomes read-only
+archived history after the replacement starts. It does not direct the
+replacement to archive the source again. Set `start: true` to continue
+immediately in the clone.
 The Remote UI calls this operation **Start with Handoff**.
 
-The source stays active by default. Set `archive_source: true` only when the
-operator confirms archive. This option returns `409 Conflict` if the source is
+The source stays active by default for ordinary clone operations. The compaction
+actions set `archive_source: true`. This option returns `409 Conflict` if the source is
 running, has an unresolved active or suspended inquiry, or has ordinary or
 mixed queued work. Callback-only queued work can use the documented
 archive-with-history path.
