@@ -143,8 +143,11 @@ module MemoryHandoffTest
       "Promotion candidates:\n- Readable handoff format",
       "source-agent",
       "queued work: 0",
-      "schedule: none"
+      "schedule: none",
+      "Review the source agent record, whether active or archived, before you resolve any remaining work."
     ].each { |text| assert(prompt.include?(text), "expected handoff prompt to include #{text.inspect}") }
+    assert(!prompt.include?("archive any remaining work"),
+           "expected handoff prompt not to prescribe source archive behavior")
     assert(!prompt.include?("\"outcome\""), "expected no JSON field syntax in handoff prompt")
 
     source.structured_result = { "memory_handoff" => { "outcome" => "Incomplete" } }

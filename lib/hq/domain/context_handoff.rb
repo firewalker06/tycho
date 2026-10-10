@@ -42,7 +42,7 @@ module HQ
 
         #{operational_state}
 
-        Review the source agent before you resolve or archive any remaining work.
+        Review the source agent record, whether active or archived, before you resolve any remaining work.
       PROMPT
     end
 
