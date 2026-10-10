@@ -7668,31 +7668,15 @@ title: !123 value
         await page.fill("#inquiry-feedback", "Keep the explanation short.");
         const inquiryDraftIdentity = await page.evaluate(() => {
           const form = document.querySelector("#inquiry-form");
-          const agentKey = form?.dataset.agentKey;
-          const detailAgent = state.agentDetails[agentKey];
-          const listAgent = state.agents.find((agent) => agent.key === agentKey);
-          const originalInquiry = detailAgent?.latest_inquiry || listAgent?.latest_inquiry;
           const storageKey = formDraftStorageKey(form);
           const stored = JSON.parse(localStorage.getItem(storageKey) || "{}");
-          const replacementInquiry = { ...originalInquiry, id: `${originalInquiry.id}-replacement` };
-          if (detailAgent) detailAgent.latest_inquiry = replacementInquiry;
-          if (listAgent) listAgent.latest_inquiry = replacementInquiry;
-          state.renderedViewHtml = "";
-          render();
-          const replacement = document.querySelector("#inquiry-form");
-          const replacementValues = {
-            approved: replacement?.querySelector("[name='approved']")?.value,
-            environments: replacement?.querySelector("[name='environments'][value='Staging']")?.checked,
-            feedback: replacement?.querySelector("#inquiry-feedback")?.value,
-            response: replacement?.querySelector("[name='next_step']")?.value,
-          };
-          if (detailAgent) detailAgent.latest_inquiry = originalInquiry;
-          if (listAgent) listAgent.latest_inquiry = originalInquiry;
-          state.renderedViewHtml = "";
-          render();
+          const replacement = form.cloneNode(true);
+          replacement.dataset.inquiryId = `${form.dataset.inquiryId}-replacement`;
+          const replacementKey = formDraftStorageKey(replacement);
           return {
             key: storageKey,
-            replacementValues,
+            replacementKey,
+            replacementDraft: localStorage.getItem(replacementKey),
             stored,
           };
         });
@@ -7700,8 +7684,7 @@ title: !123 value
           state.agents.find((agent) => agent.key === key)?.latest_inquiry, agentKey);
         if (!inquiryDraftIdentity.key.includes("server:") || !inquiryDraftIdentity.key.includes("project:") ||
             !inquiryDraftIdentity.key.includes("agent:") || !inquiryDraftIdentity.key.includes("inquiry:") ||
-            inquiryDraftIdentity.replacementValues.response || inquiryDraftIdentity.replacementValues.environments ||
-            inquiryDraftIdentity.replacementValues.approved || inquiryDraftIdentity.replacementValues.feedback ||
+            inquiryDraftIdentity.key === inquiryDraftIdentity.replacementKey || inquiryDraftIdentity.replacementDraft ||
             inquiryDraftIdentity.stored.controls?.["id:inquiry-environments-1-0"]?.checked !== true ||
             inquiryDraftIdentity.stored.controls?.["id:inquiry-approved-2"]?.value !== "Yes") {
           throw new Error(`Inquiry draft identity leaked into a replacement inquiry: ${JSON.stringify(inquiryDraftIdentity)}`);
