@@ -1,6 +1,6 @@
 # Pre-execution tool hooks and dangerous-command policy
 
-Research date: 2026-10-10  
+Research date: 2026-10-10
 Fizzy card: [#292](https://fizzy.startkit.tech/1/cards/292)
 
 ## Scope
