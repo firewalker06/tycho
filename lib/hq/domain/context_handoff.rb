@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require_relative "memory_handoff"
 
 module HQ
   module ContextHandoff
@@ -17,8 +18,8 @@ module HQ
     end
 
     def prompt(source, schedule_replacement: false)
-      handoff = source.structured_result&.dig("memory_handoff")
-      semantic = handoff.is_a?(Hash) ? formatted_handoff(handoff) : formatted_summary(source.last_summary)
+      handoff = MemoryHandoff.normalize(source.structured_result&.dig("memory_handoff"))
+      semantic = handoff ? formatted_handoff(handoff) : formatted_summary(source.last_summary)
       operational_state = if schedule_replacement
                             <<~STATE.strip
                               The schedule connection moves to this replacement agent. Other operational state remains on the source agent and was not discarded:

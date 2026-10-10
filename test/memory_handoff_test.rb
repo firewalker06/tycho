@@ -146,6 +146,10 @@ module MemoryHandoffTest
       "schedule: none"
     ].each { |text| assert(prompt.include?(text), "expected handoff prompt to include #{text.inspect}") }
     assert(!prompt.include?("\"outcome\""), "expected no JSON field syntax in handoff prompt")
+
+    source.structured_result = { "memory_handoff" => { "outcome" => "Incomplete" } }
+    assert(HQ::ContextHandoff.prompt(source).include?("Previous summary:\nIgnored summary"),
+           "expected an invalid legacy handoff to use the readable summary fallback")
   end
 
   def assert(condition, message)
