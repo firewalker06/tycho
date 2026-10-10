@@ -4234,6 +4234,57 @@ title: !123 value
               !emptySummarySafetyMatrix.currentRunIsolated || !emptySummarySafetyMatrix.knownErrorVisible || !emptySummarySafetyMatrix.missingRunIsolated) {
             throw new Error(`Empty Summary safety matrix failed: ${JSON.stringify(emptySummarySafetyMatrix)}`);
           }
+          const installKnownErrorSummaryFixture = async () => page.evaluate((key) => {
+            const agent = findAgent(key);
+            agent.run_count = 1;
+            agent.running = false;
+            agent.status = "failed";
+            agent.current_run_id = "run-known-error";
+            state.conversations[key] = {
+              blocks: [
+                {
+                  kind: "summary",
+                  content: "(error: The harness reported a known failure. token=do-not-show-this-value)",
+                  created_at: "2026-10-04T00:00:00Z",
+                  metadata: { run_id: "run-known-error", summary_entry_type: "error" },
+                },
+                {
+                  kind: "run_summary",
+                  content: "",
+                  created_at: "2026-10-04T00:00:01Z",
+                  metadata: { summary_id: "known-error-summary", run_id: "run-known-error", run_number: 1, status: "failed" },
+                },
+              ],
+            };
+            history.replaceState(null, "", routeHash({ type: "agentSummary", key, summaryId: "known-error-summary" }));
+            state.renderedRouteKey = null;
+            state.renderedViewHtml = "";
+            render();
+          }, agentKey);
+          const knownErrorSummaryContract = async () => page.evaluate(() => {
+            const fallback = document.querySelector("[data-summary-fallback]");
+            const text = fallback?.innerText || "";
+            return {
+              text,
+              overflow: Boolean(fallback && fallback.scrollWidth > fallback.clientWidth),
+              visible: Boolean(fallback?.offsetParent),
+            };
+          });
+          await installKnownErrorSummaryFixture();
+          const desktopKnownErrorSummary = await knownErrorSummaryContract();
+          if (!desktopKnownErrorSummary.visible || !desktopKnownErrorSummary.text.includes("Error") ||
+              !desktopKnownErrorSummary.text.includes("known failure") ||
+              !desktopKnownErrorSummary.text.includes("[REDACTED]") || desktopKnownErrorSummary.text.includes("do-not-show-this-value") ||
+              desktopKnownErrorSummary.overflow) {
+            throw new Error(`Desktop known-error Summary fallback failed: ${JSON.stringify(desktopKnownErrorSummary)}`);
+          }
+          if (summaryCaptureDir) await page.locator("[data-summary-fallback]").screenshot({ path: path.join(summaryCaptureDir, "summary-error-desktop.png") });
+          await page.setViewportSize({ width: 390, height: 844 });
+          const mobileKnownErrorSummary = await knownErrorSummaryContract();
+          if (!mobileKnownErrorSummary.visible || mobileKnownErrorSummary.overflow || !mobileKnownErrorSummary.text.includes("known failure")) {
+            throw new Error(`Mobile known-error Summary fallback failed: ${JSON.stringify(mobileKnownErrorSummary)}`);
+          }
+          if (summaryCaptureDir) await page.locator("[data-summary-fallback]").screenshot({ path: path.join(summaryCaptureDir, "summary-error-mobile.png") });
           const installEmptySummaryFixture = async () => page.evaluate((key) => {
             closeUnreadPanel();
             closeHeaderMore();
