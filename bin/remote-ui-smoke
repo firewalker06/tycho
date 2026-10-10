@@ -4246,15 +4246,20 @@ title: !123 value
               blocks: [
                 {
                   kind: "summary",
-                  content: "(error: The harness reported a known failure. token=do-not-show-this-value)",
+                  content: "(error: The harness reported a known failure.)",
                   created_at: "2026-10-04T00:00:00Z",
-                  metadata: { run_id: "run-known-error", summary_entry_type: "error" },
+                  metadata: {
+                    summary_entries: [
+                      { type: "error", content: "The harness reported a known failure. token=do-not-show-this-value", metadata: { run_id: "run-known-error" } },
+                      { type: "error", content: "A second known error belongs to the same run.", metadata: { run_id: "run-known-error" } },
+                    ],
+                  },
                 },
                 {
                   kind: "run_summary",
-                  content: "",
+                  content: "## Summary unavailable\\n\\nThis run returned without a usable structured summary.",
                   created_at: "2026-10-04T00:00:01Z",
-                  metadata: { summary_id: "known-error-summary", run_id: "run-known-error", run_number: 1, status: "failed" },
+                  metadata: { summary_id: "known-error-summary", run_id: "run-known-error", run_number: 1, status: "failed", summary_fallback: true },
                 },
               ],
             };
@@ -4276,6 +4281,7 @@ title: !123 value
           const desktopKnownErrorSummary = await knownErrorSummaryContract();
           if (!desktopKnownErrorSummary.visible || !desktopKnownErrorSummary.text.includes("Error") ||
               !desktopKnownErrorSummary.text.includes("known failure") ||
+              !desktopKnownErrorSummary.text.includes("second known error") ||
               !desktopKnownErrorSummary.text.includes("[REDACTED]") || desktopKnownErrorSummary.text.includes("do-not-show-this-value") ||
               desktopKnownErrorSummary.overflow) {
             throw new Error(`Desktop known-error Summary fallback failed: ${JSON.stringify(desktopKnownErrorSummary)}`);

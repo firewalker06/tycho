@@ -191,7 +191,7 @@ module HQ
           chat_system << entry
           system_log << entry
         when "stream_status"
-          metadata = merge_sequence_metadata(event["metadata"], sequence)
+          metadata = message_metadata_for(event, sequence:)
           entry = Parser::SystemEntry.new(
             type: metadata["type"] == "error" ? :error : :status,
             content: event["content"].to_s,

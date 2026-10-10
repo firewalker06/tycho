@@ -47,6 +47,7 @@ module RemoteServerTest
     assert_remote_queue_read_preserves_canonical_attachments
     assert_remote_prompt_start_accepts_dash_prefixed_message
     assert_remote_agent_conversation_includes_run_summary
+    assert_remote_summary_errors_follow_stream_events_to_run_scoped_blocks
     assert_remote_conversation_snapshot_windows_large_transcripts
     assert_archived_conversation_cache_ignores_active_store_changes
     assert_remote_agent_debug_endpoints
@@ -2883,6 +2884,83 @@ module RemoteServerTest
       archived_summary = service.conversation(created[:key]).find { |block| block[:kind] == "run_summary" }
       assert(archived_summary&.dig(:metadata, "summary_sections") == summary[:metadata]["summary_sections"],
              "expected archived run history to restore structured sections")
+    ensure
+      replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+      replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
+      replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+    end
+  end
+
+  def assert_remote_summary_errors_follow_stream_events_to_run_scoped_blocks
+    Dir.mktmpdir("hq-remote-summary-errors") do |dir|
+      old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
+      old_archive_dir = replace_constant(HQ, :AGENT_ARCHIVE_DIR, File.join(dir, "agents", "archive"))
+
+      FileUtils.mkdir_p(HQ::AGENT_LOGS_DIR)
+      FileUtils.mkdir_p(HQ::AGENT_ARCHIVE_DIR)
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      registry = registry_for(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      created = service.create_agent(
+        "project_key" => "web",
+        "template_key" => "custom",
+        "name" => "Summary error agent",
+        "prompt" => "Report failures.",
+        "agent" => "codex"
+      )
+      agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+      memory = HQ::AgentMemory.new(agent)
+      first_run = "failed-run-one"
+      second_run = "failed-run-two"
+      at = Time.utc(2026, 10, 10, 8, 0, 0)
+
+      first_projector = HQ::AgentStreamProjector.new(memory_path: agent.memory_path, agent_type: "codex", run_id: first_run)
+      first_projector.project_line(JSON.generate("type" => "error", "message" => "First run error"), source_sequence: 1, occurred_at: at)
+      memory.append_assistant_message!("A safe update from the first run.", created_at: at + 1, metadata: { "run_id" => first_run })
+      memory.append_run_summary!(
+        summary: "## Summary unavailable\n\nThis run returned without a usable structured summary.",
+        status: "failed",
+        created_at: at + 2,
+        metadata: { "run_id" => first_run, "summary_fallback" => true }
+      )
+
+      second_projector = HQ::AgentStreamProjector.new(memory_path: agent.memory_path, agent_type: "codex", run_id: second_run)
+      second_projector.project_line(JSON.generate("type" => "error", "message" => "Second run first error"), source_sequence: 1, occurred_at: at + 3)
+      second_projector.project_line(JSON.generate("type" => "turn.failed", "error" => { "message" => "Second run final error" }), source_sequence: 2, occurred_at: at + 4)
+      memory.append_run_summary!(
+        summary: "## Summary unavailable\n\nThis run returned without a usable structured summary.",
+        status: "failed",
+        created_at: at + 5,
+        metadata: { "run_id" => second_run, "summary_fallback" => true }
+      )
+
+      blocks = service.conversation(created[:key])
+      first_summary = blocks.find { |block| block[:kind] == "run_summary" && block.dig(:metadata, "run_id") == first_run }
+      second_summary = blocks.find { |block| block[:kind] == "run_summary" && block.dig(:metadata, "run_id") == second_run }
+      first_error = blocks.find { |block| block[:kind] == "summary" && block.dig(:metadata, "run_id") == first_run }
+      grouped_errors = blocks.find do |block|
+        block[:kind] == "summary" && Array(block.dig(:metadata, "summary_entries")).any? do |entry|
+          entry["type"] == "error" && entry.dig("metadata", "run_id") == second_run
+        end
+      end
+      server = HQ::RemoteServer.new
+      response = server.send(:route, service, "GET", "/agents/#{created[:key]}/conversation", {}, nil)
+      api_blocks = response.dig(:body, :conversation)
+
+      assert(memory.events.count { |event| event["type"] == "stream_status" && event["run_id"] == second_run } == 2,
+             "expected real stream projection to persist both second-run errors")
+      assert(first_error&.dig(:metadata, "summary_entry_type") == "error" && first_error.dig(:metadata, "run_id") == first_run,
+             "expected a single projected error to retain its owning run id")
+      assert(Array(grouped_errors&.dig(:metadata, "summary_entries")).map { |entry| entry.dig("metadata", "run_id") }.uniq == [second_run],
+             "expected grouped projected errors to retain only their owning run id")
+      assert(first_summary&.dig(:metadata, "summary_fallback") == true && first_summary[:content].include?("Summary unavailable"),
+             "expected the first persisted fallback summary to keep its nonempty production content")
+      assert(second_summary&.dig(:metadata, "summary_fallback") == true && second_summary[:content].include?("Summary unavailable"),
+             "expected the latest persisted fallback summary to keep its nonempty production content")
+      assert(api_blocks == blocks,
+             "expected the conversation API to preserve projected error and fallback summary metadata")
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
@@ -7702,7 +7780,8 @@ module RemoteServerTest
            js[:body].include?('excerpt === `${status}: ${firstLine}` ? detail : content'),
            "expected full Summary pages to remove duplicated status-prefixed excerpts")
     assert(js[:body].include?("function lastSafeRunError") &&
-           js[:body].include?("summary_entry_type !== \"error\"") &&
+           js[:body].include?("function summaryBlockErrorForRun") &&
+           js[:body].include?("summary_entries") &&
            js[:body].include?("### Error"),
            "expected failed Summary fallbacks to show only the selected run's known error")
     assert(js[:body].include?('viewerClassName: "markdown-viewer message-markdown-viewer"'),
