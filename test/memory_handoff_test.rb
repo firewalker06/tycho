@@ -6,6 +6,7 @@ require "time"
 require_relative "../lib/hq/domain/memory_handoff"
 require_relative "../lib/hq/domain/managed_agent"
 require_relative "../lib/hq/domain/agent_structured_output_validator"
+require_relative "../lib/hq/domain/context_handoff"
 
 module MemoryHandoffTest
   module_function
@@ -18,6 +19,7 @@ module MemoryHandoffTest
     assert_schema_rejects_incomplete_handoff
     assert_schema_has_strict_compatible_handoff_shape
     assert_schema_migration_is_additive
+    assert_context_handoff_is_readable_and_complete
     puts "memory_handoff_test: ok"
   end
 
@@ -112,6 +114,45 @@ module MemoryHandoffTest
              !required_only.fetch("required").include?(retired_property),
              "expected retired result property to be removed from user schemas")
     end
+  end
+
+  def assert_context_handoff_is_readable_and_complete
+    handoff = {
+      "outcome" => "Tidy the handoff presentation.",
+      "decisions" => ["Keep source provenance in Tycho.", "Use plain text sections."],
+      "continuing_context" => "Check the mobile layout.",
+      "references" => ["Card #296", "docs/AGENT_MEMORY.md"],
+      "lessons" => ["Avoid raw JSON in user messages."],
+      "promotion_candidates" => ["Readable handoff format"]
+    }
+    source = Struct.new(:key, :structured_result, :last_summary, :queued_prompts, :schedule_key) do
+      def inquiry_blocking_prompt_queue?
+        false
+      end
+    end.new("source-agent", { "memory_handoff" => handoff }, "Ignored summary", [], nil)
+
+    prompt = HQ::ContextHandoff.prompt(source)
+
+    assert(!prompt.include?(JSON.pretty_generate(handoff)), "expected readable handoff sections instead of raw JSON")
+    [
+      "Handoff summary:\nTidy the handoff presentation.",
+      "Decisions:\n- Keep source provenance in Tycho.\n- Use plain text sections.",
+      "Continuing context:\nCheck the mobile layout.",
+      "References:\n- Card #296\n- docs/AGENT_MEMORY.md",
+      "Lessons:\n- Avoid raw JSON in user messages.",
+      "Promotion candidates:\n- Readable handoff format",
+      "source-agent",
+      "queued work: 0",
+      "schedule: none",
+      "Review the source agent record, whether active or archived, before you resolve any remaining work."
+    ].each { |text| assert(prompt.include?(text), "expected handoff prompt to include #{text.inspect}") }
+    assert(!prompt.include?("archive any remaining work"),
+           "expected handoff prompt not to prescribe source archive behavior")
+    assert(!prompt.include?("\"outcome\""), "expected no JSON field syntax in handoff prompt")
+
+    source.structured_result = { "memory_handoff" => { "outcome" => "Incomplete" } }
+    assert(HQ::ContextHandoff.prompt(source).include?("Previous summary:\nIgnored summary"),
+           "expected an invalid legacy handoff to use the readable summary fallback")
   end
 
   def assert(condition, message)

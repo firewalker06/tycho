@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
-require "json"
+require_relative "memory_handoff"
 
 module HQ
   module ContextHandoff
@@ -18,9 +18,8 @@ module HQ
     end
 
     def prompt(source, schedule_replacement: false)
-      handoff = source.structured_result&.dig("memory_handoff")
-      semantic = handoff.is_a?(Hash) ? JSON.pretty_generate(handoff) : source.last_summary.to_s.strip
-      semantic = "No completed-run summary is available." if semantic.empty?
+      handoff = MemoryHandoff.normalize(source.structured_result&.dig("memory_handoff"))
+      semantic = handoff ? formatted_handoff(handoff) : formatted_summary(source.last_summary)
       operational_state = if schedule_replacement
                             <<~STATE.strip
                               The schedule connection moves to this replacement agent. Other operational state remains on the source agent and was not discarded:
@@ -43,8 +42,36 @@ module HQ
 
         #{operational_state}
 
-        Review the source agent before you resolve or archive any remaining work.
+        Review the source agent record, whether active or archived, before you resolve any remaining work.
       PROMPT
+    end
+
+    def formatted_handoff(handoff)
+      sections = ["Handoff summary:\n#{handoff.fetch("outcome")}"]
+      append_list_section(sections, "Decisions", handoff["decisions"])
+      append_text_section(sections, "Continuing context", handoff["continuing_context"])
+      append_list_section(sections, "References", handoff["references"])
+      append_list_section(sections, "Lessons", handoff["lessons"])
+      append_list_section(sections, "Promotion candidates", handoff["promotion_candidates"])
+      sections.join("\n\n")
+    end
+
+    def formatted_summary(summary)
+      value = summary.to_s.strip
+      value = "No completed-run summary is available." if value.empty?
+      "Previous summary:\n#{value}"
+    end
+
+    def append_text_section(sections, title, value)
+      text = value.to_s.strip
+      sections << "#{title}:\n#{text.empty? ? "None provided." : text}"
+    end
+
+    def append_list_section(sections, title, values)
+      items = Array(values).map(&:to_s).map(&:strip).reject(&:empty?)
+      return if items.empty?
+
+      sections << "#{title}:\n#{items.map { |item| "- #{item}" }.join("\n")}"
     end
 
     def copy_pull_request_catalog(source, target)
