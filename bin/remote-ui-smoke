@@ -7689,6 +7689,8 @@ title: !123 value
             inquiryDraftIdentity.stored.controls?.["id:inquiry-approved-2"]?.value !== "Yes") {
           throw new Error(`Inquiry draft identity leaked into a replacement inquiry: ${JSON.stringify(inquiryDraftIdentity)}`);
         }
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await page.evaluate(() => syncFullScreenComposerViewport());
         await page.evaluate(() => { location.hash = routeHash({ type: "agents" }); });
         await page.waitForSelector("#inquiry-form", { state: "detached", timeout: 10_000 });
         await page.evaluate((key) => { location.hash = routeHash({ type: "agent", key }); }, agentKey);
