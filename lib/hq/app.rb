@@ -1106,23 +1106,42 @@ def selected_screen_items
       @agent_store.archive_context_replacement_source!(source.key)
       @agents.reject! { |agent| agent.key == source.key }
       @all_agents.reject! { |agent| agent.key == source.key }
+    rescue ArgumentError
+      recover_context_pressure_archive_rejection!(source, @agents.find { |agent| agent.key != source.key })
+      raise
     end
 
     def finalize_context_pressure_replacement!(source, target)
       @selected[:agents] = @agents.index(target) || 0
       rebuild_agent_index!
-      HQ.hooks.publish("agent.cloned",
-                       agent_key: target.key,
-                       source_agent_key: source.key,
-                       project_key: target.project_key,
-                       name: target.name,
-                       agent: target.agent,
-                       model: target.model,
-                       reasoning_effort: target.reasoning_effort)
-      open_cloned_agent_chat(target)
+      context_replacement_follow_up("publish clone hook") do
+        HQ.hooks.publish("agent.cloned",
+                         agent_key: target.key,
+                         source_agent_key: source.key,
+                         project_key: target.project_key,
+                         name: target.name,
+                         agent: target.agent,
+                         model: target.model,
+                         reasoning_effort: target.reasoning_effort)
+      end
+      result = nil
+      context_replacement_follow_up("open replacement chat") { result = open_cloned_agent_chat(target) }
+      result || [self, nil]
+    end
+
+    def recover_context_pressure_archive_rejection!(source, target)
+      return unless target
+
+      ContextHandoff.record_archive_rejection!(source, target)
+      @agent_store.stop_agent!(target.key) if target.running?
     rescue StandardError => e
-      HQ.logger.warn("Agent") { "Context replacement committed with UI follow-up error: #{e.class}: #{e.message}" }
-      [self, nil]
+      HQ.logger.warn("Agent") { "Context replacement archive-rejection recovery failed: #{e.class}: #{e.message}" }
+    end
+
+    def context_replacement_follow_up(name)
+      yield
+    rescue StandardError => e
+      HQ.logger.warn("Agent") { "Context replacement #{name} failed: #{e.class}: #{e.message}" }
     end
 
     def replace_agent_instance!(current, replacement)

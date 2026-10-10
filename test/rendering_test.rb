@@ -108,6 +108,7 @@ module RenderingTest
     assert_clone_agent_uses_fresh_state_and_defaults_to_keep
     assert_clone_agent_can_keep_old_agent
     assert_context_pressure_tui_actions
+    assert_context_pressure_tui_follow_ups_continue_after_hook_failure
     assert_context_pressure_tui_rejects_unsafe_source
     assert_custom_claude_harness_builds_configured_command
     assert_claude_schema_is_compact_json
@@ -2663,6 +2664,23 @@ module RenderingTest
     app.update(key_message("f"))
     assert(app.instance_variable_get(:@agents) == [source],
            "expected TUI context replacement rejection to preserve the unsafe source")
+  end
+
+  def assert_context_pressure_tui_follow_ups_continue_after_hook_failure
+    app = app_with_default_agent(width: 120, height: 40)
+    source = app.instance_variable_get(:@agents).first
+    target = app.instance_variable_get(:@agent_store).clone_agent(source, existing_agents: [source])
+    app.instance_variable_set(:@agents, [source, target])
+    app.instance_variable_set(:@all_agents, [source, target])
+    hooks = HQ.hooks
+    hooks.define_singleton_method(:publish) { |*_args| raise "hook failure" }
+
+    app.send(:finalize_context_pressure_replacement!, source, target)
+
+    assert(app.instance_variable_get(:@agent_chat_form)&.agent == target,
+           "expected TUI chat follow-up to continue after clone-hook failure")
+  ensure
+    hooks.singleton_class.send(:remove_method, :publish) if hooks&.singleton_class&.method_defined?(:publish)
   end
 
   def assert_custom_claude_harness_builds_configured_command

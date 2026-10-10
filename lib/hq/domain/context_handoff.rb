@@ -43,6 +43,18 @@ module HQ
       PROMPT
     end
 
+    def record_archive_rejection!(source, target)
+      target.add_user_message!(
+        "The source agent remains active because new work arrived before its archive completed. " \
+          "Do not continue this replacement. Review the active source record before any recovery action.",
+        metadata: {
+          "context_handoff_archive_rejected" => true,
+          "source_agent_key" => source.key
+        }
+      )
+      target
+    end
+
     def active_handoff_state(source, schedule_replacement:)
       label = schedule_replacement ? "replaced schedule" : "schedule"
       <<~STATE.strip

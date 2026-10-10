@@ -30,6 +30,8 @@ module RemoteServerTest
     assert_remote_context_pressure_clone_failure_preserves_source
     assert_remote_context_replacement_rejects_unsafe_source
     assert_remote_context_replacement_commits_after_incidental_failure
+    assert_context_replacement_follow_ups_continue_after_each_failure
+    assert_remote_context_replacement_archive_race_recovers_handoff
     assert_remote_agent_payload_has_revision
     assert_remote_agent_payload_distinguishes_running_history_from_never_run
     assert_remote_agent_activity_snapshot
@@ -1382,6 +1384,70 @@ module RemoteServerTest
       result = service.clone_agent(source[:key], "archive_source" => true)
       assert(result[:archived] && service.send(:load_all_agents).map(&:key) == [result.dig(:agent, :key)],
              "expected incidental post-archive failure to keep committed replacement success")
+    ensure
+      replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+      replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
+      replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+    end
+  end
+
+  def assert_context_replacement_follow_ups_continue_after_each_failure
+    %i[remove push schedule upsert hook].each do |failure|
+      calls = []
+      snapshot = Object.new
+      snapshot.define_singleton_method(:remove!) { |_key| calls << :remove; raise "remove failure" if failure == :remove }
+      snapshot.define_singleton_method(:upsert!) { |_agent| calls << :upsert; raise "upsert failure" if failure == :upsert }
+      push = Object.new
+      push.define_singleton_method(:reconcile_agent!) { |*_args| calls << :push; raise "push failure" if failure == :push }
+      service = HQ::RemoteService.new(registry: registry_for(Dir.mktmpdir("hq-follow-up"), Dir.mktmpdir("hq-follow-up-workspace")),
+                                      agent_activity_snapshot: snapshot, push_notification_store: push)
+      service.define_singleton_method(:reconcile_archived_schedule_agent) do |_source|
+        calls << :schedule
+        raise "schedule failure" if failure == :schedule
+      end
+      hooks = HQ.hooks
+      hooks.define_singleton_method(:publish) do |*_args|
+        calls << :hook
+        raise "hook failure" if failure == :hook
+      end
+      source = Struct.new(:key).new("source")
+      target = Struct.new(:key, :project_key, :name, :agent, :model, :reasoning_effort).new("target", "web", "Target", "codex", nil, nil)
+      service.send(:publish_context_replacement!, source, target, archive_source: true)
+      assert(calls == %i[remove push schedule upsert hook],
+             "expected #{failure} follow-up failure not to skip later operations, got #{calls.inspect}")
+    ensure
+      hooks.singleton_class.send(:remove_method, :publish) if hooks&.singleton_class&.method_defined?(:publish)
+    end
+  end
+
+  def assert_remote_context_replacement_archive_race_recovers_handoff
+    Dir.mktmpdir("hq-remote-context-archive-race") do |dir|
+      old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
+      old_archive_dir = replace_constant(HQ, :AGENT_ARCHIVE_DIR, File.join(dir, "agents", "archive"))
+      FileUtils.mkdir_p(HQ::AGENT_ARCHIVE_DIR)
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      service = HQ::RemoteService.new(registry: registry_for(dir, workspace))
+      created = service.create_agent("project_key" => "web", "template_key" => "custom", "name" => "Race source", "prompt" => "Keep.", "agent" => "codex")
+      store = service.instance_variable_get(:@agent_store)
+      store.define_singleton_method(:start_agent!) do |key|
+        update_agent!(created[:key]) { |source| source.enqueue_prompt!(prompt: "Late user work", source: "user") }
+        load.find { |agent| agent.key == key }
+      end
+      error = begin
+        service.clone_agent(created[:key], "archive_source" => true, "context_handoff" => true, "start" => true)
+        nil
+      rescue HQ::RemoteServer::Error => e
+        e
+      end
+      agents = service.send(:load_all_agents)
+      source = agents.find { |agent| agent.key == created[:key] }
+      replacement = agents.find { |agent| agent.key != created[:key] }
+      recovery = File.read(replacement.memory_path)
+      assert(error&.status == 409 && source&.pending_prompts?, "expected final archive race to preserve source work")
+      assert(recovery.include?("source agent remains active") && recovery.include?("Do not continue this replacement"),
+             "expected final archive race to correct the durable handoff")
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir

@@ -3541,7 +3541,12 @@ module HQ
       end
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"])
       if archive_source
-        archive_path = @agent_store.archive_context_replacement_source!(source.key)
+        begin
+          archive_path = @agent_store.archive_context_replacement_source!(source.key)
+        rescue ArgumentError
+          recover_context_replacement_archive_rejection!(source, target) if truthy?(attrs["start"])
+          raise
+        end
       end
       publish_context_replacement!(source, target, archive_source:)
       {
@@ -3556,26 +3561,35 @@ module HQ
     end
 
     def publish_context_replacement!(source, target, archive_source:)
-      safely_reconcile_context_replacement! do
-        @agent_activity_snapshot.remove!(source.key) if archive_source
-        @push_notification_store.reconcile_agent!(source.key, state: "archived", archived_at: Time.now) if archive_source
-        reconcile_archived_schedule_agent(source) if archive_source
-        @agent_activity_snapshot.upsert!(target)
+      context_replacement_follow_up("remove source activity snapshot") { @agent_activity_snapshot.remove!(source.key) } if archive_source
+      context_replacement_follow_up("reconcile source notification") do
+        @push_notification_store.reconcile_agent!(source.key, state: "archived", archived_at: Time.now)
+      end if archive_source
+      context_replacement_follow_up("reconcile archived schedule") { reconcile_archived_schedule_agent(source) } if archive_source
+      context_replacement_follow_up("upsert replacement activity snapshot") { @agent_activity_snapshot.upsert!(target) }
+      context_replacement_follow_up("publish clone hook") do
         HQ.hooks.publish("agent.cloned",
-                       agent_key: target.key,
-                       source_agent_key: source.key,
-                       project_key: target.project_key,
-                       name: target.name,
-                       agent: target.agent,
-                       model: target.model,
-                       reasoning_effort: target.reasoning_effort)
+                         agent_key: target.key,
+                         source_agent_key: source.key,
+                         project_key: target.project_key,
+                         name: target.name,
+                         agent: target.agent,
+                         model: target.model,
+                         reasoning_effort: target.reasoning_effort)
       end
     end
 
-    def safely_reconcile_context_replacement!
+    def context_replacement_follow_up(name)
       yield
     rescue StandardError => e
-      HQ.logger.warn("RemoteService") { "Context replacement committed with follow-up error: #{e.class}: #{e.message}" }
+      HQ.logger.warn("RemoteService") { "Context replacement #{name} failed: #{e.class}: #{e.message}" }
+    end
+
+    def recover_context_replacement_archive_rejection!(source, target)
+      ContextHandoff.record_archive_rejection!(source, target)
+      @agent_store.stop_agent!(target.key) if target.running?
+    rescue StandardError => e
+      HQ.logger.warn("RemoteService") { "Context replacement archive-rejection recovery failed: #{e.class}: #{e.message}" }
     end
 
     def acknowledge_context_pressure(key, attrs)
