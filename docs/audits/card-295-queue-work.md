@@ -6,7 +6,9 @@ Scope: queue acceptance, durable batches, dispatch, contract injection, Conversa
 
 ## Result
 
-The current queue path does not silently delete work during normal processing. A queue entry moves from `prompt_queue` to a durable `queue_work` batch. Tycho writes one `Read queue` event before it starts the next run. A success result records a terminal disposition. A failed, blocked, or input-required result keeps the entry unresolved and visible.
+Current code inspection, focused tests, and controlled fixtures verify the audited current paths. In these paths, a queue entry moves from `prompt_queue` to a durable `queue_work` batch. Tycho writes one `Read queue` event before it starts the next run. A success result records a terminal disposition. A failed, blocked, or input-required result keeps the entry unresolved and visible. This verification does not prove that all retained historical batches followed these paths.
+
+Six retained historical batches have an unexplained evidence gap. Five have `completed` or `incorporated` dispositions. One has a `needs_input` disposition. All six have a delivery count of zero, no `read_id`, and no matching queue-read memory event. The retained metadata proves that these batches became terminal. It does not prove delivery, contract injection, processing, operator removal, archive handling, or work loss. This audit does not assign a cause to these records.
 
 One current gap is reproducible. A manual memory rebuild replaces `memory.jsonl` with data from `raw.log`. Queue-read events exist only in `memory.jsonl`. The rebuild can therefore remove the visible `Read queue` event while the durable batch still has its `read_id` and dispositions. Two retained archived batches have this state. This is a visibility loss, not a queue-work loss.
 
@@ -21,6 +23,7 @@ The audit used metadata only for retained agents. It did not copy private prompt
 - This was the only active agent in project `tycho`. No schedule targets project `tycho`.
 - The retained scan covered 578 queue-work batches in archived `agent_manifest.json` files.
 - Four focused test files passed: `test/prompt_queue_test.rb`, `test/remote_ui_prompt_queue_test.rb`, `test/delegation_test.rb`, and `test/archive_delegation_callbacks_test.rb`.
+- The independent review reported a detached-completion fixture failure in `test/delegation_runner_test.rb`. A focused run in this correction workspace passed. The failure was not reproduced, so this audit does not assign an infrastructure cause.
 - A temporary fixture created one `Read queue` event, rebuilt memory, and then found zero `Read queue` events. The batch still had its `read_id`.
 
 Retained scan summary:
@@ -31,8 +34,23 @@ Retained scan summary:
 | Delivered batches | 568 | Delivery count was greater than zero |
 | Delivered batches with a `read_id` | 362 | Current disclosure model is present |
 | Delivered batches without a `read_id` | 206 | Historical delivery model; all opened on or before 2026-09-27 09:32:36 UTC |
-| Terminal batches that were not delivered | 10 | Legitimate removal or archive outcomes; no read event is required |
+| Zero-delivery terminal batches with only removal-style outcomes | 4 | `declined_with_reason` or `superseded_with_reason` records directly support deliberate terminal removal; they do not claim delivery |
+| Zero-delivery resolved batches with `completed` or `incorporated` outcomes | 5 | Unexplained historical evidence; no `read_id` or matching queue-read event proves delivery or processing |
+| Zero-delivery blocked batches with a `needs_input` outcome | 1 | Unexplained historical evidence; no `read_id` or matching queue-read event proves that the prompt entered an agent context |
 | Batches with a `read_id` but no matching memory event | 2 | Reproducible visibility-loss shape |
+
+The six unexplained records keep source, acceptance, open, resolve, and disposition metadata. Some related run-summary or tool-summary records refer to batch or entry identifiers. Nearby run records also exist. These facts show retained activity near some batches, but they do not connect a queue entry to injected native context. The canonical delivery fields remain zero or absent, and no queue-read event exists. Therefore, the audit does not use the nearby records as delivery evidence.
+
+The metadata-only check used these retained manifests:
+
+- `~/.tycho/logs/agents/archive/20260926-153045-breaker-agent/agent_manifest.json`
+- `~/.tycho/logs/agents/archive/20260928-101657-secondbrain-agent-20260926-044700-363830/agent_manifest.json`
+- `~/.tycho/logs/agents/archive/20260928-131120-secondbrain-agent-20260925-060814-889508/agent_manifest.json`
+- `~/.tycho/logs/agents/archive/20261006-161321-tycho-agent-20261006-021132-206133/agent_manifest.json`
+- `~/.tycho/logs/agents/archive/20261008-164635-kids-education-agent-20261008-013844-185859/agent_manifest.json`
+- `~/.tycho/logs/agents/archive/20261008-164729-kids-education-agent-20261008-082800-019367/agent_manifest.json`
+
+These paths identify provenance without copying prompt, callback, disposition-reason, or memory-event bodies.
 
 The latest retained delivered batch without a `read_id` is in:
 
@@ -67,7 +85,7 @@ Relevant merged changes explain the historical transition:
 | Explicit `tycho queue` read | Pending entries move to one open batch under a file transaction. A failed write rolls back the state change. | The same idempotent `Read queue` event is written. | Verified by code and failure tests. |
 | New user input arrives with pending queue work | The existing or new batch remains durable and the claim state is cleared. | The user message and one `Read queue` event enter the next native context. | Verified by code and tests. |
 | Agent is running a claimed batch | Unresolved entries remain in the active batch. | Claimed entries are hidden from the pending list to prevent duplicate display. The `Read queue` block is the evidence. | Legitimate pending-list disappearance. |
-| Success, no-action-needed, or partial result | Unresolved user entries become `completed`. Delegated reports become `incorporated`. Later entries can run. | The existing block projects the resolved state and dispositions. | Verified by code and tests. |
+| Success, no-action-needed, or partial result | Under the current completion policy, unresolved user entries become `completed`. Delegated reports become `incorporated`. Later entries can run. | The existing block projects the resolved state and dispositions. | Verified for current code and tests. The six unexplained historical batches are not proof of this path. |
 | Failed, blocked, or input-required result | The batch stays open. No automatic success disposition is recorded. | Entries return to the queue view with an exact unprocessed reason. | Verified by code and tests. |
 | Dispatch start failure | The prepared claim, batch, and error remain durable. | Retry reuses the same read event. It does not add a duplicate. | Verified by code and tests. |
 | Stop or process exit | The store polls final state and dispatches eligible queued work once. Workspace, inquiry, schedule, and failure gates still apply. | Automatic dispatch writes the read event before the successor run. | Verified by code and tests. |
