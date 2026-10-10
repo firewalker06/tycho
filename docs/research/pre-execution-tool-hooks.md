@@ -25,11 +25,15 @@ guardrail. It is not a complete operating-system security boundary.
 
 ## Harness evidence
 
-| Harness | Installed and headless mode used by Tycho | Pre-tool control | Deny reason and input change | One-run installation | Failure and timeout behavior | Result |
+The control and failure columns below are source-backed capability statements.
+They are not proof of a complete model turn. The later test table records the
+separate empirical tool-call, model-reason, and turn results.
+
+| Harness | Installed and headless mode used by Tycho | Documented pre-tool control | Documented deny and input change | One-run installation | Documented failure and timeout behavior | Evidence status |
 | --- | --- | --- | --- | --- | --- | --- |
-| Claude Code | 2.1.296 at test time; `--print --output-format stream-json --verbose` | `PreToolUse` command, HTTP, MCP, prompt, or agent hook | `permissionDecision: deny` gives a reason to Claude. `ask` and `allow` are supported. `updatedInput` replaces the full input object. | Pass a temporary file with `--settings`. Use `--setting-sources` to limit normal settings. A temporary plugin can also use `--plugin-dir`. `--no-session-persistence` is available for tests. | Exit 2 blocks. Other errors and timeouts allow normal permission processing by default. `onFailure: "block"` is available from 2.1.295. | Supported. End-to-end test was unavailable because local OAuth refresh failed. The deny JSON contract was tested directly. |
+| Claude Code | 2.1.296 at test time; `--print --output-format stream-json --verbose` | `PreToolUse` command, HTTP, MCP, prompt, or agent hook | `permissionDecision: deny` gives a reason to Claude. `ask` and `allow` are supported. `updatedInput` replaces the full input object. | Pass a temporary file with `--settings`. Use `--setting-sources` to limit normal settings. A temporary plugin can also use `--plugin-dir`. `--no-session-persistence` is available for tests. | Exit 2 blocks. Other errors and timeouts allow normal permission processing by default. `onFailure: "block"` is available from 2.1.295. | Source-supported. The direct hook output matched the documented deny object. The live model path did not reach a tool call because authentication failed. |
 | Codex | 0.160.0; `exec --json`; hooks feature reports stable | Synchronous `PreToolUse` for Bash, `apply_patch`, MCP, and most local function tools | A deny reason is model-visible. `updatedInput` can replace Bash or tool arguments. `ask` is parsed but is not supported. | Pass an inline hook table with `-c`, use a Tycho-owned script path, and add `--dangerously-bypass-hook-trust` only after Tycho validates that script. `--ephemeral` and `--ignore-user-config` isolate tests. | An explicit deny blocks. A callback error, malformed result, unavailable MCP hook, or timeout fails open. Background hooks cannot block. | Supported. A real ephemeral test blocked the sentinel and returned its reason to the model. |
-| OpenCode | 1.18.4; `run --format json --dir WORKSPACE` | Plugin callback `tool.execute.before` | Mutate `output.args` before execution. Throw an error to stop the call and give the model the error. There is no native dynamic ask from this callback. | Set `OPENCODE_CONFIG_DIR` to a Tycho-owned run directory with a plugin. `OPENCODE_CONFIG_CONTENT` can add runtime config. These layers merge with other config unless Tycho also isolates standard config locations. | The public plugin reference shows a thrown error as the blocking method. It does not define a hook timeout or a fail-open/fail-closed switch. A stalled callback can stall the tool path. | Provisionally supported. A direct plugin-contract test passed. An isolated live model run was not done. Exact-version runtime verification is required before implementation. |
+| OpenCode | 1.18.4; `run --format json --dir WORKSPACE` | Plugin callback `tool.execute.before` | Mutate `output.args` before execution. Throw an error to stop the callback path. There is no native dynamic ask from this callback. The primary plugin documentation does not prove that the thrown reason reaches the model. | Set `OPENCODE_CONFIG_DIR` to a Tycho-owned run directory with a plugin. `OPENCODE_CONFIG_CONTENT` can add runtime config. These layers merge with other config unless Tycho also isolates standard config locations. | The public plugin reference shows a thrown error as the blocking mechanism. It does not define a hook timeout or a fail-open/fail-closed switch. A stalled callback can stall the tool path. | Provisionally supported. A direct callback-contract test passed. Tool execution in a live model turn, model-visible reason delivery, and turn behavior are unverified. Exact-version runtime verification is required before implementation. |
 | Pi | 0.84.4; `--mode json` | Extension event `tool_call` runs before tool execution | Return `{block: true, reason}`. Mutate `event.input` in place to replace arguments. Pi does not revalidate changed input. | Use `--no-extensions --extension PATH` for a Tycho-owned per-run extension. Tests can add `--no-session`. | A `tool_call` handler error blocks the tool as a fail-safe. The primary reference does not define a handler timeout, so Tycho must keep the policy callback small and bounded. | Supported. A real no-session JSON test blocked the sentinel and returned its reason to the model. |
 | Cursor candidate | CLI not installed; version unavailable | `preToolUse` and `beforeShellExecution` hooks | `preToolUse` supports deny reason and `updated_input`. `ask` is accepted but is not enforced there. `beforeShellExecution` supports allow, deny, and ask, but not input replacement. | Current docs list enterprise, team, project `.cursor/hooks.json`, and user `~/.cursor/hooks.json`. No one-run CLI hook path was verified. | Invalid JSON for permission hooks blocks. Other failures and timeouts fail open by default. `failClosed: true` changes them to block. | Candidate only. Do not add it to Tycho until the CLI, headless contract, and one-run setup are tested. |
 
@@ -48,21 +52,28 @@ package points to the same `earendil-works/pi` repository used above.
 ## Safe test evidence
 
 The test prompt requested one harmless command that would write the text
-`tycho-hook-probe` to a temporary marker. The policy blocked that exact token.
-No destructive command was used.
+`tycho-hook-probe` to a temporary marker. The blocking fixtures matched that
+exact token. The table shows when a fixture did not load or the harness stopped
+before it reached the fixture. No destructive command was used.
 
-| Test | Evidence |
-| --- | --- |
-| Codex | Ephemeral run, ignored user config, inline `PreToolUse`, and bypassed hook trust for the validated temporary script. Codex reported `Command blocked by PreToolUse hook` and repeated the policy reason. Marker absent. |
-| Claude | 2.1.296 loaded the temporary settings and no-session mode, but stopped before a tool call because OAuth refresh failed. Direct invocation of the hook returned the documented deny object. Marker absent. |
-| OpenCode | The installed Node runtime loaded the temporary plugin, called `tool.execute.before`, and observed the expected blocking error and reason. This was a contract test, not a full OpenCode model session. |
-| Pi | JSON mode, no saved session, no discovered extensions, and one explicit temporary extension. Pi returned an error tool result with the policy reason. Marker absent. |
-| Cursor | Not tested because no Cursor CLI executable was present. |
+| Harness and test | Tool-call outcome | Reason outcome | Turn outcome |
+| --- | --- | --- | --- |
+| Codex, first project-discovery probe | Allowed. The project hook did not load, and the harmless marker was written. | No policy reason existed because no hook ran. | Continued and completed with a final agent message. |
+| Codex, validated inline-hook probe | Denied before command execution. The marker stayed absent. | Reached the model. The final agent message repeated the hook reason. | Continued in the same turn and completed with a final agent message. The denial did not stop the turn. |
+| Claude, live isolated probe | No tool call occurred. Authentication failed first, and the marker stayed absent. | No hook reason reached the model because the hook was not called. | Stopped with an authentication error before tool use. |
+| Claude, direct hook-contract test | No harness tool call was attempted. Direct script input produced the documented deny object. | The direct caller received the reason. Model visibility was not tested. | Not applicable to a model turn. The live deny path remains unverified. |
+| OpenCode, direct plugin-contract test | No live harness tool call was attempted. The direct caller invoked `tool.execute.before` and caught the expected thrown error. | The direct test caller received the error reason. Delivery to an OpenCode model was not tested and is unverified. Documentation of the throw mechanism is not empirical model-path proof. | Unverified. No OpenCode model turn ran. |
+| Pi, first probe with unsupported default model | No tool call occurred. Model selection failed first. | No policy reason reached the model. | Stopped with a model-configuration error. |
+| Pi, valid pinned-model probe | Denied before command execution. The marker stayed absent. | Reached the model as an error tool result. The final assistant response repeated the reason. | Continued after the error tool result and completed with a final assistant response. The denial did not stop the turn. |
+| Cursor | Not tested because no Cursor CLI executable was present. | Unknown. | Unknown. |
 
 The first Codex probe used a non-Git temporary project hook. Codex did not load
 that hook, and the harmless marker was written. The marker was removed. The
 valid test used inline run config and blocked the command. This is evidence that
 Tycho must not depend on project-hook discovery for per-run policy.
+
+No input-mutation path was tested in a live harness turn. Input-mutation claims
+in the harness table come from the linked primary documentation.
 
 ## Current Tycho behavior
 
