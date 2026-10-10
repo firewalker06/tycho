@@ -7589,7 +7589,9 @@ title: !123 value
         if (collapsedInquiry.open || collapsedInquiry.formVisible || !collapsedInquiry.summary?.includes("Answer required")) {
           throw new Error(`Mobile inquiry is not collapsed by default: ${JSON.stringify(collapsedInquiry)}`);
         }
-        await page.click(".mobile-inquiry > summary");
+        if ((await page.locator(".mobile-inquiry").getAttribute("open")) === null) {
+          await page.click(".mobile-inquiry > summary");
+        }
         await page.waitForSelector("#inquiry-form", { state: "visible", timeout: 10_000 });
         await page.click("#inquiry-form .composer-action-menu > summary");
         await page.waitForSelector('[data-inquiry-lifecycle-action="dismiss"]', { state: "visible", timeout: 10_000 });
@@ -7722,7 +7724,9 @@ title: !123 value
           state.renderedViewHtml = "";
           render();
         });
-        await page.click(".mobile-inquiry > summary");
+        if ((await page.locator(".mobile-inquiry").getAttribute("open")) === null) {
+          await page.click(".mobile-inquiry > summary");
+        }
         await page.waitForSelector("#inquiry-form", { state: "visible", timeout: 10_000 });
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "inquiry-autosave-mobile.png") });
         await page.setViewportSize({ width: 1280, height: 800 });
