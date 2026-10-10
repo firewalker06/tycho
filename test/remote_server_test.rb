@@ -27,6 +27,7 @@ module RemoteServerTest
     assert_remote_schedule_session_archive_routes
     assert_remote_agent_clone_archives_source_with_editable_name
     assert_remote_context_pressure_clone_replaces_schedule_target
+    assert_remote_context_pressure_clone_failure_preserves_source
     assert_remote_agent_payload_has_revision
     assert_remote_agent_payload_distinguishes_running_history_from_never_run
     assert_remote_agent_activity_snapshot
@@ -1230,7 +1231,8 @@ module RemoteServerTest
           source.key,
           "replace_schedule_target" => true,
           "expected_schedule_key" => "warning-loop",
-          "context_handoff" => handoff
+          "context_handoff" => handoff,
+          "archive_source" => true
         )
         replacement_key = response.dig(:agent, :key)
         agents = service.send(:load_all_agents).to_h { |agent| [agent.key, agent] }
@@ -1242,8 +1244,8 @@ module RemoteServerTest
 
         assert(response.dig(:schedule_replacement, :last_target_key) == replacement_key,
                "expected Remote context clone to report the schedule replacement")
-        assert(agents.fetch(source.key).schedule_key.nil? && agents.fetch(replacement_key).schedule_key == "warning-loop",
-               "expected Remote context clone to preserve source history and move schedule identity")
+        assert(!agents.key?(source.key) && agents.fetch(replacement_key).schedule_key == "warning-loop",
+               "expected Remote context clone to archive the source after moving schedule identity")
         assert(stored_state.paused? && stored_state.previous_target_key == source.key &&
                stored_state.last_target_key == replacement_key,
                "expected Remote context clone to preserve schedule state and target history")
@@ -1266,9 +1268,9 @@ module RemoteServerTest
           e
         end
         assert(stale_error&.status == 409,
-               "expected a stale Remote replacement request to return HTTP 409")
-        assert(service.send(:load_all_agents).length == 2,
-               "expected stale Remote replacement intent not to create or start an unscheduled clone")
+               "expected an archived replacement source to reject a repeated request")
+        assert(service.send(:load_all_agents).length == 1,
+               "expected repeated replacement request not to create an unscheduled clone")
         artifact_after = Dir.glob(File.join(HQ::AGENT_LOGS_DIR, "**", "*"), File::FNM_DOTMATCH).sort
         assert(artifact_after == artifact_snapshot,
                "expected stale Remote replacement rejection not to leave target artifacts: " \
@@ -1280,6 +1282,41 @@ module RemoteServerTest
         replace_constant(HQ, :SCHEDULES_FILE, old_schedules_file) if old_schedules_file
         replace_constant(HQ, :SCHEDULES_STATE_FILE, old_schedule_state) if old_schedule_state
       end
+    end
+  end
+
+  def assert_remote_context_pressure_clone_failure_preserves_source
+    Dir.mktmpdir("hq-remote-context-clone-failure-test") do |dir|
+      old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
+      old_archive_dir = replace_constant(HQ, :AGENT_ARCHIVE_DIR, File.join(dir, "agents", "archive"))
+      FileUtils.mkdir_p(HQ::AGENT_LOGS_DIR)
+      FileUtils.mkdir_p(HQ::AGENT_ARCHIVE_DIR)
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      service = HQ::RemoteService.new(registry: registry_for(dir, workspace))
+      source = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Failure source",
+        "prompt" => "Keep this source.", "agent" => "codex"
+      )
+
+      store = service.instance_variable_get(:@agent_store)
+      store.define_singleton_method(:start_agent!) { |_key| raise ArgumentError, "simulated replacement start failure" }
+      error = begin
+        service.clone_agent(source[:key], "context_handoff" => true, "start" => true, "archive_source" => true)
+        nil
+      rescue HQ::RemoteServer::Error => e
+        e
+      end
+
+      active = service.send(:load_all_agents)
+      assert(error&.message == "simulated replacement start failure", "expected replacement start failure to propagate")
+      assert(active.any? { |agent| agent.key == source[:key] }, "expected failed replacement to preserve the source")
+      assert(active.length == 2, "expected failed replacement to retain its saved successor for recovery")
+    ensure
+      replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+      replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
+      replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
     end
   end
 

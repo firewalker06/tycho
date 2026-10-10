@@ -67,7 +67,7 @@ module RemoteUIContextPressureTest
       if (!compactionHtml.includes("No context percentage is shown") || compactionHtml.includes("NaN%")) {
         throw new Error("reported-only warning must explain that no percentage is available");
       }
-      if (!source.includes("archive_source: false") || !source.includes("context_handoff: handoff") ||
+      if (!source.includes("archive_source: true") || !source.includes("context_handoff: handoff") ||
           !source.includes("start: handoff") || !styles.includes(".context-pressure-warning") ||
           !styles.includes(".context-pressure-dismiss") || !styles.includes("position: absolute") ||
           !styles.includes("width: var(--ds-touch-target)") || !styles.includes("height: var(--ds-touch-target)") ||

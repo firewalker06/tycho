@@ -797,7 +797,7 @@ title: !123 value
         }
         const cloneRequest = await cloneRequestPromise;
         const clonePayload = cloneRequest.postDataJSON();
-        if (clonePayload.archive_source !== false || clonePayload.context_handoff !== handoff || clonePayload.start !== handoff) {
+        if (clonePayload.archive_source !== true || clonePayload.context_handoff !== handoff || clonePayload.start !== handoff) {
           throw new Error(`Context-pressure request lost ordinary clone fields: ${JSON.stringify(clonePayload)}`);
         }
         if (scheduled) {
@@ -819,17 +819,20 @@ title: !123 value
           page.request.get(`${baseUrl}/schedules`),
         ]);
         const source = (await sourceResponse.json()).agent;
+        if (!source?.archived) {
+          throw new Error(`Context-pressure source stayed active after replacement: ${JSON.stringify(source)}`);
+        }
         const replacement = (await replacementResponse.json()).agent;
         const schedules = (await schedulesResponse.json()).schedules;
         const schedule = schedules.find((item) => item.key === "smoke");
         if (scheduled) {
-          if (source.schedule_key || replacement.schedule_key !== "smoke" || replacement.scheduled !== true ||
+          if (replacement.schedule_key !== "smoke" || replacement.scheduled !== true ||
               schedule?.last_target_key !== replacementKey || schedule?.run_count !== 3 || schedule?.skip_count !== 1) {
-            throw new Error(`Schedule replacement did not preserve authoritative state: ${JSON.stringify({ source, replacement, schedule })}`);
+            throw new Error(`Schedule replacement did not preserve authoritative state: ${JSON.stringify({ replacement, schedule })}`);
           }
-        } else if (source.schedule_key || replacement.schedule_key || replacement.scheduled === true ||
+        } else if (replacement.schedule_key || replacement.scheduled === true ||
                    await page.locator("[data-header-schedule-menu]").count() !== 0) {
-          throw new Error(`Unscheduled context-pressure action created a schedule connection: ${JSON.stringify({ source, replacement })}`);
+          throw new Error(`Unscheduled context-pressure action created a schedule connection: ${JSON.stringify({ replacement })}`);
         }
         const conversation = await (await page.request.get(`${baseUrl}/agents/${encodeURIComponent(replacementKey)}/conversation`)).json();
         const hasHandoff = conversation.conversation.some((block) => block.metadata?.context_handoff === true);

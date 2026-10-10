@@ -1054,6 +1054,7 @@ def selected_screen_items
       @selected[:agents] = @agents.index(target) || 0
       replacement = @agent_store.start_agent!(target.key)
       replace_agent_instance!(target, replacement)
+      archive_context_pressure_source!(source)
       @selected[:agents] = @agents.index(replacement) || 0
       rebuild_agent_index!
       HQ.hooks.publish("agent.cloned",
@@ -1081,6 +1082,7 @@ def selected_screen_items
       close_sidebar!
       target = @agent_store.clone_agent(source, existing_agents: @all_agents)
       target = persist_context_pressure_clone!(source, target, handoff: false)
+      archive_context_pressure_source!(source)
       @selected[:agents] = @agents.index(target) || 0
       rebuild_agent_index!
       HQ.hooks.publish("agent.cloned",
@@ -1115,6 +1117,13 @@ def selected_screen_items
       @agents = sort_agents(@agents)
       save_agents!
       target
+    end
+
+    def archive_context_pressure_source!(source)
+      @agent_store.archive_agent!(source.key)
+      @agents.reject! { |agent| agent.key == source.key }
+      @all_agents.reject! { |agent| agent.key == source.key }
+      save_agents!
     end
 
     def replace_agent_instance!(current, replacement)

@@ -3505,9 +3505,6 @@ module HQ
       context_handoff = truthy?(attrs["context_handoff"])
       replace_schedule_target = truthy?(attrs["replace_schedule_target"])
       expected_schedule_key = attrs["expected_schedule_key"].to_s.strip if replace_schedule_target
-      if replace_schedule_target && archive_source
-        raise Error.new("A schedule target replacement must preserve its source history", status: 409)
-      end
       if replace_schedule_target && expected_schedule_key.to_s.empty?
         raise Error.new("A schedule target replacement requires the expected schedule key", status: 409)
       end
@@ -3531,20 +3528,21 @@ module HQ
         end
         target = replacement.fetch(:agent)
         schedule_replacement = replacement.fetch(:schedule)
-        @agent_activity_snapshot.upsert!(replacement.fetch(:source))
       else
         target.update!(**agent_attrs(target, attrs, project: project, creating: false))
         @agent_store.ensure_project_context_prompt!(target, project)
         ContextHandoff.prepare!(source, target) if context_handoff
-        archive_path = @agent_store.archive_agent!(source.key) if archive_source
-        @agent_activity_snapshot.remove!(source.key) if archive_source
-        @push_notification_store.reconcile_agent!(source.key, state: "archived", archived_at: Time.now) if archive_source
-        schedule_reconciled = reconcile_archived_schedule_agent(source) if archive_source
-        next_agents = current.reject { |agent| agent.key == target.key || (archive_source && agent.key == source.key) }
+        next_agents = current.reject { |agent| agent.key == target.key }
         next_agents.unshift(target)
         save_agents(sort_agents(next_agents))
       end
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"])
+      if archive_source
+        archive_path = @agent_store.archive_agent!(source.key)
+        @agent_activity_snapshot.remove!(source.key)
+        @push_notification_store.reconcile_agent!(source.key, state: "archived", archived_at: Time.now)
+        schedule_reconciled = reconcile_archived_schedule_agent(source)
+      end
       @agent_activity_snapshot.upsert!(target)
       HQ.hooks.publish("agent.cloned",
                        agent_key: target.key,
