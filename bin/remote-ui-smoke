@@ -4205,6 +4205,17 @@ title: !123 value
             };
             const current = agentSummaryDetail(agent, "current-summary");
             state.conversations[key] = {
+              blocks: [
+                {
+                  kind: "summary",
+                  content: "(error: Known failed-run detail: token=do-not-show-this-value)",
+                  metadata: { run_id: "run-current", summary_entry_type: "error" },
+                },
+                { kind: "run_summary", content: "", metadata: { summary_id: "error-summary", run_id: "run-current", status: "failed" } },
+              ],
+            };
+            const knownError = agentSummaryDetail(agent, "error-summary");
+            state.conversations[key] = {
               blocks: [{ kind: "message", role: "assistant", content: "PRIOR_RUN_MESSAGE_MUST_NOT_APPEAR", metadata: { run_id: "run-prior" } }],
             };
             agent.summary = "";
@@ -4214,11 +4225,13 @@ title: !123 value
               benignEqualsPreserved,
               credentialsRedacted,
               currentRunIsolated: !current.content.includes("PRIOR_RUN_MESSAGE_MUST_NOT_APPEAR") && current.content.includes("interrupted"),
+              knownErrorVisible: knownError.content.includes("### Error") && knownError.content.includes("Known failed-run detail") &&
+                knownError.content.includes("[REDACTED]") && !knownError.content.includes("do-not-show-this-value"),
               missingRunIsolated: !missing.content.includes("PRIOR_RUN_MESSAGE_MUST_NOT_APPEAR") && missing.content.includes("interrupted"),
             };
           }, agentKey);
           if (!emptySummarySafetyMatrix.rejectedSafely || !emptySummarySafetyMatrix.benignEqualsPreserved || !emptySummarySafetyMatrix.credentialsRedacted ||
-              !emptySummarySafetyMatrix.currentRunIsolated || !emptySummarySafetyMatrix.missingRunIsolated) {
+              !emptySummarySafetyMatrix.currentRunIsolated || !emptySummarySafetyMatrix.knownErrorVisible || !emptySummarySafetyMatrix.missingRunIsolated) {
             throw new Error(`Empty Summary safety matrix failed: ${JSON.stringify(emptySummarySafetyMatrix)}`);
           }
           const installEmptySummaryFixture = async () => page.evaluate((key) => {

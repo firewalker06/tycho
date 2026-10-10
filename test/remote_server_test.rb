@@ -7701,6 +7701,10 @@ module RemoteServerTest
     assert(js[:body].include?("function runSummaryDetailContent") &&
            js[:body].include?('excerpt === `${status}: ${firstLine}` ? detail : content'),
            "expected full Summary pages to remove duplicated status-prefixed excerpts")
+    assert(js[:body].include?("function lastSafeRunError") &&
+           js[:body].include?("summary_entry_type !== \"error\"") &&
+           js[:body].include?("### Error"),
+           "expected failed Summary fallbacks to show only the selected run's known error")
     assert(js[:body].include?('viewerClassName: "markdown-viewer message-markdown-viewer"'),
            "expected chat markdown to use message-scoped markdown styling")
     assert(js[:body].include?('viewerClassName: "markdown-viewer agent-summary-markdown-viewer"'),
