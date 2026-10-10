@@ -7589,7 +7589,9 @@ title: !123 value
         if (collapsedInquiry.open || collapsedInquiry.formVisible || !collapsedInquiry.summary?.includes("Answer required")) {
           throw new Error(`Mobile inquiry is not collapsed by default: ${JSON.stringify(collapsedInquiry)}`);
         }
-        await page.click(".mobile-inquiry > summary");
+        if ((await page.locator(".mobile-inquiry").getAttribute("open")) === null) {
+          await page.click(".mobile-inquiry > summary");
+        }
         await page.waitForSelector("#inquiry-form", { state: "visible", timeout: 10_000 });
         await page.click("#inquiry-form .composer-action-menu > summary");
         await page.waitForSelector('[data-inquiry-lifecycle-action="dismiss"]', { state: "visible", timeout: 10_000 });
@@ -7667,6 +7669,84 @@ title: !123 value
         await page.selectOption("[name='approved']", "Yes");
         await page.fill("#inquiry-feedback", "Keep the explanation short.");
         await assertEditorExcludedFromRefresh("#inquiry-form:not(.inquiry-form-full-screen)", "Inline inquiry form", "#inquiry-feedback");
+        const inquiryDraftIdentity = await page.evaluate(() => {
+          const form = document.querySelector("#inquiry-form");
+          const storageKey = formDraftStorageKey(form);
+          const stored = JSON.parse(localStorage.getItem(storageKey) || "{}");
+          const replacement = form.cloneNode(true);
+          replacement.dataset.inquiryId = `${form.dataset.inquiryId}-replacement`;
+          const replacementKey = formDraftStorageKey(replacement);
+          return {
+            key: storageKey,
+            replacementKey,
+            replacementDraft: localStorage.getItem(replacementKey),
+            stored,
+          };
+        });
+        const inquiryFixture = await page.evaluate((key) => state.agentDetails[key]?.latest_inquiry ||
+          state.agents.find((agent) => agent.key === key)?.latest_inquiry, agentKey);
+        if (!inquiryDraftIdentity.key.includes("server:") || !inquiryDraftIdentity.key.includes("project:") ||
+            !inquiryDraftIdentity.key.includes("agent:") || !inquiryDraftIdentity.key.includes("inquiry:") ||
+            inquiryDraftIdentity.key === inquiryDraftIdentity.replacementKey || inquiryDraftIdentity.replacementDraft ||
+            inquiryDraftIdentity.stored.controls?.["id:inquiry-environments-1-0"]?.checked !== true ||
+            inquiryDraftIdentity.stored.controls?.["id:inquiry-approved-2"]?.value !== "Yes") {
+          throw new Error(`Inquiry draft identity leaked into a replacement inquiry: ${JSON.stringify(inquiryDraftIdentity)}`);
+        }
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await page.evaluate(() => syncFullScreenComposerViewport());
+        await page.evaluate(() => { location.hash = routeHash({ type: "agents" }); });
+        await page.waitForSelector("#inquiry-form", { state: "detached", timeout: 10_000 });
+        await page.evaluate((key) => { location.hash = routeHash({ type: "agent", key }); }, agentKey);
+        await page.waitForSelector("#inquiry-form", { state: "visible", timeout: 10_000 });
+        await page.reload();
+        await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+        await page.evaluate(({ key, inquiry }) => {
+          if (state.agentDetails[key]) state.agentDetails[key].latest_inquiry = inquiry;
+          const listAgent = state.agents.find((agent) => agent.key === key);
+          if (listAgent) listAgent.latest_inquiry = inquiry;
+          state.renderedViewHtml = "";
+          render();
+        }, { key: agentKey, inquiry: inquiryFixture });
+        await page.waitForSelector("#inquiry-form", { state: "visible", timeout: 10_000 });
+        const inquiryDraftRestoration = await page.evaluate(() => ({
+          approved: document.querySelector("[name='approved']")?.value,
+          environments: document.querySelector("[name='environments'][value='Staging']")?.checked,
+          feedback: document.querySelector("#inquiry-feedback")?.value,
+          response: document.querySelector("[name='next_step']")?.value,
+        }));
+        if (inquiryDraftRestoration.response !== "Ship the focused change." || !inquiryDraftRestoration.environments ||
+            inquiryDraftRestoration.approved !== "Yes" || inquiryDraftRestoration.feedback !== "Keep the explanation short.") {
+          throw new Error(`Inquiry draft did not survive navigation and reload: ${JSON.stringify(inquiryDraftRestoration)}`);
+        }
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.evaluate(() => {
+          syncFullScreenComposerViewport();
+          state.renderedViewHtml = "";
+          render();
+        });
+        if ((await page.locator(".mobile-inquiry").getAttribute("open")) === null) {
+          await page.click(".mobile-inquiry > summary");
+        }
+        await page.waitForSelector("#inquiry-form", { state: "visible", timeout: 10_000 });
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "inquiry-autosave-mobile.png") });
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await page.evaluate(() => {
+          syncFullScreenComposerViewport();
+          state.renderedViewHtml = "";
+          render();
+        });
+        await page.waitForSelector("#inquiry-form", { state: "visible", timeout: 10_000 });
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "inquiry-autosave-desktop.png") });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.evaluate(() => {
+          syncFullScreenComposerViewport();
+          state.renderedViewHtml = "";
+          render();
+        });
+        if ((await page.locator(".mobile-inquiry").getAttribute("open")) === null) {
+          await page.click(".mobile-inquiry > summary");
+        }
+        await page.waitForSelector("#inquiry-form", { state: "visible", timeout: 10_000 });
         const inlineInquiryPollContract = await page.evaluate(async (key) => {
           clearTimeout(state.timer);
           state.timer = null;
