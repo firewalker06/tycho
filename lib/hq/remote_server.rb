@@ -3514,6 +3514,8 @@ module HQ
         raise Error.new("Agent #{source.key} #{detail}", status: 409)
       end
 
+      @agent_store.assert_context_replacement_archive_safe!(source.key) if archive_source
+
       project = find_project!(source.project_key)
       target = @agent_store.clone_agent(source, existing_agents: current)
 
@@ -3521,30 +3523,45 @@ module HQ
         replacement = scheduler.replace_session_target!(
           source_key: source.key,
           target: target,
-          expected_schedule_key:
+          expected_schedule_key:,
+          archive_source:
         ) do |current_source, candidate|
           candidate.update!(**agent_attrs(candidate, attrs, project: project, creating: false))
-          ContextHandoff.prepare!(current_source, candidate, schedule_replacement: true) if context_handoff
+          ContextHandoff.prepare!(current_source, candidate, schedule_replacement: true, archive_source:) if context_handoff
         end
         target = replacement.fetch(:agent)
         schedule_replacement = replacement.fetch(:schedule)
       else
         target.update!(**agent_attrs(target, attrs, project: project, creating: false))
         @agent_store.ensure_project_context_prompt!(target, project)
-        ContextHandoff.prepare!(source, target) if context_handoff
+        ContextHandoff.prepare!(source, target, archive_source:) if context_handoff
         next_agents = current.reject { |agent| agent.key == target.key }
         next_agents.unshift(target)
         save_agents(sort_agents(next_agents))
       end
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"])
       if archive_source
-        archive_path = @agent_store.archive_agent!(source.key)
-        @agent_activity_snapshot.remove!(source.key)
-        @push_notification_store.reconcile_agent!(source.key, state: "archived", archived_at: Time.now)
-        schedule_reconciled = reconcile_archived_schedule_agent(source)
+        archive_path = @agent_store.archive_context_replacement_source!(source.key)
       end
-      @agent_activity_snapshot.upsert!(target)
-      HQ.hooks.publish("agent.cloned",
+      publish_context_replacement!(source, target, archive_source:)
+      {
+        agent: agent_payload(target),
+        source_agent_key: source.key,
+        archived: archive_source,
+        archive_path: archive_path,
+        schedule_replacement: schedule_replacement
+      }.compact
+    rescue AgentStore::StaleScheduleTarget, ArgumentError, ScheduleRegistry::Error => e
+      raise Error.new(e.message, status: 409)
+    end
+
+    def publish_context_replacement!(source, target, archive_source:)
+      safely_reconcile_context_replacement! do
+        @agent_activity_snapshot.remove!(source.key) if archive_source
+        @push_notification_store.reconcile_agent!(source.key, state: "archived", archived_at: Time.now) if archive_source
+        reconcile_archived_schedule_agent(source) if archive_source
+        @agent_activity_snapshot.upsert!(target)
+        HQ.hooks.publish("agent.cloned",
                        agent_key: target.key,
                        source_agent_key: source.key,
                        project_key: target.project_key,
@@ -3552,17 +3569,13 @@ module HQ
                        agent: target.agent,
                        model: target.model,
                        reasoning_effort: target.reasoning_effort)
+      end
+    end
 
-      {
-        agent: agent_payload(target),
-        source_agent_key: source.key,
-        archived: archive_source,
-        archive_path: archive_path,
-        schedule_reconciled: schedule_reconciled,
-        schedule_replacement: schedule_replacement
-      }.compact
-    rescue AgentStore::StaleScheduleTarget, ArgumentError, ScheduleRegistry::Error => e
-      raise Error.new(e.message, status: 409)
+    def safely_reconcile_context_replacement!
+      yield
+    rescue StandardError => e
+      HQ.logger.warn("RemoteService") { "Context replacement committed with follow-up error: #{e.class}: #{e.message}" }
     end
 
     def acknowledge_context_pressure(key, attrs)

@@ -1046,6 +1046,7 @@ def selected_screen_items
       pressure = source&.context_pressure
       return [self, nil] unless pressure&.fetch("warning", false)
 
+      @agent_store.assert_context_replacement_archive_safe!(source.key)
       close_sidebar!
       target = @agent_store.clone_agent(source, existing_agents: @all_agents)
       project = @registry.projects.find { |candidate| candidate.key == target.project_key }
@@ -1055,17 +1056,7 @@ def selected_screen_items
       replacement = @agent_store.start_agent!(target.key)
       replace_agent_instance!(target, replacement)
       archive_context_pressure_source!(source)
-      @selected[:agents] = @agents.index(replacement) || 0
-      rebuild_agent_index!
-      HQ.hooks.publish("agent.cloned",
-                       agent_key: replacement.key,
-                       source_agent_key: source.key,
-                       project_key: replacement.project_key,
-                       name: replacement.name,
-                       agent: replacement.agent,
-                       model: replacement.model,
-                       reasoning_effort: replacement.reasoning_effort)
-      _, chat_command = open_cloned_agent_chat(replacement)
+      _, chat_command = finalize_context_pressure_replacement!(source, replacement)
       [self, Bubbletea.batch(*[schedule_action_poll, chat_command].compact)]
     rescue StandardError => e
       HQ.logger.error("Agent") { "Context handoff clone failed for #{source&.key}: #{e.class}: #{e.message}" }
@@ -1079,10 +1070,45 @@ def selected_screen_items
       pressure = source&.context_pressure
       return [self, nil] unless pressure&.fetch("warning", false)
 
+      @agent_store.assert_context_replacement_archive_safe!(source.key)
       close_sidebar!
       target = @agent_store.clone_agent(source, existing_agents: @all_agents)
       target = persist_context_pressure_clone!(source, target, handoff: false)
       archive_context_pressure_source!(source)
+      finalize_context_pressure_replacement!(source, target)
+    rescue StandardError => e
+      HQ.logger.error("Agent") { "Context fresh clone failed for #{source&.key}: #{e.class}: #{e.message}" }
+      [self, nil]
+    end
+
+    def persist_context_pressure_clone!(source, target, handoff:)
+      if source.scheduled?
+        result = Scheduler.new(registry: @registry).replace_session_target!(
+          source_key: source.key,
+          target: target,
+          archive_source: true
+        ) do |current_source, candidate|
+          ContextHandoff.prepare!(current_source, candidate, schedule_replacement: true, archive_source: true) if handoff
+        end
+        load_agents!
+        load_schedules!
+        return @agents.find { |agent| agent.key == result.dig(:agent)&.key } || result.fetch(:agent)
+      end
+
+      ContextHandoff.prepare!(source, target, archive_source: true) if handoff
+      @agents.unshift(target)
+      @agents = sort_agents(@agents)
+      save_agents!
+      target
+    end
+
+    def archive_context_pressure_source!(source)
+      @agent_store.archive_context_replacement_source!(source.key)
+      @agents.reject! { |agent| agent.key == source.key }
+      @all_agents.reject! { |agent| agent.key == source.key }
+    end
+
+    def finalize_context_pressure_replacement!(source, target)
       @selected[:agents] = @agents.index(target) || 0
       rebuild_agent_index!
       HQ.hooks.publish("agent.cloned",
@@ -1095,35 +1121,8 @@ def selected_screen_items
                        reasoning_effort: target.reasoning_effort)
       open_cloned_agent_chat(target)
     rescue StandardError => e
-      HQ.logger.error("Agent") { "Context fresh clone failed for #{source&.key}: #{e.class}: #{e.message}" }
+      HQ.logger.warn("Agent") { "Context replacement committed with UI follow-up error: #{e.class}: #{e.message}" }
       [self, nil]
-    end
-
-    def persist_context_pressure_clone!(source, target, handoff:)
-      if source.scheduled?
-        result = Scheduler.new(registry: @registry).replace_session_target!(
-          source_key: source.key,
-          target: target
-        ) do |current_source, candidate|
-          ContextHandoff.prepare!(current_source, candidate, schedule_replacement: true) if handoff
-        end
-        load_agents!
-        load_schedules!
-        return @agents.find { |agent| agent.key == result.dig(:agent)&.key } || result.fetch(:agent)
-      end
-
-      ContextHandoff.prepare!(source, target) if handoff
-      @agents.unshift(target)
-      @agents = sort_agents(@agents)
-      save_agents!
-      target
-    end
-
-    def archive_context_pressure_source!(source)
-      @agent_store.archive_agent!(source.key)
-      @agents.reject! { |agent| agent.key == source.key }
-      @all_agents.reject! { |agent| agent.key == source.key }
-      save_agents!
     end
 
     def replace_agent_instance!(current, replacement)

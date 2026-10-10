@@ -684,13 +684,25 @@ module HQ
       archive_agents!([key], root:).fetch(key.to_s)
     end
 
-    def archive_agents!(keys, root: AGENT_ARCHIVE_DIR)
+    def archive_context_replacement_source!(key, root: AGENT_ARCHIVE_DIR)
+      archive_agents!([key], root:, context_replacement: true).fetch(key.to_s)
+    end
+
+    def assert_context_replacement_archive_safe!(key)
+      with_exclusive_lock do
+        agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
+        assert_context_replacement_archive_safe_unlocked!(find_agent_in!(agents, key))
+      end
+    end
+
+    def archive_agents!(keys, root: AGENT_ARCHIVE_DIR, context_replacement: false)
       with_exclusive_lock do
         agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
         requested = Array(keys).map(&:to_s).uniq
         targets = requested.map do |key|
           agents.find { |agent| agent.key == key } || raise(ArgumentError, "Unknown agent: #{key}")
         end
+        targets.each { |target| assert_context_replacement_archive_safe_unlocked!(target) } if context_replacement
         source_paths = targets.flat_map(&:log_files)
         transaction = FileTransaction.new([AGENTS_FILE, DELEGATIONS_FILE, *source_paths])
         destinations = targets.to_h do |target|
@@ -725,6 +737,18 @@ module HQ
         @delegation_coordinator.delegation_store.update_report!(report_id, resume_state: "parent_archived")
       end
     end
+
+    def assert_context_replacement_archive_safe_unlocked!(source)
+      raise ArgumentError, "Stop the running agent before context replacement" if source.running?
+      if source.inquiry_blocking_prompt_queue?
+        raise ArgumentError, "Answer or retire the unresolved inquiry before context replacement"
+      end
+      return unless source.pending_prompts?
+      return if source.delegation_callback_prompts_only?
+
+      raise ArgumentError, "Process or remove ordinary queued work before context replacement"
+    end
+    private :assert_context_replacement_archive_safe_unlocked!
 
     def delegation_relationships(agent_key)
       @delegation_coordinator.relationships_for(agent_key)
@@ -769,7 +793,7 @@ module HQ
     end
 
     def replace_scheduled_target!(source_key, target, schedule_registry:, schedule_store:,
-                                  expected_schedule_key: nil, &prepare)
+                                  expected_schedule_key: nil, archive_source: false, &prepare)
       schedule_store.with_lock do
         with_exclusive_lock do
           agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
@@ -780,12 +804,16 @@ module HQ
             raise StaleScheduleTarget,
                   "Agent #{source.key} now belongs to schedule #{schedule_key.inspect}, not #{expected_schedule_key.inspect}"
           end
-          raise ArgumentError, "Stop the running scheduled agent before starting a replacement" if source.running?
-          if source.pending_prompts?
-            raise ArgumentError, "Scheduled session #{source.key.inspect} has queued work; let it drain before replacing it"
-          end
-          if source.inquiry_blocking_prompt_queue?
-            raise ArgumentError, "Scheduled session #{source.key.inspect} has an unresolved inquiry; answer it before replacing it"
+          if archive_source
+            assert_context_replacement_archive_safe_unlocked!(source)
+          else
+            raise ArgumentError, "Stop the running scheduled agent before starting a replacement" if source.running?
+            if source.pending_prompts?
+              raise ArgumentError, "Scheduled session #{source.key.inspect} has queued work; let it drain before replacing it"
+            end
+            if source.inquiry_blocking_prompt_queue?
+              raise ArgumentError, "Scheduled session #{source.key.inspect} has an unresolved inquiry; answer it before replacing it"
+            end
           end
 
           schedule_registry.reload!

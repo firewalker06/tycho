@@ -28,6 +28,8 @@ module RemoteServerTest
     assert_remote_agent_clone_archives_source_with_editable_name
     assert_remote_context_pressure_clone_replaces_schedule_target
     assert_remote_context_pressure_clone_failure_preserves_source
+    assert_remote_context_replacement_rejects_unsafe_source
+    assert_remote_context_replacement_commits_after_incidental_failure
     assert_remote_agent_payload_has_revision
     assert_remote_agent_payload_distinguishes_running_history_from_never_run
     assert_remote_agent_activity_snapshot
@@ -1146,6 +1148,8 @@ module RemoteServerTest
       handoff_event = handoff_messages.find { |event| event.dig("metadata", "context_handoff") == true }
       assert(handoff_event&.fetch("content", "")&.include?(source[:key]),
              "expected a durable source-agent handoff message")
+      assert(handoff_event.fetch("content").include?("Operational state remains on the source agent"),
+             "expected ordinary clone handoff to preserve active-source instructions")
       assert(service.agents.any? { |agent| agent[:key] == source[:key] },
              "expected handoff cloning to preserve the source and its operational state")
       service.archive_agent(handoff_clone.dig(:agent, :key))
@@ -1253,6 +1257,13 @@ module RemoteServerTest
                "expected Remote context clone to persist the future loop target")
         assert(handoff_events.empty? != handoff,
                "expected only the Remote Start with Handoff mode to add handoff memory")
+        if handoff
+          handoff_text = handoff_events.fetch(0).fetch("content")
+          assert(handoff_text.include?("will be archived after this replacement starts") &&
+                   handoff_text.include?("archived source history") &&
+                   !handoff_text.include?("Review the source agent before"),
+                 "expected archived replacement handoff to describe archived history accurately")
+        end
 
         artifact_snapshot = Dir.glob(File.join(HQ::AGENT_LOGS_DIR, "**", "*"), File::FNM_DOTMATCH).sort
         stale_error = begin
@@ -1313,6 +1324,64 @@ module RemoteServerTest
       assert(error&.message == "simulated replacement start failure", "expected replacement start failure to propagate")
       assert(active.any? { |agent| agent.key == source[:key] }, "expected failed replacement to preserve the source")
       assert(active.length == 2, "expected failed replacement to retain its saved successor for recovery")
+    ensure
+      replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+      replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
+      replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+    end
+  end
+
+  def assert_remote_context_replacement_rejects_unsafe_source
+    {
+      "ordinary queue" => ->(agent) { agent.enqueue_prompt!(prompt: "User work", source: "user") },
+      "mixed queue" => ->(agent) { agent.enqueue_prompt!(prompt: "Callback", source: "delegation_callback"); agent.enqueue_prompt!(prompt: "User work", source: "user") },
+      "inquiry" => ->(agent) { agent.send(:memory_store).append_inquiry_request!({ "message" => "Choose", "fields" => [] }, inquiry_id: "unsafe") }
+    }.each do |name, prepare|
+      Dir.mktmpdir("hq-remote-context-unsafe-#{name.tr(" ", "-")}") do |dir|
+        old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+        old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
+        old_archive_dir = replace_constant(HQ, :AGENT_ARCHIVE_DIR, File.join(dir, "agents", "archive"))
+        FileUtils.mkdir_p(HQ::AGENT_LOGS_DIR)
+        FileUtils.mkdir_p(HQ::AGENT_ARCHIVE_DIR)
+        workspace = File.join(dir, "workspace")
+        FileUtils.mkdir_p(workspace)
+        service = HQ::RemoteService.new(registry: registry_for(dir, workspace))
+        created = service.create_agent("project_key" => "web", "template_key" => "custom", "name" => name, "prompt" => "Keep.", "agent" => "codex")
+        source = service.send(:load_all_agents).find { |agent| agent.key == created[:key] }
+        prepare.call(source)
+        service.instance_variable_get(:@agent_store).save([source])
+        error = begin
+          service.clone_agent(source.key, "archive_source" => true, "context_handoff" => true, "start" => true)
+          nil
+        rescue HQ::RemoteServer::Error => e
+          e
+        end
+        active = service.send(:load_all_agents)
+        assert(error&.status == 409, "expected #{name} to reject context replacement")
+        assert(active.map(&:key) == [source.key], "expected #{name} source and work to stay active")
+      ensure
+        replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+        replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
+        replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+      end
+    end
+  end
+
+  def assert_remote_context_replacement_commits_after_incidental_failure
+    Dir.mktmpdir("hq-remote-context-post-archive-test") do |dir|
+      old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
+      old_archive_dir = replace_constant(HQ, :AGENT_ARCHIVE_DIR, File.join(dir, "agents", "archive"))
+      FileUtils.mkdir_p(HQ::AGENT_LOGS_DIR)
+      FileUtils.mkdir_p(HQ::AGENT_ARCHIVE_DIR)
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      service = HQ::RemoteService.new(registry: registry_for(dir, workspace))
+      source = service.create_agent("project_key" => "web", "template_key" => "custom", "name" => "Post archive", "prompt" => "Keep.", "agent" => "codex")
+      service.instance_variable_get(:@push_notification_store).define_singleton_method(:reconcile_agent!) { |*_args| raise "notification failure" }
+      result = service.clone_agent(source[:key], "archive_source" => true)
+      assert(result[:archived] && service.send(:load_all_agents).map(&:key) == [result.dig(:agent, :key)],
+             "expected incidental post-archive failure to keep committed replacement success")
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir

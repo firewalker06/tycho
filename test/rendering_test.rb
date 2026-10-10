@@ -108,6 +108,7 @@ module RenderingTest
     assert_clone_agent_uses_fresh_state_and_defaults_to_keep
     assert_clone_agent_can_keep_old_agent
     assert_context_pressure_tui_actions
+    assert_context_pressure_tui_rejects_unsafe_source
     assert_custom_claude_harness_builds_configured_command
     assert_claude_schema_is_compact_json
     assert_agent_session_id_persists_and_renders
@@ -2579,7 +2580,10 @@ module RenderingTest
     app.instance_variable_set(:@screen, :agents)
     source = app.instance_variable_get(:@agents).first
     app.instance_variable_set(:@all_agents, [source])
-    app.instance_variable_get(:@agent_store).define_singleton_method(:archive_agent!) do |key|
+    app.instance_variable_get(:@agent_store).define_singleton_method(:assert_context_replacement_archive_safe!) do |key|
+      raise "unexpected source validation" unless key == source.key
+    end
+    app.instance_variable_get(:@agent_store).define_singleton_method(:archive_context_replacement_source!) do |key|
       raise "unexpected source archive" unless key == source.key
 
       "/tmp/#{key}"
@@ -2612,7 +2616,10 @@ module RenderingTest
     handoff_app.instance_variable_set(:@screen, :agents)
     handoff_source = handoff_app.instance_variable_get(:@agents).first
     handoff_app.instance_variable_set(:@all_agents, [handoff_source])
-    handoff_app.instance_variable_get(:@agent_store).define_singleton_method(:archive_agent!) do |key|
+    handoff_app.instance_variable_get(:@agent_store).define_singleton_method(:assert_context_replacement_archive_safe!) do |key|
+      raise "unexpected handoff source validation" unless key == handoff_source.key
+    end
+    handoff_app.instance_variable_get(:@agent_store).define_singleton_method(:archive_context_replacement_source!) do |key|
       raise "unexpected handoff source archive" unless key == handoff_source.key
 
       "/tmp/#{key}"
@@ -2640,6 +2647,22 @@ module RenderingTest
            "expected the TUI clone to store a durable context handoff")
     assert(handoff_app.instance_variable_get(:@agent_chat_form)&.agent&.key == target.key,
            "expected the TUI to continue in the fresh handoff agent")
+  end
+
+  def assert_context_pressure_tui_rejects_unsafe_source
+    app = app_with_default_agent(width: 120, height: 40)
+    app.instance_variable_set(:@screen, :agents)
+    source = app.instance_variable_get(:@agents).first
+    app.instance_variable_set(:@all_agents, [source])
+    FileUtils.mkdir_p(File.dirname(source.raw_log_path))
+    File.write(source.raw_log_path, "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"total_tokens\":90000},\"model_context_window\":100000}}}\n")
+    store = app.instance_variable_get(:@agent_store)
+    store.define_singleton_method(:assert_context_replacement_archive_safe!) { |_key| raise ArgumentError, "queued user work" }
+    store.define_singleton_method(:clone_agent) { |_agent, **_| raise "unsafe source created a replacement" }
+
+    app.update(key_message("f"))
+    assert(app.instance_variable_get(:@agents) == [source],
+           "expected TUI context replacement rejection to preserve the unsafe source")
   end
 
   def assert_custom_claude_harness_builds_configured_command

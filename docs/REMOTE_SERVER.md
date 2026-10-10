@@ -978,9 +978,11 @@ saved and opens the new agent.
 
 Set `context_handoff: true` to add a durable first user message with the
 source agent's semantic handoff or latest summary, queued-work count, inquiry
-state, and schedule key. Tycho also copies the source PR catalog. Operational
-ownership, queued work, inquiries, schedules, logs, and audit history stay on
-the source agent. Set `start: true` to continue immediately in the clone.
+state, and schedule key. Tycho also copies the source PR catalog. For a
+compaction replacement, the handoff records that the source becomes read-only
+archived history after the replacement starts. It does not direct the
+replacement to archive the source again. Set `start: true` to continue
+immediately in the clone.
 The Remote UI calls this operation **Start with Handoff**.
 
 The source stays active by default for ordinary clone operations. The compaction
