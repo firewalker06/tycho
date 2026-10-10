@@ -4235,6 +4235,8 @@ title: !123 value
             throw new Error(`Empty Summary safety matrix failed: ${JSON.stringify(emptySummarySafetyMatrix)}`);
           }
           const installKnownErrorSummaryFixture = async () => page.evaluate((key) => {
+            closeUnreadPanel();
+            closeHeaderMore();
             const agent = findAgent(key);
             agent.run_count = 1;
             agent.running = false;
