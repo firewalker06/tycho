@@ -7907,6 +7907,8 @@ module RemoteServerTest
            "expected Remote UI inquiry drafts to be scoped by inquiry id")
     assert(js[:body].include?("function draftableInquiryControl") &&
            js[:body].include?("function formDraftControls") &&
+           js[:body].include?("function viewStateControlKey") &&
+           js[:body].include?("return `${formStateKey(form)}|${elementStateKey(control, index)}`;") &&
            js[:body].include?("data-server-key=\"${escapeAttr(agent.server_key || \"local\")}\"") &&
            js[:body].include?("data-project-key=\"${escapeAttr(agent.project_key || \"\")}\"") &&
            js[:body].include?("if (!hasValue && form.id !== \"inquiry-form\")") &&
