@@ -57,8 +57,9 @@ module HQ
 
     def active_handoff_state(source, schedule_replacement:)
       label = schedule_replacement ? "replaced schedule" : "schedule"
+      transfer = "The schedule connection moves to this replacement agent. " if schedule_replacement
       <<~STATE.strip
-        Operational state remains on the source agent and was not discarded:
+        #{transfer}Operational state remains on the source agent and was not discarded:
         - queued work: #{source.queued_prompts.length}
         - unresolved inquiry: #{source.inquiry_blocking_prompt_queue? ? "yes" : "no"}
         - #{label}: #{source.schedule_key || "none"}
