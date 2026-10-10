@@ -191,7 +191,7 @@ module HQ
           chat_system << entry
           system_log << entry
         when "stream_status"
-          metadata = merge_sequence_metadata(event["metadata"], sequence)
+          metadata = message_metadata_for(event, sequence:)
           entry = Parser::SystemEntry.new(
             type: metadata["type"] == "error" ? :error : :status,
             content: event["content"].to_s,
@@ -267,10 +267,14 @@ module HQ
 
     def system_metadata_for(event, sequence: nil)
       metadata = event["metadata"]
-      return sequence_metadata(sequence) unless metadata.is_a?(Hash)
+      result = metadata.is_a?(Hash) ? metadata.dup : {}
+      run_id = event["run_id"].to_s
+      result["run_id"] = run_id unless run_id.empty?
+      return merge_sequence_metadata(result, sequence) unless metadata.is_a?(Hash)
 
       details = metadata["details"]
-      selected = details.is_a?(Hash) && !details.empty? ? details : metadata
+      selected = details.is_a?(Hash) && !details.empty? ? details.dup : result
+      selected["run_id"] = run_id unless run_id.empty?
       merge_sequence_metadata(selected, sequence)
     end
 
