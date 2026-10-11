@@ -2576,6 +2576,7 @@ module RenderingTest
 
   def assert_context_pressure_tui_actions
     app = app_with_default_agent(width: 120, height: 40)
+    app.define_singleton_method(:save_agents!) { nil }
     app.instance_variable_set(:@screen, :agents)
     source = app.instance_variable_get(:@agents).first
     app.instance_variable_set(:@all_agents, [source])
