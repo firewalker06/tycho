@@ -12,12 +12,27 @@ module HQ
       "gpt-6-astra" => {
         "source" => "https://developers.openai.com/api/docs/models/gpt-6-astra",
         "as_of" => "2026-09-07"
+      }.freeze,
+      "gpt-6-sol" => {
+        "source" => "https://developers.openai.com/api/docs/models/gpt-6-sol",
+        "as_of" => "2026-10-11"
+      }.freeze,
+      "gpt-6.1-sol" => {
+        "source" => "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+        "as_of" => "2026-10-11"
+      }.freeze,
+      "gpt-6-luna" => {
+        "source" => "https://developers.openai.com/api/docs/models/gpt-6-luna",
+        "as_of" => "2026-10-11"
       }.freeze
     }.freeze
     TOKENS_PER_MILLION = 1_000_000.0
 
     PRICES_USD_PER_MILLION = {
       "gpt-6-astra" => [10.0, 1.0, 50.0],
+      "gpt-6-sol" => [2.0, 0.2, 10.0],
+      "gpt-6.1-sol" => [2.0, 0.1, 10.0],
+      "gpt-6-luna" => [0.1, 0.01, 0.5],
       "gpt-5.6-sol" => [5.0, 0.5, 30.0],
       "gpt-5.6-terra" => [2.5, 0.25, 15.0],
       "gpt-5.6-luna" => [1.0, 0.1, 6.0],
@@ -37,7 +52,10 @@ module HQ
     }.transform_values(&:freeze).freeze
 
     CACHE_WRITE_PRICES_USD_PER_MILLION = {
-      "gpt-6-astra" => 12.5
+      "gpt-6-astra" => 12.5,
+      "gpt-6-sol" => 2.5,
+      "gpt-6.1-sol" => 2.5,
+      "gpt-6-luna" => 0.125
     }.freeze
 
     MODEL_ALIASES = {
