@@ -68,6 +68,7 @@ module HQ
       status = nil
       stream, child_output = IO.pipe
       pid = Process.spawn(*command, in: File::NULL, out: child_output, err: [:child, :out])
+      acknowledge_native_start!(pid)
       child_output.close
       stream.each_line do |line|
         lines << line.chomp
@@ -87,6 +88,18 @@ module HQ
       rescue Errno::ECHILD
         nil
       end
+    end
+
+    def acknowledge_native_start!(pid)
+      path = ENV["TYCHO_NATIVE_STARTED_PATH"].to_s
+      return if path.empty? || File.exist?(path)
+
+      FileUtils.mkdir_p(File.dirname(path))
+      temporary = "#{path}.tmp-#{Process.pid}"
+      File.write(temporary, pid.to_s)
+      File.rename(temporary, path)
+    ensure
+      FileUtils.rm_f(temporary) if defined?(temporary) && temporary
     end
 
     def candidate_for(lines)

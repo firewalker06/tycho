@@ -385,6 +385,41 @@ module HQ
       end.last
     end
 
+    def update_events!
+      journal.update do |events|
+        replacement, result = yield(events)
+        [replacement, result]
+      end
+    end
+
+    def ensure_queue_read_in!(events, content, read_id:, batch_id:, created_at: Time.now,
+                              attachments: nil, metadata: nil)
+      text = content.to_s.strip
+      raise ArgumentError, "Queue read content is required" if text.empty?
+
+      normalized_attachments = normalize_attachments(attachments)
+      event_metadata = metadata.is_a?(Hash) ? metadata.dup : {}
+      event_metadata.merge!(attachment_metadata(normalized_attachments) || {})
+      event_metadata["queue_read"] = true
+      event_metadata["read_label"] = "Read queue"
+      event_metadata["queue_work_batch_id"] = batch_id.to_s
+      matching = Array(events).select { |event| event["event_id"].to_s == read_id.to_s }
+      valid = matching.length == 1 && matching.first.dig("metadata", "queue_read") == true &&
+        matching.first.dig("metadata", "queue_work_batch_id").to_s == batch_id.to_s
+      return false if valid
+
+      index = Array(events).index { |event| event["event_id"].to_s == read_id.to_s } || Array(events).length
+      events.reject! { |event| event["event_id"].to_s == read_id.to_s }
+      events.insert(index, {
+        "event_id" => read_id.to_s,
+        "type" => "user_message",
+        "content" => text,
+        "created_at" => created_at.iso8601,
+        "metadata" => event_metadata
+      })
+      true
+    end
+
     def append_assistant_message!(content, created_at: Time.now, metadata: nil, event_id: nil)
       text = content.to_s.strip
       return if text.empty?

@@ -100,6 +100,7 @@ module HQ
         changed = agent.reconcile_project_group!(project.group) || changed if project
         before_hash = agent.to_hash
         was_running = running_for_poll_event?(agent)
+        changed = agent.resume_staged_native_launch! || changed
         agent.poll!
         changed = true if before_hash != agent.to_hash
         if (completed_claim = agent.dispatched_prompt_queue_claim)
@@ -426,28 +427,76 @@ module HQ
       if target.method(:start!).parameters.any? { |_kind, name| name == :before_spawn }
         options[:before_spawn] = ->(_run) { save_unlocked(agents) }
       end
-      if target.method(:start!).parameters.any? { |_kind, name| name == :after_spawn }
-        options[:after_spawn] = ->(_run) { persist_spawned_queue_read!(target, agents) }
+      if target.method(:start!).parameters.any? { |_kind, name| name == :before_native_spawn }
+        options[:before_native_spawn] = ->(_run) { stage_queue_delivery!(target, agents) }
+      end
+      if target.method(:start!).parameters.any? { |_kind, name| name == :native_spawn_failed }
+        options[:native_spawn_failed] = lambda do |_run, delivery|
+          rollback_staged_queue_delivery!(target, agents, delivery)
+        end
       end
       target.start!(**options)
     end
 
-    def persist_spawned_queue_read!(target, agents)
+    def stage_queue_delivery!(target, agents)
       return unless target.active_queue_work
 
-      attempts = 0
-      begin
-        attempts += 1
-        queue_work = Marshal.load(Marshal.dump(target.queue_work))
-        FileTransaction.run([AGENTS_FILE, target.memory_path]) do |transaction|
-          transaction.on_rollback { target.restore_queue_work!(queue_work) }
-          target.ensure_active_queue_work_read!
-          save_unlocked(agents)
+      queue_work = Marshal.load(Marshal.dump(target.queue_work))
+      batch = target.active_queue_work
+      prior_delivery_count = batch.fetch("delivery_count", 0).to_i
+      read_id = batch["read_id"].to_s
+      read_id = "queue-read:#{batch.fetch('id')}" if read_id.empty?
+      prior_batch = Array(queue_work["batches"]).find { |item| item["id"] == batch["id"] }
+      prior_events = nil
+      run_metadata = Marshal.load(Marshal.dump(target.last_run&.metadata || {}))
+      result = FileTransaction.run([AGENTS_FILE]) do |transaction|
+        transaction.on_rollback do
+          target.restore_queue_work!(queue_work)
+          target.last_run.metadata = run_metadata if target.last_run
         end
-      rescue IOError
-        retry if attempts < 2
+        AgentMemory.new(target).update_events! do |events|
+          prior_events = events.each_with_index.filter_map do |event, index|
+            [index, Marshal.load(Marshal.dump(event))] if event["event_id"].to_s == read_id
+          end
+          result = target.ensure_active_queue_work_read!(journal_events: events)
+          target.stage_queue_delivery!(
+            "batch_id" => batch.fetch("id"),
+            "read_id" => read_id,
+            "rollback_required" => prior_delivery_count.zero? && !result.nil?,
+            "prior_state" => prior_batch&.fetch("state", nil),
+            "prior_delivery_count" => prior_delivery_count,
+            "prior_read_id" => prior_batch&.fetch("read_id", nil),
+            "remove_event_on_rollback" => prior_events.empty?
+          )
+          save_unlocked(agents)
+          [events, result]
+        end
+      end
+      {
+        "rollback_required" => prior_delivery_count.zero? && !result.nil?,
+        "queue_work" => queue_work,
+        "read_id" => read_id,
+        "prior_events" => prior_events || []
+      }
+    end
 
-        raise
+    def rollback_staged_queue_delivery!(target, agents, delivery)
+      return unless delivery.is_a?(Hash) && delivery["rollback_required"] == true
+
+      current_queue_work = Marshal.load(Marshal.dump(target.queue_work))
+      FileTransaction.run([AGENTS_FILE]) do |transaction|
+        transaction.on_rollback { target.restore_queue_work!(current_queue_work) }
+        AgentMemory.new(target).update_events! do |events|
+          read_id = delivery.fetch("read_id")
+          events.reject! { |event| event["event_id"].to_s == read_id }
+          Array(delivery["prior_events"]).sort_by(&:first).each do |index, event|
+            events.insert([index.to_i, events.length].min, event)
+          end
+          target.restore_queue_work!(delivery.fetch("queue_work"))
+          target.clear_staged_queue_delivery!
+          save_unlocked(agents)
+          [events, true]
+        end
       end
     end
 
@@ -1191,8 +1240,13 @@ module HQ
         if agent.method(:start!).parameters.any? { |_kind, name| name == :before_spawn }
           options[:before_spawn] = ->(_run) { save_unlocked(agents) }
         end
-        if agent.method(:start!).parameters.any? { |_kind, name| name == :after_spawn }
-          options[:after_spawn] = ->(_run) { persist_spawned_queue_read!(agent, agents) }
+        if agent.method(:start!).parameters.any? { |_kind, name| name == :before_native_spawn }
+          options[:before_native_spawn] = ->(_run) { stage_queue_delivery!(agent, agents) }
+        end
+        if agent.method(:start!).parameters.any? { |_kind, name| name == :native_spawn_failed }
+          options[:native_spawn_failed] = lambda do |_run, delivery|
+            rollback_staged_queue_delivery!(agent, agents, delivery)
+          end
         end
         agent.start!(**options)
       rescue StandardError => e

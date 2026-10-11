@@ -8,15 +8,17 @@ require_relative "sleep_circuit_breaker"
 
 module HQ
   class AgentStreamRecorder
-    def self.run(command:, raw_log_path:, memory_path:, agent_type:, run_id:, incident_path: nil)
-      new(raw_log_path:, memory_path:, agent_type:, run_id:, incident_path:).run(command)
+    def self.run(command:, raw_log_path:, memory_path:, agent_type:, run_id:, incident_path: nil,
+                 native_started_path: nil)
+      new(raw_log_path:, memory_path:, agent_type:, run_id:, incident_path:, native_started_path:).run(command)
     end
 
-    def initialize(raw_log_path:, memory_path:, agent_type:, run_id:, incident_path: nil)
+    def initialize(raw_log_path:, memory_path:, agent_type:, run_id:, incident_path: nil, native_started_path: nil)
       @raw_log_path = raw_log_path
       @projector = AgentStreamProjector.new(memory_path:, agent_type:, run_id:)
       @breaker = SleepCircuitBreaker.new(agent_type:)
       @incident_path = incident_path.to_s
+      @native_started_path = native_started_path.to_s
     end
 
     def run(command)
@@ -32,6 +34,7 @@ module HQ
         child_output.close
         child_output = nil
         install_signal_relay(pid)
+        acknowledge_native_start!(pid)
 
         source_sequence = 0
         stream.each_line do |line|
@@ -72,6 +75,17 @@ module HQ
     end
 
     private
+
+    def acknowledge_native_start!(pid)
+      return if @native_started_path.empty?
+
+      FileUtils.mkdir_p(File.dirname(@native_started_path))
+      temporary = "#{@native_started_path}.tmp-#{Process.pid}"
+      File.write(temporary, pid.to_s)
+      File.rename(temporary, @native_started_path)
+    ensure
+      FileUtils.rm_f(temporary) if defined?(temporary) && temporary
+    end
 
     def install_signal_relay(pid)
       %w[TERM INT].each do |signal|

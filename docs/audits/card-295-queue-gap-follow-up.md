@@ -19,20 +19,21 @@ The memory rebuild gap has a separate cause. `AgentChatLog#rebuild_memory_from_r
 
 ## Fix
 
-1. `ManagedAgent#start!` records delivery only after process creation succeeds. A preflight or spawn failure creates no delivery count, read ID, or Conversation evidence.
-2. Each batch has one stable read identity. The agent store commits the batch update and journal event in one rollback-capable file transaction. A transient save failure restores both files and in-memory batch state before one immediate retry.
-3. Event repair preserves the existing read ID and delivery count. A matching event must use that ID, have `queue_read: true`, and name the same batch. A conflicting event with the same ID is replaced by the canonical queue-read event.
-4. Automatic queue dispatch and Direct Start use the same post-spawn accounting path. The queue contract is built before launch, but durable read evidence is not created for an attempted launch.
-5. Memory rebuild merges existing queue-read events into the rebuilt journal in timestamp order. The merge, replacement, and queue-read upsert use the journal's exclusive lock. A concurrent append cannot be lost, and a repeated rebuild keeps one event with the same event ID.
+1. `ManagedAgent#start!` uses a two-phase native launch. The outer Ruby runner waits behind a run-scoped release gate. Tycho first commits the queue batch, journal event, runner PID, and staged-launch metadata. It then releases the runner and requires an acknowledgement written only after the actual harness `Process.spawn` succeeds.
+2. A native spawn failure rolls back the staged queue evidence and settles one durable failed run. An accounting failure never opens the release gate. Tycho stops and reaps the waiting runner, settles the failed run, and then permits a safe retry.
+3. Each batch has one stable read identity. The agent store commits the batch update and journal event in one rollback-capable transaction. The transaction holds the journal lock while it changes the event set and saves the batch. Rollback removes only the staged identity, so it cannot overwrite a concurrent rebuild.
+4. Event repair preserves the existing read ID and delivery count. A matching event must use that ID, have `queue_read: true`, and name the same batch. Repair removes every duplicate record with the canonical ID and writes one canonical queue-read event.
+5. Automatic queue dispatch and Direct Start use the same gated native-launch protocol. Explicit queue-claim reads keep their existing behavior for archive and read-only workflows.
+6. Memory rebuild merges existing queue-read events into the rebuilt journal in timestamp order. Rebuild, queue-read update, and rollback use the journal's exclusive lock.
 
 ## Regression coverage
 
-- A capture harness records the argument that the native executable receives. The test verifies that this argument contains the queue contract, then checks one matching batch and journal identity.
-- A deterministic post-preflight spawn failure leaves no delivery evidence. A successful retry records one delivery with the stable batch-derived identity.
-- A deterministic first save failure rolls back and retries the transaction. The final batch and journal contain one matching identity and one delivery.
+- Capture harnesses prove that Direct Start and automatic dispatch receive the queue contract only with matching durable batch and journal evidence.
+- A real executable with a missing shebang interpreter passes preflight but fails native spawn. The test verifies rollback, failed-run settlement, and safe retry.
+- Persistent batch-save and journal-append failures keep the native gate closed. The tests verify no capture, stopped and reaped runners, zero delivery evidence, durable failed runs, and successful later retry.
 - A missing-event repair keeps the existing read ID and delivery count.
-- Same-ID assistant events, non-read events, and events for another batch do not satisfy the semantic match.
-- A barrier-controlled rebuild and append race keeps one queue-read event. Two sequential rebuilds also keep the original event ID and batch ID.
+- Same-ID assistant events, non-read events, events for another batch, and duplicate canonical IDs do not satisfy the semantic match.
+- Barrier-controlled tests cover rebuild with append and rebuild with failed-launch rollback. The journal lock preserves the rebuild result and one canonical queue-read event.
 
 ## Evidence limits
 

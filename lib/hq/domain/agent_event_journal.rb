@@ -44,13 +44,15 @@ module HQ
 
       with_file(File::LOCK_EX) do |file|
         existing = read_events(file, strict: true)
-        index = existing.index { |entry| entry["event_id"].to_s == id }
-        if index && (!block_given? || yield(existing.fetch(index)))
-          return [existing.fetch(index), false]
+        indexes = existing.each_index.select { |index| existing[index]["event_id"].to_s == id }
+        matching = indexes.find { |index| !block_given? || yield(existing.fetch(index)) }
+        if indexes.length == 1 && matching
+          return [existing.fetch(matching), false]
         end
 
         now = Time.now.iso8601(6)
-        prior = index ? existing.fetch(index) : nil
+        index = indexes.first
+        prior = matching ? existing.fetch(matching) : (index ? existing.fetch(index) : nil)
         sequence = prior&.fetch("sequence", nil)
         sequence ||= existing.filter_map { |entry| integer_sequence(entry["sequence"]) }.max.to_i + 1
         stored = payload.merge(
@@ -60,12 +62,32 @@ module HQ
           "recorded_at" => payload["recorded_at"] || prior&.fetch("recorded_at", nil) || now
         ).compact
         stored["created_at"] ||= stored["occurred_at"] || now
-        index ? existing[index] = stored : existing << stored
+        existing.reject! { |entry| entry["event_id"].to_s == id }
+        index ? existing.insert(index, stored) : existing << stored
         rewrite(file, existing)
         [stored, true]
       end
     rescue StandardError => e
       raise IOError, "Failed to upsert durable agent event: #{e.message}"
+    end
+
+    def update
+      result = nil
+      with_file(File::LOCK_EX) do |file|
+        original = read_events(file, strict: true)
+        working = original.map(&:dup)
+        replacement, result = yield(working)
+        normalized = normalize_replacement(replacement)
+        begin
+          rewrite(file, normalized)
+        rescue StandardError
+          rewrite(file, original)
+          raise
+        end
+      end
+      result
+    rescue StandardError => e
+      raise IOError, "Failed to update durable agent events: #{e.message}"
     end
 
     def replace(events)
