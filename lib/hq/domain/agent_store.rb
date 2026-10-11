@@ -1175,7 +1175,7 @@ module HQ
       # Persist the claim before preparing or launching so another Tycho
       # process can never claim the same accepted entries.
       save_unlocked(agents)
-      if agent.prepare_prompt_queue_claim!
+      if agent.prepare_prompt_queue_claim!(record_read: false)
         save_unlocked(agents)
       end
 

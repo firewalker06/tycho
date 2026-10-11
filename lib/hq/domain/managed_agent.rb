@@ -568,7 +568,7 @@ module HQ
       @prompt_queue_claim
     end
 
-    def prepare_prompt_queue_claim!
+    def prepare_prompt_queue_claim!(record_read: true)
       claim = @prompt_queue_claim
       return false unless claim
       return false if claim["message_appended"]
@@ -586,7 +586,9 @@ module HQ
       recovery_metadata = circuit_breaker_recovery_metadata(entries, claim:, batch:)
       metadata["circuit_breaker_recovery"] = recovery_metadata if recovery_metadata
       if batch
-        return false
+        return false unless record_read
+
+        record_queue_read!(batch, created_at: self.class.parse_time(claim["claimed_at"]) || Time.now, metadata:)
       else
         add_user_message!(prompt, attachments:, metadata:)
       end
