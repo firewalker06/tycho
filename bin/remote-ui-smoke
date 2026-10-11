@@ -600,6 +600,7 @@ def write_smoke_script(path)
       const notificationOnly = process.env.TYCHO_REMOTE_UI_NOTIFICATION_ONLY === "1";
       const markdownFrontmatterOnly = process.env.TYCHO_REMOTE_UI_MARKDOWN_FRONTMATTER_ONLY === "1";
       const scheduleReplacementMode = process.env.TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE || "";
+      const scheduleReplacementUnrelatedAgentKey = process.env.TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_UNRELATED_AGENT_KEY || "";
       const markdownFixturePath = process.env.TYCHO_REMOTE_UI_MARKDOWN_FIXTURE;
       const queueAgentKey = process.env.TYCHO_REMOTE_UI_QUEUE_AGENT_KEY;
       const queueBulkAgentKey = process.env.TYCHO_REMOTE_UI_QUEUE_BULK_AGENT_KEY;
@@ -779,15 +780,50 @@ title: !123 value
         await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 });
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector("[data-context-pressure-warning]", { state: "visible", timeout: 10_000 });
+        const activeBefore = await page.evaluate(() => state.agents.map((agent) => ({ key: agent.key, name: agent.name })));
+        if (activeBefore.length !== 2 || !activeBefore.some((agent) => agent.key === scheduleReplacementUnrelatedAgentKey)) {
+          throw new Error(`Context-pressure fixture did not preserve its unrelated agent: ${JSON.stringify(activeBefore)}`);
+        }
         if (captureDir) {
+          await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
+          await page.waitForSelector("[aria-label='Managed agents']", { state: "visible", timeout: 10_000 });
           await page.screenshot({
-            path: path.join(captureDir, `schedule-replacement-${scheduleReplacementMode}-before.png`),
+            path: path.join(captureDir, `active-list-${scheduleReplacementMode}-before.png`),
             fullPage: false,
           });
+          await page.evaluate((key) => navigate({ type: "agent", key }), agentKey);
+          await page.waitForSelector("[data-context-pressure-warning]", { state: "visible", timeout: 10_000 });
         }
+
+        let delayedActivityRoute = null;
+        let delayedActivityResponse = null;
+        let resolveDelayedActivity;
+        const delayedActivityCaptured = new Promise((resolve) => { resolveDelayedActivity = resolve; });
+        await page.route("**/servers/activity", async (route) => {
+          if (delayedActivityRoute) {
+            await route.continue();
+            return;
+          }
+          const response = await route.fetch();
+          delayedActivityRoute = route;
+          delayedActivityResponse = {
+            status: response.status(),
+            headers: response.headers(),
+            body: await response.body(),
+          };
+          resolveDelayedActivity();
+        });
+        await page.evaluate(() => {
+          window.__tychoDelayedActivityDone = false;
+          pollAgentActivity().finally(() => { window.__tychoDelayedActivityDone = true; });
+        });
+        await delayedActivityCaptured;
 
         const cloneRequestPromise = page.waitForRequest((request) => (
           request.method() === "POST" && request.url().endsWith(`/agents/${encodeURIComponent(agentKey)}/clone`)
+        ));
+        const catalogRefreshPromise = page.waitForResponse((response) => (
+          response.request().method() === "GET" && response.url().endsWith("/servers/resources")
         ));
         if (handoff) {
           await page.locator("[data-context-pressure-warning] .context-pressure-menu > summary").click();
@@ -797,7 +833,7 @@ title: !123 value
         }
         const cloneRequest = await cloneRequestPromise;
         const clonePayload = cloneRequest.postDataJSON();
-        if (clonePayload.archive_source !== false || clonePayload.context_handoff !== handoff || clonePayload.start !== handoff) {
+        if (clonePayload.archive_source !== true || clonePayload.context_handoff !== handoff || clonePayload.start !== handoff) {
           throw new Error(`Context-pressure request lost ordinary clone fields: ${JSON.stringify(clonePayload)}`);
         }
         if (scheduled) {
@@ -809,6 +845,42 @@ title: !123 value
         }
         await page.waitForFunction((sourceKey) => location.hash.startsWith("#agent/") && !location.hash.includes(sourceKey), agentKey);
         const replacementKey = await page.evaluate(() => decodeURIComponent(location.hash.split("/")[1] || ""));
+        await catalogRefreshPromise;
+        await page.waitForFunction(({ sourceKey, replacementKey, expectedCount }) => (
+          state.agents.length === expectedCount &&
+          !state.agents.some((agent) => agent.key === sourceKey) &&
+          state.agents.some((agent) => agent.key === replacementKey)
+        ), { sourceKey: agentKey, replacementKey, expectedCount: activeBefore.length });
+        await delayedActivityRoute.fulfill(delayedActivityResponse);
+        await page.waitForFunction(() => window.__tychoDelayedActivityDone === true);
+        const staleActivityState = await page.evaluate(({ sourceKey, replacementKey, unrelatedKey }) => ({
+          activeKeys: state.agents.map((agent) => agent.key),
+          source: state.agentDetails[sourceKey],
+          replacement: state.agents.find((agent) => agent.key === replacementKey),
+          unrelated: state.agents.find((agent) => agent.key === unrelatedKey),
+        }), { sourceKey: agentKey, replacementKey, unrelatedKey: scheduleReplacementUnrelatedAgentKey });
+        if (staleActivityState.activeKeys.length !== activeBefore.length ||
+            staleActivityState.activeKeys.includes(agentKey) ||
+            !staleActivityState.replacement || !staleActivityState.unrelated ||
+            staleActivityState.source?.archived !== true || staleActivityState.source?.running !== false) {
+          throw new Error(`Delayed pre-archive activity corrupted replacement state: ${JSON.stringify(staleActivityState)}`);
+        }
+        await page.unroute("**/servers/activity");
+        await page.evaluate(() => pollAgentActivity());
+        const freshActivityState = await page.evaluate(({ sourceKey, replacementKey, unrelatedKey }) => ({
+          activeKeys: state.agents.map((agent) => agent.key),
+          source: state.agentDetails[sourceKey],
+          replacement: state.agents.find((agent) => agent.key === replacementKey),
+          unrelated: state.agents.find((agent) => agent.key === unrelatedKey),
+        }), { sourceKey: agentKey, replacementKey, unrelatedKey: scheduleReplacementUnrelatedAgentKey });
+        if (freshActivityState.activeKeys.length !== activeBefore.length ||
+            freshActivityState.activeKeys.includes(agentKey) ||
+            !freshActivityState.replacement || !freshActivityState.unrelated ||
+            freshActivityState.source?.archived !== true || freshActivityState.source?.running !== false) {
+          throw new Error(`Fresh activity polling did not converge safely: ${JSON.stringify(freshActivityState)}`);
+        }
+        const activeAfter = await page.evaluate(() => state.agents.map((agent) => ({ key: agent.key, name: agent.name })));
+        console.log(`active-list-${scheduleReplacementMode}: ${JSON.stringify({ before: activeBefore, after: activeAfter })}`);
         if (scheduled) {
           await page.waitForSelector("[data-header-schedule-menu]", { state: "visible", timeout: 10_000 });
         }
@@ -819,32 +891,43 @@ title: !123 value
           page.request.get(`${baseUrl}/schedules`),
         ]);
         const source = (await sourceResponse.json()).agent;
+        if (!source?.archived) {
+          throw new Error(`Context-pressure source stayed active after replacement: ${JSON.stringify(source)}`);
+        }
         const replacement = (await replacementResponse.json()).agent;
         const schedules = (await schedulesResponse.json()).schedules;
         const schedule = schedules.find((item) => item.key === "smoke");
         if (scheduled) {
-          if (source.schedule_key || replacement.schedule_key !== "smoke" || replacement.scheduled !== true ||
+          if (replacement.schedule_key !== "smoke" || replacement.scheduled !== true ||
               schedule?.last_target_key !== replacementKey || schedule?.run_count !== 3 || schedule?.skip_count !== 1) {
-            throw new Error(`Schedule replacement did not preserve authoritative state: ${JSON.stringify({ source, replacement, schedule })}`);
+            throw new Error(`Schedule replacement did not preserve authoritative state: ${JSON.stringify({ replacement, schedule })}`);
           }
-        } else if (source.schedule_key || replacement.schedule_key || replacement.scheduled === true ||
+        } else if (replacement.schedule_key || replacement.scheduled === true ||
                    await page.locator("[data-header-schedule-menu]").count() !== 0) {
-          throw new Error(`Unscheduled context-pressure action created a schedule connection: ${JSON.stringify({ source, replacement })}`);
+          throw new Error(`Unscheduled context-pressure action created a schedule connection: ${JSON.stringify({ replacement })}`);
         }
         const conversation = await (await page.request.get(`${baseUrl}/agents/${encodeURIComponent(replacementKey)}/conversation`)).json();
         const hasHandoff = conversation.conversation.some((block) => block.metadata?.context_handoff === true);
         if (handoff) {
-          if (!hasHandoff) {
+          if (!hasHandoff || replacement.run_count < 1) {
             throw new Error("Start with Handoff did not preserve handoff memory on the replacement");
           }
-        } else if (hasHandoff) {
-          throw new Error("Start New unexpectedly added handoff memory");
+        } else if (hasHandoff || replacement.run_count !== 0) {
+          throw new Error("Start New unexpectedly added handoff memory or started the harness");
         }
         if (captureDir) {
+          await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
+          await page.waitForSelector("[aria-label='Managed agents']", { state: "visible", timeout: 10_000 });
           await page.screenshot({
-            path: path.join(captureDir, `schedule-replacement-${scheduleReplacementMode}-after.png`),
+            path: path.join(captureDir, `active-list-${scheduleReplacementMode}-after.png`),
             fullPage: false,
           });
+          await page.evaluate((key) => navigate({ type: "agent", key }), agentKey);
+          await page.waitForSelector(".agent-archive-banner", { state: "visible", timeout: 10_000 });
+          const archivedText = await page.locator(".agent-archive-banner").innerText();
+          if (!archivedText.includes("Archived agent") || !archivedText.includes("read-only history")) {
+            throw new Error(`Archived source history is not readable: ${JSON.stringify(archivedText)}`);
+          }
         }
       }
 
@@ -9807,7 +9890,7 @@ end
 
 browser = ensure_browser_prerequisites!
 
-def run_schedule_replacement_smoke!(dir:, base_url:, agent_key:, browser:)
+def run_schedule_replacement_smoke!(dir:, base_url:, agent_key:, unrelated_agent_key:, browser:)
   node_dir = File.join(dir, "node")
   install_playwright!(node_dir)
   script = File.join(node_dir, "remote-ui-smoke.js")
@@ -9816,6 +9899,7 @@ def run_schedule_replacement_smoke!(dir:, base_url:, agent_key:, browser:)
     "TYCHO_REMOTE_UI_URL" => base_url,
     "TYCHO_REMOTE_UI_AGENT_KEY" => agent_key,
     "TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE" => ENV.fetch("TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE"),
+    "TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_UNRELATED_AGENT_KEY" => unrelated_agent_key,
     "CHROME_PATH" => browser
   }
   capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
@@ -9877,10 +9961,11 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     agent_key = create_agent(base_url)
     if ENV["TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE"].to_s != ""
       mode = ENV.fetch("TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE")
+      unrelated_agent_key = create_agent(base_url, name: "Unrelated Replacement Fixture")
       associate_agent_schedule(fixture.fetch(:logs_dir), agent_key) unless mode.start_with?("unscheduled-")
       append_context_pressure_signal(base_url, agent_key)
-      wait_for_resource_agents(base_url, [agent_key])
-      run_schedule_replacement_smoke!(dir:, base_url:, agent_key:, browser:)
+      wait_for_resource_agents(base_url, [agent_key, unrelated_agent_key])
+      run_schedule_replacement_smoke!(dir:, base_url:, agent_key:, unrelated_agent_key:, browser:)
       next
     end
     write_notification_smoke_fixture(fixture.fetch(:logs_dir), agent_key) if ENV["TYCHO_REMOTE_UI_NOTIFICATION_ONLY"] == "1"

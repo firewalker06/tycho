@@ -660,6 +660,17 @@ module SchedulerTest
                "expected one future scheduled run without a duplicate session")
         assert(read_agents.count { |agent| agent.schedule_key == "warning-loop" } == 1,
                "expected exactly one schedule-connected session")
+
+        scheduler.restore_context_replacement_source!(source_key: source.key, replacement_key: replacement.key)
+        restored = read_agents.to_h { |agent| [agent.key, agent] }
+        restored_state = HQ::ScheduleStore.new.load.fetch("warning-loop")
+        restored_config = YAML.safe_load_file(schedule_path).fetch("schedules").fetch(0)
+        assert(restored.fetch(source.key).schedule_key == "warning-loop" && restored.fetch(replacement.key).schedule_key.nil?,
+               "expected archive-rejection recovery to return schedule ownership to the active source")
+        assert(restored_state.last_target_key == source.key && restored_state.previous_target_key == replacement.key,
+               "expected archive-rejection recovery to retain truthful schedule ownership history")
+        assert(restored_config.dig("target", "agent_key") == source.key,
+               "expected archive-rejection recovery to restore the future schedule target")
       end
     end
   end
