@@ -429,6 +429,8 @@ module HQ
           return ok(agent: service.acknowledge_context_pressure(key, body))
         end
         return ok(agent: service.dismiss_context_pressure(key)) if method == "POST" && tail == ["context-pressure", "dismiss"]
+        return ok(service.retry_context_replacement_recovery(key)) if method == "POST" && tail == ["context-replacement-recovery", "retry"]
+        return ok(service.clear_context_replacement_recovery(key)) if method == "POST" && tail == ["context-replacement-recovery", "clear"]
         return ok(service.update_agent_delegation(key, body)) if %w[PATCH PUT].include?(method) && tail == ["delegation"]
         return ok(service.archive_agent(key)) if method == "DELETE" && tail.empty?
         return created(service.create_agent_loop(key, body)) if method == "POST" && tail == ["loop-schedule"]
@@ -3505,9 +3507,6 @@ module HQ
       context_handoff = truthy?(attrs["context_handoff"])
       replace_schedule_target = truthy?(attrs["replace_schedule_target"])
       expected_schedule_key = attrs["expected_schedule_key"].to_s.strip if replace_schedule_target
-      if replace_schedule_target && archive_source
-        raise Error.new("A schedule target replacement must preserve its source history", status: 409)
-      end
       if replace_schedule_target && expected_schedule_key.to_s.empty?
         raise Error.new("A schedule target replacement requires the expected schedule key", status: 409)
       end
@@ -3517,6 +3516,8 @@ module HQ
         raise Error.new("Agent #{source.key} #{detail}", status: 409)
       end
 
+      @agent_store.assert_context_replacement_archive_safe!(source.key) if archive_source
+
       project = find_project!(source.project_key)
       target = @agent_store.clone_agent(source, existing_agents: current)
 
@@ -3524,47 +3525,120 @@ module HQ
         replacement = scheduler.replace_session_target!(
           source_key: source.key,
           target: target,
-          expected_schedule_key:
+          expected_schedule_key:,
+          archive_source:
         ) do |current_source, candidate|
           candidate.update!(**agent_attrs(candidate, attrs, project: project, creating: false))
-          ContextHandoff.prepare!(current_source, candidate, schedule_replacement: true) if context_handoff
+          ContextHandoff.prepare!(current_source, candidate, schedule_replacement: true, archive_source:) if context_handoff
         end
         target = replacement.fetch(:agent)
         schedule_replacement = replacement.fetch(:schedule)
-        @agent_activity_snapshot.upsert!(replacement.fetch(:source))
       else
         target.update!(**agent_attrs(target, attrs, project: project, creating: false))
         @agent_store.ensure_project_context_prompt!(target, project)
-        ContextHandoff.prepare!(source, target) if context_handoff
-        archive_path = @agent_store.archive_agent!(source.key) if archive_source
-        @agent_activity_snapshot.remove!(source.key) if archive_source
-        @push_notification_store.reconcile_agent!(source.key, state: "archived", archived_at: Time.now) if archive_source
-        schedule_reconciled = reconcile_archived_schedule_agent(source) if archive_source
-        next_agents = current.reject { |agent| agent.key == target.key || (archive_source && agent.key == source.key) }
+        ContextHandoff.prepare!(source, target, archive_source:) if context_handoff
+        next_agents = current.reject { |agent| agent.key == target.key }
         next_agents.unshift(target)
         save_agents(sort_agents(next_agents))
       end
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"])
-      @agent_activity_snapshot.upsert!(target)
-      HQ.hooks.publish("agent.cloned",
-                       agent_key: target.key,
-                       source_agent_key: source.key,
-                       project_key: target.project_key,
-                       name: target.name,
-                       agent: target.agent,
-                       model: target.model,
-                       reasoning_effort: target.reasoning_effort)
-
+      if archive_source
+        begin
+          archive_path = @agent_store.archive_context_replacement_source!(source.key)
+        rescue ArgumentError
+          recover_context_replacement_archive_rejection!(source, target)
+          raise
+        end
+      end
+      publish_context_replacement!(source, target, archive_source:)
       {
         agent: agent_payload(target),
         source_agent_key: source.key,
         archived: archive_source,
         archive_path: archive_path,
-        schedule_reconciled: schedule_reconciled,
         schedule_replacement: schedule_replacement
       }.compact
     rescue AgentStore::StaleScheduleTarget, ArgumentError, ScheduleRegistry::Error => e
       raise Error.new(e.message, status: 409)
+    end
+
+    def publish_context_replacement!(source, target, archive_source:)
+      context_replacement_follow_up("remove source activity snapshot") { @agent_activity_snapshot.remove!(source.key) } if archive_source
+      context_replacement_follow_up("reconcile source notification") do
+        @push_notification_store.reconcile_agent!(source.key, state: "archived", archived_at: Time.now)
+      end if archive_source
+      context_replacement_follow_up("reconcile archived schedule") { reconcile_archived_schedule_agent(source) } if archive_source
+      context_replacement_follow_up("upsert replacement activity snapshot") { @agent_activity_snapshot.upsert!(target) }
+      context_replacement_follow_up("publish clone hook") do
+        HQ.hooks.publish("agent.cloned",
+                         agent_key: target.key,
+                         source_agent_key: source.key,
+                         project_key: target.project_key,
+                         name: target.name,
+                         agent: target.agent,
+                         model: target.model,
+                         reasoning_effort: target.reasoning_effort)
+      end
+    end
+
+    def context_replacement_follow_up(name)
+      yield
+    rescue StandardError => e
+      HQ.logger.warn("RemoteService") { "Context replacement #{name} failed: #{e.class}: #{e.message}" }
+    end
+
+    def recover_context_replacement_archive_rejection!(source, target, pending_actions: nil)
+      actions = pending_actions || ["record_correction", "stop_replacement", *(source.scheduled? ? ["restore_schedule"] : [])]
+      @agent_store.record_context_replacement_recovery!(target.key, source_key: source.key,
+                                                        pending_actions: actions, errors: {},
+                                                        queue_work_retained: target.pending_prompts?) unless pending_actions
+      errors = {}
+      if actions.include?("record_correction")
+        begin
+          ContextHandoff.record_archive_rejection!(source, target)
+        rescue StandardError => e
+          errors["record_correction"] = e.message
+        end
+      end
+      if actions.include?("stop_replacement")
+        begin
+          @agent_store.stop_context_replacement!(target.key)
+        rescue StandardError => e
+          errors["stop_replacement"] = e.message
+        end
+      end
+      if actions.include?("restore_schedule")
+        begin
+          scheduler.restore_context_replacement_source!(source_key: source.key, replacement_key: target.key)
+        rescue StandardError => e
+          errors["restore_schedule"] = e.message
+        end
+      end
+      recovered = @agent_store.complete_context_replacement_recovery!(
+        target.key, source_key: source.key, errors:
+      )
+      if recovered.context_replacement_recovery
+        detail = recovered.context_replacement_recovery.fetch("errors", {}).values.join("; ")
+        detail = "retained replacement queue work requires explicit action" if detail.empty?
+        HQ.logger.warn("RemoteService") { "Context replacement archive-rejection recovery needs retry: #{detail}" }
+      end
+    end
+
+    def retry_context_replacement_recovery(key)
+      target = find_agent!(key)
+      recovery = target.context_replacement_recovery || raise(Error.new("No context replacement recovery is pending", status: 409))
+      source = find_agent!(recovery.fetch("source_agent_key"))
+      actions = Array(recovery["pending_actions"])
+      actions.unshift("stop_replacement") if target.running? && !actions.include?("stop_replacement")
+      recover_context_replacement_archive_rejection!(source, target, pending_actions: actions)
+      { agent: agent_payload(find_agent!(key)) }
+    end
+
+    def clear_context_replacement_recovery(key)
+      target = @agent_store.clear_context_replacement_recovery_if_safe!(key)
+      { agent: agent_payload(target) }
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
     end
 
     def acknowledge_context_pressure(key, attrs)
@@ -4831,6 +4905,7 @@ module HQ
         summary: agent.last_summary,
         cost_snapshot: agent.cost_snapshot,
         context_pressure: agent.context_pressure,
+        context_replacement_recovery: agent.context_replacement_recovery,
         latest_inquiry: inquiry,
         suspended_inquiry: suspended_inquiry_payload(agent),
         prompt_queue: prompt_queue_payload(agent),
@@ -4874,6 +4949,7 @@ module HQ
         last_result: agent.last_result_label,
         summary: agent.last_summary,
         context_pressure: agent.context_pressure,
+        context_replacement_recovery: agent.context_replacement_recovery,
         prompt_queue_count: visible_queue_entries.length,
         prompt_queue_delegation_callback_count: visible_queue_entries.count do |entry|
           entry["source"] == "delegation_callback"

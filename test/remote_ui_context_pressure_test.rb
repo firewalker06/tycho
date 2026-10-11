@@ -67,13 +67,91 @@ module RemoteUIContextPressureTest
       if (!compactionHtml.includes("No context percentage is shown") || compactionHtml.includes("NaN%")) {
         throw new Error("reported-only warning must explain that no percentage is available");
       }
-      if (!source.includes("archive_source: false") || !source.includes("context_handoff: handoff") ||
+      if (!source.includes("archive_source: true") || !source.includes("context_handoff: handoff") ||
           !source.includes("start: handoff") || !styles.includes(".context-pressure-warning") ||
           !styles.includes(".context-pressure-dismiss") || !styles.includes("position: absolute") ||
           !styles.includes("width: var(--ds-touch-target)") || !styles.includes("height: var(--ds-touch-target)") ||
           !styles.includes(".context-pressure-warning-copy > div") || !styles.includes("padding-right")) {
         throw new Error("clone safety or warning styles are missing");
       }
+
+      async function runCloneCase({ handoff, reject = false }) {
+        const lifecycleStart = source.indexOf("function retireArchivedAgent");
+        const lifecycleEnd = source.indexOf("\nfunction toggleBulkArchiveMode", lifecycleStart);
+        if (lifecycleStart < 0 || lifecycleEnd < 0) throw new Error("missing context replacement lifecycle functions");
+
+        const state = {
+          agents: [{ key: "source" }, { key: "unrelated" }],
+          activityAgents: new Map([["source", { key: "source" }], ["unrelated", { key: "unrelated" }]]),
+          archivedAgentKeys: new Set(),
+          archivedAgentCatalogConfirmedKeys: new Set(),
+          agentDetails: { source: { key: "source", running: true } },
+          activityRevision: "old",
+          resourceMutationGeneration: 0,
+        };
+        let request = null;
+        let route = null;
+        let mutation = null;
+        let mutationError = null;
+        const lifecycle = {
+          state,
+          findAgent: (key) => state.agentDetails[key] || state.agents.find((agent) => agent.key === key),
+          removeAgent: (key) => {
+            state.agents = state.agents.filter((agent) => agent.key !== key);
+            state.activityAgents.delete(key);
+            state.activityRevision = null;
+            delete state.agentDetails[key];
+          },
+          upsertAgent: (agent) => {
+            const index = state.agents.findIndex((item) => item.key === agent.key);
+            if (index >= 0) state.agents[index] = agent;
+            else state.agents.unshift(agent);
+            state.agentDetails[agent.key] = agent;
+          },
+          navigate: (next) => { route = next; },
+          apiPost: async (path, payload) => {
+            request = { path, payload };
+            if (reject) throw new Error("archive rejected");
+            return { agent: { key: "replacement", running: handoff }, source_agent_key: "source", archived: true };
+          },
+          mutate: (callback) => {
+            mutation = callback().catch((error) => { mutationError = error; });
+          },
+        };
+        vm.createContext(lifecycle);
+        vm.runInContext(`${source.slice(lifecycleStart, lifecycleEnd)}\nthis.cloneForContextPressure = cloneForContextPressure;`, lifecycle);
+        lifecycle.cloneForContextPressure("source", handoff);
+        await mutation;
+
+        if (request.payload.archive_source !== true || request.payload.context_handoff !== handoff || request.payload.start !== handoff) {
+          throw new Error(`clone payload mismatch: ${JSON.stringify(request)}`);
+        }
+        if (reject) {
+          if (!mutationError || state.agents.map((agent) => agent.key).join(",") !== "source,unrelated" ||
+              state.archivedAgentKeys.size !== 0 || route !== null) {
+            throw new Error("rejected archive changed active client state");
+          }
+          return;
+        }
+
+        const keys = state.agents.map((agent) => agent.key);
+        if (keys.length !== 2 || keys[0] !== "replacement" || keys[1] !== "unrelated" ||
+            state.activityAgents.has("source") || !state.archivedAgentKeys.has("source") ||
+            state.resourceMutationGeneration !== 1 ||
+            state.agentDetails.source?.archived !== true || state.agentDetails.source?.running !== false ||
+            route?.key !== "replacement") {
+          throw new Error(`successful replacement left stale active state: ${JSON.stringify({ keys, route })}`);
+        }
+      }
+
+      Promise.resolve().then(async () => {
+        await runCloneCase({ handoff: false });
+        await runCloneCase({ handoff: true });
+        await runCloneCase({ handoff: true, reject: true });
+      }).catch((error) => {
+        console.error(error);
+        process.exitCode = 1;
+      });
     JAVASCRIPT
     _stdout, stderr, status = Open3.capture3("node", "-e", script, APP_PATH, CSS_PATH)
     raise "Remote UI context pressure regression failed: #{stderr.strip}" unless status.success?

@@ -1335,8 +1335,8 @@ module PromptQueueTest
       outer_pid = staged.pid
       assert(staged.staged_queue_delivery.is_a?(Hash) &&
              staged.active_queue_work.fetch("delivery_count") == 1 && staged.prompt_queue_claim &&
-             queue_read_events(staged, batch_id).empty?,
-             "expected the exact crash boundary to persist staging before the queue read journal rewrite")
+             queue_read_events(staged, batch_id).empty? && process_alive?(outer_pid),
+             "expected durable staging to retain a live recovery-owned runner before journal rewrite")
 
       failed = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
       failed_batch = failed.queue_work_batch(batch_id)
@@ -1376,17 +1376,18 @@ module PromptQueueTest
       capture_path = File.join(workspace, "prepared-restart-capture.txt")
       ENV["TYCHO_CODEX_BIN"] = queue_capture_harness(workspace)
       ENV["TYCHO_TEST_QUEUE_CAPTURE"] = capture_path
-      outer_pid = crash_dispatch_after_outer_spawn_before_staging(store, workspace)
+      crash_dispatch_before_ownership_transfer(store)
 
       prepared = HQ::ManagedAgent.from_hash(
         Array(HQ::FileStore.read_json(HQ::AGENTS_FILE, fallback: [])).fetch(0)
       )
       batch_id = prepared.active_queue_work.fetch("id")
-      assert(prepared.prepared_native_launch.is_a?(Hash) && prepared.pid.nil? &&
+      outer_pid = prepared.pid
+      assert(prepared.prepared_native_launch.is_a?(Hash) && outer_pid &&
              prepared.staged_queue_delivery.nil? && prepared.prompt_queue_claim &&
              prepared.active_queue_work.fetch("delivery_count") == 0 &&
              queue_read_events(prepared, batch_id).empty? && !File.exist?(capture_path),
-             "expected a crash after outer spawn to retain recoverable ownership without delivery evidence")
+             "expected a stop before ownership transfer to retain the prepared PID without delivery evidence")
 
       failed = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
       failed_batch = failed.queue_work_batch(batch_id)
@@ -1475,8 +1476,8 @@ module PromptQueueTest
       staged = HQ::ManagedAgent.from_hash(staged_record)
       batch_id = staged.active_queue_work.fetch("id")
       assert(staged.staged_queue_delivery.is_a?(Hash) && !File.exist?(capture_path) &&
-             queue_read_events(staged, batch_id).empty?,
-             "expected native work and its journal rewrite to remain incomplete at the exact crash boundary")
+             queue_read_events(staged, batch_id).empty? && process_alive?(staged.pid),
+             "expected recovery ownership to keep staged native work gated at the exact crash boundary")
 
       recovered = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
       deadline = Time.now + 5
@@ -1515,6 +1516,8 @@ module PromptQueueTest
       staged_record = Array(HQ::FileStore.read_json(HQ::AGENTS_FILE, fallback: [])).fetch(0)
       staged = HQ::ManagedAgent.from_hash(staged_record)
       batch_id = staged.active_queue_work.fetch("id")
+      assert(process_alive?(staged.pid),
+             "expected the recovery-owned runner to remain live after the staging owner stops")
 
       original_update = HQ::AgentEventJournal.instance_method(:update)
       failed_update = false
@@ -1535,7 +1538,7 @@ module PromptQueueTest
       )
       assert(journal_error.is_a?(IOError) && !File.exist?(capture_path) &&
              after_journal_failure.staged_queue_delivery.is_a?(Hash) &&
-             queue_read_events(after_journal_failure, batch_id).empty?,
+             queue_read_events(after_journal_failure, batch_id).empty? && process_alive?(after_journal_failure.pid),
              "expected journal repair failure to keep native work gated and staging recoverable")
 
       original_save = store.method(:save_unlocked)
@@ -1556,7 +1559,7 @@ module PromptQueueTest
       )
       assert(save_error.is_a?(IOError) && !File.exist?(capture_path) &&
              after_save_failure.staged_queue_delivery.is_a?(Hash) &&
-             queue_read_events(after_save_failure, batch_id).length == 1,
+             queue_read_events(after_save_failure, batch_id).length == 1 && process_alive?(after_save_failure.pid),
              "expected agent save failure after journal repair to keep the gate closed with durable evidence")
 
       store.define_singleton_method(:save_unlocked) { |agents, **options| original_save.call(agents, **options) }
@@ -2103,14 +2106,13 @@ module PromptQueueTest
            "expected the first Tycho process to stop after the agent save and before the journal rewrite")
   end
 
-  def crash_dispatch_after_outer_spawn_before_staging(store, workspace)
-    pid_path = File.join(workspace, "prepared-outer-pid.txt")
+  def crash_dispatch_before_ownership_transfer(store)
     child_pid = Process.fork do
-      original_spawn = HQ::ManagedAgent.instance_method(:spawn)
-      HQ::ManagedAgent.define_method(:spawn) do |*args, **options|
-        pid = original_spawn.bind_call(self, *args, **options)
-        File.write(pid_path, pid.to_s)
-        Process.exit!(89)
+      original_write = File.method(:write)
+      File.define_singleton_method(:write) do |path, *args, **options|
+        Process.exit!(89) if path.to_s.end_with?(".native-owned")
+
+        original_write.call(path, *args, **options)
       end
       store.load
       Process.exit!(87)
@@ -2119,8 +2121,7 @@ module PromptQueueTest
     end
     _waited_pid, status = Process.wait2(child_pid)
     assert(status.exitstatus == 89,
-           "expected the first Tycho process to stop after outer spawn and before delivery staging")
-    Integer(File.read(pid_path), 10)
+           "expected the first Tycho process to stop after durable PID save and before ownership transfer")
   end
 
   def crash_dispatch_during_rollback_before_journal(store)
@@ -2160,6 +2161,13 @@ module PromptQueueTest
       true
     end
     !alive && reaped
+  end
+
+  def process_alive?(pid)
+    Process.kill(0, pid)
+    true
+  rescue Errno::ESRCH
+    false
   end
 
   def capture_error

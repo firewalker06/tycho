@@ -34,8 +34,9 @@ batch. The failed claim remains available for inspection and safe recovery.
 ### Context pressure and pull-request diffs
 
 Context-pressure warnings use only reliable active-context evidence. **Start
-New** preserves the source and creates a fresh clone. **Start with Handoff**
-adds a concise continuity record. **Keep Going** acknowledges the warning, and
+New** creates a fresh clone and archives the source after it is saved. **Start
+with Handoff** adds a concise continuity record and archives the source after
+the replacement starts. **Keep Going** acknowledges the warning, and
 **Archive** retains the existing confirmation and safety checks.
 
 Pull-request diff catalogs now support explicit add and remove actions in the

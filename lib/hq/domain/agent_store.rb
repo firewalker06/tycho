@@ -321,6 +321,7 @@ module HQ
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
+        raise ArgumentError, "Context replacement recovery is pending" if target.context_replacement_recovery
 
         target.cancel_pending_sleep_recovery!
         unless target.running?
@@ -341,6 +342,7 @@ module HQ
     def dispatch_scheduled_message!(key, schedule_key:, message:, due_at: nil)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = find_agent_in!(agents, key)
+        raise ArgumentError, "Context replacement recovery is pending" if target.context_replacement_recovery
         state = ScheduleStore.new.load[schedule_key.to_s]
         current_target = state&.last_target_key.to_s
         if !current_target.empty? && current_target != target.key
@@ -424,9 +426,11 @@ module HQ
       end
     end
 
-    def start_target!(target, agents, run_metadata:)
+    def start_target!(target, agents, run_metadata:, delegation_stamp: :current)
+      raise ArgumentError, "Context replacement recovery is pending" if target.context_replacement_recovery
+
       options = {}
-      stamp = @delegation_coordinator.ownership_stamp(target.key)
+      stamp = delegation_stamp == :current ? @delegation_coordinator.ownership_stamp(target.key) : delegation_stamp
       options[:delegation_stamp] = stamp if stamp
       options[:run_metadata] = run_metadata if run_metadata
       if target.method(:start!).parameters.any? { |_kind, name| name == :before_spawn }
@@ -617,6 +621,105 @@ module HQ
         target.stop! if target.running?
         dispatch_prompt_queue!(target, agents) if prompt_queue_dispatchable?(target, ScheduleStore.new.load)
         target
+      end
+    end
+
+    def stop_context_replacement!(key)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = find_agent_in!(agents, key)
+        target.stop! if target.running?
+        target
+      end
+    end
+
+    def record_context_replacement_recovery!(key, source_key:, pending_actions:, errors:, queue_work_retained: false)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = find_agent_in!(agents, key)
+        target.record_context_replacement_recovery!(
+          source_key:, pending_actions:, errors:,
+          queue_work_retained: queue_work_retained || target.pending_prompts?
+        )
+        target
+      end
+    end
+
+    def complete_context_replacement_recovery!(key, source_key:, errors:)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = find_agent_in!(agents, key)
+        raise ArgumentError, "No context replacement recovery is pending" unless target.context_replacement_recovery
+
+        pending_errors = errors.transform_keys(&:to_s).transform_values(&:to_s)
+        if target.running? && !pending_errors.key?("stop_replacement")
+          pending_errors["stop_replacement"] = "Replacement is still running"
+        end
+        if pending_errors.empty? && !target.pending_prompts?
+          target.clear_context_replacement_recovery!
+        else
+          target.record_context_replacement_recovery!(
+            source_key:, pending_actions: pending_errors.keys, errors: pending_errors,
+            queue_work_retained: target.pending_prompts?
+          )
+        end
+        target
+      end
+    end
+
+    def clear_context_replacement_recovery_if_safe!(key)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = find_agent_in!(agents, key)
+        recovery = target.context_replacement_recovery
+        raise ArgumentError, "No context replacement recovery is pending" unless recovery
+        if Array(recovery["pending_actions"]).any?
+          raise ArgumentError, "Recovery safety actions are still pending"
+        end
+        raise ArgumentError, "Replacement is still running" if target.running?
+        if target.pending_prompts?
+          raise ArgumentError, "Remove or process retained replacement queue work before clearing recovery"
+        end
+
+        target.clear_context_replacement_recovery!
+        target
+      end
+    end
+
+    def restore_context_replacement_schedule!(source_key:, replacement_key:, schedule_registry:, schedule_store:)
+      schedule_store.with_lock do
+        with_exclusive_lock do
+          agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
+          source = find_agent_in!(agents, source_key)
+          replacement = find_agent_in!(agents, replacement_key)
+          schedule_key = replacement.schedule_key.to_s
+          raise ArgumentError, "Replacement #{replacement.key} is not connected to a schedule" if schedule_key.empty?
+
+          schedule_registry.reload!
+          schedule = schedule_registry.find(schedule_key)
+          raise ArgumentError, "Schedule #{schedule_key.inspect} no longer exists" unless schedule
+          states = schedule_store.load
+          state = states.fetch(schedule_key)
+          raise StaleScheduleTarget, "Schedule #{schedule_key.inspect} no longer targets replacement #{replacement.key.inspect}" unless state.last_target_key.to_s == replacement.key
+          configured_target = schedule.agent_key.to_s
+          unless configured_target.empty? || configured_target == replacement.key
+            raise StaleScheduleTarget, "Schedule #{schedule_key.inspect} configuration no longer targets replacement #{replacement.key.inspect}"
+          end
+
+          project = project_for(source.project_key)
+          FileTransaction.run([AGENTS_FILE, schedule_store.path, schedule_registry.path, source.memory_path]) do
+            replacement.detach_schedule!(template_key: project&.agent_templates&.first&.key)
+            adopt_schedule!(source, schedule_key:, name: schedule.name, system_message: schedule.system_message,
+                            created_at: source.created_at || Time.now)
+            state.previous_target_key = replacement.key
+            state.last_target_key = source.key
+            state.last_target_kind = "agent"
+            schedule_registry.replace_agent_target(schedule_key, expected_agent_key: replacement.key,
+                                                    replacement_agent_key: source.key) unless configured_target.empty?
+            save_unlocked(agents)
+            schedule_store.save(states)
+          end
+          source
+        rescue StandardError
+          schedule_registry.reload!
+          raise
+        end
       end
     end
 
@@ -849,13 +952,25 @@ module HQ
       archive_agents!([key], root:).fetch(key.to_s)
     end
 
-    def archive_agents!(keys, root: AGENT_ARCHIVE_DIR)
+    def archive_context_replacement_source!(key, root: AGENT_ARCHIVE_DIR)
+      archive_agents!([key], root:, context_replacement: true).fetch(key.to_s)
+    end
+
+    def assert_context_replacement_archive_safe!(key)
+      with_exclusive_lock do
+        agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
+        assert_context_replacement_archive_safe_unlocked!(find_agent_in!(agents, key))
+      end
+    end
+
+    def archive_agents!(keys, root: AGENT_ARCHIVE_DIR, context_replacement: false)
       with_exclusive_lock do
         agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
         requested = Array(keys).map(&:to_s).uniq
         targets = requested.map do |key|
           agents.find { |agent| agent.key == key } || raise(ArgumentError, "Unknown agent: #{key}")
         end
+        targets.each { |target| assert_context_replacement_archive_safe_unlocked!(target) } if context_replacement
         source_paths = targets.flat_map(&:log_files)
         transaction = FileTransaction.new([AGENTS_FILE, DELEGATIONS_FILE, *source_paths])
         destinations = targets.to_h do |target|
@@ -890,6 +1005,18 @@ module HQ
         @delegation_coordinator.delegation_store.update_report!(report_id, resume_state: "parent_archived")
       end
     end
+
+    def assert_context_replacement_archive_safe_unlocked!(source)
+      raise ArgumentError, "Stop the running agent before context replacement" if source.running?
+      if source.inquiry_blocking_prompt_queue?
+        raise ArgumentError, "Answer or retire the unresolved inquiry before context replacement"
+      end
+      return unless source.pending_prompts?
+      return if source.delegation_callback_prompts_only?
+
+      raise ArgumentError, "Process or remove ordinary queued work before context replacement"
+    end
+    private :assert_context_replacement_archive_safe_unlocked!
 
     def delegation_relationships(agent_key)
       @delegation_coordinator.relationships_for(agent_key)
@@ -934,7 +1061,7 @@ module HQ
     end
 
     def replace_scheduled_target!(source_key, target, schedule_registry:, schedule_store:,
-                                  expected_schedule_key: nil, &prepare)
+                                  expected_schedule_key: nil, archive_source: false, &prepare)
       schedule_store.with_lock do
         with_exclusive_lock do
           agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
@@ -945,12 +1072,16 @@ module HQ
             raise StaleScheduleTarget,
                   "Agent #{source.key} now belongs to schedule #{schedule_key.inspect}, not #{expected_schedule_key.inspect}"
           end
-          raise ArgumentError, "Stop the running scheduled agent before starting a replacement" if source.running?
-          if source.pending_prompts?
-            raise ArgumentError, "Scheduled session #{source.key.inspect} has queued work; let it drain before replacing it"
-          end
-          if source.inquiry_blocking_prompt_queue?
-            raise ArgumentError, "Scheduled session #{source.key.inspect} has an unresolved inquiry; answer it before replacing it"
+          if archive_source
+            assert_context_replacement_archive_safe_unlocked!(source)
+          else
+            raise ArgumentError, "Stop the running scheduled agent before starting a replacement" if source.running?
+            if source.pending_prompts?
+              raise ArgumentError, "Scheduled session #{source.key.inspect} has queued work; let it drain before replacing it"
+            end
+            if source.inquiry_blocking_prompt_queue?
+              raise ArgumentError, "Scheduled session #{source.key.inspect} has an unresolved inquiry; answer it before replacing it"
+            end
           end
 
           schedule_registry.reload!
@@ -1329,25 +1460,7 @@ module HQ
       }
       accepted = begin
         stamp = Array(claim["entries"]).last&.fetch("authority", nil)
-        options = { run_metadata: }
-        options[:delegation_stamp] = stamp if stamp
-        if agent.method(:start!).parameters.any? { |_kind, name| name == :before_spawn }
-          options[:before_spawn] = ->(_run) { save_unlocked(agents) }
-        end
-        if agent.method(:start!).parameters.any? { |_kind, name| name == :before_native_spawn }
-          options[:before_native_spawn] = ->(_run) { stage_queue_delivery!(agent, agents) }
-        end
-        if agent.method(:start!).parameters.any? { |_kind, name| name == :native_spawn_failed }
-          options[:native_spawn_failed] = lambda do |_run, delivery|
-            rollback_staged_queue_delivery!(
-              agent,
-              agents,
-              delivery,
-              failure_message: dispatch_failure_message("Native agent harness did not start")
-            )
-          end
-        end
-        agent.start!(**options)
+        start_target!(agent, agents, run_metadata:, delegation_stamp: stamp)
       rescue StandardError => e
         agent.fail_prompt_queue_dispatch!(dispatch_failure_message(e.message))
         save_unlocked(agents)
