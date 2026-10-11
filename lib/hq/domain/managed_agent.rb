@@ -640,6 +640,8 @@ module HQ
       read_id = batch["read_id"].to_s
       first_read = read_id.empty?
       read_id = "queue-read:#{SecureRandom.uuid}" if first_read
+      memory = AgentMemory.new(self)
+      event_exists = !first_read && memory.events.any? { |event| event["event_id"].to_s == read_id }
       mark_queue_work_read!(batch, read_id:)
 
       content = QueueWork.contract(batch, agent_key: @key)
@@ -654,8 +656,8 @@ module HQ
         "queue_work_state" => batch["state"],
         "queue_work_projection" => QueueWork.projection(batch)
       )
-      if first_read
-        AgentMemory.new(self).append_queue_read!(
+      unless event_exists
+        memory.append_queue_read!(
           content,
           read_id:,
           created_at:,
@@ -670,8 +672,20 @@ module HQ
         attachments:,
         read_id:,
         batch: QueueWork.payload(batch),
-        idempotent: !first_read
+        idempotent: event_exists
       }
+    end
+
+    def ensure_active_queue_work_read!(created_at: Time.now)
+      batch = active_queue_work
+      return nil unless batch
+
+      read_id = batch["read_id"].to_s
+      recorded = batch.fetch("delivery_count", 0).to_i.positive? && !read_id.empty? &&
+        AgentMemory.new(self).events.any? { |event| event["event_id"].to_s == read_id }
+      return nil if recorded
+
+      record_queue_read!(batch, created_at:)
     end
 
     def include_pending_queue_work_with_user_input!(claimed_at: Time.now)
@@ -1118,6 +1132,12 @@ module HQ
           command,
           run_metadata:
         )
+      end
+      if ensure_active_queue_work_read!
+        prompt_text = prompt_for_execution(response_style: response_style_text, include_hidden_guidance: false)
+        execution = build_command
+        command = execution.fetch(:command)
+        environment = execution.fetch(:env, {})
       end
 
       @started_at = Time.now

@@ -24,6 +24,8 @@ module PromptQueueTest
     assert_bulk_removal_is_audited_and_stale_snapshots_do_nothing
     assert_queue_action_routes_report_stale_and_selected_results
     assert_automatic_dispatch_records_one_structured_read_block
+    assert_direct_start_records_active_queue_work
+    assert_memory_rebuild_preserves_queue_read
     assert_explicit_read_consumes_one_mixed_batch_and_records_conversation
     assert_explicit_read_failure_retains_queue
     assert_explicit_read_keeps_concurrent_arrivals
@@ -1129,6 +1131,74 @@ module PromptQueueTest
              "expected Remote Conversation to expose one labeled queue read block")
     ensure
       stop_process(pid)
+    end
+  end
+
+  def assert_direct_start_records_active_queue_work
+    with_queue_store do |registry, workspace|
+      agent = terminal_agent(workspace)
+      agent.enqueue_prompt!(prompt: "Process this active batch", source: "user", id: "direct-start-entry")
+      batch = agent.open_queue_work_batch!
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+
+      previous_codex_bin = ENV["TYCHO_CODEX_BIN"]
+      ENV["TYCHO_CODEX_BIN"] = File.join(workspace, "missing-codex")
+      store.start_agent!(agent.key)
+      failed = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+                    .find { |candidate| candidate.key == agent.key }
+      failed_batch = failed.queue_work_batch(batch.fetch("id"))
+      failed_reads = HQ::AgentMemory.new(failed).events.count do |event|
+        event.dig("metadata", "queue_work_batch_id") == batch.fetch("id") &&
+          event.dig("metadata", "queue_read") == true
+      end
+      assert(failed_batch.fetch("delivery_count") == 0 && failed_batch["read_id"].to_s.empty? && failed_reads.zero?,
+             "expected executable validation to fail before Tycho records queue delivery")
+
+      ENV["TYCHO_CODEX_BIN"] = "/usr/bin/true"
+      store.start_agent!(agent.key)
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+                       .find { |candidate| candidate.key == agent.key }
+      persisted_batch = persisted.queue_work_batch(batch.fetch("id"))
+      reads = HQ::AgentMemory.new(persisted).events.select do |event|
+        event.dig("metadata", "queue_work_batch_id") == batch.fetch("id") &&
+          event.dig("metadata", "queue_read") == true
+      end
+
+      assert(File.read(persisted.raw_log_path).include?("TYCHO QUEUE WORK CONTRACT") &&
+             persisted_batch.fetch("delivery_count") == 1 && !persisted_batch["read_id"].to_s.empty? &&
+             reads.length == 1 && reads.first["event_id"] == persisted_batch["read_id"],
+             "expected direct Start to record the active queue contract before it enters the native run")
+    ensure
+      if previous_codex_bin
+        ENV["TYCHO_CODEX_BIN"] = previous_codex_bin
+      else
+        ENV.delete("TYCHO_CODEX_BIN")
+      end
+    end
+  end
+
+  def assert_memory_rebuild_preserves_queue_read
+    with_queue_store do |_registry, workspace|
+      agent = terminal_agent(workspace)
+      agent.enqueue_prompt!(prompt: "Keep this queue read visible", source: "user", id: "rebuild-entry")
+      batch = agent.open_queue_work_batch!
+      read = agent.record_queue_read!(batch, created_at: Time.utc(2026, 10, 11, 1, 2, 3))
+      File.write(agent.raw_log_path, [
+        "=== [2026-10-11 01:02:00] start ===",
+        "workspace=#{workspace}",
+        "prompt=Continue the fixture.",
+        HQ::ManagedAgent::PROCESS_OUTPUT_MARKER,
+        JSON.generate("type" => "item.completed", "item" => {
+          "type" => "agent_message", "text" => "Fixture complete."
+        })
+      ].join("\n") + "\n")
+
+      2.times { HQ::AgentChatLog.new(agent).rebuild_memory_from_raw_log! }
+      reads = HQ::AgentMemory.new(agent).events.select { |event| event.dig("metadata", "queue_read") == true }
+      assert(reads.length == 1 && reads.first["event_id"] == read.fetch(:read_id) &&
+             reads.first.dig("metadata", "queue_work_batch_id") == batch.fetch("id"),
+             "expected repeated memory rebuilds to preserve one durable Read queue event")
     end
   end
 

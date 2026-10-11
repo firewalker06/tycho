@@ -57,7 +57,9 @@ module HQ
       events, cost_snapshot = build_events_from_runs(runs)
       memory = AgentMemory.new(@agent)
       existing_attachments = memory.attachments
-      memory.write_events!(events)
+      events = memory.write_events_preserving!(events) do |rebuilt_events, existing_events|
+        merge_preserved_queue_reads(rebuilt_events, existing_events)
+      end
       existing_attachments.each do |attachment|
         memory.append_attachment!(
           attachment,
@@ -77,6 +79,26 @@ module HQ
     end
 
     private
+
+    def merge_preserved_queue_reads(rebuilt_events, existing_events)
+      merged = Array(rebuilt_events).dup
+      known_event_ids = merged.to_h { |event| [event["event_id"].to_s, true] }
+      queue_reads = Array(existing_events).select { |event| event.dig("metadata", "queue_read") == true }
+
+      queue_reads.sort_by { |event| parse_time(event["created_at"]) || Time.at(0) }.each do |event|
+        event_id = event["event_id"].to_s
+        next if !event_id.empty? && known_event_ids[event_id]
+
+        event_time = parse_time(event["created_at"])
+        index = event_time && merged.index do |candidate|
+          candidate_time = parse_time(candidate["created_at"])
+          candidate_time && candidate_time > event_time
+        end
+        index ? merged.insert(index, event) : merged << event
+        known_event_ids[event_id] = true unless event_id.empty?
+      end
+      merged
+    end
 
     def memory_chat_blocks
       conversation, chat_system, = projection_entries_from_memory

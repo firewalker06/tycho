@@ -579,6 +579,10 @@ module HQ
       journal.replace(events)
     end
 
+    def write_events_preserving!(events, &block)
+      journal.replace_preserving(events, &block)
+    end
+
     private
 
     def read_events

@@ -40,11 +40,17 @@ module HQ
     def replace(events)
       with_file(File::LOCK_EX) do |file|
         normalized = normalize_replacement(events)
-        file.rewind
-        file.truncate(0)
-        normalized.each { |event| file.puts(JSON.generate(event.compact)) }
-        file.flush
-        file.fsync
+        rewrite(file, normalized)
+        normalized
+      end
+    end
+
+    def replace_preserving(events)
+      with_file(File::LOCK_EX) do |file|
+        current = read_events(file, strict: true)
+        replacement = block_given? ? yield(events, current) : events
+        normalized = normalize_replacement(replacement)
+        rewrite(file, normalized)
         normalized
       end
     end
