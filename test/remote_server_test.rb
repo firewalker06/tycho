@@ -1351,25 +1351,25 @@ module RemoteServerTest
       original_record = HQ::ContextHandoff.method(:record_archive_rejection!)
       stopped = []
       HQ::ContextHandoff.define_singleton_method(:record_archive_rejection!) { |*_args| raise "correction failure" }
-      store.define_singleton_method(:stop_agent!) { |key| stopped << key }
+      store.define_singleton_method(:stop_context_replacement!) { |key| stopped << key }
       service.send(:recover_context_replacement_archive_rejection!, source, target)
       recovered = service.send(:load_all_agents).find { |agent| agent.key == target.key }
       assert(stopped == [target.key], "expected correction failure not to prevent replacement stop")
-      assert(recovered.context_replacement_recovery.fetch("errors").join.include?("correction failure"),
+      assert(recovered.context_replacement_recovery.fetch("errors").values.join.include?("correction failure"),
              "expected correction failure to persist actionable recovery state")
 
       HQ::ContextHandoff.define_singleton_method(:record_archive_rejection!, original_record)
-      store.define_singleton_method(:stop_agent!) { |_key| raise "stop failure" }
+      store.define_singleton_method(:stop_context_replacement!) { |_key| raise "stop failure" }
       service.send(:recover_context_replacement_archive_rejection!, source, target)
       recovered = service.send(:load_all_agents).find { |agent| agent.key == target.key }
       events = HQ::AgentMemory.new(recovered).events
       assert(events.any? { |event| event.dig("metadata", "context_handoff_archive_rejected") },
              "expected stop failure not to prevent durable correction")
-      assert(recovered.context_replacement_recovery.fetch("errors").join.include?("stop failure"),
+      assert(recovered.context_replacement_recovery.fetch("errors").values.join.include?("stop failure"),
              "expected stop failure to persist actionable recovery state")
     ensure
       HQ::ContextHandoff.define_singleton_method(:record_archive_rejection!, original_record) if defined?(original_record) && original_record
-      store.singleton_class.send(:remove_method, :stop_agent!) if store&.singleton_class&.method_defined?(:stop_agent!)
+      store.singleton_class.send(:remove_method, :stop_context_replacement!) if store&.singleton_class&.method_defined?(:stop_context_replacement!)
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
     end

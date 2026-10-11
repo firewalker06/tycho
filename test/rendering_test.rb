@@ -2694,12 +2694,12 @@ module RenderingTest
     stopped = []
     store = app.instance_variable_get(:@agent_store)
     store.define_singleton_method(:archive_context_replacement_source!) { |_key| raise ArgumentError, "late queue work" }
-    store.define_singleton_method(:stop_agent!) { |key| stopped << key }
+    store.define_singleton_method(:stop_context_replacement!) { |key| stopped << key }
     app.send(:archive_context_pressure_source!, source, target)
   rescue ArgumentError
     assert(stopped == [target.key], "expected archive recovery to stop only the exact replacement")
   ensure
-    store.singleton_class.send(:remove_method, :stop_agent!) if store&.singleton_class&.method_defined?(:stop_agent!)
+    store.singleton_class.send(:remove_method, :stop_context_replacement!) if store&.singleton_class&.method_defined?(:stop_context_replacement!)
     store.singleton_class.send(:remove_method, :archive_context_replacement_source!) if store&.singleton_class&.method_defined?(:archive_context_replacement_source!)
   end
 

@@ -455,10 +455,26 @@ module HQ
       end
     end
 
-    def record_context_replacement_recovery!(key, source_key:, errors:)
+    def stop_context_replacement!(key)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = find_agent_in!(agents, key)
-        target.record_context_replacement_recovery!(source_key:, errors:)
+        target.stop! if target.running?
+        target
+      end
+    end
+
+    def record_context_replacement_recovery!(key, source_key:, pending_actions:, errors:, queue_work_retained: false)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = find_agent_in!(agents, key)
+        target.record_context_replacement_recovery!(source_key:, pending_actions:, errors:, queue_work_retained:)
+        target
+      end
+    end
+
+    def clear_context_replacement_recovery!(key)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = find_agent_in!(agents, key)
+        target.clear_context_replacement_recovery!
         target
       end
     end

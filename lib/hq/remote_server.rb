@@ -429,6 +429,8 @@ module HQ
           return ok(agent: service.acknowledge_context_pressure(key, body))
         end
         return ok(agent: service.dismiss_context_pressure(key)) if method == "POST" && tail == ["context-pressure", "dismiss"]
+        return ok(service.retry_context_replacement_recovery(key)) if method == "POST" && tail == ["context-replacement-recovery", "retry"]
+        return ok(service.clear_context_replacement_recovery(key)) if method == "POST" && tail == ["context-replacement-recovery", "clear"]
         return ok(service.update_agent_delegation(key, body)) if %w[PATCH PUT].include?(method) && tail == ["delegation"]
         return ok(service.archive_agent(key)) if method == "DELETE" && tail.empty?
         return created(service.create_agent_loop(key, body)) if method == "POST" && tail == ["loop-schedule"]
@@ -3544,7 +3546,7 @@ module HQ
         begin
           archive_path = @agent_store.archive_context_replacement_source!(source.key)
         rescue ArgumentError
-          recover_context_replacement_archive_rejection!(source, target) if truthy?(attrs["start"])
+          recover_context_replacement_archive_rejection!(source, target)
           raise
         end
       end
@@ -3585,29 +3587,56 @@ module HQ
       HQ.logger.warn("RemoteService") { "Context replacement #{name} failed: #{e.class}: #{e.message}" }
     end
 
-    def recover_context_replacement_archive_rejection!(source, target)
-      errors = []
-      begin
-        ContextHandoff.record_archive_rejection!(source, target)
-      rescue StandardError => e
-        errors << "record correction: #{e.message}"
+    def recover_context_replacement_archive_rejection!(source, target, pending_actions: nil)
+      actions = pending_actions || ["record_correction", "stop_replacement", *(source.scheduled? ? ["restore_schedule"] : [])]
+      errors = {}
+      if actions.include?("record_correction")
+        begin
+          ContextHandoff.record_archive_rejection!(source, target)
+        rescue StandardError => e
+          errors["record_correction"] = e.message
+        end
       end
-      begin
-        @agent_store.stop_agent!(target.key)
-      rescue StandardError => e
-        errors << "stop replacement: #{e.message}"
+      if actions.include?("stop_replacement")
+        begin
+          @agent_store.stop_context_replacement!(target.key)
+        rescue StandardError => e
+          errors["stop_replacement"] = e.message
+        end
       end
-      if source.scheduled?
+      if actions.include?("restore_schedule")
         begin
           scheduler.restore_context_replacement_source!(source_key: source.key, replacement_key: target.key)
         rescue StandardError => e
-          errors << "restore schedule: #{e.message}"
+          errors["restore_schedule"] = e.message
         end
       end
-      return if errors.empty?
+      recovered = find_agent!(target.key)
+      if errors.empty? && !recovered.pending_prompts?
+        @agent_store.clear_context_replacement_recovery!(target.key)
+      else
+        @agent_store.record_context_replacement_recovery!(target.key, source_key: source.key,
+                                                          pending_actions: errors.keys, errors:,
+                                                          queue_work_retained: recovered.pending_prompts?)
+        HQ.logger.warn("RemoteService") { "Context replacement archive-rejection recovery needs retry: #{errors.values.join("; ")}" }
+      end
+    end
 
-      @agent_store.record_context_replacement_recovery!(target.key, source_key: source.key, errors:)
-      HQ.logger.warn("RemoteService") { "Context replacement archive-rejection recovery needs retry: #{errors.join("; ")}" }
+    def retry_context_replacement_recovery(key)
+      target = find_agent!(key)
+      recovery = target.context_replacement_recovery || raise(Error.new("No context replacement recovery is pending", status: 409))
+      source = find_agent!(recovery.fetch("source_agent_key"))
+      recover_context_replacement_archive_rejection!(source, target, pending_actions: recovery.fetch("pending_actions"))
+      { agent: agent_payload(find_agent!(key)) }
+    end
+
+    def clear_context_replacement_recovery(key)
+      target = find_agent!(key)
+      recovery = target.context_replacement_recovery || raise(Error.new("No context replacement recovery is pending", status: 409))
+      raise Error.new("Remove or process retained replacement queue work before clearing recovery", status: 409) if recovery["queue_work_retained"] && target.pending_prompts?
+
+      @agent_store.clear_context_replacement_recovery!(target.key)
+      { agent: agent_payload(find_agent!(key)) }
     end
 
     def acknowledge_context_pressure(key, attrs)
@@ -4874,6 +4903,7 @@ module HQ
         summary: agent.last_summary,
         cost_snapshot: agent.cost_snapshot,
         context_pressure: agent.context_pressure,
+        context_replacement_recovery: agent.context_replacement_recovery,
         latest_inquiry: inquiry,
         suspended_inquiry: suspended_inquiry_payload(agent),
         prompt_queue: prompt_queue_payload(agent),
@@ -4917,6 +4947,7 @@ module HQ
         last_result: agent.last_result_label,
         summary: agent.last_summary,
         context_pressure: agent.context_pressure,
+        context_replacement_recovery: agent.context_replacement_recovery,
         prompt_queue_count: visible_queue_entries.length,
         prompt_queue_delegation_callback_count: visible_queue_entries.count do |entry|
           entry["source"] == "delegation_callback"

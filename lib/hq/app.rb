@@ -1132,29 +1132,34 @@ def selected_screen_items
     def recover_context_pressure_archive_rejection!(source, target)
       return unless target
 
-      errors = []
+      errors = {}
       begin
         ContextHandoff.record_archive_rejection!(source, target)
       rescue StandardError => e
-        errors << "record correction: #{e.message}"
+        errors["record_correction"] = e.message
       end
       begin
-        @agent_store.stop_agent!(target.key)
+        @agent_store.stop_context_replacement!(target.key)
       rescue StandardError => e
-        errors << "stop replacement: #{e.message}"
+        errors["stop_replacement"] = e.message
       end
       if source.scheduled?
         begin
           Scheduler.new(registry: @registry).restore_context_replacement_source!(source_key: source.key, replacement_key: target.key)
           load_schedules!
         rescue StandardError => e
-          errors << "restore schedule: #{e.message}"
+          errors["restore_schedule"] = e.message
         end
       end
-      return if errors.empty?
-
-      @agent_store.record_context_replacement_recovery!(target.key, source_key: source.key, errors:)
-      HQ.logger.warn("Agent") { "Context replacement archive-rejection recovery needs retry: #{errors.join("; ")}" }
+      recovered = @agent_store.load.find { |agent| agent.key == target.key }
+      if errors.empty? && !recovered&.pending_prompts?
+        @agent_store.clear_context_replacement_recovery!(target.key)
+      else
+        @agent_store.record_context_replacement_recovery!(target.key, source_key: source.key,
+                                                          pending_actions: errors.keys, errors:,
+                                                          queue_work_retained: recovered&.pending_prompts?)
+        HQ.logger.warn("Agent") { "Context replacement archive-rejection recovery needs retry: #{errors.values.join("; ")}" }
+      end
     end
 
     def context_replacement_follow_up(name)

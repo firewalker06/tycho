@@ -928,6 +928,8 @@ module HQ
     end
 
     def prompt_queue_dispatchable?
+      return false if @context_replacement_recovery
+
       has_run_context = last_run || next_prompt_queue_entry&.fetch("source", nil) == "delegation_callback"
       !archived? && !running? && !blocked? && !inquiry_blocking_prompt_queue? &&
         (!UNPROCESSED_QUEUE_WORK_STATUSES.include?(effective_status.to_s) || active_queue_work&.fetch("resume_pending", false)) &&
@@ -1509,13 +1511,19 @@ module HQ
       end
     end
 
-    def record_context_replacement_recovery!(source_key:, errors:)
+    def record_context_replacement_recovery!(source_key:, pending_actions:, errors:, queue_work_retained: false)
       @context_replacement_recovery = {
         "source_agent_key" => source_key.to_s,
-        "action" => "stop_replacement_and_restore_schedule",
-        "errors" => Array(errors).map(&:to_s).reject(&:empty?),
+        "replacement_agent_key" => @key,
+        "pending_actions" => Array(pending_actions).map(&:to_s).uniq,
+        "errors" => errors.transform_keys(&:to_s).transform_values(&:to_s),
+        "queue_work_retained" => queue_work_retained ? true : false,
         "recorded_at" => Time.now.iso8601
       }
+    end
+
+    def clear_context_replacement_recovery!
+      @context_replacement_recovery = nil
     end
 
     def message_author_metadata(actor)

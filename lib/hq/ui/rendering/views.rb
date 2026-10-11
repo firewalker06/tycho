@@ -905,6 +905,7 @@ module HQ
           lines.concat(detail_run_result_block(agent))
           lines << ""
           lines.concat(detail_context_pressure_block(agent))
+          lines.concat(detail_context_replacement_recovery_block(agent))
           lines << ""
           lines.concat(detail_prose_block(:summary, agent.last_summary)) if agent.last_summary.to_s.strip != ""
           lines << "" if agent.last_summary.to_s.strip != ""
@@ -942,6 +943,17 @@ module HQ
             lines << warning_style.render("  f: Start New  #{Styles::MARKERS[:bullet_sep]}  g: Keep Going  #{Styles::MARKERS[:bullet_sep]}  G: Start with Handoff")
           end
           lines
+        end
+
+        def detail_context_replacement_recovery_block(agent)
+          recovery = agent.context_replacement_recovery
+          return [] unless recovery
+
+          actions = Array(recovery["pending_actions"])
+          summary = actions.empty? ? "Replacement queue work is retained for explicit action." :
+            "Retry required: #{actions.join(", ")}."
+          summary += " Remove or process queued work before clear." if recovery["queue_work_retained"]
+          ["", warning_style.render("! Replacement recovery"), "  #{summary}"]
         end
 
         def empty_agent_detail_text
