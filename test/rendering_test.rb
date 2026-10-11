@@ -2617,6 +2617,7 @@ module RenderingTest
     assert(fresh_events.none? { |line| JSON.parse(line).dig("metadata", "context_handoff") == true },
            "expected Start New not to create a context handoff")
     handoff_app = app_with_default_agent(width: 120, height: 40)
+    handoff_app.define_singleton_method(:save_agents!) { nil }
     handoff_app.instance_variable_set(:@screen, :agents)
     handoff_source = handoff_app.instance_variable_get(:@agents).first
     handoff_app.instance_variable_set(:@all_agents, [handoff_source])
