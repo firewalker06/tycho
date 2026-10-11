@@ -32,7 +32,11 @@ cumulative token usage rather than a dollar
 amount, so Tycho calculates each finalized run from the delta against the prior
 snapshot:
 
-`((input - cached input) * input rate + cached input * cached rate + output * output rate) / 1,000,000`
+`((input - cached input - cache write) * input rate + cached input * cached rate + cache write * cache-write rate + output * output rate) / 1,000,000`
+
+Cache-write tokens replace ordinary input tokens in this calculation. When a
+run has a positive cache-write count but the rate card has no cache-write rate
+for that model, the estimate remains unavailable.
 
 Reasoning tokens are already included in Codex's `output_tokens` and are not
 charged twice. The result is a standard OpenAI API list-price equivalent, not
