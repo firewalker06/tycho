@@ -3586,10 +3586,28 @@ module HQ
     end
 
     def recover_context_replacement_archive_rejection!(source, target)
-      ContextHandoff.record_archive_rejection!(source, target)
-      @agent_store.stop_agent!(target.key) if target.running?
-    rescue StandardError => e
-      HQ.logger.warn("RemoteService") { "Context replacement archive-rejection recovery failed: #{e.class}: #{e.message}" }
+      errors = []
+      begin
+        ContextHandoff.record_archive_rejection!(source, target)
+      rescue StandardError => e
+        errors << "record correction: #{e.message}"
+      end
+      begin
+        @agent_store.stop_agent!(target.key)
+      rescue StandardError => e
+        errors << "stop replacement: #{e.message}"
+      end
+      if source.scheduled?
+        begin
+          scheduler.restore_context_replacement_source!(source_key: source.key, replacement_key: target.key)
+        rescue StandardError => e
+          errors << "restore schedule: #{e.message}"
+        end
+      end
+      return if errors.empty?
+
+      @agent_store.record_context_replacement_recovery!(target.key, source_key: source.key, errors:)
+      HQ.logger.warn("RemoteService") { "Context replacement archive-rejection recovery needs retry: #{errors.join("; ")}" }
     end
 
     def acknowledge_context_pressure(key, attrs)

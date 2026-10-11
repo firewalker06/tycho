@@ -1055,7 +1055,7 @@ def selected_screen_items
       @selected[:agents] = @agents.index(target) || 0
       replacement = @agent_store.start_agent!(target.key)
       replace_agent_instance!(target, replacement)
-      archive_context_pressure_source!(source)
+      archive_context_pressure_source!(source, target)
       _, chat_command = finalize_context_pressure_replacement!(source, replacement)
       [self, Bubbletea.batch(*[schedule_action_poll, chat_command].compact)]
     rescue StandardError => e
@@ -1074,7 +1074,7 @@ def selected_screen_items
       close_sidebar!
       target = @agent_store.clone_agent(source, existing_agents: @all_agents)
       target = persist_context_pressure_clone!(source, target, handoff: false)
-      archive_context_pressure_source!(source)
+      archive_context_pressure_source!(source, target)
       finalize_context_pressure_replacement!(source, target)
     rescue StandardError => e
       HQ.logger.error("Agent") { "Context fresh clone failed for #{source&.key}: #{e.class}: #{e.message}" }
@@ -1102,12 +1102,12 @@ def selected_screen_items
       target
     end
 
-    def archive_context_pressure_source!(source)
+    def archive_context_pressure_source!(source, target)
       @agent_store.archive_context_replacement_source!(source.key)
       @agents.reject! { |agent| agent.key == source.key }
       @all_agents.reject! { |agent| agent.key == source.key }
     rescue ArgumentError
-      recover_context_pressure_archive_rejection!(source, @agents.find { |agent| agent.key != source.key })
+      recover_context_pressure_archive_rejection!(source, target)
       raise
     end
 
@@ -1132,10 +1132,29 @@ def selected_screen_items
     def recover_context_pressure_archive_rejection!(source, target)
       return unless target
 
-      ContextHandoff.record_archive_rejection!(source, target)
-      @agent_store.stop_agent!(target.key) if target.running?
-    rescue StandardError => e
-      HQ.logger.warn("Agent") { "Context replacement archive-rejection recovery failed: #{e.class}: #{e.message}" }
+      errors = []
+      begin
+        ContextHandoff.record_archive_rejection!(source, target)
+      rescue StandardError => e
+        errors << "record correction: #{e.message}"
+      end
+      begin
+        @agent_store.stop_agent!(target.key)
+      rescue StandardError => e
+        errors << "stop replacement: #{e.message}"
+      end
+      if source.scheduled?
+        begin
+          Scheduler.new(registry: @registry).restore_context_replacement_source!(source_key: source.key, replacement_key: target.key)
+          load_schedules!
+        rescue StandardError => e
+          errors << "restore schedule: #{e.message}"
+        end
+      end
+      return if errors.empty?
+
+      @agent_store.record_context_replacement_recovery!(target.key, source_key: source.key, errors:)
+      HQ.logger.warn("Agent") { "Context replacement archive-rejection recovery needs retry: #{errors.join("; ")}" }
     end
 
     def context_replacement_follow_up(name)

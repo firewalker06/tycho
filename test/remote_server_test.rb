@@ -28,6 +28,7 @@ module RemoteServerTest
     assert_remote_agent_clone_archives_source_with_editable_name
     assert_remote_context_pressure_clone_replaces_schedule_target
     assert_remote_context_pressure_clone_failure_preserves_source
+    assert_remote_archive_rejection_compensates_independently
     assert_remote_context_replacement_rejects_unsafe_source
     assert_remote_context_replacement_commits_after_incidental_failure
     assert_context_replacement_follow_ups_continue_after_each_failure
@@ -1330,6 +1331,47 @@ module RemoteServerTest
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
       replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+    end
+  end
+
+  def assert_remote_archive_rejection_compensates_independently
+    Dir.mktmpdir("hq-remote-context-recovery-test") do |dir|
+      old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
+      FileUtils.mkdir_p(HQ::AGENT_LOGS_DIR)
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      service = HQ::RemoteService.new(registry: registry_for(dir, workspace))
+      source_payload = service.create_agent("project_key" => "web", "template_key" => "custom", "name" => "Source", "prompt" => "Keep.", "agent" => "codex")
+      source = service.send(:load_all_agents).find { |agent| agent.key == source_payload[:key] }
+      target = service.instance_variable_get(:@agent_store).clone_agent(source, existing_agents: [source])
+      service.instance_variable_get(:@agent_store).save([source, target])
+      store = service.instance_variable_get(:@agent_store)
+
+      original_record = HQ::ContextHandoff.method(:record_archive_rejection!)
+      stopped = []
+      HQ::ContextHandoff.define_singleton_method(:record_archive_rejection!) { |*_args| raise "correction failure" }
+      store.define_singleton_method(:stop_agent!) { |key| stopped << key }
+      service.send(:recover_context_replacement_archive_rejection!, source, target)
+      recovered = service.send(:load_all_agents).find { |agent| agent.key == target.key }
+      assert(stopped == [target.key], "expected correction failure not to prevent replacement stop")
+      assert(recovered.context_replacement_recovery.fetch("errors").join.include?("correction failure"),
+             "expected correction failure to persist actionable recovery state")
+
+      HQ::ContextHandoff.define_singleton_method(:record_archive_rejection!, original_record)
+      store.define_singleton_method(:stop_agent!) { |_key| raise "stop failure" }
+      service.send(:recover_context_replacement_archive_rejection!, source, target)
+      recovered = service.send(:load_all_agents).find { |agent| agent.key == target.key }
+      events = HQ::AgentMemory.new(recovered).events
+      assert(events.any? { |event| event.dig("metadata", "context_handoff_archive_rejected") },
+             "expected stop failure not to prevent durable correction")
+      assert(recovered.context_replacement_recovery.fetch("errors").join.include?("stop failure"),
+             "expected stop failure to persist actionable recovery state")
+    ensure
+      HQ::ContextHandoff.define_singleton_method(:record_archive_rejection!, original_record) if defined?(original_record) && original_record
+      store.singleton_class.send(:remove_method, :stop_agent!) if store&.singleton_class&.method_defined?(:stop_agent!)
+      replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+      replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
     end
   end
 

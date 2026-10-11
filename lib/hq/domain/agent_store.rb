@@ -455,6 +455,55 @@ module HQ
       end
     end
 
+    def record_context_replacement_recovery!(key, source_key:, errors:)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = find_agent_in!(agents, key)
+        target.record_context_replacement_recovery!(source_key:, errors:)
+        target
+      end
+    end
+
+    def restore_context_replacement_schedule!(source_key:, replacement_key:, schedule_registry:, schedule_store:)
+      schedule_store.with_lock do
+        with_exclusive_lock do
+          agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
+          source = find_agent_in!(agents, source_key)
+          replacement = find_agent_in!(agents, replacement_key)
+          schedule_key = replacement.schedule_key.to_s
+          raise ArgumentError, "Replacement #{replacement.key} is not connected to a schedule" if schedule_key.empty?
+
+          schedule_registry.reload!
+          schedule = schedule_registry.find(schedule_key)
+          raise ArgumentError, "Schedule #{schedule_key.inspect} no longer exists" unless schedule
+          states = schedule_store.load
+          state = states.fetch(schedule_key)
+          raise StaleScheduleTarget, "Schedule #{schedule_key.inspect} no longer targets replacement #{replacement.key.inspect}" unless state.last_target_key.to_s == replacement.key
+          configured_target = schedule.agent_key.to_s
+          unless configured_target.empty? || configured_target == replacement.key
+            raise StaleScheduleTarget, "Schedule #{schedule_key.inspect} configuration no longer targets replacement #{replacement.key.inspect}"
+          end
+
+          project = project_for(source.project_key)
+          FileTransaction.run([AGENTS_FILE, schedule_store.path, schedule_registry.path, source.memory_path]) do
+            replacement.detach_schedule!(template_key: project&.agent_templates&.first&.key)
+            adopt_schedule!(source, schedule_key:, name: schedule.name, system_message: schedule.system_message,
+                            created_at: source.created_at || Time.now)
+            state.previous_target_key = replacement.key
+            state.last_target_key = source.key
+            state.last_target_kind = "agent"
+            schedule_registry.replace_agent_target(schedule_key, expected_agent_key: replacement.key,
+                                                    replacement_agent_key: source.key) unless configured_target.empty?
+            save_unlocked(agents)
+            schedule_store.save(states)
+          end
+          source
+        rescue StandardError
+          schedule_registry.reload!
+          raise
+        end
+      end
+    end
+
     def enqueue_prompt!(key, prompt:, attachments: nil, accepted_at: nil, id: nil, client_request_id: nil,
                         authority: nil, message_metadata: nil, source: nil)
       mutate do |agents, _events|

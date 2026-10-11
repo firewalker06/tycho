@@ -109,6 +109,7 @@ module RenderingTest
     assert_clone_agent_can_keep_old_agent
     assert_context_pressure_tui_actions
     assert_context_pressure_tui_follow_ups_continue_after_hook_failure
+    assert_context_pressure_tui_archive_rejection_uses_exact_replacement
     assert_context_pressure_tui_rejects_unsafe_source
     assert_custom_claude_harness_builds_configured_command
     assert_claude_schema_is_compact_json
@@ -2681,6 +2682,25 @@ module RenderingTest
            "expected TUI chat follow-up to continue after clone-hook failure")
   ensure
     hooks.singleton_class.send(:remove_method, :publish) if hooks&.singleton_class&.method_defined?(:publish)
+  end
+
+  def assert_context_pressure_tui_archive_rejection_uses_exact_replacement
+    app = app_with_default_agent(width: 120, height: 40)
+    source = app.instance_variable_get(:@agents).first
+    target = app.instance_variable_get(:@agent_store).clone_agent(source, existing_agents: [source])
+    unrelated = app.instance_variable_get(:@agent_store).clone_agent(source, existing_agents: [source, target])
+    app.instance_variable_set(:@agents, [unrelated, source, target])
+    app.instance_variable_set(:@all_agents, [unrelated, source, target])
+    stopped = []
+    store = app.instance_variable_get(:@agent_store)
+    store.define_singleton_method(:archive_context_replacement_source!) { |_key| raise ArgumentError, "late queue work" }
+    store.define_singleton_method(:stop_agent!) { |key| stopped << key }
+    app.send(:archive_context_pressure_source!, source, target)
+  rescue ArgumentError
+    assert(stopped == [target.key], "expected archive recovery to stop only the exact replacement")
+  ensure
+    store.singleton_class.send(:remove_method, :stop_agent!) if store&.singleton_class&.method_defined?(:stop_agent!)
+    store.singleton_class.send(:remove_method, :archive_context_replacement_source!) if store&.singleton_class&.method_defined?(:archive_context_replacement_source!)
   end
 
   def assert_custom_claude_harness_builds_configured_command

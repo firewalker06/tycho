@@ -173,6 +173,12 @@ module HQ
       end
     end
 
+    def restore_context_replacement_source!(source_key:, replacement_key:)
+      @agent_store.restore_context_replacement_schedule!(
+        source_key:, replacement_key:, schedule_registry:, schedule_store: store
+      )
+    end
+
     def archive_session(key, now: Time.now)
       store.with_lock do
         schedule, states, state = schedule_state_for(key)

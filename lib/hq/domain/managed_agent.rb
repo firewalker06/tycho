@@ -162,7 +162,7 @@ module HQ
                 :model, :reasoning_effort, :response_style, :session_id, :session_bootstrapped, :color_index, :summary,
                 :structured_result, :schedule_key, :cost_snapshot, :project_group, :delegation_parent, :archive_path,
                 :archived_at, :project_hidden_at_archive, :prompt_queue, :prompt_queue_claim, :queue_work,
-                :prompt_queue_dispatch_error
+                :prompt_queue_dispatch_error, :context_replacement_recovery
     attr_reader :context_pressure_acknowledged_signal, :context_pressure_dismissed
     attr_writer :summary, :structured_result, :cost_snapshot
 
@@ -178,7 +178,8 @@ module HQ
                    cost_snapshot: nil, total_run_count: nil, project_group: nil, delegation_parent: nil,
                    archived: false, archive_path: nil, archived_at: nil, project_hidden_at_archive: nil,
                    prompt_queue: nil, prompt_queue_claim: nil, prompt_queue_dispatch_error: nil, queue_work: nil, role: nil,
-                   context_pressure_acknowledged_signal: nil, context_pressure_dismissed: false)
+                   context_pressure_acknowledged_signal: nil, context_pressure_dismissed: false,
+                   context_replacement_recovery: nil)
       @key = key
       @name = name
       @project_key = project_key
@@ -217,6 +218,7 @@ module HQ
       @archive_path = archive_path.to_s.empty? ? nil : archive_path.to_s
       @archived_at = archived_at
       @project_hidden_at_archive = project_hidden_at_archive unless project_hidden_at_archive.nil?
+      @context_replacement_recovery = context_replacement_recovery.is_a?(Hash) ? context_replacement_recovery : nil
       @prompt_queue = normalize_prompt_queue(prompt_queue)
       @prompt_queue_claim = normalize_prompt_queue_claim(prompt_queue_claim)
       @queue_work = QueueWork.normalize(
@@ -334,7 +336,8 @@ module HQ
         queue_work: hash["queue_work"],
         role: hash["role"],
         context_pressure_acknowledged_signal: hash["context_pressure_acknowledged_signal"],
-        context_pressure_dismissed: hash["context_pressure_dismissed"]
+        context_pressure_dismissed: hash["context_pressure_dismissed"],
+        context_replacement_recovery: hash["context_replacement_recovery"]
       )
     end
 
@@ -469,6 +472,7 @@ module HQ
       result["prompt_queue_claim"] = @prompt_queue_claim if @prompt_queue_claim
       result["prompt_queue_dispatch_error"] = @prompt_queue_dispatch_error if @prompt_queue_dispatch_error
       result["queue_work"] = @queue_work if Array(@queue_work["batches"]).any?
+      result["context_replacement_recovery"] = @context_replacement_recovery if @context_replacement_recovery
       unless @context_pressure_acknowledged_signal.empty?
         result["context_pressure_acknowledged_signal"] = @context_pressure_acknowledged_signal
       end
@@ -1503,6 +1507,15 @@ module HQ
                          project_key: @project_key,
                          answer: text)
       end
+    end
+
+    def record_context_replacement_recovery!(source_key:, errors:)
+      @context_replacement_recovery = {
+        "source_agent_key" => source_key.to_s,
+        "action" => "stop_replacement_and_restore_schedule",
+        "errors" => Array(errors).map(&:to_s).reject(&:empty?),
+        "recorded_at" => Time.now.iso8601
+      }
     end
 
     def message_author_metadata(actor)
