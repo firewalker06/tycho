@@ -714,6 +714,10 @@ module HQ
       @queue_work = QueueWork.normalize(value, entry_normalizer: method(:normalize_prompt_queue_entry))
     end
 
+    def restore_prompt_queue_claim!(value)
+      @prompt_queue_claim = normalize_prompt_queue_claim(value)
+    end
+
     def stage_queue_delivery!(metadata)
       return unless last_run
 
@@ -737,17 +741,40 @@ module HQ
       last_run.metadata = metadata
     end
 
-    def resume_staged_native_launch!
-      run = last_run
-      staged = run&.metadata&.fetch("queue_delivery_staged", nil)
-      return false unless staged.is_a?(Hash) && @pid && process_group_alive?
+    def staged_queue_delivery
+      last_run&.metadata&.fetch("queue_delivery_staged", nil)
+    end
 
-      if File.file?(run_native_started_file_path(run.run_id))
+    def recover_staged_native_launch!(native_started:, native_failed:)
+      run = last_run
+      staged = staged_queue_delivery
+      return false unless staged.is_a?(Hash)
+
+      status_path = run_status_file_path(run.run_id)
+      native_started_path = run_native_started_file_path(run.run_id)
+      native_release_path = run_native_release_file_path(run.run_id)
+
+      if File.file?(native_started_path)
         acknowledge_native_start!
-      elsif !File.file?(run_native_release_file_path(run.run_id))
-        File.write(run_native_release_file_path(run.run_id), run.run_id)
+        native_started.call(run, staged)
+        return true
+      end
+
+      unless @pid && process_group_alive?
+        settle_failed_start!(run, NativeStartError.new("Native agent harness did not start"),
+                             before_spawn: nil, status_path:)
+        native_failed.call(run, staged)
+        return true
+      end
+
+      File.write(native_release_path, run.run_id) unless File.file?(native_release_path)
+      if wait_for_native_start(native_started_path, status_path)
+        acknowledge_native_start!
+        native_started.call(run, staged)
       else
-        return false
+        settle_failed_start!(run, NativeStartError.new("Native agent harness did not start"),
+                             before_spawn: nil, status_path:)
+        native_failed.call(run, staged)
       end
       true
     end
@@ -1938,7 +1965,9 @@ module HQ
     end
 
     def structured_output_runner_launch(command, environment)
-      return { command:, env: environment } unless structured_output_correction_supported?
+      unless structured_output_correction_supported?
+        return { command:, env: environment.merge("TYCHO_NATIVE_ACK_DELEGATED" => nil) }
+      end
 
       correction = command_builder(
         prompt: AgentCorrectionRunner::PROMPT_PLACEHOLDER,

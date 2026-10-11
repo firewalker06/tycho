@@ -25,6 +25,8 @@ The memory rebuild gap has a separate cause. `AgentChatLog#rebuild_memory_from_r
 4. Event repair preserves the existing read ID and delivery count. A matching event must use that ID, have `queue_read: true`, and name the same batch. Repair removes every duplicate record with the canonical ID and writes one canonical queue-read event.
 5. Automatic queue dispatch and Direct Start use the same gated native-launch protocol. Explicit queue-claim reads keep their existing behavior for archive and read-only workflows.
 6. Memory rebuild merges existing queue-read events into the rebuilt journal in timestamp order. Rebuild, queue-read update, and rollback use the journal's exclusive lock.
+7. Staged-launch metadata contains the durable queue, claim, and journal rollback snapshot. After a Tycho restart, `AgentStore` keeps the gate closed until it owns both acknowledgement and failure callbacks. It saves a native acknowledgement before polling or completing the claim. On failure, it settles the run and restores the batch, claim, and journal before retry is available.
+8. The internal delegated-acknowledgement flag is set only for the structured correction wrapper. Every non-correction launch explicitly removes an inherited flag before it starts the stream recorder.
 
 ## Regression coverage
 
@@ -34,6 +36,8 @@ The memory rebuild gap has a separate cause. `AgentChatLog#rebuild_memory_from_r
 - A missing-event repair keeps the existing read ID and delivery count.
 - Same-ID assistant events, non-read events, events for another batch, and duplicate canonical IDs do not satisfy the semantic match.
 - Barrier-controlled tests cover rebuild with append and rebuild with failed-launch rollback. The journal lock preserves the rebuild result and one canonical queue-read event.
+- Production-path restart tests stop the first Tycho process after durable staging and before acknowledgement. Failed native spawn restores zero delivery evidence and one retryable claim; one retry records one delivery. Successful native acknowledgement is saved once without duplicate retry.
+- A non-correction native launch runs with an inherited delegated-acknowledgement flag in the parent environment. The child receives the flag as unset and writes its normal acknowledgement.
 
 ## Evidence limits
 

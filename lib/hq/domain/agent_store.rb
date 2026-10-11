@@ -91,6 +91,10 @@ module HQ
               "its next run will start fresh"
           end
         end
+        agent
+      end
+      agents.each_with_index do |agent, index|
+        hash = raw_records.fetch(index)
         changed = true if hash != agent.to_hash
         if agent.schedule_key.nil? && schedule_keys.key?(agent.key)
           agent.associate_schedule!(schedule_keys.fetch(agent.key))
@@ -100,7 +104,7 @@ module HQ
         changed = agent.reconcile_project_group!(project.group) || changed if project
         before_hash = agent.to_hash
         was_running = running_for_poll_event?(agent)
-        changed = agent.resume_staged_native_launch! || changed
+        changed = recover_staged_native_launch!(agent, agents) || changed
         agent.poll!
         changed = true if before_hash != agent.to_hash
         if (completed_claim = agent.dispatched_prompt_queue_claim)
@@ -123,7 +127,6 @@ module HQ
         end
         changed = backfill_project_context_prompt!(agent) || changed
         changed = backfill_agent_system_context_prompt!(agent) || changed
-        agent
       end
       changed = backfill_color_indexes!(agents) || changed
       changed = backfill_delegation_parents!(agents) || changed
@@ -446,46 +449,52 @@ module HQ
       prior_delivery_count = batch.fetch("delivery_count", 0).to_i
       read_id = batch["read_id"].to_s
       read_id = "queue-read:#{batch.fetch('id')}" if read_id.empty?
-      prior_batch = Array(queue_work["batches"]).find { |item| item["id"] == batch["id"] }
       prior_events = nil
+      prior_claim = Marshal.load(Marshal.dump(target.prompt_queue_claim)) if target.prompt_queue_claim
       run_metadata = Marshal.load(Marshal.dump(target.last_run&.metadata || {}))
-      result = FileTransaction.run([AGENTS_FILE]) do |transaction|
+      FileTransaction.run([AGENTS_FILE]) do |transaction|
         transaction.on_rollback do
           target.restore_queue_work!(queue_work)
+          target.restore_prompt_queue_claim!(prior_claim)
           target.last_run.metadata = run_metadata if target.last_run
         end
         AgentMemory.new(target).update_events! do |events|
           prior_events = events.each_with_index.filter_map do |event, index|
             [index, Marshal.load(Marshal.dump(event))] if event["event_id"].to_s == read_id
           end
-          result = target.ensure_active_queue_work_read!(journal_events: events)
-          target.stage_queue_delivery!(
+          read_result = target.ensure_active_queue_work_read!(journal_events: events)
+          delivery = {
             "batch_id" => batch.fetch("id"),
             "read_id" => read_id,
-            "rollback_required" => prior_delivery_count.zero? && !result.nil?,
-            "prior_state" => prior_batch&.fetch("state", nil),
-            "prior_delivery_count" => prior_delivery_count,
-            "prior_read_id" => prior_batch&.fetch("read_id", nil),
-            "remove_event_on_rollback" => prior_events.empty?
-          )
+            "rollback_required" => prior_delivery_count.zero? && !read_result.nil?,
+            "queue_work" => queue_work,
+            "prompt_queue_claim" => prior_claim,
+            "prior_events" => prior_events
+          }
+          target.stage_queue_delivery!(delivery)
           save_unlocked(agents)
-          [events, result]
+          [events, delivery]
         end
       end
-      {
-        "rollback_required" => prior_delivery_count.zero? && !result.nil?,
-        "queue_work" => queue_work,
-        "read_id" => read_id,
-        "prior_events" => prior_events || []
-      }
     end
 
-    def rollback_staged_queue_delivery!(target, agents, delivery)
-      return unless delivery.is_a?(Hash) && delivery["rollback_required"] == true
+    def rollback_staged_queue_delivery!(target, agents, delivery, failure_message: nil)
+      return unless delivery.is_a?(Hash)
+
+      unless delivery["rollback_required"] == true
+        target.clear_staged_queue_delivery!
+        target.fail_prompt_queue_dispatch!(failure_message) if failure_message && target.prompt_queue_claim
+        save_unlocked(agents)
+        return
+      end
 
       current_queue_work = Marshal.load(Marshal.dump(target.queue_work))
+      current_claim = Marshal.load(Marshal.dump(target.prompt_queue_claim)) if target.prompt_queue_claim
       FileTransaction.run([AGENTS_FILE]) do |transaction|
-        transaction.on_rollback { target.restore_queue_work!(current_queue_work) }
+        transaction.on_rollback do
+          target.restore_queue_work!(current_queue_work)
+          target.restore_prompt_queue_claim!(current_claim)
+        end
         AgentMemory.new(target).update_events! do |events|
           read_id = delivery.fetch("read_id")
           events.reject! { |event| event["event_id"].to_s == read_id }
@@ -493,11 +502,30 @@ module HQ
             events.insert([index.to_i, events.length].min, event)
           end
           target.restore_queue_work!(delivery.fetch("queue_work"))
+          target.restore_prompt_queue_claim!(delivery["prompt_queue_claim"])
           target.clear_staged_queue_delivery!
+          target.fail_prompt_queue_dispatch!(failure_message) if failure_message && target.prompt_queue_claim
           save_unlocked(agents)
           [events, true]
         end
       end
+    end
+
+    def recover_staged_native_launch!(target, agents)
+      target.recover_staged_native_launch!(
+        native_started: lambda do |_run, _delivery|
+          # Persist acknowledgement before polling can finalize the run or complete its queue claim.
+          save_unlocked(agents)
+        end,
+        native_failed: lambda do |_run, delivery|
+          rollback_staged_queue_delivery!(
+            target,
+            agents,
+            delivery,
+            failure_message: dispatch_failure_message("Native agent harness did not start")
+          )
+        end
+      )
     end
 
     def accept_delegation_prompt!(child, owner:, parent_key: nil, now: Time.now)

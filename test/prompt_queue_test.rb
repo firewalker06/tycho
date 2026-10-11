@@ -28,6 +28,8 @@ module PromptQueueTest
     assert_direct_start_records_active_queue_work
     assert_spawn_failure_does_not_record_queue_delivery
     assert_native_spawn_failure_rolls_back_and_retries_safely
+    assert_restart_recovery_rolls_back_failed_native_spawn_and_retries_once
+    assert_restart_recovery_accepts_successful_native_acknowledgement_once
     assert_persistent_queue_delivery_save_failure_stops_and_retries_safely
     assert_persistent_queue_delivery_append_failure_stops_and_retries_safely
     assert_missing_queue_event_repairs_without_new_delivery
@@ -1311,6 +1313,95 @@ module PromptQueueTest
     end
   end
 
+  def assert_restart_recovery_rolls_back_failed_native_spawn_and_retries_once
+    with_queue_store do |registry, workspace|
+      agent = terminal_agent(workspace)
+      agent.enqueue_prompt!(prompt: "Recover this failed staged launch", source: "user", id: "restart-failure-entry")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+      previous_codex_bin = ENV["TYCHO_CODEX_BIN"]
+      invalid_harness = File.join(workspace, "restart-missing-interpreter")
+      File.write(invalid_harness, "#!/missing/restart-test-interpreter\n")
+      FileUtils.chmod(0o755, invalid_harness)
+      ENV["TYCHO_CODEX_BIN"] = invalid_harness
+
+      crash_dispatch_after_staging(store)
+      staged_record = Array(HQ::FileStore.read_json(HQ::AGENTS_FILE, fallback: [])).fetch(0)
+      staged = HQ::ManagedAgent.from_hash(staged_record)
+      batch_id = staged.active_queue_work.fetch("id")
+      outer_pid = staged.pid
+      assert(staged.staged_queue_delivery.is_a?(Hash) &&
+             staged.active_queue_work.fetch("delivery_count") == 1 && staged.prompt_queue_claim,
+             "expected the crashed process to leave one durable staged launch behind a closed gate")
+
+      failed = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      failed_batch = failed.queue_work_batch(batch_id)
+      assert(failed_batch.fetch("delivery_count") == 0 && failed_batch["read_id"].to_s.empty? &&
+             queue_read_events(failed, batch_id).empty? && failed.pid.nil? &&
+             failed.last_run.status == "failed" && failed.last_run.metadata["start_failure"] == true &&
+             failed.staged_queue_delivery.nil? && failed.prompt_queue_claim &&
+             failed.prompt_queue_dispatch_error&.fetch("retryable", false) == true &&
+             process_gone_and_reaped?(outer_pid),
+             "expected restart recovery to roll back false evidence, settle failure, and retain a retryable claim")
+
+      capture_path = File.join(workspace, "restart-retry-capture.txt")
+      ENV["TYCHO_CODEX_BIN"] = queue_capture_harness(workspace)
+      ENV["TYCHO_TEST_QUEUE_CAPTURE"] = capture_path
+      retried = store.retry_prompt_queue!(agent.key)
+      wait_for_agent_process(retried)
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      persisted_batch = persisted.queue_work_batch(batch_id)
+      assert(File.read(capture_path).include?("TYCHO QUEUE WORK CONTRACT") &&
+             persisted_batch.fetch("delivery_count") == 1 &&
+             queue_read_events(persisted, batch_id).length == 1 &&
+             persisted.prompt_queue_claim.nil? && persisted.prompt_queue_dispatch_error.nil?,
+             "expected one safe retry after restart recovery to create exactly one durable delivery")
+    ensure
+      previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
+      ENV.delete("TYCHO_TEST_QUEUE_CAPTURE")
+    end
+  end
+
+  def assert_restart_recovery_accepts_successful_native_acknowledgement_once
+    with_queue_store do |registry, workspace|
+      agent = terminal_agent(workspace)
+      agent.enqueue_prompt!(prompt: "Recover this successful staged launch", source: "user", id: "restart-success-entry")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+      previous_codex_bin = ENV["TYCHO_CODEX_BIN"]
+      capture_path = File.join(workspace, "restart-success-capture.txt")
+      ENV["TYCHO_CODEX_BIN"] = queue_capture_harness(workspace)
+      ENV["TYCHO_TEST_QUEUE_CAPTURE"] = capture_path
+
+      crash_dispatch_after_staging(store)
+      staged_record = Array(HQ::FileStore.read_json(HQ::AGENTS_FILE, fallback: [])).fetch(0)
+      staged = HQ::ManagedAgent.from_hash(staged_record)
+      batch_id = staged.active_queue_work.fetch("id")
+      assert(staged.staged_queue_delivery.is_a?(Hash) && !File.exist?(capture_path),
+             "expected native work to remain gated when the first Tycho process stops")
+
+      recovered = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      deadline = Time.now + 5
+      until File.file?(capture_path) && !recovered.running?
+        raise "recovered native harness did not finish" if Time.now >= deadline
+
+        sleep 0.01
+        recovered = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      end
+      recovered = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      recovered_batch = recovered.queue_work_batch(batch_id)
+      assert(File.read(capture_path).include?("TYCHO QUEUE WORK CONTRACT") &&
+             recovered.last_run.metadata["native_start_acknowledged"] == true &&
+             recovered.staged_queue_delivery.nil? && recovered_batch.fetch("delivery_count") == 1 &&
+             queue_read_events(recovered, batch_id).length == 1 && recovered.prompt_queue_claim.nil? &&
+             recovered.prompt_queue_dispatch_error.nil?,
+             "expected restart recovery to durably accept one native acknowledgement without duplicate delivery")
+    ensure
+      previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
+      ENV.delete("TYCHO_TEST_QUEUE_CAPTURE")
+    end
+  end
+
   def assert_persistent_queue_delivery_save_failure_stops_and_retries_safely
     with_queue_store do |registry, workspace|
       agent = terminal_agent(workspace)
@@ -1810,6 +1901,24 @@ module PromptQueueTest
     HQ::ManagedAgent.define_method(:spawn, original) if original
   end
 
+  def crash_dispatch_after_staging(store)
+    child_pid = Process.fork do
+      original_write = File.method(:write)
+      File.define_singleton_method(:write) do |path, *args, **options|
+        Process.exit!(86) if path.to_s.end_with?(".native-release")
+
+        original_write.call(path, *args, **options)
+      end
+      store.load
+      Process.exit!(87)
+    rescue StandardError
+      Process.exit!(88)
+    end
+    _waited_pid, status = Process.wait2(child_pid)
+    assert(status.exitstatus == 86,
+           "expected the first Tycho process to stop after staging and before native release")
+  end
+
   def process_gone_and_reaped?(pid)
     alive = begin
       Process.kill(0, pid)
@@ -1868,7 +1977,7 @@ module PromptQueueTest
     original = HQ::ManagedAgent.instance_method(:start!)
     HQ::ManagedAgent.define_method(:start!) do |delegation_stamp: nil, run_metadata: nil,
                                                    before_spawn: nil, after_spawn: nil,
-                                                   before_native_spawn: nil|
+                                                   before_native_spawn: nil, native_spawn_failed: nil|
       raise error if error
 
       prompts << send(:prompt_for_execution) if prompts
@@ -1887,6 +1996,7 @@ module PromptQueueTest
       )
       before_spawn&.call(@runs.last)
       (before_native_spawn || after_spawn)&.call(@runs.last)
+      acknowledge_native_start! if before_native_spawn
       true
     end
     yield
@@ -1899,7 +2009,7 @@ module PromptQueueTest
     pids = []
     HQ::ManagedAgent.define_method(:start!) do |delegation_stamp: nil, run_metadata: nil,
                                                    before_spawn: nil, after_spawn: nil,
-                                                   before_native_spawn: nil|
+                                                   before_native_spawn: nil, native_spawn_failed: nil|
       now = Time.now
       pid = Process.spawn(RbConfig.ruby, "-e", "sleep 60", pgroup: true, out: File::NULL, err: File::NULL)
       pids << pid
@@ -1917,6 +2027,7 @@ module PromptQueueTest
       )
       before_spawn&.call(@runs.last)
       (before_native_spawn || after_spawn)&.call(@runs.last)
+      acknowledge_native_start! if before_native_spawn
       true
     end
     yield pids
