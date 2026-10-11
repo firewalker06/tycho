@@ -779,15 +779,23 @@ title: !123 value
         await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 });
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector("[data-context-pressure-warning]", { state: "visible", timeout: 10_000 });
+        const activeBefore = await page.evaluate(() => state.agents.map((agent) => ({ key: agent.key, name: agent.name })));
         if (captureDir) {
+          await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
+          await page.waitForSelector("[aria-label='Managed agents']", { state: "visible", timeout: 10_000 });
           await page.screenshot({
-            path: path.join(captureDir, `schedule-replacement-${scheduleReplacementMode}-before.png`),
+            path: path.join(captureDir, `active-list-${scheduleReplacementMode}-before.png`),
             fullPage: false,
           });
+          await page.evaluate((key) => navigate({ type: "agent", key }), agentKey);
+          await page.waitForSelector("[data-context-pressure-warning]", { state: "visible", timeout: 10_000 });
         }
 
         const cloneRequestPromise = page.waitForRequest((request) => (
           request.method() === "POST" && request.url().endsWith(`/agents/${encodeURIComponent(agentKey)}/clone`)
+        ));
+        const catalogRefreshPromise = page.waitForResponse((response) => (
+          response.request().method() === "GET" && response.url().endsWith("/servers/resources")
         ));
         if (handoff) {
           await page.locator("[data-context-pressure-warning] .context-pressure-menu > summary").click();
@@ -809,6 +817,14 @@ title: !123 value
         }
         await page.waitForFunction((sourceKey) => location.hash.startsWith("#agent/") && !location.hash.includes(sourceKey), agentKey);
         const replacementKey = await page.evaluate(() => decodeURIComponent(location.hash.split("/")[1] || ""));
+        await catalogRefreshPromise;
+        await page.waitForFunction(({ sourceKey, replacementKey, expectedCount }) => (
+          state.agents.length === expectedCount &&
+          !state.agents.some((agent) => agent.key === sourceKey) &&
+          state.agents.some((agent) => agent.key === replacementKey)
+        ), { sourceKey: agentKey, replacementKey, expectedCount: activeBefore.length });
+        const activeAfter = await page.evaluate(() => state.agents.map((agent) => ({ key: agent.key, name: agent.name })));
+        console.log(`active-list-${scheduleReplacementMode}: ${JSON.stringify({ before: activeBefore, after: activeAfter })}`);
         if (scheduled) {
           await page.waitForSelector("[data-header-schedule-menu]", { state: "visible", timeout: 10_000 });
         }
@@ -837,17 +853,25 @@ title: !123 value
         const conversation = await (await page.request.get(`${baseUrl}/agents/${encodeURIComponent(replacementKey)}/conversation`)).json();
         const hasHandoff = conversation.conversation.some((block) => block.metadata?.context_handoff === true);
         if (handoff) {
-          if (!hasHandoff) {
+          if (!hasHandoff || replacement.run_count < 1) {
             throw new Error("Start with Handoff did not preserve handoff memory on the replacement");
           }
-        } else if (hasHandoff) {
-          throw new Error("Start New unexpectedly added handoff memory");
+        } else if (hasHandoff || replacement.run_count !== 0) {
+          throw new Error("Start New unexpectedly added handoff memory or started the harness");
         }
         if (captureDir) {
+          await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
+          await page.waitForSelector("[aria-label='Managed agents']", { state: "visible", timeout: 10_000 });
           await page.screenshot({
-            path: path.join(captureDir, `schedule-replacement-${scheduleReplacementMode}-after.png`),
+            path: path.join(captureDir, `active-list-${scheduleReplacementMode}-after.png`),
             fullPage: false,
           });
+          await page.evaluate((key) => navigate({ type: "agent", key }), agentKey);
+          await page.waitForSelector(".agent-archive-banner", { state: "visible", timeout: 10_000 });
+          const archivedText = await page.locator(".agent-archive-banner").innerText();
+          if (!archivedText.includes("Archived agent") || !archivedText.includes("read-only history")) {
+            throw new Error(`Archived source history is not readable: ${JSON.stringify(archivedText)}`);
+          }
         }
       }
 
