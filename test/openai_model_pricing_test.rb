@@ -8,6 +8,7 @@ module OpenAIModelPricingTest
   def run!
     assert_prices_uncached_cached_and_output_tokens
     assert_prices_gpt_6_astra_cache_writes
+    assert_prices_current_gpt_6_catalog
     assert_ignores_reasoning_token_breakdown
     assert_resolves_aliases_and_snapshots
     assert_rejects_unknown_models_and_invalid_usage
@@ -41,6 +42,45 @@ module OpenAIModelPricingTest
            "expected Astra's pricing date")
     assert(HQ::OpenAIModelPricing.price_model_for("gpt-6-astra-2026-09-07") == "gpt-6-astra",
            "expected dated Astra snapshots to use Astra pricing")
+  end
+
+  def assert_prices_current_gpt_6_catalog
+    {
+      "gpt-6-sol" => [2.0, 0.2, 2.5, 10.0, 0.00292],
+      "gpt-6.1-sol" => [2.0, 0.1, 2.5, 10.0, 0.00291],
+      "gpt-6-luna" => [0.1, 0.01, 0.125, 0.5, 0.000146]
+    }.each do |model, (input_rate, cached_rate, cache_write_rate, output_rate, expected_amount)|
+      estimate = HQ::OpenAIModelPricing.estimate(
+        model:,
+        tokens: {
+          "input_tokens" => 1_000,
+          "cached_input_tokens" => 100,
+          "cache_creation_input_tokens" => 200,
+          "output_tokens" => 100
+        }
+      )
+
+      assert((estimate["amount_usd"] - expected_amount).abs < 0.000_000_001,
+             "expected #{model} to price uncached, cached, cache-write, and output tokens")
+      assert(estimate.dig("pricing", "input_usd_per_million") == input_rate,
+             "expected the official #{model} input price")
+      assert(estimate.dig("pricing", "cached_input_usd_per_million") == cached_rate,
+             "expected the official #{model} cached-input price")
+      assert(estimate.dig("pricing", "cache_write_usd_per_million") == cache_write_rate,
+             "expected the official #{model} cache-write price")
+      assert(estimate.dig("pricing", "output_usd_per_million") == output_rate,
+             "expected the official #{model} output price")
+      assert(estimate.dig("pricing", "source") ==
+             "https://developers.openai.com/api/docs/models/#{model}",
+             "expected #{model}'s model-specific pricing provenance")
+      assert(estimate.dig("pricing", "as_of") == "2026-10-11",
+             "expected #{model}'s pricing date")
+      assert(HQ::OpenAIModelPricing.price_model_for("#{model}-2026-10-11") == model,
+             "expected dated #{model} snapshots to use #{model} pricing")
+    end
+
+    assert(HQ::OpenAIModelPricing.price_model_for("gpt-reserve").nil?,
+           "expected a catalog-only model without an official API price to remain unpriced")
   end
 
   def assert_prices_uncached_cached_and_output_tokens

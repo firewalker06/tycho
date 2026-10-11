@@ -32,7 +32,11 @@ cumulative token usage rather than a dollar
 amount, so Tycho calculates each finalized run from the delta against the prior
 snapshot:
 
-`((input - cached input) * input rate + cached input * cached rate + output * output rate) / 1,000,000`
+`((input - cached input - cache write) * input rate + cached input * cached rate + cache write * cache-write rate + output * output rate) / 1,000,000`
+
+Cache-write tokens replace ordinary input tokens in this calculation. When a
+run has a positive cache-write count but the rate card has no cache-write rate
+for that model, the estimate remains unavailable.
 
 Reasoning tokens are already included in Codex's `output_tokens` and are not
 charged twice. The result is a standard OpenAI API list-price equivalent, not
@@ -42,27 +46,35 @@ long-context multipliers that cannot be inferred from Codex's aggregate turn
 telemetry.
 
 The embedded rate card comes from the [official OpenAI API pricing
-page](https://developers.openai.com/api/docs/pricing), checked on 2026-07-22.
-All values are USD per 1M tokens:
+page](https://developers.openai.com/api/docs/pricing) and model-specific
+pricing pages. The GPT-6 Sol, GPT-6.1 Sol, and GPT-6 Luna prices were checked
+on 2026-10-11. Older prices retain their original 2026-07-22 provenance. All
+values are standard short-context USD prices per 1M tokens:
 
-| Model | Input | Cached input | Output |
-| --- | ---: | ---: | ---: |
-| `gpt-5.6-sol` | $5.00 | $0.50 | $30.00 |
-| `gpt-5.6-terra` | $2.50 | $0.25 | $15.00 |
-| `gpt-5.6-luna` | $1.00 | $0.10 | $6.00 |
-| `gpt-5.5` | $5.00 | $0.50 | $30.00 |
-| `gpt-5.4` | $2.50 | $0.25 | $15.00 |
-| `gpt-5.4-mini` | $0.75 | $0.075 | $4.50 |
-| `gpt-5.3-codex` | $1.75 | $0.175 | $14.00 |
-| `gpt-5.2`, `gpt-5.2-codex` | $1.75 | $0.175 | $14.00 |
-| `gpt-5.1`, `gpt-5.1-codex`, `gpt-5.1-codex-max` | $1.25 | $0.125 | $10.00 |
-| `gpt-5.1-codex-mini` | $0.25 | $0.025 | $2.00 |
-| `gpt-5`, `gpt-5-codex` | $1.25 | $0.125 | $10.00 |
-| `codex-mini-latest` | $1.50 | $0.375 | $6.00 |
+| Model | Input | Cached input | Cache write | Output |
+| --- | ---: | ---: | ---: | ---: |
+| `gpt-6-astra` | $10.00 | $1.00 | $12.50 | $50.00 |
+| `gpt-6-sol` | $2.00 | $0.20 | $2.50 | $10.00 |
+| `gpt-6.1-sol` | $2.00 | $0.10 | $2.50 | $10.00 |
+| `gpt-6-luna` | $0.10 | $0.01 | $0.125 | $0.50 |
+| `gpt-5.6-sol` | $5.00 | $0.50 | Not recorded | $30.00 |
+| `gpt-5.6-terra` | $2.50 | $0.25 | Not recorded | $15.00 |
+| `gpt-5.6-luna` | $1.00 | $0.10 | Not recorded | $6.00 |
+| `gpt-5.5` | $5.00 | $0.50 | Not recorded | $30.00 |
+| `gpt-5.4` | $2.50 | $0.25 | Not recorded | $15.00 |
+| `gpt-5.4-mini` | $0.75 | $0.075 | Not recorded | $4.50 |
+| `gpt-5.3-codex` | $1.75 | $0.175 | Not recorded | $14.00 |
+| `gpt-5.2`, `gpt-5.2-codex` | $1.75 | $0.175 | Not recorded | $14.00 |
+| `gpt-5.1`, `gpt-5.1-codex`, `gpt-5.1-codex-max` | $1.25 | $0.125 | Not recorded | $10.00 |
+| `gpt-5.1-codex-mini` | $0.25 | $0.025 | Not recorded | $2.00 |
+| `gpt-5`, `gpt-5-codex` | $1.25 | $0.125 | Not recorded | $10.00 |
+| `codex-mini-latest` | $1.50 | $0.375 | Not recorded | $6.00 |
 
 `gpt-5.6` resolves to `gpt-5.6-sol`; dated model snapshots resolve to their
-base model. Missing models or incomplete token telemetry stay untracked rather
-than using a guessed fallback price.
+base model. Tycho does not treat the Codex catalog-only `gpt-reserve` name as an
+official API model ID because OpenAI does not publish an API price for it.
+Missing models, missing cache-write prices, or incomplete token telemetry stay
+untracked rather than using a guessed fallback price.
 
 The latest snapshot lives on the managed agent for O(1) startup and remote
 payload reads. Each `run_summary` memory event also receives its own copy, so a
