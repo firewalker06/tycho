@@ -28,7 +28,9 @@ module PromptQueueTest
     assert_direct_start_records_active_queue_work
     assert_spawn_failure_does_not_record_queue_delivery
     assert_native_spawn_failure_rolls_back_and_retries_safely
+    assert_pre_staging_restart_aborts_orphaned_runner_and_retries_once
     assert_exact_boundary_restart_rolls_back_failed_native_spawn_and_retries_once
+    assert_rollback_boundary_restart_removes_false_read_and_retries_once
     assert_exact_boundary_restart_accepts_successful_native_acknowledgement_once
     assert_exact_boundary_repair_failures_keep_native_gate_closed
     assert_persistent_queue_delivery_save_failure_stops_and_retries_safely
@@ -1364,6 +1366,99 @@ module PromptQueueTest
     end
   end
 
+  def assert_pre_staging_restart_aborts_orphaned_runner_and_retries_once
+    with_queue_store do |registry, workspace|
+      agent = terminal_agent(workspace)
+      agent.enqueue_prompt!(prompt: "Recover this prepared launch", source: "user", id: "prepared-restart-entry")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+      previous_codex_bin = ENV["TYCHO_CODEX_BIN"]
+      capture_path = File.join(workspace, "prepared-restart-capture.txt")
+      ENV["TYCHO_CODEX_BIN"] = queue_capture_harness(workspace)
+      ENV["TYCHO_TEST_QUEUE_CAPTURE"] = capture_path
+      outer_pid = crash_dispatch_after_outer_spawn_before_staging(store, workspace)
+
+      prepared = HQ::ManagedAgent.from_hash(
+        Array(HQ::FileStore.read_json(HQ::AGENTS_FILE, fallback: [])).fetch(0)
+      )
+      batch_id = prepared.active_queue_work.fetch("id")
+      assert(prepared.prepared_native_launch.is_a?(Hash) && prepared.pid.nil? &&
+             prepared.staged_queue_delivery.nil? && prepared.prompt_queue_claim &&
+             prepared.active_queue_work.fetch("delivery_count") == 0 &&
+             queue_read_events(prepared, batch_id).empty? && !File.exist?(capture_path),
+             "expected a crash after outer spawn to retain recoverable ownership without delivery evidence")
+
+      failed = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      failed_batch = failed.queue_work_batch(batch_id)
+      assert(failed_batch.fetch("delivery_count") == 0 && failed_batch["read_id"].to_s.empty? &&
+             queue_read_events(failed, batch_id).empty? && failed.pid.nil? &&
+             failed.last_run.status == "failed" && failed.prepared_native_launch.nil? &&
+             failed.prompt_queue_claim && failed.prompt_queue_dispatch_error&.fetch("retryable", false) == true &&
+             process_gone_and_reaped?(outer_pid) && !File.exist?(capture_path),
+             "expected restart recovery to stop the unowned gate and retain one retryable claim")
+
+      retried = store.retry_prompt_queue!(agent.key)
+      wait_for_agent_process(retried)
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      assert(File.read(capture_path).include?("TYCHO QUEUE WORK CONTRACT") &&
+             persisted.queue_work_batch(batch_id).fetch("delivery_count") == 1 &&
+             queue_read_events(persisted, batch_id).length == 1 && persisted.prompt_queue_claim.nil?,
+             "expected one safe retry after prepared-launch recovery")
+    ensure
+      previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
+      ENV.delete("TYCHO_TEST_QUEUE_CAPTURE")
+    end
+  end
+
+  def assert_rollback_boundary_restart_removes_false_read_and_retries_once
+    with_queue_store do |registry, workspace|
+      agent = terminal_agent(workspace)
+      agent.enqueue_prompt!(prompt: "Recover this interrupted rollback", source: "user", id: "rollback-restart-entry")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+      previous_codex_bin = ENV["TYCHO_CODEX_BIN"]
+      invalid_harness = File.join(workspace, "rollback-missing-interpreter")
+      File.write(invalid_harness, "#!/missing/rollback-test-interpreter\n")
+      FileUtils.chmod(0o755, invalid_harness)
+      ENV["TYCHO_CODEX_BIN"] = invalid_harness
+
+      crash_dispatch_during_rollback_before_journal(store)
+      interrupted = HQ::ManagedAgent.from_hash(
+        Array(HQ::FileStore.read_json(HQ::AGENTS_FILE, fallback: [])).fetch(0)
+      )
+      batch_id = interrupted.active_queue_work.fetch("id")
+      assert(interrupted.queue_delivery_rollback.is_a?(Hash) &&
+             interrupted.active_queue_work.fetch("delivery_count") == 0 &&
+             interrupted.active_queue_work["read_id"].to_s.empty? &&
+             queue_read_events(interrupted, batch_id).length == 1 && interrupted.pid.nil? &&
+             interrupted.last_run.status == "failed" && interrupted.prompt_queue_claim,
+             "expected interrupted rollback to keep a durable recovery phase beside the old read event")
+
+      failed = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      failed_batch = failed.queue_work_batch(batch_id)
+      assert(failed.queue_delivery_rollback.nil? && failed.staged_queue_delivery.nil? &&
+             failed_batch.fetch("delivery_count") == 0 && failed_batch["read_id"].to_s.empty? &&
+             queue_read_events(failed, batch_id).empty? && failed.pid.nil? &&
+             failed.last_run.status == "failed" && failed.prompt_queue_claim &&
+             failed.prompt_queue_dispatch_error&.fetch("retryable", false) == true,
+             "expected restart recovery to remove false read evidence and retain a retryable failed claim")
+
+      capture_path = File.join(workspace, "rollback-retry-capture.txt")
+      ENV["TYCHO_CODEX_BIN"] = queue_capture_harness(workspace)
+      ENV["TYCHO_TEST_QUEUE_CAPTURE"] = capture_path
+      retried = store.retry_prompt_queue!(agent.key)
+      wait_for_agent_process(retried)
+      persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      assert(File.read(capture_path).include?("TYCHO QUEUE WORK CONTRACT") &&
+             persisted.queue_work_batch(batch_id).fetch("delivery_count") == 1 &&
+             queue_read_events(persisted, batch_id).length == 1 && persisted.prompt_queue_claim.nil?,
+             "expected one safe retry after interrupted rollback recovery")
+    ensure
+      previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
+      ENV.delete("TYCHO_TEST_QUEUE_CAPTURE")
+    end
+  end
+
   def assert_exact_boundary_restart_accepts_successful_native_acknowledgement_once
     with_queue_store do |registry, workspace|
       agent = terminal_agent(workspace)
@@ -1592,7 +1687,8 @@ module PromptQueueTest
 
   def assert_queue_event_match_requires_read_semantics_and_batch
     [
-      ["assistant_message", true, "wrong-batch"],
+      ["assistant_message", true, nil],
+      ["user_message", true, "wrong-batch"],
       ["user_message", false, nil]
     ].each do |type, queue_read, stored_batch_id|
       with_queue_store do |_registry, workspace|
@@ -1616,7 +1712,7 @@ module PromptQueueTest
           event["event_id"] == batch.fetch("read_id") && event.dig("metadata", "queue_read") == true &&
             event.dig("metadata", "queue_work_batch_id") == batch.fetch("id")
         end
-        assert(batch.fetch("delivery_count") == 1 && matching.length == 1,
+        assert(batch.fetch("delivery_count") == 1 && matching.length == 1 && matching.first["type"] == "user_message",
                "expected repair to reject an unrelated same-ID event and keep one semantic queue read")
       end
     end
@@ -1635,6 +1731,7 @@ module PromptQueueTest
       agent.ensure_active_queue_work_read!
       matching = memory.events.select { |candidate| candidate["event_id"] == first.fetch(:read_id) }
       assert(batch.fetch("delivery_count") == 1 && matching.length == 1 &&
+             matching.first["type"] == "user_message" &&
              matching.first.dig("metadata", "queue_read") == true &&
              matching.first.dig("metadata", "queue_work_batch_id") == batch.fetch("id"),
              "expected repair to keep one semantic event for a duplicated canonical ID")
@@ -2004,6 +2101,49 @@ module PromptQueueTest
     _waited_pid, status = Process.wait2(child_pid)
     assert(status.exitstatus == 86,
            "expected the first Tycho process to stop after the agent save and before the journal rewrite")
+  end
+
+  def crash_dispatch_after_outer_spawn_before_staging(store, workspace)
+    pid_path = File.join(workspace, "prepared-outer-pid.txt")
+    child_pid = Process.fork do
+      original_spawn = HQ::ManagedAgent.instance_method(:spawn)
+      HQ::ManagedAgent.define_method(:spawn) do |*args, **options|
+        pid = original_spawn.bind_call(self, *args, **options)
+        File.write(pid_path, pid.to_s)
+        Process.exit!(89)
+      end
+      store.load
+      Process.exit!(87)
+    rescue StandardError
+      Process.exit!(88)
+    end
+    _waited_pid, status = Process.wait2(child_pid)
+    assert(status.exitstatus == 89,
+           "expected the first Tycho process to stop after outer spawn and before delivery staging")
+    Integer(File.read(pid_path), 10)
+  end
+
+  def crash_dispatch_during_rollback_before_journal(store)
+    child_pid = Process.fork do
+      original_update = HQ::AgentEventJournal.instance_method(:update)
+      update_count = 0
+      HQ::AgentEventJournal.define_method(:update) do |&operation|
+        update_count += 1
+        original_update.bind_call(self) do |events|
+          result = operation.call(events)
+          Process.exit!(90) if update_count == 2
+
+          result
+        end
+      end
+      store.load
+      Process.exit!(87)
+    rescue StandardError
+      Process.exit!(88)
+    end
+    _waited_pid, status = Process.wait2(child_pid)
+    assert(status.exitstatus == 90,
+           "expected the first Tycho process to stop after rollback save and before journal removal")
   end
 
   def process_gone_and_reaped?(pid)

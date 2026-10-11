@@ -724,11 +724,43 @@ module HQ
       last_run.metadata = (last_run.metadata || {}).merge("queue_delivery_staged" => metadata)
     end
 
+    def prepare_native_launch!(run)
+      metadata = (run.metadata || {}).dup
+      metadata["native_launch_prepared"] = { "run_id" => run.run_id }
+      run.metadata = metadata
+    end
+
+    def prepared_native_launch
+      last_run&.metadata&.fetch("native_launch_prepared", nil)
+    end
+
+    def begin_queue_delivery_rollback!(metadata)
+      return unless last_run
+
+      last_run.metadata = (last_run.metadata || {}).merge("queue_delivery_rollback" => metadata)
+    end
+
+    def queue_delivery_rollback
+      last_run&.metadata&.fetch("queue_delivery_rollback", nil)
+    end
+
+    def complete_queue_delivery_rollback!
+      return unless last_run
+
+      metadata = (last_run.metadata || {}).dup
+      metadata.delete("queue_delivery_rollback")
+      metadata.delete("queue_delivery_staged")
+      metadata.delete("native_launch_prepared")
+      last_run.metadata = metadata
+    end
+
     def acknowledge_native_start!
       return unless last_run
 
       metadata = (last_run.metadata || {}).dup
       metadata.delete("queue_delivery_staged")
+      metadata.delete("native_launch_prepared")
+      metadata.delete("queue_delivery_rollback")
       metadata["native_start_acknowledged"] = true
       last_run.metadata = metadata
     end
@@ -745,6 +777,39 @@ module HQ
       last_run&.metadata&.fetch("queue_delivery_staged", nil)
     end
 
+    def recover_prepared_native_launch!(native_started:, native_failed:)
+      run = last_run
+      prepared = prepared_native_launch
+      return false unless prepared.is_a?(Hash)
+      return false if staged_queue_delivery.is_a?(Hash) || queue_delivery_rollback.is_a?(Hash)
+
+      adopt_prepared_runner_pid!(run)
+      status_path = run_status_file_path(run.run_id)
+      native_started_path = run_native_started_file_path(run.run_id)
+      native_release_path = run_native_release_file_path(run.run_id)
+      native_owned_path = run_native_owned_file_path(run.run_id)
+
+      if File.file?(native_started_path)
+        acknowledge_native_start!
+        native_started.call(run)
+        return true
+      end
+
+      if File.file?(native_release_path) && @pid && process_group_alive?
+        File.write(native_owned_path, run.run_id) unless File.file?(native_owned_path)
+        if wait_for_native_start(native_started_path, status_path)
+          acknowledge_native_start!
+          native_started.call(run)
+          return true
+        end
+      end
+
+      settle_failed_start!(run, NativeStartError.new("Native agent harness did not start"),
+                           before_spawn: nil, status_path:)
+      native_failed.call(run)
+      true
+    end
+
     def recover_staged_native_launch!(native_started:, native_failed:)
       run = last_run
       staged = staged_queue_delivery
@@ -753,6 +818,7 @@ module HQ
       status_path = run_status_file_path(run.run_id)
       native_started_path = run_native_started_file_path(run.run_id)
       native_release_path = run_native_release_file_path(run.run_id)
+      native_owned_path = run_native_owned_file_path(run.run_id)
 
       if File.file?(native_started_path)
         acknowledge_native_start!
@@ -767,6 +833,7 @@ module HQ
         return true
       end
 
+      File.write(native_owned_path, run.run_id) unless File.file?(native_owned_path)
       File.write(native_release_path, run.run_id) unless File.file?(native_release_path)
       if wait_for_native_start(native_started_path, status_path)
         acknowledge_native_start!
@@ -1273,7 +1340,10 @@ module HQ
       )
       memory_store.append_run_started!(run_id: run.run_id, created_at: @started_at)
       record_run!(run)
+      prepare_native_launch!(run)
       before_spawn&.call(run)
+      native_owned_path = run_native_owned_file_path(run_id)
+      FileUtils.rm_f(native_owned_path)
       @pid = spawn(
         external_process_environment(launch.fetch(:env)).merge(
           "TYCHO_STATUS_PATH" => status_path,
@@ -1287,19 +1357,23 @@ module HQ
           "TYCHO_RUN_ID" => run.run_id,
           "TYCHO_SLEEP_INCIDENT_PATH" => sleep_incident_file_path(run.run_id),
           "TYCHO_NATIVE_RELEASE_PATH" => native_release_path,
-          "TYCHO_NATIVE_STARTED_PATH" => native_started_path
+          "TYCHO_NATIVE_STARTED_PATH" => native_started_path,
+          "TYCHO_NATIVE_OWNED_PATH" => native_owned_path,
+          "TYCHO_LAUNCH_OWNER_PID" => Process.pid.to_s
         ),
         current_ruby_executable, "--disable-gems", "-e", agent_runner_script, *launch.fetch(:command),
         chdir: @workspace, out: log_file, err: %i[child out], pgroup: true
       )
-      delivery_callback = before_native_spawn || after_spawn
-      delivery = delivery_callback ? delivery_callback.call(run) : ensure_active_queue_work_read!
       delivery_rolled_back = false
       native_acknowledged = false
+      delivery_callback = before_native_spawn || after_spawn
+      delivery = delivery_callback ? delivery_callback.call(run) : ensure_active_queue_work_read!
+      # Keep the prepared phase durable with the outer PID until delivery staging is complete.
+      # The ownership file then lets the gated runner survive a parent restart.
+      before_spawn&.call(run)
+      File.write(native_owned_path, run.run_id)
       File.write(native_release_path, run.run_id)
       unless wait_for_native_start(native_started_path, status_path)
-        delivery_rolled_back = true
-        native_spawn_failed&.call(run, delivery)
         raise NativeStartError, "Native agent harness did not start"
       end
       native_acknowledged = true
@@ -1319,10 +1393,12 @@ module HQ
     rescue StandardError => e
       log_file&.close rescue nil
       if defined?(run) && run
+        settle_failed_start!(run, e, before_spawn: nil, status_path:)
         if defined?(delivery) && delivery && !native_acknowledged && !delivery_rolled_back
           native_spawn_failed&.call(run, delivery)
+          delivery_rolled_back = true
         end
-        settle_failed_start!(run, e, before_spawn:, status_path:)
+        before_spawn&.call(run)
       end
       raise
     end
@@ -1361,6 +1437,7 @@ module HQ
       FileUtils.rm_f(run_pid_file_path(last_run.run_id)) if last_run&.run_id
       FileUtils.rm_f(run_native_release_file_path(last_run.run_id)) if last_run&.run_id
       FileUtils.rm_f(run_native_started_file_path(last_run.run_id)) if last_run&.run_id
+      FileUtils.rm_f(run_native_owned_file_path(last_run.run_id)) if last_run&.run_id
       finalize_latest_run!
       HQ.logger.info("Agent") { "#{@key} exited (code=#{@last_exit_code})" }
       @pid = nil
@@ -1382,6 +1459,7 @@ module HQ
       FileUtils.rm_f(run_pid_file_path(last_run.run_id))
       FileUtils.rm_f(run_native_release_file_path(last_run.run_id))
       FileUtils.rm_f(run_native_started_file_path(last_run.run_id))
+      FileUtils.rm_f(run_native_owned_file_path(last_run.run_id))
       @pid = nil
       finalize_latest_run!
       @pid = nil
@@ -1506,6 +1584,7 @@ module HQ
         *@runs.filter_map { |run| run_pid_file_path(run.run_id) unless run.run_id.to_s.empty? },
         *@runs.filter_map { |run| run_native_release_file_path(run.run_id) unless run.run_id.to_s.empty? },
         *@runs.filter_map { |run| run_native_started_file_path(run.run_id) unless run.run_id.to_s.empty? },
+        *@runs.filter_map { |run| run_native_owned_file_path(run.run_id) unless run.run_id.to_s.empty? },
         *@runs.filter_map { |run| sleep_incident_file_path(run.run_id) unless run.run_id.to_s.empty? },
         last_message_file_path,
         legacy_status_file_path,
@@ -1864,7 +1943,8 @@ module HQ
 
     def queue_read_event?(events, batch:, read_id:)
       matching = Array(events).select { |event| event["event_id"].to_s == read_id.to_s }
-      matching.length == 1 && matching.first.dig("metadata", "queue_read") == true &&
+      matching.length == 1 && matching.first["type"] == "user_message" &&
+        matching.first.dig("metadata", "queue_read") == true &&
         matching.first.dig("metadata", "queue_work_batch_id").to_s == batch.fetch("id").to_s
     end
 
@@ -2130,6 +2210,11 @@ module HQ
       derived_log_path("run-#{token}.native-started")
     end
 
+    def run_native_owned_file_path(run_id)
+      token = Digest::SHA256.hexdigest(run_id.to_s)[0, 24]
+      derived_log_path("run-#{token}.native-owned")
+    end
+
     def sleep_incident_file_path(run_id)
       token = Digest::SHA256.hexdigest(run_id.to_s)[0, 24]
       derived_log_path("run-#{token}.sleep-incident.json")
@@ -2151,42 +2236,57 @@ module HQ
           nil
         end
         release_path = ENV["TYCHO_NATIVE_RELEASE_PATH"].to_s
+        owned_path = ENV["TYCHO_NATIVE_OWNED_PATH"].to_s
+        launch_owner_pid = ENV["TYCHO_LAUNCH_OWNER_PID"].to_i
+        launch_abandoned = false
         until release_path.empty? || File.exist?(release_path)
-          sleep 0.01
-        end
-        status = begin
-          recorder_path = ENV["TYCHO_STREAM_RECORDER_PATH"].to_s
-          if !recorder_path.empty? && !ENV["TYCHO_MEMORY_PATH"].to_s.empty?
-            require recorder_path
-            HQ::AgentStreamRecorder.run(
-              command: ARGV,
-              raw_log_path: ENV.fetch("TYCHO_RAW_LOG_PATH"),
-              memory_path: ENV.fetch("TYCHO_MEMORY_PATH"),
-              agent_type: ENV.fetch("TYCHO_AGENT_TYPE"),
-              run_id: ENV.fetch("TYCHO_RUN_ID"),
-              incident_path: ENV["TYCHO_SLEEP_INCIDENT_PATH"],
-              native_started_path: ENV["TYCHO_NATIVE_ACK_DELEGATED"] == "1" ? nil :
-                ENV["TYCHO_NATIVE_STARTED_PATH"]
-            )
-          else
-            result = system(*ARGV)
-            child = $?
-            if result.nil?
-              warn "failed to execute \#{ARGV.first.inspect} (exit 127)"
-              127
-            elsif child&.signaled?
-              128 + child.termsig.to_i
-            else
-              child ? child.exitstatus.to_i : (result ? 0 : 1)
+          unless owned_path.empty? || File.exist?(owned_path)
+            begin
+              Process.kill(0, launch_owner_pid)
+            rescue Errno::ESRCH, Errno::EPERM
+              launch_abandoned = true
+              break
             end
           end
-        rescue SystemCallError => e
-          warn e.message
-          127
-        rescue StandardError => e
-          warn e.message
-          1
+          sleep 0.01
         end
+        status = if launch_abandoned
+                   125
+                 else
+                   begin
+                     recorder_path = ENV["TYCHO_STREAM_RECORDER_PATH"].to_s
+                     if !recorder_path.empty? && !ENV["TYCHO_MEMORY_PATH"].to_s.empty?
+                       require recorder_path
+                       HQ::AgentStreamRecorder.run(
+                         command: ARGV,
+                         raw_log_path: ENV.fetch("TYCHO_RAW_LOG_PATH"),
+                         memory_path: ENV.fetch("TYCHO_MEMORY_PATH"),
+                         agent_type: ENV.fetch("TYCHO_AGENT_TYPE"),
+                         run_id: ENV.fetch("TYCHO_RUN_ID"),
+                         incident_path: ENV["TYCHO_SLEEP_INCIDENT_PATH"],
+                         native_started_path: ENV["TYCHO_NATIVE_ACK_DELEGATED"] == "1" ? nil :
+                           ENV["TYCHO_NATIVE_STARTED_PATH"]
+                       )
+                     else
+                       result = system(*ARGV)
+                       child = $?
+                       if result.nil?
+                         warn "failed to execute \#{ARGV.first.inspect} (exit 127)"
+                         127
+                       elsif child&.signaled?
+                         128 + child.termsig.to_i
+                       else
+                         child ? child.exitstatus.to_i : (result ? 0 : 1)
+                       end
+                     end
+                   rescue SystemCallError => e
+                     warn e.message
+                     127
+                   rescue StandardError => e
+                     warn e.message
+                     1
+                   end
+                 end
         begin
           path = ENV.fetch("TYCHO_STATUS_PATH")
           temporary_path = "\#{path}.tmp-\#{Process.pid}"
@@ -2237,6 +2337,30 @@ module HQ
       end
     end
 
+    def adopt_prepared_runner_pid!(run, timeout: 1.0)
+      return @pid if @pid && process_group_alive?
+
+      path = run_pid_file_path(run.run_id)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+      loop do
+        if File.file?(path)
+          candidate = Integer(File.read(path).strip, 10)
+          if candidate.positive? && ProcessLiveness.alive?(candidate) && own_process_group?(candidate)
+            @pid = candidate
+            return candidate
+          end
+        end
+        break if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+        sleep 0.01
+      rescue ArgumentError, Errno::ENOENT
+        break if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+        sleep 0.01
+      end
+      nil
+    end
+
     def settle_failed_start!(run, error, before_spawn:, status_path:)
       failed_pid = @pid
       if failed_pid
@@ -2265,9 +2389,11 @@ module HQ
       }
       failure_metadata["spawn_error"] = error.message if error.is_a?(SystemCallError)
       run.metadata = (run.metadata || {}).merge(failure_metadata)
+      run.metadata.delete("native_launch_prepared")
       FileUtils.rm_f(run_pid_file_path(run.run_id))
       FileUtils.rm_f(run_native_release_file_path(run.run_id))
       FileUtils.rm_f(run_native_started_file_path(run.run_id))
+      FileUtils.rm_f(run_native_owned_file_path(run.run_id))
       before_spawn&.call(run)
       if @usage_metrics_store
         UsageMetrics.record_run(agent: self, run:, usage_entries: [], metrics_store: @usage_metrics_store)

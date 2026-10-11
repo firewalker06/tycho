@@ -380,7 +380,7 @@ module HQ
         "metadata" => event_metadata
       }
       journal.upsert(event, event_id: read_id) do |existing|
-        existing.dig("metadata", "queue_read") == true &&
+        existing["type"] == "user_message" && existing.dig("metadata", "queue_read") == true &&
           existing.dig("metadata", "queue_work_batch_id").to_s == batch_id.to_s
       end.last
     end
@@ -404,7 +404,8 @@ module HQ
       event_metadata["read_label"] = "Read queue"
       event_metadata["queue_work_batch_id"] = batch_id.to_s
       matching = Array(events).select { |event| event["event_id"].to_s == read_id.to_s }
-      valid = matching.length == 1 && matching.first.dig("metadata", "queue_read") == true &&
+      valid = matching.length == 1 && matching.first["type"] == "user_message" &&
+        matching.first.dig("metadata", "queue_read") == true &&
         matching.first.dig("metadata", "queue_work_batch_id").to_s == batch_id.to_s
       return false if valid
 
