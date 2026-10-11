@@ -84,8 +84,10 @@ module RemoteUIContextPressureTest
           agents: [{ key: "source" }, { key: "unrelated" }],
           activityAgents: new Map([["source", { key: "source" }], ["unrelated", { key: "unrelated" }]]),
           archivedAgentKeys: new Set(),
+          archivedAgentCatalogConfirmedKeys: new Set(),
           agentDetails: { source: { key: "source", running: true } },
           activityRevision: "old",
+          resourceMutationGeneration: 0,
         };
         let request = null;
         let route = null;
@@ -135,6 +137,7 @@ module RemoteUIContextPressureTest
         const keys = state.agents.map((agent) => agent.key);
         if (keys.length !== 2 || keys[0] !== "replacement" || keys[1] !== "unrelated" ||
             state.activityAgents.has("source") || !state.archivedAgentKeys.has("source") ||
+            state.resourceMutationGeneration !== 1 ||
             state.agentDetails.source?.archived !== true || state.agentDetails.source?.running !== false ||
             route?.key !== "replacement") {
           throw new Error(`successful replacement left stale active state: ${JSON.stringify({ keys, route })}`);
