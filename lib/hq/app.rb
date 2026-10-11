@@ -1155,13 +1155,13 @@ def selected_screen_items
           errors["restore_schedule"] = e.message
         end
       end
-      if errors.empty? && !target.pending_prompts?
-        @agent_store.clear_context_replacement_recovery!(target.key)
-      else
-        @agent_store.record_context_replacement_recovery!(target.key, source_key: source.key,
-                                                          pending_actions: errors.keys, errors:,
-                                                          queue_work_retained: target.pending_prompts?)
-        HQ.logger.warn("Agent") { "Context replacement archive-rejection recovery needs retry: #{errors.values.join("; ")}" }
+      recovered = @agent_store.complete_context_replacement_recovery!(
+        target.key, source_key: source.key, errors:
+      )
+      if recovered.context_replacement_recovery
+        detail = recovered.context_replacement_recovery.fetch("errors", {}).values.join("; ")
+        detail = "retained replacement queue work requires explicit action" if detail.empty?
+        HQ.logger.warn("Agent") { "Context replacement archive-rejection recovery needs retry: #{detail}" }
       end
     end
 

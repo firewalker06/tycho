@@ -420,9 +420,11 @@ module HQ
       end
     end
 
-    def start_target!(target, agents, run_metadata:)
+    def start_target!(target, agents, run_metadata:, delegation_stamp: :current)
+      raise ArgumentError, "Context replacement recovery is pending" if target.context_replacement_recovery
+
       options = {}
-      stamp = @delegation_coordinator.ownership_stamp(target.key)
+      stamp = delegation_stamp == :current ? @delegation_coordinator.ownership_stamp(target.key) : delegation_stamp
       options[:delegation_stamp] = stamp if stamp
       options[:run_metadata] = run_metadata if run_metadata
       if target.method(:start!).parameters.any? { |_kind, name| name == :before_spawn }
@@ -468,14 +470,48 @@ module HQ
     def record_context_replacement_recovery!(key, source_key:, pending_actions:, errors:, queue_work_retained: false)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = find_agent_in!(agents, key)
-        target.record_context_replacement_recovery!(source_key:, pending_actions:, errors:, queue_work_retained:)
+        target.record_context_replacement_recovery!(
+          source_key:, pending_actions:, errors:,
+          queue_work_retained: queue_work_retained || target.pending_prompts?
+        )
         target
       end
     end
 
-    def clear_context_replacement_recovery!(key)
+    def complete_context_replacement_recovery!(key, source_key:, errors:)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = find_agent_in!(agents, key)
+        raise ArgumentError, "No context replacement recovery is pending" unless target.context_replacement_recovery
+
+        pending_errors = errors.transform_keys(&:to_s).transform_values(&:to_s)
+        if target.running? && !pending_errors.key?("stop_replacement")
+          pending_errors["stop_replacement"] = "Replacement is still running"
+        end
+        if pending_errors.empty? && !target.pending_prompts?
+          target.clear_context_replacement_recovery!
+        else
+          target.record_context_replacement_recovery!(
+            source_key:, pending_actions: pending_errors.keys, errors: pending_errors,
+            queue_work_retained: target.pending_prompts?
+          )
+        end
+        target
+      end
+    end
+
+    def clear_context_replacement_recovery_if_safe!(key)
+      mutate(dispatch_prompt_queues: false) do |agents, _events|
+        target = find_agent_in!(agents, key)
+        recovery = target.context_replacement_recovery
+        raise ArgumentError, "No context replacement recovery is pending" unless recovery
+        if Array(recovery["pending_actions"]).any?
+          raise ArgumentError, "Recovery safety actions are still pending"
+        end
+        raise ArgumentError, "Replacement is still running" if target.running?
+        if target.pending_prompts?
+          raise ArgumentError, "Remove or process retained replacement queue work before clearing recovery"
+        end
+
         target.clear_context_replacement_recovery!
         target
       end
@@ -1259,12 +1295,7 @@ module HQ
       }
       accepted = begin
         stamp = Array(claim["entries"]).last&.fetch("authority", nil)
-        options = { run_metadata: }
-        options[:delegation_stamp] = stamp if stamp
-        if agent.method(:start!).parameters.any? { |_kind, name| name == :before_spawn }
-          options[:before_spawn] = ->(_run) { save_unlocked(agents) }
-        end
-        agent.start!(**options)
+        start_target!(agent, agents, run_metadata:, delegation_stamp: stamp)
       rescue StandardError => e
         agent.fail_prompt_queue_dispatch!(dispatch_failure_message(e.message))
         save_unlocked(agents)

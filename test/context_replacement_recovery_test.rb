@@ -13,12 +13,109 @@ module ContextReplacementRecoveryTest
 
   def run!
     with_stubbed_agent_start do
+      assert_remote_prompt_start_is_inhibited
       assert_remote_recovery_chain_inhibits_dispatch_and_retries
       assert_clear_rejects_running_replacement_and_retry_stops_it
+      assert_clear_observes_post_marker_and_concurrent_queue_arrival
+      assert_remote_completion_observes_concurrent_queue_arrival
       assert_tui_recovery_chain_inhibits_dispatch
+      assert_tui_completion_observes_concurrent_queue_arrival
       assert_scheduler_tick_inhibits_pending_recovery
     end
     puts "context_replacement_recovery_test: ok"
+  end
+
+  def assert_remote_prompt_start_is_inhibited
+    with_temp_runtime do |dir|
+      service = HQ::RemoteService.new(registry: write_registry(dir))
+      target_payload = service.create_agent(agent_attributes("Prompt start target"))
+      store = service.instance_variable_get(:@agent_store)
+      store.record_context_replacement_recovery!(
+        target_payload[:key], source_key: "source-agent", pending_actions: ["restore_schedule"],
+        errors: { "restore_schedule" => "restore failed" }
+      )
+
+      assert_raises(HQ::RemoteServer::Error, "expected Remote start:true to honor recovery inhibition") do
+        service.submit_prompt(target_payload[:key], "prompt" => "Do not launch", "start" => true)
+      end
+      target = load_without_dispatch(store).find { |agent| agent.key == target_payload[:key] }
+      assert(target.run_count.zero? && target.context_replacement_recovery,
+             "expected the shared start boundary not to launch a recovery-pending replacement")
+      events = HQ::AgentMemory.new(target).events
+      assert(events.none? { |event| event["content"] == "Do not launch" },
+             "expected rejected prompt acceptance to roll back with the inhibited launch")
+
+      store.update_agent!(target.key) do |agent|
+        agent.enqueue_prompt!(prompt: "Explicit queued work", source: "user")
+      end
+      queued = load_without_dispatch(store).find { |agent| agent.key == target.key }
+      entry_ids = queued.visible_prompt_queue_entries.map { |entry| entry.fetch("id") }
+      store.process_prompt_queue_entries!(target.key, entry_ids:, expected_entry_ids: entry_ids)
+      queued = load_without_dispatch(store).find { |agent| agent.key == target.key }
+      assert(queued.run_count.zero? && queued.context_replacement_recovery,
+             "expected explicit queue processing to use the same inhibited start boundary")
+    end
+  end
+
+  def assert_clear_observes_post_marker_and_concurrent_queue_arrival
+    with_temp_runtime do |dir|
+      service = HQ::RemoteService.new(registry: write_registry(dir))
+      source_payload = service.create_agent(agent_attributes("Clear source"))
+      target_payload = service.create_agent(agent_attributes("Clear target"))
+      store = service.instance_variable_get(:@agent_store)
+      store.record_context_replacement_recovery!(
+        target_payload[:key], source_key: source_payload[:key], pending_actions: [], errors: {},
+        queue_work_retained: false
+      )
+      entered, release = gate_store_call_before(store, :clear_context_replacement_recovery_if_safe!)
+      clear_thread = Thread.new do
+        begin
+          service.clear_context_replacement_recovery(target_payload[:key])
+        rescue StandardError => e
+          e
+        end
+      end
+      entered.pop
+      store.update_agent!(target_payload[:key]) do |agent|
+        agent.enqueue_prompt!(prompt: "Concurrent retained work", source: "user")
+      end
+      release << true
+      error = clear_thread.value
+
+      target = load_without_dispatch(store).find { |agent| agent.key == target_payload[:key] }
+      assert(error.is_a?(HQ::RemoteServer::Error) && error.status == 409,
+             "expected atomic Clear to reject queue work that arrived after a false retained snapshot")
+      assert(target.pending_prompts? && target.context_replacement_recovery,
+             "expected unsafe Clear to retain both current queue work and the recovery marker")
+    end
+  end
+
+  def assert_remote_completion_observes_concurrent_queue_arrival
+    with_temp_runtime do |dir|
+      service = HQ::RemoteService.new(registry: write_registry(dir))
+      source_payload = service.create_agent(agent_attributes("Remote completion source"))
+      target_payload = service.create_agent(agent_attributes("Remote completion target"))
+      store = service.instance_variable_get(:@agent_store)
+      source = load_without_dispatch(store).find { |agent| agent.key == source_payload[:key] }
+      target = load_without_dispatch(store).find { |agent| agent.key == target_payload[:key] }
+      store.record_context_replacement_recovery!(
+        target.key, source_key: source.key, pending_actions: [], errors: {}, queue_work_retained: false
+      )
+      entered, release = gate_store_call_before(store, :complete_context_replacement_recovery!)
+      recovery_thread = Thread.new do
+        service.send(:recover_context_replacement_archive_rejection!, source, target, pending_actions: [])
+      end
+      entered.pop
+      store.update_agent!(target.key) { |agent| agent.enqueue_prompt!(prompt: "Remote race work", source: "user") }
+      release << true
+      recovery_thread.value
+
+      recovered = load_without_dispatch(store).find { |agent| agent.key == target.key }
+      assert(recovered.pending_prompts? && recovered.context_replacement_recovery,
+             "expected Remote completion to retain inhibition after concurrent queue arrival")
+      assert(recovered.context_replacement_recovery["queue_work_retained"],
+             "expected Remote completion to refresh retained-work state from the current target")
+    end
   end
 
   def assert_clear_rejects_running_replacement_and_retry_stops_it
@@ -151,6 +248,31 @@ module ContextReplacementRecoveryTest
     end
   end
 
+  def assert_tui_completion_observes_concurrent_queue_arrival
+    with_temp_runtime do |dir|
+      service = HQ::RemoteService.new(registry: write_registry(dir))
+      source_payload = service.create_agent(agent_attributes("TUI completion source"))
+      target_payload = service.create_agent(agent_attributes("TUI completion target"))
+      store = service.instance_variable_get(:@agent_store)
+      source = load_without_dispatch(store).find { |agent| agent.key == source_payload[:key] }
+      target = load_without_dispatch(store).find { |agent| agent.key == target_payload[:key] }
+      app = HQ::App.allocate
+      app.instance_variable_set(:@agent_store, store)
+      entered, release = gate_store_call_before(store, :complete_context_replacement_recovery!)
+      recovery_thread = Thread.new { app.send(:recover_context_pressure_archive_rejection!, source, target) }
+      entered.pop
+      store.update_agent!(target.key) { |agent| agent.enqueue_prompt!(prompt: "TUI race work", source: "user") }
+      release << true
+      recovery_thread.value
+
+      recovered = load_without_dispatch(store).find { |agent| agent.key == target.key }
+      assert(recovered.pending_prompts? && recovered.context_replacement_recovery,
+             "expected TUI completion to retain inhibition after concurrent queue arrival")
+      assert(recovered.context_replacement_recovery["queue_work_retained"],
+             "expected TUI completion to refresh retained-work state from the current target")
+    end
+  end
+
   def assert_scheduler_tick_inhibits_pending_recovery
     with_temp_runtime do |dir|
       now = Time.new(2026, 10, 11, 9, 0, 0, "+07:00")
@@ -188,6 +310,18 @@ module ContextReplacementRecoveryTest
 
   def load_without_dispatch(store)
     store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+  end
+
+  def gate_store_call_before(store, method_name)
+    entered = Queue.new
+    release = Queue.new
+    original = store.method(method_name)
+    store.define_singleton_method(method_name) do |*args, **kwargs|
+      entered << true
+      release.pop
+      original.call(*args, **kwargs)
+    end
+    [entered, release]
   end
 
   def write_registry(dir, schedule: false)
