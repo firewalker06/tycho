@@ -426,7 +426,29 @@ module HQ
       if target.method(:start!).parameters.any? { |_kind, name| name == :before_spawn }
         options[:before_spawn] = ->(_run) { save_unlocked(agents) }
       end
+      if target.method(:start!).parameters.any? { |_kind, name| name == :after_spawn }
+        options[:after_spawn] = ->(_run) { persist_spawned_queue_read!(target, agents) }
+      end
       target.start!(**options)
+    end
+
+    def persist_spawned_queue_read!(target, agents)
+      return unless target.active_queue_work
+
+      attempts = 0
+      begin
+        attempts += 1
+        queue_work = Marshal.load(Marshal.dump(target.queue_work))
+        FileTransaction.run([AGENTS_FILE, target.memory_path]) do |transaction|
+          transaction.on_rollback { target.restore_queue_work!(queue_work) }
+          target.ensure_active_queue_work_read!
+          save_unlocked(agents)
+        end
+      rescue IOError
+        retry if attempts < 2
+
+        raise
+      end
     end
 
     def accept_delegation_prompt!(child, owner:, parent_key: nil, now: Time.now)
@@ -1168,6 +1190,9 @@ module HQ
         options[:delegation_stamp] = stamp if stamp
         if agent.method(:start!).parameters.any? { |_kind, name| name == :before_spawn }
           options[:before_spawn] = ->(_run) { save_unlocked(agents) }
+        end
+        if agent.method(:start!).parameters.any? { |_kind, name| name == :after_spawn }
+          options[:after_spawn] = ->(_run) { persist_spawned_queue_read!(agent, agents) }
         end
         agent.start!(**options)
       rescue StandardError => e

@@ -19,14 +19,20 @@ The memory rebuild gap has a separate cause. `AgentChatLog#rebuild_memory_from_r
 
 ## Fix
 
-1. Before a native process starts, `ManagedAgent#start!` now makes sure that an active queue-work batch has durable delivery metadata and one matching `Read queue` event. This check runs after executable validation, so a missing harness does not create false delivery evidence.
-2. `record_queue_read!` now restores a missing event when a batch keeps its `read_id`. It still uses the existing event ID, so repair is idempotent.
-3. Memory rebuild now merges existing queue-read events into the rebuilt journal in timestamp order. The merge and replacement use one exclusive journal lock, so a concurrent queue read cannot fall between the read and write operations. A repeated rebuild keeps one event with the same event ID.
+1. `ManagedAgent#start!` records delivery only after process creation succeeds. A preflight or spawn failure creates no delivery count, read ID, or Conversation evidence.
+2. Each batch has one stable read identity. The agent store commits the batch update and journal event in one rollback-capable file transaction. A transient save failure restores both files and in-memory batch state before one immediate retry.
+3. Event repair preserves the existing read ID and delivery count. A matching event must use that ID, have `queue_read: true`, and name the same batch. A conflicting event with the same ID is replaced by the canonical queue-read event.
+4. Automatic queue dispatch and Direct Start use the same post-spawn accounting path. The queue contract is built before launch, but durable read evidence is not created for an attempted launch.
+5. Memory rebuild merges existing queue-read events into the rebuilt journal in timestamp order. The merge, replacement, and queue-read upsert use the journal's exclusive lock. A concurrent append cannot be lost, and a repeated rebuild keeps one event with the same event ID.
 
 ## Regression coverage
 
-- A direct Start fixture begins with an active batch that has zero deliveries. The test verifies that the native prompt contains the contract, the batch gets delivery count 1 and a `read_id`, and Conversation gets one matching queue-read event.
-- A rebuild fixture starts with one delivered batch and one queue-read event. Two rebuilds keep exactly one event with the original event ID and batch ID.
+- A capture harness records the argument that the native executable receives. The test verifies that this argument contains the queue contract, then checks one matching batch and journal identity.
+- A deterministic post-preflight spawn failure leaves no delivery evidence. A successful retry records one delivery with the stable batch-derived identity.
+- A deterministic first save failure rolls back and retries the transaction. The final batch and journal contain one matching identity and one delivery.
+- A missing-event repair keeps the existing read ID and delivery count.
+- Same-ID assistant events, non-read events, and events for another batch do not satisfy the semantic match.
+- A barrier-controlled rebuild and append race keeps one queue-read event. Two sequential rebuilds also keep the original event ID and batch ID.
 
 ## Evidence limits
 

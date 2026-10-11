@@ -586,7 +586,7 @@ module HQ
       recovery_metadata = circuit_breaker_recovery_metadata(entries, claim:, batch:)
       metadata["circuit_breaker_recovery"] = recovery_metadata if recovery_metadata
       if batch
-        record_queue_read!(batch, created_at: self.class.parse_time(claim["claimed_at"]) || Time.now, metadata:)
+        return false
       else
         add_user_message!(prompt, attachments:, metadata:)
       end
@@ -638,11 +638,11 @@ module HQ
     def record_queue_read!(batch, created_at: Time.now, metadata: nil)
       entries = Array(batch["entries"])
       read_id = batch["read_id"].to_s
-      first_read = read_id.empty?
-      read_id = "queue-read:#{SecureRandom.uuid}" if first_read
+      read_id = canonical_queue_read_id(batch) if read_id.empty?
       memory = AgentMemory.new(self)
-      event_exists = !first_read && memory.events.any? { |event| event["event_id"].to_s == read_id }
-      mark_queue_work_read!(batch, read_id:)
+      delivered = batch.fetch("delivery_count", 0).to_i.positive?
+      mark_queue_work_read!(batch, read_id:) unless delivered
+      batch["read_id"] ||= read_id
 
       content = QueueWork.contract(batch, agent_key: @key)
       attachments = consolidated_prompt_queue_attachments(entries)
@@ -656,15 +656,14 @@ module HQ
         "queue_work_state" => batch["state"],
         "queue_work_projection" => QueueWork.projection(batch)
       )
-      unless event_exists
-        memory.append_queue_read!(
-          content,
-          read_id:,
-          created_at:,
-          attachments:,
-          metadata: event_metadata
-        )
-      end
+      event_changed = memory.ensure_queue_read!(
+        content,
+        read_id:,
+        batch_id: batch.fetch("id"),
+        created_at:,
+        attachments:,
+        metadata: event_metadata
+      )
       {
         entries:,
         read_entries:,
@@ -672,7 +671,7 @@ module HQ
         attachments:,
         read_id:,
         batch: QueueWork.payload(batch),
-        idempotent: event_exists
+        idempotent: delivered && !event_changed
       }
     end
 
@@ -682,10 +681,16 @@ module HQ
 
       read_id = batch["read_id"].to_s
       recorded = batch.fetch("delivery_count", 0).to_i.positive? && !read_id.empty? &&
-        AgentMemory.new(self).events.any? { |event| event["event_id"].to_s == read_id }
+        queue_read_event?(AgentMemory.new(self).events, batch:, read_id:)
       return nil if recorded
 
-      record_queue_read!(batch, created_at:)
+      result = record_queue_read!(batch, created_at:, metadata: active_queue_work_read_metadata)
+      @prompt_queue_claim["message_appended"] = true if @prompt_queue_claim&.fetch("id", nil) == batch["id"]
+      result
+    end
+
+    def restore_queue_work!(value)
+      @queue_work = QueueWork.normalize(value, entry_normalizer: method(:normalize_prompt_queue_entry))
     end
 
     def include_pending_queue_work_with_user_input!(claimed_at: Time.now)
@@ -1106,7 +1111,7 @@ module HQ
       @unread = false
     end
 
-    def start!(delegation_stamp: nil, run_metadata: nil, before_spawn: nil)
+    def start!(delegation_stamp: nil, run_metadata: nil, before_spawn: nil, after_spawn: nil)
       return if running?
 
       finalize_previous_run!
@@ -1133,13 +1138,6 @@ module HQ
           run_metadata:
         )
       end
-      if ensure_active_queue_work_read!
-        prompt_text = prompt_for_execution(response_style: response_style_text, include_hidden_guidance: false)
-        execution = build_command
-        command = execution.fetch(:command)
-        environment = execution.fetch(:env, {})
-      end
-
       @started_at = Time.now
       @finished_at = nil
       @last_exit_code = nil
@@ -1201,6 +1199,7 @@ module HQ
         current_ruby_executable, "--disable-gems", "-e", agent_runner_script, *launch.fetch(:command),
         chdir: @workspace, out: log_file, err: %i[child out], pgroup: true
       )
+      after_spawn ? after_spawn.call(run) : ensure_active_queue_work_read!
       log_file.close
       monitor_agent_process(@pid, status_path)
       HQ.logger.info("Agent") { "Started #{@key} (pid=#{@pid})" }
@@ -1762,6 +1761,34 @@ module HQ
     end
 
     private
+
+    def canonical_queue_read_id(batch)
+      "queue-read:#{batch.fetch('id')}"
+    end
+
+    def queue_read_event?(events, batch:, read_id:)
+      Array(events).any? do |event|
+        event["event_id"].to_s == read_id.to_s &&
+          event.dig("metadata", "queue_read") == true &&
+          event.dig("metadata", "queue_work_batch_id").to_s == batch.fetch("id").to_s
+      end
+    end
+
+    def active_queue_work_read_metadata
+      claim = @prompt_queue_claim
+      return nil unless claim
+
+      entries = Array(claim["entries"])
+      newest_entry = entries.last || {}
+      batch = QueueWork.find(@queue_work, claim["id"])
+      metadata = newest_entry["message_metadata"].is_a?(Hash) ? newest_entry["message_metadata"].dup : {}
+      metadata.merge!(consolidated_prompt_queue_metadata(entries))
+      metadata["prompt_queue_claim_id"] = claim["id"]
+      metadata["queue_work_batch_id"] = batch["id"] if batch
+      recovery_metadata = circuit_breaker_recovery_metadata(entries, claim:, batch:)
+      metadata["circuit_breaker_recovery"] = recovery_metadata if recovery_metadata
+      metadata
+    end
 
     def current_ruby_executable
       configured = RbConfig.ruby.to_s
@@ -2865,10 +2892,18 @@ module HQ
     end
 
     def prompt_for_execution(response_style: resolved_response_style, include_hidden_guidance: true)
-      claimed_prompt = if @prompt_queue_claim&.fetch("message_appended", false)
-                         memory_store.user_message_with_metadata(
-                           "prompt_queue_claim_id" => @prompt_queue_claim["id"]
-                         )
+      claimed_prompt = if @prompt_queue_claim
+                         if @prompt_queue_claim.fetch("message_appended", false)
+                           memory_store.user_message_with_metadata(
+                             "prompt_queue_claim_id" => @prompt_queue_claim["id"]
+                           )
+                         elsif (claimed_batch = QueueWork.find(@queue_work, @prompt_queue_claim["id"]))
+                           QueueWork.contract(
+                             claimed_batch,
+                             agent_key: @key,
+                             entry_ids: Array(@prompt_queue_claim["entries"]).map { |entry| entry["id"] }
+                           )
+                         end
                        end
       threshold = last_run&.finished_at || @finished_at || @started_at
       threshold = Time.at(threshold.to_i) if threshold

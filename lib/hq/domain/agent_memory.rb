@@ -363,6 +363,28 @@ module HQ
       )
     end
 
+    def ensure_queue_read!(content, read_id:, batch_id:, created_at: Time.now, attachments: nil, metadata: nil)
+      text = content.to_s.strip
+      raise ArgumentError, "Queue read content is required" if text.empty?
+
+      normalized_attachments = normalize_attachments(attachments)
+      event_metadata = metadata.is_a?(Hash) ? metadata.dup : {}
+      event_metadata.merge!(attachment_metadata(normalized_attachments) || {})
+      event_metadata["queue_read"] = true
+      event_metadata["read_label"] = "Read queue"
+      event_metadata["queue_work_batch_id"] = batch_id.to_s
+      event = {
+        "type" => "user_message",
+        "content" => text,
+        "created_at" => created_at.iso8601,
+        "metadata" => event_metadata
+      }
+      journal.upsert(event, event_id: read_id) do |existing|
+        existing.dig("metadata", "queue_read") == true &&
+          existing.dig("metadata", "queue_work_batch_id").to_s == batch_id.to_s
+      end.last
+    end
+
     def append_assistant_message!(content, created_at: Time.now, metadata: nil, event_id: nil)
       text = content.to_s.strip
       return if text.empty?

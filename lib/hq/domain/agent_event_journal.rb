@@ -37,6 +37,37 @@ module HQ
       append_with_status(event, event_id:).last
     end
 
+    def upsert(event, event_id:)
+      payload = stringify_keys(event)
+      id = event_id.to_s.strip
+      raise ArgumentError, "Event ID is required" if id.empty?
+
+      with_file(File::LOCK_EX) do |file|
+        existing = read_events(file, strict: true)
+        index = existing.index { |entry| entry["event_id"].to_s == id }
+        if index && (!block_given? || yield(existing.fetch(index)))
+          return [existing.fetch(index), false]
+        end
+
+        now = Time.now.iso8601(6)
+        prior = index ? existing.fetch(index) : nil
+        sequence = prior&.fetch("sequence", nil)
+        sequence ||= existing.filter_map { |entry| integer_sequence(entry["sequence"]) }.max.to_i + 1
+        stored = payload.merge(
+          "schema_version" => payload["schema_version"] || SCHEMA_VERSION,
+          "sequence" => sequence,
+          "event_id" => id,
+          "recorded_at" => payload["recorded_at"] || prior&.fetch("recorded_at", nil) || now
+        ).compact
+        stored["created_at"] ||= stored["occurred_at"] || now
+        index ? existing[index] = stored : existing << stored
+        rewrite(file, existing)
+        [stored, true]
+      end
+    rescue StandardError => e
+      raise IOError, "Failed to upsert durable agent event: #{e.message}"
+    end
+
     def replace(events)
       with_file(File::LOCK_EX) do |file|
         normalized = normalize_replacement(events)
