@@ -2694,6 +2694,8 @@ module RenderingTest
     stopped = []
     store = app.instance_variable_get(:@agent_store)
     store.define_singleton_method(:archive_context_replacement_source!) { |_key| raise ArgumentError, "late queue work" }
+    store.define_singleton_method(:record_context_replacement_recovery!) { |*_args, **_kwargs| target }
+    store.define_singleton_method(:clear_context_replacement_recovery!) { |_key| target }
     store.define_singleton_method(:stop_context_replacement!) { |key| stopped << key }
     app.send(:archive_context_pressure_source!, source, target)
   rescue ArgumentError
@@ -2701,6 +2703,8 @@ module RenderingTest
   ensure
     store.singleton_class.send(:remove_method, :stop_context_replacement!) if store&.singleton_class&.method_defined?(:stop_context_replacement!)
     store.singleton_class.send(:remove_method, :archive_context_replacement_source!) if store&.singleton_class&.method_defined?(:archive_context_replacement_source!)
+    store.singleton_class.send(:remove_method, :record_context_replacement_recovery!) if store&.singleton_class&.method_defined?(:record_context_replacement_recovery!)
+    store.singleton_class.send(:remove_method, :clear_context_replacement_recovery!) if store&.singleton_class&.method_defined?(:clear_context_replacement_recovery!)
   end
 
   def assert_custom_claude_harness_builds_configured_command

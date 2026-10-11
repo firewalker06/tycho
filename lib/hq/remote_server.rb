@@ -3589,6 +3589,9 @@ module HQ
 
     def recover_context_replacement_archive_rejection!(source, target, pending_actions: nil)
       actions = pending_actions || ["record_correction", "stop_replacement", *(source.scheduled? ? ["restore_schedule"] : [])]
+      @agent_store.record_context_replacement_recovery!(target.key, source_key: source.key,
+                                                        pending_actions: actions, errors: {},
+                                                        queue_work_retained: target.pending_prompts?) unless pending_actions
       errors = {}
       if actions.include?("record_correction")
         begin
@@ -3611,13 +3614,12 @@ module HQ
           errors["restore_schedule"] = e.message
         end
       end
-      recovered = find_agent!(target.key)
-      if errors.empty? && !recovered.pending_prompts?
+      if errors.empty? && !target.pending_prompts?
         @agent_store.clear_context_replacement_recovery!(target.key)
       else
         @agent_store.record_context_replacement_recovery!(target.key, source_key: source.key,
                                                           pending_actions: errors.keys, errors:,
-                                                          queue_work_retained: recovered.pending_prompts?)
+                                                          queue_work_retained: target.pending_prompts?)
         HQ.logger.warn("RemoteService") { "Context replacement archive-rejection recovery needs retry: #{errors.values.join("; ")}" }
       end
     end
@@ -3625,6 +3627,8 @@ module HQ
     def retry_context_replacement_recovery(key)
       target = find_agent!(key)
       recovery = target.context_replacement_recovery || raise(Error.new("No context replacement recovery is pending", status: 409))
+      raise Error.new("Recovery safety actions are still pending", status: 409) if Array(recovery["pending_actions"]).any?
+      raise Error.new("Replacement is still running", status: 409) if target.running?
       source = find_agent!(recovery.fetch("source_agent_key"))
       recover_context_replacement_archive_rejection!(source, target, pending_actions: recovery.fetch("pending_actions"))
       { agent: agent_payload(find_agent!(key)) }

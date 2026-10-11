@@ -1132,6 +1132,10 @@ def selected_screen_items
     def recover_context_pressure_archive_rejection!(source, target)
       return unless target
 
+      actions = ["record_correction", "stop_replacement", *(source.scheduled? ? ["restore_schedule"] : [])]
+      @agent_store.record_context_replacement_recovery!(target.key, source_key: source.key,
+                                                        pending_actions: actions, errors: {},
+                                                        queue_work_retained: target.pending_prompts?)
       errors = {}
       begin
         ContextHandoff.record_archive_rejection!(source, target)
@@ -1151,13 +1155,12 @@ def selected_screen_items
           errors["restore_schedule"] = e.message
         end
       end
-      recovered = @agent_store.load.find { |agent| agent.key == target.key }
-      if errors.empty? && !recovered&.pending_prompts?
+      if errors.empty? && !target.pending_prompts?
         @agent_store.clear_context_replacement_recovery!(target.key)
       else
         @agent_store.record_context_replacement_recovery!(target.key, source_key: source.key,
                                                           pending_actions: errors.keys, errors:,
-                                                          queue_work_retained: recovered&.pending_prompts?)
+                                                          queue_work_retained: target.pending_prompts?)
         HQ.logger.warn("Agent") { "Context replacement archive-rejection recovery needs retry: #{errors.values.join("; ")}" }
       end
     end

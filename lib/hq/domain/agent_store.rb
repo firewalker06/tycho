@@ -315,6 +315,7 @@ module HQ
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
+        raise ArgumentError, "Context replacement recovery is pending" if target.context_replacement_recovery
 
         target.cancel_pending_sleep_recovery!
         unless target.running?
@@ -335,6 +336,7 @@ module HQ
     def dispatch_scheduled_message!(key, schedule_key:, message:, due_at: nil)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = find_agent_in!(agents, key)
+        raise ArgumentError, "Context replacement recovery is pending" if target.context_replacement_recovery
         state = ScheduleStore.new.load[schedule_key.to_s]
         current_target = state&.last_target_key.to_s
         if !current_target.empty? && current_target != target.key
