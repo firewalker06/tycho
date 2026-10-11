@@ -512,6 +512,10 @@ module HQ
     end
 
     def recover_staged_native_launch!(target, agents)
+      delivery = target.staged_queue_delivery
+      return false unless delivery.is_a?(Hash)
+
+      ensure_staged_queue_delivery_evidence!(target, agents, delivery)
       target.recover_staged_native_launch!(
         native_started: lambda do |_run, _delivery|
           # Persist acknowledgement before polling can finalize the run or complete its queue claim.
@@ -526,6 +530,25 @@ module HQ
           )
         end
       )
+    end
+
+    def ensure_staged_queue_delivery_evidence!(target, agents, delivery)
+      batch = target.active_queue_work
+      batch_id = delivery["batch_id"].to_s
+      read_id = delivery["read_id"].to_s
+      unless batch && batch.fetch("id").to_s == batch_id && !read_id.empty? &&
+             batch["read_id"].to_s == read_id && batch.fetch("delivery_count", 0).to_i.positive?
+        raise IOError, "Staged queue delivery identity is inconsistent"
+      end
+
+      # The staged agent store can become durable before the journal rewrite. Repair the
+      # journal first while the native gate is closed. A stop after this rewrite is safe:
+      # the next recovery sees the same canonical event and repeats no delivery.
+      AgentMemory.new(target).update_events! do |events|
+        target.ensure_active_queue_work_read!(journal_events: events)
+        [events, true]
+      end
+      save_unlocked(agents)
     end
 
     def accept_delegation_prompt!(child, owner:, parent_key: nil, now: Time.now)

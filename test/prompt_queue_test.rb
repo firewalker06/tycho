@@ -28,8 +28,9 @@ module PromptQueueTest
     assert_direct_start_records_active_queue_work
     assert_spawn_failure_does_not_record_queue_delivery
     assert_native_spawn_failure_rolls_back_and_retries_safely
-    assert_restart_recovery_rolls_back_failed_native_spawn_and_retries_once
-    assert_restart_recovery_accepts_successful_native_acknowledgement_once
+    assert_exact_boundary_restart_rolls_back_failed_native_spawn_and_retries_once
+    assert_exact_boundary_restart_accepts_successful_native_acknowledgement_once
+    assert_exact_boundary_repair_failures_keep_native_gate_closed
     assert_persistent_queue_delivery_save_failure_stops_and_retries_safely
     assert_persistent_queue_delivery_append_failure_stops_and_retries_safely
     assert_missing_queue_event_repairs_without_new_delivery
@@ -1313,7 +1314,7 @@ module PromptQueueTest
     end
   end
 
-  def assert_restart_recovery_rolls_back_failed_native_spawn_and_retries_once
+  def assert_exact_boundary_restart_rolls_back_failed_native_spawn_and_retries_once
     with_queue_store do |registry, workspace|
       agent = terminal_agent(workspace)
       agent.enqueue_prompt!(prompt: "Recover this failed staged launch", source: "user", id: "restart-failure-entry")
@@ -1325,14 +1326,15 @@ module PromptQueueTest
       FileUtils.chmod(0o755, invalid_harness)
       ENV["TYCHO_CODEX_BIN"] = invalid_harness
 
-      crash_dispatch_after_staging(store)
+      crash_dispatch_after_store_before_journal(store)
       staged_record = Array(HQ::FileStore.read_json(HQ::AGENTS_FILE, fallback: [])).fetch(0)
       staged = HQ::ManagedAgent.from_hash(staged_record)
       batch_id = staged.active_queue_work.fetch("id")
       outer_pid = staged.pid
       assert(staged.staged_queue_delivery.is_a?(Hash) &&
-             staged.active_queue_work.fetch("delivery_count") == 1 && staged.prompt_queue_claim,
-             "expected the crashed process to leave one durable staged launch behind a closed gate")
+             staged.active_queue_work.fetch("delivery_count") == 1 && staged.prompt_queue_claim &&
+             queue_read_events(staged, batch_id).empty?,
+             "expected the exact crash boundary to persist staging before the queue read journal rewrite")
 
       failed = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
       failed_batch = failed.queue_work_batch(batch_id)
@@ -1362,7 +1364,7 @@ module PromptQueueTest
     end
   end
 
-  def assert_restart_recovery_accepts_successful_native_acknowledgement_once
+  def assert_exact_boundary_restart_accepts_successful_native_acknowledgement_once
     with_queue_store do |registry, workspace|
       agent = terminal_agent(workspace)
       agent.enqueue_prompt!(prompt: "Recover this successful staged launch", source: "user", id: "restart-success-entry")
@@ -1373,12 +1375,13 @@ module PromptQueueTest
       ENV["TYCHO_CODEX_BIN"] = queue_capture_harness(workspace)
       ENV["TYCHO_TEST_QUEUE_CAPTURE"] = capture_path
 
-      crash_dispatch_after_staging(store)
+      crash_dispatch_after_store_before_journal(store)
       staged_record = Array(HQ::FileStore.read_json(HQ::AGENTS_FILE, fallback: [])).fetch(0)
       staged = HQ::ManagedAgent.from_hash(staged_record)
       batch_id = staged.active_queue_work.fetch("id")
-      assert(staged.staged_queue_delivery.is_a?(Hash) && !File.exist?(capture_path),
-             "expected native work to remain gated when the first Tycho process stops")
+      assert(staged.staged_queue_delivery.is_a?(Hash) && !File.exist?(capture_path) &&
+             queue_read_events(staged, batch_id).empty?,
+             "expected native work and its journal rewrite to remain incomplete at the exact crash boundary")
 
       recovered = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
       deadline = Time.now + 5
@@ -1397,6 +1400,89 @@ module PromptQueueTest
              recovered.prompt_queue_dispatch_error.nil?,
              "expected restart recovery to durably accept one native acknowledgement without duplicate delivery")
     ensure
+      previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
+      ENV.delete("TYCHO_TEST_QUEUE_CAPTURE")
+    end
+  end
+
+  def assert_exact_boundary_repair_failures_keep_native_gate_closed
+    with_queue_store do |registry, workspace|
+      agent = terminal_agent(workspace)
+      agent.enqueue_prompt!(prompt: "Recover after repair failures", source: "user", id: "repair-failure-entry")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+      previous_codex_bin = ENV["TYCHO_CODEX_BIN"]
+      capture_path = File.join(workspace, "repair-failure-capture.txt")
+      ENV["TYCHO_CODEX_BIN"] = queue_capture_harness(workspace)
+      ENV["TYCHO_TEST_QUEUE_CAPTURE"] = capture_path
+
+      crash_dispatch_after_store_before_journal(store)
+      staged_record = Array(HQ::FileStore.read_json(HQ::AGENTS_FILE, fallback: [])).fetch(0)
+      staged = HQ::ManagedAgent.from_hash(staged_record)
+      batch_id = staged.active_queue_work.fetch("id")
+
+      original_update = HQ::AgentEventJournal.instance_method(:update)
+      failed_update = false
+      HQ::AgentEventJournal.define_method(:update) do |&operation|
+        unless failed_update
+          failed_update = true
+          raise IOError, "simulated recovery journal failure"
+        end
+
+        original_update.bind_call(self, &operation)
+      end
+      journal_error = capture_error do
+        store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false)
+      end
+      HQ::AgentEventJournal.define_method(:update, original_update)
+      after_journal_failure = HQ::ManagedAgent.from_hash(
+        Array(HQ::FileStore.read_json(HQ::AGENTS_FILE, fallback: [])).fetch(0)
+      )
+      assert(journal_error.is_a?(IOError) && !File.exist?(capture_path) &&
+             after_journal_failure.staged_queue_delivery.is_a?(Hash) &&
+             queue_read_events(after_journal_failure, batch_id).empty?,
+             "expected journal repair failure to keep native work gated and staging recoverable")
+
+      original_save = store.method(:save_unlocked)
+      failed_save = false
+      store.define_singleton_method(:save_unlocked) do |agents, **options|
+        if !failed_save && agents.first.staged_queue_delivery.is_a?(Hash)
+          failed_save = true
+          raise IOError, "simulated recovery agent save failure"
+        end
+
+        original_save.call(agents, **options)
+      end
+      save_error = capture_error do
+        store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false)
+      end
+      after_save_failure = HQ::ManagedAgent.from_hash(
+        Array(HQ::FileStore.read_json(HQ::AGENTS_FILE, fallback: [])).fetch(0)
+      )
+      assert(save_error.is_a?(IOError) && !File.exist?(capture_path) &&
+             after_save_failure.staged_queue_delivery.is_a?(Hash) &&
+             queue_read_events(after_save_failure, batch_id).length == 1,
+             "expected agent save failure after journal repair to keep the gate closed with durable evidence")
+
+      store.define_singleton_method(:save_unlocked) { |agents, **options| original_save.call(agents, **options) }
+      recovered = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      deadline = Time.now + 5
+      until File.file?(capture_path) && !recovered.running?
+        raise "recovered native harness did not finish after repair retry" if Time.now >= deadline
+
+        sleep 0.01
+        recovered = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      end
+      recovered = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
+      assert(File.read(capture_path).include?("TYCHO QUEUE WORK CONTRACT") &&
+             recovered.queue_work_batch(batch_id).fetch("delivery_count") == 1 &&
+             queue_read_events(recovered, batch_id).length == 1 && recovered.prompt_queue_claim.nil?,
+             "expected recovery retry to deliver once after durable repair failures")
+    ensure
+      HQ::AgentEventJournal.define_method(:update, original_update) if defined?(original_update) && original_update
+      if defined?(original_save) && original_save
+        store.define_singleton_method(:save_unlocked) { |agents, **options| original_save.call(agents, **options) }
+      end
       previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
       ENV.delete("TYCHO_TEST_QUEUE_CAPTURE")
     end
@@ -1901,13 +1987,14 @@ module PromptQueueTest
     HQ::ManagedAgent.define_method(:spawn, original) if original
   end
 
-  def crash_dispatch_after_staging(store)
+  def crash_dispatch_after_store_before_journal(store)
     child_pid = Process.fork do
-      original_write = File.method(:write)
-      File.define_singleton_method(:write) do |path, *args, **options|
-        Process.exit!(86) if path.to_s.end_with?(".native-release")
-
-        original_write.call(path, *args, **options)
+      original_update = HQ::AgentEventJournal.instance_method(:update)
+      HQ::AgentEventJournal.define_method(:update) do |&operation|
+        original_update.bind_call(self) do |events|
+          operation.call(events)
+          Process.exit!(86)
+        end
       end
       store.load
       Process.exit!(87)
@@ -1916,7 +2003,7 @@ module PromptQueueTest
     end
     _waited_pid, status = Process.wait2(child_pid)
     assert(status.exitstatus == 86,
-           "expected the first Tycho process to stop after staging and before native release")
+           "expected the first Tycho process to stop after the agent save and before the journal rewrite")
   end
 
   def process_gone_and_reaped?(pid)
