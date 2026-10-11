@@ -953,7 +953,10 @@ module HQ
           summary = actions.empty? ? "Replacement queue work is retained for explicit action." :
             "Retry required: #{actions.join(", ")}."
           summary += " Remove or process queued work before clear." if recovery["queue_work_retained"]
-          ["", warning_style.render("! Replacement recovery"), "  #{summary}"]
+          errors = recovery.fetch("errors", {}).map { |step, message| "#{step}: #{message}" }.join("; ")
+          lines = ["", warning_style.render("! Replacement recovery"), "  #{summary}"]
+          lines << "  Last error: #{errors}" unless errors.empty?
+          lines
         end
 
         def empty_agent_detail_text

@@ -110,6 +110,7 @@ module RenderingTest
     assert_context_pressure_tui_actions
     assert_context_pressure_tui_follow_ups_continue_after_hook_failure
     assert_context_pressure_tui_archive_rejection_uses_exact_replacement
+    assert_context_replacement_recovery_renders_pending_steps
     assert_context_pressure_tui_rejects_unsafe_source
     assert_custom_claude_harness_builds_configured_command
     assert_claude_schema_is_compact_json
@@ -2578,7 +2579,7 @@ module RenderingTest
   end
 
   def assert_context_pressure_tui_actions
-    app = app_with_default_agent(width: 120, height: 40)
+    app = app_with_default_agent(width: 200, height: 40)
     app.instance_variable_set(:@screen, :agents)
     source = app.instance_variable_get(:@agents).first
     app.instance_variable_set(:@all_agents, [source])
@@ -2705,6 +2706,20 @@ module RenderingTest
     store.singleton_class.send(:remove_method, :archive_context_replacement_source!) if store&.singleton_class&.method_defined?(:archive_context_replacement_source!)
     store.singleton_class.send(:remove_method, :record_context_replacement_recovery!) if store&.singleton_class&.method_defined?(:record_context_replacement_recovery!)
     store.singleton_class.send(:remove_method, :clear_context_replacement_recovery!) if store&.singleton_class&.method_defined?(:clear_context_replacement_recovery!)
+  end
+
+  def assert_context_replacement_recovery_renders_pending_steps
+    app = app_with_default_agent(width: 200, height: 40)
+    app.instance_variable_set(:@screen, :agents)
+    agent = app.instance_variable_get(:@agents).first
+    agent.record_context_replacement_recovery!(
+      source_key: "source-agent", pending_actions: ["stop_replacement", "restore_schedule"],
+      errors: { "stop_replacement" => "stop failed" }, queue_work_retained: true
+    )
+    rendered = Bubbles::ANSI.strip(app.view)
+    assert(rendered.include?("Replacement recovery") && rendered.include?("stop_replacement, restore_schedule") &&
+           rendered.include?("stop_replacement: stop failed") && rendered.include?("Remove or process queued work before clear"),
+           "expected TUI recovery warning to show pending steps and retained queue action")
   end
 
   def assert_custom_claude_harness_builds_configured_command
