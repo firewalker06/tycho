@@ -37,14 +37,73 @@ module HQ
       append_with_status(event, event_id:).last
     end
 
+    def upsert(event, event_id:)
+      payload = stringify_keys(event)
+      id = event_id.to_s.strip
+      raise ArgumentError, "Event ID is required" if id.empty?
+
+      with_file(File::LOCK_EX) do |file|
+        existing = read_events(file, strict: true)
+        indexes = existing.each_index.select { |index| existing[index]["event_id"].to_s == id }
+        matching = indexes.find { |index| !block_given? || yield(existing.fetch(index)) }
+        if indexes.length == 1 && matching
+          return [existing.fetch(matching), false]
+        end
+
+        now = Time.now.iso8601(6)
+        index = indexes.first
+        prior = matching ? existing.fetch(matching) : (index ? existing.fetch(index) : nil)
+        sequence = prior&.fetch("sequence", nil)
+        sequence ||= existing.filter_map { |entry| integer_sequence(entry["sequence"]) }.max.to_i + 1
+        stored = payload.merge(
+          "schema_version" => payload["schema_version"] || SCHEMA_VERSION,
+          "sequence" => sequence,
+          "event_id" => id,
+          "recorded_at" => payload["recorded_at"] || prior&.fetch("recorded_at", nil) || now
+        ).compact
+        stored["created_at"] ||= stored["occurred_at"] || now
+        existing.reject! { |entry| entry["event_id"].to_s == id }
+        index ? existing.insert(index, stored) : existing << stored
+        rewrite(file, existing)
+        [stored, true]
+      end
+    rescue StandardError => e
+      raise IOError, "Failed to upsert durable agent event: #{e.message}"
+    end
+
+    def update
+      result = nil
+      with_file(File::LOCK_EX) do |file|
+        original = read_events(file, strict: true)
+        working = original.map(&:dup)
+        replacement, result = yield(working)
+        normalized = normalize_replacement(replacement)
+        begin
+          rewrite(file, normalized)
+        rescue StandardError
+          rewrite(file, original)
+          raise
+        end
+      end
+      result
+    rescue StandardError => e
+      raise IOError, "Failed to update durable agent events: #{e.message}"
+    end
+
     def replace(events)
       with_file(File::LOCK_EX) do |file|
         normalized = normalize_replacement(events)
-        file.rewind
-        file.truncate(0)
-        normalized.each { |event| file.puts(JSON.generate(event.compact)) }
-        file.flush
-        file.fsync
+        rewrite(file, normalized)
+        normalized
+      end
+    end
+
+    def replace_preserving(events)
+      with_file(File::LOCK_EX) do |file|
+        current = read_events(file, strict: true)
+        replacement = block_given? ? yield(events, current) : events
+        normalized = normalize_replacement(replacement)
+        rewrite(file, normalized)
         normalized
       end
     end

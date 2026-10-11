@@ -58,6 +58,7 @@ module ManagedAgentTest
     assert_poll_stops_stale_unstructured_output
     assert_poll_preserves_stale_structured_output
     assert_external_process_environment_removes_ruby_loader_state
+    assert_non_correction_start_clears_inherited_native_ack_delegation
     assert_internal_runners_ignore_incompatible_json_gems
     assert_start_spawns_harness_through_validation_runner
     assert_running_harness_persists_assistant_messages_incrementally
@@ -2289,6 +2290,39 @@ module ManagedAgentTest
     )
     assert($?.success? && runner_output == "runner-loaded",
            "expected sanitized environment to execute the correction runner, got #{runner_output.inspect}")
+  end
+
+  def assert_non_correction_start_clears_inherited_native_ack_delegation
+    previous_flag = ENV["TYCHO_NATIVE_ACK_DELEGATED"]
+    previous_opencode_bin = ENV["TYCHO_OPENCODE_BIN"]
+    Dir.mktmpdir("hq-native-ack-environment-test") do |dir|
+      capture_path = File.join(dir, "native-environment.txt")
+      harness = File.join(dir, "opencode")
+      File.write(harness, <<~RUBY)
+        #!/usr/bin/env ruby
+        File.write(#{capture_path.inspect}, ENV.key?("TYCHO_NATIVE_ACK_DELEGATED") ? "inherited" : "unset")
+      RUBY
+      FileUtils.chmod(0o755, harness)
+      ENV["TYCHO_NATIVE_ACK_DELEGATED"] = "1"
+      ENV["TYCHO_OPENCODE_BIN"] = harness
+      agent = HQ::ManagedAgent.new(
+        key: "native-ack-environment", name: "Native Ack Environment", project_key: "demo",
+        template_key: "custom", workspace: dir, prompt: "System prompt", agent: "opencode",
+        response_style: false, log_path: File.join(dir, "native-ack.raw.log")
+      )
+
+      agent.start!
+      deadline = Time.now + 5
+      sleep 0.01 while agent.running? && Time.now < deadline
+      agent.poll!
+
+      assert(File.read(capture_path) == "unset" && agent.last_run.metadata["native_start_acknowledged"] == true &&
+             agent.last_run.exit_code == 0,
+             "expected a non-correction launch to clear the inherited delegated-ack flag and acknowledge native start")
+    end
+  ensure
+    previous_flag ? ENV["TYCHO_NATIVE_ACK_DELEGATED"] = previous_flag : ENV.delete("TYCHO_NATIVE_ACK_DELEGATED")
+    previous_opencode_bin ? ENV["TYCHO_OPENCODE_BIN"] = previous_opencode_bin : ENV.delete("TYCHO_OPENCODE_BIN")
   end
 
   def assert_internal_runners_ignore_incompatible_json_gems

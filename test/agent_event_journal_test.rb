@@ -13,6 +13,7 @@ module AgentEventJournalTest
     assert_concurrent_writers_share_one_sequence
     assert_legacy_replacement_assigns_sequences
     assert_append_migrates_legacy_prefix_before_new_event
+    assert_upsert_removes_all_duplicate_ids
     assert_strict_reader_rejects_corrupt_journal
     puts "agent_event_journal_test: ok"
   end
@@ -41,6 +42,33 @@ module AgentEventJournalTest
       assert(second["sequence"] == 2, "expected second sequence")
       assert(duplicate == first, "expected duplicate append to return existing event")
       assert(journal.events.map { |event| event["content"] } == %w[first second], "expected one durable copy")
+    end
+  end
+
+  def assert_upsert_removes_all_duplicate_ids
+    Dir.mktmpdir("tycho-event-journal-upsert") do |dir|
+      path = File.join(dir, "memory.jsonl")
+      duplicate_id = "queue-read:batch-1"
+      File.write(path, [
+        JSON.generate("event_id" => duplicate_id, "type" => "assistant_message", "content" => "wrong"),
+        JSON.generate("event_id" => duplicate_id, "type" => "user_message", "content" => "old",
+                      "metadata" => { "queue_read" => true, "queue_work_batch_id" => "batch-1" })
+      ].join("\n") + "\n")
+      journal = HQ::AgentEventJournal.new(path)
+      changed = journal.upsert(
+        {
+          "type" => "user_message", "content" => "canonical",
+          "metadata" => { "queue_read" => true, "queue_work_batch_id" => "batch-1" }
+        },
+        event_id: duplicate_id
+      ) do |event|
+        event.dig("metadata", "queue_read") == true &&
+          event.dig("metadata", "queue_work_batch_id") == "batch-1"
+      end.last
+
+      matching = journal.events.select { |event| event["event_id"] == duplicate_id }
+      assert(changed && matching.length == 1 && matching.first["content"] == "canonical",
+             "expected upsert to remove every duplicate canonical ID")
     end
   end
 
