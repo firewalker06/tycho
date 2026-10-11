@@ -3627,16 +3627,18 @@ module HQ
     def retry_context_replacement_recovery(key)
       target = find_agent!(key)
       recovery = target.context_replacement_recovery || raise(Error.new("No context replacement recovery is pending", status: 409))
-      raise Error.new("Recovery safety actions are still pending", status: 409) if Array(recovery["pending_actions"]).any?
-      raise Error.new("Replacement is still running", status: 409) if target.running?
       source = find_agent!(recovery.fetch("source_agent_key"))
-      recover_context_replacement_archive_rejection!(source, target, pending_actions: recovery.fetch("pending_actions"))
+      actions = Array(recovery["pending_actions"])
+      actions.unshift("stop_replacement") if target.running? && !actions.include?("stop_replacement")
+      recover_context_replacement_archive_rejection!(source, target, pending_actions: actions)
       { agent: agent_payload(find_agent!(key)) }
     end
 
     def clear_context_replacement_recovery(key)
       target = find_agent!(key)
       recovery = target.context_replacement_recovery || raise(Error.new("No context replacement recovery is pending", status: 409))
+      raise Error.new("Recovery safety actions are still pending", status: 409) if Array(recovery["pending_actions"]).any?
+      raise Error.new("Replacement is still running", status: 409) if target.running?
       raise Error.new("Remove or process retained replacement queue work before clearing recovery", status: 409) if recovery["queue_work_retained"] && target.pending_prompts?
 
       @agent_store.clear_context_replacement_recovery!(target.key)
