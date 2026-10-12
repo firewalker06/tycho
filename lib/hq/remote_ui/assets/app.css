@@ -9621,7 +9621,8 @@ body:has(.inquiry-form-full-screen) {
 
 /* 380 + 440 + 440 px panes, gaps, navigation and page padding fit at 1760 px. */
 @media (min-width: 1760px) {
-  .app-shell:has(> .bottom-nav:not(.hidden)):has(.has-attachment-preview) {
+  /* Include split state so the preview limit wins over the two-pane rule. */
+  .app-shell:has(> .bottom-nav:not(.hidden)):has(.content.agent-split-active .has-attachment-preview) {
     max-width: 2200px;
   }
 

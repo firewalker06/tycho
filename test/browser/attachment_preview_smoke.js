@@ -26,13 +26,52 @@ module.exports = async function attachmentPreviewSmoke({ browser, baseUrl, agent
   await page.waitForFunction(() => document.querySelector(".summary-attachment-preview-scroll")?.getAttribute("aria-busy") === "false");
   await assert(await pane.locator("h1").innerText() === "Release review", "Markdown did not use the existing renderer");
   await assert(await page.evaluate(() => document.activeElement?.hasAttribute("data-close-summary-attachment-preview")), "Opening did not focus the close control");
-  const layout = await page.evaluate(() => {
-    const box = (selector) => { const r = document.querySelector(selector).getBoundingClientRect(); return { x: r.x, right: r.right, width: r.width, bottom: r.bottom }; };
-    return { conversation: box(".agent-conversation-pane"), summary: box(".agent-detail-pane"), preview: box(".summary-attachment-preview-pane"), viewport: innerWidth, overflow: document.documentElement.scrollWidth > innerWidth };
-  });
-  await assert(layout.conversation.width >= 380 && layout.summary.width >= 440 && layout.preview.width >= 440 &&
-    layout.conversation.right <= layout.summary.x && layout.summary.right <= layout.preview.x && !layout.overflow,
-    `Three readable panes do not fit: ${JSON.stringify(layout)}`);
+  async function measureLayout() {
+    return page.evaluate(() => {
+      const box = (selector) => {
+        const element = document.querySelector(selector);
+        if (!element) return null;
+        const r = element.getBoundingClientRect();
+        return { x: r.x, right: r.right, width: r.width, bottom: r.bottom };
+      };
+      const shell = document.querySelector(".app-shell");
+      return {
+        shell: box(".app-shell"), shellMaxWidth: getComputedStyle(shell).maxWidth,
+        workspace: box(".agent-workspace"), conversation: box(".agent-conversation-pane"),
+        summary: box(".agent-detail-pane"), preview: box(".summary-attachment-preview-pane"),
+        split: shell.matches(":has(.content.agent-split-active)"),
+        viewport: innerWidth, overflow: document.documentElement.scrollWidth > innerWidth,
+      };
+    });
+  }
+  const wideLayouts = [];
+  const closedLayouts = [];
+  for (const width of [1760, 1920, 2200, 2560]) {
+    await page.setViewportSize({ width, height: 1080 });
+    const measured = await measureLayout();
+    wideLayouts.push(measured);
+    const expectedWidth = Math.min(width, 2200);
+    await assert(measured.split && measured.shellMaxWidth === "2200px" && Math.abs(measured.shell.width - expectedWidth) < 1 &&
+      Math.abs(measured.shell.x - (width - expectedWidth) / 2) < 1,
+      `Preview shell does not use available width: ${JSON.stringify(measured)}`);
+    await assert(measured.workspace.width >= measured.shell.width - 200 && measured.shell.right - measured.preview.right < 20 &&
+      Math.abs(measured.conversation.width + measured.summary.width + measured.preview.width + 24 - measured.workspace.width) < 1,
+      `Preview panes leave unused horizontal space: ${JSON.stringify(measured)}`);
+    await assert(measured.conversation.width >= 380 && measured.summary.width >= 440 && measured.preview.width >= 440 &&
+      measured.conversation.right <= measured.summary.x && measured.summary.right <= measured.preview.x && !measured.overflow,
+      `Three readable panes do not fit: ${JSON.stringify(measured)}`);
+    await capture(`attachment-preview-wide-${width}`);
+    await page.locator("[data-close-summary-attachment-preview]").click();
+    const closed = await measureLayout();
+    closedLayouts.push(closed);
+    await assert(!closed.preview && closed.shellMaxWidth === "1600px" && Math.abs(closed.shell.width - 1600) < 1 &&
+      Math.abs(closed.shell.x - (width - 1600) / 2) < 1 && closed.workspace.width <= 1400 && !closed.overflow,
+      `Closing preview did not restore split sizing: ${JSON.stringify(closed)}`);
+    await open("Release review");
+  }
+  console.log(`attachment-preview-widths: ${JSON.stringify(wideLayouts)}`);
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  const layout = await measureLayout();
   await capture("attachment-preview-wide");
   const independentScroll = await page.evaluate(() => {
     const preview = document.querySelector(".summary-attachment-preview-scroll");
@@ -162,16 +201,28 @@ module.exports = async function attachmentPreviewSmoke({ browser, baseUrl, agent
 
   // Verify the exact boundary and resize into the existing detail view.
   await page.goto(summaryUrl, { waitUntil: "networkidle" });
-  await page.setViewportSize({ width: 1760, height: 1000 });
-  await open("Release review");
-  await assert(await pane.count() === 1 && !(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)), "Breakpoint has horizontal overflow");
-  await page.setViewportSize({ width: 1759, height: 1000 });
-  await page.waitForURL(/\/attachment\//);
-  await assert(await pane.count() === 0, "Resize did not open the detail fallback");
+  const resizedLayouts = [];
+  for (const width of [1759, 1440, 390]) {
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.goto(summaryUrl, { waitUntil: "networkidle" });
+    await open("Release review");
+    await page.setViewportSize({ width, height: 900 });
+    await page.waitForURL(/\/attachment\//);
+    await page.locator(".agent-attachment-viewer h1").waitFor();
+    const narrow = await measureLayout();
+    resizedLayouts.push(narrow);
+    await assert(!narrow.preview && narrow.shellMaxWidth !== "2200px" && !narrow.overflow &&
+      narrow.shell.width <= width && narrow.shell.width <= 1600,
+      `Resize did not restore the detail fallback and shell sizing: ${JSON.stringify(narrow)}`);
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await assert(await pane.count() === 0 && (await measureLayout()).shellMaxWidth === "1600px",
+      "Resize back to wide reopened the preview or retained its shell limit");
+  }
 
   for (const [name, width, height] of [["normal", 1440, 900], ["mobile", 390, 844]]) {
     await page.setViewportSize({ width, height });
     await page.goto(summaryUrl, { waitUntil: "networkidle" });
+    await previewButton("Release review").waitFor({ state: "visible" });
     await previewButton("Release review").scrollIntoViewIfNeeded();
     await assert(!(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)), `${name} Summary has horizontal overflow`);
     await capture(`attachment-summary-${name}`);
@@ -185,7 +236,7 @@ module.exports = async function attachmentPreviewSmoke({ browser, baseUrl, agent
     await capture(`attachment-detail-${name}`);
   }
   await assert(errors.length === 0, `Browser errors: ${errors.join("; ")}`);
-  if (captureDir) fs.writeFileSync(path.join(captureDir, "attachment-preview-results.json"), JSON.stringify({ layout, independentScroll, raceResults, errors, tested: ["1920", "1760", "1759", "1440", "390", "keyboard", "polling", "run/agent lifecycle", "secure renderers", "missing file", "metadata failure", "repeated-ID metadata/image races after render/polling", "delayed response after navigation"] }, null, 2));
+  if (captureDir) fs.writeFileSync(path.join(captureDir, "attachment-preview-results.json"), JSON.stringify({ layout, wideLayouts, closedLayouts, resizedLayouts, independentScroll, raceResults, errors, tested: ["1920", "2200", "2560", "closed at each wide width", "1760", "1759", "1440", "390", "keyboard", "polling", "run/agent lifecycle", "secure renderers", "missing file", "metadata failure", "repeated-ID metadata/image races after render/polling", "delayed response after navigation"] }, null, 2));
   console.log(`attachment-preview-smoke: ok ${JSON.stringify(layout)}`);
   await page.close();
 };
