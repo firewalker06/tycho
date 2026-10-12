@@ -485,6 +485,55 @@ def associate_agent_download_fixture(logs_dir, agent_key, workspace)
   File.write(attachments_path, JSON.pretty_generate(records))
 end
 
+def run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser:)
+  agents = JSON.parse(File.read(File.join(fixture.fetch(:logs_dir), "managed_agents.json")))
+  agent = agents.find { |item| item["key"] == agent_key }
+  workspace = fixture.fetch(:workspace)
+  File.write(File.join(workspace, "notes.txt"), "Plain text preview\n")
+  File.write(File.join(workspace, "missing.md"), "# File removed after catalog load\n")
+  File.write(File.join(workspace, "report.html"), "<h1>Interactive report</h1><script>document.body.dataset.preview = 'ready'</script>")
+  File.binwrite(File.join(workspace, "package.bin"), "binary\x00package")
+  records = [
+    ["Release review", "docs/guide.md"], ["Notes", "notes.txt"], ["Diagram", "diagram.png"],
+    ["Interactive report", "report.html"], ["Download package", "package.bin"], ["Missing report", "missing.md"]
+  ].map { |title, path| { "type" => "file", "title" => title, "path" => File.join(workspace, path), "created_at" => Time.now.iso8601 } }
+  records << { "type" => "link", "title" => "External reference", "url" => "https://example.com/review", "created_at" => Time.now.iso8601 }
+  File.write(agent.fetch("log_path").sub(/\.raw\.log\z/, ".attachments.json"), JSON.pretty_generate("attachments" => records))
+  File.write(File.join(workspace, "docs", "guide.md"), "# Release review\n\nThe release is ready for operator review.\n\n" + 80.times.map { |i| "## Check #{i + 1}\n\nThe attachment preview keeps this document beside the conversation and Summary." }.join("\n\n"))
+  detail = JSON.parse(Net::HTTP.get(URI("#{base_url}/agents/#{agent_key}"))).fetch("agent")
+  memory_path = agent.fetch("log_path").sub(/\.raw\.log\z/, ".memory.jsonl")
+  File.open(memory_path, "a") do |file|
+    %w[preview-prior preview-current].each_with_index do |id, index|
+      file.puts JSON.generate("type" => "run_summary", "content" => "## Release review complete\n\nReview the report and supporting files.\n\n- The conversation stays visible.\n- The selected document opens beside this Summary.", "status" => "success", "created_at" => Time.now.iso8601,
+                              "metadata" => { "summary_id" => id, "run_number" => index + 1, "attachments" => detail.fetch("attachments") })
+    end
+  end
+  other_agent_key = create_agent(base_url, name: "Other preview session")
+  node_dir = File.join(dir, "node")
+  install_playwright!(node_dir)
+  script = File.join(node_dir, "attachment-preview.js")
+  File.write(script, <<~JS)
+    const { chromium } = require("playwright");
+    const smoke = require(#{File.join(ROOT, "test", "browser", "attachment_preview_smoke.js").inspect});
+    (async () => {
+      const browser = await chromium.launch({ executablePath: #{browser.inspect}, headless: true });
+      try {
+        await smoke({ browser, baseUrl: #{base_url.inspect}, agentKey: #{agent_key.inspect}, otherAgentKey: #{other_agent_key.inspect}, captureDir: process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "" });
+      } finally { await browser.close(); }
+    })().catch((error) => { console.error(error); process.exit(1); });
+  JS
+  capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
+  unless capture_dir.empty?
+    capture_dir = File.expand_path(capture_dir)
+    raise "Capture directory must be outside the repository" if capture_dir == ROOT || capture_dir.start_with?("#{ROOT}/")
+    FileUtils.mkdir_p(capture_dir)
+  end
+  out, err, status = Open3.capture3({ "TYCHO_REMOTE_UI_CAPTURE_DIR" => capture_dir }, "node", script, chdir: node_dir)
+  puts out unless out.empty?
+  warn err unless err.empty?
+  raise "Attachment preview smoke failed" unless status.success?
+end
+
 def mark_schedule_daemon_running(logs_dir, pid)
   FileUtils.mkdir_p(logs_dir)
   now = Time.now.iso8601
@@ -9959,6 +10008,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     wait_for_remote(base_url, log_path)
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key = create_agent(base_url)
+    if ENV["TYCHO_REMOTE_UI_ATTACHMENT_PREVIEW_ONLY"] == "1"
+      run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser:)
+      exit 0
+    end
     if ENV["TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE"].to_s != ""
       mode = ENV.fetch("TYCHO_REMOTE_UI_SCHEDULE_REPLACEMENT_MODE")
       unrelated_agent_key = create_agent(base_url, name: "Unrelated Replacement Fixture")
