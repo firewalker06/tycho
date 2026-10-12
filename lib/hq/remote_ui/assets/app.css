@@ -5527,7 +5527,7 @@ details.queue-read-block:not([open]) > .queue-read-body {
 
 .summary-attachment-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -9616,5 +9616,46 @@ body:has(.inquiry-form-full-screen) {
 
   [data-ds-form="settings"] .ui-input {
     font-size: 16px;
+  }
+}
+
+/* 380 + 440 + 440 px panes, gaps, navigation and page padding fit at 1760 px. */
+@media (min-width: 1760px) {
+  .app-shell:has(> .bottom-nav:not(.hidden)):has(.has-attachment-preview) {
+    max-width: 2200px;
+  }
+
+  .agent-workspace.has-detail.has-attachment-preview {
+    grid-template-columns: minmax(380px, 0.9fr) minmax(440px, 1fr) minmax(440px, 1fr);
+    max-width: none;
+  }
+
+  .summary-attachment-preview-pane {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    min-width: 0;
+    min-height: 0;
+    margin-top: 8px;
+    overflow: hidden;
+    border-left: 1px solid var(--border);
+    padding-left: 12px;
+  }
+
+  .summary-attachment-preview-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 8px;
+  }
+
+  .summary-attachment-preview-scroll {
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding-right: 4px;
   }
 }
