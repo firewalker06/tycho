@@ -4,6 +4,7 @@ const path = require("path");
 module.exports = async function attachmentPreviewSmoke({ browser, baseUrl, agentKey, otherAgentKey, captureDir }) {
   const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
   const errors = [];
+  const raceResults = [];
   page.on("pageerror", (error) => errors.push(error.message));
   const agent = (await (await page.request.get(`${baseUrl}/agents/${agentKey}`)).json()).agent;
   const attachments = Object.fromEntries(agent.attachments.map((item) => [item.title, item]));
@@ -67,6 +68,75 @@ module.exports = async function attachmentPreviewSmoke({ browser, baseUrl, agent
   await assert(page.context().pages().length === 1, "Preview opened an external site without a click");
   await open("Download package");
   await assert(await pane.getByText("Download file", { exact: true }).count() >= 1, "Binary download fallback is absent");
+  // Repeat an ID while its first request is held, then release the old response last.
+  async function assertRepeatedIdRace(title, image = false) {
+    const attachment = attachments[title];
+    const payload = (await (await page.request.get(`${baseUrl}/attachments/${attachment.id}`)).json());
+    const pattern = image ? `**/attachments/${attachment.id}/blob*` : `**/attachments/${attachment.id}`;
+    let held;
+    let signalHeld;
+    const heldReady = new Promise((resolve) => { signalHeld = resolve; });
+    let count = 0;
+    const response = (stale) => image
+      ? { status: 200, contentType: "image/svg+xml", body: `<svg xmlns="http://www.w3.org/2000/svg" width="${stale ? 17 : 29}" height="20"><rect width="100%" height="100%" fill="${stale ? "red" : "blue"}"/></svg>` }
+      : { status: 200, contentType: "application/json", body: JSON.stringify({ ...payload, attachment: { ...payload.attachment, content: stale ? "STALE_RESPONSE_A" : "CURRENT_RESPONSE_A" } }) };
+    await page.evaluate(() => {
+      window.previewRaceSettled = [];
+      window.previewRaceOriginalOpen = openSummaryAttachmentPreview;
+      openSummaryAttachmentPreview = async (...args) => {
+        try { return await window.previewRaceOriginalOpen(...args); }
+        finally { window.previewRaceSettled.push(args[0]); }
+      };
+      window.previewRaceCreatedUrls = [];
+      window.previewRaceOriginalCreateUrl = URL.createObjectURL;
+      URL.createObjectURL = (blob) => { const url = window.previewRaceOriginalCreateUrl(blob); window.previewRaceCreatedUrls.push(url); return url; };
+    });
+    await page.route(pattern, async (route) => {
+      count += 1;
+      if (count === 1) { held = route; signalHeld(); return; }
+      await route.fulfill(response(false));
+    });
+    await previewButton(title).click();
+    // Wait for the actual request to be held; UI loading alone precedes image fetches.
+    await Promise.race([heldReady, new Promise((_, reject) => setTimeout(() => reject(new Error("First repeated-ID request was not held")), 10_000))]);
+    await open("Release review");
+    await open(title);
+    if (image) await pane.locator("img").evaluate((image) => image.decode());
+    const current = await page.evaluate((id) => ({ content: state.attachmentDetails[id]?.content, url: state.attachmentImageUrls[id] }), attachment.id);
+    await held.fulfill(response(true));
+    await page.waitForFunction((id) => window.previewRaceSettled.filter((item) => item === id).length === 2, attachment.id);
+    await page.evaluate(() => render());
+    await page.evaluate(async () => { await refresh({ force: true, preserveFocusedWorkspace: true }); render(); });
+    if (image) {
+      await pane.locator("img").evaluate((image) => image.decode());
+      await assert(await pane.locator("img").evaluate((image) => image.naturalWidth === 29), "Delayed repeated-ID image replaced current preview after render/polling");
+      await assert(await page.evaluate((value) => state.attachmentImageUrls[value.id] === value.url && window.previewRaceCreatedUrls.length === 1, { id: attachment.id, url: current.url }), "Stale image response allocated or replaced a blob URL");
+    } else {
+      await assert((await pane.innerText()).includes("CURRENT_RESPONSE_A") && !(await pane.innerText()).includes("STALE_RESPONSE_A"), "Delayed repeated-ID metadata replaced current preview after render/polling");
+      await assert(await page.evaluate((id) => state.attachmentDetails[id].content === "CURRENT_RESPONSE_A", attachment.id), "Stale metadata poisoned the shared cache");
+    }
+    raceResults.push({ kind: image ? "image" : "metadata", sequence: "A -> B -> A; newest response first, delayed response last", ordinaryRender: "current content preserved", polling: "current content preserved", staleBlobAllocated: false });
+    await page.unroute(pattern);
+    await page.evaluate(() => { window.previewRaceSettled = []; });
+    // A late response after leaving the Summary must not reopen its pane.
+    let leaving;
+    let signalLeaving;
+    const leavingReady = new Promise((resolve) => { signalLeaving = resolve; });
+    await page.route(pattern, (route) => { leaving = route; signalLeaving(); });
+    await previewButton(title).click();
+    await Promise.race([leavingReady, new Promise((_, reject) => setTimeout(() => reject(new Error("Leaving request was not held")), 10_000))]);
+    await page.goto(`${baseUrl}/ui#agent/${otherAgentKey}`, { waitUntil: "domcontentloaded" });
+    await leaving.fulfill(response(true));
+    await page.waitForFunction((id) => window.previewRaceSettled.includes(id), attachment.id);
+    await page.unroute(pattern);
+    await page.evaluate(() => { openSummaryAttachmentPreview = window.previewRaceOriginalOpen; URL.createObjectURL = window.previewRaceOriginalCreateUrl; });
+    await page.evaluate(() => render());
+    await assert(await pane.count() === 0, "A late response reopened the preview after agent navigation");
+    await page.goto(summaryUrl, { waitUntil: "networkidle" });
+  }
+  await assertRepeatedIdRace("Notes");
+  await assertRepeatedIdRace("Diagram", true);
+
   fs.unlinkSync(attachments["Missing report"].path);
   await open("Missing report");
   await assert(/not readable|not found/i.test(await pane.innerText()), "Missing file has no useful error");
@@ -115,7 +185,7 @@ module.exports = async function attachmentPreviewSmoke({ browser, baseUrl, agent
     await capture(`attachment-detail-${name}`);
   }
   await assert(errors.length === 0, `Browser errors: ${errors.join("; ")}`);
-  if (captureDir) fs.writeFileSync(path.join(captureDir, "attachment-preview-results.json"), JSON.stringify({ layout, independentScroll, errors, tested: ["1920", "1760", "1759", "1440", "390", "keyboard", "polling", "run/agent lifecycle", "secure renderers", "missing file", "metadata failure"] }, null, 2));
+  if (captureDir) fs.writeFileSync(path.join(captureDir, "attachment-preview-results.json"), JSON.stringify({ layout, independentScroll, raceResults, errors, tested: ["1920", "1760", "1759", "1440", "390", "keyboard", "polling", "run/agent lifecycle", "secure renderers", "missing file", "metadata failure", "repeated-ID metadata/image races after render/polling", "delayed response after navigation"] }, null, 2));
   console.log(`attachment-preview-smoke: ok ${JSON.stringify(layout)}`);
   await page.close();
 };
