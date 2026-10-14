@@ -1444,6 +1444,7 @@ module HQ
       name = opts[:name].to_s.strip
       name = File.basename(path) if name.empty?
       name = key if name.empty? || name == File::SEPARATOR
+      registry = Registry.new
       harness = project_harness_option(opts, default: HQ.harness_keys.first)
       attrs = {
         key: key,
@@ -1458,7 +1459,6 @@ module HQ
       attrs[:response_style] = project_response_style_option(opts[:response_style]) if opts.key?(:response_style)
       attrs[:hidden] = project_hidden_option(opts[:hidden]) if opts.key?(:hidden)
 
-      registry = Registry.new
       registry.add_project!(attrs)
       config = registry.projects.find { |project| project.key == key }
       payload = project_config_payload(config)
@@ -1508,13 +1508,16 @@ module HQ
 
       attrs = {}
       %i[name group model reasoning_effort pr_url].each { |field| copy_project_option!(attrs, opts, field) }
-      attrs[:agent] = project_harness_option(opts) if opts.key?(:harness) || opts.key?(:agent)
+      if opts.key?(:harness) || opts.key?(:agent)
+        registry = Registry.new unless remote_requested?(opts)
+        attrs[:agent] = project_harness_option(opts)
+      end
       attrs[:response_style] = project_response_style_option(opts[:response_style]) if opts.key?(:response_style)
       attrs[:hidden] = project_hidden_option(opts[:hidden]) if opts.key?(:hidden)
       return command_failure("No fields to update", opts, out:, err:) if attrs.empty?
       return remote_update_project(project_key, attrs, opts, out:, err:) if remote_requested?(opts)
 
-      registry = Registry.new
+      registry ||= Registry.new
       updated = registry.update_project!(project_key, attrs)
       return command_failure("Unknown project: #{project_key}", opts, out:, err:) unless updated
 

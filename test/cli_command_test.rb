@@ -619,7 +619,13 @@ module CLICommandTest
       logs_root = File.join(dir, "logs")
       schedules_path = File.join(dir, "schedules.yml")
       FileUtils.mkdir_p(workspace)
-      File.write(config_path, "projects: []\n")
+      File.write(config_path, <<~YAML)
+        custom_harnesses:
+          - key: custom
+            adapter: claude
+            execution_command: custom-claude --stream-json
+        projects: []
+      YAML
       File.write(prompts_path, "{}\n")
       File.write(schedules_path, "schedules: []\n")
       env = {
@@ -630,14 +636,14 @@ module CLICommandTest
       }
 
       created = run_tycho(env, "project", "create", "demo", "--path", workspace, "--name", "Demo Project",
-                          "--group", "Core", "--harness", "codex", "--model", "gpt-test",
+                          "--group", "Core", "--harness", "custom", "--model", "gpt-test",
                           "--reasoning-effort", "high", "--response-style", "disabled",
                           "--pr-url", "https://github.com/example/demo/pull/7", "--hidden", "true", "--json")
       assert(created.fetch(:status).success?, "expected explicit project creation to succeed: #{created.fetch(:stderr)}")
       created_payload = JSON.parse(created.fetch(:stdout))
       assert(created_payload["key"] == "demo", "expected created project key")
       assert(created_payload["path"] == workspace, "expected created project path")
-      assert(created_payload["harness"] == "codex", "expected created project harness")
+      assert(created_payload["harness"] == "custom", "expected created project harness")
       assert(created_payload["response_style"] == false, "expected disabled response style")
       assert(created_payload["hidden"] == true, "expected hidden project override")
 
@@ -665,9 +671,24 @@ module CLICommandTest
       assert(updated_payload["pr_url"].nil?, "expected PR URL to clear")
       assert(updated_payload["hidden_override"].nil?, "expected visibility to inherit")
 
+      updated_harness = run_tycho(env, "project", "update", "demo", "--harness", "custom", "--json")
+      assert(updated_harness.fetch(:status).success?,
+             "expected project update to accept the configured custom harness: #{updated_harness.fetch(:stderr)}")
+      assert(JSON.parse(updated_harness.fetch(:stdout))["harness"] == "custom",
+             "expected project update to retain the configured custom harness")
+
+      registry_before_unsupported_harness = File.binread(config_path)
+      unsupported_harness = run_tycho(env, "project", "update", "demo", "--harness", "unsupported", "--json")
+      assert(!unsupported_harness.fetch(:status).success?, "expected project update to reject an unsupported harness")
+      assert(JSON.parse(unsupported_harness.fetch(:stdout)).fetch("error").include?("Unsupported harness \"unsupported\""),
+             "expected unsupported project harness error to name the rejected harness")
+      assert_registry_unchanged(config_path, registry_before_unsupported_harness, "unsupported project harness")
+
       explicit = run_tycho(env, "project", "create", "explicit", "--path", workspace, "--json")
       assert(explicit.fetch(:status).success?, "expected explicit project create to succeed: #{explicit.fetch(:stderr)}")
       assert(JSON.parse(explicit.fetch(:stdout))["key"] == "explicit", "expected explicit project create key")
+      assert(JSON.parse(explicit.fetch(:stdout))["harness"] == "codex",
+             "expected project create without --harness to retain the built-in default")
       agent_created = run_tycho(env, "agent", "create", "explicit", "Check this project")
       assert(agent_created.fetch(:status).success?, "expected project fixture agent creation to succeed")
       agent_key = JSON.parse(File.read(File.join(logs_root, "managed_agents.json"))).fetch(0).fetch("key")
