@@ -20,14 +20,14 @@ module HQ
     PWA_ICON_512_PATH = File.join(ROOT, "assets", "pwa-icon-512.png")
     PWA_ICON_MASKABLE_512_PATH = File.join(ROOT, "assets", "pwa-icon-maskable-512.png")
     SERVICE_WORKER_PATH = File.join(ROOT, "assets", "service-worker.js")
-    SOURCE_SANS_3_ROOT = File.join(ROOT, "assets", "fonts", "source-sans-3")
-    SOURCE_SANS_3_LICENSE_PATH = File.join(SOURCE_SANS_3_ROOT, "LICENSE.md")
-    SOURCE_SANS_3_PROVENANCE_PATH = File.join(SOURCE_SANS_3_ROOT, "README.md")
+    PLUS_JAKARTA_SANS_ROOT = File.join(ROOT, "assets", "fonts", "plus-jakarta-sans")
+    PLUS_JAKARTA_SANS_LICENSE_PATH = File.join(PLUS_JAKARTA_SANS_ROOT, "LICENSE.md")
+    PLUS_JAKARTA_SANS_PROVENANCE_PATH = File.join(PLUS_JAKARTA_SANS_ROOT, "README.md")
     FONT_ASSETS = {
-      "/fonts/source-sans-3/source-sans-3-3.052-upright.woff2" =>
-        File.join(SOURCE_SANS_3_ROOT, "source-sans-3-3.052-upright.woff2"),
-      "/fonts/source-sans-3/source-sans-3-3.052-italic.woff2" =>
-        File.join(SOURCE_SANS_3_ROOT, "source-sans-3-3.052-italic.woff2")
+      "/fonts/plus-jakarta-sans/plus-jakarta-sans-v12-latin-wght-normal-153fc85b7029.woff2" =>
+        File.join(PLUS_JAKARTA_SANS_ROOT, "plus-jakarta-sans-v12-latin-wght-normal-153fc85b7029.woff2"),
+      "/fonts/plus-jakarta-sans/plus-jakarta-sans-v12-latin-wght-italic-bb113d8f5be8.woff2" =>
+        File.join(PLUS_JAKARTA_SANS_ROOT, "plus-jakarta-sans-v12-latin-wght-italic-bb113d8f5be8.woff2")
     }.freeze
     PNG_ASSETS = {
       "remote-logo" => LOGO_PATH,
