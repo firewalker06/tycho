@@ -198,7 +198,7 @@ module CLICommandTest
       fake_codex = File.join(dir, "fake-codex")
       File.write(fake_codex, <<~SH)
         #!/bin/sh
-        sleep 20
+        sleep 60
       SH
       FileUtils.chmod(0o755, fake_codex)
 
