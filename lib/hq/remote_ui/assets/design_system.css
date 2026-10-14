@@ -5,6 +5,22 @@
  * here. Product and route-specific composition remains in app.css.
  */
 
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("/fonts/plus-jakarta-sans/plus-jakarta-sans-v12-latin-wght-normal-153fc85b7029.woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  font-style: italic;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("/fonts/plus-jakarta-sans/plus-jakarta-sans-v12-latin-wght-italic-bb113d8f5be8.woff2") format("woff2-variations");
+}
+
 :root {
   color-scheme: dark;
 
@@ -52,7 +68,7 @@
   --ds-focus-ring: var(--ds-color-lavender);
 
   /* Typography. */
-  --ds-font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ds-font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --ds-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --ds-font-size-1: 0.75rem;
   --ds-font-size-2: 0.8125rem;

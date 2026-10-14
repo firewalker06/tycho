@@ -20,6 +20,15 @@ module HQ
     PWA_ICON_512_PATH = File.join(ROOT, "assets", "pwa-icon-512.png")
     PWA_ICON_MASKABLE_512_PATH = File.join(ROOT, "assets", "pwa-icon-maskable-512.png")
     SERVICE_WORKER_PATH = File.join(ROOT, "assets", "service-worker.js")
+    PLUS_JAKARTA_SANS_ROOT = File.join(ROOT, "assets", "fonts", "plus-jakarta-sans")
+    PLUS_JAKARTA_SANS_LICENSE_PATH = File.join(PLUS_JAKARTA_SANS_ROOT, "LICENSE.md")
+    PLUS_JAKARTA_SANS_PROVENANCE_PATH = File.join(PLUS_JAKARTA_SANS_ROOT, "README.md")
+    FONT_ASSETS = {
+      "/fonts/plus-jakarta-sans/plus-jakarta-sans-v12-latin-wght-normal-153fc85b7029.woff2" =>
+        File.join(PLUS_JAKARTA_SANS_ROOT, "plus-jakarta-sans-v12-latin-wght-normal-153fc85b7029.woff2"),
+      "/fonts/plus-jakarta-sans/plus-jakarta-sans-v12-latin-wght-italic-bb113d8f5be8.woff2" =>
+        File.join(PLUS_JAKARTA_SANS_ROOT, "plus-jakarta-sans-v12-latin-wght-italic-bb113d8f5be8.woff2")
+    }.freeze
     PNG_ASSETS = {
       "remote-logo" => LOGO_PATH,
       "remote-logo-horizontal" => HORIZONTAL_LOGO_PATH,
@@ -36,6 +45,7 @@ module HQ
       HELPERS_JS_PATH,
       JS_PATH,
       SERVICE_WORKER_PATH,
+      *FONT_ASSETS.values,
       *PNG_ASSETS.values
     ].freeze
     FAVICON_SVG = <<~SVG
@@ -120,6 +130,14 @@ module HQ
 
     def self.png_asset(name)
       asset_content(PNG_ASSETS.fetch(name))
+    end
+
+    def self.font_asset(route)
+      asset_content(FONT_ASSETS.fetch(route))
+    end
+
+    def self.font_asset_route?(route)
+      FONT_ASSETS.key?(route)
     end
 
     def self.asset_version

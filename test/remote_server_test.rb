@@ -5941,6 +5941,44 @@ module RemoteServerTest
     css = server.send(:route_ui, "/ui.css")
     app_js = server.send(:route_ui, "/ui.js")
     assert(css[:content_type].include?("text/css"), "expected /ui.css to return CSS")
+    assert(css[:body].include?('@font-face') &&
+           css[:body].include?('font-family: "Plus Jakarta Sans"') &&
+           css[:body].include?('/fonts/plus-jakarta-sans/plus-jakarta-sans-v12-latin-wght-normal-153fc85b7029.woff2') &&
+           css[:body].include?('/fonts/plus-jakarta-sans/plus-jakarta-sans-v12-latin-wght-italic-bb113d8f5be8.woff2'),
+           "expected Remote UI CSS to load the self-hosted Plus Jakarta Sans variable fonts")
+    assert(css[:body].include?('--ds-font-sans: "Plus Jakarta Sans", ui-sans-serif') &&
+           css[:body].include?("font-family: var(--ds-font-mono)"),
+           "expected Plus Jakarta Sans for UI text and the existing monospace stack for code")
+    assert(!css[:body].match?(%r{https?://(?:fonts\.)?(?:googleapis|gstatic)\.com}),
+           "expected Remote UI fonts to have no Google Fonts runtime dependency")
+    assert(response[:body].include?('font-family: "Plus Jakarta Sans", ui-sans-serif'),
+           "expected the initial loading shell to use the Remote UI font stack")
+
+    HQ::RemoteUI::FONT_ASSETS.each do |font_route, font_path|
+      font_request = HQ::RemoteServer.const_get(:Request).new(
+        method: "GET",
+        path: font_route,
+        headers: {},
+        body: ""
+      )
+      assert(server.send(:ui_request?, font_request), "expected #{font_route} to be a public UI route")
+      font = server.send(:route_ui, font_route)
+      assert(font[:content_type] == "font/woff2", "expected #{font_route} to use the WOFF2 MIME type")
+      assert(font[:body].byteslice(0, 4) == "wOF2".b, "expected #{font_route} to return a WOFF2 file")
+      assert(font.dig(:headers, "Cache-Control") == "public, max-age=31536000, immutable",
+             "expected #{font_route} to use immutable browser caching")
+      assert(font.dig(:headers, "X-Content-Type-Options") == "nosniff",
+             "expected #{font_route} to disable MIME sniffing")
+      digest = Digest::SHA256.file(font_path).hexdigest[0, 12]
+      assert(font_route.include?(digest),
+             "expected #{font_route} to change when its font bytes change")
+    end
+    assert(File.read(HQ::RemoteUI::PLUS_JAKARTA_SANS_LICENSE_PATH).include?("SIL OPEN FONT LICENSE Version 1.1"),
+           "expected the Plus Jakarta Sans license to ship with the font files")
+    provenance = File.read(HQ::RemoteUI::PLUS_JAKARTA_SANS_PROVENANCE_PATH)
+    assert(provenance.include?("@fontsource-variable/plus-jakarta-sans 5.3.0") &&
+           provenance.include?("02b28c06b126c852a5b966b44aef777ca923f6f6"),
+           "expected Plus Jakarta Sans provenance to identify its exact Fontsource release")
     %w[
       --ds-background-canvas
       --ds-text-primary

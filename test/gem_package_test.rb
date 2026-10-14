@@ -19,6 +19,7 @@ module GemPackageTest
       FileUtils.mkdir_p(unpacked)
       Gem::Package.new(gem_path).extract_files(unpacked)
       verify_packaged_schemas!(unpacked)
+      verify_packaged_fonts!(unpacked)
       verify_packaged_installer!(unpacked, File.join(dir, "home"))
     end
     puts "gem_package_test: ok"
@@ -29,6 +30,18 @@ module GemPackageTest
       path = File.join(unpacked, "config", "schemas", name)
       raise "packaged gem is missing #{name}" unless File.file?(path)
     end
+  end
+
+  def verify_packaged_fonts!(unpacked)
+    font_root = File.join(unpacked, "lib", "hq", "remote_ui", "assets", "fonts", "plus-jakarta-sans")
+    expected = %w[
+      LICENSE.md
+      README.md
+      plus-jakarta-sans-v12-latin-wght-italic-bb113d8f5be8.woff2
+      plus-jakarta-sans-v12-latin-wght-normal-153fc85b7029.woff2
+    ]
+    missing = expected.reject { |name| File.file?(File.join(font_root, name)) }
+    raise "packaged gem is missing Plus Jakarta Sans assets: #{missing.join(', ')}" unless missing.empty?
   end
 
   def build_gem!(gem_path)

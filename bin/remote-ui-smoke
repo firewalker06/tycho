@@ -657,10 +657,12 @@ def write_smoke_script(path)
       const queueEntryIds = (process.env.TYCHO_REMOTE_UI_QUEUE_ENTRY_IDS || "").split(",").filter(Boolean);
       const queueBulkEntryIds = (process.env.TYCHO_REMOTE_UI_QUEUE_BULK_ENTRY_IDS || "").split(",").filter(Boolean);
       const captureDir = process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY === "1" ? "" : summaryCaptureDir;
+      const fontCaptureDir = process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY === "1" ? summaryCaptureDir : "";
       const draft = "Remote UI smoke draft " + Date.now();
       const errors = [];
 
       if (captureDir) fs.mkdirSync(captureDir, { recursive: true });
+      if (fontCaptureDir) fs.mkdirSync(fontCaptureDir, { recursive: true });
       if (captureDir && beforeCapture) fs.copyFileSync(beforeCapture, path.join(captureDir, "attachment-flyout-before.png"));
 
       const browser = await chromium.launch({ executablePath: chromePath, headless: true });
@@ -4183,6 +4185,298 @@ title: !123 value
         }
         }
         if (process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY === "1") {
+          async function inspectTypography(candidate, width, height) {
+            await candidate.setViewportSize({ width, height });
+            return candidate.evaluate(async () => {
+              window.__fontPolicyViolations = [];
+              document.addEventListener("securitypolicyviolation", (event) => {
+                window.__fontPolicyViolations.push({
+                  directive: event.violatedDirective,
+                  blocked: event.blockedURI,
+                });
+              }, { once: false });
+              await Promise.all([
+                document.fonts.load('400 16px "Plus Jakarta Sans"', "Tycho font verification"),
+                document.fonts.load('600 16px "Plus Jakarta Sans"', "Tycho semibold verification"),
+                document.fonts.load('italic 400 16px "Plus Jakarta Sans"', "Tycho italic verification"),
+                document.fonts.load('italic 600 16px "Plus Jakarta Sans"', "Tycho semibold italic verification"),
+              ]);
+              await document.fonts.ready;
+
+              const probe = document.createElement("span");
+              probe.textContent = "Managed agents keep long operational prose readable 0123456789";
+              Object.assign(probe.style, {
+                position: "fixed",
+                visibility: "hidden",
+                whiteSpace: "nowrap",
+                fontFamily: '"Plus Jakarta Sans", sans-serif',
+                fontSize: "16px",
+              });
+              document.body.append(probe);
+              const probeWidth = probe.getBoundingClientRect().width;
+              probe.remove();
+
+              const codeProbe = document.createElement("code");
+              codeProbe.textContent = "const agent = fixture";
+              document.body.append(codeProbe);
+              const codeFamily = getComputedStyle(codeProbe).fontFamily;
+              codeProbe.remove();
+
+              const visibleTextControls = Array.from(document.querySelectorAll("button, input, select, textarea, a.ui-button"))
+                .filter((control) => control.getClientRects().length && getComputedStyle(control).visibility !== "hidden")
+                .filter((control) => !control.classList.contains("ui-icon-button") && !control.querySelector(".sr-only"))
+                .filter((control) => (control.value || control.textContent || control.getAttribute("aria-label") || "").trim());
+              const smallControls = visibleTextControls
+                .filter((control) => Number.parseFloat(getComputedStyle(control).fontSize) < 12)
+                .map((control) => control.getAttribute("aria-label") || control.textContent.trim()).slice(0, 5);
+              const resources = performance.getEntriesByType("resource").map((entry) => entry.name);
+              const uprightResponse = await fetch("/fonts/plus-jakarta-sans/plus-jakarta-sans-v12-latin-wght-normal-153fc85b7029.woff2");
+              return {
+                family: getComputedStyle(document.body).fontFamily,
+                normalLoaded: document.fonts.check('400 16px "Plus Jakarta Sans"', "Tycho font verification"),
+                semiboldLoaded: document.fonts.check('600 16px "Plus Jakarta Sans"', "Tycho semibold verification"),
+                italicLoaded: document.fonts.check('italic 400 16px "Plus Jakarta Sans"', "Tycho italic verification"),
+                semiboldItalicLoaded: document.fonts.check('italic 600 16px "Plus Jakarta Sans"', "Tycho semibold italic verification"),
+                uprightRequested: resources.some((name) => name.endsWith("/fonts/plus-jakarta-sans/plus-jakarta-sans-v12-latin-wght-normal-153fc85b7029.woff2")),
+                italicRequested: resources.some((name) => name.endsWith("/fonts/plus-jakarta-sans/plus-jakarta-sans-v12-latin-wght-italic-bb113d8f5be8.woff2")),
+                cacheControl: uprightResponse.headers.get("cache-control"),
+                contentType: uprightResponse.headers.get("content-type"),
+                policyViolations: window.__fontPolicyViolations,
+                overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+                smallControls,
+                codeFamily,
+                probeWidth,
+              };
+            });
+          }
+
+          const typographyDesktop = await inspectTypography(page, 1440, 900);
+          const typographyMobile = await inspectTypography(page, 390, 844);
+          for (const [viewport, contract] of [["desktop", typographyDesktop], ["mobile", typographyMobile]]) {
+            if (!contract.family.startsWith('"Plus Jakarta Sans"') ||
+                !contract.normalLoaded ||
+                !contract.semiboldLoaded ||
+                !contract.italicLoaded ||
+                !contract.semiboldItalicLoaded ||
+                !contract.uprightRequested ||
+                !contract.italicRequested ||
+                contract.cacheControl !== "public, max-age=31536000, immutable" ||
+                contract.contentType !== "font/woff2" ||
+                contract.policyViolations.length ||
+                contract.overflow ||
+                contract.smallControls.length ||
+                contract.codeFamily.includes("Plus Jakarta Sans") ||
+                !Number.isFinite(contract.probeWidth) ||
+                contract.probeWidth <= 100) {
+              throw new Error(`Plus Jakarta Sans ${viewport} contract failed: ${JSON.stringify(contract)}`);
+            }
+          }
+
+          const fontRoutes = [
+            "/fonts/plus-jakarta-sans/plus-jakarta-sans-v12-latin-wght-normal-153fc85b7029.woff2",
+            "/fonts/plus-jakarta-sans/plus-jakarta-sans-v12-latin-wght-italic-bb113d8f5be8.woff2",
+          ];
+          const cacheContext = await browser.newContext({ serviceWorkers: "block" });
+          const cachePage = await cacheContext.newPage();
+          const cacheSession = await cacheContext.newCDPSession(cachePage);
+          const cacheRequests = new Map();
+          const cacheSignals = [];
+          let cachePhase = "first";
+          await cacheSession.send("Network.enable");
+          cacheSession.on("Network.requestWillBeSent", (event) => {
+            const route = fontRoutes.find((candidate) => new URL(event.request.url).pathname === candidate);
+            if (!route) return;
+
+            const signal = {
+              phase: cachePhase,
+              route,
+              requestId: event.requestId,
+              servedFromCache: false,
+              fromDiskCache: false,
+              fromPrefetchCache: false,
+              encodedDataLength: null,
+            };
+            cacheRequests.set(event.requestId, signal);
+            cacheSignals.push(signal);
+          });
+          cacheSession.on("Network.requestServedFromCache", (event) => {
+            const signal = cacheRequests.get(event.requestId);
+            if (signal) signal.servedFromCache = true;
+          });
+          cacheSession.on("Network.responseReceived", (event) => {
+            const signal = cacheRequests.get(event.requestId);
+            if (!signal) return;
+
+            signal.fromDiskCache = Boolean(event.response.fromDiskCache);
+            signal.fromPrefetchCache = Boolean(event.response.fromPrefetchCache);
+            signal.status = event.response.status;
+            signal.mimeType = event.response.mimeType;
+            signal.cacheControl = Object.entries(event.response.headers || {})
+              .find(([name]) => name.toLowerCase() === "cache-control")?.[1] || null;
+          });
+          cacheSession.on("Network.loadingFinished", (event) => {
+            const signal = cacheRequests.get(event.requestId);
+            if (signal) signal.encodedDataLength = event.encodedDataLength;
+          });
+
+          async function loadFontFaces(candidate) {
+            return candidate.evaluate(async () => {
+              const loads = await Promise.all([
+                document.fonts.load('400 16px "Plus Jakarta Sans"', "Tycho cache verification"),
+                document.fonts.load('600 16px "Plus Jakarta Sans"', "Tycho cache verification"),
+                document.fonts.load('italic 400 16px "Plus Jakarta Sans"', "Tycho cache verification"),
+                document.fonts.load('italic 600 16px "Plus Jakarta Sans"', "Tycho cache verification"),
+              ]);
+              await document.fonts.ready;
+              return {
+                loadCounts: loads.map((faces) => faces.length),
+                resources: performance.getEntriesByType("resource")
+                  .filter((entry) => entry.name.includes("/fonts/plus-jakarta-sans/"))
+                  .map((entry) => ({
+                    route: new URL(entry.name).pathname,
+                    transferSize: entry.transferSize,
+                    encodedBodySize: entry.encodedBodySize,
+                    decodedBodySize: entry.decodedBodySize,
+                  })),
+              };
+            });
+          }
+
+          await cachePage.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
+          const firstLoad = await loadFontFaces(cachePage);
+          cachePhase = "repeat";
+          await cachePage.evaluate(() => performance.clearResourceTimings());
+          await cachePage.reload({ waitUntil: "networkidle" });
+          const repeatLoad = await loadFontFaces(cachePage);
+          await cacheSession.detach();
+          await cacheContext.close();
+
+          const cacheEvidence = { firstLoad, repeatLoad, signals: cacheSignals };
+          for (const route of fontRoutes) {
+            const firstSignals = cacheSignals.filter((signal) => signal.phase === "first" && signal.route === route);
+            const repeatSignals = cacheSignals.filter((signal) => signal.phase === "repeat" && signal.route === route);
+            const firstResource = firstLoad.resources.find((resource) => resource.route === route);
+            const repeatResource = repeatLoad.resources.find((resource) => resource.route === route);
+            const firstTransferred = firstSignals.some((signal) => Number(signal.encodedDataLength) > 0) ||
+              Number(firstResource?.transferSize) > 0;
+            const repeatCached = repeatSignals.some((signal) =>
+              signal.servedFromCache || signal.fromDiskCache || signal.fromPrefetchCache || signal.encodedDataLength === 0
+            ) || (repeatResource?.transferSize === 0 && Number(repeatResource?.decodedBodySize) > 0);
+            if (!firstTransferred || !repeatCached) {
+              throw new Error(`Plus Jakarta Sans cache reuse failed for ${route}: ${JSON.stringify(cacheEvidence)}`);
+            }
+          }
+          if (![...firstLoad.loadCounts, ...repeatLoad.loadCounts].every((count) => count > 0)) {
+            throw new Error(`Plus Jakarta Sans cache font loads failed: ${JSON.stringify(cacheEvidence)}`);
+          }
+          if (fontCaptureDir) {
+            fs.writeFileSync(path.join(fontCaptureDir, "plus-jakarta-sans-cache-evidence.json"), JSON.stringify(cacheEvidence, null, 2));
+          }
+
+          async function captureFontPair(width, height, viewport) {
+            if (!fontCaptureDir) return;
+
+            await page.setViewportSize({ width, height });
+            const settleLayout = () => page.evaluate(() => new Promise((resolve) => {
+              window.scrollTo(0, 0);
+              const pane = document.querySelector("[data-agent-conversation-scroll]");
+              if (pane) {
+                pane.scrollTop = 0;
+                pane.scrollLeft = 0;
+              }
+              requestAnimationFrame(() => requestAnimationFrame(resolve));
+            }));
+            await settleLayout();
+            const baselineStyle = await page.addStyleTag({
+              content: ':root { --ds-font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important; }',
+            });
+            await settleLayout();
+            await page.screenshot({ path: path.join(fontCaptureDir, `plus-jakarta-sans-before-${viewport}.png`), fullPage: false });
+            await baselineStyle.evaluate((element) => element.remove());
+            await page.evaluate(async () => {
+              await Promise.all([
+                document.fonts.load('400 16px "Plus Jakarta Sans"'),
+                document.fonts.load('600 16px "Plus Jakarta Sans"'),
+                document.fonts.load('italic 400 16px "Plus Jakarta Sans"'),
+                document.fonts.load('italic 600 16px "Plus Jakarta Sans"'),
+              ]);
+              await document.fonts.ready;
+            });
+            await settleLayout();
+            await page.screenshot({ path: path.join(fontCaptureDir, `plus-jakarta-sans-after-${viewport}.png`), fullPage: false });
+          }
+          await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
+          await page.waitForSelector("#prompt-input", { state: "visible", timeout: 10_000 });
+          await page.waitForSelector(".message-list > .message-group", { state: "visible", timeout: 10_000 });
+          await page.evaluate(() => {
+            document.querySelectorAll(".message-list > details.message-group").forEach((group) => {
+              group.open = true;
+            });
+            const publicMessages = [
+              "Project: Web · public synthetic workspace fixture",
+              "Tycho manages agents and keeps their verified work visible for review.",
+              "Exercise readable prose, semibold controls, italic text, and monospace code.",
+            ];
+            document.querySelectorAll(".message-group-body .message-content").forEach((message, index) => {
+              if (publicMessages[index]) message.textContent = publicMessages[index];
+            });
+            const pane = document.querySelector("[data-agent-conversation-scroll]");
+            if (pane) {
+              pane.scrollTop = 0;
+              pane.scrollLeft = 0;
+            }
+            window.scrollTo(0, 0);
+          });
+          await captureFontPair(1440, 900, "desktop");
+          await captureFontPair(390, 844, "mobile");
+
+          const fallbackContext = await browser.newContext({ serviceWorkers: "block" });
+          const fallbackPage = await fallbackContext.newPage();
+          let blockedFontRequests = 0;
+          await fallbackPage.route("**/fonts/plus-jakarta-sans/*.woff2", async (route) => {
+            blockedFontRequests += 1;
+            await route.abort("failed");
+          });
+          await fallbackPage.goto(baseUrl, { waitUntil: "networkidle" });
+          await fallbackPage.waitForSelector("#app:not([aria-busy='true'])", { timeout: 10_000 });
+          const fallbackContract = await fallbackPage.evaluate(async () => {
+            await document.fonts.ready;
+            const probe = document.createElement("span");
+            probe.textContent = "Managed agents keep long operational prose readable 0123456789";
+            Object.assign(probe.style, {
+              position: "fixed",
+              visibility: "hidden",
+              whiteSpace: "nowrap",
+              fontFamily: '"Plus Jakarta Sans", sans-serif',
+              fontSize: "16px",
+            });
+            document.body.append(probe);
+            const probeWidth = probe.getBoundingClientRect().width;
+            probe.remove();
+            const controls = Array.from(document.querySelectorAll("button"))
+              .filter((control) => control.getClientRects().length);
+            return {
+              family: getComputedStyle(document.body).fontFamily,
+              fontAvailable: document.fonts.check('400 16px "Plus Jakarta Sans"', "Tycho font verification"),
+              overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+              readableControls: controls.length > 0 &&
+                controls.every((control) => Number.parseFloat(getComputedStyle(control).fontSize) >= 12) &&
+                controls.some((control) => control.getBoundingClientRect().height >= 42),
+              probeWidth,
+            };
+          });
+          await fallbackContext.close();
+          if (!blockedFontRequests ||
+              !fallbackContract.family.startsWith('"Plus Jakarta Sans"') ||
+              fallbackContract.fontAvailable ||
+              fallbackContract.overflow ||
+              !fallbackContract.readableControls ||
+              !Number.isFinite(fallbackContract.probeWidth) ||
+              fallbackContract.probeWidth <= 100) {
+            throw new Error(`Plus Jakarta Sans fallback contract failed: ${JSON.stringify({ blockedFontRequests, ...fallbackContract })}`);
+          }
+          console.log(`remote-ui-smoke: Plus Jakarta Sans typography ok ${JSON.stringify({ desktop: typographyDesktop.probeWidth, mobile: typographyMobile.probeWidth, fallback: fallbackContract.probeWidth })}`);
+
           await page.setViewportSize({ width: 1440, height: 900 });
           const richSummaryContract = await page.evaluate((key) => {
             const agent = findAgent(key);
