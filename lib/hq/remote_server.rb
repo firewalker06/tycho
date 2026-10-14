@@ -609,6 +609,17 @@ module HQ
     end
 
     def route_ui(path)
+      if RemoteUI.font_asset_route?(path)
+        return ui_asset(
+          "font/woff2",
+          RemoteUI.font_asset(path),
+          headers: {
+            "Cache-Control" => "public, max-age=31536000, immutable",
+            "X-Content-Type-Options" => "nosniff"
+          }
+        )
+      end
+
       case path
       when "/", "/ui", "/ui/"
         ui_asset("text/html; charset=utf-8", RemoteUI.index)
@@ -660,7 +671,10 @@ module HQ
     end
 
     def ui_request?(request)
-      request.method == "GET" && [
+      return false unless request.method == "GET"
+      return true if RemoteUI.font_asset_route?(request.path)
+
+      [
         "/",
         "/ui",
         "/ui/",

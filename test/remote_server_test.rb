@@ -5941,6 +5941,39 @@ module RemoteServerTest
     css = server.send(:route_ui, "/ui.css")
     app_js = server.send(:route_ui, "/ui.js")
     assert(css[:content_type].include?("text/css"), "expected /ui.css to return CSS")
+    assert(css[:body].include?('@font-face') &&
+           css[:body].include?('font-family: "Source Sans 3"') &&
+           css[:body].include?('/fonts/source-sans-3/source-sans-3-3.052-upright.woff2') &&
+           css[:body].include?('/fonts/source-sans-3/source-sans-3-3.052-italic.woff2'),
+           "expected Remote UI CSS to load the self-hosted Source Sans 3 variable fonts")
+    assert(css[:body].include?('--ds-font-sans: "Source Sans 3", ui-sans-serif') &&
+           css[:body].include?("font-family: var(--ds-font-mono)"),
+           "expected Source Sans 3 for UI text and the existing monospace stack for code")
+    assert(!css[:body].match?(%r{https?://(?:fonts\.)?(?:googleapis|gstatic)\.com}),
+           "expected Remote UI fonts to have no Google Fonts runtime dependency")
+    assert(response[:body].include?('font-family: "Source Sans 3", ui-sans-serif'),
+           "expected the initial loading shell to use the Remote UI font stack")
+
+    HQ::RemoteUI::FONT_ASSETS.each_key do |font_route|
+      font_request = HQ::RemoteServer.const_get(:Request).new(
+        method: "GET",
+        path: font_route,
+        headers: {},
+        body: ""
+      )
+      assert(server.send(:ui_request?, font_request), "expected #{font_route} to be a public UI route")
+      font = server.send(:route_ui, font_route)
+      assert(font[:content_type] == "font/woff2", "expected #{font_route} to use the WOFF2 MIME type")
+      assert(font[:body].byteslice(0, 4) == "wOF2".b, "expected #{font_route} to return a WOFF2 file")
+      assert(font.dig(:headers, "Cache-Control") == "public, max-age=31536000, immutable",
+             "expected #{font_route} to use immutable browser caching")
+      assert(font.dig(:headers, "X-Content-Type-Options") == "nosniff",
+             "expected #{font_route} to disable MIME sniffing")
+    end
+    assert(File.read(HQ::RemoteUI::SOURCE_SANS_3_LICENSE_PATH).include?("SIL OPEN FONT LICENSE Version 1.1"),
+           "expected the Source Sans 3 license to ship with the font files")
+    assert(File.read(HQ::RemoteUI::SOURCE_SANS_3_PROVENANCE_PATH).include?("87b37a2daaed80fcb8e8ccb0085c4d72ddade12e"),
+           "expected Source Sans 3 provenance to identify its upstream commit")
     %w[
       --ds-background-canvas
       --ds-text-primary

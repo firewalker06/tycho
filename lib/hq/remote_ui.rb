@@ -20,6 +20,15 @@ module HQ
     PWA_ICON_512_PATH = File.join(ROOT, "assets", "pwa-icon-512.png")
     PWA_ICON_MASKABLE_512_PATH = File.join(ROOT, "assets", "pwa-icon-maskable-512.png")
     SERVICE_WORKER_PATH = File.join(ROOT, "assets", "service-worker.js")
+    SOURCE_SANS_3_ROOT = File.join(ROOT, "assets", "fonts", "source-sans-3")
+    SOURCE_SANS_3_LICENSE_PATH = File.join(SOURCE_SANS_3_ROOT, "LICENSE.md")
+    SOURCE_SANS_3_PROVENANCE_PATH = File.join(SOURCE_SANS_3_ROOT, "README.md")
+    FONT_ASSETS = {
+      "/fonts/source-sans-3/source-sans-3-3.052-upright.woff2" =>
+        File.join(SOURCE_SANS_3_ROOT, "source-sans-3-3.052-upright.woff2"),
+      "/fonts/source-sans-3/source-sans-3-3.052-italic.woff2" =>
+        File.join(SOURCE_SANS_3_ROOT, "source-sans-3-3.052-italic.woff2")
+    }.freeze
     PNG_ASSETS = {
       "remote-logo" => LOGO_PATH,
       "remote-logo-horizontal" => HORIZONTAL_LOGO_PATH,
@@ -36,6 +45,7 @@ module HQ
       HELPERS_JS_PATH,
       JS_PATH,
       SERVICE_WORKER_PATH,
+      *FONT_ASSETS.values,
       *PNG_ASSETS.values
     ].freeze
     FAVICON_SVG = <<~SVG
@@ -120,6 +130,14 @@ module HQ
 
     def self.png_asset(name)
       asset_content(PNG_ASSETS.fetch(name))
+    end
+
+    def self.font_asset(route)
+      asset_content(FONT_ASSETS.fetch(route))
+    end
+
+    def self.font_asset_route?(route)
+      FONT_ASSETS.key?(route)
     end
 
     def self.asset_version

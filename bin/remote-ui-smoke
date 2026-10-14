@@ -4183,6 +4183,134 @@ title: !123 value
         }
         }
         if (process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY === "1") {
+          async function inspectTypography(candidate, width, height) {
+            await candidate.setViewportSize({ width, height });
+            return candidate.evaluate(async () => {
+              window.__fontPolicyViolations = [];
+              document.addEventListener("securitypolicyviolation", (event) => {
+                window.__fontPolicyViolations.push({
+                  directive: event.violatedDirective,
+                  blocked: event.blockedURI,
+                });
+              }, { once: false });
+              await Promise.all([
+                document.fonts.load('400 16px "Source Sans 3"', "Tycho font verification"),
+                document.fonts.load('italic 400 16px "Source Sans 3"', "Tycho italic verification"),
+              ]);
+              await document.fonts.ready;
+
+              const probe = document.createElement("span");
+              probe.textContent = "Managed agents keep long operational prose readable 0123456789";
+              Object.assign(probe.style, {
+                position: "fixed",
+                visibility: "hidden",
+                whiteSpace: "nowrap",
+                fontFamily: '"Source Sans 3", sans-serif',
+                fontSize: "16px",
+              });
+              document.body.append(probe);
+              const probeWidth = probe.getBoundingClientRect().width;
+              probe.remove();
+
+              const codeProbe = document.createElement("code");
+              codeProbe.textContent = "const agent = fixture";
+              document.body.append(codeProbe);
+              const codeFamily = getComputedStyle(codeProbe).fontFamily;
+              codeProbe.remove();
+
+              const visibleTextControls = Array.from(document.querySelectorAll("button, input, select, textarea, a.ui-button"))
+                .filter((control) => control.getClientRects().length && getComputedStyle(control).visibility !== "hidden")
+                .filter((control) => !control.classList.contains("ui-icon-button") && !control.querySelector(".sr-only"))
+                .filter((control) => (control.value || control.textContent || control.getAttribute("aria-label") || "").trim());
+              const smallControls = visibleTextControls
+                .filter((control) => Number.parseFloat(getComputedStyle(control).fontSize) < 12)
+                .map((control) => control.getAttribute("aria-label") || control.textContent.trim()).slice(0, 5);
+              const resources = performance.getEntriesByType("resource").map((entry) => entry.name);
+              const uprightResponse = await fetch("/fonts/source-sans-3/source-sans-3-3.052-upright.woff2");
+              return {
+                family: getComputedStyle(document.body).fontFamily,
+                normalLoaded: document.fonts.check('400 16px "Source Sans 3"', "Tycho font verification"),
+                italicLoaded: document.fonts.check('italic 400 16px "Source Sans 3"', "Tycho italic verification"),
+                uprightRequested: resources.some((name) => name.endsWith("/fonts/source-sans-3/source-sans-3-3.052-upright.woff2")),
+                italicRequested: resources.some((name) => name.endsWith("/fonts/source-sans-3/source-sans-3-3.052-italic.woff2")),
+                cacheControl: uprightResponse.headers.get("cache-control"),
+                contentType: uprightResponse.headers.get("content-type"),
+                policyViolations: window.__fontPolicyViolations,
+                overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+                smallControls,
+                codeFamily,
+                probeWidth,
+              };
+            });
+          }
+
+          const typographyDesktop = await inspectTypography(page, 1440, 900);
+          const typographyMobile = await inspectTypography(page, 390, 844);
+          for (const [viewport, contract] of [["desktop", typographyDesktop], ["mobile", typographyMobile]]) {
+            if (!contract.family.startsWith('"Source Sans 3"') ||
+                !contract.normalLoaded ||
+                !contract.italicLoaded ||
+                !contract.uprightRequested ||
+                !contract.italicRequested ||
+                contract.cacheControl !== "public, max-age=31536000, immutable" ||
+                contract.contentType !== "font/woff2" ||
+                contract.policyViolations.length ||
+                contract.overflow ||
+                contract.smallControls.length ||
+                contract.codeFamily.includes("Source Sans 3") ||
+                !Number.isFinite(contract.probeWidth) ||
+                contract.probeWidth <= 100) {
+              throw new Error(`Source Sans 3 ${viewport} contract failed: ${JSON.stringify(contract)}`);
+            }
+          }
+
+          const fallbackContext = await browser.newContext({ serviceWorkers: "block" });
+          const fallbackPage = await fallbackContext.newPage();
+          let blockedFontRequests = 0;
+          await fallbackPage.route("**/fonts/source-sans-3/*.woff2", async (route) => {
+            blockedFontRequests += 1;
+            await route.abort("failed");
+          });
+          await fallbackPage.goto(baseUrl, { waitUntil: "networkidle" });
+          await fallbackPage.waitForSelector("#app:not([aria-busy='true'])", { timeout: 10_000 });
+          const fallbackContract = await fallbackPage.evaluate(async () => {
+            await document.fonts.ready;
+            const probe = document.createElement("span");
+            probe.textContent = "Managed agents keep long operational prose readable 0123456789";
+            Object.assign(probe.style, {
+              position: "fixed",
+              visibility: "hidden",
+              whiteSpace: "nowrap",
+              fontFamily: '"Source Sans 3", sans-serif',
+              fontSize: "16px",
+            });
+            document.body.append(probe);
+            const probeWidth = probe.getBoundingClientRect().width;
+            probe.remove();
+            const controls = Array.from(document.querySelectorAll("button"))
+              .filter((control) => control.getClientRects().length);
+            return {
+              family: getComputedStyle(document.body).fontFamily,
+              fontAvailable: document.fonts.check('400 16px "Source Sans 3"', "Tycho font verification"),
+              overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+              readableControls: controls.length > 0 &&
+                controls.every((control) => Number.parseFloat(getComputedStyle(control).fontSize) >= 12) &&
+                controls.some((control) => control.getBoundingClientRect().height >= 42),
+              probeWidth,
+            };
+          });
+          await fallbackContext.close();
+          if (!blockedFontRequests ||
+              !fallbackContract.family.startsWith('"Source Sans 3"') ||
+              fallbackContract.fontAvailable ||
+              fallbackContract.overflow ||
+              !fallbackContract.readableControls ||
+              !Number.isFinite(fallbackContract.probeWidth) ||
+              fallbackContract.probeWidth <= 100) {
+            throw new Error(`Source Sans 3 fallback contract failed: ${JSON.stringify({ blockedFontRequests, ...fallbackContract })}`);
+          }
+          console.log(`remote-ui-smoke: Source Sans 3 typography ok ${JSON.stringify({ desktop: typographyDesktop.probeWidth, mobile: typographyMobile.probeWidth, fallback: fallbackContract.probeWidth })}`);
+
           await page.setViewportSize({ width: 1440, height: 900 });
           const richSummaryContract = await page.evaluate((key) => {
             const agent = findAgent(key);
