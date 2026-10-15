@@ -88,6 +88,34 @@ module ServiceWorkerTest
         assert.deepStrictEqual(navigations, ["https://tycho.test/#agent/windows-check"]);
         assert.strictEqual(focused, 1);
 
+        let releaseNavigation;
+        let delayedNavigationSettled = false;
+        matchedClients = [{
+          url: "https://tycho.test/#agent/empty-conversation",
+          navigate: () => new Promise((resolve) => {
+            releaseNavigation = () => {
+              delayedNavigationSettled = true;
+              resolve();
+            };
+          }),
+          focus: async () => { focused += 1; },
+        }];
+        const delayedClick = dispatch("notificationclick", {
+          notification: {
+            data: { url: "/#agent/existing-conversation" },
+            close: () => {},
+          },
+        });
+        const clickState = await Promise.race([
+          delayedClick.then(() => "finished"),
+          new Promise((resolve) => setImmediate(() => resolve("pending"))),
+        ]);
+        assert.strictEqual(clickState, "pending", "click lifetime must include warm-client navigation");
+        assert.strictEqual(delayedNavigationSettled, false);
+        releaseNavigation();
+        await delayedClick;
+        assert.strictEqual(delayedNavigationSettled, true);
+
         matchedClients = [];
         await dispatch("notificationclick", {
           notification: {

@@ -638,6 +638,13 @@ def write_notification_smoke_fixture(logs_dir, agent_key)
       "body" => "Removed queue agent: The original target was removed.",
       "detail" => "The original target was removed. Queued work was retained for operator review.",
       "url" => "/#notification/notification-missing", "created_at" => now, "read_at" => nil
+    },
+    {
+      "id" => "notification-agent", "kind" => "agent", "target_type" => "agent",
+      "target_state" => "active", "agent_key" => agent_key, "agent_name" => "Notification Smoke Agent",
+      "project_key" => "web", "event" => "finished", "status" => "succeeded", "run_count" => 1,
+      "title" => "Done", "body" => "Notification Smoke Agent: Existing conversation is ready.",
+      "url" => "/#notification/notification-agent", "created_at" => now, "read_at" => nil
     }
   ]
   File.write(File.join(logs_dir, "push_notifications.json"), JSON.pretty_generate(records))
@@ -2995,6 +3002,104 @@ title: !123 value
           const readState = await page.evaluate(async () => (await (await fetch("/notifications/notification-active")).json()).notification.read_at);
           if (!readState) throw new Error("Opening a notification did not persist read state");
           if (captureDir) await page.screenshot({ path: path.join(captureDir, "queue-notification-active-desktop.png"), fullPage: false });
+
+          // Direct routes exercise browser loading; they are not OS notification clicks.
+          const revisitResults = [];
+          for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+            const recoveryPage = await browser.newPage({ viewport });
+            await recoveryPage.goto(`${baseUrl}/ui#notification/notification-active`, { waitUntil: "networkidle" });
+            const pattern = `**/agents/${encodeURIComponent(agentKey)}/conversation`;
+            let attempts = 0;
+            await recoveryPage.route(pattern, async (route) => {
+              attempts++;
+              await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Recovery fixture unavailable" }) });
+            });
+            await recoveryPage.evaluate(() => { clearTimeout(state.timer); location.hash = "#notification/notification-agent"; });
+            await recoveryPage.waitForFunction(() => document.body.innerText.includes("Recovery fixture unavailable"));
+            const cached = await recoveryPage.evaluate(() => Boolean(state.notificationDetails["notification-agent"]));
+            await recoveryPage.unroute(pattern);
+            await recoveryPage.evaluate(() => { location.hash = "#agents"; });
+            await recoveryPage.waitForFunction(() => parseRoute().tab === "agents" && !document.body.dataset.routeLoading);
+            await recoveryPage.evaluate(() => { location.hash = "#notification/notification-agent"; });
+            await recoveryPage.waitForFunction(() => !document.body.dataset.routeLoading);
+            const recovered = await recoveryPage.evaluate((key) => ({
+              route: parseRoute(),
+              message: document.querySelector(".message-list")?.innerText || "",
+              empty: Boolean(document.querySelector(".message-list .empty-state")),
+              overflow: document.documentElement.scrollWidth > window.innerWidth,
+            }), agentKey);
+            if (captureDir) await recoveryPage.screenshot({ path: path.join(captureDir, `notification-recovery-${viewport.width}.png`), fullPage: false });
+            await recoveryPage.evaluate(() => { location.hash = "#agents"; });
+            await recoveryPage.waitForFunction(() => parseRoute().tab === "agents" && !document.body.dataset.routeLoading);
+            await recoveryPage.evaluate(() => { location.hash = "#notification/notification-agent"; });
+            await recoveryPage.waitForFunction(() => !document.body.dataset.routeLoading);
+            const repeated = await recoveryPage.evaluate(() => parseRoute());
+            revisitResults.push({ viewport, cached, attempts, recovered, repeated });
+            await recoveryPage.close();
+          }
+          console.log("notification-revisit-results", JSON.stringify(revisitResults));
+          for (const result of revisitResults) {
+            if (!result.cached || result.attempts !== 1 || result.recovered.route.type !== "agent" ||
+                result.recovered.route.key !== agentKey || !result.recovered.message.includes("Existing notification conversation message") ||
+                result.recovered.empty || result.recovered.overflow || result.repeated.type !== "agent" || result.repeated.key !== agentKey) {
+              throw new Error(`Notification recovery/repeat visit failed: ${JSON.stringify(result)}`);
+            }
+          }
+
+          let releaseConversation;
+          const conversationGate = new Promise((resolve) => { releaseConversation = resolve; });
+          const conversationPattern = `**/agents/${encodeURIComponent(agentKey)}/conversation`;
+          await page.route(conversationPattern, async (route) => {
+            await conversationGate;
+            await route.continue();
+          });
+          await page.evaluate(() => { location.hash = "#notification/notification-agent"; });
+          await page.waitForSelector(".notification-detail, .tycho-loading-state", { state: "visible", timeout: 10_000 });
+          const pendingConversation = await page.evaluate(() => ({
+            route: parseRoute(),
+            falseEmpty: Boolean(document.querySelector(".message-list .empty-state")),
+            notificationLoading: Boolean(document.querySelector(".notification-detail, .tycho-loading-state")),
+          }));
+          if (pendingConversation.route.type !== "notification" || pendingConversation.falseEmpty ||
+              !pendingConversation.notificationLoading) {
+            throw new Error(`Delayed notification target showed a false empty conversation: ${JSON.stringify(pendingConversation)}`);
+          }
+          releaseConversation();
+          await page.waitForURL(`**/ui#agent/${encodeURIComponent(agentKey)}`, { timeout: 10_000 });
+          await page.waitForFunction(() => Array.from(document.querySelectorAll(".message-list .message"))
+            .some((message) => message.getClientRects().length > 0), null, { timeout: 10_000 });
+          await page.unroute(conversationPattern);
+          const conversation = await page.evaluate((key) => ({
+            route: parseRoute(),
+            key: findAgent(key)?.key,
+            text: document.querySelector(".message-list")?.innerText || "",
+            loading: Boolean(document.querySelector(".conversation-loading-state")),
+            empty: Boolean(document.querySelector(".message-list .empty-state")),
+          }), agentKey);
+          if (conversation.route.type !== "agent" || conversation.route.key !== agentKey ||
+              conversation.key !== agentKey || !conversation.text.includes("Existing notification conversation message") ||
+              conversation.loading || conversation.empty) {
+            throw new Error(`Warm notification direct route did not load the existing conversation: ${JSON.stringify(conversation)}`);
+          }
+          if (captureDir) await page.screenshot({ path: path.join(captureDir, "agent-notification-conversation-desktop.png"), fullPage: false });
+
+          const mobilePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+          await mobilePage.goto(`${baseUrl}/#notification/notification-agent`, { waitUntil: "networkidle" });
+          await mobilePage.waitForURL(`**/#agent/${encodeURIComponent(agentKey)}`, { timeout: 10_000 });
+          await mobilePage.waitForFunction(() => Array.from(document.querySelectorAll(".message-list .message"))
+            .some((message) => message.getClientRects().length > 0), null, { timeout: 10_000 });
+          const mobileConversation = await mobilePage.evaluate(() => ({
+            route: parseRoute(),
+            loading: Boolean(document.querySelector(".conversation-loading-state")),
+            empty: Boolean(document.querySelector(".message-list .empty-state")),
+            overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          }));
+          if (mobileConversation.route.type !== "agent" || mobileConversation.loading ||
+              mobileConversation.empty || mobileConversation.overflow) {
+            throw new Error(`Cold notification route did not load the mobile conversation: ${JSON.stringify(mobileConversation)}`);
+          }
+          if (captureDir) await mobilePage.screenshot({ path: path.join(captureDir, "agent-notification-conversation-mobile.png"), fullPage: false });
+          await mobilePage.close();
           if (errors.length) throw new Error(`Browser console errors: ${errors.join(" | ")}`);
           console.log("remote-ui-notification-smoke: ok");
           return;
@@ -10259,6 +10364,31 @@ end
 
 browser = ensure_browser_prerequisites!
 
+def run_notification_smoke!(dir:, base_url:, agent_key:, browser:)
+  node_dir = File.join(dir, "node")
+  install_playwright!(node_dir)
+  script = File.join(node_dir, "remote-ui-smoke.js")
+  write_smoke_script(script)
+  smoke_env = {
+    "TYCHO_REMOTE_UI_URL" => base_url,
+    "TYCHO_REMOTE_UI_AGENT_KEY" => agent_key,
+    "TYCHO_REMOTE_UI_NOTIFICATION_ONLY" => "1",
+    "CHROME_PATH" => browser
+  }
+  capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
+  unless capture_dir.empty?
+    expanded_capture_dir = File.expand_path(capture_dir, ROOT)
+    if expanded_capture_dir == ROOT || expanded_capture_dir.start_with?("#{ROOT}/")
+      raise "TYCHO_REMOTE_UI_CAPTURE_DIR must be outside the repository"
+    end
+    smoke_env["TYCHO_REMOTE_UI_CAPTURE_DIR"] = expanded_capture_dir
+  end
+  out, err, status = Open3.capture3(smoke_env, "node", script, chdir: node_dir)
+  puts out unless out.empty?
+  warn err unless err.empty?
+  raise "Notification browser smoke failed with exit #{status.exitstatus || 1}" unless status.success?
+end
+
 def run_schedule_replacement_smoke!(dir:, base_url:, agent_key:, unrelated_agent_key:, browser:)
   node_dir = File.join(dir, "node")
   install_playwright!(node_dir)
@@ -10328,6 +10458,13 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     wait_for_remote(base_url, log_path)
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key = create_agent(base_url)
+    if ENV["TYCHO_REMOTE_UI_NOTIFICATION_ONLY"] == "1"
+      send_agent_message(base_url, agent_key, "Existing notification conversation message.")
+      write_notification_smoke_fixture(fixture.fetch(:logs_dir), agent_key)
+      wait_for_resource_agents(base_url, [agent_key])
+      run_notification_smoke!(dir:, base_url:, agent_key:, browser:)
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_CONVERSATION_SPACING_ONLY"] == "1"
       run_conversation_spacing_smoke!(dir:, base_url:, agent_key:, browser:)
       exit 0
@@ -10345,7 +10482,6 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       run_schedule_replacement_smoke!(dir:, base_url:, agent_key:, unrelated_agent_key:, browser:)
       next
     end
-    write_notification_smoke_fixture(fixture.fetch(:logs_dir), agent_key) if ENV["TYCHO_REMOTE_UI_NOTIFICATION_ONLY"] == "1"
     unscheduled_agent_key = create_agent(base_url, name: "Unscheduled Smoke Agent")
     archived_agent_key = create_agent(base_url, name: "Archived Smoke Agent")
     orchestrator_agent_key = create_agent(
