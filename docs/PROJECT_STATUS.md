@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-10-12
+2026-10-15
 
 ## Strategic Direction
 
@@ -35,6 +35,7 @@ Key references:
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
+| Conversation motion | Small native pixel SVG based on the retired FRED avatar; active-process loop and one-shot confirmed-success marker | Motion follows existing run state, retains its time across polling, and becomes static under reduced motion; see [CONVERSATION_ANIMATIONS.md](./CONVERSATION_ANIMATIONS.md) |
 | TUI framework | Bubbletea + Lipgloss-compatible styling + Bubbles (Charm Ruby) | Elm Architecture fits the dashboard's event-driven model; Tycho uses native Lipgloss except on Intel macOS, where a Ruby compatibility backend avoids Go cgo callback crashes from multiple Charm native runtimes |
 | Homebrew bottle platforms | Apple Silicon macOS and Linux; no Intel macOS bottle from v0.11.1 onward | v0.11.0 is the final Intel bottle. Intel users retain the source-install path, while the bottle workflow and release checks must not publish Intel artifacts or checksums |
 | Default data root | `~/.tycho` for config, schedule prompts, runtime state, and logs | Source and packaged installs should never write runtime data into the repository or Homebrew Cellar by default |
