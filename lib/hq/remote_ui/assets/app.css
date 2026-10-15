@@ -8938,6 +8938,7 @@ body:has(.inquiry-form-full-screen) {
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior-y: contain;
+    padding-top: 0;
     padding-bottom: var(--ds-space-6);
   }
 

@@ -51,6 +51,7 @@ module.exports = async function settingsSmoke({ page, baseUrl }) {
       });
       assert(scroll.scrollable && scroll.contentBottom <= scroll.navTop + 1);
       assert(scroll.navBottom <= scroll.height + 1);
+      assert(await page.evaluate(() => Math.abs(document.querySelector(".settings-section-nav-shell").getBoundingClientRect().top - els.view.getBoundingClientRect().top) <= 1), "Sticky section navigation must cover content up to the header");
       // Walk the complete content range, in both directions, with real wheel input.
       await page.locator('[aria-controls="settings-panel-connection"]').click();
       await page.waitForTimeout(600);
