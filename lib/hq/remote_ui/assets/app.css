@@ -4187,6 +4187,16 @@ select {
 
 .message-list {
   align-content: start;
+  gap: var(--ds-conversation-activity-gap);
+}
+
+.message-list > .message {
+  gap: var(--ds-conversation-header-gap);
+}
+
+/* The grid gap already supplies the compact boundary beside activities. */
+.message-list > .message + .message {
+  margin-top: calc(var(--ds-conversation-turn-gap) - var(--ds-conversation-activity-gap));
 }
 
 .conversation-load-older {
