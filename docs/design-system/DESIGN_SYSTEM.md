@@ -70,7 +70,7 @@ Foundations cover:
 - Subtle/default/strong borders and focus.
 - Brand, neutral hover, link/selection, information, success, warning, and danger.
 - System sans/mono typography, seven size steps, three weights, and readable measures.
-- A 4/8/12/16/24/32/48/96px spacing rhythm.
+- A 4/8/12/16/24/32/48/64px spacing rhythm.
 - 36/44/48px controls and a 44px minimum pointer target.
 - Three radii, two elevations, standard focus rings.
 - Fast/standard/enter motion and a reduced-motion policy.
@@ -81,13 +81,13 @@ Dark Dracula is the only supported theme. A light theme is intentionally out of 
 ## Conversation spacing
 
 Conversation rhythm uses four semantic tokens: `--ds-conversation-turn-gap`
-(24px), `--ds-conversation-user-gap` (96px), `--ds-conversation-header-gap` (8px), and
+(24px), `--ds-conversation-user-gap` (64px), `--ds-conversation-header-gap` (8px), and
 `--ds-conversation-activity-gap` (8px). These map to the existing spacing scale.
 The Remote UI applies the header gap only to direct message children of
 `.message-list`, including Summary. Adjacent ordinary messages receive one
 margin equal to the turn gap minus the list gap, so the total boundary is 24px.
 
-The card 321 trial uses a total 96px boundary before each direct `.message.user`
+The card 321 trial uses a total 64px boundary before each direct `.message.user`
 child with a preceding sibling. This replaces the ordinary margin and subtracts
 the 8px grid gap. The first child has no added top gap. This includes ordinary
 User prompts, pending prompts, parent-agent messages, inquiry responses, and
@@ -96,7 +96,7 @@ queue blocks. The pending send status remains a separate compact sibling; it
 receives no user gap.
 
 Activity groups keep 8px on each side except directly before a qualifying user
-block, where the boundary is 96px. Their internal 5px header gap, entry
+block, where the boundary is 64px. Their internal 5px header gap, entry
 padding, dividers, and responsive summary layout stay unchanged. Conversation
 bottom clearance stays 64px and the composer dock gap stays 8px. Product layout
 rules remain in `app.css`; the semantic values live in `design_system.css`.

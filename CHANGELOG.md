@@ -4,7 +4,7 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
-- Trial a 96px gap before top-level User and user-like conversation blocks,
+- Trial a 64px gap before top-level User and user-like conversation blocks,
   with no extra gap above the first block.
 
 ## 0.13.0 - 2026-10-05

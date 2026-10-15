@@ -98,7 +98,7 @@ async function measure(page) {
       height: rect(list).height,
       firstOffset: rect(children[0]).top - rect(list).top,
       classes: children.map(element => element.className),
-      expected: children.slice(1).map((element, index) => element.matches(".message-send-status") ? 4 : element.matches(".message.user") ? 96 : element.matches(".message") && children[index].matches(".message") ? 24 : 8),
+      expected: children.slice(1).map((element, index) => element.matches(".message-send-status") ? 4 : element.matches(".message.user") ? 64 : element.matches(".message") && children[index].matches(".message") ? 24 : 8),
       boundaries: children.slice(1).map((element, index) => rect(element).top - rect(children[index]).bottom),
       headers: children.filter(element => element.matches(".message")).map(element => rect(element.querySelector(".message-content")).top - rect(element.querySelector(".message-header")).bottom),
       activity: [...list.querySelectorAll(".message-group")].map(group => ({
@@ -139,7 +139,7 @@ async function captureBoundary(page, captureDir, label) {
     const user = summary.nextElementSibling;
     const a = summary.getBoundingClientRect(), b = user.getBoundingClientRect();
     const y = Math.max(0, a.bottom - 70);
-    return { x: Math.max(0, a.x), y, width: Math.min(a.width, innerWidth - Math.max(0, a.x)), height: Math.min(innerHeight - y, b.bottom - y) };
+    return { x: Math.max(0, a.x), y, width: Math.min(Math.max(a.right, b.right), innerWidth) - Math.max(0, Math.min(a.x, b.x)), height: Math.min(innerHeight - y, b.bottom - y) };
   });
   await page.screenshot({ path: path.join(captureDir, `${label}-boundary.png`), clip });
 }
