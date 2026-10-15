@@ -105,7 +105,7 @@ module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
     assert.equal(complete.decorative, "true");
     assert.equal(complete.artOpacity, "0.2");
     assert.equal(complete.labelOpacity, "1");
-    assert.equal(complete.label, "you have reached the end");
+    assert.equal(complete.label, "You have reached the end.");
     assert.ok(complete.labelContrast >= 4.5, JSON.stringify(complete));
     assert.equal(complete.containerOpacity, "1");
     assert.equal(complete.liveRegions, 0);
@@ -130,7 +130,7 @@ module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
     }
     await page.waitForTimeout(1400);
     assert.equal((await facts(page)).artOpacity, "0.2");
-    assert.equal((await facts(page)).label, "you have reached the end");
+    assert.equal((await facts(page)).label, "You have reached the end.");
     assert.ok((await facts(page)).labelContrast >= 4.5);
     assert.ok((await facts(page)).animations.every(a => a.time >= 1280));
     if (captureDir) {
@@ -206,7 +206,7 @@ module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
     assert.equal((await facts(page)).animations.length, 0);
     assert.equal((await facts(page)).artOpacity, "0.2");
     assert.equal((await facts(page)).labelOpacity, "1");
-    assert.equal((await facts(page)).label, "you have reached the end");
+    assert.equal((await facts(page)).label, "You have reached the end.");
     assert.ok((await facts(page)).labelContrast >= 4.5);
     if (captureDir) {
       await bottom(page);
