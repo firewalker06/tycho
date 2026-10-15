@@ -32,7 +32,10 @@ module.exports = async function settingsSmoke({ page, baseUrl }) {
     for (const section of ["connection", "servers", "notifications", "automation", "skills", "configuration"]) {
       const control = page.locator(`[aria-controls="settings-panel-${section}"]`);
       await control.click();
-      await page.waitForTimeout(600);
+      await page.locator(`[aria-controls="settings-panel-${section}"][aria-current="location"]`).waitFor({
+        state: "visible",
+        timeout: 5000,
+      });
       assert.equal(await control.getAttribute("aria-current"), "location", `${viewport.width}px ${section}`);
       const geometry = await page.evaluate((section) => {
         const panel = document.getElementById(`settings-panel-${section}`).getBoundingClientRect();
