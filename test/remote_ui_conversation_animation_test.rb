@@ -19,8 +19,10 @@ module RemoteUIConversationAnimationTest
         last_result: "success", last_exit_code: 0, finished_at: "2026-10-15T03:00:00Z" };
       const summary = { kind: "run_summary", content: "Work complete", metadata: { status: "success", run_id: "run-1" } };
       assert.equal(marker(agent, [summary]).mode, "complete");
+      assert.equal(marker(agent, [summary]).label, "you have reached the end");
       const running = { ...agent, running: true, status: "running", finished_at: null };
       assert.equal(marker(running, [summary]).mode, "running");
+      assert.equal(marker(running, [summary]).label, "Agent is working");
       assert.notEqual(marker(running, [summary]).key, marker(agent, [summary]).key);
       assert.equal(marker({ ...running, current_run_id: "run-2" }, [summary]).mode, "running");
       assert.equal(marker({ ...agent, current_run_id: "run-2" }, [summary]), null, "old success during a new run");

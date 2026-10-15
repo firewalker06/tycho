@@ -21,7 +21,9 @@ at 160 ms each, a 1.28-second sequence. No Mona artwork or remote asset is used.
 - **Running:** a 2.4-second eye scan and three small signal pixels. The face stays
   still. The label is **Agent is working**.
 - **Complete:** one 1.28-second nod and reflection glint, then a resting smile.
-  The label is **Run complete**. A run can play only once per loaded UI session.
+  The label is exactly **you have reached the end**, in a muted color mixed from
+  75% muted text and 25% canvas. Text keeps full opacity and readable contrast.
+  A run can play only once per loaded UI session.
   Only the decorative SVG uses 20% opacity during motion, at rest, and under
   reduced motion. The status label and running illustration keep full opacity.
 - **Reduced motion:** static face and state text. Running keeps three static

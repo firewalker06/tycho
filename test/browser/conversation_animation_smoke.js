@@ -46,6 +46,24 @@ async function facts(page) {
     const dock = document.querySelector("[data-agent-dock]");
     const r = marker.getBoundingClientRect();
     const d = dock.getBoundingClientRect();
+    const label = marker.querySelector("span");
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext("2d");
+    const rgb = color => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = color;
+      context.fillRect(0, 0, 1, 1);
+      return [...context.getImageData(0, 0, 1, 1).data].slice(0, 3);
+    };
+    const luminance = color => {
+      const channels = rgb(color).map(c => c / 255).map(c => c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4);
+      return channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
+    };
+    const labelColor = getComputedStyle(label).color;
+    const background = getComputedStyle(marker).getPropertyValue("--ds-background-canvas");
+    const textLight = luminance(labelColor);
+    const backgroundLight = luminance(background);
     return {
       mode: marker.dataset.conversationMarker, width: r.width, height: r.height,
       top: r.top, bottom: r.bottom, dockTop: d.top, viewport: window.innerHeight,
@@ -54,6 +72,10 @@ async function facts(page) {
       decorative: marker.querySelector("svg").getAttribute("aria-hidden"),
       artOpacity: getComputedStyle(marker.querySelector("svg")).opacity,
       labelOpacity: getComputedStyle(marker.querySelector("span")).opacity,
+      label: label.textContent,
+      labelColor,
+      labelRGB: rgb(labelColor),
+      labelContrast: (Math.max(textLight, backgroundLight) + .05) / (Math.min(textLight, backgroundLight) + .05),
       containerOpacity: getComputedStyle(marker).opacity,
       animations: marker.getAnimations({ subtree: true }).map(a => ({ name: a.animationName, time: a.currentTime,
         iterations: a.effect.getTiming().iterations === Infinity ? "infinite" : a.effect.getTiming().iterations,
@@ -83,6 +105,8 @@ module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
     assert.equal(complete.decorative, "true");
     assert.equal(complete.artOpacity, "0.2");
     assert.equal(complete.labelOpacity, "1");
+    assert.equal(complete.label, "you have reached the end");
+    assert.ok(complete.labelContrast >= 4.5, JSON.stringify(complete));
     assert.equal(complete.containerOpacity, "1");
     assert.equal(complete.liveRegions, 0);
     assert.ok(!complete.overflow);
@@ -106,6 +130,8 @@ module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
     }
     await page.waitForTimeout(1400);
     assert.equal((await facts(page)).artOpacity, "0.2");
+    assert.equal((await facts(page)).label, "you have reached the end");
+    assert.ok((await facts(page)).labelContrast >= 4.5);
     assert.ok((await facts(page)).animations.every(a => a.time >= 1280));
     if (captureDir) {
       await page.screenshot({ path: path.join(captureDir, `complete-${viewport.width}.png`) });
@@ -125,6 +151,8 @@ module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
     await page.waitForTimeout(550);
     const running = await facts(page);
     assert.equal(running.artOpacity, "1");
+    assert.equal(running.label, "Agent is working");
+    assert.deepEqual(running.labelRGB, [189, 194, 219]);
     assert.equal(running.animations.length, 4);
     assert.ok(running.animations.every(a => a.iterations === "infinite" && a.duration === 2400));
     await page.locator("#prompt-input").fill("Keep this draft during a poll");
@@ -178,6 +206,8 @@ module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
     assert.equal((await facts(page)).animations.length, 0);
     assert.equal((await facts(page)).artOpacity, "0.2");
     assert.equal((await facts(page)).labelOpacity, "1");
+    assert.equal((await facts(page)).label, "you have reached the end");
+    assert.ok((await facts(page)).labelContrast >= 4.5);
     if (captureDir) {
       await bottom(page);
       await page.screenshot({ path: path.join(captureDir, `reduced-${viewport.width}.png`) });

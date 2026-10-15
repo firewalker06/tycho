@@ -4214,6 +4214,9 @@ select {
 
 .conversation-fred { flex: none; overflow: visible; }
 [data-conversation-marker="complete"] .conversation-fred { opacity: .2; }
+[data-conversation-marker="complete"] > span {
+  color: color-mix(in srgb, var(--ds-text-muted) 75%, var(--ds-background-canvas));
+}
 .fred-face { transform-origin: 32px 38px; }
 .fred-glint, .fred-signal { opacity: 0; }
 [data-conversation-marker="running"] .fred-eyes { animation: fred-scan 2.4s steps(1, end) infinite; }
