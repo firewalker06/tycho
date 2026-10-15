@@ -52,6 +52,9 @@ async function facts(page) {
       overflow: document.documentElement.scrollWidth > window.innerWidth || pane.scrollWidth > pane.clientWidth,
       liveRegions: marker.querySelectorAll('[aria-live], [role="status"], [role="alert"]').length,
       decorative: marker.querySelector("svg").getAttribute("aria-hidden"),
+      artOpacity: getComputedStyle(marker.querySelector("svg")).opacity,
+      labelOpacity: getComputedStyle(marker.querySelector("span")).opacity,
+      containerOpacity: getComputedStyle(marker).opacity,
       animations: marker.getAnimations({ subtree: true }).map(a => ({ name: a.animationName, time: a.currentTime,
         iterations: a.effect.getTiming().iterations === Infinity ? "infinite" : a.effect.getTiming().iterations,
         duration: a.effect.getTiming().duration })),
@@ -78,6 +81,9 @@ module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
     await bottom(page);
     const complete = await facts(page);
     assert.equal(complete.decorative, "true");
+    assert.equal(complete.artOpacity, "0.2");
+    assert.equal(complete.labelOpacity, "1");
+    assert.equal(complete.containerOpacity, "1");
     assert.equal(complete.liveRegions, 0);
     assert.ok(!complete.overflow);
     assert.ok(complete.bottom <= complete.dockTop, JSON.stringify(complete));
@@ -85,6 +91,7 @@ module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
     assert.equal(complete.animations.length, 2);
     await page.waitForTimeout(200);
     const midMotion = await facts(page);
+    assert.equal(midMotion.artOpacity, "0.2");
     await page.evaluate((key) => {
       state.conversations[key].blocks[1].content += " Mid-animation poll.";
       render();
@@ -98,8 +105,12 @@ module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
       await page.evaluate(() => document.querySelector("[data-conversation-marker]").getAnimations({ subtree: true }).forEach(a => a.play()));
     }
     await page.waitForTimeout(1400);
+    assert.equal((await facts(page)).artOpacity, "0.2");
     assert.ok((await facts(page)).animations.every(a => a.time >= 1280));
-    if (captureDir) await page.screenshot({ path: path.join(captureDir, `complete-${viewport.width}.png`) });
+    if (captureDir) {
+      await page.screenshot({ path: path.join(captureDir, `complete-${viewport.width}.png`) });
+      await page.locator("[data-conversation-marker]").screenshot({ path: path.join(captureDir, `complete-${viewport.width}-frame-8.png`) });
+    }
 
     // A second run can play, but a rendered poll cannot replay this run.
     await page.evaluate((key) => {
@@ -113,6 +124,7 @@ module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
     await bottom(page);
     await page.waitForTimeout(550);
     const running = await facts(page);
+    assert.equal(running.artOpacity, "1");
     assert.equal(running.animations.length, 4);
     assert.ok(running.animations.every(a => a.iterations === "infinite" && a.duration === 2400));
     await page.locator("#prompt-input").fill("Keep this draft during a poll");
@@ -164,6 +176,8 @@ module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
     assert.equal((await facts(page)).animations.length, 0);
     await fixture(page, agentKey, "complete");
     assert.equal((await facts(page)).animations.length, 0);
+    assert.equal((await facts(page)).artOpacity, "0.2");
+    assert.equal((await facts(page)).labelOpacity, "1");
     if (captureDir) {
       await bottom(page);
       await page.screenshot({ path: path.join(captureDir, `reduced-${viewport.width}.png`) });
