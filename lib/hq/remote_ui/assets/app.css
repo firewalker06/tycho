@@ -4199,6 +4199,11 @@ select {
   margin-top: calc(var(--ds-conversation-turn-gap) - var(--ds-conversation-activity-gap));
 }
 
+/* Replace the ordinary margin; the list already supplies the activity gap. */
+.message-list > * + .message.user {
+  margin-top: calc(var(--ds-conversation-user-gap) - var(--ds-conversation-activity-gap));
+}
+
 .conversation-load-older {
   display: flex;
   justify-content: center;
