@@ -10268,6 +10268,46 @@ def run_schedule_replacement_smoke!(dir:, base_url:, agent_key:, unrelated_agent
   raise "Schedule replacement browser smoke failed with exit #{status.exitstatus || 1}" unless status.success?
 end
 
+def write_notification_trace_fixture(logs_dir, agent_key)
+  path = File.join(logs_dir, "push_notifications.json")
+  File.open("#{path}.lock", File::RDWR | File::CREAT, 0o600) do |lock|
+    lock.flock(File::LOCK_EX)
+    records = File.exist?(path) ? JSON.parse(File.read(path)) : []
+    records << { "id" => "debug:trace-fixture", "kind" => "agent", "target_type" => "agent",
+                 "agent_key" => agent_key, "title" => "Done", "body" => "Synthetic retained notification",
+                 "url" => "/#notification/debug%3Atrace-fixture", "created_at" => Time.now.utc.iso8601 }
+    File.write(path, JSON.pretty_generate(records))
+  end
+end
+
+def run_notification_trace_smoke!(dir:, base_url:, agent_key:, browser:)
+  node_dir = File.join(dir, "trace-node")
+  install_playwright!(node_dir)
+  script = File.join(node_dir, "notification-trace-smoke.js")
+  File.write(script, <<~JAVASCRIPT)
+    const { chromium } = require("playwright");
+    const smoke = require(#{File.join(ROOT, "test", "browser", "notification_trace_smoke.js").inspect});
+    (async () => {
+      const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH, headless: true });
+      try {
+        const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+        await smoke({ page, baseUrl: process.env.TYCHO_REMOTE_UI_URL, agentKey: process.env.TYCHO_REMOTE_UI_AGENT_KEY, captureDir: process.env.TYCHO_REMOTE_UI_CAPTURE_DIR });
+      } finally { await browser.close(); }
+    })().catch((error) => { console.error(error); process.exitCode = 1; });
+  JAVASCRIPT
+  capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
+  unless capture_dir.empty?
+    capture_dir = File.expand_path(capture_dir, ROOT)
+    raise "Capture directory must be outside the repository" if capture_dir == ROOT || capture_dir.start_with?("#{ROOT}/")
+  end
+  env = { "CHROME_PATH" => browser, "TYCHO_REMOTE_UI_URL" => base_url,
+          "TYCHO_REMOTE_UI_AGENT_KEY" => agent_key, "TYCHO_REMOTE_UI_CAPTURE_DIR" => capture_dir }
+  out, err, status = Open3.capture3(env, "node", script, chdir: node_dir)
+  puts out unless out.empty?
+  warn err unless err.empty?
+  raise "Notification trace browser smoke failed" unless status.success?
+end
+
 def stop_fixture_server(pid)
   return unless pid && process_alive?(pid)
 
@@ -10311,6 +10351,15 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     wait_for_remote(base_url, log_path)
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key = create_agent(base_url)
+    if ENV["TYCHO_REMOTE_UI_CLICK_TRACE_ONLY"] == "1"
+      start_agent(base_url, agent_key)
+      wait_for_agent_status(base_url, agent_key, "succeeded")
+      write_notification_trace_fixture(fixture.fetch(:logs_dir), agent_key)
+      retained = JSON.parse(Net::HTTP.get(URI("#{base_url}/notifications/debug%3Atrace-fixture")))
+      raise "Trace fixture record missing: #{retained.inspect}" unless retained["notification"]
+      run_notification_trace_smoke!(dir:, base_url:, agent_key:, browser:)
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_ATTACHMENT_PREVIEW_ONLY"] == "1"
       run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser:)
       exit 0

@@ -407,10 +407,10 @@ module HQ
       return ok(service.push_status(body)) if method == "POST" && parts == ["push", "status"]
       return ok(notifications: service.notifications) if method == "GET" && parts == ["notifications"]
       if parts.length == 2 && parts.first == "notifications" && method == "GET"
-        return ok(notification: service.notification(parts[1]))
+        return ok(notification: service.notification(URI::DEFAULT_PARSER.unescape(parts[1])))
       end
       if parts.length == 3 && parts.first == "notifications" && parts[2] == "read" && method == "POST"
-        return ok(notification: service.mark_notification_read(parts[1]))
+        return ok(notification: service.mark_notification_read(URI::DEFAULT_PARSER.unescape(parts[1])))
       end
       return service.attachment_blob(parts[1]) if method == "GET" && parts.length == 3 && parts.first == "attachments" && parts[2] == "blob"
       return ok(service.delete_attachment(parts[1])) if method == "DELETE" && parts.length == 2 && parts.first == "attachments"

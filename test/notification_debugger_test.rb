@@ -94,6 +94,16 @@ module NotificationDebuggerTest
         WebPush.define_singleton_method(:payload_send, original)
       end
       assert(File.binread(HQ::AGENTS_FILE) == before, "all sends leave agent status, runs and commands unchanged")
+      # Follow the actual generated route through the HTTP route boundary.
+      server = HQ::RemoteServer.new
+      retained = service.instance_variable_get(:@push_notification_store).all.find { |item| item["debug"] }
+      encoded_id = URI.encode_www_form_component(retained.fetch("id"))
+      raw = server.send(:route, service, "GET", "/notifications/#{retained.fetch("id")}", {}, nil)
+      assert(raw[:body][:notification]["agent_key"] == agent.key, "raw retained ID resolves")
+      encoded = server.send(:route, service, "GET", "/notifications/#{encoded_id}", {}, nil)
+      assert(encoded[:body][:notification]["id"] == retained.fetch("id"), "encoded retained ID resolves to the same record")
+      read = server.send(:route, service, "POST", "/notifications/#{encoded_id}/read", {}, nil)
+      assert(read[:body][:notification]["target_url"] == "/#agent/debug-agent" && read[:body][:notification]["read_at"], "browser read route opens the retained active target")
       service.disable_push_subscription("endpoint" => endpoint)
       assert_error(409) { service.send_agent_notification(attrs.merge("endpoint" => endpoint)) }
       assert_error(409) { service.send_test_push({}) }

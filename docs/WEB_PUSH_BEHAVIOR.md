@@ -45,6 +45,43 @@ acceptance does not prove native display, PWA focus, or a successful click.
 The operator must perform that native browser loop; automated tests use fake
 transport and isolated fixtures.
 
+## Click diagnostics
+
+Debugger notifications retain a bounded click trace in this browser's IndexedDB.
+Only a `debug:` notification route starts a trace. The worker records its own
+loaded asset version, same-origin window selection, navigation/focus results,
+and new-window results. The page records boot, app startup, route, notification
+lookup, selected local/peer server, agent and Conversation HTTP status, block
+count, and visible/loading/empty state. Ordinary notification clicks keep their
+existing handler. Notification API IDs are percent-decoded once at lookup and
+read boundaries, so an encoded `debug:` ID resolves to its retained record.
+
+After the click, return to **Settings → Notifications → Agent notification
+debugger → Export redacted trace**. Export works after a full page load without
+repeating Preview or Send. The `click_trace` field reports joined-click-and-page,
+worker-only, page-only, or no-click-observed coverage. Joined coverage proves that
+both boundaries ran; inspect the recorded load/render outcomes before calling a
+Conversation successful. The worker's own build value differs from a hash of
+served source: it identifies the code that emitted the event. An older installed
+worker cannot emit click events, even if the page has new code.
+
+The store holds at most 64 events for 24 hours from the latest debugger click.
+The first 16 events retain the click boundary; a rolling tail holds the latest
+48. Routes are allowlisted. No request/response body, conversation text, token,
+subscription endpoint, key, error message, or stack is stored in these events.
+Diagnostics stay on this origin. **Clear click diagnostics** removes only this
+trace, without changing permissions, subscriptions, browser cache, or server
+state. Unavailable browser storage is reported in export and cannot stop normal
+page loading or click handling. These diagnostics can affect timing; they do not
+prove the cause of a historical click race.
+
+The isolated `TYCHO_REMOTE_UI_CLICK_TRACE_ONLY=1 bin/remote-ui-smoke` checks the
+served callback in an actual Chrome worker with real WindowClients and actual
+page requests. Its callback is synthetic and lacks trusted OS activation. Focus
+can reject for that reason. No Web Push or permission request is used. Native
+Edge/PWA activation remains an operator check after independent review and a
+coordinated reload of the serving process.
+
 ## Deployment Coherence
 
 The Remote server snapshots the Remote UI templates, JavaScript, service worker, icons, and their shared asset hash when the daemon starts. A source update therefore cannot make an old Ruby API serve a newer JavaScript client. Restart `tycho serve` after updating Tycho; the restarted daemon exposes its loaded version and asset hash in **Settings → Connection → Tycho build**, `/setup`, and the `X-Tycho-Asset-Version` response header.

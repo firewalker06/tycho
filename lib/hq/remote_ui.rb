@@ -19,6 +19,7 @@ module HQ
     PWA_ICON_192_PATH = File.join(ROOT, "assets", "pwa-icon-192.png")
     PWA_ICON_512_PATH = File.join(ROOT, "assets", "pwa-icon-512.png")
     PWA_ICON_MASKABLE_512_PATH = File.join(ROOT, "assets", "pwa-icon-maskable-512.png")
+    NOTIFICATION_TRACE_PATH = File.join(ROOT, "assets", "notification_trace.js")
     SERVICE_WORKER_PATH = File.join(ROOT, "assets", "service-worker.js")
     PLUS_JAKARTA_SANS_ROOT = File.join(ROOT, "assets", "fonts", "plus-jakarta-sans")
     PLUS_JAKARTA_SANS_LICENSE_PATH = File.join(PLUS_JAKARTA_SANS_ROOT, "LICENSE.md")
@@ -45,6 +46,7 @@ module HQ
       HELPERS_JS_PATH,
       JS_PATH,
       SERVICE_WORKER_PATH,
+      NOTIFICATION_TRACE_PATH,
       *FONT_ASSETS.values,
       *PNG_ASSETS.values
     ].freeze
@@ -86,11 +88,15 @@ module HQ
     end
 
     def self.helpers_js
-      asset_content(HELPERS_JS_PATH)
+      [notification_trace_js, asset_content(HELPERS_JS_PATH)].join("\n")
     end
 
     def self.service_worker_js
-      asset_content(SERVICE_WORKER_PATH)
+      [notification_trace_js, asset_content(SERVICE_WORKER_PATH)].join("\n")
+    end
+
+    def self.notification_trace_js
+      asset_content(NOTIFICATION_TRACE_PATH).gsub("__TYCHO_TRACE_BUILD__", asset_version)
     end
 
     def self.manifest_json
