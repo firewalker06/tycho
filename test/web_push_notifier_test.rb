@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "support/push_safety"
+
 require "json"
 require "net/http"
 require "tmpdir"

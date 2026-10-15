@@ -2553,7 +2553,7 @@ select {
   margin: 0 0 10px;
 }
 
-.skill-installation-actions {
+.detail-row > .skill-installation-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -2571,9 +2571,9 @@ select {
     align-items: start;
   }
 
-  .skill-installation-actions {
+  .detail-row > .skill-installation-actions {
     grid-column: 2;
-    justify-content: flex-start;
+    justify-content: flex-end;
   }
 
   .skill-installation-card .skill-installation-source {
@@ -9766,4 +9766,16 @@ body:has(.inquiry-form-full-screen) {
     overscroll-behavior: contain;
     padding-right: 4px;
   }
+}
+
+.notification-debugger { margin-top: var(--ds-space-4); min-width: 0; }
+.notification-debugger > summary { display: grid; gap: var(--ds-space-1); cursor: pointer; }
+.notification-debugger form { margin-top: var(--ds-space-3); }
+.notification-debugger input, .notification-debugger select { width: 100%; min-width: 0; }
+.notification-debugger .kv-grid, .notification-debugger pre { overflow-wrap: anywhere; word-break: break-word; }
+.notification-debugger pre { white-space: pre-wrap; }
+.notification-debug-diagnostics { min-width: 0; }
+
+@media (max-width: 560px) {
+  .notification-debugger .kv-grid { grid-template-columns: minmax(0, 1fr); }
 }

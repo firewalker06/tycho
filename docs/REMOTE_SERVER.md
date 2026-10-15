@@ -486,7 +486,9 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `POST` | `/push/status` | Check whether one browser endpoint is currently enabled. |
 | `POST` | `/push/subscriptions` | Save or refresh one browser push subscription. |
 | `DELETE` | `/push/subscriptions` | Disable one browser push subscription. |
-| `POST` | `/push/test` | Send a test notification to an enabled subscription. |
+| `POST` | `/push/test` | Send a generic test to the supplied enabled browser subscription; no broadcast fallback. |
+| `POST` | `/push/agent-preview` | Resolve a retained local agent identity and preview a supported production notification outcome. |
+| `POST` | `/push/agent-test` | Record and send that outcome through the production pipeline to the supplied enabled browser subscription. |
 | `GET` | `/notifications` | List retained push notification records with current target state. |
 | `GET` | `/notifications/{id}` | Read one retained notification and its active, archived, or missing target state. |
 | `POST` | `/notifications/{id}/read` | Persist the read time for one retained notification. |

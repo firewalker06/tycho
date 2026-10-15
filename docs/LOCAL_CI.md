@@ -6,6 +6,22 @@ GitHub's enforced `signoff` ruleset on the default branch requires the
 force pushes and branch deletion. This is a trusted-maintainer workflow, not a
 replacement for independent review where that is needed.
 
+## Test notification safety
+
+`bin/test` gives each command a fresh temporary Tycho home and logs root,
+clears inherited config-path overrides, and preloads
+`test/support/push_safety.rb` for Ruby test files. The helper sets the root
+before HQ constants load and blocks real Web Push transport. Scheduler
+fixtures inject fake notifiers. Push delivery contract tests must install
+their own explicit transport fake. Do not remove these boundaries when
+adding a scheduler or notification fixture. The guard records denied transport
+attempts and fails at process exit even if production code catches the exception.
+Set `TYCHO_TEST_PUSH_AUDIT_FILE=/absolute/temp/path.jsonl` to capture redacted
+per-process attempt counts. An intentional guard probe clears only its own
+expected denial. For standalone tests not already requiring the helper, use
+`bundle exec ruby -r ./test/support/push_safety.rb test/NAME_test.rb`.
+No production entry point loads this helper.
+
 ## Supported tool
 
 Use [basecamp/gh-signoff](https://github.com/basecamp/gh-signoff) **v0.4.1**.

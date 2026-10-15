@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "support/push_safety"
+
 require "fileutils"
 require "json"
 require "open3"
@@ -859,7 +861,7 @@ module SchedulerTest
       state.last_target_key = source.key
       store.save("config-loop" => state)
       schedule_registry = BlockingUpdateScheduleRegistry.new(path: schedule_path, projects: [project], store:)
-      scheduler = HQ::Scheduler.new(registry:, schedule_registry:, store:)
+      scheduler = HQ::Scheduler.new(registry:, schedule_registry:, store:, web_push_notifier: FakeNotifier.new)
       target = agent_store.clone_agent(source, existing_agents: [source])
       schedule_registry.arm_update_load!
 
@@ -950,7 +952,7 @@ module SchedulerTest
       state.last_target_key = source.key
       store.save("retry-loop" => state)
       schedule_registry = HQ::ScheduleRegistry.new(path: schedule_path, projects: [project], store:)
-      scheduler = HQ::Scheduler.new(registry:, schedule_registry:, store:)
+      scheduler = HQ::Scheduler.new(registry:, schedule_registry:, store:, web_push_notifier: FakeNotifier.new)
       failed_target = agent_store.clone_agent(source, existing_agents: [source])
       store.fail_next_save!
 

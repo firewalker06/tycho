@@ -13,6 +13,10 @@ module.exports = async function settingsSmoke({ page, baseUrl }) {
       auth_snapshot: { state: "authenticated" }, model_suggestions: ["example-model"],
     })),
     tools: [{ name: "gh", ready: true, detail: "GitHub CLI is available" }],
+    skill_installation: { harnesses: ["codex", "claude", "opencode", "pi"].map((harness, index) => ({
+      harness, status: index === 3 ? "installed" : "outdated", target_path: `~/.${harness}/skills`,
+      skills: [{ name: "tycho" }], actions: { update: index !== 3 },
+    })) },
   });
   await page.route("**/setup", (route) => route.fulfill({ json: fixture }));
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -44,6 +48,27 @@ module.exports = async function settingsSmoke({ page, baseUrl }) {
       }, section);
       assert(!geometry.overflow, "Settings must not overflow horizontally");
       assert(geometry.panelTop >= geometry.navBottom - 2, `${section} heading must clear the section navigator`);
+    }
+    for (const row of await page.locator(".skill-installation-row").all()) {
+      const layout = await row.evaluate((element) => {
+        const group = element.querySelector(".skill-installation-actions");
+        const badge = group.firstElementChild.getBoundingClientRect();
+        const button = group.querySelector("button")?.getBoundingClientRect();
+        const bounds = group.getBoundingClientRect();
+        const row = element.getBoundingClientRect();
+        return { display: getComputedStyle(group).display,
+          rightAligned: Math.abs(bounds.right - row.right + parseFloat(getComputedStyle(element).paddingRight)) < 2,
+          sameLine: !button || Math.abs(badge.y + badge.height / 2 - button.y - button.height / 2) < 2,
+          contained: !button || button.left >= bounds.left && button.right <= bounds.right && button.bottom <= bounds.bottom };
+      });
+      assert.equal(layout.display, "flex", "skill status and action need the same flex container");
+      assert(layout.contained && layout.rightAligned, "skill actions stay within their related row and align right");
+      assert(layout.sameLine, "badge and Update share a line when this fixture has enough room");
+      for (const button of await row.locator("button").all()) {
+        await button.click({ trial: true });
+        const bounds = await button.boundingBox();
+        assert(bounds.width >= 44 && bounds.height >= 44);
+      }
     }
     // Related actions share a flex row; narrow layouts may wrap inside that row.
     for (const subscribed of [false, true]) {
@@ -223,4 +248,5 @@ module.exports = async function settingsSmoke({ page, baseUrl }) {
   await page.locator(".content.settings-page").waitFor({ state: "detached" });
   await page.locator('#bottom-nav [data-tab="settings"]').click();
   await page.locator(".content.settings-page").waitFor({ state: "visible" });
+  await require("./notification_debugger_smoke")({ page, baseUrl });
 };

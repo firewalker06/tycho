@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "support/push_safety"
+
 require "tmpdir"
 require "fileutils"
 require "stringio"
