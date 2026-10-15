@@ -2553,7 +2553,7 @@ select {
   margin: 0 0 10px;
 }
 
-.skill-installation-actions {
+.detail-row > .skill-installation-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -2571,9 +2571,9 @@ select {
     align-items: start;
   }
 
-  .skill-installation-actions {
+  .detail-row > .skill-installation-actions {
     grid-column: 2;
-    justify-content: flex-start;
+    justify-content: flex-end;
   }
 
   .skill-installation-card .skill-installation-source {
@@ -3232,6 +3232,11 @@ select {
   display: inline-flex !important;
   align-items: center;
   gap: 6px;
+}
+
+.harness-summary-warning {
+  grid-column: 2 / -1;
+  justify-items: start;
 }
 
 .harness-action-menu {
@@ -8924,6 +8929,95 @@ body:has(.inquiry-form-full-screen) {
   scroll-margin-top: calc(var(--app-header-height, 64px) + 64px);
 }
 
+.settings-section-heading {
+  display: grid;
+  gap: var(--ds-space-1);
+  margin-bottom: var(--ds-space-3);
+}
+
+.settings-section-heading h2 {
+  font-size: var(--ds-font-size-4);
+  font-weight: var(--ds-weight-bold);
+}
+
+.settings-section-heading p,
+.automation-ready-details > summary span {
+  color: var(--ds-text-muted);
+  font-size: var(--ds-font-size-1);
+}
+
+.automation-ready-details {
+  margin-block: var(--ds-space-3);
+}
+
+.connection-details > summary,
+.automation-ready-details > summary {
+  min-height: var(--touch-target);
+  cursor: pointer;
+}
+
+.connection-details > summary {
+  align-content: center;
+}
+
+.automation-ready-details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-3);
+}
+
+.automation-ready-details > summary > div {
+  display: grid;
+  flex: 1;
+  gap: var(--ds-space-1);
+}
+
+.automation-ready-details > summary::before {
+  content: "+";
+  color: var(--ds-text-muted);
+}
+
+.automation-ready-details[open] > summary::before {
+  content: "−";
+}
+
+.automation-ready-body {
+  margin-top: var(--ds-space-3);
+}
+
+@media (max-width: 1099px) {
+  .app-shell:has(> .settings-page) {
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+  }
+
+  .content.settings-page {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    padding-top: 0;
+    padding-bottom: var(--ds-space-6);
+  }
+
+  .settings-page .settings-section-nav-shell {
+    top: 0;
+  }
+
+  .settings-page .settings-section-panel {
+    scroll-margin-top: 64px;
+  }
+
+  .app-shell:has(> .settings-page) > .bottom-nav {
+    position: static;
+    width: 100%;
+    transform: none;
+    transition: none;
+    pointer-events: auto;
+  }
+}
+
 .agent-loop-timing-grid,
 .session-loop-default-grid {
   display: grid;
@@ -8943,8 +9037,24 @@ body:has(.inquiry-form-full-screen) {
   font-size: 13px;
 }
 
-.copy-url-button {
-  justify-self: end;
+.settings-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--ds-space-3);
+  min-width: 0;
+}
+
+.settings-action-row > :is(.card-title, .push-notification-status) {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.settings-action-row > :is(button, .ui-form-actions) {
+  flex: 0 0 auto;
+  max-width: 100%;
+  margin-inline-start: auto;
 }
 
 .session-loop-settings,
@@ -9057,10 +9167,6 @@ body:has(.inquiry-form-full-screen) {
   color: var(--danger);
 }
 
-.session-loop-settings-form [data-add-session-loop-template] {
-  justify-self: start;
-}
-
 .session-loop-settings-actions {
   justify-content: flex-end;
 }
@@ -9114,6 +9220,7 @@ body:has(.inquiry-form-full-screen) {
 .push-notification-status > div {
   display: grid;
   gap: 2px;
+  min-width: 0;
 }
 
 .visibility-legend {
@@ -9718,4 +9825,16 @@ body:has(.inquiry-form-full-screen) {
     overscroll-behavior: contain;
     padding-right: 4px;
   }
+}
+
+.notification-debugger { margin-top: var(--ds-space-4); min-width: 0; }
+.notification-debugger > summary { display: grid; gap: var(--ds-space-1); cursor: pointer; }
+.notification-debugger form { margin-top: var(--ds-space-3); }
+.notification-debugger input, .notification-debugger select { width: 100%; min-width: 0; }
+.notification-debugger .kv-grid, .notification-debugger pre { overflow-wrap: anywhere; word-break: break-word; }
+.notification-debugger pre { white-space: pre-wrap; }
+.notification-debug-diagnostics { min-width: 0; }
+
+@media (max-width: 560px) {
+  .notification-debugger .kv-grid { grid-template-columns: minmax(0, 1fr); }
 }

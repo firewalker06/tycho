@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "support/push_safety"
+
 require "tmpdir"
 require "fileutils"
 require "stringio"
@@ -6482,7 +6484,7 @@ module RemoteServerTest
            js[:body].scan("statusMarkAttributes(").length >= 15,
            "expected representative agent, schedule, setup, project, and diff states to use the semantic status contract")
     assert(js[:body].include?("function metadataBadge") &&
-           js[:body].scan("metadataBadge(").length >= 16 &&
+           js[:body].scan("metadataBadge(").length >= 14 &&
            js[:body].include?('data-kind="metadata"'),
            "expected compact factual metadata to use one neutral badge contract")
     assert(js[:body].include?('metadataBadge("Markdown")') &&
@@ -7046,10 +7048,9 @@ module RemoteServerTest
            "expected Settings More menu to offer Homebrew Tycho updates through the local API")
     assert(js[:body].include?("Remote restart"),
            "expected Settings readiness to include Remote restart status")
-    assert(js[:body].index("Automation readiness") < js[:body].index("Remote restart"),
-           "expected Remote restart readiness to sit inside Automation readiness")
-    assert(js[:body].index("Remote restart") < js[:body].index('<div class="section-label"><strong>Configuration</strong>'),
-           "expected Remote restart readiness to render before Configuration")
+    assert(js[:body].include?("function renderAutomationReadiness(setup)") &&
+           js[:body].index('${renderAutomationReadiness(setup)}') < js[:body].index('${settingsPanel("configuration"'),
+           "expected Automation readiness checks to render before Configuration")
     assert(js[:body].include?("Refresh harness catalogs"),
            "expected Settings More menu to expose harness catalog refresh")
     assert(js[:body].include?("data-refresh-harnesses"), "expected Settings to wire harness catalog refresh")

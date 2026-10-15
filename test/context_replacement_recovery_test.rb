@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "support/push_safety"
+
 require "fileutils"
 require "rbconfig"
 require "tmpdir"
@@ -279,10 +281,12 @@ module ContextReplacementRecoveryTest
       registry, schedules_path = write_registry(dir, schedule: true)
       projects = registry.projects.map { |config| HQ::Project.new(config) }
       schedule_store = HQ::ScheduleStore.new
+      notifier = TestPushSafety::Notifier.new
       scheduler = HQ::Scheduler.new(
         registry:,
         schedule_registry: HQ::ScheduleRegistry.new(path: schedules_path, projects:, store: schedule_store),
-        store: schedule_store
+        store: schedule_store,
+        web_push_notifier: notifier
       )
       first = scheduler.run_now("recovery-loop", now:).fetch(:agent)
       agent_store = scheduler.instance_variable_get(:@agent_store)
@@ -297,6 +301,9 @@ module ContextReplacementRecoveryTest
 
       totals = scheduler.tick(now: now + 60)
       recovered = load_without_dispatch(agent_store).find { |agent| agent.key == first.key }
+      assert(notifier.payloads.any? { |payload| payload[:title] == "Failed" && payload[:url] == "/#setup" &&
+        payload[:body] == "recovery-loop: Context replacement recovery is pending. Schedule stopped." },
+             "expected the fixture failure notification to stay in the fake notifier")
       assert(totals.fetch(:failed) == 1, "expected the real scheduler tick to reject a recovery-pending target")
       assert(recovered.run_count == 1 && recovered.context_replacement_recovery,
              "expected the failed scheduler tick not to start the rejected replacement")

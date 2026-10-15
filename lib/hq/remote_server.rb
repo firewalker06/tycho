@@ -48,6 +48,7 @@ require_relative "domain/skill_installer"
 require_relative "domain/onboarding"
 require_relative "domain/visibility"
 require_relative "domain/web_push_notifier"
+require_relative "domain/agent_notification"
 require_relative "domain/usage_metrics"
 require_relative "domain/remote_server_control"
 
@@ -406,10 +407,10 @@ module HQ
       return ok(service.push_status(body)) if method == "POST" && parts == ["push", "status"]
       return ok(notifications: service.notifications) if method == "GET" && parts == ["notifications"]
       if parts.length == 2 && parts.first == "notifications" && method == "GET"
-        return ok(notification: service.notification(parts[1]))
+        return ok(notification: service.notification(URI::DEFAULT_PARSER.unescape(parts[1])))
       end
       if parts.length == 3 && parts.first == "notifications" && parts[2] == "read" && method == "POST"
-        return ok(notification: service.mark_notification_read(parts[1]))
+        return ok(notification: service.mark_notification_read(URI::DEFAULT_PARSER.unescape(parts[1])))
       end
       return service.attachment_blob(parts[1]) if method == "GET" && parts.length == 3 && parts.first == "attachments" && parts[2] == "blob"
       return ok(service.delete_attachment(parts[1])) if method == "DELETE" && parts.length == 2 && parts.first == "attachments"
@@ -418,6 +419,8 @@ module HQ
         return created(service.save_push_subscription(body, user_agent: request&.[]("User-Agent"))) if method == "POST"
         return ok(service.disable_push_subscription(body)) if method == "DELETE"
       end
+      return ok(service.preview_agent_notification(body)) if method == "POST" && parts == ["push", "agent-preview"]
+      return ok(service.send_agent_notification(body)) if method == "POST" && parts == ["push", "agent-test"]
       return ok(service.send_test_push(body)) if method == "POST" && parts == ["push", "test"]
 
       if parts.length >= 2 && parts.first == "agents"
@@ -2837,6 +2840,7 @@ module HQ
 
     def push_config
       @web_push_notifier.config.merge(
+        notification_types: AgentNotification::TYPES.map { |key, type| { key: key, title: type[:title], event: type[:event] } },
         secure_context_required: true,
         localhost_allowed: true,
         magic_dns_https_required: true
@@ -2871,10 +2875,53 @@ module HQ
     end
 
     def send_test_push(attrs)
+      raise Error.new("This browser has no enabled subscription", status: 409) unless @push_subscription_store.enabled_endpoint?(attrs["endpoint"])
+
       result = @web_push_notifier.send_test!(endpoint: attrs["endpoint"])
       raise Error.new("No matching push subscription", status: 404) if result.fetch(:attempted).zero?
 
       result
+    end
+
+    def preview_agent_notification(attrs)
+      matches = notification_debug_matches(attrs)
+      if matches.length > 1
+        return { choices: matches.map { |agent, state| { key: agent.key, name: agent.display_name, target_state: state } } }
+      end
+      agent, target_state = matches.first
+      status = attrs["type"].to_s
+      raise Error.new("Choose a supported notification type") unless AgentNotification::TYPES.key?(status)
+
+      message = AgentNotification.build(agent, status:, unread_count: 1, id: "preview")
+      {
+        agent: { key: agent.key, name: agent.display_name, session_id: agent.session_id,
+                 harness: agent.agent, target_state: target_state },
+        server: ServerIdentity.load.slice("id", "name"),
+        type: status, event: message[:event], payload: message[:payload],
+        target_url: "/#agent/#{URI.encode_www_form_component(agent.key)}",
+        build: { version: HQ::VERSION, asset_version: RemoteUI.asset_version },
+        delivery: "Preview only; nothing sent"
+      }
+    end
+
+    def send_agent_notification(attrs)
+      preview = preview_agent_notification(attrs)
+      raise Error.new("Choose one matching agent", status: 409) if preview[:choices]
+      endpoint = attrs["endpoint"].to_s
+      if endpoint.empty? || !@push_subscription_store.status(endpoint)[:subscribed]
+        raise Error.new("This browser has no enabled subscription on this server", status: 409)
+      end
+
+      agent, target_state = notification_debug_matches(attrs.merge("agent_key" => preview[:agent][:key])).first
+      message = AgentNotification.build(agent, status: attrs["type"], unread_count: 1,
+                                       id: "debug:#{SecureRandom.uuid}")
+      message[:record][:target_state] = target_state
+      message[:record][:debug] = true
+      result = deliver_agent_notification(message, endpoint: endpoint)
+      preview.merge(payload: message[:payload], record_id: message[:id], delivery: result,
+                    subscription: @push_subscription_store.status(endpoint).slice(
+                      :subscribed, :last_response_code, :last_accepted_at, :last_error_class, :failure_count
+                    ))
     end
 
     def dispatch_agent_push_notifications!
@@ -4242,30 +4289,9 @@ module HQ
         payload = agent && agent_push_payload(agent, unread_count: unread_count)
         next unless payload
 
-        notification_id = agent_push_notification_id(agent, payload.fetch(:event))
-        push_payload = payload.fetch(:payload).merge(url: "/#notification/#{URI.encode_www_form_component(notification_id)}")
-        recorded = @push_notification_store.record!(
-          notification_id,
-          kind: "agent",
-          target_type: "agent",
-          target_state: "active",
-          agent_key: agent.key,
-          agent_name: agent.display_name,
-          project_key: agent.respond_to?(:project_key) ? agent.project_key : nil,
-          event: payload.fetch(:event),
-          status: agent.status,
-          run_count: agent.run_count,
-          title: push_payload.fetch(:title),
-          body: push_payload.fetch(:body),
-          url: push_payload.fetch(:url)
-        )
-        next unless recorded
+        result = deliver_agent_notification(payload)
+        next unless result
 
-        result = @web_push_notifier.send_payload!(
-          push_payload,
-          urgency: payload.fetch(:event) == "input_required" ? "high" : "normal",
-          ttl: payload.fetch(:event) == "input_required" ? 3600 : 900
-        )
         totals[:events] += 1
         totals[:sent] += result.fetch(:sent, 0)
         totals[:failed] += result.fetch(:failed, 0)
@@ -4363,7 +4389,7 @@ module HQ
       payload = event.slice(
         "id", "kind", "target_type", "target_state", "agent_key", "agent_name", "project_key",
         "queue_work_batch_id", "queue_entry_ids", "event", "status", "run_count", "title", "body", "detail",
-        "url", "created_at", "read_at", "resolved_at", "target_archived_at"
+        "url", "created_at", "read_at", "resolved_at", "target_archived_at", "debug"
       )
       agent_key = event["agent_key"].to_s
       active = nil
@@ -4393,39 +4419,36 @@ module HQ
       end
       return nil if agent.last_run_from_prompt_queue?
 
-      status = agent.status
-      if status == "awaiting-input"
-        event = "input_required"
-        title = "Input needed"
-      elsif %w[succeeded partial failed stopped blocked].include?(status)
-        event = "finished"
-        title = {
-          "succeeded" => "Done",
-          "partial" => "Partial",
-          "failed" => "Failed",
-          "stopped" => "Stopped",
-          "blocked" => "Blocked"
-        }.fetch(status)
-      else
-        return nil
+      return nil unless AgentNotification::TYPES.key?(agent.status)
+
+      AgentNotification.build(agent, status: agent.status, unread_count: unread_count,
+                              id: agent_push_notification_id(agent, AgentNotification::TYPES.fetch(agent.status)[:event]))
+    end
+
+    def deliver_agent_notification(message, endpoint: nil)
+      return nil unless @push_notification_store.record!(message.fetch(:id), message.fetch(:record))
+
+      options = { urgency: message.fetch(:urgency), ttl: message.fetch(:ttl) }
+      options[:endpoint] = endpoint if endpoint
+      @web_push_notifier.send_payload!(message.fetch(:payload), **options)
+    end
+
+    def notification_debug_matches(attrs)
+      identity = attrs["session_id"].to_s.strip
+      raise Error.new("Enter a Tycho agent key or native harness session ID") if identity.empty? || identity.length > 512
+
+      # Read retained identities without polling, queue dispatch, or lifecycle changes.
+      active = Array(FileStore.read_json(AGENTS_FILE, fallback: [])).map { |row| ManagedAgent.from_hash(row) }
+      candidates = visible_agents(active).map { |agent| [agent, "active"] }
+      archived = @agent_archive_store.all.map(&:agent).reject { |agent| active.any? { |live| live.key == agent.key } }
+      candidates.concat(visible_agents(archived).map { |agent| [agent, "archived"] })
+      matches = candidates.select do |agent, _state|
+        ([agent.key, agent.session_id] + agent.runs.map(&:session_id)).compact.map(&:to_s).include?(identity)
       end
-
-      group_count = [unread_count.to_i, 1].max
-      body = "#{agent.display_name}: #{truncate(agent.last_summary, 120)}"
-      body = "#{body} (#{group_count} unread agents)" if group_count > 1
-
-      {
-        event: event,
-        payload: {
-          title: title,
-          body: body,
-          tag: "hq:agents",
-          renotify: event == "input_required",
-          silent: event != "input_required",
-          badge_count: group_count,
-          url: "/#agent/#{agent.key}"
-        }
-      }
+      selected = attrs["agent_key"].to_s
+      matches = matches.select { |agent, _state| agent.key == selected } unless selected.empty?
+      raise Error.new("No retained agent matches this ID on this server", status: 404) if matches.empty?
+      matches
     end
 
     def agent_push_notification_id(agent, event)
