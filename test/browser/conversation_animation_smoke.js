@@ -152,6 +152,13 @@ module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
     assert.equal(await page.locator("[data-conversation-marker]").getAttribute("data-motion"), "rest");
     await page.evaluate((key) => { state.conversations[key].loading = true; render(); }, agentKey);
     assert.equal(await page.locator("[data-conversation-marker]").count(), 0);
+    await page.evaluate((key) => state.conversationAnimationRuns.delete(`${key}:animation-run-1:complete`), agentKey);
+    await fixture(page, agentKey, "complete");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.waitForFunction(() => document.querySelector("[data-conversation-marker]").dataset.motion === "rest");
+    assert.equal((await facts(page)).animations.length, 0, "reduced motion must stop an active completion");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    assert.equal((await facts(page)).animations.length, 0, "changing motion preference must not replay completion");
     await fixture(page, agentKey, "running");
     await page.emulateMedia({ reducedMotion: "reduce" });
     assert.equal((await facts(page)).animations.length, 0);

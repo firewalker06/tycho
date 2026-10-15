@@ -4241,7 +4241,7 @@ select {
   .conversation-marker .fred-face,
   .conversation-marker .fred-eyes,
   .conversation-marker .fred-glint,
-  .conversation-marker .fred-signal path { animation: none; }
+  .conversation-marker .fred-signal path { animation: none !important; }
 }
 
 .conversation-load-older {
