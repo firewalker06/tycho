@@ -22,6 +22,7 @@ module RemoteUIConversationLoadingTest
       const unseenConversationBlocks = context.window.TychoRemoteHelpers.unseenConversationBlocks;
       const pendingConversationBlockAcknowledged = context.window.TychoRemoteHelpers.pendingConversationBlockAcknowledged;
       const conversationSnapshotRequestMode = context.window.TychoRemoteHelpers.conversationSnapshotRequestMode;
+      const shouldAutoScrollConversation = context.window.TychoRemoteHelpers.shouldAutoScrollConversation;
       const shouldOpenSucceededAgentSummary = context.window.TychoRemoteHelpers.shouldOpenSucceededAgentSummary;
       const conversations = {
         alpha: { blocks: [], loaded: true, loading: false },
@@ -114,6 +115,20 @@ module RemoteUIConversationLoadingTest
       }
       if (conversationSnapshotRequestMode({ ...loadedConversation, revision: "new" }, "new") !== "none") {
         throw new Error("unchanged conversation revision triggered another request");
+      }
+
+      const conversationScrollChecks = [
+        ["first visit", { marker: "first", previousMarker: undefined, entered: true, atBottom: false }, true],
+        ["reopened conversation", { marker: "same", previousMarker: "same", entered: true, atBottom: false }, true],
+        ["asynchronous first content", { marker: "loaded", previousMarker: undefined, entered: false, atBottom: false }, true],
+        ["new content at the live tail", { marker: "new", previousMarker: "old", entered: false, atBottom: true }, true],
+        ["reader in older history", { marker: "new", previousMarker: "old", entered: false, atBottom: false }, false],
+        ["unchanged live conversation", { marker: "same", previousMarker: "same", entered: false, atBottom: true }, false],
+      ];
+      const failedScrollCheck = conversationScrollChecks.find(([, input, expected]) =>
+        shouldAutoScrollConversation(input) !== expected);
+      if (failedScrollCheck) {
+        throw new Error(`conversation scroll policy failed for ${failedScrollCheck[0]}`);
       }
 
       if (shouldOpenSucceededAgentSummary(
