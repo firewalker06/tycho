@@ -8978,8 +8978,24 @@ body:has(.inquiry-form-full-screen) {
   font-size: 13px;
 }
 
-.copy-url-button {
-  justify-self: end;
+.settings-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--ds-space-3);
+  min-width: 0;
+}
+
+.settings-action-row > :is(.card-title, .push-notification-status) {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.settings-action-row > :is(button, .ui-form-actions) {
+  flex: 0 0 auto;
+  max-width: 100%;
+  margin-inline-start: auto;
 }
 
 .session-loop-settings,
@@ -9092,10 +9108,6 @@ body:has(.inquiry-form-full-screen) {
   color: var(--danger);
 }
 
-.session-loop-settings-form [data-add-session-loop-template] {
-  justify-self: start;
-}
-
 .session-loop-settings-actions {
   justify-content: flex-end;
 }
@@ -9149,6 +9161,7 @@ body:has(.inquiry-form-full-screen) {
 .push-notification-status > div {
   display: grid;
   gap: 2px;
+  min-width: 0;
 }
 
 .visibility-legend {

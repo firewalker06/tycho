@@ -4,6 +4,8 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+- Keep Copy URL, notification controls, and prompt-template actions inside
+  their related flex rows, with right alignment and responsive wrapping.
 - Give mobile Settings a separate scroll area above its navigation. Use
   consistent section headings, group healthy Automation checks and supporting
   connection facts, keep warnings visible, and correct singular tool counts.

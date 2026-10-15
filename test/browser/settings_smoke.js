@@ -42,6 +42,55 @@ module.exports = async function settingsSmoke({ page, baseUrl }) {
       assert(!geometry.overflow, "Settings must not overflow horizontally");
       assert(geometry.panelTop >= geometry.navBottom - 2, `${section} heading must clear the section navigator`);
     }
+    // Related actions share a flex row; narrow layouts may wrap inside that row.
+    for (const subscribed of [false, true]) {
+      await page.evaluate((subscribed) => {
+        state.setup.push = { ...state.setup.push, configured: true, public_key: "synthetic-key", subscribed };
+        render();
+      }, subscribed);
+      for (const selector of ["#settings-connection .settings-action-row", "#settings-push-notifications .settings-action-row"]) {
+        const row = page.locator(selector);
+        const action = row.locator(":scope > button, :scope > .ui-form-actions");
+        const geometry = await row.evaluate((row) => {
+          const content = row.firstElementChild.getBoundingClientRect();
+          const action = row.lastElementChild.getBoundingClientRect();
+          const bounds = row.getBoundingClientRect();
+          return { sameLine: Math.abs(content.y + content.height / 2 - action.y - action.height / 2) < 2,
+            contained: action.left >= bounds.left - 1 && action.right <= bounds.right + 1 && action.bottom <= bounds.bottom + 1,
+            rightAligned: Math.abs(action.right - bounds.right) < 2 };
+        });
+        assert(geometry.contained && geometry.rightAligned, `${selector} actions must stay inside and align right`);
+        if (viewport.width === 1440) assert(geometry.sameLine, `${selector} must not push actions to a separate desktop row`);
+        for (const button of await row.locator("button").all()) {
+          await button.click({ trial: true });
+          const box = await button.boundingBox();
+          assert(box.width >= 44 && box.height >= 44);
+        }
+        assert.equal(await action.count(), 1);
+      }
+    }
+    await page.evaluate(() => {
+      state.setup.push.subscribed = false;
+      render();
+    });
+    await page.locator('[aria-controls="settings-panel-automation"]').click();
+    await page.waitForTimeout(600);
+    await page.locator("#session-loop-templates > summary").click();
+    const templateActions = page.locator("#session-loop-templates-form .session-loop-settings-actions");
+    assert.equal(await templateActions.locator("[data-add-session-loop-template]").count(), 1);
+    assert.equal(await templateActions.locator('button[type="submit"]').count(), 1);
+    const templateGeometry = await templateActions.evaluate((row) => {
+      const [add, save] = [...row.querySelectorAll("button")].map((button) => button.getBoundingClientRect());
+      const bounds = row.getBoundingClientRect();
+      return { sameLine: Math.abs(add.y - save.y) < 2, contained: add.left >= bounds.left - 1 && save.right <= bounds.right + 1 && save.bottom <= bounds.bottom + 1 };
+    });
+    assert(templateGeometry.contained);
+    if (viewport.width === 1440) assert(templateGeometry.sameLine, "Template footer actions must share a desktop row");
+    for (const button of await templateActions.locator("button").all()) await button.click({ trial: true });
+    await page.locator("#session-loop-templates > summary").click();
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && els.view.scrollWidth <= els.view.clientWidth), "Action rows must not cause horizontal overflow");
+    await page.locator('[aria-controls="settings-panel-configuration"]').click();
+    await page.waitForTimeout(600);
     if (viewport.width === 390) {
       const scroll = await page.evaluate(() => {
         const root = settingsScrollRoot();
