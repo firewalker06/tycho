@@ -26,6 +26,13 @@ module RemoteUINotificationTest
       const route = helpers.parseRoute("#notification/queue%3Afailure", { topTabs: ["now", "agents", "settings"] });
       if (route.type !== "notification" || route.id !== "queue:failure") throw new Error(JSON.stringify(route));
       if (helpers.routeHash(route) !== "#notification/queue%3Afailure") throw new Error(helpers.routeHash(route));
+      const activeTarget = helpers.notificationTargetRoute({ kind: "agent", target_state: "active", agent_key: "release:check" });
+      if (activeTarget.type !== "agent" || activeTarget.key !== "release:check") throw new Error(JSON.stringify(activeTarget));
+      const archivedTarget = helpers.notificationTargetRoute({ kind: "agent", target_state: "archived", agent_key: "release:archive" });
+      if (archivedTarget.type !== "agent" || archivedTarget.key !== "release:archive") throw new Error(JSON.stringify(archivedTarget));
+      if (helpers.notificationTargetRoute({ kind: "agent", target_state: "missing", agent_key: "removed" }) !== null) throw new Error("missing agent target redirected");
+      if (helpers.notificationTargetRoute({ kind: "queue_process_failed", target_state: "active", agent_key: "queue-agent" }) !== null) throw new Error("queue failure redirected");
+      if (helpers.notificationTargetRoute({ kind: "agent", target_state: "active", agent_key: "" }) !== null) throw new Error("empty target redirected");
     JAVASCRIPT
     _stdout, stderr, status = Open3.capture3("node", "-e", script, HELPERS_PATH)
     raise "notification route regression failed: #{stderr}" unless status.success?
@@ -36,6 +43,7 @@ module RemoteUINotificationTest
     required = [
       "notificationDetails: {}",
       "async function ensureNotification",
+      "REMOTE_HELPERS.notificationTargetRoute(notification)",
       "function renderNotification",
       'apiPost(`/notifications/${encodeURIComponent(id)}/read`, {})',
       'targetState === "archived"',

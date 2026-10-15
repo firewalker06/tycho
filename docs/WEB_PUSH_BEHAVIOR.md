@@ -10,7 +10,7 @@ This note explains how Tycho Remote UI uses browser push notifications, notifica
 4. `WebPushNotifier#send_payload!` sends that payload to every enabled browser subscription with VAPID authentication.
 5. `/service-worker.js` receives the push event, updates the installed-app badge when a `badge_count` is present, and calls `registration.showNotification(title, options)`.
 6. When the Remote UI page is open, a compact activity poll reads the server-owned snapshot and calls `syncUnreadAlert()` to mirror the unread-agent count into the logo and app badge. Lifecycle mutations update that snapshot immediately, while the existing notification reconciliation pass catches external process completion; no additional server loop is created.
-7. Notification clicks focus an existing Tycho Remote tab when possible, otherwise they open `/#notification/{id}`. The notification route marks the retained event read, opens its active or archived agent target when available, and keeps a bounded failure detail plus an Agents fallback when the original target is absent.
+7. Notification clicks navigate an existing Tycho Remote tab and wait for that navigation before focusing it, or open `/#notification/{id}` when no tab exists. For normal agent events, the notification route marks the retained event read, loads the active or archived agent and its conversation, and only then opens the Conversation. Queue failures stay on their diagnostic detail. Missing targets keep a bounded failure detail plus an Agents fallback.
 
 Queue dispatch failures use the same durable path. Their records include the agent key, queue-work batch ID, queue-entry IDs, failure time, resolution time, and read time. One unresolved failure generation produces one push. A retry failure has a new failure time and can produce a new push, while repeated polls cannot repeat the same alert. Recovery or discard settles the retained notification without deleting its diagnostic context.
 
@@ -103,6 +103,8 @@ Example agent payload:
 - `lib/hq/remote_ui/assets/service-worker.js`: receives push events, displays notifications, and updates badges in the background.
 - `lib/hq/remote_ui/assets/app.js`: mirrors unread-agent state to the header logo badge and the installed PWA app badge.
 - `test/push_notification_contract_test.rb`: locks exact agent, schedule, and test payload copy and delivery options.
+- `test/service_worker_test.rb`: verifies warm-tab navigation remains inside the notification-click event lifetime and that the no-client path opens a new window.
+- `test/remote_ui_notification_test.rb`: verifies that only available normal agent notifications auto-open their Conversation.
 - `test/remote_server_test.rb`: regression coverage for push payload shape, service worker behavior, and Remote UI hooks.
 - `test/web_push_notifier_test.rb`: delivery-error coverage for permanent and transient subscription failures.
 
