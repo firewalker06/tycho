@@ -27,18 +27,20 @@ module.exports = async function notificationTraceSmoke({ page, baseUrl, agentKey
     self.fixtureClick({ notification: { data: { url }, close() {} }, waitUntil(value) { pending = value; } });
     await Promise.resolve(pending).catch(() => {});
   }, notificationRoute);
-  await page.waitForURL(/#notification\/debug%3Atrace-fixture/);
-  await page.locator(".notification-detail").waitFor({ timeout: 10000 }).catch(async (error) => {
-    console.error(await page.evaluate(() => ({ hash: location.hash, view: els.view.innerText.slice(0, 500), details: state.notificationDetails })));
-    throw error;
-  });
+  await page.waitForURL(new RegExp(`#agent/${agentKey}$`));
   await page.evaluate(async (key) => { await ensureAgentDetail(key, true); }, agentKey);
-  await page.locator('.notification-detail a[href*="#agent/"]').click();
   await page.locator("[data-agent-conversation-pane]").waitFor();
   await page.waitForFunction(async () => {
     const trace = await TychoNotificationTrace.snapshot();
     return trace.events.some((event) => event.name === "conversation.loaded") && trace.events.some((event) => event.name === "view.rendered" && event.view === "conversation");
   });
+  if (captureDir) {
+    fs.mkdirSync(captureDir, { recursive: true });
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      await page.screenshot({ path: path.join(captureDir, `integrated-notification-conversation-${viewport.width}.png`) });
+    }
+  }
   let trace = await page.evaluate(() => TychoNotificationTrace.snapshot());
   if (captureDir) { fs.mkdirSync(captureDir, { recursive: true }); fs.writeFileSync(path.join(captureDir, "trace-probe.json"), JSON.stringify(trace, null, 2)); }
   assert.equal(trace.record_id, record);

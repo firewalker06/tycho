@@ -78,6 +78,20 @@ Foundations cover:
 
 Dark Dracula is the only supported theme. A light theme is intentionally out of scope because there is no product requirement or existing architecture to verify it.
 
+## Conversation spacing
+
+Conversation rhythm uses three semantic tokens: `--ds-conversation-turn-gap`
+(24px), `--ds-conversation-header-gap` (8px), and
+`--ds-conversation-activity-gap` (8px). These map to the existing spacing scale.
+The Remote UI applies the header gap only to direct message children of
+`.message-list`, including Summary. Adjacent ordinary messages receive one
+margin equal to the turn gap minus the list gap, so the total boundary is 24px.
+
+Activity groups keep 8px on each side. Their internal 5px header gap, entry
+padding, dividers, and responsive summary layout stay unchanged. Conversation
+bottom clearance stays 64px and the composer dock gap stays 8px. Product layout
+rules remain in `app.css`; the semantic values live in `design_system.css`.
+
 ## Component conventions
 
 - Shared selectors use the `ui-` prefix. Product patterns keep product names.

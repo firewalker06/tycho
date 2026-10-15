@@ -51,9 +51,26 @@ module NotificationTraceTest
         assert(events.some((event) => event.name === "client.selected" && event.same_origin));
         assert(events.some((event) => event.name === "navigate.resolved"));
         assert(events.some((event) => event.name === "focus.resolved"));
+        let releaseNavigation;
+        let settled = false;
+        let focusedNavigated = false;
+        clients = [{
+          url: "https://tycho.test/#settings",
+          navigate: () => new Promise((resolve) => { releaseNavigation = resolve; }),
+          focus: async () => { throw new Error("must focus returned client"); },
+        }];
+        const pendingNavigation = click().then(() => { settled = true; });
+        await new Promise(setImmediate);
+        assert.equal(settled, false, "click lifetime must await navigation");
+        releaseNavigation({ url: "https://tycho.test/#notification/debug%3Aworker-fixture", focus: async () => { focusedNavigated = true; } });
+        await pendingNavigation;
+        assert(focusedNavigated, "focus the navigated WindowClient");
         clients = [{ url: "https://tycho.test/", navigate: async () => { throw new Error("PRIVATE ENDPOINT"); }, focus: async () => { throw new Error("PRIVATE TOKEN"); } }];
         await assert.rejects(click());
         assert(events.some((event) => event.name === "navigate.rejected"));
+        assert(!events.some((event) => event.name === "focus.rejected"), "navigation failure must not focus");
+        clients = [{ url: "https://tycho.test/", navigate: async (url) => ({ url }), focus: async () => { throw new Error("PRIVATE"); } }];
+        await assert.rejects(click());
         assert(events.some((event) => event.name === "focus.rejected"));
         assert(!JSON.stringify(events).includes("PRIVATE"));
         clients = [];
