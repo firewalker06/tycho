@@ -2977,31 +2977,48 @@ title: !123 value
           if (!readState) throw new Error("Opening a notification did not persist read state");
           if (captureDir) await page.screenshot({ path: path.join(captureDir, "queue-notification-active-desktop.png"), fullPage: false });
 
-          const beforePage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-          await beforePage.goto(`${baseUrl}/ui#agent/${encodeURIComponent(agentKey)}`, { waitUntil: "networkidle" });
-          await beforePage.evaluate((key) => {
-            state.conversations[key] = {
-              revision: "pre-fix-empty",
-              blocks: [],
-              loaded: true,
-              loading: false,
-              total: 0,
-              hasOlder: false,
-            };
-            history.replaceState(null, "", routeHash({ type: "agent", key }));
-            state.renderedRouteKey = null;
-            state.renderedViewHtml = "";
-            render();
-          }, agentKey);
-          await beforePage.waitForSelector(".message-list .empty-state", { state: "visible", timeout: 10_000 });
-          const emptyConversationText = await beforePage.locator(".message-list .empty-state").innerText();
-          if (!emptyConversationText.includes("No conversation yet")) {
-            throw new Error(`Pre-fix empty Conversation fixture is not visible: ${JSON.stringify(emptyConversationText)}`);
+          // Direct routes exercise browser loading; they are not OS notification clicks.
+          const revisitResults = [];
+          for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+            const recoveryPage = await browser.newPage({ viewport });
+            await recoveryPage.goto(`${baseUrl}/ui#notification/notification-active`, { waitUntil: "networkidle" });
+            const pattern = `**/agents/${encodeURIComponent(agentKey)}/conversation`;
+            let attempts = 0;
+            await recoveryPage.route(pattern, async (route) => {
+              attempts++;
+              await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Recovery fixture unavailable" }) });
+            });
+            await recoveryPage.evaluate(() => { clearTimeout(state.timer); location.hash = "#notification/notification-agent"; });
+            await recoveryPage.waitForFunction(() => document.body.innerText.includes("Recovery fixture unavailable"));
+            const cached = await recoveryPage.evaluate(() => Boolean(state.notificationDetails["notification-agent"]));
+            await recoveryPage.unroute(pattern);
+            await recoveryPage.evaluate(() => { location.hash = "#agents"; });
+            await recoveryPage.waitForFunction(() => parseRoute().tab === "agents" && !document.body.dataset.routeLoading);
+            await recoveryPage.evaluate(() => { location.hash = "#notification/notification-agent"; });
+            await recoveryPage.waitForFunction(() => !document.body.dataset.routeLoading);
+            const recovered = await recoveryPage.evaluate((key) => ({
+              route: parseRoute(),
+              message: document.querySelector(".message-list")?.innerText || "",
+              empty: Boolean(document.querySelector(".message-list .empty-state")),
+              overflow: document.documentElement.scrollWidth > window.innerWidth,
+            }), agentKey);
+            if (captureDir) await recoveryPage.screenshot({ path: path.join(captureDir, `notification-recovery-${viewport.width}.png`), fullPage: false });
+            await recoveryPage.evaluate(() => { location.hash = "#agents"; });
+            await recoveryPage.waitForFunction(() => parseRoute().tab === "agents" && !document.body.dataset.routeLoading);
+            await recoveryPage.evaluate(() => { location.hash = "#notification/notification-agent"; });
+            await recoveryPage.waitForFunction(() => !document.body.dataset.routeLoading);
+            const repeated = await recoveryPage.evaluate(() => parseRoute());
+            revisitResults.push({ viewport, cached, attempts, recovered, repeated });
+            await recoveryPage.close();
           }
-          if (captureDir) await beforePage.screenshot({ path: path.join(captureDir, "agent-notification-before-empty-desktop.png"), fullPage: false });
-          await beforePage.setViewportSize({ width: 390, height: 844 });
-          if (captureDir) await beforePage.screenshot({ path: path.join(captureDir, "agent-notification-before-empty-mobile.png"), fullPage: false });
-          await beforePage.close();
+          console.log("notification-revisit-results", JSON.stringify(revisitResults));
+          for (const result of revisitResults) {
+            if (!result.cached || result.attempts !== 1 || result.recovered.route.type !== "agent" ||
+                result.recovered.route.key !== agentKey || !result.recovered.message.includes("Existing notification conversation message") ||
+                result.recovered.empty || result.recovered.overflow || result.repeated.type !== "agent" || result.repeated.key !== agentKey) {
+              throw new Error(`Notification recovery/repeat visit failed: ${JSON.stringify(result)}`);
+            }
+          }
 
           let releaseConversation;
           const conversationGate = new Promise((resolve) => { releaseConversation = resolve; });
@@ -3036,7 +3053,7 @@ title: !123 value
           if (conversation.route.type !== "agent" || conversation.route.key !== agentKey ||
               conversation.key !== agentKey || !conversation.text.includes("Existing notification conversation message") ||
               conversation.loading || conversation.empty) {
-            throw new Error(`Warm notification click did not load the existing conversation: ${JSON.stringify(conversation)}`);
+            throw new Error(`Warm notification direct route did not load the existing conversation: ${JSON.stringify(conversation)}`);
           }
           if (captureDir) await page.screenshot({ path: path.join(captureDir, "agent-notification-conversation-desktop.png"), fullPage: false });
 
