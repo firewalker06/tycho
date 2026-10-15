@@ -4,6 +4,8 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+- Trial a 64px gap before top-level User and user-like conversation blocks,
+  with no extra gap above the first block.
 - Keep Copy URL, notification controls, and prompt-template actions inside
   their related flex rows, with right alignment and responsive wrapping.
 - Give mobile Settings a separate scroll area above its navigation. Use

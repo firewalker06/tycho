@@ -4204,6 +4204,11 @@ select {
   margin-top: calc(var(--ds-conversation-turn-gap) - var(--ds-conversation-activity-gap));
 }
 
+/* Replace the ordinary margin; the list already supplies the activity gap. */
+.message-list > * + .message.user {
+  margin-top: calc(var(--ds-conversation-user-gap) - var(--ds-conversation-activity-gap));
+}
+
 /* FRED's content palette is independent of the UI theme. See docs/CONVERSATION_ANIMATIONS.md. */
 .conversation-marker {
   display: flex;

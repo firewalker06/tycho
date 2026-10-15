@@ -94,9 +94,11 @@
   --ds-space-5: 1.5rem;
   --ds-space-6: 2rem;
   --ds-space-7: 3rem;
+  --ds-space-8: 4rem;
 
   /* Conversation rhythm; activity entries retain their compact spacing. */
   --ds-conversation-turn-gap: var(--ds-space-5);
+  --ds-conversation-user-gap: var(--ds-space-8);
   --ds-conversation-header-gap: var(--ds-space-2);
   --ds-conversation-activity-gap: var(--ds-space-2);
   --ds-control-height-sm: 2.25rem;

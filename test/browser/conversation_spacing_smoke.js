@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 
 // Same synthetic conversation used for the approved card 319 comparison.
 async function installFixture(page, baseUrl, agentKey) {
@@ -17,6 +18,7 @@ async function installFixture(page, baseUrl, agentKey) {
       loading: false,
       revision: "card-319-spacing-fixture",
       blocks: [
+        { id: "first-user", kind: "message", role: "user", content: "First user: no extra top gap." },
         {
           id: "assistant-1",
           kind: "message",
@@ -52,6 +54,17 @@ async function installFixture(page, baseUrl, agentKey) {
         },
       ],
     };
+    state.conversations[key].blocks.push(
+      { id: "parent", kind: "message", role: "user", content: "Please check the trial.", metadata: { message_author: { type: "agent", agent_key: "synthetic-parent", name: "Parent agent" } } },
+      { id: "answers", kind: "message", role: "user", content: '{"placement":"before"}', metadata: { inquiry_response: true } },
+      { id: "tool-before-user", kind: "tool_call", tool_name: "exec", content: "Checked the boundaries." },
+      { id: "callback", kind: "message", role: "user", content: "Delegated result", metadata: { delegation_callback: true, delegation_report: { summary: "The synthetic check passed.", child: { name: "Fixture agent" } } } },
+      { id: "pending", kind: "message", role: "user", content: "Pending user prompt.", pending: true },
+      { id: "reply", kind: "message", role: "assistant", content: "Reply after pending status." },
+      { id: "reply-2", kind: "message", role: "assistant", content: "Adjacent assistant reply." },
+      { id: "read", kind: "message", role: "user", content: "Read queue fixture", metadata: { queue_read: true } },
+      { id: "last-user", kind: "message", role: "user", content: "User after Read queue." }
+    );
     history.replaceState(null, "", routeHash({ type: "agent", key }));
     state.renderedRouteKey = null;
     state.renderedViewHtml = "";
@@ -83,9 +96,13 @@ async function measure(page) {
     const dock = document.querySelector("[data-agent-dock]");
     return {
       height: rect(list).height,
+      firstOffset: rect(children[0]).top - rect(list).top,
+      classes: children.map(element => element.className),
+      expected: children.slice(1).map((element, index) => element.matches(".message-send-status") ? 4 : element.matches(".message.user") ? 64 : element.matches(".message") && children[index].matches(".message") ? 24 : 8),
       boundaries: children.slice(1).map((element, index) => rect(element).top - rect(children[index]).bottom),
       headers: children.filter(element => element.matches(".message")).map(element => rect(element.querySelector(".message-content")).top - rect(element.querySelector(".message-header")).bottom),
       activity: [...list.querySelectorAll(".message-group")].map(group => ({
+        queueRead: group.classList.contains("queue-read-block"),
         summaryPadding: style(group.querySelector("summary")).padding,
         summaryGap: style(group.querySelector("summary")).gap,
         bodyPadding: style(group.querySelector(".message-group-body")).padding,
@@ -104,6 +121,29 @@ async function measure(page) {
   });
 }
 
+async function captureBoundary(page, captureDir, label) {
+  if (!captureDir) return;
+  await page.locator('[data-run-summary-id="summary-18"]').scrollIntoViewIfNeeded();
+  await page.evaluate(() => {
+    const summary = document.querySelector('[data-run-summary-id="summary-18"]');
+    const pane = document.querySelector('[data-agent-conversation-scroll]');
+    if (pane.scrollHeight > pane.clientHeight) {
+      pane.scrollTop += summary.getBoundingClientRect().top - pane.getBoundingClientRect().top - 90;
+    } else {
+      window.scrollBy(0, summary.getBoundingClientRect().top - 100);
+    }
+  });
+  await page.screenshot({ path: path.join(captureDir, `${label}-context.png`) });
+  const clip = await page.evaluate(() => {
+    const summary = document.querySelector('[data-run-summary-id="summary-18"]');
+    const user = summary.nextElementSibling;
+    const a = summary.getBoundingClientRect(), b = user.getBoundingClientRect();
+    const y = Math.max(0, a.bottom - 70);
+    return { x: Math.max(0, a.x), y, width: Math.min(Math.max(a.right, b.right), innerWidth) - Math.max(0, Math.min(a.x, b.x)), height: Math.min(innerHeight - y, b.bottom - y) };
+  });
+  await page.screenshot({ path: path.join(captureDir, `${label}-boundary.png`), clip });
+}
+
 module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
   const results = [];
   for (const viewport of [{ width: 1060, height: 737 }, { width: 390, height: 844 }]) {
@@ -119,8 +159,10 @@ module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
     for (const open of [false, true]) {
       await page.evaluate(open => document.querySelectorAll(".message-group").forEach(group => { group.open = open; }), open);
       const selected = await measure(page);
-      assert.deepEqual(selected.boundaries, [8, 8, 24, 24, 8, 8]);
-      assert.deepEqual(selected.headers, [8, 8, 8, 8, 8]);
+      assert.deepEqual(selected.boundaries, selected.expected);
+      assert.equal(selected.firstOffset, 0);
+      assert(selected.headers.every(gap => gap === 8));
+      for (const name of ["parent-agent-message", "inquiry-response", "delegation-callback-event", "pending", "queue-read-block", "message-send-status"]) assert(selected.classes.some(value => value.split(" ").includes(name)), name);
       assert.equal(selected.padding, "64px");
       assert.equal(selected.dockGap, "8px");
       assert.equal(selected.overflow, false);
@@ -129,8 +171,8 @@ module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
         for (const group of selected.activity) {
           assert.equal(group.summaryPadding, "9px 12px");
           assert.equal(group.summaryGap, viewport.width === 390 ? "2px" : "10px");
-          assert.equal(group.bodyPadding, "4px 0px 0px");
-          assert.deepEqual(group.boundaries, [0]);
+          assert.equal(group.bodyPadding, group.queueRead ? "10px 12px 12px" : "4px 0px 0px");
+          assert(group.boundaries.every(gap => gap === 0));
           group.entries.forEach((entry, index) => {
             assert.equal(entry.padding, "8px 12px");
             assert.equal(entry.margin, "0px");
@@ -140,14 +182,20 @@ module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
           });
         }
       }
-      // Recreate only the old two spacing rules to compare all activity styles.
-      const baselineStyle = await page.addStyleTag({ content: ".message-list > .message { gap:5px!important; } .message-list > .message + .message { margin-top:0!important; }" });
+      // Serve the actual committed base stylesheet, with the same fixture and fonts.
+      const baselineCss = execFileSync("git", ["show", "1f20166:lib/hq/remote_ui/assets/design_system.css"], { cwd: path.resolve(__dirname, "../.."), encoding: "utf8" }) + "\n" + execFileSync("git", ["show", "1f20166:lib/hq/remote_ui/assets/app.css"], { cwd: path.resolve(__dirname, "../.."), encoding: "utf8" });
+      await page.evaluate(() => { document.querySelectorAll('link[rel="stylesheet"]').forEach(link => { link.disabled = true; }); });
+      const baselineStyle = await page.addStyleTag({ content: baselineCss });
       const baseline = await measure(page);
       assert.deepEqual(selected.activity, baseline.activity);
-      assert.equal(selected.height - baseline.height, 47);
-      await baselineStyle.evaluate(element => element.remove());
+      baseline.boundaries.forEach((gap, index) => assert.equal(gap, selected.classes[index + 1] === "message-send-status" ? 4 : selected.classes[index + 1].split(" ").includes("message") && selected.classes[index].split(" ").includes("message") ? 24 : 8));
+      assert.equal(selected.height - baseline.height, selected.boundaries.reduce((sum, gap, index) => sum + gap - baseline.boundaries[index], 0));
       await page.evaluate(() => { document.querySelector("[data-agent-conversation-scroll]").scrollTop = 0; window.scrollTo(0, 0); });
-      if (captureDir) await page.screenshot({ path: path.join(captureDir, `selected-${viewport.width}-${open ? "expanded" : "collapsed"}.png`) });
+      await captureBoundary(page, captureDir, `before-${viewport.width}-${open ? "expanded" : "collapsed"}`);
+      await baselineStyle.evaluate(element => element.remove());
+      await page.evaluate(() => { document.querySelectorAll('link[rel="stylesheet"]').forEach(link => { link.disabled = false; }); });
+      await page.evaluate(() => { document.querySelector("[data-agent-conversation-scroll]").scrollTop = 0; window.scrollTo(0, 0); });
+      await captureBoundary(page, captureDir, `after-${viewport.width}-${open ? "expanded" : "collapsed"}`);
       await page.evaluate(() => {
         const pane = document.querySelector("[data-agent-conversation-scroll]");
         pane.scrollTop = pane.scrollHeight;
@@ -173,10 +221,34 @@ module.exports = async function ({ browser, baseUrl, agentKey, captureDir }) {
       if (captureDir) await page.screenshot({ path: path.join(captureDir, `selected-${viewport.width}-${open ? "expanded" : "collapsed"}-end.png`) });
       modes.push({ open, selected, baseline, end });
     }
+    await page.locator("#prompt-input").fill("Keep this draft during polling.");
+    const pollBefore = await page.evaluate(() => ({ scroll: document.querySelector("[data-agent-conversation-scroll]").scrollTop, windowScroll: scrollY, open: [...document.querySelectorAll(".message-group")].map(group => group.open) }));
+    await page.evaluate(async () => { await refresh({ force: true }); });
+    const pollAfter = await page.evaluate(() => ({ scroll: document.querySelector("[data-agent-conversation-scroll]").scrollTop, windowScroll: scrollY, open: [...document.querySelectorAll(".message-group")].map(group => group.open) }));
+    assert.deepEqual(pollAfter, pollBefore);
+    assert.equal(await page.locator("#prompt-input").evaluate(element => element === document.activeElement), true);
+    assert.equal(await page.locator("#prompt-input").inputValue(), "Keep this draft during polling.");
+    const settled = await page.evaluate(key => {
+      const pending = state.conversations[key].blocks.find(block => block.id === "pending");
+      if (!pending) return null;
+      const list = document.querySelector(".message-list");
+      const before = list.querySelector(".message.pending").offsetTop;
+      pending.pending = false;
+      state.renderedViewHtml = "";
+      render({ preserveLiveEditor: true });
+      const messages = [...document.querySelectorAll(".message-list > .message.user")];
+      const message = messages.find(element => element.textContent.includes("Pending user prompt."));
+      return { before, after: message.offsetTop, status: Boolean(document.querySelector(".message-send-status")) };
+    }, agentKey);
+    assert(settled, "fixture must survive polling");
+    assert.equal(settled.before, settled.after);
+    assert.equal(settled.status, false);
+    const finalGeometry = await measure(page);
+    assert.deepEqual(finalGeometry.boundaries, finalGeometry.expected);
     assert.deepEqual(errors, []);
     results.push({ viewport, modes });
     await page.close();
   }
   if (captureDir) fs.writeFileSync(path.join(captureDir, "geometry.json"), JSON.stringify(results, null, 2));
-  console.log("conversation spacing: passed desktop/mobile collapsed/expanded geometry, activity invariants, overflow, end scroll, and control hit checks");
+  console.log("conversation spacing: passed desktop/mobile collapsed/expanded geometry, activity invariants, polling/draft/focus/scroll preservation, pending settlement, overflow, end scroll, and control hit checks");
 };
