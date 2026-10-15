@@ -313,7 +313,8 @@ module RegistryTest
         puts registry.projects.map(&:key).join(",")
       RUBY
       env = {
-        "TYCHO_HOME" => home_dir
+        "TYCHO_HOME" => home_dir,
+        "TYCHO_LOGS_ROOT" => nil
       }
       out, err, status = Open3.capture3(env, RbConfig.ruby, "-e", script, chdir: File.expand_path("..", __dir__))
       assert(status.success?, "expected TYCHO_HOME registry subprocess to succeed, err: #{err}")

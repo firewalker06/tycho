@@ -6,6 +6,13 @@ All notable changes to Tycho will be documented in this file.
 
 - Trial a 64px gap before top-level User and user-like conversation blocks,
   with no extra gap above the first block.
+- Keep Copy URL, notification controls, and prompt-template actions inside
+  their related flex rows, with right alignment and responsive wrapping.
+- Give mobile Settings a separate scroll area above its navigation. Use
+  consistent section headings, group healthy Automation checks and supporting
+  connection facts, keep warnings visible, and correct singular tool counts.
+- Remove the unused browser-token writer while preserving legacy token reads,
+  removal after successful host persistence, and peer request forwarding.
 
 ## 0.13.0 - 2026-10-05
 

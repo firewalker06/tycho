@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "support/push_safety"
+
 require "time"
 
 require_relative "../lib/hq/remote_server"
@@ -73,7 +75,7 @@ module PushNotificationContractTest
                renotify: status == "awaiting-input",
                silent: status != "awaiting-input",
                badge_count: 2,
-               url: "/#agent/release-check"
+               url: "/#notification/#{URI.encode_www_form_component("release-check:#{status == 'awaiting-input' ? 'input_required' : 'finished'}:1:::#{status}")}"
              }, "expected concise generic #{status} notification contract")
     end
 

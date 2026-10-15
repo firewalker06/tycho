@@ -6,13 +6,81 @@ This note explains how Tycho Remote UI uses browser push notifications, notifica
 
 1. The Remote server polls managed agents through `AgentStore#load_with_poll_events`.
 2. When a running agent transitions to `awaiting-input`, `succeeded`, `partial`, `failed`, `stopped`, or `blocked`, Tycho marks that agent unread and records a push event, except for structured `no_action_needed` outcomes. Notification polling also recovers unsent events from durable unread terminal state, so another process polling the agent first cannot consume the notification transition.
-3. `RemoteService#dispatch_agent_push_events` builds a compact JSON payload for the event.
+3. `RemoteService#dispatch_agent_push_events` uses `AgentNotification.build` for the compact payload and retained record. `deliver_agent_notification` records it and calls the notifier.
 4. `WebPushNotifier#send_payload!` sends that payload to every enabled browser subscription with VAPID authentication.
 5. `/service-worker.js` receives the push event, updates the installed-app badge when a `badge_count` is present, and calls `registration.showNotification(title, options)`.
 6. When the Remote UI page is open, a compact activity poll reads the server-owned snapshot and calls `syncUnreadAlert()` to mirror the unread-agent count into the logo and app badge. Lifecycle mutations update that snapshot immediately, while the existing notification reconciliation pass catches external process completion; no additional server loop is created.
 7. Notification clicks navigate an existing Tycho Remote tab and wait for that navigation before focusing it, or open `/#notification/{id}` when no tab exists. For normal agent events, the notification route marks the retained event read, loads the active or archived agent and its conversation, and only then opens the Conversation. The retained notification record is cached separately from target loading: reopening the same notification retries a failed target load and opens the Conversation again after a successful prior visit. Queue failures stay on their diagnostic detail. Missing targets keep a bounded failure detail plus an Agents fallback.
 
 Queue dispatch failures use the same durable path. Their records include the agent key, queue-work batch ID, queue-entry IDs, failure time, resolution time, and read time. One unresolved failure generation produces one push. A retry failure has a new failure time and can produce a new push, while repeated polls cannot repeat the same alert. Recovery or discard settles the retained notification without deleting its diagnostic context.
+
+## Settings debugger
+
+Settings → Notifications → **Agent notification debugger** previews an existing
+agent on the UI-serving server. Enter its Tycho key, current native harness
+session ID, or a native ID in retained run history. Active and archived agents
+are supported. Shared session IDs show explicit choices; a missing ID is an
+error. Peer servers are not searched or guessed.
+
+Select Done, Partial, Failed, Stopped, Blocked, or Input needed. These are test
+cases from the same production outcome definitions, not a notification-policy
+setting. Preview does not poll agents, dispatch queues, change status, create an
+agent, or send a push. **Send to this browser** is a separate explicit action.
+It requires this browser's enabled subscription and never falls back to a
+broadcast. The older generic **Test** action also requires that subscription.
+
+Both automatic alerts and debugger sends use `AgentNotification.build`,
+`RemoteService#deliver_agent_notification`, `PushNotificationStore`, and
+`WebPushNotifier#send_payload!`. A debugger record has a unique ID and `debug`
+metadata; its ordinary `/#notification/{id}` route uses the existing worker and
+Conversation resolver. Its selected outcome does not alter the real agent.
+The payload uses the retained summary, the normal tag, sound policy, and TTL.
+
+Redacted diagnostics include permission, subscription presence, worker states,
+the SHA-256 of the served worker, server build, record ID, target route, and
+provider counts. **Export redacted trace** excludes endpoint capability URLs,
+subscription keys, VAPID keys, authorization headers, and the summary body.
+A served-worker hash does not prove the installed worker version. Provider
+acceptance does not prove native display, PWA focus, or a successful click.
+The operator must perform that native browser loop; automated tests use fake
+transport and isolated fixtures.
+
+## Click diagnostics
+
+Debugger notifications retain a bounded click trace in this browser's IndexedDB.
+Only a `debug:` notification route starts a trace. The worker records its own
+loaded asset version, same-origin window selection, navigation/focus results,
+and new-window results. The page records boot, app startup, route, notification
+lookup, selected local/peer server, agent and Conversation HTTP status, block
+count, and visible/loading/empty state. Ordinary notification clicks keep their
+existing handler. Notification API IDs are percent-decoded once at lookup and
+read boundaries, so an encoded `debug:` ID resolves to its retained record.
+
+After the click, return to **Settings → Notifications → Agent notification
+debugger → Export redacted trace**. Export works after a full page load without
+repeating Preview or Send. The `click_trace` field reports joined-click-and-page,
+worker-only, page-only, or no-click-observed coverage. Joined coverage proves that
+both boundaries ran; inspect the recorded load/render outcomes before calling a
+Conversation successful. The worker's own build value differs from a hash of
+served source: it identifies the code that emitted the event. An older installed
+worker cannot emit click events, even if the page has new code.
+
+The store holds at most 64 events for 24 hours from the latest debugger click.
+The first 16 events retain the click boundary; a rolling tail holds the latest
+48. Routes are allowlisted. No request/response body, conversation text, token,
+subscription endpoint, key, error message, or stack is stored in these events.
+Diagnostics stay on this origin. **Clear click diagnostics** removes only this
+trace, without changing permissions, subscriptions, browser cache, or server
+state. Unavailable browser storage is reported in export and cannot stop normal
+page loading or click handling. These diagnostics can affect timing; they do not
+prove the cause of a historical click race.
+
+The isolated `TYCHO_REMOTE_UI_CLICK_TRACE_ONLY=1 bin/remote-ui-smoke` checks the
+served callback in an actual Chrome worker with real WindowClients and actual
+page requests. Its callback is synthetic and lacks trusted OS activation. Focus
+can reject for that reason. No Web Push or permission request is used. Native
+Edge/PWA activation remains an operator check after independent review and a
+coordinated reload of the serving process.
 
 ## Deployment Coherence
 
