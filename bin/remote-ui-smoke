@@ -485,6 +485,32 @@ def associate_agent_download_fixture(logs_dir, agent_key, workspace)
   File.write(attachments_path, JSON.pretty_generate(records))
 end
 
+def run_conversation_spacing_smoke!(dir:, base_url:, agent_key:, browser:)
+  node_dir = File.join(dir, "node")
+  install_playwright!(node_dir)
+  script = File.join(node_dir, "conversation-spacing.js")
+  File.write(script, <<~JS)
+    const { chromium } = require("playwright");
+    const smoke = require(#{File.join(ROOT, "test", "browser", "conversation_spacing_smoke.js").inspect});
+    (async () => {
+      const browser = await chromium.launch({ executablePath: #{browser.inspect}, headless: true });
+      try {
+        await smoke({ browser, baseUrl: #{base_url.inspect}, agentKey: #{agent_key.inspect}, captureDir: process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "" });
+      } finally { await browser.close(); }
+    })().catch((error) => { console.error(error); process.exit(1); });
+  JS
+  capture_dir = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s.strip
+  unless capture_dir.empty?
+    capture_dir = File.expand_path(capture_dir)
+    raise "Capture directory must be outside the repository" if capture_dir == ROOT || capture_dir.start_with?("#{ROOT}/")
+    FileUtils.mkdir_p(capture_dir)
+  end
+  out, err, status = Open3.capture3({ "TYCHO_REMOTE_UI_CAPTURE_DIR" => capture_dir }, "node", script, chdir: node_dir)
+  puts out unless out.empty?
+  warn err unless err.empty?
+  raise "Conversation spacing smoke failed" unless status.success?
+end
+
 def run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser:)
   agents = JSON.parse(File.read(File.join(fixture.fetch(:logs_dir), "managed_agents.json")))
   agent = agents.find { |item| item["key"] == agent_key }
@@ -10438,6 +10464,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       wait_for_resource_agents(base_url, [agent_key])
       run_notification_smoke!(dir:, base_url:, agent_key:, browser:)
       next
+    end
+    if ENV["TYCHO_REMOTE_UI_CONVERSATION_SPACING_ONLY"] == "1"
+      run_conversation_spacing_smoke!(dir:, base_url:, agent_key:, browser:)
+      exit 0
     end
     if ENV["TYCHO_REMOTE_UI_ATTACHMENT_PREVIEW_ONLY"] == "1"
       run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser:)
