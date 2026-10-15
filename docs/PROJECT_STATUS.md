@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-10-12
+2026-10-15
 
 ## Strategic Direction
 
@@ -406,6 +406,7 @@ and queued-run push notification behavior. Schedule-management work remains on
 - [x] Attachment detail context menus with exclusive Balanced/Widen/Full layouts, content/path copy, and forced cache refresh
 - [x] Responsive desktop/mobile shell with persistent, header-aligned in-shell desktop navigation across top-level and detail routes, consistently named New agent action, shared control sizing, and fixed-region safe-area handling
 - [x] Sticky Settings section navigator over one continuous page and copyable native session ID in Conversation Settings
+- [x] Bounded mobile Settings scrolling above persistent navigation, consistent section headings, compact healthy readiness checks, and grouped connection facts with visible warnings
 - [x] In-flow desktop conversation composer with resize-aware mobile content reservation
 - [x] Accessible full-screen Conversation editor with polling-safe autosaved drafts, focus containment, mobile visual-viewport sizing, and Escape-to-exit
 - [x] Focused Summary/Attachment full-view controls and compact mobile follow-up composer

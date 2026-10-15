@@ -672,6 +672,15 @@ def write_smoke_script(path)
       });
       page.on("pageerror", (error) => errors.push(error.message));
 
+      if (process.env.TYCHO_REMOTE_UI_SETTINGS_ONLY === "1") {
+        const smoke = require(#{File.join(ROOT, "test", "browser", "settings_smoke.js").inspect});
+        await smoke({ page, baseUrl });
+        if (errors.length) throw new Error(`Settings browser errors: ${errors.join("; ")}`);
+        console.log("remote-ui-smoke: settings ok");
+        await browser.close();
+        return;
+      }
+
       async function assertMarkdownFrontmatterRendering() {
         const fixture = fs.readFileSync(markdownFixturePath, "utf8");
         const rejectedSource = `---
