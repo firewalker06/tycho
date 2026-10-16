@@ -11,6 +11,50 @@ Scope: inventory Tycho's current Codex and Claude managed-agent harness behavior
 > readiness, and skills contract; see [Custom harness
 > profiles](./CUSTOM_HARNESSES.md) for the current configuration.
 
+## List models and reasoning efforts from the CLI
+
+Run these commands from the repository root, or use the installed `tycho` command:
+
+```sh
+bin/tycho harness list
+bin/tycho harness list --json
+bin/tycho harness list --harness claude --model claude-opus-5-5
+bin/tycho harness list --harness codex --discover --json
+bin/tycho harness list --help
+```
+
+The default is offline. It reads the same built-in fallback catalogs and
+`harness_catalogs` configuration that Settings uses. It includes built-in and
+configured custom harnesses. It does not run an executable, check authentication,
+or contact a provider. The exact, case-sensitive `--harness` and `--model` filters
+return an error when the selected value is absent. An absent model is not proof
+that the provider does not support it.
+
+Use `--discover` to run the same local harness catalog commands as Settings.
+These commands can depend on installed tools, credentials, and provider access;
+wrapper commands can also contact a network. A failed or missing tool can return
+an empty catalog or fallback suggestions. The source field states what Tycho
+used. This command does not add a provider API query or authentication check.
+It does not print execution commands, environment values, or credentials.
+
+The JSON object has `discovery`, `limitations`, and `harnesses` fields. Each
+harness has its exact `name`, adapter, custom flag, catalog source, models,
+harness reasoning suggestions, and defaults. Model rows preserve exact `value`
+and `label` strings. When the source provides model-specific reasoning levels,
+`reasoning_efforts` lists them and `reasoning_scope` is `model`. Otherwise the
+model row omits `reasoning_efforts` and states that model support is unverified.
+An empty list from a source is kept as an empty list. Harness-wide suggestions
+are not a model capability guarantee. Unknown defaults are JSON `null` and text
+`unknown; harness decides`. Project and template overrides are not listed.
+
+For example, the shared Claude fallback catalog includes `claude-opus-5-5` and
+harness suggestions `low`, `medium`, `high`, `xhigh`, `max`. It does not declare
+model-specific levels or a default. With `--discover`, the built-in Claude
+harness reads effort suggestions from installed `claude --help` when possible;
+custom Claude profiles retain Claude-compatible defaults, as Settings does.
+All catalogs are suggestions for selection. They do not prove live provider
+availability, account entitlement, or acceptance of a model/reasoning pair.
+
 ## Executive Summary
 
 Tycho's managed-agent system is not just a command launcher. A harness participates in configuration, executable discovery, command construction, detached process management, native session resume, stream parsing, structured result extraction, memory capture, skill discovery, TUI and Remote UI forms, schedules, hooks, setup readiness, and interactive terminal open flows.

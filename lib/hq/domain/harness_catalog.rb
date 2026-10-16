@@ -25,6 +25,49 @@ module HQ
 
     module_function
 
+    # Offline mode uses the same fallback catalogs as UI discovery, without executing tools.
+    def for_listing(name, registry:, discover: false)
+      custom = HQ.custom_harness(name)
+      payload = if discover
+                  custom ? for_custom(custom) : for_builtin(name, ExecutableResolver.resolve_tool(name))
+                else
+                  custom ? build_custom_catalog(custom, nil, command_prefix: []) : build_builtin_catalog(name, nil, command_prefix: [])
+                end
+      merge_config(payload, registry.harness_catalog(name))
+    end
+
+    def merge_config(payload, config)
+      return payload unless config
+
+      payload.merge(
+        model_suggestions: merge_model_suggestions(payload[:model_suggestions], config.models),
+        reasoning_effort_suggestions: merge_effort_suggestions(payload[:reasoning_effort_suggestions], config.reasoning_efforts),
+        configured_model_suggestions: config.models,
+        configured_reasoning_effort_suggestions: config.reasoning_efforts,
+        catalog_source: [payload[:catalog_source], "hq.yml custom catalog"].compact.reject(&:empty?).join(" + ")
+      )
+    end
+
+    def merge_model_suggestions(existing, configured)
+      suggestions = Array(existing).dup
+      seen = suggestions.each_with_object({}) do |item, memo|
+        value = item.is_a?(Hash) ? item[:value].to_s : item.to_s
+        memo[value] = true
+      end
+      Array(configured).each do |model|
+        value = model.to_s.strip
+        next if value.empty? || seen[value]
+
+        suggestions << { value: value, label: value }
+        seen[value] = true
+      end
+      suggestions
+    end
+
+    def merge_effort_suggestions(existing, configured)
+      (Array(existing) + Array(configured)).map { |value| value.to_s.strip.downcase }.reject(&:empty?).uniq
+    end
+
     def for_builtin(name, resolution)
       cache_key = ["builtin", name.to_s, resolution&.command.to_s, resolution&.path.to_s]
       catalog_cache[cache_key] ||= build_builtin_catalog(

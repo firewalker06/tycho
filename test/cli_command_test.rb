@@ -21,6 +21,7 @@ module CLICommandTest
   module_function
 
   def run!
+    assert_harness_list_catalogs
     assert_version_output
     assert_project_commands_manage_full_lifecycle
     assert_project_command_and_help_paths_do_not_create_projects
@@ -34,6 +35,64 @@ module CLICommandTest
     assert_metrics_commands_are_listed_in_usage
     assert_debug_claude_run_agent_uses_claude_defaults
     puts "cli_command_test: ok"
+  end
+
+  def assert_harness_list_catalogs
+    Dir.mktmpdir("tycho-harness-list") do |dir|
+      config = File.join(dir, "hq.yml")
+      prompts = File.join(dir, "prompts.yml")
+      marker = File.join(dir, "executed")
+      tool = File.join(dir, "catalog-tool")
+      File.write(tool, <<~RUBY)
+        #!#{RbConfig.ruby}
+        require "json"
+        File.write(#{marker.inspect}, "called")
+        puts({models: [{slug: "exact/model", supported_reasoning_levels: [{effort: "high"}, {effort: "low"}], default_reasoning_level: "high"}]}.to_json)
+      RUBY
+      FileUtils.chmod(0o755, tool)
+      File.write(prompts, "{}\n")
+      File.write(config, {
+        "projects" => [],
+        "custom_harnesses" => [{"key" => "private-codex", "adapter" => "codex", "execution_command" => ["env", "PRIVATE_TOKEN=secret-sentinel", tool]}],
+        "harness_catalogs" => {"private-codex" => {"models" => ["Configured/Exact"], "reasoning_efforts" => ["turbo"]}}
+      }.to_yaml)
+      env = {"TYCHO_CONFIG_PATH" => config, "TYCHO_SYSTEM_PROMPTS_PATH" => prompts, "TYCHO_LOGS_ROOT" => File.join(dir, "logs"), "TYCHO_CODEX_BIN" => tool}
+      result = run_tycho(env, "harness", "list", "--json")
+      assert(result[:status].success?, "expected offline harness list: #{result}")
+      payload = JSON.parse(result[:stdout])
+      assert(payload["discovery"] == "offline", "expected offline default")
+      assert(!File.exist?(marker), "offline list must not execute harnesses")
+      assert(payload["harnesses"].map { |row| row["name"] } == %w[codex claude opencode pi private-codex], "expected built-in and custom harnesses")
+      custom = payload["harnesses"].last
+      assert(custom["models"].map { |row| row["value"] } == ["Configured/Exact"], "expected exact configured model")
+      assert(custom["reasoning_efforts"].include?("turbo"), "expected configured reasoning effort")
+      assert(!result[:stdout].include?("secret-sentinel"), "must not expose execution environment")
+      result = run_tycho(env, "harness", "list", "--harness", "private-codex", "--model", "exact/model", "--discover", "--json")
+      assert(result[:status].success?, "expected local discovery: #{result}")
+      model = JSON.parse(result[:stdout]).fetch("harnesses").first.fetch("models").first
+      assert(model["reasoning_efforts"] == %w[low high], "expected model-specific levels")
+      assert(model["default_reasoning_effort"] == "high" && model["reasoning_scope"] == "model", "expected model-specific default")
+      assert(!result[:stdout].include?("secret-sentinel"), "discovery must not expose secrets")
+      result = run_tycho(env, "harness", "list", "--harness", "claude", "--model", "claude-opus-5-5", "--json")
+      model = JSON.parse(result[:stdout]).fetch("harnesses").first.fetch("models").first
+      assert(model["default_reasoning_effort"].nil? && !model.key?("reasoning_efforts"), "Claude must not claim model-level support or defaults")
+      text = run_tycho(env, "harness", "list", "--harness", "claude", "--model", "claude-opus-5-5")
+      assert(text[:stdout].include?("claude-opus-5-5 | reasoning: unknown"), "expected useful text model output")
+      assert(text[:stdout].include?("low, medium, high, xhigh, max"), "expected exact harness suggestions")
+      help = run_tycho(env, "--help")
+      assert((help[:stdout] + help[:stderr]).include?("harness list"), "expected discoverable command")
+      help = run_tycho(env, "harness", "list", "--help")
+      assert((help[:stdout] + help[:stderr]).include?("--[no-]discover"), "expected discovery help")
+      result = run_tycho(env.merge("TYCHO_CODEX_BIN" => File.join(dir, "missing")), "harness", "list", "--harness", "codex", "--discover", "--json")
+      assert(result[:status].success?, "expected missing executable to return a catalog with limits")
+      missing = JSON.parse(result[:stdout]).fetch("harnesses").first
+      assert(missing["models"].empty? && missing["catalog_source"] == "codex defaults", "expected explicit fallback catalog")
+      [["--harness", "absent"], ["--model", "absent"], ["extra"]].each do |args|
+        result = run_tycho(env, "harness", "list", *args, "--json")
+        assert(!result[:status].success?, "expected invalid selection to fail: #{args}")
+        assert(JSON.parse(result[:stdout])["error"], "expected JSON failure")
+      end
+    end
   end
 
   def assert_local_parent_send_conversation_events
