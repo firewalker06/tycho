@@ -6,6 +6,20 @@ All notable changes to Tycho will be documented in this file.
 
 ## 0.14.0 - 2026-10-16
 
+### Local harness catalog CLI
+
+- Add `tycho harness list` with text and JSON output for built-in and configured
+  custom harnesses. The default is offline and uses shared fallback catalogs plus
+  `harness_catalogs` configuration without running tools or contacting providers.
+- Support exact, case-sensitive `--harness` and `--model` filters. An absent value
+  is a catalog error, not proof of provider support or availability.
+- Add optional `--discover` to run local catalog commands used by Settings. These
+  can depend on tools, credentials, and provider/network access. Report the source
+  used, including fallbacks, without printing credentials or execution commands.
+- Keep unknown defaults as JSON `null` or text `unknown; harness decides`.
+  Harness reasoning suggestions do not prove model-specific support. The command
+  is local only and does not support `--server`.
+
 ### Agent continuity and recovery
 
 - Preserve recurring schedules when Start New or Start with Handoff replaces

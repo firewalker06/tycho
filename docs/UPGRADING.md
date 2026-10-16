@@ -9,6 +9,37 @@ still required. No new gem dependency or manual conversion is required for
 projects, schedules, agents, delegation, QueueWork, memory, credentials,
 notification records, or attachments.
 
+### Local model and reasoning catalogs
+
+Use the new local catalog command without starting an agent:
+
+```bash
+tycho harness list
+tycho harness list --json
+tycho harness list --harness claude --model claude-opus-5-5 --json
+tycho harness list --harness codex --discover --json
+```
+
+The default is offline: it uses the same built-in fallback catalogs and
+`harness_catalogs` configuration as Settings, including configured custom
+harnesses. It does not run tools, check authentication, or contact providers.
+Both filters are exact and case-sensitive. A missing model means it is absent
+from that catalog; it does not establish provider availability or lack of support.
+This is a local command with no `--server` option or remote CLI forwarding.
+
+Choose `--discover` only when you want local harness catalog commands to run.
+Those commands can require installed tools and credentials, and can contact
+providers or a network. Read `catalog_source` for the source or fallback used.
+Discovery is not a live entitlement or model/reasoning validation guarantee.
+The command adds no provider API query or authentication check of its own.
+
+The Claude catalog includes `claude-opus-5-5`. Its `low`, `medium`, `high`,
+`xhigh`, and `max` values are harness suggestions, not proven effort support for
+that model. Model rows have `reasoning_scope`; only model-specific source data
+produces a model `reasoning_efforts` list. Unknown defaults are JSON `null` and
+text `unknown; harness decides`. Project/template overrides are not listed.
+No new config or packaged skill update is required for this command.
+
 ### Context replacement and archive
 
 **Start New** creates a fresh clone and archives its source after the clone is
