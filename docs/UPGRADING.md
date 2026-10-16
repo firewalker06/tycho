@@ -27,7 +27,7 @@ controls. Read queue evidence remains available in Conversation and memory.
 Inquiry values save locally while you type and survive refresh and reload.
 Conversation opens at its latest message. Wide screens can show a selected
 Summary attachment in a third column; smaller screens retain their normal
-workspace navigation. FRED uses reliable matching run evidence for completion
+workspace navigation. The status marker uses reliable matching run evidence for completion
 and honors the browser's reduced-motion setting.
 
 The Remote UI serves its new fonts locally; no font service or separate package

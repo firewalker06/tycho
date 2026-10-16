@@ -32,7 +32,7 @@ All notable changes to Tycho will be documented in this file.
 - Snap Conversation to its latest message on entry and improve activity spacing.
   Use a total 64 px gap before qualifying top-level user blocks, with no extra
   first-block gap.
-- Add FRED working and successful-completion markers. Keep animation state
+- Add animated working and successful-completion markers. Keep animation state
   through polling, play completion once per UI session, and honor reduced motion.
 - Self-host Plus Jakarta Sans normal and italic variable fonts, with a system
   fallback and the bundled SIL Open Font License.
