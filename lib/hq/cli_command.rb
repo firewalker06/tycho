@@ -68,6 +68,25 @@ module HQ
         end
       end
 
+      class HarnessList < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "List local harness catalogs, exact model values, and reasoning efforts"
+        option :harness, desc: "Exact harness key (built-in or custom)"
+        option :model, desc: "Exact model value"
+        option :discover, type: :boolean, default: false, desc: "Run local harness catalog commands used by Settings (may contact providers)"
+        option :json, type: :boolean, default: false, desc: "Print JSON"
+        usage_template "harness list [--harness KEY] [--model MODEL] [--discover] [--json]"
+
+        def call(**opts)
+          exit CLICommand.list_harnesses(opts, out: out, err: err)
+        end
+      end
+
+      register "harness" do |prefix|
+        prefix.register "list", HarnessList
+      end
+
       class Project < Dry::CLI::Command
         extend CommandMetadata
 
@@ -893,6 +912,7 @@ module HQ
       "Usage:",
       "  #{COMMAND_NAME} --help",
       *RUNTIME_COMMANDS,
+      "  #{COMMAND_NAME} #{Commands::HarnessList.usage_template}",
       *PROJECT_COMMANDS.map { |command| "  #{COMMAND_NAME} #{format(command.usage_template, project_key: "<project-key>")}" },
       *AGENT_COMMANDS.map { |command|
         template = command.usage_template
@@ -921,6 +941,63 @@ module HQ
       Dry::CLI.new(Commands).call(arguments: argv)
     rescue SystemExit => e
       e.status
+    end
+
+    def list_harnesses(opts = {}, out: $stdout, err: $stderr)
+      require_relative "registry"
+      require_relative "domain/harness_catalog"
+
+      return command_failure("Unexpected arguments: #{Array(opts[:args]).join(" ")}", opts, out:, err:) unless Array(opts[:args]).empty?
+
+      registry = Registry.new
+      names = HQ.harness_keys
+      if opts[:harness]
+        return command_failure("Unknown harness #{opts[:harness].inspect}. Supported: #{names.join(", ")}", opts, out:, err:) unless names.include?(opts[:harness])
+
+        names = [opts[:harness]]
+      end
+      rows = names.filter_map do |name|
+        catalog = HarnessCatalog.for_listing(name, registry: registry, discover: opts[:discover])
+        models = Array(catalog[:model_suggestions]).map do |model|
+          model.merge(
+            reasoning_scope: model.key?(:reasoning_efforts) ? "model" : "harness suggestions; model support unverified",
+            default_reasoning_effort: model[:default_reasoning_effort]
+          )
+        end
+        models.select! { |model| model[:value] == opts[:model] } if opts[:model]
+        next if opts[:model] && models.empty?
+
+        {
+          name: name, adapter: HQ.harness_adapter(name), custom: !!HQ.custom_harness(name),
+          catalog_source: catalog[:catalog_source], models: models,
+          reasoning_efforts: catalog[:reasoning_effort_suggestions],
+          default_model: nil, default_reasoning_effort: nil
+        }
+      end
+      if opts[:model] && rows.empty?
+        return command_failure("Model #{opts[:model].inspect} is absent from this catalog; provider availability is not checked.", opts, out:, err:)
+      end
+      note = "Catalog suggestions are not provider live availability or validation. Unknown defaults are null (text: unknown; harness decides). Harness reasoning suggestions do not prove model support. Project/template overrides are not listed."
+      if opts[:json]
+        out.puts JSON.pretty_generate(discovery: opts[:discover] ? "local harness commands" : "offline", limitations: note, harnesses: rows)
+      else
+        out.puts note
+        rows.each do |row|
+          out.puts "\n#{row[:name]} (adapter: #{row[:adapter]}; #{row[:custom] ? "custom" : "built-in"})"
+          out.puts "  Source: #{row[:catalog_source] || "unknown"}"
+          out.puts "  Default model: unknown; harness decides"
+          out.puts "  Default reasoning: unknown; harness decides"
+          out.puts "  Harness reasoning suggestions: #{row[:reasoning_efforts].join(", ")}"
+          out.puts "  Models: unknown; configure hq.yml or use --discover" if row[:models].empty?
+          row[:models].each do |model|
+            efforts = model.key?(:reasoning_efforts) ? model[:reasoning_efforts].join(", ") : "unknown (see harness suggestions)"
+            out.puts "  #{model[:value]} | reasoning: #{efforts} | default reasoning: #{model[:default_reasoning_effort] || "unknown; harness decides"}"
+          end
+        end
+      end
+      0
+    rescue StandardError => e
+      command_failure(e.message, opts, out:, err:)
     end
 
     def serve(argv, executable: nil)
