@@ -2,6 +2,109 @@
 
 ## Unreleased
 
+## 0.14.0
+
+Upgrade through Homebrew or update the source checkout. Ruby 3.2 or later is
+still required. No new gem dependency or manual conversion is required for
+projects, schedules, agents, delegation, QueueWork, memory, credentials,
+notification records, or attachments.
+
+### Local model and reasoning catalogs
+
+Use the new local catalog command without starting an agent:
+
+```bash
+tycho harness list
+tycho harness list --json
+tycho harness list --harness claude --model claude-opus-5-5 --json
+tycho harness list --harness codex --discover --json
+```
+
+The default is offline: it uses the same built-in fallback catalogs and
+`harness_catalogs` configuration as Settings, including configured custom
+harnesses. It does not run tools, check authentication, or contact providers.
+Both filters are exact and case-sensitive. A missing model means it is absent
+from that catalog; it does not establish provider availability or lack of support.
+This is a local command with no `--server` option or remote CLI forwarding.
+
+Choose `--discover` only when you want local harness catalog commands to run.
+Those commands can require installed tools and credentials, and can contact
+providers or a network. Read `catalog_source` for the source or fallback used.
+Discovery is not a live entitlement or model/reasoning validation guarantee.
+The command adds no provider API query or authentication check of its own.
+
+The Claude catalog includes `claude-opus-5-5`. Its `low`, `medium`, `high`,
+`xhigh`, and `max` values are harness suggestions, not proven effort support for
+that model. Model rows have `reasoning_scope`; only model-specific source data
+produces a model `reasoning_efforts` list. Unknown defaults are JSON `null` and
+text `unknown; harness decides`. Project/template overrides are not listed.
+No new config or packaged skill update is required for this command.
+
+### Context replacement and archive
+
+**Start New** creates a fresh clone and archives its source after the clone is
+saved. **Start with Handoff** saves a concise continuity record and archives the
+source after its replacement starts. A recurring schedule follows the replacement
+agent. Check the schedule target after replacement; do not create a second
+schedule to continue the same work.
+
+Context replacement blocks running agents, unresolved inquiries, and ordinary
+or mixed queued work. Stop active work, answer or retire the inquiry, and process
+or remove ordinary queue entries before you replace the source.
+
+Manual archive has different behavior: it stops active work, cancels an unresolved
+inquiry, and records final outcomes for queued work. It does not run that queued
+work. Undelivered user prompts are declined with a reason; protected delegation
+callbacks are superseded with a reason and kept in read-only history. Delivered
+or in-flight work is marked aborted with uncertainty. Inquiry cancellation,
+queue outcomes, and delivery evidence remain in the archive; Read queue evidence
+remains in Conversation and memory.
+
+### Remote UI and credentials
+
+Inquiry values save locally while you type and survive refresh and reload.
+Conversation opens at its latest message. Wide screens can show a selected
+Summary attachment in a third column; smaller screens retain their normal
+workspace navigation. The status marker uses reliable matching run evidence for completion
+and honors the browser's reduced-motion setting.
+
+The Remote UI serves its new fonts locally; no font service or separate package
+installation is required. Mobile Settings uses its own content scroll area above
+navigation. Existing browser token reads and peer forwarding remain supported.
+Do not clear credentials as part of this upgrade.
+
+Notification diagnostics are in Settings. An explicit test send targets the
+current browser subscription and does not change the selected agent's state.
+Provider acceptance and synthetic browser checks do not prove native OS display,
+trusted notification activation, installed-PWA focus, or cold-window behavior.
+Use the redacted trace to collect evidence when a native click still fails.
+
+### Runtime and usage estimates
+
+Internal runners no longer activate incompatible user Ruby gems. Managed
+harnesses retain their supported environment. GPT-6 estimates use the embedded
+rate card and cache-write accounting; estimates remain unavailable when required
+rates or token counts are missing. This is a list-price estimate, not a bill.
+
+The packaged Tycho skill is unchanged from v0.13.0 in this release range. Users
+upgrading from an older release should apply that release's skill update steps.
+Apple Silicon macOS and Linux bottles remain supported. Intel macOS users can
+run from source; v0.11.0 is the last Intel bottle.
+
+### Verify
+
+```bash
+tycho --version
+tycho doctor
+tycho agent list
+tycho schedule list
+```
+
+Check that the version is `0.14.0`, existing sessions and schedules are present,
+and the expected harness is ready. Open Conversation, an inquiry draft, an
+attachment preview, and Settings. Check notification diagnostics with synthetic
+data before you choose to send a real test notification.
+
 ## 0.13.0
 
 Upgrade normally through Homebrew, or update a source checkout with Git and

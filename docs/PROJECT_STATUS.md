@@ -107,6 +107,19 @@ Key references:
 
 ## Current Focus
 
+**v0.14.0 release preparation**: improves context replacement and schedule
+continuity, safe archive, Read queue evidence, inquiry drafts, attachment review,
+Conversation spacing and FRED states, mobile Settings, retained notification
+routing and diagnostics, runner isolation, and GPT-6 usage estimates. Merged
+harness catalog CLI PR 245 is integrated: `tycho harness list` is local only,
+offline by default, and supports exact filters, JSON, and optional discovery
+that may contact providers. Catalog sources and unknown defaults stay explicit;
+harness effort suggestions are not proof of model support. Packaged skills remain
+unchanged from v0.13.0. The release workflow now requires separate website delivery
+and production verification after the exact published tag exists. The website is
+on hold until v0.14.0 is published. Independent review of the integrated head and
+operator approval remain required before publication.
+
 **v0.13.0 release preparation**: adds safe context-pressure guidance, blocked
 queue controls, failed-batch recovery, Partial QueueWork settlement, recurring
 schedule continuation after Partial, stale Ruby-path recovery, and manual
