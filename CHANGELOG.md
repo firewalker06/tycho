@@ -4,15 +4,65 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
-- Trial a 64px gap before top-level User and user-like conversation blocks,
-  with no extra gap above the first block.
-- Keep Copy URL, notification controls, and prompt-template actions inside
-  their related flex rows, with right alignment and responsive wrapping.
-- Give mobile Settings a separate scroll area above its navigation. Use
-  consistent section headings, group healthy Automation checks and supporting
-  connection facts, keep warnings visible, and correct singular tool counts.
-- Remove the unused browser-token writer while preserving legacy token reads,
+## 0.14.0 - 2026-10-16
+
+### Agent continuity and recovery
+
+- Preserve recurring schedules when Start New or Start with Handoff replaces
+  a context-limited session. Archive the source at the safe replacement point
+  and retain callback history, native-session evidence, and queued work.
+- Close archive/prompt and scheduler races. Refuse archive for ordinary queued
+  work or unresolved inquiries; retain protected callback-only queues as history.
+- Make context-pressure warnings dismissible for the current evidence and keep
+  Start with Handoff context concise without losing the continuity record.
+- Record agent sends in Conversation and preserve expandable Read queue evidence
+  after memory projection and later runs.
+- Autosave inquiry values and retain drafts across refresh and reload.
+- Isolate internal agent runners from incompatible user Ruby gems while keeping
+  the managed harness environment available to its executable.
+- Accept valid configured custom project harness profiles.
+
+### Conversation and document review
+
+- Add a wide third-column Summary attachment preview with secure renderers,
+  independent scrolling, keyboard focus, and correct wide/mobile shell sizing.
+- Render safe Markdown frontmatter as metadata and preserve list semantics.
+  Rejected frontmatter remains visible and untrusted HTML stays sanitized.
+- Show known error details in Summary without changing the recorded outcome.
+- Snap Conversation to its latest message on entry and improve activity spacing.
+  Use a total 64 px gap before qualifying top-level user blocks, with no extra
+  first-block gap.
+- Add FRED working and successful-completion markers. Keep animation state
+  through polling, play completion once per UI session, and honor reduced motion.
+- Self-host Plus Jakarta Sans normal and italic variable fonts, with a system
+  fallback and the bundled SIL Open Font License.
+
+### Settings and notification diagnostics
+
+- Preserve notification targets during loading and route retained encoded IDs
+  correctly. Add redacted click tracing and an export in Settings.
+- Add an explicit current-browser notification debugger that uses the normal
+  retained-record and send path, resolves Tycho/native session IDs, and reports
+  missing or ambiguous targets without changing agent state.
+- Give mobile Settings its own scroll area above navigation. Use consistent
+  section headings, group healthy Automation checks and supporting connection
+  facts, keep warnings visible, and correct singular tool counts.
+- Keep Copy URL, notification controls, prompt-template actions, and Skills
+  actions aligned within their related rows, with responsive wrapping.
+- Remove the unused browser-token writer while retaining legacy token reads,
   removal after successful host persistence, and peer request forwarding.
+- Isolate test storage and block real Web Push transport in Ruby tests.
+
+### Metrics and compatibility
+
+- Update the embedded GPT-6 rate card and account for cache-write tokens without
+  double charging ordinary input. Missing prices remain explicitly unpriced.
+- No manual data migration or new Ruby gem dependency is required. Existing
+  projects, schedules, queues, credentials, attachments, and memory remain valid.
+- Start New now archives its source after the clone is saved; Start with Handoff
+  archives after its replacement starts. Schedule ownership follows replacement.
+- v0.11.0 remains the final Intel macOS bottle. Current bottles target Apple
+  Silicon macOS and Linux; Intel users can continue from source.
 
 ## 0.13.0 - 2026-10-05
 

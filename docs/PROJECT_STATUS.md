@@ -107,6 +107,14 @@ Key references:
 
 ## Current Focus
 
+**v0.14.0 release preparation**: improves context replacement and schedule
+continuity, safe archive, Read queue evidence, inquiry drafts, attachment review,
+Conversation spacing and FRED states, mobile Settings, retained notification
+routing and diagnostics, runner isolation, and GPT-6 usage estimates. The release
+branch changes version and documentation only. Harness catalog CLI PR 245 is an
+explicit merge and integration-test gate; it is not included in this snapshot.
+Independent review and operator approval remain required before publication.
+
 **v0.13.0 release preparation**: adds safe context-pressure guidance, blocked
 queue controls, failed-batch recovery, Partial QueueWork settlement, recurring
 schedule continuation after Partial, stale Ruby-path recovery, and manual
