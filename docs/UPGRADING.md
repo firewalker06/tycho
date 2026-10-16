@@ -17,10 +17,17 @@ source after its replacement starts. A recurring schedule follows the replacemen
 agent. Check the schedule target after replacement; do not create a second
 schedule to continue the same work.
 
-Archive keeps protected delegation callbacks in read-only history. Ordinary
-queued prompts, mixed queues, running agents, and unresolved inquiries still
-block unsafe archive. Process or remove ordinary work through the existing queue
-controls. Read queue evidence remains available in Conversation and memory.
+Context replacement blocks running agents, unresolved inquiries, and ordinary
+or mixed queued work. Stop active work, answer or retire the inquiry, and process
+or remove ordinary queue entries before you replace the source.
+
+Manual archive has different behavior: it stops active work, cancels an unresolved
+inquiry, and records final outcomes for queued work. It does not run that queued
+work. Undelivered user prompts are declined with a reason; protected delegation
+callbacks are superseded with a reason and kept in read-only history. Delivered
+or in-flight work is marked aborted with uncertainty. Inquiry cancellation,
+queue outcomes, and delivery evidence remain in the archive; Read queue evidence
+remains in Conversation and memory.
 
 ### Remote UI and credentials
 

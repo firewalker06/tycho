@@ -11,8 +11,10 @@ All notable changes to Tycho will be documented in this file.
 - Preserve recurring schedules when Start New or Start with Handoff replaces
   a context-limited session. Archive the source at the safe replacement point
   and retain callback history, native-session evidence, and queued work.
-- Close archive/prompt and scheduler races. Refuse archive for ordinary queued
-  work or unresolved inquiries; retain protected callback-only queues as history.
+- Close archive/prompt and scheduler races. Context replacement blocks running
+  agents, unresolved inquiries, and ordinary or mixed queued work. Manual archive
+  stops active work, cancels inquiries, and records queue outcomes and evidence;
+  protected delegation callbacks remain in history without execution.
 - Make context-pressure warnings dismissible for the current evidence and keep
   Start with Handoff context concise without losing the continuity record.
 - Record agent sends in Conversation and preserve expandable Read queue evidence
