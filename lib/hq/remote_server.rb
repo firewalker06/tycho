@@ -4606,36 +4606,7 @@ module HQ
       snapshot = @registry.harness_auth_snapshot(name)
       config = @registry.harness_catalog(name)
       payload = payload.merge(auth_snapshot: snapshot) if snapshot
-      return payload unless config
-
-      source = [payload[:catalog_source], "hq.yml custom catalog"].compact.reject(&:empty?).join(" + ")
-      payload.merge(
-        model_suggestions: merge_model_suggestions(payload[:model_suggestions], config.models),
-        reasoning_effort_suggestions: merge_effort_suggestions(payload[:reasoning_effort_suggestions], config.reasoning_efforts),
-        configured_model_suggestions: config.models,
-        configured_reasoning_effort_suggestions: config.reasoning_efforts,
-        catalog_source: source
-      )
-    end
-
-    def merge_model_suggestions(existing, configured)
-      suggestions = Array(existing).dup
-      seen = suggestions.each_with_object({}) do |item, memo|
-        value = item.is_a?(Hash) ? item[:value].to_s : item.to_s
-        memo[value] = true
-      end
-      Array(configured).each do |model|
-        value = model.to_s.strip
-        next if value.empty? || seen[value]
-
-        suggestions << { value: value, label: value }
-        seen[value] = true
-      end
-      suggestions
-    end
-
-    def merge_effort_suggestions(existing, configured)
-      (Array(existing) + Array(configured)).map { |value| value.to_s.strip.downcase }.reject(&:empty?).uniq
+      HarnessCatalog.merge_config(payload, config)
     end
 
     def executable_detail(resolution)
