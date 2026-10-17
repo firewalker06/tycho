@@ -51,6 +51,7 @@ module PromptQueueTest
     assert_entries_accepted_after_claim_form_a_consecutive_batch
     assert_authority_is_captured_per_fifo_entry
     assert_callback_can_start_a_never_run_parent
+    assert_server_poll_preserves_nested_callback_authority
     assert_normal_stop_dispatches_pending_work
     assert_idle_agent_without_live_pid_dispatches_pending_work
     assert_ineligible_agents_do_not_dispatch_pending_work
@@ -1962,6 +1963,59 @@ module PromptQueueTest
              "expected concurrent readers to share one durable open batch and Conversation event")
     ensure
       stop_process(pid)
+    end
+  end
+
+  def assert_server_poll_preserves_nested_callback_authority
+    [false, true].each do |takeover|
+      with_stubbed_start do
+        with_queue_store do |registry, workspace|
+          root_workspace = File.join(workspace, "root")
+          leaf_workspace = File.join(workspace, "leaf")
+          FileUtils.mkdir_p([root_workspace, leaf_workspace])
+          root = terminal_agent(root_workspace)
+          root.instance_variable_set(:@key, "nested-root")
+          middle, pid = running_agent(workspace)
+          leaf = terminal_agent(leaf_workspace)
+          leaf.instance_variable_set(:@key, "nested-leaf")
+          [middle, leaf].each do |agent|
+            agent.last_run.delegation_owner = "parent"
+            agent.last_run.delegation_generation = 1
+          end
+          agents = [root, middle, leaf]
+          store = HQ::AgentStore.new(registry.projects)
+          coordinator = store.delegation_coordinator
+          coordinator.attach!(agents:, child: middle, parent_key: root.key)
+          coordinator.attach!(agents:, child: leaf, parent_key: middle.key)
+          store.save(agents)
+          service = HQ::RemoteService.new(registry:)
+
+          # Polling discovers C's terminal run and queues its report behind B.
+          service.agent(middle.key)
+          queued = store.load.find { |agent| agent.key == middle.key }.queued_prompts
+          assert(queued.length == 1 && queued.first["source"] == "delegation_callback" &&
+                   queued.first["authority"].values_at("owner", "generation") == ["parent", 1],
+                 "expected server polling to enqueue a nested callback with B's upstream authority")
+          service.submit_prompt(middle.key, "prompt" => "Real user control", "start" => true) if takeover
+          stop_process(pid)
+          service.agent(middle.key)
+          persisted = store.load.find { |agent| agent.key == middle.key }
+          expected = takeover ? ["user", 2] : ["parent", 1]
+          relation = coordinator.delegation_store.relation_for_child(middle.key)
+          assert(relation.values_at("owner", "ownership_generation") == expected &&
+                   persisted.last_run.then { |run| [run.delegation_owner, run.delegation_generation] } == expected,
+                 "expected automatic server dispatch to preserve nested authority and genuine user takeover")
+          entries = persisted.active_queue_work.fetch("entries")
+          sources = takeover ? %w[delegation_callback user] : ["delegation_callback"]
+          assert(entries.map { |entry| entry["source"] } == sources,
+                 "expected server dispatch to keep callback provenance in the complete FIFO batch")
+          upstream = coordinator.delegation_store.reports.select { |report| report["parent_agent_key"] == root.key }
+          assert(takeover ? upstream.empty? : upstream.any? { |report| report["child_run_id"] == persisted.last_run.run_id },
+                 "expected only current parent-owned automatic runs to propagate reports to A")
+        ensure
+          stop_process(pid)
+        end
+      end
     end
   end
 
