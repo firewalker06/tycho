@@ -13,7 +13,11 @@ services, state, dependencies, and planning PR are unchanged.
 - Tailscale Serve can provide private HTTPS in front of a loopback listener.
   Every agent API request also requires a separate 256-bit bearer token.
 - No ERB, Charm, Bundler, Ruby interpreter, or asset directory is needed by the
-  compiled executable. Codex and Tailscale remain external programs.
+compiled executable. Codex and Tailscale remain external programs.
+
+Native Windows x64 is now tested on one Windows 11 host. See
+[Windows build and operation](./WINDOWS.md) for the compiler patch, private
+access lists, Job Object control, and remaining limits.
 
 The service holds a state-directory lock and processes mutations on one event
 loop. A worker thread only waits for the child process and returns its exit code.
@@ -190,13 +194,12 @@ The original Tailscale routes and the workspace file were unchanged.
   It handles one request at a time, limits request reads to three seconds, and
   closes each connection. Independent security review and load/backpressure
   tests are required before production use.
-- The initial evidence is macOS ARM64 only. Tailscale HTTPS was tested from the
-  same host through the tailnet URL; another authorized device and denied-device
-  ACL tests remain. No new native Windows, Intel, Linux, minimum-OS, signing, or
-  clean-machine support claim follows from this result.
+- The first gate was macOS ARM64. A later Windows x64 gate passed on one Windows
+  11 host, including HTTPS from the Mac as a second tailnet device. Denied-device
+  policy, Intel macOS, Linux, minimum-OS, signing, and clean-machine tests remain.
 - Preserve CRuby as a behavior reference. Repeat native tests after every Spinel
   revision. A successful compile alone is not a compatibility test.
 
-Next: independently review the HTTP/process boundaries, test from a second
-tailnet device, qualify an otherwise clean target host, and add a Linux lane.
+Next: independently review the HTTP/process boundaries and Windows adapter,
+qualify an otherwise clean target host, and add a Linux lane.
 Only then decide whether to port more Tycho behavior.

@@ -77,12 +77,11 @@ class PrototypeRun
               else
                 [@executable, "exec", "--ignore-user-config", "--ephemeral",
                  "--skip-git-repo-check", "--sandbox", "read-only",
-                 "-c", "approval_policy=\"never\"", "--model", @model,
+                 "-c", "approval_policy=\"never\"", "--model", @model] + PrototypePlatform.codex_options + [
                  "--json", "--color", "never", "--output-last-message", result_path,
                  "--", prompt]
               end
-    @pid = Process.spawn(environment, *command, chdir: @workspace,
-                         in: File::NULL, out: log_path, err: [:child, :out], pgroup: true)
+    @pid = PrototypePlatform.spawn(environment, command, @workspace, log_path)
     child_pid = @pid
     @waiter = Thread.new do
       waited = Process.waitpid2(child_pid)
@@ -98,7 +97,7 @@ class PrototypeRun
   end
 
   def signal_group(signal)
-    Process.kill(signal, -@pid) if active?
+    PrototypePlatform.signal(@pid, signal) if active?
   rescue Errno::ESRCH
     nil
   rescue Errno::EPERM
@@ -175,10 +174,9 @@ class PrototypeServer
     File.umask(0o077)
     root = ENV.fetch("TYCHO_PROTO_STATE")
     workspace = ENV.fetch("TYCHO_PROTO_WORKSPACE")
-    raise "Use absolute state and workspace paths" unless root.start_with?("/") && workspace.start_with?("/")
+    raise "Use absolute state and workspace paths" unless File.absolute_path?(root) && File.absolute_path?(workspace)
     raise "Workspace must exist" unless File.directory?(workspace)
-    Dir.mkdir(root, 0o700) unless File.exist?(root)
-    raise "State must be a private directory owned by this user" if File.symlink?(root) || !File.directory?(root) || File.stat(root).uid != Process.uid || (File.stat(root).mode & 0o077) != 0
+    PrototypePlatform.prepare(root)
     @lock = File.open(File.join(root, "lock"), "w", 0o600)
     raise "State is already in use" unless @lock.flock(File::LOCK_EX | File::LOCK_NB)
     token_path = File.join(root, "access-token")
@@ -195,7 +193,7 @@ class PrototypeServer
     @local_host = "127.0.0.1:#{@port}"
     @remote_host = @remote_origin.delete_prefix("https://")
     executable = ENV.fetch("TYCHO_PROTO_EXECUTABLE")
-    raise "Harness must be an absolute executable path" unless executable.start_with?("/") && File.executable?(executable)
+    raise "Harness must be an absolute executable path" unless File.absolute_path?(executable) && File.executable?(executable)
     @run = PrototypeRun.new(root, workspace, executable,
                             ENV.fetch("TYCHO_PROTO_MODEL", "gpt-6.1-sol"),
                             ENV.fetch("TYCHO_PROTO_FIXTURE", "0") == "1")

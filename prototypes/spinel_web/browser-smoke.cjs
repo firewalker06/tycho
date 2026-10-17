@@ -32,6 +32,18 @@ const path = require("node:path");
     const status = await page.locator("#status").textContent();
     const result = await page.locator("#result").textContent();
     if (status !== "succeeded" || !result.includes("PROTOTYPE_AGENT_OK")) throw new Error(`Agent did not pass: ${status}: ${result}`);
+    if (!result.includes("Prototype workspace")) throw new Error("Agent did not report the workspace heading");
+    const run = await page.evaluate(async (credential) => {
+      const response = await fetch("/api/run", { headers: { Authorization: `Bearer ${credential}` } });
+      return response.json();
+    }, token);
+    const events = run.output.split("\n").flatMap((line) => {
+      try { return [JSON.parse(line)]; } catch { return []; }
+    });
+    const readCommand = events.find((event) => event.type === "item.completed" &&
+      event.item?.type === "command_execution" && event.item.exit_code === 0 &&
+      event.item.aggregated_output?.includes("Prototype workspace"));
+    if (!readCommand) throw new Error("No successful workspace read command in agent events");
     await page.screenshot({ path: path.join(capture, "desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: path.join(capture, "mobile.png"), fullPage: true });
@@ -44,6 +56,7 @@ const path = require("node:path");
     fs.writeFileSync(path.join(capture, "browser-evidence.json"), JSON.stringify({
       url: base, status, result, invalidTokenRejected: true, draftPreserved: true,
       mobileOverflow: overflow, reloadRequiresToken: true, browserErrors: errors,
+      workspaceReadCommand: readCommand.item.command, workspaceReadExitCode: readCommand.item.exit_code,
     }, null, 2));
     console.log("Browser smoke passed: real agent, authentication, polling, desktop, mobile, reload.");
   } finally { await browser.close(); }

@@ -112,9 +112,13 @@ web-agent experiment with no TUI or ERB runtime. It lives in
 `prototypes/spinel_web/`; its README records build, test, and cleanup commands.
 The initial gate includes a real Codex run and private HTTPS through Tailscale
 Serve, with a separate bearer token. This experiment does not replace the current
-application or establish Linux, Intel, or native Windows support. Its next gate
-is independent review of process lifecycle and HTTP boundaries, then clean-host
-and additional-platform qualification.
+application. The native Windows x64 prototype now passes on one Windows 11 host,
+including a real read-only Codex command and HTTPS from a second tailnet device.
+Its Windows adapter adds private access lists and Job Object cleanup; the pinned
+compiler needs one build-helper patch and selected build targets. See
+`prototypes/spinel_web/WINDOWS.md`. Linux, Intel macOS, Windows ARM64, minimum OS,
+and clean-host support remain unqualified. The next gate is independent review
+of process lifecycle, HTTP boundaries, and the Windows adapter.
 
 **v0.14.0 release preparation**: improves context replacement and schedule
 continuity, safe archive, Read queue evidence, inquiry drafts, attachment review,
