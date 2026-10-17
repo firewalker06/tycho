@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-10-15
+2026-10-17
 
 ## Strategic Direction
 
@@ -106,6 +106,13 @@ Key references:
 | Pull-request test attestation | Enforced GitHub `signoff` ruleset requiring `signoff/tycho-bin-test`, posted locally with pinned `basecamp/gh-signoff` v0.4.1 after `bin/test` passes on the pushed head | Keep test execution local while retaining a branch-protected, commit-specific merge gate; document repeatable success, failure, and cross-clone attestation workflows |
 
 ## Current Focus
+
+**Card 329 distribution proposal**: the [distribution research plan](https://github.com/firewalker06/tycho/blob/docs/card-329-distribution-plan/docs/research/distribution-plan-card-329.md)
+audits current runtime dependencies and proposes small CRuby bundle experiments,
+platform acceptance gates, and installer/update work packages. It preserves the
+current Homebrew policy and separates native Windows portability from packaging.
+The plan awaits independent review and operator scope selection. No new platform
+support or distribution architecture is approved by this research.
 
 **v0.14.0 release preparation**: improves context replacement and schedule
 continuity, safe archive, Read queue evidence, inquiry drafts, attachment review,
