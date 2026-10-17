@@ -107,7 +107,7 @@ Key references:
 
 ## Current Focus
 
-**Card 329 distribution proposal**: the [distribution research plan](https://github.com/firewalker06/tycho/blob/docs/card-329-distribution-plan/docs/research/distribution-plan-card-329.md)
+**Card 329 distribution proposal**: the [reviewed distribution research record](https://github.com/firewalker06/tycho/blob/6ef88b791ac0e179fe3f04ee0675f78243f54372/docs/research/distribution-plan-card-329.md)
 audits current runtime dependencies and proposes small CRuby bundle experiments,
 platform acceptance gates, and installer/update work packages. It preserves the
 current Homebrew policy and separates native Windows portability from packaging.
