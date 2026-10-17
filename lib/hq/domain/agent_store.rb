@@ -428,6 +428,12 @@ module HQ
 
     def start_target!(target, agents, run_metadata:, delegation_stamp: :current)
       raise ArgumentError, "Context replacement recovery is pending" if target.context_replacement_recovery
+      return if target.running?
+
+      # The process can exit after the normal report scan. Preserve its
+      # terminal report before start! replaces last_run and clears the result.
+      target.finalize_previous_run!
+      @delegation_coordinator.delegation_store.record_report!(child: target)
 
       options = {}
       stamp = delegation_stamp == :current ? @delegation_coordinator.ownership_stamp(target.key) : delegation_stamp

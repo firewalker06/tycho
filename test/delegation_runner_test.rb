@@ -48,6 +48,13 @@ module DelegationRunnerTest
         }
         resumed_session = ARGV.find { |argument| argument.start_with?("fake-") }
         session_id = resumed_session || "fake-#{Process.pid}"
+        gate = ENV["TYCHO_TEST_NESTED_GATE"]
+        if gate && !resumed_session && ARGV.last.to_s.include?("Coordinate queued nested work")
+          File.write("#{gate}.ready", "ready")
+          deadline = Time.now + 30
+          sleep 0.02 until File.exist?(gate) || Time.now >= deadline
+          raise "nested fixture gate was not released" unless File.exist?(gate)
+        end
         File.write(output, JSON.generate(payload)) if output
         puts JSON.generate("type" => "thread.started", "thread_id" => session_id)
         puts JSON.generate("type" => "item.completed", "item" => {
@@ -147,8 +154,144 @@ module DelegationRunnerTest
 
       wait_for_agent(agents_path, parent_key, minimum_runs: 2)
       wait_for_store_idle(agents_path)
+      assert_nested_callbacks(clean_env, agents_path, logs, parent_key, parent_runs: 2)
+      assert_running_nested_callbacks(clean_env, agents_path, logs, parent_key, takeover: false)
+      assert_running_nested_callbacks(clean_env, agents_path, logs, parent_key, takeover: true)
     end
     puts "delegation_runner_test: ok"
+  end
+
+  def assert_nested_callbacks(env, agents_path, logs, root_key, parent_runs:)
+    # A -> B -> C: B is both a delegated child and a callback receiver.
+    middle = JSON.parse(run_cli(env, "agent", "create", "uploads", "Coordinate nested work",
+                               "--parent-agent", root_key, "--json"))
+    middle_key = middle.fetch("key")
+    leaf = JSON.parse(run_cli(env, "agent", "create", "uploads", "Finish leaf work",
+                             "--parent-agent", middle_key, "--run", "--json"))
+    leaf_key = leaf.fetch("key")
+    wait_for_agent(agents_path, leaf_key, minimum_runs: 1)
+    middle_record = wait_for_agent(agents_path, middle_key, minimum_runs: 1)
+    root_record = wait_for_agent(agents_path, root_key, minimum_runs: parent_runs + 1)
+    wait_for_store_idle(agents_path)
+
+    ledger = JSON.parse(File.read(File.join(logs, "agent_delegations.json")))
+    [middle_key, leaf_key].each do |key|
+      relation = ledger.fetch("relationships").find { |item| item.dig("child", "agent_key") == key }
+      unless relation["owner"] == "parent" && relation["ownership_generation"] == 1
+        raise "nested callback changed edge ownership for #{key}"
+      end
+      reports = ledger.fetch("reports").select { |report| report.dig("child", "agent_key") == key }
+      unless reports.length == 1 && reports.first["resume_state"] == "resumed"
+        raise "nested completion did not reach its recorded parent exactly once for #{key}"
+      end
+    end
+    unless middle_record.fetch("runs").last.values_at("delegation_owner", "delegation_generation") == ["parent", 1]
+      raise "callback resumed middle agent without its upstream ownership stamp"
+    end
+    [[middle_record, leaf_key], [root_record, middle_key]].each do |record, child_key|
+      path = record.fetch("log_path").sub(/\.raw\.log\z/, ".memory.jsonl")
+      events = File.readlines(path).map { |line| JSON.parse(line) }
+      callback = events.find do |event|
+        metadata = event["metadata"] || {}
+        metadata["delegation_callback"] && metadata.dig("agent_reference", "agent_key") == child_key
+      end
+      unless callback && callback.dig("metadata", "message_author", "type") == "agent"
+        raise "nested callback lost internal agent provenance for #{child_key}"
+      end
+      # The canonical batch entries retain their protected source at each hop.
+      entries = callback.dig("metadata", "prompt_queue_entries") || []
+      unless entries.any? { |entry| entry["source"] == "delegation_callback" }
+        raise "nested callback lost its protected queue source: #{callback.fetch('metadata').keys}"
+      end
+    end
+
+    # A direct user prompt is still Takeover. A later C report must not
+    # reclaim B on behalf of A or create an upstream completion callback.
+    run_cli(env, "agent", "send", middle_key, "User takes control", "--json")
+    wait_for_agent(agents_path, middle_key, minimum_runs: 2)
+    run_cli(env, "agent", "send", leaf_key, "Finish another leaf turn",
+            "--parent-agent", middle_key, "--json")
+    wait_for_agent(agents_path, leaf_key, minimum_runs: 2)
+    middle_record = wait_for_agent(agents_path, middle_key, minimum_runs: 3)
+    wait_for_store_idle(agents_path)
+    ledger = JSON.parse(File.read(File.join(logs, "agent_delegations.json")))
+    relation = ledger.fetch("relationships").find { |item| item.dig("child", "agent_key") == middle_key }
+    unless relation.values_at("owner", "ownership_generation") == ["user", 2] &&
+           middle_record.fetch("runs").last.values_at("delegation_owner", "delegation_generation") == ["user", 2]
+      raise "nested callback reclaimed a real user takeover"
+    end
+    upstream = ledger.fetch("reports").select { |report| report.dig("child", "agent_key") == middle_key }
+    raise "user-owned nested run reported upstream" unless upstream.length == 1
+
+    run_cli(env, "agent", "send", middle_key, "Parent reclaims delegated work",
+            "--parent-agent", root_key, "--json")
+    wait_for_agent(agents_path, middle_key, minimum_runs: 4)
+    wait_for_agent(agents_path, root_key, minimum_runs: parent_runs + 2)
+    wait_for_store_idle(agents_path)
+    ledger = JSON.parse(File.read(File.join(logs, "agent_delegations.json")))
+    relation = ledger.fetch("relationships").find { |item| item.dig("child", "agent_key") == middle_key }
+    reports = ledger.fetch("reports").select { |report| report.dig("child", "agent_key") == middle_key }
+    unless relation.values_at("owner", "ownership_generation") == ["parent", 3] &&
+           reports.map { |report| report["ownership_generation"] }.sort == [1, 3]
+      raise "parent reclaim lost its new generation or replayed a user-owned nested run"
+    end
+  end
+
+  def assert_running_nested_callbacks(env, agents_path, logs, root_key, takeover:)
+    gate = File.join(logs, "nested-gate-#{takeover}")
+    env = env.merge("TYCHO_TEST_NESTED_GATE" => gate)
+    middle = JSON.parse(run_cli(env, "agent", "create", "uploads", "Coordinate queued nested work",
+                               "--parent-agent", root_key, "--run", "--json"))
+    middle_key = middle.fetch("key")
+    wait_until("middle harness gate") { File.exist?("#{gate}.ready") }
+    leaf = JSON.parse(run_cli(env, "agent", "create", "demo", "Finish queued leaf work",
+                             "--parent-agent", middle_key, "--run", "--json"))
+    leaf_key = leaf.fetch("key")
+    wait_for_agent(agents_path, leaf_key, minimum_runs: 1)
+    wait_until("callback queued behind running middle") do
+      record = JSON.parse(File.read(agents_path)).find { |item| item["key"] == middle_key }
+      Array(record["prompt_queue"]).any? { |entry| entry["source"] == "delegation_callback" }
+    end
+    run_cli(env, "agent", "send", middle_key, "User instruction in callback batch", "--json") if takeover
+    File.write(gate, "release")
+    record = wait_for_agent(agents_path, middle_key, minimum_runs: 2)
+    wait_until("nested automatic finalization") do
+      ledger = JSON.parse(File.read(File.join(logs, "agent_delegations.json")))
+      reports = ledger.fetch("reports").select { |report| report.dig("child", "agent_key") == middle_key }
+      if takeover
+        reports.empty? && record.fetch("runs").last["finished_at"]
+      else
+        reports.length == 2 && reports.all? { |report| report["resume_state"] == "resumed" }
+      end
+    end
+    wait_for_store_idle(agents_path)
+    ledger = JSON.parse(File.read(File.join(logs, "agent_delegations.json")))
+    relation = ledger.fetch("relationships").find { |item| item.dig("child", "agent_key") == middle_key }
+    expected = takeover ? ["user", 2] : ["parent", 1]
+    unless relation.values_at("owner", "ownership_generation") == expected &&
+           record.fetch("runs").last.values_at("delegation_owner", "delegation_generation") == expected
+      raise "automatic nested queue dispatch lost upstream ownership"
+    end
+    path = record.fetch("log_path").sub(/\.raw\.log\z/, ".memory.jsonl")
+    events = File.readlines(path).map { |line| JSON.parse(line) }
+    read = events.find { |event| event.dig("metadata", "queue_read") }
+    entries = Array(read&.dig("metadata", "prompt_queue_entries"))
+    expected_sources = takeover ? %w[delegation_callback user] : ["delegation_callback"]
+    unless entries.map { |entry| entry["source"] } == expected_sources
+      raise "automatic nested dispatch did not consume the complete callback/user batch"
+    end
+  ensure
+    File.write(gate, "release") if gate
+  end
+
+  def wait_until(label)
+    deadline = Time.now + 12
+    loop do
+      return if yield
+      raise "timed out waiting for #{label}" if Time.now >= deadline
+
+      sleep 0.05
+    end
   end
 
   def run_cli(env, *args)
