@@ -107,6 +107,15 @@ Key references:
 
 ## Current Focus
 
+**Ruby distribution prototype:** the operator authorized a new, isolated Ruby
+web-agent experiment with no TUI or ERB runtime. It lives in
+`prototypes/spinel_web/`; its README records build, test, and cleanup commands.
+The initial gate includes a real Codex run and private HTTPS through Tailscale
+Serve, with a separate bearer token. This experiment does not replace the current
+application or establish Linux, Intel, or native Windows support. Its next gate
+is independent review of process lifecycle and HTTP boundaries, then clean-host
+and additional-platform qualification.
+
 **v0.14.0 release preparation**: improves context replacement and schedule
 continuity, safe archive, Read queue evidence, inquiry drafts, attachment review,
 Conversation spacing and FRED states, mobile Settings, retained notification

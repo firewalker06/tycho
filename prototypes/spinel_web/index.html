@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tycho · Ruby prototype</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><span class="eyebrow">TYCHO / RUBY PROTOTYPE</span><h1>One agent. A clear view.</h1><p>Run a task, watch its output, and keep the result.</p></header>
+    <section id="login-panel">
+      <h2>Connect</h2>
+      <p>Enter the access token from the private file on the host. The token stays in this page's memory.</p>
+      <form id="login"><label for="token">Access token</label><div class="row"><input id="token" type="password" autocomplete="off" required><button>Connect</button></div></form>
+    </section>
+    <div id="workspace" hidden>
+      <section>
+        <div class="row"><h2>New run</h2><button id="disconnect" class="secondary">Disconnect</button></div>
+        <p id="harness"></p>
+        <form id="run-form"><label for="prompt">Task</label><textarea id="prompt" rows="4" maxlength="4000" required placeholder="Read README.md and report its first heading."></textarea><div class="row"><button id="start">Run agent</button><button id="stop" class="secondary" type="button" disabled>Stop run</button><span id="status" role="status">Idle</span></div></form>
+      </section>
+      <section><h2>Result</h2><pre id="result">No result yet.</pre><details><summary>Live output</summary><pre id="output"></pre></details></section>
+    </div>
+    <p id="error" role="alert"></p>
+    <footer>Prototype · One active run · Read-only agent workspace · Latest run retained</footer>
+  </main>
+</body>
+</html>
