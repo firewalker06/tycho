@@ -59,6 +59,11 @@ Use `docs/PROJECT_STATUS.md` as the living project status document for current f
 
 If you introduce new tooling, document the command here and keep it runnable from the repo root.
 
+The isolated Ruby web-agent prototype builds with `ruby prototypes/spinel_web/build.rb /absolute/output [ /absolute/spinel ]`.
+See `prototypes/spinel_web/README.md` for private state, Codex, Tailscale, and browser-test commands.
+Run `ruby test/spinel_web_prototype_test.rb` for CRuby, or set `TYCHO_PROTO_TEST_BINARY=/absolute/binary` for the same native contract checks.
+For native Windows, set `TYCHO_PROTO_TEST_BINARY` to the compiled `.exe` and run `ruby test/spinel_web_windows_test.rb` with Devkit GCC on PATH. This test skips on other hosts. See `prototypes/spinel_web/WINDOWS.md` for the pinned compiler patch, build targets, private access lists, and Job Object tests.
+
 ## Runtime Behavior
 
 

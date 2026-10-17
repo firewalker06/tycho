@@ -1,0 +1,11 @@
+--- a/tools/probe_common.rb
++++ b/tools/probe_common.rb
+@@ -68,7 +68,7 @@
+ # (A run is many programs, so unlike `spinel diff` one status summarizes it.)
+ 
+ require "fileutils"
+-require "pty"
++require "pty" unless RUBY_PLATFORM.match?(/mingw|mswin/)
+ require "rbconfig"
+ require "tmpdir"
+ 
