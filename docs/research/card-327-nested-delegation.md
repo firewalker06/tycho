@@ -4,7 +4,9 @@
 
 ## Result
 
-The isolated A → B → C scenario passes on main `8d813dc`. This investigation did not reproduce the reported fault. There is no established cause for the reported Takeover and no production code fix in this change. Two separate report-loss paths were reproduced during the follow-up investigation; they do not change ownership. Keep the card open until the affected version, agent keys, or exact trigger is known.
+The original Takeover observation remains unproven. Two automatic upstream report omissions were reproduced and fixed. The first occurs when Stop dispatches a queued child callback. The second occurs when B exits after the normal report scan but before automatic queue dispatch. Both left ownership unchanged.
+
+The shared AgentStore start boundary now confirms that the old process is stopped, finalizes its run, and durably records its eligible report before `start!` can replace `last_run` or clear the result. It uses the existing report ID, generation, and connection rules. A ledger write failure prevents the successor from starting. No ownership rule changes are part of this fix.
 
 ## Repeatable check
 
@@ -72,7 +74,7 @@ The fixture uses a fake spawn method that calls the real `finalize_previous_run!
 
 The source sequence explains these two omissions. `DelegationStore#record_report!` reads only `child.last_run`. Normal load scans reports before queue dispatch. If B is finalized and replaced after that scan, the next scan sees the successor. The previous terminal run is no longer the report candidate. The Stop path has an explicit stop-then-dispatch sequence without another report scan between those actions.
 
-These are confirmed report-loss paths. They do not reproduce the card's claimed ownership change. No production fix was made in this evidence update.
+These are the pre-fix results. They do not reproduce the card's claimed ownership change. The later fix preserves these reports at the shared start boundary.
 
 ## Updated hypotheses
 
@@ -81,10 +83,16 @@ These are confirmed report-loss paths. They do not reproduce the card's claimed 
 3. Runtime or loader differences cause callback loss. Prediction: the same source path fails before callback processing in one runtime. The installed-source detached fixture has a loader failure; the in-process callback test passes. The loaded commit for a historical incident remains unknown.
 4. Ordinary callback batching changes ownership. Prediction: running-B callbacks or mixed batches use the wrong upstream generation. The new automatic detached-runner and RemoteService tests reject this prediction for the tested paths.
 
-## Limits and next step
+## Fix verification and limits
 
-Keep the card open. The missing evidence is the operator's affected chain and time, the caller or entry origin at its ownership transition, and the loaded source version for that runtime. These items distinguish Takeover from a separate report omission. The parent is handling that input; this investigation does not request credentials or repeat the operator question.
+The new assertions require one report for B's prior eligible terminal run. Both Stop and the exit boundary failed on the old code with zero reports. They pass after the fix. The deterministic exit injection occurs after the real coordinator scan and before the real queue dispatcher; native process creation alone is faked.
+
+The regression matrix also covers direct user takeover, parent reclaim with a new generation, disconnect/reconnect, archived roots, and repeated polling. Ineligible old runs remain absent. Eligible runs keep their own status and generation and produce one report. A simulated ledger write failure retains the old run and queued work; retry produces one report and then starts the successor. Existing actual CLI/detached-runner coverage checks A → B → C propagation and direct takeover/reclaim with a fake model.
+
+The fix does not scan old histories or revive reports from superseded runs. It does not change message authorship, queue batch selection, ownership generations, callback delivery gating, or archive policy. It records the current terminal run while its full result is still available and uses the existing ledger for later delivery.
+
+The takeover-specific missing evidence remains the operator's affected chain and time, the caller or entry origin at its ownership transition, and the loaded source version for that runtime. The parent handles that input. These unknowns do not block the proven report-loss fix.
 
 Only local files and process metadata were read for historical evidence. Prompt, result, tool, and credential contents were not copied into the report. All synthetic writes and dispatches used isolated fixture state. No production agent, running service, schedule, or identity was changed. No real push notification was sent.
 
-The draft remains investigation and regression coverage. It is not a completed bug fix. Screenshots do not apply because there is no UI change.
+The PR remains draft for independent review. Screenshots do not apply because the fix changes backend lifecycle behavior and has no UI change.

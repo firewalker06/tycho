@@ -52,6 +52,8 @@ module PromptQueueTest
     assert_authority_is_captured_per_fifo_entry
     assert_callback_can_start_a_never_run_parent
     assert_server_poll_preserves_nested_callback_authority
+    assert_terminal_reports_survive_automatic_callback_dispatch
+    assert_report_write_failure_prevents_callback_successor
     assert_normal_stop_dispatches_pending_work
     assert_idle_agent_without_live_pid_dispatches_pending_work
     assert_ineligible_agents_do_not_dispatch_pending_work
@@ -1963,6 +1965,136 @@ module PromptQueueTest
              "expected concurrent readers to share one durable open batch and Conversation event")
     ensure
       stop_process(pid)
+    end
+  end
+
+  def assert_terminal_reports_survive_automatic_callback_dispatch
+    %w[stop exit].each do |trigger|
+      %w[parent user reclaimed disconnected archived].each do |ownership|
+        with_nested_callback_boundary(trigger:, ownership:) do |store, coordinator, middle_key, original_id, agents|
+          original = agents.find { |agent| agent.key == middle_key }.runs.find { |run| run.run_id == original_id }
+          reports = coordinator.delegation_store.reports.select { |report| report["child_run_id"] == original_id }
+          expected = %w[parent archived].include?(ownership) ? 1 : 0
+          assert(reports.length == expected,
+                 "expected #{expected} prior terminal report before #{trigger} callback dispatch (#{ownership}), got #{reports.length}")
+          assert(original.status == "stopped", "expected Stop to retain the original stopped outcome") if trigger == "stop"
+          middle = agents.find { |agent| agent.key == middle_key }
+          assert(middle.last_run.run_id != original_id, "expected the queued callback to start a distinct successor")
+          if expected.positive?
+            assert(reports.first["status"] == original.status && reports.first["ownership_generation"] == 1,
+                   "expected the report to retain the previous run status and generation")
+          end
+          if ownership == "disconnected"
+            store.set_delegation_connected!(middle_key, connected: true)
+          end
+          # Repeated polls must deliver the durable report once, never reconstruct
+          # an old user-owned, stale-generation, or disconnected run.
+          2.times { store.load }
+          reports = coordinator.delegation_store.reports.select { |report| report["child_run_id"] == original_id }
+          assert(reports.length == expected, "expected terminal report deduplication and suppression to survive replay")
+          if ownership == "archived"
+            assert(reports.first["resume_state"] == "parent_archived", "expected an archived root to receive history without resuming")
+          end
+          relation = coordinator.delegation_store.relation_for_child(middle_key)
+          expected_stamp = case ownership
+                           when "user" then ["user", 2]
+                           when "reclaimed" then ["parent", 3]
+                           else ["parent", 1]
+                           end
+          assert(relation.values_at("owner", "ownership_generation") == expected_stamp,
+                 "expected report preservation to leave ownership unchanged")
+        end
+      end
+    end
+  end
+
+  def assert_report_write_failure_prevents_callback_successor
+    with_nested_callback_boundary(trigger: "stop", ownership: "parent", fail_report: true) do |store, coordinator, middle_key, original_id, agents|
+      middle = agents.find { |agent| agent.key == middle_key }
+      assert(middle.last_run.run_id == original_id && middle.prompt_queue_dispatch_error,
+             "expected failed report persistence to keep the old run and retain queued work")
+      retried = store.retry_prompt_queue!(middle_key)
+      assert(retried.last_run.run_id != original_id, "expected a successful durable retry to start the callback successor")
+      2.times { store.load }
+      reports = coordinator.delegation_store.reports.select { |report| report["child_run_id"] == original_id }
+      assert(reports.length == 1, "expected one prior-run report after retry")
+    end
+  end
+
+  def with_nested_callback_boundary(trigger:, ownership:, fail_report: false)
+    with_stubbed_start do
+      fake_start = HQ::ManagedAgent.instance_method(:start!)
+      HQ::ManagedAgent.define_method(:start!) do |**options|
+        # Keep the real start boundary; replace only native process creation.
+        finalize_previous_run!
+        fake_start.bind_call(self, **options)
+      end
+      with_queue_store do |registry, workspace|
+        FileUtils.mkdir_p([File.join(workspace, "root"), File.join(workspace, "leaf")])
+        root = terminal_agent(File.join(workspace, "root"))
+        root.instance_variable_set(:@key, "boundary-root")
+        middle, pid = running_agent(workspace)
+        original_id = "boundary-original-run"
+        middle.last_run.run_id = original_id
+        leaf = terminal_agent(File.join(workspace, "leaf"))
+        leaf.instance_variable_set(:@key, "boundary-leaf")
+        [middle, leaf].each do |agent|
+          agent.last_run.delegation_owner = "parent"
+          agent.last_run.delegation_generation = 1
+        end
+        agents = [root, middle, leaf]
+        store = HQ::AgentStore.new(registry.projects)
+        coordinator = store.delegation_coordinator
+        coordinator.attach!(agents:, child: middle, parent_key: root.key)
+        coordinator.attach!(agents:, child: leaf, parent_key: middle.key)
+        store.save(agents)
+        # The real coordinator discovers C and queues the callback while B runs.
+        store.load
+        service = HQ::RemoteService.new(registry:)
+        if %w[user reclaimed].include?(ownership)
+          service.submit_prompt(middle.key, "prompt" => "User takes control", "start" => true)
+          if ownership == "reclaimed"
+            service.submit_prompt(middle.key, "prompt" => "Parent reclaims", "parent_agent_key" => root.key, "start" => true)
+          end
+        elsif ownership == "disconnected"
+          store.set_delegation_connected!(middle.key, connected: false)
+        elsif ownership == "archived"
+          store.archive_agent!(root.key)
+        end
+        if fail_report
+          ledger = coordinator.delegation_store
+          original_record = ledger.method(:record_report!)
+          failed = false
+          ledger.define_singleton_method(:record_report!) do |child:, **options|
+            if !failed && child.last_run&.run_id == original_id && child.effective_status == "stopped"
+              failed = true
+              raise IOError, "simulated prior terminal report write failure"
+            end
+            original_record.call(child:, **options)
+          end
+        end
+        if trigger == "exit"
+          injected = false
+          coordinator.define_singleton_method(:process!) do |loaded, **options|
+            result = super(loaded, **options)
+            unless injected
+              injected = true
+              target = loaded.find { |agent| agent.key == middle.key }
+              PromptQueueTest.stop_process(pid)
+              File.write(target.send(:status_file_path), "0")
+              File.write(target.send(:last_message_file_path), JSON.generate("status" => "success", "summary" => "Completed before callback dispatch"))
+            end
+            result
+          end
+          loaded = store.load
+        else
+          store.stop_agent!(middle.key)
+          loaded = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+        end
+        yield store, coordinator, middle.key, original_id, loaded
+      ensure
+        stop_process(pid)
+      end
     end
   end
 
