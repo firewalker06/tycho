@@ -147,8 +147,85 @@ module DelegationRunnerTest
 
       wait_for_agent(agents_path, parent_key, minimum_runs: 2)
       wait_for_store_idle(agents_path)
+      assert_nested_callbacks(clean_env, agents_path, logs, parent_key, parent_runs: 2)
     end
     puts "delegation_runner_test: ok"
+  end
+
+  def assert_nested_callbacks(env, agents_path, logs, root_key, parent_runs:)
+    # A -> B -> C: B is both a delegated child and a callback receiver.
+    middle = JSON.parse(run_cli(env, "agent", "create", "uploads", "Coordinate nested work",
+                               "--parent-agent", root_key, "--json"))
+    middle_key = middle.fetch("key")
+    leaf = JSON.parse(run_cli(env, "agent", "create", "uploads", "Finish leaf work",
+                             "--parent-agent", middle_key, "--run", "--json"))
+    leaf_key = leaf.fetch("key")
+    wait_for_agent(agents_path, leaf_key, minimum_runs: 1)
+    middle_record = wait_for_agent(agents_path, middle_key, minimum_runs: 1)
+    root_record = wait_for_agent(agents_path, root_key, minimum_runs: parent_runs + 1)
+    wait_for_store_idle(agents_path)
+
+    ledger = JSON.parse(File.read(File.join(logs, "agent_delegations.json")))
+    [middle_key, leaf_key].each do |key|
+      relation = ledger.fetch("relationships").find { |item| item.dig("child", "agent_key") == key }
+      unless relation["owner"] == "parent" && relation["ownership_generation"] == 1
+        raise "nested callback changed edge ownership for #{key}"
+      end
+      reports = ledger.fetch("reports").select { |report| report.dig("child", "agent_key") == key }
+      unless reports.length == 1 && reports.first["resume_state"] == "resumed"
+        raise "nested completion did not reach its recorded parent exactly once for #{key}"
+      end
+    end
+    unless middle_record.fetch("runs").last.values_at("delegation_owner", "delegation_generation") == ["parent", 1]
+      raise "callback resumed middle agent without its upstream ownership stamp"
+    end
+    [[middle_record, leaf_key], [root_record, middle_key]].each do |record, child_key|
+      path = record.fetch("log_path").sub(/\.raw\.log\z/, ".memory.jsonl")
+      events = File.readlines(path).map { |line| JSON.parse(line) }
+      callback = events.find do |event|
+        metadata = event["metadata"] || {}
+        metadata["delegation_callback"] && metadata.dig("agent_reference", "agent_key") == child_key
+      end
+      unless callback && callback.dig("metadata", "message_author", "type") == "agent"
+        raise "nested callback lost internal agent provenance for #{child_key}"
+      end
+      # The canonical batch entries retain their protected source at each hop.
+      entries = callback.dig("metadata", "prompt_queue_entries") || []
+      unless entries.any? { |entry| entry["source"] == "delegation_callback" }
+        raise "nested callback lost its protected queue source: #{callback.fetch('metadata').keys}"
+      end
+    end
+
+    # A direct user prompt is still Takeover. A later C report must not
+    # reclaim B on behalf of A or create an upstream completion callback.
+    run_cli(env, "agent", "send", middle_key, "User takes control", "--json")
+    wait_for_agent(agents_path, middle_key, minimum_runs: 2)
+    run_cli(env, "agent", "send", leaf_key, "Finish another leaf turn",
+            "--parent-agent", middle_key, "--json")
+    wait_for_agent(agents_path, leaf_key, minimum_runs: 2)
+    middle_record = wait_for_agent(agents_path, middle_key, minimum_runs: 3)
+    wait_for_store_idle(agents_path)
+    ledger = JSON.parse(File.read(File.join(logs, "agent_delegations.json")))
+    relation = ledger.fetch("relationships").find { |item| item.dig("child", "agent_key") == middle_key }
+    unless relation.values_at("owner", "ownership_generation") == ["user", 2] &&
+           middle_record.fetch("runs").last.values_at("delegation_owner", "delegation_generation") == ["user", 2]
+      raise "nested callback reclaimed a real user takeover"
+    end
+    upstream = ledger.fetch("reports").select { |report| report.dig("child", "agent_key") == middle_key }
+    raise "user-owned nested run reported upstream" unless upstream.length == 1
+
+    run_cli(env, "agent", "send", middle_key, "Parent reclaims delegated work",
+            "--parent-agent", root_key, "--json")
+    wait_for_agent(agents_path, middle_key, minimum_runs: 4)
+    wait_for_agent(agents_path, root_key, minimum_runs: parent_runs + 2)
+    wait_for_store_idle(agents_path)
+    ledger = JSON.parse(File.read(File.join(logs, "agent_delegations.json")))
+    relation = ledger.fetch("relationships").find { |item| item.dig("child", "agent_key") == middle_key }
+    reports = ledger.fetch("reports").select { |report| report.dig("child", "agent_key") == middle_key }
+    unless relation.values_at("owner", "ownership_generation") == ["parent", 3] &&
+           reports.map { |report| report["ownership_generation"] }.sort == [1, 3]
+      raise "parent reclaim lost its new generation or replayed a user-owned nested run"
+    end
   end
 
   def run_cli(env, *args)
