@@ -15,6 +15,15 @@ const path = require("node:path");
   try {
     const response = await page.goto(base);
     if (response.status() !== 200) throw new Error("Page did not load");
+    await page.route("**/api/run", (route) => route.fulfill({ status: 502, body: "" }));
+    await page.locator("#token").fill("test-token");
+    await page.locator("#login button").click();
+    await page.waitForFunction(() => document.getElementById("error").textContent.length > 0);
+    if (!(await page.locator("#error").textContent()).includes("Server unavailable (HTTP 502)")) {
+      throw new Error("Empty gateway response did not show a clear connection error");
+    }
+    if (!(await page.locator("#login-panel").isVisible())) throw new Error("Failed login hid the form");
+    await page.unroute("**/api/run");
     await page.locator("#token").fill("wrong-token");
     await page.locator("#login button").click();
     await page.waitForFunction(() => document.getElementById("error").textContent.includes("Access token"));
@@ -57,6 +66,7 @@ const path = require("node:path");
       url: base, status, result, invalidTokenRejected: true, draftPreserved: true,
       mobileOverflow: overflow, reloadRequiresToken: true, browserErrors: errors,
       workspaceReadCommand: readCommand.item.command, workspaceReadExitCode: readCommand.item.exit_code,
+      emptyGatewayResponseHandled: true,
     }, null, 2));
     console.log("Browser smoke passed: real agent, authentication, polling, desktop, mobile, reload.");
   } finally { await browser.close(); }

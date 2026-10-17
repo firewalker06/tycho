@@ -12,7 +12,12 @@ async function request(path, body) {
     body: body === undefined ? undefined : JSON.stringify(body),
     cache: "no-store",
   });
-  const data = await response.json();
+  if (response.status >= 500) {
+    throw new Error(`Server unavailable (HTTP ${response.status}). Try again shortly.`);
+  }
+  let data;
+  try { data = await response.json(); }
+  catch { throw new Error("Server returned an invalid response. Reload the page and try again."); }
   if (!response.ok) throw new Error(data.error || "Request failed");
   return data;
 }

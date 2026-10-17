@@ -73,7 +73,11 @@ requires the token from the private `access-token` file. Do not enable Funnel.
 The operator's test machine uses an isolated directory under the user's profile
 and a manually started task named `TychoSpinelPrototype`. It runs with the
 logged-in user's limited token. It has no boot or login trigger and stores no
-password. To start it after sign-in:
+password. Its PowerShell action uses `-WindowStyle Hidden` so there is no visible
+server console to close by mistake. The original task ended with `0xC000013A`,
+which indicates a console interruption; the resulting empty HTTP 502 response
+exposed a missing browser error check. The browser now reports server unavailability
+and keeps the login form available for another attempt. To start it after sign-in:
 
 ```powershell
 Start-ScheduledTask -TaskName TychoSpinelPrototype
