@@ -40,6 +40,7 @@ module ManagedAgentTest
     assert_current_agent_context_covers_root_delegation_and_skill_states
     assert_current_agent_context_reaches_real_root_and_delegated_launches
     assert_summary_sections_guidance_reaches_every_harness_run
+    assert_readable_agent_messages_guidance_reaches_every_harness_run
     assert_queue_work_contract_reaches_every_harness
     assert_response_style_applies_to_cold_and_resumed_runs
     assert_native_resume_includes_same_second_follow_up
@@ -1786,6 +1787,37 @@ module ManagedAgentTest
       )
       resumed.add_user_message!("Continue the substantive review.")
       assert_summary_sections_guidance(resumed.send(:build_command).fetch(:command).last, harness, "resumed")
+    end
+  end
+
+  def assert_readable_agent_messages_guidance_reaches_every_harness_run
+    Dir.mktmpdir("hq-readable-agent-messages-test") do |dir|
+      # Card 330: these joined words were already in the sender's tool request.
+      original = "Address allthree corrections. Commit/push, fullbin/test."
+      %w[codex claude opencode pi].each do |harness|
+        [false, true].each do |resumed|
+          agent = HQ::ManagedAgent.new(
+            key: "#{harness}-readable-#{resumed}", name: "Readable messages", project_key: "demo",
+            template_key: "custom", workspace: dir, prompt: "Coordinate work.", agent: harness,
+            response_style: false, log_path: File.join(dir, "#{harness}-#{resumed}.raw.log"),
+            session_id: resumed ? "native-session" : nil, session_bootstrapped: resumed,
+            runs: resumed ? [HQ::ManagedAgent::AgentRun.new(
+              started_at: Time.now - 60, finished_at: Time.now - 30, exit_code: 0, status: "success"
+            )] : []
+          )
+          agent.add_user_message!(original)
+          prompt = agent.send(:build_command).fetch(:command).last
+          assert(prompt.include?("Use normal word spacing in prose, including prompts and messages sent to other agents."),
+                 "expected #{harness} #{resumed ? 'resumed' : 'cold'} launch to guide message composition")
+          assert(prompt.include?("Shorten prose by removing unnecessary words, never by joining words or removing spaces."),
+                 "expected explicit guidance against the card 330 source pattern")
+          assert(prompt.include?("Preserve code, commands, paths, URLs, identifiers, and quoted source text exactly."),
+                 "expected literal source protection")
+          assert(prompt.include?(original), "expected execution guidance to keep the original message intact")
+          event = HQ::AgentMemory.new(agent).events.find { |item| item["type"] == "user_message" }
+          assert(event["content"] == original, "expected stored source to remain unchanged")
+        end
+      end
     end
   end
 

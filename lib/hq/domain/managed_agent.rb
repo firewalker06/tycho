@@ -142,6 +142,9 @@ module HQ
                              "plan, review, report, markdown file, image, or other durable artifact. " \
                              "If yes, include it in `attachments`: use `type: file` with `path` for local files, " \
                              "or `type: link` with an http(s) `url` for web links."
+    AGENT_MESSAGE_GUIDANCE = "Use normal word spacing in prose, including prompts and messages sent to other agents. " \
+                             "Shorten prose by removing unnecessary words, never by joining words or removing spaces. " \
+                             "Preserve code, commands, paths, URLs, identifiers, and quoted source text exactly."
     LEGACY_SCHEDULED_NAME_PREFIX = "[Scheduled]"
     DIRECT_OUTPUT_IDLE_TIMEOUT_SECONDS = 5 * 60
     PROCESS_OUTPUT_MARKER = "=== process output ==="
@@ -3266,6 +3269,7 @@ module HQ
         guidance = prompt_only_structured_output_guidance
         text = [guidance, text].reject(&:empty?).join("\n\n") unless guidance.empty?
       end
+      text = [text, AGENT_MESSAGE_GUIDANCE].reject(&:empty?).join("\n\n") unless text.include?(AGENT_MESSAGE_GUIDANCE)
       with_final_output_checklist(text)
     end
 
