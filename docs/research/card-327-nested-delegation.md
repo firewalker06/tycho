@@ -96,3 +96,49 @@ The takeover-specific missing evidence remains the operator's affected chain and
 Only local files and process metadata were read for historical evidence. Prompt, result, tool, and credential contents were not copied into the report. All synthetic writes and dispatches used isolated fixture state. No production agent, running service, schedule, or identity was changed. No real push notification was sent.
 
 The PR remains draft for independent review. Screenshots do not apply because the fix changes backend lifecycle behavior and has no UI change.
+
+## Resumed ownership investigation
+
+PR 247 was rechecked at the previously approved head `323403b52053c297ccbe142051d7302666b159d6`. It was open and published, with successful required signoff and no live review comments or review bodies to address. The existing independent Standards and Spec report approved that exact head. This continuation preserves the production fix and the published PR state. Any new head needs a separate independent review.
+
+The worker could not fetch the current Fizzy card or comments because it has no Fizzy token. The cached authoritative card text contains no affected chain or time. The parent handles Fizzy access; this is not a request for credentials.
+
+The new read-only local ledger snapshot contains 1,032 relationships and 1,665 reports. It has the same twelve nested intermediates as the earlier snapshot. The same single intermediate is user-owned at generation 2, with the same September 9 transition. No additional nested Takeover example was found. Historical prompt and tool contents were not copied into this evidence.
+
+### Three ranked, falsifiable hypotheses
+
+1. **An ordinary input path accepted a manual child report.** Prediction: `agent send B ...` without a parent declaration changes B to user ownership, including when `TYCHO_AGENT_KEY=C`; an automatic C callback does not. The isolated loop confirms this mechanism in Local and Remote modes. This is the documented input contract, not evidence that the historical incident used this path.
+2. **A valid parent declaration is lost in CLI routing.** Prediction: A's `--parent-agent A` send or run reaches B as user input, changing its owner or generation. Both real CLI transports preserve the declaration in the tested cases. Parent-declared run also restores Delegation after user input, advancing the generation. This hypothesis was not reproduced.
+3. **Automatic callback resume uses user-control acceptance.** Prediction: C's callback changes B's parent-owned edge or enters a user-owned run stamp. The automatic path retains the protected callback source and the existing upstream stamp. When the edge is already user-owned, it retains that stamp and does not resume upstream reporting. This hypothesis was not reproduced.
+
+### Minimal comparison loop and observed trace
+
+`test/delegation_runner_test.rb` now runs the same A → B → C contract through local CLI and a throwaway localhost Remote server. Both use temporary config, logs, identities, empty schedules, and a fake Codex executable. The loop uses the actual CLI parser, Remote request serialization, automatic callback enqueue, detached finalization, and queue dispatch. It does not call a production server.
+
+The following trace is identical for both transports. Each row checks the persisted relationship, actual native run stamp, and durable upstream ledger count:
+
+| Operation | B owner / generation | B run stamp | New queue source / stamp | Total B reports to A |
+| --- | --- | --- | --- | --- |
+| C completes; automatic callback starts B | parent / 1 | parent / 1 | delegation_callback / parent 1 | 1 |
+| A sends with recorded parent declaration | parent / 1 | parent / 1 | No queued input | 2 |
+| A runs B with recorded parent declaration | parent / 1 | parent / 1 | No queued input | 3 |
+| Ordinary direct user prompt | user / 2 | user / 2 | No queued input | 3 |
+| A reclaims B with parent-declared run | parent / 3 | parent / 3 | No queued input | 4 |
+| Ordinary send from a process with C's environment key | user / 4 | user / 4 | No queued input | 4 |
+| C completes again; automatic callback starts B | user / 4 | user / 4 | delegation_callback / user 4 | 4 |
+
+A separate upward prompt declaring C as B's parent is rejected and leaves B's ownership unchanged. The loop never declares A on C's behalf. It does not grant authority from environment data or report text.
+
+The automatic messages retain agent authorship and protected queue sources. Upstream reporting stops only after the ordinary input transition in this loop. This reproduces the ownership-change and missing-root-report pattern under ordinary input, but does not reproduce an automatic callback incorrectly causing Takeover.
+
+Run from the repository root to capture only synthetic ownership and queue metadata outside the checkout:
+
+```sh
+TYCHO_TEST_CONTRACT_TRACE=/tmp/tycho-nested-contract.jsonl bundle exec ruby -r ./test/support/push_safety.rb test/delegation_runner_test.rb
+```
+
+### Parent contract and remaining evidence
+
+The callback path calls `DelegationCoordinator#deliver_reports!`, which enqueues directly with `source: delegation_callback` and B's current upstream ownership stamp. It does not pass through ordinary user acceptance. Local CLI send/run builds its actor from the explicit parent option. Remote CLI includes that option as `parent_agent_key`; RemoteService builds the same actor. Ordinary input without that field reaches `accept_prompt_from!` as a user actor and advances ownership generation. `TYCHO_AGENT_KEY` is informational, except for the documented delayed self-continuation rule.
+
+The original automatic Takeover observation remains unproven. To distinguish a callback fault from contract-defined user control, the missing evidence is the affected A/B/C keys, the ownership-change time, the entry origin, redacted CLI flags or HTTP route and parent-field presence, and the runtime executable/version for that entry. The approved two-path report-loss fix is not used as a substitute for this missing reproduction. No new production change is proposed by this continuation.

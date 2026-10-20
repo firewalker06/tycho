@@ -4,6 +4,7 @@ require "json"
 require "fileutils"
 require "open3"
 require "rbconfig"
+require "socket"
 require "tmpdir"
 
 module DelegationRunnerTest
@@ -33,6 +34,8 @@ module DelegationRunnerTest
             agent: codex
       YAML
       File.write(prompts, "{}\n")
+      schedules = File.join(dir, "schedules.yml")
+      File.write(schedules, "schedules: []\n")
       File.write(harness, <<~'RUBY')
         #!/usr/bin/env ruby
         require "json"
@@ -66,6 +69,7 @@ module DelegationRunnerTest
         "TYCHO_HOME" => dir,
         "TYCHO_CONFIG_PATH" => config,
         "TYCHO_SYSTEM_PROMPTS_PATH" => prompts,
+        "TYCHO_SCHEDULES_PATH" => schedules,
         "TYCHO_LOGS_ROOT" => logs,
         "TYCHO_CODEX_BIN" => harness
       }
@@ -157,8 +161,125 @@ module DelegationRunnerTest
       assert_nested_callbacks(clean_env, agents_path, logs, parent_key, parent_runs: 2)
       assert_running_nested_callbacks(clean_env, agents_path, logs, parent_key, takeover: false)
       assert_running_nested_callbacks(clean_env, agents_path, logs, parent_key, takeover: true)
+      assert_nested_parent_declaration_contract(clean_env, agents_path, logs)
+      with_contract_remote_server(clean_env, dir) do |remote_env|
+        assert_nested_parent_declaration_contract(remote_env, agents_path, logs, remote: true)
+      end
     end
     puts "delegation_runner_test: ok"
+  end
+
+  def assert_nested_parent_declaration_contract(env, agents_path, logs, remote: false)
+    route = remote ? ["--server", "fixture"] : []
+    command = ->(*args) { JSON.parse(run_cli(env, *args, *route, "--json")) }
+    root = command.call("agent", "create", "demo", "Contract root")
+    middle = command.call("agent", "create", "uploads", "Contract middle", "--parent-agent", root.fetch("key"))
+    leaf = command.call("agent", "create", "uploads", "Contract leaf", "--parent-agent", middle.fetch("key"), "--run")
+    root_key = root.fetch("key")
+    middle_key = middle.fetch("key")
+    leaf_key = leaf.fetch("key")
+    trace = []
+    checkpoint = lambda do |origin, runs, owner, generation, report_count|
+      record = wait_for_agent(agents_path, middle_key, minimum_runs: runs)
+      wait_for_agent(agents_path, root_key, minimum_runs: report_count)
+      wait_until("contract reports delivered") do
+        ledger = JSON.parse(File.read(File.join(logs, "agent_delegations.json")))
+        reports = ledger.fetch("reports").select { |item| item.dig("child", "agent_key") == middle_key }
+        reports.length == report_count && reports.all? { |item| item["resume_state"] == "resumed" }
+      end
+      ledger = JSON.parse(File.read(File.join(logs, "agent_delegations.json")))
+      relation = ledger.fetch("relationships").find { |item| item.dig("child", "agent_key") == middle_key }
+      run = record.fetch("runs").last
+      unless relation.values_at("owner", "ownership_generation") == [owner, generation] &&
+             run.values_at("delegation_owner", "delegation_generation") == [owner, generation]
+        raise "#{remote ? 'Remote' : 'Local'} #{origin} changed ownership outside the explicit parent contract"
+      end
+      claim_id = run.dig("metadata", "prompt_queue_claim_id")
+      batch = Array(record.dig("queue_work", "batches")).find { |item| item["id"] == claim_id } if claim_id
+      entries = Array(batch&.fetch("entries", nil))
+      if origin.start_with?("automatic")
+        unless entries.length == 1 && entries.first["source"] == "delegation_callback" &&
+               entries.first.dig("message_metadata", "delegation_callback") == true &&
+               entries.first.dig("message_metadata", "message_author", "type") == "agent" &&
+               entries.first.fetch("authority").values_at("owner", "generation") == [owner, generation]
+          raise "automatic callback lost its internal source or upstream queue stamp"
+        end
+      end
+      trace << { "origin" => origin, "owner" => relation["owner"], "generation" => relation["ownership_generation"],
+                 "run_stamp" => run.values_at("delegation_owner", "delegation_generation"),
+                 "queue_sources" => entries.map { |entry| entry["source"] },
+                 "queue_stamps" => entries.map { |entry| entry.fetch("authority").values_at("owner", "generation") },
+                 "queue_author_types" => entries.map { |entry| entry.dig("message_metadata", "message_author", "type") },
+                 "upstream_reports" => report_count }
+    end
+    wait_for_agent(agents_path, leaf_key, minimum_runs: 1)
+    checkpoint.call("automatic_leaf_report", 1, "parent", 1, 1)
+    command.call("agent", "send", middle_key, "Parent instruction", "--parent-agent", root_key)
+    checkpoint.call("parent_declared_send", 2, "parent", 1, 2)
+    command.call("agent", "run", middle_key, "--parent-agent", root_key)
+    checkpoint.call("parent_declared_run", 3, "parent", 1, 3)
+    command.call("agent", "send", middle_key, "Direct user instruction")
+    checkpoint.call("ordinary_user_send", 4, "user", 2, 3)
+    command.call("agent", "run", middle_key, "--parent-agent", root_key)
+    checkpoint.call("parent_declared_run_reclaim", 5, "parent", 3, 4)
+
+    # A child's informational environment key does not grant authority to
+    # send upward through ordinary user input or to impersonate B's parent.
+    child_env = env.merge("TYCHO_AGENT_KEY" => leaf_key)
+    run_cli(child_env, "agent", "send", middle_key, "Manual child report", *route, "--json")
+    checkpoint.call("ordinary_send_from_child_environment", 6, "user", 4, 4)
+    command.call("agent", "run", leaf_key, "--parent-agent", middle_key)
+    wait_for_agent(agents_path, leaf_key, minimum_runs: 2)
+    checkpoint.call("automatic_report_during_user_ownership", 7, "user", 4, 4)
+    _stdout, _stderr, status = capture_cli(child_env, "agent", "send", middle_key, "Upward prompt",
+                                        "--parent-agent", leaf_key, *route, "--json")
+    raise "a child acquired parent authority for an upward prompt" if status.success?
+    relation = JSON.parse(File.read(File.join(logs, "agent_delegations.json"))).fetch("relationships")
+                   .find { |item| item.dig("child", "agent_key") == middle_key }
+    raise "rejected upward prompt changed ownership" unless relation.values_at("owner", "ownership_generation") == ["user", 4]
+    if (path = ENV["TYCHO_TEST_CONTRACT_TRACE"]) && !path.empty?
+      File.open(path, "a") { |file| file.puts(JSON.generate("transport" => remote ? "remote" : "local", "stages" => trace)) }
+    end
+  end
+
+  def with_contract_remote_server(env, dir)
+    socket = TCPServer.new("127.0.0.1", 0)
+    port = socket.addr.fetch(1)
+    socket.close
+    token = "nested-contract-fixture-token"
+    config = File.join(dir, "contract-client.yml")
+    File.write(config, <<~YAML)
+      projects: []
+      remote_servers:
+        - key: fixture
+          url: http://127.0.0.1:#{port}
+          token_env: TYCHO_TEST_CONTRACT_TOKEN
+    YAML
+    log = File.open(File.join(dir, "contract-server.log"), "w")
+    pid = Process.spawn(env.merge("TYCHO_REMOTE_TOKEN" => token), RbConfig.ruby, File.join(ROOT, "bin", "tycho"),
+                        "serve", "--host", "127.0.0.1", "--port", port.to_s, chdir: ROOT, out: log, err: log)
+    wait_until("isolated contract server") do
+      begin
+        connection = TCPSocket.new("127.0.0.1", port)
+        connection.close
+        true
+      rescue Errno::ECONNREFUSED
+        false
+      end
+    end
+    yield env.merge("TYCHO_HOME" => File.join(dir, "contract-client-home"), "TYCHO_CONFIG_PATH" => config,
+                    "TYCHO_LOGS_ROOT" => File.join(dir, "contract-client-logs"), "TYCHO_TEST_CONTRACT_TOKEN" => token)
+  ensure
+    if pid
+      begin
+        Process.kill("TERM", pid)
+        Process.wait(pid)
+      rescue Errno::ESRCH, Errno::ECHILD
+        nil
+      end
+    end
+    log&.close
+    socket&.close unless socket&.closed?
   end
 
   def assert_nested_callbacks(env, agents_path, logs, root_key, parent_runs:)
