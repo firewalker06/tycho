@@ -56,6 +56,7 @@ module RemoteServerTest
     assert_remote_prompt_start_accepts_dash_prefixed_message
     assert_remote_agent_conversation_includes_run_summary
     assert_remote_summary_errors_follow_stream_events_to_run_scoped_blocks
+    assert_remote_summary_preserves_persisted_idle_stop_reason
     assert_remote_conversation_snapshot_windows_large_transcripts
     assert_archived_conversation_cache_ignores_active_store_changes
     assert_remote_agent_debug_endpoints
@@ -3177,6 +3178,47 @@ module RemoteServerTest
              "expected the latest persisted fallback summary to keep its nonempty production content")
       assert(api_blocks == blocks,
              "expected the conversation API to preserve projected error and fallback summary metadata")
+    ensure
+      replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
+      replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
+      replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+    end
+  end
+
+  def assert_remote_summary_preserves_persisted_idle_stop_reason
+    Dir.mktmpdir("hq-remote-idle-stop-summary") do |dir|
+      old_agents_file = replace_constant(HQ, :AGENTS_FILE, File.join(dir, "managed_agents.json"))
+      old_logs_dir = replace_constant(HQ, :AGENT_LOGS_DIR, File.join(dir, "agents"))
+      old_archive_dir = replace_constant(HQ, :AGENT_ARCHIVE_DIR, File.join(dir, "archive"))
+      FileUtils.mkdir_p(HQ::AGENT_LOGS_DIR)
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      registry = registry_for(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      created = service.create_agent("project_key" => "web", "template_key" => "custom", "name" => "Idle-stop summary", "prompt" => "Synthetic wrapper only", "agent" => "codex")
+      store = HQ::AgentStore.new(registry.projects)
+      agents = store.load
+      agent = agents.find { |item| item.key == created[:key] }
+      at = Time.utc(2026, 10, 21, 6, 12, 59)
+      marker = "Tycho stopped this run after no structured agent output stayed idle for 300 seconds."
+      run = HQ::ManagedAgent::AgentRun.new(started_at: at, finished_at: at + 304, exit_code: 143, status: "stopped", log_path: agent.raw_log_path,
+                                          run_id: "persisted-idle-run", log_start_offset: 0, metadata: { "operator_stop_reason" => "no_structured_output_idle" })
+      agent.runs << run
+      agent.instance_variable_set(:@started_at, at)
+      agent.instance_variable_set(:@finished_at, at + 304)
+      agent.instance_variable_set(:@last_exit_code, 143)
+      agent.instance_variable_set(:@stop_requested_at, at + 303)
+      File.write(agent.raw_log_path, "=== [#{at.iso8601}] start ===\n=== process output ===\nhttps://example.test/sso?callback=SYNTHETIC_CALLBACK_SECRET\ntoken=SYNTHETIC_LOGIN_SECRET\n#{marker}\n")
+      agent.build_summary!
+      agent.send(:capture_run_memory!, run)
+      store.save(agents)
+      reloaded = store.load.find { |item| item.key == agent.key }
+      assert(reloaded.runs.last.metadata["operator_stop_reason"] == "no_structured_output_idle", "expected the run reason to survive a store reload")
+      fresh_service = HQ::RemoteService.new(registry: registry)
+      response = HQ::RemoteServer.new.send(:route, fresh_service, "GET", "/agents/#{agent.key}/conversation", {}, nil)
+      block = response.dig(:body, :conversation).find { |item| item[:kind] == "run_summary" }
+      assert(block&.dig(:metadata, "operator_stop_reason") == "no_structured_output_idle" && block[:content].include?(marker), "expected HTTP projection to retain safe persisted stop context")
+      assert(!block[:content].include?("SYNTHETIC_") && !block[:content].include?("example.test"), "expected wrapper secrets to stay outside the Summary payload")
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
