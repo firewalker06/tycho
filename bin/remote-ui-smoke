@@ -10507,6 +10507,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     wait_for_remote(base_url, log_path)
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key = create_agent(base_url)
+    if ENV["TYCHO_REMOTE_UI_MERMAID_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "mermaid_smoke")
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_CLICK_TRACE_ONLY"] == "1"
       start_agent(base_url, agent_key)
       wait_for_agent_status(base_url, agent_key, "succeeded")
