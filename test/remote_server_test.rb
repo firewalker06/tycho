@@ -8053,7 +8053,7 @@ module RemoteServerTest
            "expected markdown rendering to lazy-load marked from a pinned CDN URL")
     assert(js[:body].include?("https://cdn.jsdelivr.net/npm/dompurify@"),
            "expected markdown rendering to sanitize parsed HTML with DOMPurify")
-    assert(js[:body].include?("https://cdn.jsdelivr.net/npm/mermaid@11.15.0/") &&
+    assert(js[:body].include?("https://cdn.jsdelivr.net/npm/mermaid@12.2.0/") &&
            js[:body].include?("function prepareMarkdownCodeBlocks") &&
            js[:body].include?("function previewMermaidCodeBlock") &&
            js[:body].include?("function showMermaidCodeBlock") &&
