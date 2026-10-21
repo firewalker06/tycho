@@ -511,6 +511,34 @@ def run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_
   raise "#{test_name} failed" unless status.success?
 end
 
+def write_summary_idle_stop_fixture(logs_dir, agent_key)
+  path = File.join(logs_dir, "managed_agents.json")
+  agents = JSON.parse(File.read(path))
+  agent = agents.find { |item| item["key"] == agent_key }
+  at = Time.utc(2026, 10, 21, 6, 12, 59)
+  marker = "Tycho stopped this run after no structured agent output stayed idle for 300 seconds."
+  fallback = "## Summary unavailable\n\nThis run returned without a usable structured summary."
+  cases = [
+    ["legacy-idle", "#{fallback}\n\n### Run context\n\n> #{marker}\nhttps://example.test/sso?callback=SYNTHETIC_CALLBACK_SECRET\ntoken=SYNTHETIC_LOGIN_SECRET", {}],
+    ["explicit-idle", fallback, { "operator_stop_reason" => "no_structured_output_idle" }],
+    ["manual-stop", fallback, {}],
+    ["rich-summary", "Usable structured summary", { "summary_fallback" => false, "summary_sections" => [{ "type" => "text", "text" => "Rich summary detail remains visible." }] }]
+  ]
+  events = []
+  agent["runs"] = cases.each_with_index.map do |(id, content, extra), index|
+    started = at + index * 600
+    status = id == "rich-summary" ? "success" : "stopped"
+    metadata = { "run_id" => id, "summary_id" => id, "run_number" => index + 1, "summary_fallback" => true }.merge(extra)
+    events << { "type" => "run_summary", "content" => content, "status" => status, "created_at" => (started + 304).iso8601, "metadata" => metadata }
+    { "run_id" => id, "started_at" => started.iso8601, "finished_at" => (started + 304).iso8601,
+      "exit_code" => status == "success" ? 0 : 143, "status" => status, "command" => "synthetic-wrapper", "metadata" => extra, "log_path" => agent.fetch("log_path") }
+  end
+  agent.merge!("name" => "Wrapper idle-stop fixture", "started_at" => agent["runs"].last["started_at"], "finished_at" => agent["runs"].last["finished_at"],
+               "pid" => nil, "last_exit_code" => 0, "total_run_count" => cases.length, "summary" => "Usable structured summary")
+  File.write(path, JSON.pretty_generate(agents))
+  File.write(agent.fetch("log_path").sub(/\.raw\.log\z/, ".memory.jsonl"), events.map { |event| JSON.generate(event) }.join("\n") + "\n")
+end
+
 def run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser:)
   agents = JSON.parse(File.read(File.join(fixture.fetch(:logs_dir), "managed_agents.json")))
   agent = agents.find { |item| item["key"] == agent_key }
@@ -10475,6 +10503,17 @@ end
 
 Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   fixture = write_fixture(dir)
+  if ENV["TYCHO_REMOTE_UI_SUMMARY_IDLE_STOP_ONLY"] == "1"
+    agent_key = "web-agent-summary-idle-fixture"
+    logs_dir = fixture.fetch(:logs_dir)
+    FileUtils.mkdir_p(File.join(logs_dir, "agents"))
+    File.write(File.join(logs_dir, "managed_agents.json"), JSON.generate([{
+      "key" => agent_key, "name" => "Idle-stop fixture", "project_key" => "web", "template_key" => "custom",
+      "workspace" => fixture.fetch(:workspace), "prompt" => "Synthetic only", "agent" => "codex", "created_at" => Time.now.iso8601,
+      "log_path" => File.join(logs_dir, "agents", "summary-idle.raw.log"), "runs" => []
+    }]))
+    write_summary_idle_stop_fixture(logs_dir, agent_key)
+  end
   github_server, github_thread = start_fake_github_api
   github_api_url = "http://127.0.0.1:#{github_server.addr[1]}"
   port = free_port
@@ -10506,7 +10545,11 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   begin
     wait_for_remote(base_url, log_path)
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
-    agent_key = create_agent(base_url)
+    agent_key ||= create_agent(base_url)
+    if ENV["TYCHO_REMOTE_UI_SUMMARY_IDLE_STOP_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "summary_idle_stop_smoke")
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_MERMAID_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "mermaid_smoke")
       next

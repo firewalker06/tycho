@@ -2630,6 +2630,9 @@ module HQ
     end
 
     def safe_operator_context_from_log
+      if last_run&.status == "stopped" && last_run.metadata.to_h["operator_stop_reason"] == "no_structured_output_idle"
+        return "Tycho stopped this run after no structured agent output stayed idle for #{DIRECT_OUTPUT_IDLE_TIMEOUT_SECONDS} seconds."
+      end
       return nil unless File.exist?(@log_path)
 
       marker = last_run_log_lines.last(20).reverse.find do |line|
@@ -2824,6 +2827,9 @@ module HQ
       return false unless reason
 
       @stop_requested_at = now
+      if (run = last_run)
+        run.metadata = run.metadata.to_h.merge("operator_stop_reason" => "no_structured_output_idle")
+      end
       append_direct_output_stop_marker!(reason)
       terminate_process_group!(term_timeout: 1.0)
       true
@@ -3555,6 +3561,9 @@ module HQ
     def run_summary_metadata(run)
       metadata = @structured_result.is_a?(Hash) ? @structured_result.dup : {}
       metadata["summary_fallback"] = true unless @structured_result.is_a?(Hash)
+      if run&.status == "stopped" && run.metadata.to_h["operator_stop_reason"] == "no_structured_output_idle"
+        metadata["operator_stop_reason"] = "no_structured_output_idle"
+      end
       attachments = current_structured_attachments
       attachments.empty? ? metadata.delete("attachments") : metadata["attachments"] = attachments
       metadata["run_number"] = run_count
