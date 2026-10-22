@@ -10,7 +10,15 @@ type: project
 
 ## Last Updated
 
-2026-10-15
+2026-10-22
+
+## Latest Fix
+
+The Remote UI **Clone and archive** form now requests source archival. Unstarted
+independent clones become active in the same locked store transaction that
+archives the source. Failed archives retain source work and do not publish a
+replacement. Started and scheduled context replacements retain their existing
+recovery and schedule ownership rules.
 
 ## Strategic Direction
 

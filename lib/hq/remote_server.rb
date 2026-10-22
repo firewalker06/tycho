@@ -3567,6 +3567,7 @@ module HQ
       archive_source = truthy?(attrs["archive_source"])
       context_handoff = truthy?(attrs["context_handoff"])
       replace_schedule_target = truthy?(attrs["replace_schedule_target"])
+      atomic_archive = archive_source && !replace_schedule_target && !truthy?(attrs["start"])
       expected_schedule_key = attrs["expected_schedule_key"].to_s.strip if replace_schedule_target
       if replace_schedule_target && expected_schedule_key.to_s.empty?
         raise Error.new("A schedule target replacement requires the expected schedule key", status: 409)
@@ -3598,16 +3599,22 @@ module HQ
         target.update!(**agent_attrs(target, attrs, project: project, creating: false))
         @agent_store.ensure_project_context_prompt!(target, project)
         ContextHandoff.prepare!(source, target, archive_source:) if context_handoff
-        next_agents = current.reject { |agent| agent.key == target.key }
-        next_agents.unshift(target)
-        save_agents(sort_agents(next_agents))
+        unless atomic_archive
+          next_agents = current.reject { |agent| agent.key == target.key }
+          next_agents.unshift(target)
+          save_agents(sort_agents(next_agents))
+        end
       end
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"])
       if archive_source
         begin
-          archive_path = @agent_store.archive_context_replacement_source!(source.key)
+          archive_path = if atomic_archive
+                           @agent_store.archive_context_replacement_source!(source.key, replacement: target)
+                         else
+                           @agent_store.archive_context_replacement_source!(source.key)
+                         end
         rescue ArgumentError
-          recover_context_replacement_archive_rejection!(source, target)
+          recover_context_replacement_archive_rejection!(source, target) unless atomic_archive
           raise
         end
       end

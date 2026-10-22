@@ -989,6 +989,18 @@ replacement to archive the source again. Set `start: true` to continue
 immediately in the clone.
 The Remote UI calls this operation **Start with Handoff**.
 
+Run the disposable desktop/mobile Chrome regression with
+`TYCHO_REMOTE_UI_ARCHIVE_CLONE_ONLY=1 bin/remote-ui-smoke`. Use
+`TYCHO_REMOTE_UI_CAPTURE_DIR` to retain screenshots outside the repository.
+
+The editable **Clone and archive** form also sends `archive_source: true`.
+For a clone that does not start or replace a schedule target, the store saves
+the independent clone and archives the source in one locked transaction.
+An archive failure retains the source and does not publish a clone, so the
+operator can retry. A retry after a committed archive is rejected as read-only
+and cannot create a second clone. The client removes the source only when the
+server confirms `archived: true`.
+
 The source stays active by default for ordinary clone operations. The compaction
 actions set `archive_source: true`. This option returns `409 Conflict` if the source is
 running, has an unresolved active or suspended inquiry, or has ordinary or

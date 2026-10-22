@@ -1160,6 +1160,51 @@ module RemoteServerTest
              "expected handoff cloning to preserve the source and its operational state")
       service.archive_agent(handoff_clone.dig(:agent, :key))
 
+      store = service.instance_variable_get(:@agent_store)
+      original_save = store.method(:save_unlocked)
+      store.define_singleton_method(:save_unlocked) do |agents, **options|
+        raise IOError, "Injected archive commit failure" unless agents.any? { |agent| agent.key == source[:key] }
+
+        original_save.call(agents, **options)
+      end
+      begin
+        service.clone_agent(source[:key], "archive_source" => true)
+        raise "expected archive commit failure"
+      rescue IOError => e
+        assert(e.message == "Injected archive commit failure", "expected injected archive failure")
+      ensure
+        store.singleton_class.send(:remove_method, :save_unlocked)
+      end
+      assert(service.agents.map { |agent| agent[:key] } == [source[:key]],
+             "expected failed clone-and-archive to leave only the source for safe retry")
+      assert(File.read(source[:log_path]) == "source log\n", "expected archive rollback to retain source evidence")
+
+      original_archive = store.method(:archive_context_replacement_source!)
+      store.define_singleton_method(:archive_context_replacement_source!) do |key, **options|
+        update_agent!(key) do |agent|
+          agent.enqueue_prompt!(id: "late-user-work", prompt: "Keep late user work", source: "user", not_before: Time.now + 3600)
+        end
+        original_archive.call(key, **options)
+      end
+      begin
+        service.clone_agent(source[:key], "archive_source" => true)
+        raise "expected late queued work to block archive"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409, "expected archive safety to be checked again under the commit lock")
+      ensure
+        store.singleton_class.send(:remove_method, :archive_context_replacement_source!)
+      end
+      assert(service.agents.map { |agent| agent[:key] } == [source[:key]],
+             "expected late user work to block archive without publishing a clone")
+      retained = store.load.find { |agent| agent.key == source[:key] }
+      assert(retained.queued_prompts.any? { |entry| entry["prompt"] == "Keep late user work" },
+             "expected late user work to stay on the source")
+      store.update_agent!(source[:key]) { |agent| agent.delete_queued_prompt!("late-user-work") }
+
+      store.update_agent!(source[:key]) do |agent|
+        agent.enqueue_prompt!(prompt: "Preserve unrun callback evidence", source: "delegation_callback", not_before: Time.now + 3600)
+      end
+
       cloned = service.clone_agent(
         source[:key],
         "name" => "Replacement Agent",
@@ -1173,6 +1218,20 @@ module RemoteServerTest
       assert(service.agents.map { |agent| agent[:key] } == [cloned[:agent][:key]],
              "expected source to be removed after clone-and-archive")
       assert(Dir.exist?(cloned[:archive_path]), "expected source logs to be archived")
+      archived = service.agent(source[:key])
+      assert(archived[:archived], "expected the source detail to remain archived")
+      assert(Dir.glob(File.join(cloned[:archive_path], "*.memory.jsonl")).any? { |path| File.read(path).include?("Preserve unrun callback evidence") },
+             "expected combined archive to preserve callback evidence")
+      assert(cloned[:agent][:prompt_queue_count].to_i.zero? && cloned[:agent][:session_id].nil?,
+             "expected independent clone without the source queue or native session")
+      begin
+        service.clone_agent(source[:key], "archive_source" => true)
+        raise "expected a retry against the archived source to be rejected"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409, "expected a committed archive retry to be read-only")
+      end
+      assert(service.agents.map { |agent| agent[:key] } == [cloned[:agent][:key]],
+             "expected a repeated combined action not to create a duplicate clone")
     ensure
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir

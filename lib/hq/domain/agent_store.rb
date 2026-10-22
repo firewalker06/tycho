@@ -958,8 +958,8 @@ module HQ
       archive_agents!([key], root:).fetch(key.to_s)
     end
 
-    def archive_context_replacement_source!(key, root: AGENT_ARCHIVE_DIR)
-      archive_agents!([key], root:, context_replacement: true).fetch(key.to_s)
+    def archive_context_replacement_source!(key, root: AGENT_ARCHIVE_DIR, replacement: nil)
+      archive_agents!([key], root:, context_replacement: true, replacement:).fetch(key.to_s)
     end
 
     def assert_context_replacement_archive_safe!(key)
@@ -969,7 +969,7 @@ module HQ
       end
     end
 
-    def archive_agents!(keys, root: AGENT_ARCHIVE_DIR, context_replacement: false)
+    def archive_agents!(keys, root: AGENT_ARCHIVE_DIR, context_replacement: false, replacement: nil)
       with_exclusive_lock do
         agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
         requested = Array(keys).map(&:to_s).uniq
@@ -977,6 +977,11 @@ module HQ
           agents.find { |agent| agent.key == key } || raise(ArgumentError, "Unknown agent: #{key}")
         end
         targets.each { |target| assert_context_replacement_archive_safe_unlocked!(target) } if context_replacement
+        if replacement && (!context_replacement || targets.length != 1 ||
+                           replacement.running? || replacement.run_count.positive? ||
+                           agents.any? { |agent| agent.key == replacement.key })
+          raise ArgumentError, "Archive replacement must be a new unstarted agent"
+        end
         source_paths = targets.flat_map(&:log_files)
         transaction = FileTransaction.new([AGENTS_FILE, DELEGATIONS_FILE, *source_paths])
         destinations = targets.to_h do |target|
@@ -989,10 +994,9 @@ module HQ
           reconcile_archived_callbacks(archived_work.fetch(:entries))
           [target.key, destination]
         end
-        save_unlocked(
-          agents.reject { |agent| requested.include?(agent.key) },
-          allow_large_reduction: true
-        )
+        remaining = agents.reject { |agent| requested.include?(agent.key) }
+        remaining.unshift(replacement) if replacement
+        save_unlocked(remaining, allow_large_reduction: true)
         destinations
       rescue StandardError
         transaction&.rollback
