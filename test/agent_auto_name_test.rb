@@ -112,6 +112,23 @@ module AgentAutoNameTest
         assert(normalized["agent_title_suggestion"] == "Export Choice", "terminal parser lost title")
         assert(normalized["inquiry"]["message"] == "Which export?", "title broke inquiry")
       end
+      codex = agent(dir)
+      command = codex.send(:build_command).fetch(:command)
+      native_path = command.fetch(command.index("--output-schema") + 1)
+      native_schema = JSON.parse(File.read(native_path))
+      assert(codex.log_files.include?(native_path), "native schema must follow agent archive cleanup")
+      assert(native_path != HQ::AGENT_RESULT_SCHEMA, "Codex needs a separate strict schema")
+      assert(native_schema["required"].include?("agent_title_suggestion"), "native Codex schema has an optional property")
+      assert(native_schema.dig("properties", "agent_title_suggestion", "type").include?("null"), "native title must accept null")
+      assert(native_schema["properties"].keys.sort == native_schema["required"].sort, "native schema does not require every root property")
+      assert(agent(dir, adapter: "claude").send(:command_result_schema_path) == HQ::AGENT_RESULT_SCHEMA,
+             "Claude should retain the optional canonical schema")
+      old_payload = { "status" => "success", "summary" => "Done.", "summary_sections" => nil,
+                      "inquiry" => nil, "attachments" => nil, "memory_handoff" => nil }
+      canonical = JSON.parse(File.read(HQ::AGENT_RESULT_SCHEMA))
+      assert(HQ::AgentStructuredOutputValidator.new(schema: canonical).validate(old_payload).valid?,
+             "older payload without a title must still validate")
+
       migration_path = File.join(dir, "old_schema.json")
       File.write(migration_path, JSON.generate("type" => "object", "properties" => { "summary" => { "type" => "string" } }, "required" => ["summary"]))
       HQ.migrate_agent_result_schema!(migration_path)

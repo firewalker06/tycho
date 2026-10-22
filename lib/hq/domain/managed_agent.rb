@@ -1591,6 +1591,7 @@ module HQ
         "#{pull_request_catalog_path}.bak",
         "#{pull_request_catalog_path}.lock",
         invalid_structured_output_file_path,
+        derived_log_path("codex_result_schema.json"),
         *status_file_paths,
         *@runs.filter_map { |run| run_status_file_path(run.run_id) unless run.run_id.to_s.empty? },
         *@runs.filter_map { |run| run_pid_file_path(run.run_id) unless run.run_id.to_s.empty? },
@@ -2090,7 +2091,7 @@ module HQ
         harness_command_prefix: execution.fetch(:command),
         harness_command_environment: execution.fetch(:env),
         last_message_file_path: last_message_file_path,
-        result_schema_path: result_schema_path,
+        result_schema_path: command_result_schema_path,
         claude_result_schema: canonical_result_schema_json
       )
     end
@@ -3471,6 +3472,21 @@ module HQ
 
     def result_schema_path
       AGENT_RESULT_SCHEMA
+    end
+
+    def command_result_schema_path
+      return result_schema_path unless harness_adapter == "codex" && File.file?(result_schema_path)
+
+      schema = JSON.parse(File.read(result_schema_path))
+      return result_schema_path unless schema.dig("properties", "agent_title_suggestion")
+      return result_schema_path if Array(schema["required"]).include?("agent_title_suggestion")
+
+      # OpenAI strict output needs required nullable fields. Keep the canonical
+      # validator schema optional so older harness results remain valid.
+      schema["required"] = Array(schema["required"]) + ["agent_title_suggestion"]
+      path = derived_log_path("codex_result_schema.json")
+      FileStore.write_json(path, schema, backup: false)
+      path
     end
 
     def canonical_result_schema_json
