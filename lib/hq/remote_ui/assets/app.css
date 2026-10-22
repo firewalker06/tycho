@@ -8509,6 +8509,12 @@ body:has(.inquiry-form-full-screen) {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
+.quick-agent-advanced[hidden] {
+  display: none;
+}
+.quick-agent-name-field {
+  grid-column: 1 / -1;
+}
 .quick-agent-field {
   display: flex;
   flex-direction: column;
