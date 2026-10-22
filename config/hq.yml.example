@@ -34,6 +34,12 @@ harness_catalogs: {}
 groups: {}
 projects: []
 
+# Optional global Quick Agent default on this host. Blank keeps the first
+# available project; project-scoped launches and manual choices take priority.
+# Configure this in Remote UI Settings > Configuration.
+quick_agent:
+  default_project_key: null
+
 # Example custom harness profile:
 #
 # custom_harnesses:

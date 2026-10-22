@@ -74,7 +74,7 @@ module HQ
     }.freeze
 
     attr_reader :path, :projects, :groups, :remote_servers, :system_prompts_path, :custom_harnesses,
-                :harness_catalogs, :harness_auth_snapshots, :session_loop_settings
+                :harness_catalogs, :harness_auth_snapshots, :session_loop_settings, :quick_agent_settings
 
     def archived_projects_path
       default_archived_path
@@ -102,6 +102,8 @@ module HQ
       @harness_catalogs = build_harness_catalogs(data["harness_catalogs"])
       @harness_auth_snapshots = build_harness_auth_snapshots(data["harness_auth_snapshots"])
       @session_loop_settings = build_session_loop_settings(data["session_loops"])
+      saved_project = data["quick_agent"].is_a?(Hash) ? data["quick_agent"]["default_project_key"] : nil
+      @quick_agent_settings = { default_project_key: saved_project.is_a?(String) ? saved_project.strip : nil }
       @groups = build_groups(data["groups"])
       @remote_servers = build_remote_servers(data["remote_servers"])
       HQ.custom_harnesses = @custom_harnesses
@@ -413,6 +415,31 @@ module HQ
 
     def harness_auth_snapshot(harness_key)
       @harness_auth_snapshots[harness_key.to_s.strip.downcase]
+    end
+
+    def quick_agent_projects
+      @projects.select { |project| !project.hidden && File.directory?(project.path) && File.readable?(project.path) }
+    end
+
+    def update_quick_agent_settings!(attrs)
+      unless attrs.key?("default_project_key") && (attrs["default_project_key"].nil? || attrs["default_project_key"].is_a?(String))
+        raise ConfigError, "Default project must be a project key or blank"
+      end
+
+      key = attrs["default_project_key"].to_s.strip
+      with_config_lock do
+        load!
+        unless key.empty? || quick_agent_projects.any? { |project| project.key == key }
+          raise ConfigError, "Default project must be a visible project with an available workspace"
+        end
+
+        data = load_yaml(@path)
+        settings = data["quick_agent"].is_a?(Hash) ? data["quick_agent"] : {}
+        data["quick_agent"] = settings.merge("default_project_key" => key.empty? ? nil : key)
+        write_yaml(@path, data)
+      end
+      load!
+      @quick_agent_settings
     end
 
     def update_session_loop_settings!(attrs)

@@ -2863,7 +2863,7 @@ module ManagedAgentTest
            "expected backfilled Codex resume command to include --model")
     assert(argument_after(resume_command, "-c") == "model_reasoning_effort=\"xhigh\"",
            "expected backfilled Codex resume command to include model_reasoning_effort")
-    assert(argument_after(resume_command, "--output-schema") == HQ::AGENT_RESULT_SCHEMA,
+    assert(argument_after(resume_command, "--output-schema") == restored.send(:command_result_schema_path),
            "expected Codex resume command to enforce the structured result schema")
 
     explicit = HQ::ManagedAgent.from_hash(data.merge("model" => "gpt-5.1", "reasoning_effort" => "medium"))

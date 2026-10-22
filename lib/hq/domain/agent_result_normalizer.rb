@@ -27,6 +27,8 @@ module HQ
       inquiry = normalize_inquiry(parsed["inquiry"])
       status = normalize_status(status, summary:, inquiry:)
       result = { "status" => status, "summary" => summary }
+      title = parsed["agent_title_suggestion"]
+      result["agent_title_suggestion"] = title if title.is_a?(String)
       summary_sections = normalize_summary_sections(parsed["summary_sections"])
       result["summary_sections"] = summary_sections if summary_sections
       result["inquiry"] = inquiry if inquiry

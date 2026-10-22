@@ -381,6 +381,10 @@ module HQ
       end
       return ok(hidden: service.hidden_settings) if method == "GET" && parts == ["settings", "hidden"]
       return ok(hidden: service.update_hidden_setting(body)) if %w[PATCH PUT].include?(method) && parts == ["settings", "hidden"]
+      return ok(quick_agent: service.quick_agent_settings) if method == "GET" && parts == ["settings", "quick-agent"]
+      if %w[PATCH PUT].include?(method) && parts == ["settings", "quick-agent"]
+        return ok(quick_agent: service.update_quick_agent_settings(body))
+      end
       return ok(session_loops: service.session_loop_settings) if method == "GET" && parts == ["settings", "session-loops"]
       if %w[PATCH PUT].include?(method) && parts == ["settings", "session-loops"]
         return ok(session_loops: service.update_session_loop_settings(body))
@@ -2779,6 +2783,27 @@ module HQ
       hidden_settings
     end
 
+    def quick_agent_settings
+      available = @registry.quick_agent_projects
+      saved = @registry.quick_agent_settings[:default_project_key]
+      effective = available.find { |project| project.key == saved } || available.first
+      {
+        default_project_key: saved,
+        effective_project_key: effective&.key,
+        projects: available.sort_by { |project| [project.name.downcase, project.key] }.map do |project|
+          { key: project.key, name: project.name }
+        end
+      }
+    end
+
+    def update_quick_agent_settings(attrs)
+      @registry.update_quick_agent_settings!(attrs)
+      reload_projects_from_registry!
+      quick_agent_settings
+    rescue ConfigError => e
+      raise Error.new(e.message, status: 400)
+    end
+
     def session_loop_settings
       @registry.session_loop_settings
     end
@@ -3518,7 +3543,14 @@ module HQ
     def create_agent(attrs = {}, actor: nil, effective_settings: nil, **attribute_keywords)
       attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
       actor ||= delegation_actor_from_attrs(attrs)
-      project = find_project!(attrs["project_key"])
+      project_key = attrs["project_key"]
+      if truthy?(attrs["quick_agent"])
+        project_key = quick_agent_settings[:effective_project_key] if project_key.to_s.empty?
+        unless @registry.quick_agent_projects.any? { |project| project.key == project_key }
+          raise Error.new("Choose a visible project with an available workspace", status: 400)
+        end
+      end
+      project = find_project!(project_key)
       template_key = attrs["template_key"].to_s
       template_key = project.agent_templates.first&.key.to_s if template_key.empty?
       parent_key = attrs["parent_agent_key"].to_s.strip
@@ -3534,6 +3566,7 @@ module HQ
                    end
       target = @agent_store.create_from_template_and_persist!(project, template_key, delegation:) do |candidate, _current|
         candidate.update!(**agent_attrs(candidate, attrs, project: project, creating: true, effective: effective_settings))
+        candidate.preserve_name! unless attrs["name"].to_s.strip.empty?
         @agent_store.ensure_project_context_prompt!(candidate, project)
       end
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"])
@@ -4644,6 +4677,7 @@ module HQ
         prompt_template_count: prompt_template_count,
         schedule_system_message_template: AgentStore.scheduled_system_prompt_template,
         session_loop_settings: @registry.session_loop_settings,
+        quick_agent_settings: quick_agent_settings,
         active_projects: @projects.length,
         archived_projects: archived_project_count
       }
@@ -4698,6 +4732,7 @@ module HQ
                  project.agent_templates.first
       prompt = attrs.key?("prompt") ? attrs["prompt"].to_s : target.prompt.to_s
       name = attrs.key?("name") ? attrs["name"].to_s : target.name.to_s
+      name = target.name.to_s if creating && name.strip.empty?
       workspace = if effective&.key?("workspace")
                     effective["workspace"].to_s
                   elsif attrs.key?("workspace")
