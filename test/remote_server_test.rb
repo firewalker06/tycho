@@ -68,6 +68,7 @@ module RemoteServerTest
     assert_remote_hidden_settings_filter_projects_and_agents
     assert_remote_response_style_settings
     assert_remote_session_loop_settings
+    assert_remote_quick_agent_settings
     assert_remote_skill_installation_requires_confirmation
     assert_remote_schedule_routes
     assert_remote_setup_payload_includes_readiness
@@ -667,6 +668,92 @@ module RemoteServerTest
              "expected Remote API cost summary")
       backfill = server.send(:route, service, "POST", "/metrics/backfill", { "durable_only" => true }, nil)
       assert(backfill.dig(:body, "status") == "success", "expected Remote API backfill route")
+    end
+  end
+
+  def assert_remote_quick_agent_settings
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      config = YAML.safe_load_file(registry.path)
+      config["projects"] += [
+        { "key" => "zulu", "name" => "Zulu", "path" => workspace },
+        { "key" => "alpha-b", "name" => "alpha", "path" => workspace },
+        { "key" => "alpha-a", "name" => "Alpha", "path" => workspace },
+        { "key" => "hidden", "name" => "Hidden", "path" => workspace, "hidden" => true },
+        { "key" => "unavailable", "name" => "Missing", "path" => File.join(dir, "missing") }
+      ]
+      File.write(registry.path, YAML.dump(config))
+      registry.load!
+      service = HQ::RemoteService.new(registry: registry)
+      server = HQ::RemoteServer.new
+      defaults = server.send(:route, service, "GET", "/settings/quick-agent", {}, nil).dig(:body, :quick_agent)
+      assert(defaults[:default_project_key].nil? && defaults[:effective_project_key] == "web",
+             "expected no preference to preserve original first-project behavior")
+      assert(defaults[:projects].map { |project| project[:key] } == %w[alpha-a alpha-b web zulu],
+             "expected visible available choices sorted by case-insensitive name then key")
+      updated = server.send(:route, service, "PATCH", "/settings/quick-agent", { "default_project_key" => "alpha-b" }, nil)
+      assert(updated.dig(:body, :quick_agent, :effective_project_key) == "alpha-b", "expected saved global default")
+      persisted = YAML.safe_load_file(registry.path)
+      assert(persisted["projects"] == config["projects"] && persisted["custom_harnesses"] == config["custom_harnesses"],
+             "expected preference save to preserve unrelated config")
+      reloaded = HQ::Registry.new(path: registry.path, system_prompts_path: registry.system_prompts_path)
+      service = HQ::RemoteService.new(registry: reloaded)
+      assert(service.setup_summary.dig(:config, :quick_agent_settings, :default_project_key) == "alpha-b",
+             "expected persisted preference after registry/service reload")
+      before = File.read(registry.path)
+      ["unknown", "hidden", "unavailable", 42, [], {}].each do |invalid|
+        begin
+          service.update_quick_agent_settings("default_project_key" => invalid)
+          raise "expected invalid preference rejection: #{invalid.inspect}"
+        rescue HQ::RemoteServer::Error => error
+          assert(error.status == 400, "expected invalid preference response")
+        end
+        assert(File.read(registry.path) == before, "invalid preference modified config")
+      end
+      explicit = service.create_agent("project_key" => "web", "quick_agent" => true, "prompt" => "Use the chosen project")
+      assert(explicit[:project_key] == "web", "explicit project must override saved default")
+      implicit = service.create_agent("quick_agent" => true, "prompt" => "Use the global default")
+      assert(implicit[:project_key] == "alpha-b", "expected server-owned Quick Agent default")
+      %w[hidden unavailable unknown].each do |key|
+        count = service.agents.length
+        begin
+          service.create_agent("project_key" => key, "quick_agent" => true, "prompt" => "Must not create")
+          raise "expected invalid Quick Agent project rejection"
+        rescue HQ::RemoteServer::Error => error
+          assert(error.status == 400, "expected project boundary rejection")
+        end
+        assert(service.agents.length == count, "invalid Quick Agent request created an agent")
+      end
+      %w[hidden unavailable removed].each do |key|
+        data = YAML.safe_load_file(registry.path)
+        data["quick_agent"]["default_project_key"] = key
+        File.write(registry.path, YAML.dump(data))
+        reloaded.load!
+        fallback = service.quick_agent_settings
+        assert(fallback[:default_project_key] == key && fallback[:effective_project_key] == "web",
+               "expected a safe fallback for an unavailable saved project")
+      end
+      data = YAML.safe_load_file(registry.path)
+      data["quick_agent"]["default_project_key"] = "alpha-b"
+      data["projects"].reject! { |project| project["key"] == "alpha-b" }
+      File.write(registry.path, YAML.dump(data))
+      reloaded.load!
+      assert(service.quick_agent_settings[:effective_project_key] == "web", "removed saved project must fall back safely")
+      cleared = service.update_quick_agent_settings("default_project_key" => "")
+      assert(cleared[:default_project_key].nil? && cleared[:effective_project_key] == "web", "expected cleared preference")
+      data = YAML.safe_load_file(registry.path)
+      data["projects"].each { |project| project["path"] = File.join(dir, "not-available") }
+      File.write(registry.path, YAML.dump(data))
+      reloaded.load!
+      assert(service.quick_agent_settings[:effective_project_key].nil?, "expected no fallback when every project is unavailable")
+      begin
+        service.create_agent("quick_agent" => true, "prompt" => "No valid project")
+        raise "expected no-project Quick Agent rejection"
+      rescue HQ::RemoteServer::Error => error
+        assert(error.status == 400, "expected a safe error when no valid project remains")
+      end
     end
   end
 

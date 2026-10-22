@@ -8414,8 +8414,7 @@ body:has(.inquiry-form-full-screen) {
   max-height: none;
 }
 .quick-agent-dialog::backdrop {
-  background: rgba(0, 0, 0, .55);
-  backdrop-filter: blur(2px);
+  background: rgba(0, 0, 0, .75);
 }
 
 .quick-agent-form {
@@ -8512,6 +8511,7 @@ body:has(.inquiry-form-full-screen) {
 .quick-agent-advanced[hidden] {
   display: none;
 }
+.quick-agent-advanced > .quick-agent-project-row,
 .quick-agent-name-field {
   grid-column: 1 / -1;
 }

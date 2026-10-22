@@ -49,6 +49,11 @@ def write_fixture(dir)
         agent: codex
   YAML
   config << "    pr_url: https://github.com/example/web/pull/123\n" unless ENV["TYCHO_REMOTE_UI_PR_DIFF_MANAGEMENT_ONLY"] == "1"
+  if ENV["TYCHO_REMOTE_UI_AUTO_NAME_ONLY"] == "1"
+    %w[zulu alpha-b alpha-a].zip(%w[Zulu alpha Alpha]).each do |key, name|
+      config << "  - key: #{key}\n    name: #{name}\n    path: #{workspace.inspect}\n    agent: codex\n"
+    end
+  end
   File.write(config_path, config)
   File.write(prompts_path, "---\ncustom: \"Check the workspace.\"\n")
   File.write(schedules_path, <<~YAML)
