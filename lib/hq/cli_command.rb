@@ -1758,6 +1758,7 @@ module HQ
       agent = agent_store.create_from_template(project, template_key)
 
       name = opts[:name].to_s.strip
+      agent.preserve_name! unless name.empty?
       name = agent.name if name.empty?
       model = opts[:model].to_s.strip
       model = nil if model.empty?

@@ -816,6 +816,19 @@ module RemoteServerTest
       assert(created[:name] == "Remote Agent", "expected custom agent name")
       assert(created[:status] == "idle", "expected new agent to be idle")
 
+      unnamed = service.create_agent("project_key" => "web", "template_key" => "custom",
+                                     "name" => "", "prompt" => "Use an automatic name.")
+      assert(unnamed[:name].match?(/\AWeb custom \d+\z/), "expected blank name to keep the generated template name")
+      default_record = service.instance_variable_get(:@agent_store).load.find { |agent| agent.key == unnamed[:key] }
+      assert(default_record.to_hash["auto_name_default"] == unnamed[:name], "expected exact default provenance")
+      explicit = service.create_agent("project_key" => "web", "template_key" => "custom",
+                                      "name" => "Web custom 3", "prompt" => "Keep the explicit name.")
+      explicit_record = service.instance_variable_get(:@agent_store).load.find { |agent| agent.key == explicit[:key] }
+      assert(explicit_record.to_hash["auto_name_default"].nil?, "expected even a default-shaped explicit name to remain manual")
+
+      service.archive_agent(unnamed[:key])
+      service.archive_agent(explicit[:key])
+
       submitted = service.submit_prompt(created[:key], "prompt" => "Read the code first.")
       assert(submitted[:conversation].any? { |message| message[:role] == "user" && message[:content] == "Read the code first." },
              "expected submitted prompt to appear in conversation")

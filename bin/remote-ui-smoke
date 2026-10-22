@@ -88,6 +88,7 @@ def write_fixture(dir)
       "attachments" => nil,
       "memory_handoff" => nil
     }
+    payload["agent_title_suggestion"] = "Export Check" if ENV["TYCHO_REMOTE_UI_AUTO_NAME_ONLY"] == "1"
     File.write(output, JSON.generate(payload)) if output
     puts JSON.generate("type" => "thread.started", "thread_id" => "smoke-fixture-session")
     puts JSON.generate("type" => "item.completed", "item" => {
@@ -10546,6 +10547,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     wait_for_remote(base_url, log_path)
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key ||= create_agent(base_url)
+    if ENV["TYCHO_REMOTE_UI_AUTO_NAME_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "agent_auto_name_smoke")
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_SUMMARY_IDLE_STOP_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "summary_idle_stop_smoke")
       next

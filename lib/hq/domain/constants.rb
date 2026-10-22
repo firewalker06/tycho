@@ -79,12 +79,13 @@ module HQ
     migrate_result_schema!(
       path,
       source:,
-      owned_properties: %w[memory_handoff summary_sections],
+      owned_properties: %w[memory_handoff summary_sections agent_title_suggestion],
+      optional_properties: %w[agent_title_suggestion],
       remove_properties: RETIRED_RESULT_PROPERTIES
     )
   end
 
-  def self.migrate_result_schema!(path, source:, owned_properties:, remove_properties: [])
+  def self.migrate_result_schema!(path, source:, owned_properties:, remove_properties: [], optional_properties: [])
     current = JSON.parse(File.read(path))
     bundled = JSON.parse(File.read(source))
     properties = current["properties"]
@@ -104,7 +105,7 @@ module HQ
     end
     required = Array(current["required"])
     updated_required = required - remove_properties
-    missing_required = owned_properties.reject { |key| required.include?(key) }
+    missing_required = (owned_properties - optional_properties).reject { |key| required.include?(key) }
     updated_required += missing_required
     changed ||= updated_required != required
     current["required"] = updated_required if changed

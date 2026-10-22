@@ -3534,6 +3534,7 @@ module HQ
                    end
       target = @agent_store.create_from_template_and_persist!(project, template_key, delegation:) do |candidate, _current|
         candidate.update!(**agent_attrs(candidate, attrs, project: project, creating: true, effective: effective_settings))
+        candidate.preserve_name! unless attrs["name"].to_s.strip.empty?
         @agent_store.ensure_project_context_prompt!(candidate, project)
       end
       target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"])
@@ -4691,6 +4692,7 @@ module HQ
                  project.agent_templates.first
       prompt = attrs.key?("prompt") ? attrs["prompt"].to_s : target.prompt.to_s
       name = attrs.key?("name") ? attrs["name"].to_s : target.name.to_s
+      name = target.name.to_s if creating && name.strip.empty?
       workspace = if effective&.key?("workspace")
                     effective["workspace"].to_s
                   elsif attrs.key?("workspace")

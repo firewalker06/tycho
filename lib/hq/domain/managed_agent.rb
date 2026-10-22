@@ -180,9 +180,10 @@ module HQ
                    archived: false, archive_path: nil, archived_at: nil, project_hidden_at_archive: nil,
                    prompt_queue: nil, prompt_queue_claim: nil, prompt_queue_dispatch_error: nil, queue_work: nil, role: nil,
                    context_pressure_acknowledged_signal: nil, context_pressure_dismissed: false,
-                   context_replacement_recovery: nil)
+                   context_replacement_recovery: nil, auto_name_default: nil)
       @key = key
       @name = name
+      @auto_name_default = auto_name_default.is_a?(String) ? auto_name_default : nil
       @project_key = project_key
       @role = role.to_s.strip.empty? ? nil : role.to_s
       @project_group = project_group.to_s
@@ -325,6 +326,7 @@ module HQ
         schedule_key: hash["schedule_key"],
         cost_snapshot: hash["cost_snapshot"],
         total_run_count: hash["total_run_count"],
+        auto_name_default: hash["auto_name_default"],
         project_group: hash["project_group"],
         delegation_parent: hash["delegation_parent"],
         archived: hash["archived"],
@@ -444,6 +446,7 @@ module HQ
         "log_path" => @log_path,
         "runs" => @runs.map(&:to_hash),
         "total_run_count" => run_count,
+        "auto_name_default" => @auto_name_default,
         "stop_requested_at" => @stop_requested_at&.iso8601,
         "sandbox_mode" => @sandbox_mode,
         "agent" => @agent,
@@ -1342,7 +1345,9 @@ module HQ
         run_scoped_status: true,
         delegation_owner: delegation_stamp&.fetch("owner", nil),
         delegation_generation: delegation_stamp&.fetch("generation", nil),
-        metadata: run_metadata.is_a?(Hash) ? run_metadata : {}
+        metadata: (run_metadata.is_a?(Hash) ? run_metadata : {}).merge(
+          "agent_title_requested" => run_count.zero?
+        )
       )
       memory_store.append_run_started!(run_id: run.run_id, created_at: @started_at)
       record_run!(run)
@@ -1632,12 +1637,14 @@ module HQ
     end
 
     def rename!(name)
+      preserve_name!
       @name = name
     end
 
     def update!(name:, template_key:, workspace:, prompt:, sandbox_mode: @sandbox_mode, agent: @agent,
                 model: @model, reasoning_effort: @reasoning_effort, response_style: @response_style)
       previous_prompt = @prompt
+      preserve_name! if name != @name
       @name = name
       @template_key = template_key
       @workspace = workspace
@@ -1659,6 +1666,10 @@ module HQ
                        model: @model,
                        reasoning_effort: @reasoning_effort,
                        response_style: @response_style)
+    end
+
+    def preserve_name!
+      @auto_name_default = nil
     end
 
     def effective_response_style_source
@@ -1942,6 +1953,7 @@ module HQ
       structured = payload ? normalize_structured_result(payload) : nil
 
       @structured_result = structured
+      apply_agent_title_suggestion!(structured)
       @summary = compute_summary_text(structured)
       if (run = @runs.last)
         run.status = effective_status if run.status != "running"
@@ -1958,6 +1970,27 @@ module HQ
     end
 
     private
+
+    def apply_agent_title_suggestion!(structured)
+      run = last_run
+      return unless run && run_count == 1 && run.metadata.is_a?(Hash) && run.metadata["agent_title_requested"] == true
+      return if run.status == "running"
+      return if run.metadata["agent_title_processed"]
+
+      run.metadata["agent_title_processed"] = true
+      return unless @auto_name_default && @name == @auto_name_default
+
+      suggestion = structured&.fetch("agent_title_suggestion", nil)
+      return unless suggestion.is_a?(String)
+      return if suggestion.match?(/[[:cntrl:]]/)
+
+      title = suggestion.strip
+      return if title.empty? || title.split(/[[:space:]]+/).size > 3 || title.length >= 40
+      return unless title.match?(/\p{L}/)
+
+      @name = title
+      preserve_name!
+    end
 
     def canonical_queue_read_id(batch)
       "queue-read:#{batch.fetch('id')}"
@@ -3245,6 +3278,12 @@ module HQ
       if (batch = active_queue_work)
         contract = QueueWork.contract(batch, agent_key: @key)
         base_prompt = [contract, base_prompt].join("\n\n") unless base_prompt.include?("[TYCHO QUEUE WORK CONTRACT — REQUIRED]")
+      end
+      if run_count.zero?
+        base_prompt = [base_prompt,
+                       "For this first prompt only, you may return agent_title_suggestion in the structured result. " \
+                       "Use a short task name: at most 3 words and fewer than 40 characters. " \
+                       "Return null or omit the field if no name is suitable."].join("\n\n")
       end
       with_execution_guidance(base_prompt, response_style:, include_hidden_guidance:)
     end

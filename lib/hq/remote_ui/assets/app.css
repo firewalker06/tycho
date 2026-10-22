@@ -8516,7 +8516,9 @@ body:has(.inquiry-form-full-screen) {
   font-size: .75rem;
   color: var(--text-muted, #6272a4);
 }
-.quick-agent-field select {
+.quick-agent-field :is(input, select) {
+  min-height: var(--control-height, 44px);
+  min-width: 0;
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -9453,7 +9455,7 @@ body:has(.inquiry-form-full-screen) {
   select,
   textarea,
   .quick-agent-project-row select,
-  .quick-agent-field select,
+  .quick-agent-field :is(input, select),
   .harness-catalog-form textarea {
     font-size: 16px;
   }
@@ -9472,7 +9474,7 @@ body:has(.inquiry-form-full-screen) {
   }
 
   .quick-agent-project-row select,
-  .quick-agent-field select {
+  .quick-agent-field :is(input, select) {
     min-height: var(--control-height);
   }
 

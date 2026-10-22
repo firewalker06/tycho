@@ -292,6 +292,13 @@
         "lessons",
         "promotion_candidates"
       ]
+    },
+    "agent_title_suggestion": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional task name from the first prompt only. At most 3 words and fewer than 40 characters. Null or omission leaves the name unchanged."
     }
   },
   "required": [

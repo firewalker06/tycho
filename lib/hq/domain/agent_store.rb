@@ -173,6 +173,7 @@ module HQ
       agent = ManagedAgent.new(
         key: key,
         name: "#{project.name} #{template.name.downcase} #{suffix}",
+        auto_name_default: template.key == "custom" ? "#{project.name} #{template.name.downcase} #{suffix}" : nil,
         project_key: project.key,
         project_group: project.group,
         template_key: template.key,
