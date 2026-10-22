@@ -13,6 +13,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     const name = page.locator("#quick-agent-name");
     const project = page.locator("#quick-agent-project");
     const prompt = page.locator("#quick-agent-prompt");
+    const currentProject = page.locator("[data-quick-agent-current-project]");
     const toggle = page.locator("[data-quick-agent-toggle]");
     const checkOverflow = async () => {
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
@@ -21,8 +22,17 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       await checkOverflow();
       if (captureDir) await page.screenshot({ path: path.join(captureDir, `auto-name-${state}-${viewport.width}.png`) });
     };
+    const checkProject = async (key, label) => {
+      assert.equal(await currentProject.isVisible(), true);
+      assert.equal(await currentProject.innerText(), label);
+      assert.equal(await currentProject.getAttribute("data-project-key"), key);
+      assert.equal(await currentProject.evaluate(el => el.isContentEditable || el.matches("input, select, textarea")), false);
+      assert.equal(await project.inputValue(), key);
+      assert.equal(await page.locator("#quick-agent-form").getAttribute("data-project-key"), key);
+    };
     const checkCollapsed = async () => {
       assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+      assert.equal(await currentProject.isVisible(), true);
       assert.equal(await name.isVisible(), false);
       assert.equal(await project.isVisible(), false);
       assert.equal(await page.locator("#quick-agent-harness").isVisible(), false);
@@ -39,7 +49,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await page.locator("#quick-agent-fab").click();
     await prompt.waitFor({ state: "visible" });
     await checkCollapsed();
-    assert.equal(await project.inputValue(), "web", "no preference changed the original default");
+    await checkProject("web", "Web");
     assert.deepEqual(await page.evaluate(() => {
       const original = state.projects;
       try {
@@ -68,11 +78,41 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     assert.equal(await setting.inputValue(), "alpha-b", "default did not survive reload");
     await setting.scrollIntoViewIfNeeded();
     await capture("settings");
+    // Scoped starts keep their project, but must still offer the selector.
+    await page.goto(`${baseUrl}/ui#project/web`, { waitUntil: "networkidle" });
+    await page.evaluate(() => openQuickAgent());
+    await checkCollapsed();
+    await checkProject("web", "Web");
+    await toggle.click();
+    assert.equal(await project.isVisible(), true);
+    assert.deepEqual(await project.locator("option").evaluateAll(items => items.map(el => el.value)), sortedKeys);
+    await prompt.fill("Scoped prompt");
+    await name.fill("Scoped Name");
+    await project.selectOption("zulu");
+    await checkProject("zulu", "Zulu");
+    await toggle.click();
+    await checkCollapsed();
+    await checkProject("zulu", "Zulu");
+    await toggle.click();
+    assert.equal(await prompt.inputValue(), "Scoped prompt");
+    assert.equal(await name.inputValue(), "Scoped Name");
+    // Even a one-project catalog keeps summary and selection as separate controls.
+    await page.evaluate(() => {
+      const original = state.projects;
+      try {
+        state.projects = original.filter(project => project.key === "web");
+        renderQuickAgentDialog("web", {advancedOpen: true});
+      } finally { state.projects = original; }
+    });
+    assert.equal(await project.isVisible(), true);
+    assert.equal(await project.locator("option").count(), 1);
+    await checkProject("web", "Web");
+    await page.keyboard.press("Escape");
     await page.goto(`${baseUrl}/ui#agents`, { waitUntil: "networkidle" });
     await page.locator("#quick-agent-fab").click();
     await prompt.waitFor({ state: "visible" });
     await checkCollapsed();
-    assert.equal(await project.inputValue(), "alpha-b", "global launch ignored saved default");
+    await checkProject("alpha-b", "alpha");
     assert.equal(await page.evaluate(() => quickAgentInitialProject({type: "project", key: "web"}).key), "web", "project scope lost its override");
     await prompt.fill("Check the export output.");
     const overlay = await page.locator("#quick-agent-dialog").evaluate(el => {
@@ -109,6 +149,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     assert(!Object.hasOwn(response.request().postDataJSON(), "name"));
     assert.equal(response.request().postDataJSON().project_key, "alpha-b");
     const { agent } = await response.json();
+    assert.equal(agent.project_key, "alpha-b", "created project differs from visible current project");
     assert.match(agent.name, /^alpha custom \d+$/);
     await page.waitForFunction(async ({baseUrl, key}) => {
       const data = await (await fetch(`${baseUrl}/agents/${key}`)).json();
@@ -125,8 +166,21 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await prompt.fill("Keep this name and project.");
     await toggle.click();
     await name.fill("Manual Export");
-    await project.selectOption("web");
-    await page.waitForFunction(() => document.querySelector("#quick-agent-form").dataset.projectKey === "web");
+    await page.evaluate(() => { delete state.projectDetails.web; });
+    let releaseProject;
+    const projectGate = new Promise(resolve => { releaseProject = resolve; });
+    await page.route(`${baseUrl}/projects/web`, async route => { await projectGate; await route.continue(); });
+    try {
+      await project.selectOption("web");
+      await checkProject("web", "Web");
+      // Collapse while detail loading; the read-only name must already be current.
+      await toggle.click();
+      await checkCollapsed();
+      await checkProject("web", "Web");
+    } finally { releaseProject(); }
+    await page.waitForFunction(() => Boolean(state.projectDetails.web));
+    await page.unroute(`${baseUrl}/projects/web`);
+    await toggle.click();
     assert.equal(await name.inputValue(), "Manual Export");
     assert.equal(await prompt.inputValue(), "Keep this name and project.");
     await toggle.click();
@@ -135,11 +189,13 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await page.evaluate(() => refresh({ force: true }));
     await checkCollapsed();
     await toggle.click();
-    assert.equal(await project.inputValue(), "web", "new default replaced a manual selection");
+    await checkProject("web", "Web");
     assert.equal(await name.inputValue(), "Manual Export");
     assert.equal(await prompt.inputValue(), "Keep this name and project.");
     await toggle.click();
     await checkCollapsed();
+    await checkProject("web", "Web");
+    await capture("changed");
     const explicitResponse = page.waitForResponse(response => response.url() === `${baseUrl}/agents` && response.request().method() === "POST");
     await page.locator("#quick-agent-form button[type=submit]").click();
     const explicitResult = await explicitResponse;
@@ -147,12 +203,14 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     assert.equal(explicitResult.request().postDataJSON().name, "Manual Export");
     assert.equal(explicitResult.request().postDataJSON().project_key, "web");
     const explicit = await explicitResult.json();
+    assert.equal(explicit.agent.project_key, "web", "manual create target differs from current project label");
     await page.waitForFunction(async ({baseUrl, key}) => {
       const data = await (await fetch(`${baseUrl}/agents/${key}`)).json();
       return data.agent.status === "success" && data.agent.name === "Manual Export";
     }, { baseUrl, key: explicit.agent.key });
     assert.deepEqual(errors, []);
-    results.push({ viewport: viewport.width, projectAndNameHidden: true, promptFocus: true, alphabeticProjectKeys: sortedKeys,
+    results.push({ viewport: viewport.width, currentProjectVisible: true, selectorAndNameHidden: true, scopedSelector: true, singleProjectSelector: true,
+      labelMatchesCreateTarget: true, delayedProjectConsistency: true, promptFocus: true, alphabeticProjectKeys: sortedKeys,
       persistedDefault: "alpha-b", scopedOverride: "web", manualSelectionPreserved: true, collapsedBlankAutoName: "Export Check",
       collapsedExplicitName: "Manual Export", overlay, overflow: false });
     await context.close();
