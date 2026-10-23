@@ -1671,6 +1671,8 @@ module HQ
 
     def preserve_name!
       @auto_name_default = nil
+      run = last_run
+      run.metadata["agent_title_processed"] = true if run&.metadata.is_a?(Hash)
     end
 
     def effective_response_style_source
@@ -1974,8 +1976,10 @@ module HQ
 
     def apply_agent_title_suggestion!(structured)
       run = last_run
-      return unless run && run_count == 1 && run.metadata.is_a?(Hash) && run.metadata["agent_title_requested"] == true
+      return unless run
       return if run.status == "running"
+
+      run.metadata = {} unless run.metadata.is_a?(Hash)
       return if run.metadata["agent_title_processed"]
 
       run.metadata["agent_title_processed"] = true
@@ -3285,6 +3289,11 @@ module HQ
                        "For this first prompt only, you may return agent_title_suggestion in the structured result. " \
                        "Use a short task name: at most 3 words and fewer than 40 characters. " \
                        "Return null or omit the field if no name is suitable."].join("\n\n")
+      else
+        base_prompt = [base_prompt,
+                       "Return agent_title_suggestion only if the user asks to change this agent's title. " \
+                       "Use at most 3 words and fewer than 40 characters. Only a default title can change; " \
+                       "an existing custom title is preserved. Otherwise return null or omit the field."].join("\n\n")
       end
       with_execution_guidance(base_prompt, response_style:, include_hidden_guidance:)
     end
