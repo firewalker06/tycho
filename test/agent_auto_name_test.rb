@@ -36,6 +36,7 @@ module AgentAutoNameTest
         first_prompt = target.send(:prompt_for_execution)
         assert(first_prompt.include?("agent_title_suggestion"), "#{adapter}: missing first prompt request")
         first_run(target)
+        assert(target.send(:prompt_for_execution).include?("only if the user asks"), "#{adapter}: missing later title request boundary")
         target = HQ::ManagedAgent.from_hash(target.to_hash)
         assert(!target.send(:prompt_for_execution).include?("For this first prompt only"), "#{adapter}: repeated request after reload")
         result(target, "Export Repair")
@@ -76,7 +77,7 @@ module AgentAutoNameTest
       first_run(target)
       target.send(:record_run!, HQ::ManagedAgent::AgentRun.new(started_at: Time.now, status: "success", run_id: "second", metadata: {}))
       result(target, "Delayed Title")
-      assert(target.name == "Project custom 1", "later run accepted delayed suggestion")
+      assert(target.name == "Delayed Title", "later run did not replace a tracked default title")
       clone = HQ::AgentStore.new([]).clone_agent(agent(dir), existing_agents: [])
       first_run(clone)
       result(clone, "Clone Rename")
@@ -99,7 +100,56 @@ module AgentAutoNameTest
       legacy = agent(dir)
       legacy.send(:record_run!, HQ::ManagedAgent::AgentRun.new(started_at: Time.now, status: "success"))
       result(legacy, "Legacy Title")
-      assert(legacy.name == "Project custom 1", "legacy run without request was renamed")
+      assert(legacy.name == "Legacy Title", "tracked default title required a first-run request flag")
+
+      # Replay the reported follow-up after the first run and a cold reload.
+      [true, false].each do |tracked|
+        target = agent(dir, tracked:)
+        first_run(target)
+        result(target, nil)
+        retry_run = HQ::ManagedAgent::AgentRun.new(started_at: Time.now, status: "success", run_id: "retry",
+                                                  metadata: {})
+        target.send(:record_run!, retry_run)
+        target = HQ::ManagedAgent.from_hash(target.to_hash)
+        result(target, "Title Retry")
+        expected = tracked ? "Title Retry" : "Project custom 1"
+        assert(target.name == expected, "later title did not respect default-name provenance after reload")
+        result(target, "Stale Replacement")
+        assert(target.name == expected, "summary rebuild reapplied a later title")
+        target.send(:record_run!, HQ::ManagedAgent::AgentRun.new(started_at: Time.now, status: "success", run_id: "third",
+                                metadata: {}))
+        result(target, "Another Title")
+        assert(target.name == expected, "later suggestion replaced a non-default title")
+      end
+
+      target = agent(dir, name: "Manual Name", tracked: false)
+      first_run(target)
+      target.send(:record_run!, HQ::ManagedAgent::AgentRun.new(started_at: Time.now, status: "success", run_id: "manual",
+                              metadata: {}))
+      result(target, "Title Again Fix")
+      assert(target.name == "Manual Name", "valid suggestion replaced a manual title")
+
+      [nil, "", "one two three four", "x" * 40, "line\nbreak"].each do |title|
+        target = agent(dir)
+        first_run(target)
+        target.send(:record_run!, HQ::ManagedAgent::AgentRun.new(started_at: Time.now, status: "success", run_id: "invalid",
+                                metadata: {}))
+        result(target, title)
+        assert(target.name == "Project custom 1", "invalid later title changed a default name")
+      end
+
+      target = agent(dir)
+      first_run(target)
+      target.send(:record_run!, HQ::ManagedAgent::AgentRun.new(started_at: Time.now, status: "running", run_id: "rename",
+                              metadata: {}))
+      result(target, "Early Title")
+      assert(target.name == "Project custom 1", "live later title changed the name")
+      target.rename!("User Choice")
+      target.rename!("Project custom 1")
+      target.last_run.status = "success"
+      target = HQ::ManagedAgent.from_hash(target.to_hash)
+      result(target, "Stale Title")
+      assert(target.name == "Project custom 1", "manual rename during the run was overwritten")
 
       payload = { "status" => "input_required", "summary" => "Choose an export.",
                   "agent_title_suggestion" => "Export Choice", "inquiry" => { "message" => "Which export?" } }

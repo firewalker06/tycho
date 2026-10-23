@@ -298,7 +298,7 @@
         "string",
         "null"
       ],
-      "description": "Optional task name from the first prompt only. At most 3 words and fewer than 40 characters. Null or omission leaves the name unchanged."
+      "description": "Optional task name on the first prompt, or on a later prompt when the user asks to change this agent's title. At most 3 words and fewer than 40 characters. A suggestion only replaces a stored default title; custom titles stay unchanged. Null or omission leaves the name unchanged."
     }
   },
   "required": [
