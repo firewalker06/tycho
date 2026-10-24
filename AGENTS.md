@@ -11,7 +11,7 @@ Runtime artifacts are written to `~/.tycho/logs/`, including app state files suc
 
 ## Build, Test, and Development Commands
 
-- `bundle install`: install Ruby gems declared for Ruby 3.2+.
+- `bundle install`: install Ruby gems declared for Ruby 4.0.9+.
 - `bin/tycho`: start the TUI locally.
 - `bundle exec bin/tycho`: run through Bundler when debugging gem resolution issues.
 - `bin/tycho harness list [--harness KEY] [--model MODEL] [--discover] [--json]`: list shared built-in and configured custom model/reasoning catalogs; offline by default, with optional Settings-style local tool discovery. See `docs/HARNESS_INVENTORY.md` for source and default limits.

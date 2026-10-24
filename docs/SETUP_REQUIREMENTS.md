@@ -8,7 +8,7 @@ optional integrations that enable specific features.
 
 | Dependency | Required for | Setup behavior |
 |------------|--------------|----------------|
-| Ruby 3.2+ | Running `tycho`, `tycho serve`, tests, and all app code | Hard fail if missing or older than 3.2 |
+| Ruby 4.0.9+ | Running `tycho`, `tycho serve`, tests, and all app code | Hard fail if missing or older than 4.0.9 |
 | Bundler | Installing gems from `Gemfile` | Hard fail if missing; install or print the exact install command |
 | Go | Building Charm Ruby native gems (`bubbletea`, `lipgloss`, `glamour`) when a prebuilt platform gem is unavailable | Hard fail before `bundle install` unless the setup script intentionally relies on prebuilt gems |
 | Native build tools | Compiling Ruby native extensions and Go c-archives when needed | Hard fail for source installs; on macOS this usually means Xcode Command Line Tools |
@@ -119,7 +119,7 @@ explicitly requested a feature profile whose toolchain is missing.
 
 Recommended hard failures:
 
-- Ruby is missing or older than 3.2.
+- Ruby is missing or older than 4.0.9.
 - Bundler is missing and cannot be installed.
 - Go or native build tools are missing for a source install that must compile
   Charm Ruby native extensions.

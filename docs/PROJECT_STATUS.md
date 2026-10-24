@@ -10,9 +10,12 @@ type: project
 
 ## Last Updated
 
-2026-10-22
+2026-10-24
 
 ## Latest Fix
+
+Tycho now requires Ruby 4.0.9 or later. The gem requirement, Bundler
+requirement, lockfile, and setup checks use this minimum version.
 
 The Remote UI **Clone and archive** form now requests source archival. Unstarted
 independent clones become active in the same locked store transaction that

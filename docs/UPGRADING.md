@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## Current source checkout
+
+Ruby 4.0.9 or later is required. Upgrade Ruby before running `bundle install`
+or the setup script.
+
 ## 0.14.0
 
 Upgrade through Homebrew or update the source checkout. Ruby 3.2 or later is

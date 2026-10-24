@@ -30,7 +30,7 @@ Tycho Intel macOS bottle; v0.11.1 ships no Intel macOS bottle. Intel users can
 run Tycho from source and should migrate Homebrew installations to Apple
 Silicon.
 
-To run from source, install Ruby 3.2+, Bundler, Go, and native build tools,
+To run from source, install Ruby 4.0.9+, Bundler, Go, and native build tools,
 then run:
 
 ```bash

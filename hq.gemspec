@@ -10,7 +10,7 @@ Gem::Specification.new do |spec|
   spec.description = "Tycho provides a Ruby TUI and local Remote UI for supervising managed coding agents and scheduled runs."
   spec.homepage = "https://github.com/firewalker06/tycho"
   spec.license = "MIT"
-  spec.required_ruby_version = ">= 3.2.0"
+  spec.required_ruby_version = ">= 4.0.9"
   spec.metadata = {
     "bug_tracker_uri" => "https://github.com/firewalker06/tycho/issues",
     "changelog_uri" => "https://github.com/firewalker06/tycho/blob/main/CHANGELOG.md",
