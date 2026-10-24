@@ -862,6 +862,26 @@ title: !123 value
 
       if (markdownFrontmatterOnly) {
         await assertMarkdownFrontmatterRendering();
+        const sanitizerSecurity = await page.evaluate(() => {
+          const results = ["parent", "nextSibling"].map((mode) => {
+            const purifier = window.DOMPurify(window);
+            const root = document.createElement("div");
+            root.innerHTML = '<figure><img class="bad"><img onerror="window.SMOKE_XSS = true"></figure><p>safe</p>';
+            const target = root.querySelector("img[onerror]");
+            purifier.addHook("afterSanitizeAttributes", (node) => {
+              if (node.getAttribute?.("class") !== "bad") return;
+              if (mode === "parent") node.parentNode.remove();
+              else node.nextElementSibling.remove();
+            });
+            purifier.sanitize(root, { IN_PLACE: true });
+            return { mode, handler: target.getAttribute("onerror") };
+          });
+          return { version: window.DOMPurify.version, results };
+        });
+        if (sanitizerSecurity.results.some((result) => result.handler !== null)) {
+          throw new Error(`Detached subtree kept an event handler: ${JSON.stringify(sanitizerSecurity)}`);
+        }
+        console.log(`remote-ui-smoke: DOMPurify security ${JSON.stringify(sanitizerSecurity)}`);
         console.log("remote-ui-smoke: markdown frontmatter ok");
         await browser.close();
         return;
