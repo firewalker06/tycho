@@ -4268,6 +4268,11 @@ select {
   font-size: 0.85em;
 }
 
+.show-full-block {
+  margin: 4px 0 8px;
+  font-size: 0.85em;
+}
+
 .agent-relationship-section,
 .agent-relationship-list {
   display: grid;

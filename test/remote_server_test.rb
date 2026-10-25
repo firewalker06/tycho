@@ -64,6 +64,7 @@ module RemoteServerTest
     assert_remote_summary_errors_follow_stream_events_to_run_scoped_blocks
     assert_remote_summary_preserves_persisted_idle_stop_reason
     assert_remote_conversation_snapshot_windows_large_transcripts
+    assert_remote_conversation_tail_is_bounded_by_bytes
     assert_archived_conversation_cache_ignores_active_store_changes
     assert_remote_agent_debug_endpoints
     assert_remote_project_payloads_include_status_and_detail
@@ -3583,6 +3584,56 @@ module RemoteServerTest
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
       replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+    end
+  end
+
+  def assert_remote_conversation_tail_is_bounded_by_bytes
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      service = HQ::RemoteService.new(registry: registry_for(dir, workspace))
+      created = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Byte budget agent",
+        "prompt" => "Work.", "agent" => "codex"
+      )
+      agent = HQ::AgentStore.new(registry_for(dir, workspace).projects).load.find { |item| item.key == created[:key] }
+      memory = HQ::AgentMemory.new(agent)
+      big = "x" * 100_000
+      60.times do |index|
+        memory.append_tool_summary!("#{index}:#{big}", tool_name: "Bash", created_at: Time.now - (60 - index))
+      end
+      memory.append_assistant_message!("Final answer", created_at: Time.now)
+
+      total = service.conversation(created[:key]).length
+      snapshot = service.conversation_snapshot(created[:key])
+      payload_bytes = JSON.generate(snapshot[:conversation]).bytesize
+      budget = HQ::RemoteService::CONVERSATION_TAIL_BYTE_BUDGET
+      assert(payload_bytes <= budget, "expected tail payload #{payload_bytes} within byte budget #{budget}")
+      assert(snapshot[:conversation].last[:content] == "Final answer", "expected newest block kept")
+      truncated = snapshot[:conversation].select { |block| block[:content_truncated] }
+      assert(truncated.any?, "expected oversized tool content to be truncated")
+      assert(truncated.all? { |block| block[:content].include?("[truncated:") && block[:content_bytes] > 100_000 },
+             "expected truncation marker and original byte size")
+      assert(snapshot[:conversation_has_older] == true, "expected older blocks beyond the byte budget")
+      assert(snapshot[:conversation_block_count] == total, "expected full block count")
+      assert(snapshot[:conversation_window_start] == total - snapshot[:conversation].length,
+             "expected window start to match the kept blocks")
+
+      full = service.conversation_block(created[:key], truncated.first[:block_index])
+      assert(full[:block][:content].bytesize == truncated.first[:content_bytes], "expected full block content")
+      assert(!full[:block].key?(:content_truncated), "expected full block without truncation marker")
+      [total, "abc", -1].each do |bad_index|
+        status = begin
+          service.conversation_block(created[:key], bad_index)
+        rescue HQ::RemoteServer::Error => e
+          e.status
+        end
+        assert(status == 404, "expected 404 for block index #{bad_index.inspect}, got #{status.inspect}")
+      end
+
+      older = service.conversation_snapshot(created[:key], { "before" => snapshot[:conversation].length.to_s })
+      assert(older[:conversation_window_start] + older[:conversation].length == snapshot[:conversation_window_start],
+             "expected before-paging to end exactly where the tail window begins")
     end
   end
 
