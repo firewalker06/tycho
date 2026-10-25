@@ -403,6 +403,27 @@ While running, the server prints request logs to stdout:
 
 The same lines are written to `~/.tycho/logs/hq.log` through `HQ.logger`.
 
+### Server-Timing and slow requests
+
+Every response carries a [`Server-Timing`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Server-Timing) header. Stages are exclusive, so a stage that runs inside another stage is not counted twice:
+
+```text
+Server-Timing: agent_load;dur=3.1, block_build;dur=42.7, json_encode;dur=9.4, total;dur=58.2
+```
+
+- `agent_load`: reading the agent store (`load_all_agents`).
+- `block_build`: building or fetching Conversation blocks (cache lookup, build and projection).
+- `json_encode`: serializing the response body.
+- `total`: time since the server read the request, up to the moment the header is written. A stage appears only when the route used it.
+
+A request that takes 500 ms or more (`RemoteServer::SLOW_REQUEST_THRESHOLD_MS`) is logged at `WARN` level with the stage split, in the console output, the Remote daemon log, and `hq.log`:
+
+```text
+[Remote] 00:14:40 slow GET /agents/web-charlie-agent-8/conversation 200 812.4ms [agent_load=601.2ms block_build=190.7ms json_encode=14.0ms]
+```
+
+Time not listed in a stage (routing, socket writes) is the difference between the total and the sum of the stages. Timing state is kept per request thread, so parallel requests never share it.
+
 ## Response Shapes
 
 Agent responses use this shape:

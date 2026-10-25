@@ -29,6 +29,7 @@ require_relative "domain/agent_store"
 require_relative "domain/context_handoff"
 require_relative "domain/conversation_blocks_cache"
 require_relative "domain/delegation_actor"
+require_relative "domain/request_timing"
 require_relative "domain/agent_archive_store"
 require_relative "domain/executable_resolver"
 require_relative "domain/file_store"
@@ -64,6 +65,7 @@ module HQ
     CLIENT_DRAIN_TIMEOUT = 5
     CLIENT_READ_TIMEOUT = 10
     MAX_HEADER_BYTES = 64 * 1024
+    SLOW_REQUEST_THRESHOLD_MS = 500
     ACTIVITY_AGENT_FIELDS = %i[
       key name project_key template_key scheduled schedule_key agent model reasoning_effort status running unread
       awaiting_input blocked run_count created_at started_at finished_at updated_at last_exit_code last_result summary
@@ -92,7 +94,7 @@ module HQ
                    daemonize_after_startup: false, daemon_log_path: REMOTE_DAEMON_LOG_FILE, daemonizer: nil,
                    resource_catalog: nil, resource_snapshot_path: nil, agent_activity_snapshot: nil,
                    agent_list_cache: nil,
-                   registry: nil, clock: -> { Time.now })
+                   registry: nil, clock: -> { Time.now }, slow_request_ms: SLOW_REQUEST_THRESHOLD_MS)
       @host = host.to_s.empty? ? DEFAULT_HOST : host.to_s
       @port = port.to_i.positive? ? port.to_i : DEFAULT_PORT
       @public_url = public_url.to_s
@@ -113,6 +115,7 @@ module HQ
       @client_workers = {}
       @max_client_workers = MAX_CLIENT_WORKERS
       @client_read_timeout = CLIENT_READ_TIMEOUT
+      @slow_request_ms = slow_request_ms
       @client_workers_mutex = Mutex.new
       @output_mutex = Mutex.new
     end
@@ -254,7 +257,7 @@ module HQ
     end
 
     def handle_client(client)
-      started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      timing = RequestTiming.start
       status = nil
       request = read_request(client)
       unless request
@@ -321,7 +324,8 @@ module HQ
       @logger.error("Remote") { "#{label}: #{e.class} - #{e.message}" }
       write_http(client, status, error: "Internal server error")
     ensure
-      log_request(request, status || 500, started_at) if started_at
+      log_request(request, status || 500, timing) if timing
+      RequestTiming.clear
       client&.close
     end
 
@@ -936,13 +940,17 @@ module HQ
 
     def write_http(client, status, body = nil, content_type: "application/json", headers: {}, raw_body: false, **payload)
       body = payload if body.nil? && !payload.empty?
-      content = raw_body || !content_type.start_with?("application/json") ? body.to_s : JSON.pretty_generate(body)
+      content = RequestTiming.measure("json_encode") do
+        raw_body || !content_type.start_with?("application/json") ? body.to_s : JSON.pretty_generate(body)
+      end
       reason = reason_phrase(status)
       response_headers = headers
+      timing_header = RequestTiming.current&.server_timing_header
       client.write "HTTP/1.1 #{status} #{reason}\r\n"
       client.write "Content-Type: #{content_type}\r\n"
       client.write "Content-Length: #{content.bytesize}\r\n"
       response_headers.each { |name, value| client.write "#{name}: #{value}\r\n" }
+      client.write "Server-Timing: #{timing_header}\r\n" if timing_header
       client.write "Connection: close\r\n"
       client.write "\r\n"
       client.write content
@@ -950,14 +958,17 @@ module HQ
       nil
     end
 
-    def log_request(request, status, started_at)
-      elapsed_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at) * 1000).round(1)
+    def log_request(request, status, timing)
+      elapsed_ms = timing.total_ms.round(1)
       line = if request
                "#{request.method} #{request.path} #{status} #{elapsed_ms}ms"
              else
                "bad_request #{status} #{elapsed_ms}ms"
              end
-      log_server(line)
+      return log_server(line) if elapsed_ms < @slow_request_ms
+
+      stages = timing.stage_summary
+      log_server("slow #{line}#{" [#{stages}]" unless stages.empty?}", level: :warn)
     rescue StandardError
       nil
     end
@@ -993,8 +1004,8 @@ module HQ
       DelegationActor.parent_actor(parent_key)
     end
 
-    def log_server(line)
-      @logger.info("Remote") { line }
+    def log_server(line, level: :info)
+      @logger.public_send(level, "Remote") { line }
       @output_mutex.synchronize do
         @output.puts("[Remote] #{Time.now.strftime("%H:%M:%S")} #{line}")
         @output.flush if @output.respond_to?(:flush)
@@ -3275,10 +3286,12 @@ module HQ
     # references, hidden-agent redaction, queue-work state) is projected from
     # them on every read, so another agent changing state is never served stale.
     def conversation_for_agent_cached(target)
-      blocks = @conversation_blocks_cache.fetch(target.key, conversation_cache_revision(target)) do
-        chat_blocks_for_agent(target)
+      RequestTiming.measure("block_build") do
+        blocks = @conversation_blocks_cache.fetch(target.key, conversation_cache_revision(target)) do
+          chat_blocks_for_agent(target)
+        end
+        project_conversation_blocks(target, blocks)
       end
-      project_conversation_blocks(target, blocks)
     end
 
     def chat_blocks_for_agent(target)
@@ -3462,14 +3475,16 @@ module HQ
 
       # The cache signature must be read under the store lock, before and after the write.
       before = nil
-      @agent_store.mark_read!(
-        target.key,
-        before_write: -> { before = @agent_list_cache.signature },
-        after_write: lambda { |record|
-          @agent_list_cache.update_record!(record, before_signature: before,
-                                                   signature: @agent_list_cache.signature)
-        }
-      )
+      RequestTiming.measure("agent_write") do
+        @agent_store.mark_read!(
+          target.key,
+          before_write: -> { before = @agent_list_cache.signature },
+          after_write: lambda { |record|
+            @agent_list_cache.update_record!(record, before_signature: before,
+                                                     signature: @agent_list_cache.signature)
+          }
+        )
+      end
       target.mark_read!
       @agent_activity_snapshot.upsert!(target)
       agent_payload(target)
@@ -4242,7 +4257,7 @@ module HQ
     end
 
     def load_all_agents
-      agents, events = load_agents_with_events
+      agents, events = RequestTiming.measure("agent_load") { load_agents_with_events }
       notification_candidates = notification_agents(agents)
       @push_notification_store.reconcile_queue_failures!(active_queue_failure_notification_ids(agents))
       replace_agent_activity_snapshot!(agents)
@@ -4261,7 +4276,9 @@ module HQ
 
     # Cached lookup that skips the full load and its reconciliation; the push timer refreshes the snapshot.
     def cached_agent(key)
-      @agent_list_cache.fetch(key, usage_metrics_store: @agent_store.usage_metrics_store)
+      RequestTiming.measure("agent_load") do
+        @agent_list_cache.fetch(key, usage_metrics_store: @agent_store.usage_metrics_store)
+      end
     end
 
     def agent_run_debug_payload(agent)
@@ -5313,8 +5330,9 @@ module HQ
     end
 
     def delegation_reference_context(active_agents = nil)
-      active_agents ||= @agent_list_cache.readonly_agents(usage_metrics_store: @agent_store.usage_metrics_store) ||
-                        load_all_agents
+      active_agents ||= RequestTiming.measure("agent_load") do
+        @agent_list_cache.readonly_agents(usage_metrics_store: @agent_store.usage_metrics_store)
+      end || load_all_agents
       active = active_agents.to_h { |agent| [agent.key, agent] }
       archived = @agent_archive_store.all.to_h { |record| [record.agent.key, record.agent] }
       {

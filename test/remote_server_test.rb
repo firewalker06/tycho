@@ -22,6 +22,9 @@ module RemoteServerTest
   def run!
     assert_remote_agent_lifecycle
     assert_slow_request_does_not_block_activity
+    assert_remote_responses_include_server_timing_stages
+    assert_slow_requests_log_stage_split
+    assert_write_http_omits_server_timing_outside_a_request
     assert_stalled_clients_time_out_without_blocking_requests
     assert_client_worker_cap_recovers_after_stalled_clients
     assert_shutdown_closes_stalled_client_sockets
@@ -618,6 +621,114 @@ module RemoteServerTest
         server.shutdown
         assert(thread.join(10), "expected server to shut down cleanly")
       end
+    end
+  end
+
+  def assert_remote_responses_include_server_timing_stages
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      created = HQ::RemoteService.new(registry: registry).create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Timed agent",
+        "prompt" => "Work.", "agent" => "codex"
+      )
+      log = StringIO.new
+      with_timed_remote_server(registry, log: log, slow_request_ms: 60_000) do |port|
+        response = Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/agents/#{created[:key]}/conversation"))
+        assert(response.code == "200", "expected the conversation request to succeed, got #{response.code}")
+        stages = server_timing_metrics(response["Server-Timing"])
+        assert(%w[agent_load block_build json_encode total].all? { |name| stages.key?(name) },
+               "expected load, build, encode and total stages, got #{response["Server-Timing"].inspect}")
+        assert(stages["total"] >= stages["agent_load"] + stages["block_build"] + stages["json_encode"] - 1,
+               "expected total to cover the exclusive stages: #{stages}")
+
+        reading = Net::HTTP.start("127.0.0.1", port) do |http|
+          http.put("/agents/#{created[:key]}/reading", "{}", "Content-Type" => "application/json")
+        end
+        assert(reading.code == "200", "expected the reading request to succeed, got #{reading.code}")
+        reading_stages = server_timing_metrics(reading["Server-Timing"])
+        assert(reading_stages.key?("agent_load") && reading_stages.key?("total"),
+               "expected the reading path to report the cached agent lookup, got #{reading["Server-Timing"].inspect}")
+
+        tail = Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/agents/#{created[:key]}/conversation?limit=50"))
+        assert(tail.code == "200" && server_timing_metrics(tail["Server-Timing"]).key?("block_build"),
+               "expected the first-paint tail request to report block_build, got #{tail["Server-Timing"].inspect}")
+
+        cached = Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/servers/activity"))
+        assert(server_timing_metrics(cached["Server-Timing"]).key?("total"),
+               "expected cached reads to report a total, got #{cached["Server-Timing"].inspect}")
+        assert(!log.string.include?("slow "), "expected no slow-request line below the threshold: #{log.string}")
+      end
+    end
+  end
+
+  def assert_slow_requests_log_stage_split
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      log = StringIO.new
+      output = StringIO.new
+      with_timed_remote_server(registry, log: log, output: output, slow_request_ms: 80) do |port, server|
+        server.define_singleton_method(:route) do |service, method, path, body, request = nil|
+          if path == "/slow-timing-test"
+            HQ::RequestTiming.measure("agent_load") { sleep 0.15 }
+            return { status: 200, body: { slow: true } }
+          end
+          super(service, method, path, body, request)
+        end
+        slow = Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/slow-timing-test"))
+        fast = Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/servers/activity"))
+        assert(slow.code == "200" && fast.code == "200", "expected both requests to succeed")
+        assert(server_timing_metrics(slow["Server-Timing"])["agent_load"] >= 140,
+               "expected the header to carry the slow stage, got #{slow["Server-Timing"].inspect}")
+        slow_lines = log.string.lines.grep(/slow GET \/slow-timing-test 200 /)
+        assert(slow_lines.length == 1, "expected one slow-request log line, got #{log.string.inspect}")
+        assert(slow_lines.first.include?("WARN") && slow_lines.first.match?(/\[agent_load=1\d\d\.\dms json_encode=/),
+               "expected a warning with the stage split, got #{slow_lines.first.inspect}")
+        assert(output.string.include?("slow GET /slow-timing-test"), "expected the daemon output to include the line")
+        assert(!log.string.include?("slow GET /servers/activity"), "expected fast requests not to be reported as slow")
+      end
+    end
+  end
+
+  def assert_write_http_omits_server_timing_outside_a_request
+    server = HQ::RemoteServer.new(logger: Logger.new(StringIO.new), output: StringIO.new)
+    HQ::RequestTiming.clear
+    client = StringIO.new
+    server.send(:write_http, client, 200, ok: true)
+    assert(!client.string.include?("Server-Timing"), "expected no Server-Timing header without request timing")
+  end
+
+  def with_timed_remote_server(registry, log:, slow_request_ms:, output: StringIO.new)
+    port = TCPServer.open("127.0.0.1", 0) { |probe| probe.addr[1] }
+    logger = Logger.new(log, formatter: proc { |severity, _time, progname, message| "#{severity} #{progname}: #{message}\n" })
+    server = HQ::RemoteServer.new(host: "127.0.0.1", port: port, registry: registry, token: "", logger: logger,
+                                  output: output, slow_request_ms: slow_request_ms)
+    thread = Thread.new { server.start }
+    deadline = Time.now + 5
+    begin
+      TCPSocket.new("127.0.0.1", port).close
+    rescue SystemCallError
+      raise "server did not start" if Time.now > deadline
+
+      sleep 0.05
+      retry
+    end
+    begin
+      yield port, server
+    ensure
+      server.shutdown
+      assert(thread.join(10), "expected server to shut down cleanly")
+    end
+  end
+
+  def server_timing_metrics(header)
+    assert(header, "expected a Server-Timing header")
+    header.split(", ").to_h do |metric|
+      name, duration = metric.split(";dur=")
+      [name, Float(duration)]
     end
   end
 
@@ -9494,7 +9605,7 @@ module RemoteServerTest
       body: ""
     )
 
-    server.send(:log_request, request, 200, Process.clock_gettime(Process::CLOCK_MONOTONIC))
+    server.send(:log_request, request, 200, HQ::RequestTiming.new)
 
     line = output.string
     assert(line.include?("[Remote]"), "expected console log to include Remote prefix")
