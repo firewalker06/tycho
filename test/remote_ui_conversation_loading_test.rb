@@ -43,6 +43,16 @@ module RemoteUIConversationLoadingTest
         throw new Error(`${label}: expected ${expected}, got ${actual}`);
       }
 
+      const slowPollDelay = context.window.TychoRemoteHelpers.slowPollDelay;
+      const slowChecks = [
+        ["fast request keeps interval", slowPollDelay(5000, 200, 1500), 5000],
+        ["slow request doubles interval", slowPollDelay(5000, 2000, 1500), 10000],
+        ["very slow request is capped at 4x", slowPollDelay(5000, 60000, 1500), 20000],
+        ["unknown duration keeps interval", slowPollDelay(5000, undefined, 1500), 5000],
+      ];
+      const failedSlow = slowChecks.find(([, actual, expected]) => actual !== expected);
+      if (failedSlow) throw new Error(`${failedSlow[0]}: expected ${failedSlow[2]}, got ${failedSlow[1]}`);
+
       const composerChecks = [
         ["normal agent", agentComposerState({}), "composer"],
         ["pending inquiry detail", agentComposerState({ awaiting_input: true }), "inquiry-loading"],
