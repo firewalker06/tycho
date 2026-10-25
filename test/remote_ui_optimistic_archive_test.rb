@@ -123,6 +123,46 @@ module RemoteUIOptimisticArchiveTest
               "Failed archive must show a useful error");
           }
         }
+        // Bulk archive across two servers: a failed group must not restore an agent the other server archived.
+        const archiveSelectedAgents = extractAsync("archiveSelectedAgents");
+        for (const scenario of ["ok", "partial"]) {
+          const context = makeContext([{ key: "a", server_key: "s1" }, { key: "b", server_key: "s2" }]);
+          context.state.bulkArchiveSelection = new Set(["a", "b"]);
+          context.selectedBulkArchiveKeys = () => ["a", "b"];
+          context.confirmAction = async () => true;
+          context.arrayValue = value => value || [];
+          context.serverDisplayName = () => "Server";
+          context.resourceServer = serverKey => ({ key: serverKey });
+          context.resourceApiPath = (serverKey, path) => `${serverKey}:${path}`;
+          context.resourceHeaders = () => ({});
+          context.resourceRawKey = key => key;
+          context.resourceClientKey = (serverKey, key) => key;
+          context.readJson = async response => response.body;
+          context.fetch = async path => {
+            if (path.startsWith("s1:")) return { body: { archived: [{ agent_key: "a" }] } };
+            if (scenario === "partial") throw new Error("server s2 unreachable");
+            return { body: { archived: [{ agent_key: "b" }] } };
+          };
+          context.mutate = (callback, options = {}) => {
+            context.pending = Promise.resolve().then(callback).catch(error => {
+              options.onError?.(error);
+              throw error;
+            });
+          };
+          vm.runInContext(archiveSelectedAgents, context);
+          await context.archiveSelectedAgents();
+          await context.pending;
+          const shown = context.state.agents.map(agent => agent.key).sort();
+          if (scenario === "ok") {
+            assert.deepEqual(shown, [], "Successful bulk archive must keep both agents removed");
+          } else {
+            assert.deepEqual(shown, ["b"], "Failed group must restore only its own agent");
+            assert(context.state.archivedAgentKeys.has("a"), "Agent archived by the healthy server must stay archived");
+            assert(!context.state.archivedAgentKeys.has("b"), "Unconfirmed agent must not stay archived");
+            assert(context.calls.some(call => call[0] === "growl" && /Archive failed for some agents/.test(call[1]) && call[2] === "fail"),
+              "Partial bulk failure must show an error");
+          }
+        }
         console.log("remote_ui_optimistic_archive_test: ok");
       })().catch(error => { console.error(error); process.exit(1); });
     JS

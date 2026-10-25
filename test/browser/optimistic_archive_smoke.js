@@ -65,6 +65,76 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
   const catalog = await (await context.request.get(`${baseUrl}/agents`)).json();
   assert.equal(catalog.agents.some(agent => agent.key === succeeding.key), false, "Server must report the agent as archived");
 
+  // Bulk archive: the same pattern across the agents list, including a partial failure.
+  const bulkUrl = `${baseUrl}/agents/archive`;
+  const runBulk = async (names, respond) => {
+    const agents = [];
+    for (const name of names) agents.push(await createAgent(name));
+    await page.goto(`${baseUrl}/ui#agents`, { waitUntil: "networkidle" });
+    await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
+    await page.locator("[data-toggle-bulk-archive]").first().click();
+    for (const agent of agents) await page.locator(`input[data-select-agent='${agent.key}']`).check();
+    let release;
+    const held = new Promise(resolve => { release = resolve; });
+    await page.route(bulkUrl, async route => {
+      await held;
+      await respond(route);
+    }, { times: 1 });
+    const requested = page.waitForRequest(request => request.url() === bulkUrl && request.method() === "POST");
+    await page.locator("[data-run-bulk-archive]:visible").first().click();
+    await page.locator("[data-confirmation-accept]").click();
+    await requested;
+    const immediate = await page.evaluate(keys => ({
+      inState: keys.map(key => state.agents.some(agent => agent.key === key)),
+      bulkMode: state.bulkArchiveMode,
+      selection: state.bulkArchiveSelection.size,
+    }), agents.map(agent => agent.key));
+    assert.deepEqual(immediate.inState, [false, false], "Bulk archive must remove selected agents before the request settles");
+    assert.equal(immediate.bulkMode, false, "Bulk archive must leave selection mode at once");
+    assert.equal(immediate.selection, 0, "Bulk archive must clear the selection at once");
+    release();
+    await page.waitForFunction(() => !state.bulkArchiveMode && !document.querySelector("[data-run-bulk-archive]"), null, { timeout: 10_000 });
+    await page.waitForTimeout(200);
+    const settled = await page.evaluate(keys => ({
+      inState: keys.map(key => state.agents.some(agent => agent.key === key)),
+      markers: keys.map(key => state.archivedAgentKeys.has(key)),
+      connection: state.connection,
+    }), agents.map(agent => agent.key));
+    return { agents, immediate, settled };
+  };
+  const fulfillJson = (status, body) => route => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+
+  // Success: both removed and kept removed.
+  const bulkOk = await runBulk(["Bulk archive ok A", "Bulk archive ok B"], async route => {
+    const body = JSON.parse(route.request().postData() || "{}");
+    const archived = body.keys.map(key => ({ agent_key: key }));
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ archived, skipped: [], failed: [] }) });
+  });
+  assert.deepEqual(bulkOk.settled.inState, [false, false], "Successful bulk archive must keep both agents removed");
+
+  // Partial failure: the confirmed agent stays archived, the unconfirmed agent comes back.
+  const bulkPartial = await runBulk(["Bulk partial A", "Bulk partial B"], async route => {
+    const body = JSON.parse(route.request().postData() || "{}");
+    const [confirmed, unconfirmed] = body.keys;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      archived: [{ agent_key: confirmed }], skipped: [], failed: [{ agent_key: unconfirmed, error: "Fixture busy" }],
+    }) });
+  });
+  assert.deepEqual(bulkPartial.settled.inState, [false, true], "Partial failure must keep only the confirmed agent archived");
+  assert.deepEqual(bulkPartial.settled.markers, [true, false], "Partial failure must mark only the confirmed agent as archived");
+  const partialGrowl = await page.locator("#growl").innerText();
+  assert.match(partialGrowl, /could not be archived/, "Partial failure must show an error that stays visible after refresh");
+  if (captureDir) await page.screenshot({ path: path.join(captureDir, `optimistic-bulk-partial-${width}.png`) });
+
+  // Whole request refused: both come back with an error.
+  const bulkRefused = await runBulk(["Bulk refused A", "Bulk refused B"], fulfillJson(503, { error: "Fixture bulk refused" }));
+  assert.deepEqual(bulkRefused.settled.inState, [true, true], "Refused bulk archive must restore every selected agent");
+  assert.deepEqual(bulkRefused.settled.markers, [false, false], "Refused bulk archive must clear archived markers");
+  const refusedGrowl = await page.locator("#growl").innerText();
+  assert.match(refusedGrowl, /Archive failed/, "Refused bulk archive must show an error");
+  if (captureDir) await page.screenshot({ path: path.join(captureDir, `optimistic-bulk-refused-${width}.png`) });
+  console.log(JSON.stringify({ bulkOk: bulkOk.settled, bulkPartial: bulkPartial.settled, bulkRefused: bulkRefused.settled }));
+
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
   assert.equal(overflow, false);
   assert.deepEqual(errors, [], `Unexpected page errors: ${errors.join("; ")}`);
