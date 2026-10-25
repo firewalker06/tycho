@@ -9593,7 +9593,7 @@ module RemoteServerTest
       body: ""
     )
 
-    server.send(:log_request, request, 200, Process.clock_gettime(Process::CLOCK_MONOTONIC))
+    server.send(:log_request, request, 200, HQ::RequestTiming.new)
 
     line = output.string
     assert(line.include?("[Remote]"), "expected console log to include Remote prefix")
