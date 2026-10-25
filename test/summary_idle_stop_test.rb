@@ -46,7 +46,7 @@ module SummaryIdleStopTest
       def service.delegation_reference_context
         { active: {}, archived: {}, visible_keys: {} }
       end
-      blocks = service.send(:conversation_for_agent, agent)
+      blocks = service.send(:project_conversation_blocks, agent, service.send(:chat_blocks_for_agent, agent))
       block = blocks.find { |item| item[:kind] == "run_summary" }
       raise "API lost reason" unless block.dig(:metadata, "operator_stop_reason") == "no_structured_output_idle" && block[:content].include?(MARKER)
       fixture_path = File.join(dir, "fixture.json")

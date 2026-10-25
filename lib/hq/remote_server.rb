@@ -26,6 +26,7 @@ require_relative "domain/agent_activity_snapshot"
 require_relative "domain/agent_chat_log"
 require_relative "domain/agent_store"
 require_relative "domain/context_handoff"
+require_relative "domain/conversation_blocks_cache"
 require_relative "domain/delegation_actor"
 require_relative "domain/agent_archive_store"
 require_relative "domain/executable_resolver"
@@ -102,6 +103,7 @@ module HQ
       @daemonizer = daemonizer
       @resource_catalog = resource_catalog || RemoteResourceCatalog.new(snapshot_path: resource_snapshot_path)
       @agent_activity_snapshot = agent_activity_snapshot || AgentActivitySnapshot.new
+      @conversation_blocks_cache = ConversationBlocksCache.new
       @registry = registry
       @clock = clock
       @client_workers = {}
@@ -292,7 +294,8 @@ module HQ
         public_url: @public_url,
         auth_required: !@token.empty?,
         restartable: restartable?,
-        agent_activity_snapshot: @agent_activity_snapshot
+        agent_activity_snapshot: @agent_activity_snapshot,
+        conversation_blocks_cache: @conversation_blocks_cache
       )
       result = route(service, request.method, request.path, json_body(request), request)
       status = result.fetch(:status, 200)
@@ -340,7 +343,8 @@ module HQ
                                   server_url: "http://#{@host}:#{@port}",
                                   public_url: @public_url,
                                   auth_required: !@token.empty?,
-                                  agent_activity_snapshot: @agent_activity_snapshot)
+                                  agent_activity_snapshot: @agent_activity_snapshot,
+                                  conversation_blocks_cache: @conversation_blocks_cache)
       service.dispatch_agent_push_notifications!
     rescue StandardError => e
       HQ.logger.warn("Push") { "Agent push notification poll failed: #{e.class} - #{e.message}" }
@@ -958,7 +962,8 @@ module HQ
         public_url: @public_url,
         auth_required: !@token.empty?,
         restartable: restartable?,
-        agent_activity_snapshot: @agent_activity_snapshot
+        agent_activity_snapshot: @agent_activity_snapshot,
+        conversation_blocks_cache: @conversation_blocks_cache
       )
       @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
       @resource_catalog.refresh(
@@ -1864,6 +1869,7 @@ module HQ
                    github_client: GitHubAPIClient.new,
                    pull_request_diff_store: PullRequestDiff::Store.new,
                    agent_activity_snapshot: AgentActivitySnapshot.new,
+                   conversation_blocks_cache: ConversationBlocksCache.new,
                    clock: -> { Time.now })
       @registry = registry
       @clock = clock
@@ -1892,6 +1898,7 @@ module HQ
       @github_client = github_client
       @pull_request_diff_store = pull_request_diff_store
       @agent_activity_snapshot = agent_activity_snapshot
+      @conversation_blocks_cache = conversation_blocks_cache
       @pull_request_fetch_lock = Mutex.new
       @pull_request_fetches = {}
       @archived_query_lock = Mutex.new
@@ -3164,7 +3171,6 @@ module HQ
     CONVERSATION_DIGEST_WINDOW_SIZE = CONVERSATION_TAIL_DEFAULT_LIMIT
     CONVERSATION_METADATA_FINGERPRINT_DEPTH = 4
     CONVERSATION_METADATA_FINGERPRINT_ITEMS = 8
-    CONVERSATION_BLOCKS_CACHE_LIMIT = 200
 
     # Returns the FULL, unwindowed conversation. Used internally (delegation
     # context, queue-work lookups, tests) where the caller genuinely needs
@@ -3255,17 +3261,34 @@ module HQ
       )
     end
 
+    # Only the parsed chat blocks, which depend on this agent's own files, are
+    # cached. Everything that reads other agents or the agent record (delegation
+    # references, hidden-agent redaction, queue-work state) is projected from
+    # them on every read, so another agent changing state is never served stale.
     def conversation_for_agent_cached(target)
-      revision = agent_revision(target)
-      cache = (@conversation_blocks_cache ||= {})
-      cached = cache[target.key]
-      return cached[:blocks] if cached && cached[:revision] == revision
+      blocks = @conversation_blocks_cache.fetch(target.key, conversation_cache_revision(target)) do
+        chat_blocks_for_agent(target)
+      end
+      project_conversation_blocks(target, blocks)
+    end
 
-      blocks = conversation_for_agent(target)
-      cache.delete(target.key)
-      cache[target.key] = { revision: revision, blocks: blocks }
-      cache.shift while cache.size > CONVERSATION_BLOCKS_CACHE_LIMIT
-      blocks
+    def chat_blocks_for_agent(target)
+      AgentChatLog.new(target).chat_blocks
+    end
+
+    # Validates cached blocks against this agent's own files, so writes to the
+    # shared agents file by other agents do not invalidate it. Size is included
+    # with a nanosecond mtime to catch same-tick appends. Live-run blocks depend
+    # on pid, finished_at and the latest run, which live in the agent record.
+    def conversation_cache_revision(target)
+      files = [target.raw_log_path, target.memory_path, target.attachments_path, target.pull_request_catalog_path]
+      stamps = files.map do |path|
+        stat = path && File.stat(path)
+        stat ? [stat.mtime.to_i, stat.mtime.nsec, stat.size] : nil
+      rescue SystemCallError
+        nil
+      end
+      [stamps, target.pid, target.finished_at&.to_f, target.runs.last&.run_id]
     end
 
     def conversation_digest_for(blocks)
@@ -3331,12 +3354,14 @@ module HQ
       }
     end
 
-    def conversation_for_agent(target)
-      blocks = AgentChatLog.new(target).chat_blocks
+    def project_conversation_blocks(target, blocks)
       return conversation_messages(target) if blocks.empty?
 
-      reference_context = delegation_reference_context
+      reference_context = nil
       blocks.map do |block|
+        if delegation_reference?(block.metadata)
+          reference_context ||= delegation_reference_context
+        end
         content, metadata = sanitized_delegation_block(block.content.to_s, block.metadata, reference_context:)
         if metadata.is_a?(Hash) && !metadata["sleep_recovery_for_incident_id"].to_s.empty? &&
            !metadata["circuit_breaker_recovery"].is_a?(Hash)
@@ -3399,6 +3424,15 @@ module HQ
         "stopped_at" => message_metadata["sleep_recovery_observed_at"] || incident&.dig("observed_at"),
         "queue_work_batch_id" => batch["id"]
       }.compact
+    end
+
+    def delegation_reference?(metadata)
+      return false unless metadata.is_a?(Hash)
+
+      author = metadata["message_author"]
+      return true if metadata["agent_reference"].is_a?(Hash)
+
+      author.is_a?(Hash) && author["type"] == "agent" && !author["agent_key"].to_s.empty?
     end
 
     def conversation_messages(target)
@@ -3537,7 +3571,7 @@ module HQ
       expected_entry_ids = queue_action_entry_ids(attrs, "expected_entry_ids", allow_empty: true)
       result = @agent_store.process_prompt_queue_entries!(key, entry_ids:, expected_entry_ids:)
       target = result.fetch("agent")
-      @conversation_blocks_cache&.delete(key.to_s)
+      @conversation_blocks_cache.delete(key)
       @agent_activity_snapshot.upsert!(target)
       result.reject { |name, _value| name == "agent" }.merge(agent: agent_payload(target))
     rescue ArgumentError => e
@@ -3551,7 +3585,7 @@ module HQ
         key, entry_ids:, expected_entry_ids:, reason: attrs["reason"]
       )
       target = result.fetch("agent")
-      @conversation_blocks_cache&.delete(key.to_s)
+      @conversation_blocks_cache.delete(key)
       @agent_activity_snapshot.upsert!(target)
       result.reject { |name, _value| name == "agent" }.merge(agent: agent_payload(target))
     rescue ArgumentError => e
@@ -3562,7 +3596,7 @@ module HQ
       find_agent!(key)
       result = @agent_store.discard_prompt_queue!(key, reason: attrs["reason"])
       target = result.fetch("agent")
-      @conversation_blocks_cache&.delete(key.to_s)
+      @conversation_blocks_cache.delete(key)
       @agent_activity_snapshot.upsert!(target)
       {
         discarded: result.fetch("discarded"),
@@ -3603,7 +3637,7 @@ module HQ
       raise Error.new("Dispositions must be an array", status: 400) unless dispositions.is_a?(Array)
 
       result = @agent_store.complete_queue_work!(key, batch_id:, dispositions:)
-      @conversation_blocks_cache&.delete(key.to_s)
+      @conversation_blocks_cache.delete(key)
       @agent_activity_snapshot.upsert!(result.fetch("agent"))
       result.reject { |name, _value| name.to_s == "agent" }
     rescue ArgumentError => e
@@ -3851,6 +3885,7 @@ module HQ
     end
 
     def publish_context_replacement!(source, target, archive_source:)
+      @conversation_blocks_cache.delete(source.key) if archive_source
       context_replacement_follow_up("remove source activity snapshot") { @agent_activity_snapshot.remove!(source.key) } if archive_source
       context_replacement_follow_up("reconcile source notification") do
         @push_notification_store.reconcile_agent!(source.key, state: "archived", archived_at: Time.now)
@@ -3948,6 +3983,7 @@ module HQ
 
       archived_callback_count = target.queued_prompts.count { |entry| entry["source"] == "delegation_callback" }
       archive_path = @agent_store.archive_agent!(target.key)
+      @conversation_blocks_cache.delete(target.key)
       @agent_activity_snapshot.remove!(target.key)
       @push_notification_store.reconcile_agent!(target.key, state: "archived", archived_at: Time.now)
       schedule_reconciled = reconcile_archived_schedule_agent(target)
@@ -3982,6 +4018,7 @@ module HQ
 
         archived_callback_count = target.queued_prompts.count { |entry| entry["source"] == "delegation_callback" }
         archive_path = @agent_store.archive_agent!(target.key)
+        @conversation_blocks_cache.delete(target.key)
         @agent_activity_snapshot.remove!(target.key)
         @push_notification_store.reconcile_agent!(target.key, state: "archived", archived_at: Time.now)
         archived << {
