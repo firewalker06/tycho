@@ -643,6 +643,18 @@ module RemoteServerTest
         assert(stages["total"] >= stages["agent_load"] + stages["block_build"] + stages["json_encode"] - 1,
                "expected total to cover the exclusive stages: #{stages}")
 
+        reading = Net::HTTP.start("127.0.0.1", port) do |http|
+          http.put("/agents/#{created[:key]}/reading", "{}", "Content-Type" => "application/json")
+        end
+        assert(reading.code == "200", "expected the reading request to succeed, got #{reading.code}")
+        reading_stages = server_timing_metrics(reading["Server-Timing"])
+        assert(reading_stages.key?("agent_load") && reading_stages.key?("total"),
+               "expected the reading path to report the cached agent lookup, got #{reading["Server-Timing"].inspect}")
+
+        tail = Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/agents/#{created[:key]}/conversation?limit=50"))
+        assert(tail.code == "200" && server_timing_metrics(tail["Server-Timing"]).key?("block_build"),
+               "expected the first-paint tail request to report block_build, got #{tail["Server-Timing"].inspect}")
+
         cached = Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/servers/activity"))
         assert(server_timing_metrics(cached["Server-Timing"]).key?("total"),
                "expected cached reads to report a total, got #{cached["Server-Timing"].inspect}")
