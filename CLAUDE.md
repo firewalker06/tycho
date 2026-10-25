@@ -48,6 +48,7 @@ TYCHO_REMOTE_UI_WORKSPACE_ONLY=1 bin/remote-ui-smoke
 TYCHO_REMOTE_UI_WORKSPACE_ONLY=1 TYCHO_REMOTE_UI_CAPTURE_DIR=/tmp/tycho-workspace-captures bin/remote-ui-smoke
 TYCHO_REMOTE_UI_DELEGATION_ONLY=1 bin/remote-ui-smoke
 TYCHO_REMOTE_UI_POLLING_BUDGET_ONLY=1 bin/remote-ui-smoke
+TYCHO_REMOTE_UI_LARGE_CONVERSATION_ONLY=1 bin/remote-ui-smoke
 TYCHO_REMOTE_UI_SUMMARY_ATTACHMENTS_ONLY=1 bin/remote-ui-smoke
 bundle exec ruby -c bin/tycho
 bundle exec ruby test/registry_test.rb
