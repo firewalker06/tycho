@@ -105,6 +105,7 @@ module RemoteServerTest
     assert_serve_command_accepts_daemon_mode
     assert_remote_push_subscription_lifecycle
     assert_remote_agent_push_notifications
+    assert_cached_agent_reads_skip_agent_load
     assert_queue_failure_notification_lifecycle
     assert_remote_search_index_includes_agents_and_projects
     assert_remote_skills_payload_uses_discovery
@@ -5991,6 +5992,39 @@ module RemoteServerTest
       assert(disabled[:subscription_count].zero?, "expected disabled subscription to be excluded from count")
       assert(!service.push_status("endpoint" => "https://push.example.test/subscription/1")[:subscribed],
              "expected push config to expose a disabled browser subscription as inactive")
+    end
+  end
+
+  def assert_cached_agent_reads_skip_agent_load
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      agent = HQ::ManagedAgent.new(key: "cached-1", name: "Cached", project_key: "web", template_key: "default",
+                                   workspace: workspace, prompt: "Work.")
+      HQ::AgentStore.new([]).save([agent])
+      build = lambda do |max_age|
+        HQ::RemoteService.new(registry: registry, web_push_notifier: RecordingPushNotifier.new,
+                              agent_list_cache: HQ::AgentListCache.new(max_age: max_age))
+      end
+      reads = lambda do |service|
+        [service.schedules, service.setup_summary.except(:logs), service.project("web").except(:recent_agent_summary)]
+      end
+      baseline = reads.call(build.call(0))
+
+      cached = build.call(60)
+      cached.send(:load_all_agents)
+      store = cached.instance_variable_get(:@agent_store)
+      store.define_singleton_method(:load_with_poll_events) { |**| raise "unexpected full agent load" }
+      timings = []
+      result = nil
+      3.times do
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        result = reads.call(cached)
+        timings << ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round(1)
+      end
+      assert(result == baseline, "expected cached schedules, setup summary and project reads to match uncached reads")
+      puts "cached agent reads (schedules+setup/summary+project) ms: #{timings.inspect}"
     end
   end
 

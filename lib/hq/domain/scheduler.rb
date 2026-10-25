@@ -49,11 +49,12 @@ module HQ
       true
     end
 
-    def list(now: Time.now)
+    # agents: optional shared read-only list; when given, list skips the polling agent load.
+    def list(now: Time.now, agents: nil)
       store.with_lock do
         schedules = schedule_registry.schedules
         states = store.load
-        agents = load_agents
+        agents ||= load_agents
         changed = false
         rows = schedules.map do |schedule|
           state = store.state_for(states, schedule.key)
