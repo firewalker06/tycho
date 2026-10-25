@@ -2196,6 +2196,21 @@ select {
   align-items: flex-start;
 }
 
+.harness-label,
+.harness-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  vertical-align: middle;
+}
+
+.harness-mark {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
 .harness-refresh-button {
   flex: 0 0 auto;
   min-height: 44px;

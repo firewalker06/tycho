@@ -6686,6 +6686,18 @@ module RemoteServerTest
     assert(provenance.include?("@fontsource-variable/plus-jakarta-sans 5.3.0") &&
            provenance.include?("02b28c06b126c852a5b966b44aef777ca923f6f6"),
            "expected Plus Jakarta Sans provenance to identify its exact Fontsource release")
+    HQ::RemoteUI::HARNESS_LOGO_ASSETS.each do |logo_route, logo_path|
+      logo_request = HQ::RemoteServer.const_get(:Request).new(method: "GET", path: logo_route, headers: {}, body: "")
+      assert(server.send(:ui_request?, logo_request), "expected #{logo_route} to be a public UI route")
+      logo = server.send(:route_ui, logo_route)
+      assert(logo[:content_type] == "image/svg+xml; charset=utf-8", "expected #{logo_route} to use the SVG MIME type")
+      assert(logo[:body] == File.binread(logo_path), "expected #{logo_route} to serve the upstream file byte-for-byte")
+    end
+    assert(File.read(HQ::RemoteUI::JS_PATH).include?("const HARNESS_MARKS = {") &&
+           File.read(HQ::RemoteUI::JS_PATH).include?("function harnessLabelHtml(name)"),
+           "expected Remote UI to map built-in harness marks through the shared label helper")
+    assert(!File.read(HQ::RemoteUI::JS_PATH)[/const HARNESS_MARKS = \{.*?\n\};/m].to_s.include?("codex"),
+           "expected Codex to keep a text-only label until an official mark is confirmed")
     %w[
       --ds-background-canvas
       --ds-text-primary

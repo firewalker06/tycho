@@ -20,6 +20,7 @@ module HQ
     PWA_ICON_512_PATH = File.join(ROOT, "assets", "pwa-icon-512.png")
     PWA_ICON_MASKABLE_512_PATH = File.join(ROOT, "assets", "pwa-icon-maskable-512.png")
     NOTIFICATION_TRACE_PATH = File.join(ROOT, "assets", "notification_trace.js")
+    HARNESS_LOGO_ROOT = File.join(ROOT, "assets", "harness-logos")
     SERVICE_WORKER_PATH = File.join(ROOT, "assets", "service-worker.js")
     PLUS_JAKARTA_SANS_ROOT = File.join(ROOT, "assets", "fonts", "plus-jakarta-sans")
     PLUS_JAKARTA_SANS_LICENSE_PATH = File.join(PLUS_JAKARTA_SANS_ROOT, "LICENSE.md")
@@ -38,6 +39,11 @@ module HQ
       "pwa-icon-512" => PWA_ICON_512_PATH,
       "pwa-icon-maskable-512" => PWA_ICON_MASKABLE_512_PATH
     }.freeze
+    HARNESS_LOGO_ASSETS = {
+      "/harness-logos/claude-spark-clay.svg" => File.join(HARNESS_LOGO_ROOT, "claude-spark-clay.svg"),
+      "/harness-logos/opencode-logo-dark-square.svg" => File.join(HARNESS_LOGO_ROOT, "opencode-logo-dark-square.svg"),
+      "/harness-logos/pi-logo-auto.svg" => File.join(HARNESS_LOGO_ROOT, "pi-logo-auto.svg")
+    }.freeze
     ASSET_VERSION_PATHS = [
       TEMPLATE_PATH,
       DESIGN_SYSTEM_TEMPLATE_PATH,
@@ -48,6 +54,7 @@ module HQ
       SERVICE_WORKER_PATH,
       NOTIFICATION_TRACE_PATH,
       *FONT_ASSETS.values,
+      *HARNESS_LOGO_ASSETS.values,
       *PNG_ASSETS.values
     ].freeze
     FAVICON_SVG = <<~SVG
@@ -144,6 +151,14 @@ module HQ
 
     def self.font_asset_route?(route)
       FONT_ASSETS.key?(route)
+    end
+
+    def self.harness_logo_asset(route)
+      asset_content(HARNESS_LOGO_ASSETS.fetch(route))
+    end
+
+    def self.harness_logo_route?(route)
+      HARNESS_LOGO_ASSETS.key?(route)
     end
 
     def self.asset_version
