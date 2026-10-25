@@ -7,6 +7,12 @@ require "tmpdir"
 ROOT = File.expand_path("..", __dir__)
 require File.join(ROOT, "test/support/test_environment")
 
+unsafe_killers = TestEnvironment.broad_process_killer_files(ROOT)
+unless unsafe_killers.empty?
+  warn "bin/test: broad process-name killers are forbidden: #{unsafe_killers.map { |path| path.delete_prefix("#{ROOT}/") }.join(", ")}"
+  exit 1
+end
+
 test_files = Dir.glob(File.join(ROOT, "test", "*_test.rb")).sort.map do |path|
   path.delete_prefix("#{ROOT}/")
 end

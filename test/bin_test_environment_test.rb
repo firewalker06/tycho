@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "fileutils"
 require "open3"
 require "rbconfig"
 require "tmpdir"
@@ -53,5 +54,18 @@ spawned = File.read(File.join(ROOT, "lib/hq/domain/managed_agent.rb"))
 missing = spawned - TestEnvironment::INHERITED_RUN_VARIABLES
 raise "managed_agent.rb sets unlisted variables: #{missing.join(", ")}" unless missing.empty?
 raise "spawn-variable scan found nothing" if spawned.empty?
+
+# 5. Test scripts cannot use broad process-name matching. Exercise the scanner
+# with a synthetic script. Do not execute the fixture command.
+Dir.mktmpdir("tycho-process-kill-guard-") do |root|
+  FileUtils.mkdir_p(File.join(root, "bin"))
+  fixture = File.join(root, "bin", "unsafe-smoke")
+  File.write(fixture, "#{["pk", "ill"].join} -f 'bin/test'\n")
+  unsafe = TestEnvironment.broad_process_killer_files(root)
+  raise "process-kill guard missed synthetic broad killer" unless unsafe == [fixture]
+end
+
+unsafe = TestEnvironment.broad_process_killer_files(ROOT)
+raise "broad process-name killer found in #{unsafe.join(", ")}" unless unsafe.empty?
 
 puts "bin_test_environment_test: ok"

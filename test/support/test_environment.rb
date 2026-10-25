@@ -36,6 +36,8 @@ module TestEnvironment
     TYCHO_SCHEDULES_ROOT
   ].freeze
 
+  BROAD_PROCESS_KILLERS = [["pk", "ill"].join, ["kill", "all"].join].freeze
+
   # Environment overrides for one bin/test command. A nil value removes the
   # variable from the child process.
   def self.command_env(home)
@@ -45,5 +47,11 @@ module TestEnvironment
 
   def self.clear_inherited_run_variables!
     INHERITED_RUN_VARIABLES.each { |name| ENV.delete(name) }
+  end
+
+  def self.broad_process_killer_files(root)
+    files = Dir.glob(File.join(root, "bin", "*")) + Dir.glob(File.join(root, "test", "**", "*"))
+    expression = /\b(?:#{BROAD_PROCESS_KILLERS.join("|")})\b/
+    files.select { |path| File.file?(path) && File.read(path).match?(expression) }
   end
 end
