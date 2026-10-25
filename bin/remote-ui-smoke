@@ -10580,6 +10580,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "summary_idle_stop_smoke")
       next
     end
+    if ENV["TYCHO_REMOTE_UI_POLLING_BUDGET_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "polling_budget_smoke")
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_ARCHIVE_CLONE_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "archive_clone_smoke")
       next

@@ -43,6 +43,24 @@ module RemoteUIConversationLoadingTest
         throw new Error(`${label}: expected ${expected}, got ${actual}`);
       }
 
+      const slowPollDelay = context.window.TychoRemoteHelpers.slowPollDelay;
+      const modeChecks = [
+        ["matching revision skips poll", conversationSnapshotRequestMode({ loaded: true, revision: "r1" }, "r1"), "none"],
+        ["remembered agent revision skips poll", conversationSnapshotRequestMode({ loaded: true, revision: "conv-9", agentRevision: "r1" }, "r1"), "none"],
+        ["changed revision fetches metadata", conversationSnapshotRequestMode({ loaded: true, revision: "conv-9", agentRevision: "r1" }, "r2"), "metadata"],
+        ["unloaded conversation fetches snapshot", conversationSnapshotRequestMode({ loaded: false }, "r1"), "snapshot"],
+      ];
+      const failedMode = modeChecks.find(([, actual, expected]) => actual !== expected);
+      if (failedMode) throw new Error(`${failedMode[0]}: expected ${failedMode[2]}, got ${failedMode[1]}`);
+      const slowChecks = [
+        ["fast request keeps interval", slowPollDelay(5000, 200, 1500), 5000],
+        ["slow request doubles interval", slowPollDelay(5000, 2000, 1500), 10000],
+        ["very slow request is capped at 4x", slowPollDelay(5000, 60000, 1500), 20000],
+        ["unknown duration keeps interval", slowPollDelay(5000, undefined, 1500), 5000],
+      ];
+      const failedSlow = slowChecks.find(([, actual, expected]) => actual !== expected);
+      if (failedSlow) throw new Error(`${failedSlow[0]}: expected ${failedSlow[2]}, got ${failedSlow[1]}`);
+
       const composerChecks = [
         ["normal agent", agentComposerState({}), "composer"],
         ["pending inquiry detail", agentComposerState({ awaiting_input: true }), "inquiry-loading"],
