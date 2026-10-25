@@ -51,7 +51,7 @@ module RemoteUIActivityReplacementRaceTest
         normalizeProjectResource: (project, server) => ({ ...project, server_key: server.key }),
         reconcileOptimisticPromptQueue: () => {},
         prunePullRequestDiffState: () => {},
-        REMOTE_HELPERS: { reconcileAgentDetail: (detail) => detail },
+        REMOTE_HELPERS: { reconcileAgentDetail: (detail) => detail, inquiryResolved: () => false },
       });
       Object.assign(context.state, {
         projects: [],
