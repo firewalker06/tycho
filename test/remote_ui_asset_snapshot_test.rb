@@ -16,6 +16,7 @@ module RemoteUIAssetSnapshotTest
     assert_delegation_ui_uses_typed_safe_references
     assert_delegation_callbacks_render_as_complete_delegated_agent_messages
     assert_delegated_summary_attention_icon_is_in_header
+    assert_started_agent_notice_uses_started_label_and_project
     assert_focused_detail_close_control
     assert_archived_agents_are_reference_only_and_read_only
     assert_agent_status_icons_use_lucide_without_badges
@@ -124,6 +125,26 @@ module RemoteUIAssetSnapshotTest
     ]
     missing = required.reject { |fragment| javascript.include?(fragment) }
     raise "missing lightweight setup bootstrap contract: #{missing.join(', ')}" unless missing.empty?
+  end
+
+  def assert_started_agent_notice_uses_started_label_and_project
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
+    started_renderer = javascript[/function renderDelegationEventBlock.*?^}/m].to_s
+
+    required = [
+      'if (block?.metadata?.event === "agent_started") {',
+      'delegation-started-event',
+      '<span class="delegation-event-brand">STARTED</span>',
+      'renderAgentReference(reference, { projectName })',
+      'return findProject(key)?.name || key;',
+      '${projectPart} · ${escapeHtml(serverHealth)}'
+    ]
+    missing = required.reject { |fragment| javascript.include?(fragment) || started_renderer.include?(fragment) }
+    raise "missing started agent notice contract: #{missing.join(", ")}" unless missing.empty?
+    raise "started agent notice still renders the Started agent text" if started_renderer[/agent_started.*?\n  }\n/m].to_s.include?("Started agent")
+    raise "started agent icon still has a border" unless css.include?(".delegation-started-event .agent-reference .status-mark {") &&
+      css[/\.delegation-started-event \.agent-reference \.status-mark \{.*?\}/m].to_s.include?("border: 0;")
   end
 
   def assert_delegated_summary_attention_icon_is_in_header

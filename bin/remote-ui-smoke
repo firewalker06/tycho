@@ -4147,8 +4147,9 @@ title: !123 value
             !delegationEventContract.callbackResult.includes("Preserved safe Markdown rendering.") ||
             delegationEventContract.callbackHasDetails ||
             Math.abs(delegationEventContract.callbackRight - delegationEventContract.messageListRight) > 1 ||
-            !delegationEventContract.startedHeader.includes("TYCHO") ||
-            !delegationEventContract.startedHeader.includes("Started agent")) {
+            !delegationEventContract.startedHeader.includes("STARTED") ||
+            delegationEventContract.startedHeader.includes("Started agent") ||
+            delegationEventContract.startedHeader.includes("TYCHO")) {
           throw new Error(`Delegation callback presentation is incorrect: ${JSON.stringify(delegationEventContract)}`);
         }
         await page.setViewportSize({ width: 390, height: 844 });
