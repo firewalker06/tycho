@@ -29,6 +29,19 @@ module RemoteUIStateReconciliationTest
         throw new Error(`catalog reconciliation did not mark the merged detail stale: ${JSON.stringify(reconciled)}`);
       }
 
+      const inquiryDetail = { key: "agent-1", revision: "same", awaiting_input: true, latest_inquiry: { id: "inquiry-1" } };
+      const resolvedDetail = helpers.reconcileAgentDetail(inquiryDetail, { key: "agent-1", revision: "same", awaiting_input: false });
+      if (resolvedDetail.detail_stale !== true) {
+        throw new Error(`resolved inquiry did not mark the cached detail stale: ${JSON.stringify(resolvedDetail)}`);
+      }
+      const pendingDetail = helpers.reconcileAgentDetail(inquiryDetail, { key: "agent-1", revision: "same", awaiting_input: true });
+      if (pendingDetail.detail_stale === true || pendingDetail.latest_inquiry?.id !== "inquiry-1") {
+        throw new Error(`pending inquiry was wrongly invalidated: ${JSON.stringify(pendingDetail)}`);
+      }
+      if (helpers.inquiryResolved({ key: "agent-1" }, { awaiting_input: false })) {
+        throw new Error("agent without a cached inquiry was marked as resolved");
+      }
+
       const activityServers = helpers.mergeActivityServers(
         [
           { key: "healthy", ready: true, agents: [{ key: "healthy-old" }] },
