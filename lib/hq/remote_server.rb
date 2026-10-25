@@ -3161,7 +3161,7 @@ module HQ
     # pass -- see Fizzy #226 (iOS Safari PWA content-process crash from an
     # unbounded conversation payload/DOM). Callers page backward from the tail
     # with `before` (see #conversation_snapshot).
-    CONVERSATION_TAIL_DEFAULT_LIMIT = 200
+    CONVERSATION_TAIL_DEFAULT_LIMIT = 50
     CONVERSATION_TAIL_MAX_LIMIT = 2_000
     # Block count alone does not bound the payload: one archived agent's
     # 200-block tail was 4.8 MB of tool output. The tail is also limited by
@@ -3172,11 +3172,12 @@ module HQ
     CONVERSATION_TOOL_CONTENT_LIMIT = 8 * 1024
     CONVERSATION_TRUNCATABLE_KINDS = %w[tool_call tool_result].freeze
     # Digest only needs to detect "did anything change", not describe the
-    # entire transcript. Fingerprint the ordinary rendered tail (plus the
+    # entire transcript. Fingerprint a tail wider than the 50-block first paint
+    # window, so loaded older pages stay observable (plus the
     # total count), rather than `JSON.generate`-ing a whole multi-megabyte
     # block array. This keeps /conversation/metadata polling bounded while
     # making metadata-only updates to every normally visible block observable.
-    CONVERSATION_DIGEST_WINDOW_SIZE = CONVERSATION_TAIL_DEFAULT_LIMIT
+    CONVERSATION_DIGEST_WINDOW_SIZE = 200
     CONVERSATION_METADATA_FINGERPRINT_DEPTH = 4
     CONVERSATION_METADATA_FINGERPRINT_ITEMS = 8
 
