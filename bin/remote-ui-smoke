@@ -517,6 +517,25 @@ def run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_
   raise "#{test_name} failed" unless status.success?
 end
 
+# Seeds enough alternating user/assistant messages to exceed the first-paint
+# window several times, using the same isolated config the fixture server uses.
+def seed_conversation_tail_fixture(env, agent_key, count)
+  script = <<~RUBY2
+    require #{File.join(ROOT, "lib", "hq", "remote_server").inspect}
+    registry = HQ::Registry.new(path: ENV.fetch("TYCHO_CONFIG_PATH"), system_prompts_path: ENV.fetch("TYCHO_SYSTEM_PROMPTS_PATH"))
+    agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == #{agent_key.inspect} }
+    raise "Agent not found" unless agent
+    memory = HQ::AgentMemory.new(agent)
+    #{count}.times do |index|
+      created_at = Time.now - (#{count} - index)
+      text = "Tail message \#{index}. " + "Synthetic filler text. " * 12
+      index.even? ? memory.append_user_message!(text, created_at:) : memory.append_assistant_message!(text, created_at:)
+    end
+  RUBY2
+  out, status = Open3.capture2e(env, RbConfig.ruby, "-e", script, chdir: ROOT)
+  raise "Failed to seed conversation tail fixture: #{out}" unless status.success?
+end
+
 def write_summary_idle_stop_fixture(logs_dir, agent_key)
   path = File.join(logs_dir, "managed_agents.json")
   agents = JSON.parse(File.read(path))
@@ -10612,7 +10631,12 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "conversation_spacing_smoke")
       exit 0
     end
-    if ENV["TYCHO_REMOTE_UI_CONVERSATION_ANIMATION_ONLY"] == "1"
+if ENV["TYCHO_REMOTE_UI_CONVERSATION_TAIL_ONLY"] == "1"
+  seed_conversation_tail_fixture(env, agent_key, 180)
+  run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "conversation_tail_pagination_smoke")
+  exit 0
+end
+if ENV["TYCHO_REMOTE_UI_CONVERSATION_ANIMATION_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "conversation_animation_smoke")
       exit 0
     end
