@@ -6,9 +6,9 @@ This page records where Tycho shows harness marks, where it does not, and why. A
 
 | Surface | Marks shown | Notes |
 | --- | --- | --- |
-| Remote UI agent rows and agent cards | Claude, OpenCode, Pi | The harness name stays as text next to the mark. |
-| Remote UI Settings harness summaries | Claude, OpenCode, Pi | The harness name stays as text in the summary heading. |
-| Remote UI native `<select>` options, detail key-value rows, form summaries | None | Native options cannot show images. Detail rows and summaries are plain text. |
+| Remote UI agent rows and agent cards | Codex, Claude, OpenCode, Pi | The harness name stays as text next to the mark. |
+| Remote UI Settings harness summaries and agent `Harness` rows, skill installation rows | Codex, Claude, OpenCode, Pi | The harness name stays as text in the summary heading. |
+| Remote UI native `<select>` options, form summaries, Settings/schedule/project selectors | None | Native options cannot show images. Form summaries are plain text. |
 | TUI (`lib/hq/ui`), CLI output, docs, README | None | Terminal output and prose stay text-only. |
 
 ## Marks by harness
@@ -18,14 +18,20 @@ This page records where Tycho shows harness marks, where it does not, and why. A
 | Claude (`claude`) | Claude Spark, clay color | Official Anthropic press kit. The clay color reads on light and dark backgrounds. |
 | OpenCode (`opencode`) | Dark square mark | Official asset from the MIT-licensed OpenCode repository. The Remote UI is dark only, so the dark-square variant is used. |
 | Pi (`pi`) | Pi logo | Official asset linked from the Pi project README. The mark uses fixed colors that read on the dark surface. |
-| OpenAI / Codex (`codex`) | None, text label only | No official, downloadable OpenAI mark was reachable. The OpenAI brand page (https://openai.com/brand/) returned HTTP 403 to automated fetches, and its public guidance does not link a logo file. Third-party icon sets were not used. Add a mark only after an official asset and its usage terms are confirmed. |
+| OpenAI / Codex (`codex`) | OpenAI blossom, dark-background file | Taken from `docs/src/assets/dark-logo.svg` in the OpenAI-owned MIT repository https://github.com/openai/openai-agents-js. The downloadable brand portal (https://openai.com/brand/) returned HTTP 403 to automated fetches, so the repository file is the official source used. Third-party icon sets were not used. The mark is shown without the wordmark. |
 
 ## Usage rules applied
 
 - Marks are unchanged upstream files. Tycho does not recolor, crop, or redraw them.
 - Marks are decorative (`alt=""`, `aria-hidden="true"`) because the harness name is always shown as adjacent text.
 - The Remote UI is dark only (`color-scheme: dark`), so light-background variants are not shipped.
+- Harness identity is also shown in the agent detail `Harness` row, the agent Settings `Harness` row, and the skill installation rows. Native `<select>` options, prose, and the TUI stay text-only.
 - Custom harnesses do not get marks. Only built-in harness keys are mapped.
+
+## Source limits
+
+- OpenAI brand portal: https://openai.com/brand/ returned HTTP 403 to automated fetches. Its public text describes a non-exclusive, revocable license and a no-wordmark-pairing rule. Maintainers should check the portal in a browser before a public release.
+- The OpenAI Cookbook also ships an OpenAI logomark (https://github.com/openai/openai-cookbook/blob/main/examples/agents_sdk/deployment_manager/frontend/src/openai-logomark.svg). Tycho uses the Agents SDK file because it has an explicit dark variant.
 
 ## Trademark note
 

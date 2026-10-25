@@ -6696,8 +6696,13 @@ module RemoteServerTest
     assert(File.read(HQ::RemoteUI::JS_PATH).include?("const HARNESS_MARKS = {") &&
            File.read(HQ::RemoteUI::JS_PATH).include?("function harnessLabelHtml(name)"),
            "expected Remote UI to map built-in harness marks through the shared label helper")
-    assert(!File.read(HQ::RemoteUI::JS_PATH)[/const HARNESS_MARKS = \{.*?\n\};/m].to_s.include?("codex"),
-           "expected Codex to keep a text-only label until an official mark is confirmed")
+    marks = File.read(HQ::RemoteUI::JS_PATH)[/const HARNESS_MARKS = \{.*?\n\};/m].to_s
+    assert(marks.include?('codex: "/harness-logos/openai-blossom-dark.svg"'),
+           "expected Codex to use the official OpenAI blossom mark")
+    assert(marks.include?('claude: "/harness-logos/claude-spark-clay.svg"') &&
+           marks.include?('opencode: "/harness-logos/opencode-logo-dark-square.svg"') &&
+           marks.include?('pi: "/harness-logos/pi-logo-auto.svg"'),
+           "expected every built-in harness mark to map to its packaged upstream file")
     %w[
       --ds-background-canvas
       --ds-text-primary
@@ -7373,7 +7378,7 @@ module RemoteServerTest
     assert(js[:body].include?("kv-copy-button"),
            "expected copyable key/value rows to render a copy control")
     assert(js[:body].include?('["Raw log", agent.log_path]') &&
-           js[:body].include?('label === "Status" ? agentStatusKv(agent, { copyable: true }) : copyableKv(label, value)'),
+           js[:body].include?('label === "Status" ? agentStatusKv(agent, { copyable: true }) : label === "Harness" ? kv(label, value, { copyable: true, valueHtml: harnessLabelHtml(value) }) : copyableKv(label, value)'),
            "expected Conversation settings rows to be copyable")
     assert(js[:body].include?('copyableKv("Path", project.path)') &&
            js[:body].include?('copyableKv("Templates",'),
