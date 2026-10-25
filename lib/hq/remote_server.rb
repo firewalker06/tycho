@@ -23,6 +23,7 @@ require_relative "domain/attachment_normalizer"
 require_relative "domain/constants"
 require_relative "domain/agent_attachment_store"
 require_relative "domain/agent_activity_snapshot"
+require_relative "domain/agent_list_cache"
 require_relative "domain/agent_chat_log"
 require_relative "domain/agent_store"
 require_relative "domain/context_handoff"
@@ -58,6 +59,7 @@ module HQ
     DEFAULT_HOST = "127.0.0.1"
     DEFAULT_PORT = 7373
     AGENT_PUSH_POLL_INTERVAL = 5
+    AGENT_LIST_CACHE_MAX_AGE = AGENT_PUSH_POLL_INTERVAL * 3
     MAX_CLIENT_WORKERS = 32
     CLIENT_DRAIN_TIMEOUT = 5
     CLIENT_READ_TIMEOUT = 10
@@ -89,6 +91,7 @@ module HQ
                    restart_command: nil, token: HQ.env("REMOTE_TOKEN"), logger: HQ.logger, output: $stdout,
                    daemonize_after_startup: false, daemon_log_path: REMOTE_DAEMON_LOG_FILE, daemonizer: nil,
                    resource_catalog: nil, resource_snapshot_path: nil, agent_activity_snapshot: nil,
+                   agent_list_cache: nil,
                    registry: nil, clock: -> { Time.now })
       @host = host.to_s.empty? ? DEFAULT_HOST : host.to_s
       @port = port.to_i.positive? ? port.to_i : DEFAULT_PORT
@@ -104,6 +107,7 @@ module HQ
       @resource_catalog = resource_catalog || RemoteResourceCatalog.new(snapshot_path: resource_snapshot_path)
       @agent_activity_snapshot = agent_activity_snapshot || AgentActivitySnapshot.new
       @conversation_blocks_cache = ConversationBlocksCache.new
+      @agent_list_cache = agent_list_cache || AgentListCache.new(max_age: AGENT_LIST_CACHE_MAX_AGE)
       @registry = registry
       @clock = clock
       @client_workers = {}
@@ -295,7 +299,8 @@ module HQ
         auth_required: !@token.empty?,
         restartable: restartable?,
         agent_activity_snapshot: @agent_activity_snapshot,
-        conversation_blocks_cache: @conversation_blocks_cache
+        conversation_blocks_cache: @conversation_blocks_cache,
+        agent_list_cache: @agent_list_cache
       )
       result = route(service, request.method, request.path, json_body(request), request)
       status = result.fetch(:status, 200)
@@ -344,7 +349,8 @@ module HQ
                                   public_url: @public_url,
                                   auth_required: !@token.empty?,
                                   agent_activity_snapshot: @agent_activity_snapshot,
-                                  conversation_blocks_cache: @conversation_blocks_cache)
+                                  conversation_blocks_cache: @conversation_blocks_cache,
+                                  agent_list_cache: @agent_list_cache)
       service.dispatch_agent_push_notifications!
     rescue StandardError => e
       HQ.logger.warn("Push") { "Agent push notification poll failed: #{e.class} - #{e.message}" }
@@ -1870,6 +1876,7 @@ module HQ
                    pull_request_diff_store: PullRequestDiff::Store.new,
                    agent_activity_snapshot: AgentActivitySnapshot.new,
                    conversation_blocks_cache: ConversationBlocksCache.new,
+                   agent_list_cache: AgentListCache.new,
                    clock: -> { Time.now })
       @registry = registry
       @clock = clock
@@ -1899,6 +1906,7 @@ module HQ
       @pull_request_diff_store = pull_request_diff_store
       @agent_activity_snapshot = agent_activity_snapshot
       @conversation_blocks_cache = conversation_blocks_cache
+      @agent_list_cache = agent_list_cache
       @pull_request_fetch_lock = Mutex.new
       @pull_request_fetches = {}
       @archived_query_lock = Mutex.new
@@ -4235,7 +4243,14 @@ module HQ
     end
 
     def load_agents_with_events
-      @agent_store.load_with_poll_events
+      @agent_store.load_with_poll_events(
+        after_load: ->(agents) { @agent_list_cache.replace!(agents, signature: @agent_list_cache.signature) }
+      )
+    end
+
+    # Cached lookup that skips the full load and its reconciliation; the push timer refreshes the snapshot.
+    def cached_agent(key)
+      @agent_list_cache.fetch(key, usage_metrics_store: @agent_store.usage_metrics_store)
     end
 
     def agent_run_debug_payload(agent)
@@ -4380,7 +4395,10 @@ module HQ
     end
 
     def find_agent!(key)
-      active = load_all_agents.find { |agent| agent.key == key.to_s }
+      cached = cached_agent(key)
+      return cached if cached.is_a?(ManagedAgent)
+
+      active = cached == :unknown ? nil : load_all_agents.find { |agent| agent.key == key.to_s }
       return active if active
 
       if visible_archived_agent(key)
@@ -4413,7 +4431,10 @@ module HQ
     end
 
     def find_agent_reference!(key)
-      load_all_agents.find { |agent| agent.key == key.to_s } ||
+      cached = cached_agent(key)
+      return cached if cached.is_a?(ManagedAgent)
+
+      (cached == :unknown ? nil : load_all_agents.find { |agent| agent.key == key.to_s }) ||
         readable_archived_agent(key) ||
         raise(Error.new("Unknown agent: #{key}", status: 404))
     end
@@ -5280,7 +5301,9 @@ module HQ
       @agent_store.delegation_coordinator.relationship_index
     end
 
-    def delegation_reference_context(active_agents = load_all_agents)
+    def delegation_reference_context(active_agents = nil)
+      active_agents ||= @agent_list_cache.readonly_agents(usage_metrics_store: @agent_store.usage_metrics_store) ||
+                        load_all_agents
       active = active_agents.to_h { |agent| [agent.key, agent] }
       archived = @agent_archive_store.all.to_h { |record| [record.agent.key, record.agent] }
       {
