@@ -1115,7 +1115,7 @@ Sends a test notification to an enabled subscription. Automatic agent-transition
 
 ### `GET /projects`
 
-Returns active projects after refreshing metadata:
+Returns active projects from cached state. Reads never run git; the server refreshes git metadata (branch, commit, dirty count) about every 30 seconds in the background, and a failed refresh keeps the last good values:
 
 ```json
 {
@@ -1134,6 +1134,8 @@ Returns active projects after refreshing metadata:
 ```
 
 ### `GET /projects/{key}`
+
+Returns the same cached git metadata as `GET /projects`, so branch, commit, and dirty counts can lag the workspace by up to one refresh interval. `GET /projects/{key}/git/status` still runs a live `git status` for the diff view.
 
 ### `GET /projects/{key}/workspace?path={relative}&offset={n}&limit={n}`
 

@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "open3"
 require_relative "constants"
 require_relative "log_paths"
 
@@ -81,8 +82,19 @@ module HQ
       "#{repo}/commit/#{sha}"
     end
 
+    # Runs git, so call it from a background refresh, never from a read path.
+    # Returns the new git values, or nil when the read failed and the previous values stay.
     def refresh_metadata!
-      parse_git_status
+      metadata = read_git_metadata
+      apply_git_metadata(metadata) if metadata
+      metadata
+    end
+
+    def apply_git_metadata(metadata)
+      @commit_hash = metadata[:commit_hash]
+      @branch = metadata[:branch]
+      @dirty_files = metadata[:dirty_files]
+      self
     end
 
     def log_dir
@@ -109,22 +121,29 @@ module HQ
       slug.empty? ? @key : slug
     end
 
-    def parse_git_status
-      git_dir = File.join(@path, ".git")
-      return unless File.exist?(git_dir)
+    def read_git_metadata
+      return nil unless File.exist?(File.join(@path, ".git"))
 
-      @commit_hash = `git -C #{@path.shellescape} rev-parse --short HEAD 2>/dev/null`.strip
-      @commit_hash = nil if @commit_hash.to_s.empty?
+      porcelain, status = Open3.capture2("git", "-C", @path, "status", "--porcelain", err: File::NULL)
+      unless status.success?
+        HQ.logger.warn("Project") { "Git status failed for #{@key}; keeping cached metadata" }
+        return nil
+      end
 
-      @branch = `git -C #{@path.shellescape} branch --show-current 2>/dev/null`.strip
-      @branch = nil if @branch.to_s.empty?
+      {
+        commit_hash: git_output("rev-parse", "--short", "HEAD"),
+        branch: git_output("branch", "--show-current"),
+        dirty_files: porcelain.lines.count
+      }
+    rescue StandardError => e
+      HQ.logger.warn("Project") { "Git metadata read failed for #{@key}: #{e.class} - #{e.message}; keeping cached metadata" }
+      nil
+    end
 
-      porcelain = `git -C #{@path.shellescape} status --porcelain 2>/dev/null`
-      @dirty_files = porcelain.lines.count
-    rescue StandardError
-      @commit_hash = nil
-      @branch = nil
-      @dirty_files = 0
+    def git_output(*args)
+      output, status = Open3.capture2("git", "-C", @path, *args, err: File::NULL)
+      value = output.strip
+      status.success? && !value.empty? ? value : nil
     end
   end
 end
