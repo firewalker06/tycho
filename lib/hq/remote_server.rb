@@ -2349,7 +2349,7 @@ module HQ
     end
 
     def schedules
-      scheduler.list
+      scheduler.list(agents: cached_all_agents)
     rescue ScheduleRegistry::Error => e
       raise Error.new(e.message, status: 400)
     end
@@ -2664,7 +2664,7 @@ module HQ
     def project(key)
       target = find_project!(key)
       refresh_project!(target)
-      agents = load_agents.select { |agent| agent.project_key == target.key }
+      agents = visible_agents(cached_all_agents || load_all_agents).select { |agent| agent.project_key == target.key }
       project_detail_payload(target, agents:)
     end
 
@@ -2774,7 +2774,7 @@ module HQ
     end
 
     def setup_payload
-      all_agents = load_all_agents
+      all_agents = cached_all_agents || load_all_agents
       agents = visible_agents(all_agents)
       hidden_projects = HQ::Visibility.hidden_projects(@projects)
       hidden_agent_count = HQ::Visibility.hidden_agents(all_agents, @projects).length
@@ -4272,6 +4272,11 @@ module HQ
       @agent_store.load_with_poll_events(
         after_load: ->(agents) { @agent_list_cache.replace!(agents, signature: @agent_list_cache.signature) }
       )
+    end
+
+    # Shared read-only agents from a valid snapshot, or nil; callers must not mutate them.
+    def cached_all_agents
+      @agent_list_cache.readonly_agents(usage_metrics_store: @agent_store.usage_metrics_store)
     end
 
     # Cached lookup that skips the full load and its reconciliation; the push timer refreshes the snapshot.
