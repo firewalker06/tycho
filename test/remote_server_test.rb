@@ -6001,7 +6001,8 @@ module RemoteServerTest
       service = HQ::RemoteService.new(
         registry: registry,
         web_push_notifier: notifier,
-        agent_activity_snapshot: activity_snapshot
+        agent_activity_snapshot: activity_snapshot,
+        agent_list_cache: HQ::AgentListCache.new(max_age: 60)
       )
       started_at = Time.now - 60
 
@@ -6173,8 +6174,11 @@ module RemoteServerTest
       queued_result = service.send(:dispatch_agent_push_events, [queued_event], agents: [queued_agent])
       assert(queued_result[:events].zero?, "expected queue-dispatched runs to skip push notifications")
       assert(notifier.payloads.length == 2, "expected queued completion not to send a push payload")
+      service.send(:load_all_agents) # prime the shared cache so the reading call takes the cached path
       read_payload = service.mark_agent_read("web-agent-2")
       assert(!read_payload[:unread], "expected explicit reading mutation to clear unread state")
+      read_activity = activity_snapshot.snapshot[:agents].find { |agent| agent[:key] == "web-agent-2" }
+      assert(!read_activity[:unread], "expected the activity snapshot to show the agent as read right after reading")
       read_agent = service.agents.find { |agent| agent[:key] == "web-agent-2" }
       assert(!read_agent[:unread], "expected explicit reading mutation to persist")
 

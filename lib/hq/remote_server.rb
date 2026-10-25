@@ -3470,6 +3470,7 @@ module HQ
         }
       )
       target.mark_read!
+      @agent_activity_snapshot.upsert!(target)
       agent_payload(target)
     end
 
