@@ -3261,17 +3261,25 @@ module HQ
       )
     end
 
+    # Only the parsed chat blocks, which depend on this agent's own files, are
+    # cached. Everything that reads other agents or the agent record (delegation
+    # references, hidden-agent redaction, queue-work state) is projected from
+    # them on every read, so another agent changing state is never served stale.
     def conversation_for_agent_cached(target)
-      @conversation_blocks_cache.fetch(target.key, conversation_cache_revision(target)) do
-        conversation_for_agent(target)
+      blocks = @conversation_blocks_cache.fetch(target.key, conversation_cache_revision(target)) do
+        chat_blocks_for_agent(target)
       end
+      project_conversation_blocks(target, blocks)
     end
 
-    # Validates cached blocks against this agent's own files only, so writes
-    # to the shared agents file by other agents do not invalidate it. Size is
-    # included with a nanosecond mtime to catch same-tick appends. Queue-work
-    # batches live in the agent record and are rendered into blocks, so their
-    # state is part of the key.
+    def chat_blocks_for_agent(target)
+      AgentChatLog.new(target).chat_blocks
+    end
+
+    # Validates cached blocks against this agent's own files, so writes to the
+    # shared agents file by other agents do not invalidate it. Size is included
+    # with a nanosecond mtime to catch same-tick appends. Live-run blocks depend
+    # on pid, finished_at and the latest run, which live in the agent record.
     def conversation_cache_revision(target)
       files = [target.raw_log_path, target.memory_path, target.attachments_path, target.pull_request_catalog_path]
       stamps = files.map do |path|
@@ -3280,9 +3288,7 @@ module HQ
       rescue SystemCallError
         nil
       end
-      batches = Array(target.queue_work&.fetch("batches", nil))
-      queue_digest = batches.empty? ? nil : Digest::SHA256.hexdigest(JSON.generate(batches))
-      [stamps, queue_digest]
+      [stamps, target.pid, target.finished_at&.to_f, target.runs.last&.run_id]
     end
 
     def conversation_digest_for(blocks)
@@ -3348,12 +3354,14 @@ module HQ
       }
     end
 
-    def conversation_for_agent(target)
-      blocks = AgentChatLog.new(target).chat_blocks
+    def project_conversation_blocks(target, blocks)
       return conversation_messages(target) if blocks.empty?
 
-      reference_context = delegation_reference_context
+      reference_context = nil
       blocks.map do |block|
+        if delegation_reference?(block.metadata)
+          reference_context ||= delegation_reference_context
+        end
         content, metadata = sanitized_delegation_block(block.content.to_s, block.metadata, reference_context:)
         if metadata.is_a?(Hash) && !metadata["sleep_recovery_for_incident_id"].to_s.empty? &&
            !metadata["circuit_breaker_recovery"].is_a?(Hash)
@@ -3416,6 +3424,15 @@ module HQ
         "stopped_at" => message_metadata["sleep_recovery_observed_at"] || incident&.dig("observed_at"),
         "queue_work_batch_id" => batch["id"]
       }.compact
+    end
+
+    def delegation_reference?(metadata)
+      return false unless metadata.is_a?(Hash)
+
+      author = metadata["message_author"]
+      return true if metadata["agent_reference"].is_a?(Hash)
+
+      author.is_a?(Hash) && author["type"] == "agent" && !author["agent_key"].to_s.empty?
     end
 
     def conversation_messages(target)
@@ -3868,6 +3885,7 @@ module HQ
     end
 
     def publish_context_replacement!(source, target, archive_source:)
+      @conversation_blocks_cache.delete(source.key) if archive_source
       context_replacement_follow_up("remove source activity snapshot") { @agent_activity_snapshot.remove!(source.key) } if archive_source
       context_replacement_follow_up("reconcile source notification") do
         @push_notification_store.reconcile_agent!(source.key, state: "archived", archived_at: Time.now)
@@ -3965,6 +3983,7 @@ module HQ
 
       archived_callback_count = target.queued_prompts.count { |entry| entry["source"] == "delegation_callback" }
       archive_path = @agent_store.archive_agent!(target.key)
+      @conversation_blocks_cache.delete(target.key)
       @agent_activity_snapshot.remove!(target.key)
       @push_notification_store.reconcile_agent!(target.key, state: "archived", archived_at: Time.now)
       schedule_reconciled = reconcile_archived_schedule_agent(target)
@@ -3999,6 +4018,7 @@ module HQ
 
         archived_callback_count = target.queued_prompts.count { |entry| entry["source"] == "delegation_callback" }
         archive_path = @agent_store.archive_agent!(target.key)
+        @conversation_blocks_cache.delete(target.key)
         @agent_activity_snapshot.remove!(target.key)
         @push_notification_store.reconcile_agent!(target.key, state: "archived", archived_at: Time.now)
         archived << {

@@ -67,6 +67,8 @@ module RemoteServerTest
     assert_remote_conversation_tail_is_bounded_by_bytes
     assert_archived_conversation_cache_ignores_active_store_changes
     assert_conversation_blocks_cache_survives_requests_and_tracks_agent_files
+    assert_conversation_cache_is_bounded_and_single_flight
+    assert_conversation_cache_does_not_serve_stale_delegation_references
     assert_remote_agent_debug_endpoints
     assert_remote_project_payloads_include_status_and_detail
     assert_remote_project_git_diff_payload
@@ -3681,67 +3683,182 @@ module RemoteServerTest
     end
   end
 
-def assert_conversation_blocks_cache_survives_requests_and_tracks_agent_files
-  with_remote_temp_store do |dir|
-    workspace = File.join(dir, "workspace")
-    FileUtils.mkdir_p(workspace)
-    registry = registry_for(dir, workspace)
-    cache = HQ::ConversationBlocksCache.new
-    builds = Hash.new(0)
-    counter = Mutex.new
-    # Mirrors the server, which builds a fresh RemoteService per request and
-    # hands every one of them the same server-lifetime cache.
-    new_service = lambda do
-      service = HQ::RemoteService.new(registry: registry, conversation_blocks_cache: cache)
-      original = service.method(:conversation_for_agent)
-      service.define_singleton_method(:conversation_for_agent) do |target|
-        counter.synchronize { builds[target.key] += 1 }
-        original.call(target)
+  def assert_conversation_blocks_cache_survives_requests_and_tracks_agent_files
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      registry = registry_for(dir, workspace)
+      cache = HQ::ConversationBlocksCache.new
+      builds = Hash.new(0)
+      counter = Mutex.new
+      # Mirrors the server, which builds a fresh RemoteService per request and
+      # hands every one of them the same server-lifetime cache.
+      new_service = lambda do
+        service = HQ::RemoteService.new(registry: registry, conversation_blocks_cache: cache)
+        original = service.method(:chat_blocks_for_agent)
+        service.define_singleton_method(:chat_blocks_for_agent) do |target|
+          counter.synchronize { builds[target.key] += 1 }
+          original.call(target)
+        end
+        service
       end
-      service
+      create = lambda do |name|
+        created = new_service.call.create_agent(
+          "project_key" => "web", "template_key" => "custom", "name" => name,
+          "prompt" => "Work.", "agent" => "codex"
+        )
+        HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+      end
+      agent = create.call("Cache subject")
+      other = create.call("Cache neighbour")
+      HQ::AgentMemory.new(agent).append_assistant_message!("First reply")
+
+      first = new_service.call.conversation_snapshot(agent.key)
+      second = new_service.call.conversation_snapshot(agent.key)
+      assert(builds[agent.key] == 1, "expected two reads from separate services to build blocks once")
+      assert(first[:conversation] == second[:conversation], "expected the cached read to match the first read")
+
+      HQ::AgentMemory.new(other).append_assistant_message!("Neighbour reply")
+      FileUtils.touch(HQ::AGENTS_FILE, mtime: Time.now + 60)
+      new_service.call.conversation_snapshot(agent.key)
+      assert(builds[agent.key] == 1, "expected other agents and the shared agents file not to invalidate the cache")
+
+      HQ::AgentMemory.new(agent).append_assistant_message!("Second reply")
+      updated = new_service.call.conversation_snapshot(agent.key)
+      assert(builds[agent.key] == 2, "expected an agent memory change to rebuild its blocks")
+      assert(updated[:conversation].any? { |block| block[:content].to_s.include?("Second reply") },
+             "expected the rebuilt blocks to include the new message")
+
+      FileUtils.mkdir_p(File.dirname(agent.raw_log_path))
+      File.open(agent.raw_log_path, "a") { |file| file.puts("{}") }
+      new_service.call.conversation_snapshot(agent.key)
+      assert(builds[agent.key] == 3, "expected an agent raw log change to rebuild its blocks")
+
+      # Live-run blocks come from the agent record, which the key must track.
+      live = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == agent.key }
+      before_live = HQ::RemoteService.new(registry: registry).send(:conversation_cache_revision, live)
+      live.instance_variable_set(:@pid, 424_242)
+      live.instance_variable_set(:@finished_at, nil)
+      after_live = HQ::RemoteService.new(registry: registry).send(:conversation_cache_revision, live)
+      assert(before_live != after_live, "expected pid and finished_at to be part of the conversation cache key")
+
+      before_concurrent = builds[agent.key]
+      File.open(agent.raw_log_path, "a") { |file| file.puts("{}") }
+      threads = Array.new(8) { Thread.new { new_service.call.conversation_snapshot(agent.key) } }
+      threads.each(&:join)
+      assert(builds[agent.key] == before_concurrent + 1,
+             "expected concurrent reads of one revision to share a single build")
+
+      new_service.call.archive_agent(other.key)
+      assert(cache.blocks_for(other.key).nil?, "expected archiving an agent to drop its cached blocks")
     end
-    create = lambda do |name|
-      created = new_service.call.create_agent(
-        "project_key" => "web", "template_key" => "custom", "name" => name,
-        "prompt" => "Work.", "agent" => "codex"
-      )
-      HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
-    end
-    agent = create.call("Cache subject")
-    other = create.call("Cache neighbour")
-    HQ::AgentMemory.new(agent).append_assistant_message!("First reply")
-
-    first = new_service.call.conversation_snapshot(agent.key)
-    second = new_service.call.conversation_snapshot(agent.key)
-    assert(builds[agent.key] == 1, "expected two reads from separate services to build blocks once")
-    assert(first[:conversation] == second[:conversation], "expected the cached read to match the first read")
-
-    HQ::AgentMemory.new(other).append_assistant_message!("Neighbour reply")
-    FileUtils.touch(HQ::AGENTS_FILE, mtime: Time.now + 60)
-    new_service.call.conversation_snapshot(agent.key)
-    assert(builds[agent.key] == 1, "expected other agents and the shared agents file not to invalidate the cache")
-
-    HQ::AgentMemory.new(agent).append_assistant_message!("Second reply")
-    updated = new_service.call.conversation_snapshot(agent.key)
-    assert(builds[agent.key] == 2, "expected an agent memory change to rebuild its blocks")
-    assert(updated[:conversation].any? { |block| block[:content].to_s.include?("Second reply") },
-           "expected the rebuilt blocks to include the new message")
-
-    FileUtils.mkdir_p(File.dirname(agent.raw_log_path))
-    File.open(agent.raw_log_path, "a") { |file| file.puts("{}") }
-    new_service.call.conversation_snapshot(agent.key)
-    assert(builds[agent.key] == 3, "expected an agent raw log change to rebuild its blocks")
-
-    threads = Array.new(8) { Thread.new { new_service.call.conversation_snapshot(agent.key) } }
-    threads.each(&:join)
-    assert(builds[agent.key] <= 3 + threads.length, "expected concurrent reads to stay bounded")
-    assert(cache.size <= HQ::ConversationBlocksCache::DEFAULT_LIMIT, "expected the cache to stay size-bounded")
-
-    bounded = HQ::ConversationBlocksCache.new(limit: 2)
-    %w[a b c].each { |key| bounded.fetch(key, 1) { [key] } }
-    assert(bounded.size == 2 && bounded.blocks_for("a").nil?, "expected the oldest entry to be evicted")
   end
-end
+
+  def assert_conversation_cache_is_bounded_and_single_flight
+    cache = HQ::ConversationBlocksCache.new(limit: 2, block_budget: 10)
+    %w[a b c].each { |key| cache.fetch(key, 1) { [key] } }
+    assert(cache.size == 2 && cache.blocks_for("a").nil?, "expected the oldest entry to be evicted")
+
+    cache.fetch("big", 1) { Array.new(6, "x") }
+    assert(cache.block_count <= 10, "expected the total block count to respect the budget")
+    cache.fetch("huge", 1) { Array.new(11, "x") }
+    assert(cache.blocks_for("huge").nil?, "expected a transcript over the whole budget not to be cached")
+
+    shared = HQ::ConversationBlocksCache.new
+    builds = Queue.new
+    start = Queue.new
+    threads = Array.new(8) do
+      Thread.new do
+        start.pop
+        shared.fetch("agent", 7) do
+          builds << true
+          sleep(0.05)
+          [:block]
+        end
+      end
+    end
+    8.times { start << true }
+    results = threads.map(&:value)
+    assert(builds.size == 1, "expected eight concurrent cold reads to run one build, got #{builds.size}")
+    assert(results.all? { |blocks| blocks == [:block] }, "expected every waiting reader to receive the built blocks")
+
+    failing = HQ::ConversationBlocksCache.new
+    begin
+      failing.fetch("agent", 1) { raise "boom" }
+    rescue RuntimeError
+      nil
+    end
+    assert(failing.fetch("agent", 1) { [:retry] } == [:retry], "expected a failed build not to block later reads")
+  end
+
+  def assert_conversation_cache_does_not_serve_stale_delegation_references
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      secret_workspace = File.join(dir, "secret")
+      FileUtils.mkdir_p([workspace, secret_workspace])
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      File.write(config_path, <<~YAML)
+        projects:
+          - key: web
+            name: Web
+            path: #{workspace}
+          - key: secret
+            name: Secret
+            path: #{secret_workspace}
+      YAML
+      File.write(prompts_path, "custom: Default prompt for %{project_key}.\n")
+      registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
+      cache = HQ::ConversationBlocksCache.new
+      builds = Hash.new(0)
+      new_service = lambda do
+        service = HQ::RemoteService.new(registry: registry, conversation_blocks_cache: cache)
+        original = service.method(:chat_blocks_for_agent)
+        service.define_singleton_method(:chat_blocks_for_agent) do |target|
+          builds[target.key] += 1
+          original.call(target)
+        end
+        service
+      end
+      parent = new_service.call.create_agent(
+        "project_key" => "web", "name" => "Parent", "prompt" => "Coordinate", "agent" => "codex"
+      )
+      visible_child = new_service.call.create_agent(
+        "project_key" => "web", "name" => "Visible child", "prompt" => "Work", "agent" => "codex",
+        "parent_agent_key" => parent[:key]
+      )
+      secret_child = new_service.call.create_agent(
+        "project_key" => "secret", "name" => "Secret child", "prompt" => "Work", "agent" => "codex",
+        "parent_agent_key" => parent[:key]
+      )
+      references = lambda do
+        new_service.call.conversation(parent[:key]).select { |block| block.dig(:metadata, "agent_reference") }
+      end
+      reference_for = lambda do |blocks, key|
+        blocks.find { |block| block.dig(:metadata, "agent_reference", "agent_key") == key }
+      end
+
+      initial = references.call
+      assert(reference_for.call(initial, visible_child[:key]).dig(:metadata, "agent_reference", "state") == "active",
+             "expected the visible child to start active")
+      secret_text = reference_for.call(initial, secret_child[:key])[:content]
+      assert(secret_text != "Started hidden agent", "expected the secret child to be readable before it is hidden")
+      parent_builds = builds[parent[:key]]
+
+      new_service.call.archive_agent(visible_child[:key])
+      archived = reference_for.call(references.call, visible_child[:key])
+      assert(archived.dig(:metadata, "agent_reference", "state") == "archived",
+             "expected a child archived after caching to show as archived in the parent conversation")
+
+      new_service.call.update_hidden_setting("scope" => "project", "key" => "secret", "hidden" => true)
+      hidden = reference_for.call(references.call, secret_child[:key])
+      assert(hidden.dig(:metadata, "agent_reference", "state") == "hidden" && hidden[:content] == "Started hidden agent",
+             "expected a child hidden after caching to be redacted from the parent conversation")
+      assert(!hidden.dig(:metadata, "delegation_report"), "expected hidden child report to be removed")
+      assert(builds[parent[:key]] == parent_builds,
+             "expected reference changes to be projected without rebuilding the parent's cached blocks")
+    end
+  end
 
   def assert_remote_agent_debug_endpoints
     with_remote_temp_store do |dir|
