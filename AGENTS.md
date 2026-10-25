@@ -91,6 +91,8 @@ For input components, keep paste handling compatible with Bubbles `TextInput` an
 
 ## Testing Guidelines
 
+Test and smoke cleanup must use PIDs returned by the fixture process that the same run started. Start fixture process trees in their own process group and signal only that verified group. Do not use process-name matching such as `pkill -f` or `killall` for cleanup; harness command lines can contain task text and match unrelated managed agents. `bin/test` rejects these broad killers in checked-in `bin/` and `test/` files.
+
 This repository now has lightweight automated coverage under `test/`. Every change should at minimum pass `bin/test` and a manual run of `bin/tycho` when TUI behavior is affected.
 
 ### Required local CI signoff

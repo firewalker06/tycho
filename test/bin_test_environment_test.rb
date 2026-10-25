@@ -68,4 +68,8 @@ end
 unsafe = TestEnvironment.broad_process_killer_files(ROOT)
 raise "broad process-name killer found in #{unsafe.join(", ")}" unless unsafe.empty?
 
+rules = File.read(File.join(ROOT, "AGENTS.md"))
+policy = ["pk", "ill"].join + " -f"
+raise "AGENTS.md lost the process-cleanup safety rule" unless rules.include?(policy)
+
 puts "bin_test_environment_test: ok"
