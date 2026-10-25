@@ -26,6 +26,7 @@ require_relative "domain/agent_activity_snapshot"
 require_relative "domain/agent_chat_log"
 require_relative "domain/agent_store"
 require_relative "domain/context_handoff"
+require_relative "domain/conversation_blocks_cache"
 require_relative "domain/delegation_actor"
 require_relative "domain/agent_archive_store"
 require_relative "domain/executable_resolver"
@@ -102,6 +103,7 @@ module HQ
       @daemonizer = daemonizer
       @resource_catalog = resource_catalog || RemoteResourceCatalog.new(snapshot_path: resource_snapshot_path)
       @agent_activity_snapshot = agent_activity_snapshot || AgentActivitySnapshot.new
+      @conversation_blocks_cache = ConversationBlocksCache.new
       @registry = registry
       @clock = clock
       @client_workers = {}
@@ -292,7 +294,8 @@ module HQ
         public_url: @public_url,
         auth_required: !@token.empty?,
         restartable: restartable?,
-        agent_activity_snapshot: @agent_activity_snapshot
+        agent_activity_snapshot: @agent_activity_snapshot,
+        conversation_blocks_cache: @conversation_blocks_cache
       )
       result = route(service, request.method, request.path, json_body(request), request)
       status = result.fetch(:status, 200)
@@ -340,7 +343,8 @@ module HQ
                                   server_url: "http://#{@host}:#{@port}",
                                   public_url: @public_url,
                                   auth_required: !@token.empty?,
-                                  agent_activity_snapshot: @agent_activity_snapshot)
+                                  agent_activity_snapshot: @agent_activity_snapshot,
+                                  conversation_blocks_cache: @conversation_blocks_cache)
       service.dispatch_agent_push_notifications!
     rescue StandardError => e
       HQ.logger.warn("Push") { "Agent push notification poll failed: #{e.class} - #{e.message}" }
@@ -958,7 +962,8 @@ module HQ
         public_url: @public_url,
         auth_required: !@token.empty?,
         restartable: restartable?,
-        agent_activity_snapshot: @agent_activity_snapshot
+        agent_activity_snapshot: @agent_activity_snapshot,
+        conversation_blocks_cache: @conversation_blocks_cache
       )
       @resource_catalog.reconcile(registry: service.registry, server_url: service.server_url)
       @resource_catalog.refresh(
@@ -1864,6 +1869,7 @@ module HQ
                    github_client: GitHubAPIClient.new,
                    pull_request_diff_store: PullRequestDiff::Store.new,
                    agent_activity_snapshot: AgentActivitySnapshot.new,
+                   conversation_blocks_cache: ConversationBlocksCache.new,
                    clock: -> { Time.now })
       @registry = registry
       @clock = clock
@@ -1892,6 +1898,7 @@ module HQ
       @github_client = github_client
       @pull_request_diff_store = pull_request_diff_store
       @agent_activity_snapshot = agent_activity_snapshot
+      @conversation_blocks_cache = conversation_blocks_cache
       @pull_request_fetch_lock = Mutex.new
       @pull_request_fetches = {}
       @archived_query_lock = Mutex.new
@@ -3164,7 +3171,6 @@ module HQ
     CONVERSATION_DIGEST_WINDOW_SIZE = CONVERSATION_TAIL_DEFAULT_LIMIT
     CONVERSATION_METADATA_FINGERPRINT_DEPTH = 4
     CONVERSATION_METADATA_FINGERPRINT_ITEMS = 8
-    CONVERSATION_BLOCKS_CACHE_LIMIT = 200
 
     # Returns the FULL, unwindowed conversation. Used internally (delegation
     # context, queue-work lookups, tests) where the caller genuinely needs
@@ -3256,16 +3262,27 @@ module HQ
     end
 
     def conversation_for_agent_cached(target)
-      revision = agent_revision(target)
-      cache = (@conversation_blocks_cache ||= {})
-      cached = cache[target.key]
-      return cached[:blocks] if cached && cached[:revision] == revision
+      @conversation_blocks_cache.fetch(target.key, conversation_cache_revision(target)) do
+        conversation_for_agent(target)
+      end
+    end
 
-      blocks = conversation_for_agent(target)
-      cache.delete(target.key)
-      cache[target.key] = { revision: revision, blocks: blocks }
-      cache.shift while cache.size > CONVERSATION_BLOCKS_CACHE_LIMIT
-      blocks
+    # Validates cached blocks against this agent's own files only, so writes
+    # to the shared agents file by other agents do not invalidate it. Size is
+    # included with a nanosecond mtime to catch same-tick appends. Queue-work
+    # batches live in the agent record and are rendered into blocks, so their
+    # state is part of the key.
+    def conversation_cache_revision(target)
+      files = [target.raw_log_path, target.memory_path, target.attachments_path, target.pull_request_catalog_path]
+      stamps = files.map do |path|
+        stat = path && File.stat(path)
+        stat ? [stat.mtime.to_i, stat.mtime.nsec, stat.size] : nil
+      rescue SystemCallError
+        nil
+      end
+      batches = Array(target.queue_work&.fetch("batches", nil))
+      queue_digest = batches.empty? ? nil : Digest::SHA256.hexdigest(JSON.generate(batches))
+      [stamps, queue_digest]
     end
 
     def conversation_digest_for(blocks)
@@ -3537,7 +3554,7 @@ module HQ
       expected_entry_ids = queue_action_entry_ids(attrs, "expected_entry_ids", allow_empty: true)
       result = @agent_store.process_prompt_queue_entries!(key, entry_ids:, expected_entry_ids:)
       target = result.fetch("agent")
-      @conversation_blocks_cache&.delete(key.to_s)
+      @conversation_blocks_cache.delete(key)
       @agent_activity_snapshot.upsert!(target)
       result.reject { |name, _value| name == "agent" }.merge(agent: agent_payload(target))
     rescue ArgumentError => e
@@ -3551,7 +3568,7 @@ module HQ
         key, entry_ids:, expected_entry_ids:, reason: attrs["reason"]
       )
       target = result.fetch("agent")
-      @conversation_blocks_cache&.delete(key.to_s)
+      @conversation_blocks_cache.delete(key)
       @agent_activity_snapshot.upsert!(target)
       result.reject { |name, _value| name == "agent" }.merge(agent: agent_payload(target))
     rescue ArgumentError => e
@@ -3562,7 +3579,7 @@ module HQ
       find_agent!(key)
       result = @agent_store.discard_prompt_queue!(key, reason: attrs["reason"])
       target = result.fetch("agent")
-      @conversation_blocks_cache&.delete(key.to_s)
+      @conversation_blocks_cache.delete(key)
       @agent_activity_snapshot.upsert!(target)
       {
         discarded: result.fetch("discarded"),
@@ -3603,7 +3620,7 @@ module HQ
       raise Error.new("Dispositions must be an array", status: 400) unless dispositions.is_a?(Array)
 
       result = @agent_store.complete_queue_work!(key, batch_id:, dispositions:)
-      @conversation_blocks_cache&.delete(key.to_s)
+      @conversation_blocks_cache.delete(key)
       @agent_activity_snapshot.upsert!(result.fetch("agent"))
       result.reject { |name, _value| name.to_s == "agent" }
     rescue ArgumentError => e

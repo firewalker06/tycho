@@ -66,6 +66,7 @@ module RemoteServerTest
     assert_remote_conversation_snapshot_windows_large_transcripts
     assert_remote_conversation_tail_is_bounded_by_bytes
     assert_archived_conversation_cache_ignores_active_store_changes
+    assert_conversation_blocks_cache_survives_requests_and_tracks_agent_files
     assert_remote_agent_debug_endpoints
     assert_remote_project_payloads_include_status_and_detail
     assert_remote_project_git_diff_payload
@@ -3664,11 +3665,11 @@ module RemoteServerTest
              "expected a direct archived-key lookup not to deserialize the full archive index")
 
       first = service.conversation_snapshot(agent.key)
-      cached_blocks = service.instance_variable_get(:@conversation_blocks_cache).dig(agent.key, :blocks)
+      cached_blocks = service.instance_variable_get(:@conversation_blocks_cache).blocks_for(agent.key)
       first_revision = service.agent(agent.key).fetch(:revision)
       FileUtils.touch(HQ::AGENTS_FILE, mtime: Time.now + 60)
       second = service.conversation_snapshot(agent.key)
-      second_blocks = service.instance_variable_get(:@conversation_blocks_cache).dig(agent.key, :blocks)
+      second_blocks = service.instance_variable_get(:@conversation_blocks_cache).blocks_for(agent.key)
       second_revision = service.agent(agent.key).fetch(:revision)
 
       assert(first_revision == second_revision,
@@ -3679,6 +3680,68 @@ module RemoteServerTest
              "expected cached archived conversation output to remain unchanged")
     end
   end
+
+def assert_conversation_blocks_cache_survives_requests_and_tracks_agent_files
+  with_remote_temp_store do |dir|
+    workspace = File.join(dir, "workspace")
+    FileUtils.mkdir_p(workspace)
+    registry = registry_for(dir, workspace)
+    cache = HQ::ConversationBlocksCache.new
+    builds = Hash.new(0)
+    counter = Mutex.new
+    # Mirrors the server, which builds a fresh RemoteService per request and
+    # hands every one of them the same server-lifetime cache.
+    new_service = lambda do
+      service = HQ::RemoteService.new(registry: registry, conversation_blocks_cache: cache)
+      original = service.method(:conversation_for_agent)
+      service.define_singleton_method(:conversation_for_agent) do |target|
+        counter.synchronize { builds[target.key] += 1 }
+        original.call(target)
+      end
+      service
+    end
+    create = lambda do |name|
+      created = new_service.call.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => name,
+        "prompt" => "Work.", "agent" => "codex"
+      )
+      HQ::AgentStore.new(registry.projects).load.find { |item| item.key == created[:key] }
+    end
+    agent = create.call("Cache subject")
+    other = create.call("Cache neighbour")
+    HQ::AgentMemory.new(agent).append_assistant_message!("First reply")
+
+    first = new_service.call.conversation_snapshot(agent.key)
+    second = new_service.call.conversation_snapshot(agent.key)
+    assert(builds[agent.key] == 1, "expected two reads from separate services to build blocks once")
+    assert(first[:conversation] == second[:conversation], "expected the cached read to match the first read")
+
+    HQ::AgentMemory.new(other).append_assistant_message!("Neighbour reply")
+    FileUtils.touch(HQ::AGENTS_FILE, mtime: Time.now + 60)
+    new_service.call.conversation_snapshot(agent.key)
+    assert(builds[agent.key] == 1, "expected other agents and the shared agents file not to invalidate the cache")
+
+    HQ::AgentMemory.new(agent).append_assistant_message!("Second reply")
+    updated = new_service.call.conversation_snapshot(agent.key)
+    assert(builds[agent.key] == 2, "expected an agent memory change to rebuild its blocks")
+    assert(updated[:conversation].any? { |block| block[:content].to_s.include?("Second reply") },
+           "expected the rebuilt blocks to include the new message")
+
+    FileUtils.mkdir_p(File.dirname(agent.raw_log_path))
+    File.open(agent.raw_log_path, "a") { |file| file.puts("{}") }
+    new_service.call.conversation_snapshot(agent.key)
+    assert(builds[agent.key] == 3, "expected an agent raw log change to rebuild its blocks")
+
+    threads = Array.new(8) { Thread.new { new_service.call.conversation_snapshot(agent.key) } }
+    threads.each(&:join)
+    assert(builds[agent.key] <= 3 + threads.length, "expected concurrent reads to stay bounded")
+    assert(cache.size <= HQ::ConversationBlocksCache::DEFAULT_LIMIT, "expected the cache to stay size-bounded")
+
+    bounded = HQ::ConversationBlocksCache.new(limit: 2)
+    %w[a b c].each { |key| bounded.fetch(key, 1) { [key] } }
+    assert(bounded.size == 2 && bounded.blocks_for("a").nil?, "expected the oldest entry to be evicted")
+  end
+end
 
   def assert_remote_agent_debug_endpoints
     with_remote_temp_store do |dir|
