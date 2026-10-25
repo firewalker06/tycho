@@ -41,7 +41,7 @@ module HQ
       format(scheduled_system_prompt_template, title:)
     end
 
-    attr_reader :delegation_coordinator
+    attr_reader :delegation_coordinator, :usage_metrics_store
 
     def initialize(projects, usage_metrics_store: nil, delegation_coordinator: nil, recovery: nil)
       @projects = projects
@@ -57,9 +57,12 @@ module HQ
       agents
     end
 
-    def load_with_poll_events(process_delegations: true, dispatch_prompt_queues: true)
+    # after_load runs inside the lock, so it can observe the file state that matches the loaded agents.
+    def load_with_poll_events(process_delegations: true, dispatch_prompt_queues: true, after_load: nil)
       with_exclusive_lock do
-        load_with_poll_events_unlocked(process_delegations:, dispatch_prompt_queues:)
+        agents, events = load_with_poll_events_unlocked(process_delegations:, dispatch_prompt_queues:)
+        after_load&.call(agents)
+        [agents, events]
       end
     end
 
