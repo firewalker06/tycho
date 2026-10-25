@@ -520,6 +520,9 @@ module HQ
           return ok(service.conversation_snapshot(key, request&.query_params || {}))
         end
         return ok(metadata: service.conversation_metadata(key)) if method == "GET" && tail == ["conversation", "metadata"]
+        if method == "GET" && tail.length == 3 && tail.first(2) == %w[conversation blocks]
+          return ok(service.conversation_block(key, tail.last))
+        end
         return ok(debug: service.agent_debug(key)) if method == "GET" && tail == ["debug"]
         return ok(log: service.agent_log(key, request&.query_params || {})) if method == "GET" && tail == ["logs"]
         if method == "POST" && tail == ["memory", "capture", "dry-run"]
@@ -3145,6 +3148,14 @@ module HQ
     # with `before` (see #conversation_snapshot).
     CONVERSATION_TAIL_DEFAULT_LIMIT = 200
     CONVERSATION_TAIL_MAX_LIMIT = 2_000
+    # Block count alone does not bound the payload: one archived agent's
+    # 200-block tail was 4.8 MB of tool output. The tail is also limited by
+    # serialized bytes (newest blocks win; at least one block is always
+    # returned), and oversized tool content is cut with a marker. The full
+    # block stays available through #conversation_block.
+    CONVERSATION_TAIL_BYTE_BUDGET = 256 * 1024
+    CONVERSATION_TOOL_CONTENT_LIMIT = 8 * 1024
+    CONVERSATION_TRUNCATABLE_KINDS = %w[tool_call tool_result].freeze
     # Digest only needs to detect "did anything change", not describe the
     # entire transcript. Fingerprint the ordinary rendered tail (plus the
     # total count), rather than `JSON.generate`-ing a whole multi-megabyte
@@ -3188,6 +3199,7 @@ module HQ
       end_index = [total - already_loaded, 0].max
       start_index = [end_index - limit, 0].max
       window = blocks[start_index...end_index] || []
+      window, start_index = apply_conversation_byte_budget(window, start_index)
       {
         conversation: window,
         conversation_revision: agent_revision(target),
@@ -3196,6 +3208,51 @@ module HQ
         conversation_window_start: start_index,
         conversation_has_older: start_index.positive?
       }
+    end
+
+    # Returns one complete (untruncated) block by its absolute index in the
+    # full transcript, i.e. the `block_index` marker on a truncated block.
+    def conversation_block(key, index)
+      blocks = conversation_for_agent_cached(find_agent_reference!(key))
+      position = Integer(index.to_s, 10, exception: false)
+      if position.nil? || position.negative? || position >= blocks.length
+        raise Error.new("Conversation block not found", status: 404)
+      end
+
+      { block: blocks[position], block_index: position, conversation_block_count: blocks.length }
+    end
+
+    # Keeps the newest blocks whose serialized size fits the byte budget and
+    # truncates oversized tool content. Returns the kept window and its new
+    # absolute start index, so `conversation_window_start` and
+    # `conversation_has_older` stay truthful and `before` paging continues
+    # from the first kept block.
+    def apply_conversation_byte_budget(window, start_index)
+      kept = []
+      used = 0
+      window.each_with_index.reverse_each do |block, offset|
+        shaped = truncate_conversation_block(block, start_index + offset)
+        size = JSON.generate(shaped).bytesize
+        break if kept.any? && used + size > CONVERSATION_TAIL_BYTE_BUDGET
+
+        kept.unshift(shaped)
+        used += size
+      end
+      [kept, start_index + window.length - kept.length]
+    end
+
+    def truncate_conversation_block(block, index)
+      content = block[:content]
+      return block unless CONVERSATION_TRUNCATABLE_KINDS.include?(block[:kind]) && content.is_a?(String)
+      return block if content.bytesize <= CONVERSATION_TOOL_CONTENT_LIMIT
+
+      shown = content.byteslice(0, CONVERSATION_TOOL_CONTENT_LIMIT).scrub("")
+      block.merge(
+        content: "#{shown}\n... [truncated: showing #{shown.bytesize} of #{content.bytesize} bytes]",
+        content_truncated: true,
+        content_bytes: content.bytesize,
+        block_index: index
+      )
     end
 
     def conversation_for_agent_cached(target)
