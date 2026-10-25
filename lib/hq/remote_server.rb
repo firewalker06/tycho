@@ -59,6 +59,8 @@ module HQ
     AGENT_PUSH_POLL_INTERVAL = 5
     MAX_CLIENT_WORKERS = 32
     CLIENT_DRAIN_TIMEOUT = 5
+    CLIENT_READ_TIMEOUT = 10
+    MAX_HEADER_BYTES = 64 * 1024
     ACTIVITY_AGENT_FIELDS = %i[
       key name project_key template_key scheduled schedule_key agent model reasoning_effort status running unread
       awaiting_input blocked run_count created_at started_at finished_at updated_at last_exit_code last_result summary
@@ -102,7 +104,9 @@ module HQ
       @agent_activity_snapshot = agent_activity_snapshot || AgentActivitySnapshot.new
       @registry = registry
       @clock = clock
-      @client_workers = []
+      @client_workers = {}
+      @max_client_workers = MAX_CLIENT_WORKERS
+      @client_read_timeout = CLIENT_READ_TIMEOUT
       @client_workers_mutex = Mutex.new
       @output_mutex = Mutex.new
     end
@@ -188,7 +192,7 @@ module HQ
     def spawn_client_worker(client)
       wait_for_client_slot
       @client_workers_mutex.synchronize do
-        @client_workers << Thread.new do
+        worker = Thread.new do
           Thread.current.report_on_exception = false
           begin
             handle_client(client)
@@ -198,21 +202,38 @@ module HQ
             @client_workers_mutex.synchronize { @client_workers.delete(Thread.current) }
           end
         end
+        @client_workers[worker] = client
       end
+    rescue StandardError => e
+      @logger.error("Remote") { "could not start client worker: #{e.class} - #{e.message}" }
+      client.close unless client.closed?
     end
 
     def wait_for_client_slot
-      while !@shutdown && @client_workers_mutex.synchronize { @client_workers.size } >= MAX_CLIENT_WORKERS
+      while !@shutdown && @client_workers_mutex.synchronize { @client_workers.size } >= @max_client_workers
         sleep(0.005)
       end
     end
 
+    # Waits for in-flight requests up to CLIENT_DRAIN_TIMEOUT, then closes the
+    # sockets of workers that are still alive so stalled reads end promptly.
     def drain_client_workers
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + CLIENT_DRAIN_TIMEOUT
-      workers = @client_workers_mutex.synchronize { @client_workers.dup }
+      workers = @client_workers_mutex.synchronize { @client_workers.keys }
       workers.each do |worker|
         remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
         worker.join(remaining) if remaining.positive?
+      end
+      stragglers = @client_workers_mutex.synchronize { @client_workers.dup }
+      stragglers.each do |worker, client|
+        next unless worker.alive?
+
+        begin
+          client.close unless client.closed?
+        rescue IOError, SystemCallError
+          nil
+        end
+        worker.join(1)
       end
     end
 
@@ -830,22 +851,74 @@ module HQ
       exec(*command)
     end
 
+    # Reads with a total deadline so a silent or truncated client cannot hold
+    # a worker (and a MAX_CLIENT_WORKERS slot) forever.
     def read_request(client)
-      request_line = client.gets&.strip
-      return nil if request_line.to_s.empty?
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + @client_read_timeout
+      buffer = +"".b
+      head = read_until_blank_line(client, buffer, deadline)
+      return nil if head.nil?
+
+      lines = head.split("\n").map(&:chomp)
+      request_line = lines.shift.to_s.strip
+      return nil if request_line.empty?
 
       method, raw_path, _version = request_line.split(/\s+/, 3)
       headers = {}
-      while (line = client.gets)
-        line = line.chomp
-        break if line.empty?
-
+      lines.each do |line|
         name, value = line.split(":", 2)
         headers[name.to_s.downcase] = value.to_s.strip unless name.to_s.empty?
       end
-      body = client.read(headers["content-length"].to_i).to_s
+      length = headers["content-length"].to_i
+      buffer << read_chunk(client, deadline) while buffer.bytesize < length
+      body = buffer.byteslice(0, length).to_s.force_encoding(Encoding::UTF_8)
       path, query = raw_path.to_s.split("?", 2)
       Request.new(method: method.to_s.upcase, path: path, query: query.to_s, headers: headers, body: body)
+    end
+
+    # Returns the header block and leaves any already-read body bytes in buffer.
+    def read_until_blank_line(client, buffer, deadline)
+      loop do
+        if (match = buffer.match(/\r?\n\r?\n/n))
+          head = buffer.byteslice(0, match.begin(0)).to_s.force_encoding(Encoding::UTF_8)
+          buffer.replace(buffer.byteslice(match.end(0)..).to_s)
+          return head
+        end
+        raise Error.new("Request headers too large", status: 413) if buffer.bytesize > MAX_HEADER_BYTES
+
+        chunk = read_chunk(client, deadline, eof_ok: true)
+        if chunk.nil?
+          return nil if buffer.strip.empty?
+
+          head = buffer.dup.force_encoding(Encoding::UTF_8)
+          buffer.clear
+          return head
+        end
+        buffer << chunk
+      end
+    end
+
+    def read_chunk(client, deadline, eof_ok: false)
+      remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      raise Error.new("Request timed out", status: 408) unless remaining.positive?
+
+      begin
+        chunk = client.read_nonblock(16 * 1024, exception: false)
+      rescue EOFError, IOError, SystemCallError
+        chunk = nil
+      end
+      case chunk
+      when :wait_readable
+        raise Error.new("Request timed out", status: 408) unless IO.select([client], nil, nil, remaining)
+
+        read_chunk(client, deadline, eof_ok: eof_ok)
+      when nil
+        return nil if eof_ok
+
+        raise Error.new("Incomplete request body", status: 400)
+      else
+        chunk.b
+      end
     end
 
     def write_http(client, status, body = nil, content_type: "application/json", headers: {}, raw_body: false, **payload)
@@ -926,6 +999,7 @@ module HQ
         403 => "Forbidden",
         404 => "Not Found",
         409 => "Conflict",
+        408 => "Request Timeout",
         413 => "Content Too Large",
         415 => "Unsupported Media Type",
         502 => "Bad Gateway",

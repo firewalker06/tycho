@@ -22,6 +22,9 @@ module RemoteServerTest
   def run!
     assert_remote_agent_lifecycle
     assert_slow_request_does_not_block_activity
+    assert_stalled_clients_time_out_without_blocking_requests
+    assert_client_worker_cap_recovers_after_stalled_clients
+    assert_shutdown_closes_stalled_client_sockets
     assert_remote_agent_delegation_lifecycle
     assert_remote_conversation_persists_agent_system_context_once
     assert_remote_conversation_persists_installed_tycho_skill_context
@@ -611,6 +614,75 @@ module RemoteServerTest
         server.shutdown
         assert(thread.join(10), "expected server to shut down cleanly")
       end
+    end
+  end
+
+  def with_running_remote_server(read_timeout: nil, max_workers: nil)
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      port = TCPServer.open("127.0.0.1", 0) { |probe| probe.addr[1] }
+      server = HQ::RemoteServer.new(host: "127.0.0.1", port: port, registry: registry, token: "", output: StringIO.new)
+      server.instance_variable_set(:@client_read_timeout, read_timeout) if read_timeout
+      server.instance_variable_set(:@max_client_workers, max_workers) if max_workers
+      thread = Thread.new { server.start }
+      deadline = Time.now + 5
+      begin
+        TCPSocket.new("127.0.0.1", port).close
+      rescue SystemCallError
+        raise "server did not start" if Time.now > deadline
+
+        sleep 0.05
+        retry
+      end
+      begin
+        yield server, port
+      ensure
+        server.shutdown
+        assert(thread.join(10), "expected server to shut down cleanly")
+      end
+    end
+  end
+
+  def assert_stalled_clients_time_out_without_blocking_requests
+    with_running_remote_server(read_timeout: 0.5) do |_server, port|
+      silent = TCPSocket.new("127.0.0.1", port)
+      truncated = TCPSocket.new("127.0.0.1", port)
+      truncated.write("POST /agents HTTP/1.1\r\nContent-Length: 100\r\n\r\n{")
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      fast = Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/servers/activity"))
+      assert(fast.code == "200", "expected /servers/activity to answer while clients are stalled")
+      assert(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started < 0.4,
+             "expected stalled clients not to delay other requests")
+      [silent, truncated].each do |socket|
+        assert(IO.select([socket], nil, nil, 5), "expected the server to answer a stalled client")
+        response = socket.read
+        assert(response.start_with?("HTTP/1.1 408"), "expected 408 for a stalled client, got #{response[0, 20].inspect}")
+        socket.close
+      end
+    end
+  end
+
+  def assert_client_worker_cap_recovers_after_stalled_clients
+    with_running_remote_server(read_timeout: 1, max_workers: 2) do |server, port|
+      stalled = Array.new(2) { TCPSocket.new("127.0.0.1", port) }
+      sleep 0.2
+      assert(server.instance_variable_get(:@client_workers).size == 2, "expected the worker cap to be reached")
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      response = Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/servers/activity"))
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+      assert(response.code == "200", "expected a request queued at the cap to be served after stalled clients time out")
+      assert(elapsed >= 0.5, "expected the request to wait while the cap was full")
+      stalled.each(&:close)
+    end
+  end
+
+  def assert_shutdown_closes_stalled_client_sockets
+    with_running_remote_server(read_timeout: 60) do |_server, port|
+      stalled = TCPSocket.new("127.0.0.1", port)
+      sleep 0.2
+      assert(stalled, "stalled client connected")
     end
   end
 
