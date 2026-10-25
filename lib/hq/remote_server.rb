@@ -3457,10 +3457,19 @@ module HQ
 
     def mark_agent_read(key)
       target = find_agent!(key)
-      if target.unread?
-        target.mark_read!
-        save_agent(target)
-      end
+      return agent_payload(target) unless target.unread?
+
+      # The cache signature must be read under the store lock, before and after the write.
+      before = nil
+      @agent_store.mark_read!(
+        target.key,
+        before_write: -> { before = @agent_list_cache.signature },
+        after_write: lambda { |record|
+          @agent_list_cache.update_record!(record, before_signature: before,
+                                                   signature: @agent_list_cache.signature)
+        }
+      )
+      target.mark_read!
       agent_payload(target)
     end
 

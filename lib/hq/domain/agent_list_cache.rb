@@ -35,6 +35,20 @@ module HQ
       end
     end
 
+    # Swaps one record after a store write made under the store lock. The snapshot stays valid only if
+    # it matched the file before the write (before_signature); otherwise it is dropped.
+    def update_record!(record, before_signature:, signature:)
+      @mutex.synchronize do
+        if @records.nil? || before_signature != @signature
+          @records = nil
+        else
+          @records = @records.merge(record["key"] => Marshal.load(Marshal.dump(record)).freeze).freeze
+          @signature = signature
+        end
+        @readonly_agents = nil
+      end
+    end
+
     # Shared agents for read-only use (such as reference payloads); callers must not mutate them.
     # Returns nil when the snapshot is missing or stale.
     def readonly_agents(usage_metrics_store: nil)
