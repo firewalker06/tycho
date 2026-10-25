@@ -10,6 +10,8 @@ require "base64"
 require "digest"
 require "open3"
 require "yaml"
+require "net/http"
+require "socket"
 
 require_relative "../lib/hq/remote_server"
 require_relative "../lib/hq/serve_command"
@@ -19,6 +21,7 @@ module RemoteServerTest
 
   def run!
     assert_remote_agent_lifecycle
+    assert_slow_request_does_not_block_activity
     assert_remote_agent_delegation_lifecycle
     assert_remote_conversation_persists_agent_system_context_once
     assert_remote_conversation_persists_installed_tycho_skill_context
@@ -562,6 +565,51 @@ module RemoteServerTest
              "expected successful persisted handoff in source feed")
       response = HQ::RemoteServer.new.send(:route, service, "GET", "/memory-handoffs", {}, nil)
       assert(response.dig(:body, :runs, 0, :run_id) == "run-memory-1", "expected API handoff retrieval")
+    end
+  end
+
+  def assert_slow_request_does_not_block_activity
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      port = TCPServer.open("127.0.0.1", 0) { |probe| probe.addr[1] }
+      release = Queue.new
+      slow_started = Queue.new
+      server = HQ::RemoteServer.new(host: "127.0.0.1", port: port, registry: registry, output: StringIO.new)
+      server.define_singleton_method(:route) do |service, method, path, body, request = nil|
+        if path == "/slow-test"
+          slow_started << true
+          release.pop
+          return { status: 200, body: { slow: true } }
+        end
+        super(service, method, path, body, request)
+      end
+      thread = Thread.new { server.start }
+      begin
+        deadline = Time.now + 5
+        begin
+          TCPSocket.new("127.0.0.1", port).close
+        rescue SystemCallError
+          raise "server did not start" if Time.now > deadline
+
+          sleep 0.05
+          retry
+        end
+        slow = Thread.new { Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/slow-test")) }
+        slow_started.pop
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        fast = Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/servers/activity"))
+        elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+        assert(fast.code == "200" && elapsed < 2, "expected /servers/activity to answer while a slow request is pending")
+        assert(slow.alive?, "expected the slow request to still be pending")
+        release << true
+        assert(slow.value.code == "200", "expected the slow request to finish after release")
+      ensure
+        release << true
+        server.shutdown
+        assert(thread.join(10), "expected server to shut down cleanly")
+      end
     end
   end
 

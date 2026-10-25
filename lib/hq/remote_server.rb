@@ -57,6 +57,8 @@ module HQ
     DEFAULT_HOST = "127.0.0.1"
     DEFAULT_PORT = 7373
     AGENT_PUSH_POLL_INTERVAL = 5
+    MAX_CLIENT_WORKERS = 32
+    CLIENT_DRAIN_TIMEOUT = 5
     ACTIVITY_AGENT_FIELDS = %i[
       key name project_key template_key scheduled schedule_key agent model reasoning_effort status running unread
       awaiting_input blocked run_count created_at started_at finished_at updated_at last_exit_code last_result summary
@@ -100,6 +102,9 @@ module HQ
       @agent_activity_snapshot = agent_activity_snapshot || AgentActivitySnapshot.new
       @registry = registry
       @clock = clock
+      @client_workers = []
+      @client_workers_mutex = Mutex.new
+      @output_mutex = Mutex.new
     end
 
     def shutdown
@@ -139,20 +144,23 @@ module HQ
       daemonize_after_startup! if @daemonize_after_startup
       warm_resource_catalog!
 
+      push_thread = start_push_notification_thread
       until @shutdown
         begin
           if IO.select([server], nil, nil, 0.25)
             client = server.accept_nonblock
-            handle_client(client)
+            spawn_client_worker(client)
           end
         rescue IO::WaitReadable
           nil
         rescue IOError, Errno::EBADF
           break if @shutdown
         end
-        poll_agent_push_notifications! unless @shutdown
       end
     ensure
+      @shutdown = true
+      push_thread&.join(CLIENT_DRAIN_TIMEOUT)
+      drain_client_workers
       RemoteServerControl.clear(host: @host, port: @port)
       server&.close unless server&.closed?
       @daemon_log_io&.close
@@ -169,6 +177,52 @@ module HQ
 
       def query_params
         @query_params ||= URI.decode_www_form(query.to_s).to_h
+      end
+    end
+
+    # One thread per accepted client: a slow request (for example a large
+    # conversation read) must not block cheap cached reads. Requests are short
+    # lived, so a thread per client is simpler than a pool. MAX_CLIENT_WORKERS
+    # bounds the fan-out; at the cap we stop accepting and clients wait in the
+    # kernel backlog.
+    def spawn_client_worker(client)
+      wait_for_client_slot
+      @client_workers_mutex.synchronize do
+        @client_workers << Thread.new do
+          Thread.current.report_on_exception = false
+          begin
+            handle_client(client)
+          rescue StandardError => e
+            @logger.error("Remote") { "client worker failed: #{e.class} - #{e.message}" }
+          ensure
+            @client_workers_mutex.synchronize { @client_workers.delete(Thread.current) }
+          end
+        end
+      end
+    end
+
+    def wait_for_client_slot
+      while !@shutdown && @client_workers_mutex.synchronize { @client_workers.size } >= MAX_CLIENT_WORKERS
+        sleep(0.005)
+      end
+    end
+
+    def drain_client_workers
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + CLIENT_DRAIN_TIMEOUT
+      workers = @client_workers_mutex.synchronize { @client_workers.dup }
+      workers.each do |worker|
+        remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        worker.join(remaining) if remaining.positive?
+      end
+    end
+
+    def start_push_notification_thread
+      Thread.new do
+        Thread.current.report_on_exception = false
+        until @shutdown
+          poll_agent_push_notifications!
+          sleep(0.25)
+        end
       end
     end
 
@@ -854,8 +908,10 @@ module HQ
 
     def log_server(line)
       @logger.info("Remote") { line }
-      @output.puts("[Remote] #{Time.now.strftime("%H:%M:%S")} #{line}")
-      @output.flush if @output.respond_to?(:flush)
+      @output_mutex.synchronize do
+        @output.puts("[Remote] #{Time.now.strftime("%H:%M:%S")} #{line}")
+        @output.flush if @output.respond_to?(:flush)
+      end
     rescue StandardError
       nil
     end
