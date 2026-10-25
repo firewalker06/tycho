@@ -576,7 +576,7 @@ module RemoteServerTest
       port = TCPServer.open("127.0.0.1", 0) { |probe| probe.addr[1] }
       release = Queue.new
       slow_started = Queue.new
-      server = HQ::RemoteServer.new(host: "127.0.0.1", port: port, registry: registry, output: StringIO.new)
+      server = HQ::RemoteServer.new(host: "127.0.0.1", port: port, registry: registry, token: "", output: StringIO.new)
       server.define_singleton_method(:route) do |service, method, path, body, request = nil|
         if path == "/slow-test"
           slow_started << true
@@ -597,7 +597,8 @@ module RemoteServerTest
           retry
         end
         slow = Thread.new { Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/slow-test")) }
-        slow_started.pop
+        reached = slow_started.pop(timeout: 5)
+        assert(reached, "expected the slow request to reach the server: #{slow.join(1) ? slow.value.code : "pending"}")
         started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         fast = Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/servers/activity"))
         elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
