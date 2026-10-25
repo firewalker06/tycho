@@ -4,6 +4,10 @@ require "fileutils"
 require "tmpdir"
 require "web_push"
 require "json"
+require_relative "test_environment"
+
+# A managed agent that runs a test must not leak its per-run variables into it.
+TestEnvironment.clear_inherited_run_variables!
 
 # Load before HQ constants. Never inherit an operator's logs root in tests.
 module TestPushSafety

@@ -5,6 +5,7 @@ require "open3"
 require "tmpdir"
 
 ROOT = File.expand_path("..", __dir__)
+require File.join(ROOT, "test/support/test_environment")
 
 test_files = Dir.glob(File.join(ROOT, "test", "*_test.rb")).sort.map do |path|
   path.delete_prefix("#{ROOT}/")
@@ -20,11 +21,7 @@ commands = [
 commands.each do |command|
   puts "$ #{command.join(" ")}"
   success = Dir.mktmpdir("tycho-test-command-") do |logs_root|
-    system({ "TYCHO_LOGS_ROOT" => File.join(logs_root, "logs"),
-             "TYCHO_HOME" => logs_root,
-             "TYCHO_CONFIG_DIR" => nil, "TYCHO_CONFIG_PATH" => nil,
-             "TYCHO_SYSTEM_PROMPTS_PATH" => nil, "TYCHO_RESPONSE_STYLE_PATH" => nil,
-             "TYCHO_SCHEDULES_PATH" => nil, "TYCHO_SCHEDULES_ROOT" => nil }, *command, chdir: ROOT)
+    system(TestEnvironment.command_env(logs_root), *command, chdir: ROOT)
   end
   exit($?.exitstatus || 1) unless success
 end

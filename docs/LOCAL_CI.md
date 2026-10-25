@@ -9,7 +9,9 @@ replacement for independent review where that is needed.
 ## Test notification safety
 
 `bin/test` gives each command a fresh temporary Tycho home and logs root,
-clears inherited config-path overrides, and preloads
+clears inherited config-path overrides and per-run managed-agent variables
+(`TYCHO_NATIVE_RELEASE_PATH`, `TYCHO_AGENT_KEY`, and the others listed in
+`test/support/test_environment.rb`), and preloads
 `test/support/push_safety.rb` for Ruby test files. The helper sets the root
 before HQ constants load and blocks real Web Push transport. Scheduler
 fixtures inject fake notifiers. Push delivery contract tests must install
