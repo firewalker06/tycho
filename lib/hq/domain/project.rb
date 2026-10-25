@@ -121,18 +121,23 @@ module HQ
       slug.empty? ? @key : slug
     end
 
+    # Any failed command returns nil, so one bad read never clears the other values.
     def read_git_metadata
       return nil unless File.exist?(File.join(@path, ".git"))
 
-      porcelain, status = Open3.capture2("git", "-C", @path, "status", "--porcelain", err: File::NULL)
-      unless status.success?
-        HQ.logger.warn("Project") { "Git status failed for #{@key}; keeping cached metadata" }
-        return nil
-      end
+      porcelain, status = git_capture("status", "--porcelain")
+      return cannot_read_git("status") unless status.success?
+
+      # Exit 1 from --verify means the branch has no commit yet; other failures are unknown.
+      commit, commit_status = git_capture("rev-parse", "--verify", "--short", "-q", "HEAD")
+      return cannot_read_git("rev-parse") unless commit_status.success? || commit_status.exitstatus == 1
+
+      branch, branch_status = git_capture("branch", "--show-current")
+      return cannot_read_git("branch") unless branch_status.success?
 
       {
-        commit_hash: git_output("rev-parse", "--short", "HEAD"),
-        branch: git_output("branch", "--show-current"),
+        commit_hash: presence(commit),
+        branch: presence(branch),
         dirty_files: porcelain.lines.count
       }
     rescue StandardError => e
@@ -140,10 +145,18 @@ module HQ
       nil
     end
 
-    def git_output(*args)
-      output, status = Open3.capture2("git", "-C", @path, *args, err: File::NULL)
+    def git_capture(*args)
+      Open3.capture2("git", "-C", @path, *args, err: File::NULL)
+    end
+
+    def cannot_read_git(command)
+      HQ.logger.warn("Project") { "Git #{command} failed for #{@key}; keeping cached metadata" }
+      nil
+    end
+
+    def presence(output)
       value = output.strip
-      status.success? && !value.empty? ? value : nil
+      value.empty? ? nil : value
     end
   end
 end

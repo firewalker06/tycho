@@ -159,6 +159,7 @@ module HQ
       end
       daemonize_after_startup! if @daemonize_after_startup
       warm_resource_catalog!
+      refresh_project_metadata
 
       push_thread = start_push_notification_thread
       metadata_thread = start_project_metadata_thread
@@ -262,12 +263,13 @@ module HQ
     end
 
     # Project reads serve cached git metadata; this thread is the only periodic git refresh.
+    # start warms the cache once before it accepts requests, so the first refresh waits one interval.
     def start_project_metadata_thread
       Thread.new do
         Thread.current.report_on_exception = false
         until @shutdown
-          refresh_project_metadata
           wait_for_next_project_metadata_refresh
+          refresh_project_metadata unless @shutdown
         end
       end
     end
@@ -2694,9 +2696,9 @@ module HQ
       end
     end
 
-    # Refreshes cached git metadata for every project in parallel. Only the server's background timer calls this.
+    # Refreshes cached git metadata for every visible project in parallel. Only the server's startup and background timer call this.
     def refresh_project_metadata!
-      @projects.map { |project| Thread.new { refresh_project!(project) } }.each(&:join)
+      visible_projects.map { |project| Thread.new { refresh_project!(project) } }.each(&:join)
     end
 
     def project(key)
@@ -4269,8 +4271,11 @@ module HQ
       @schedule_daemon_supervisor ||= ScheduleDaemonSupervisor.new
     end
 
+    # Runs on writes only. A visible project with no cached value (new, renamed, or unhidden) is refreshed here,
+    # so it does not report unknown git state until the next background tick.
     def reload_projects_from_registry!
       @projects = @registry.projects.map { |config| @project_metadata_cache.apply(Project.new(config)) }
+      visible_projects.each { |project| refresh_project!(project) unless @project_metadata_cache.cached?(project) }
       @agent_store = AgentStore.new(@projects)
     end
 

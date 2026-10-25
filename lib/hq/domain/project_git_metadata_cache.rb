@@ -22,6 +22,10 @@ module HQ
       project
     end
 
+    def cached?(project)
+      @mutex.synchronize { @entries.key?(cache_key(project)) }
+    end
+
     private
 
     def cache_key(project)

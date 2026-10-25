@@ -1115,7 +1115,7 @@ Sends a test notification to an enabled subscription. Automatic agent-transition
 
 ### `GET /projects`
 
-Returns active projects from cached state. Reads never run git; the server refreshes git metadata (branch, commit, dirty count) about every 30 seconds in the background, and a failed refresh keeps the last good values:
+Returns active projects from cached state. Reads never run git. The server refreshes git metadata (branch, commit, dirty count) once before it accepts requests, about every 30 seconds in the background, and when a visible project has no cached value after a configuration write. A failed read keeps the last good values:
 
 ```json
 {
