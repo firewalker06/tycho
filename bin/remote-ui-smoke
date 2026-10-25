@@ -10629,6 +10629,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "archive_clone_smoke")
       next
     end
+    if ENV["TYCHO_REMOTE_UI_OPTIMISTIC_ARCHIVE_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "optimistic_archive_smoke")
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_MERMAID_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "mermaid_smoke")
       next
