@@ -151,6 +151,26 @@ module HQ
       with_exclusive_lock { save_unlocked(agents) }
     end
 
+    # Clears the unread flag on one stored record without a full load, poll, or reconciliation.
+    # Returns nil for an unknown key, false when the flag is already clear (no write), true after a write.
+    # after_write receives the updated record and runs inside the lock.
+    def mark_read!(key, before_write: nil, after_write: nil)
+      with_exclusive_lock do
+        current = File.exist?(AGENTS_FILE) ? Array(FileStore.read_json(AGENTS_FILE, fallback: [])) : []
+        index = current.index { |record| record["key"] == key.to_s }
+        next nil unless index
+        next false unless current[index]["unread"]
+
+        records = current.each_with_index.map { |record, i| i == index ? record.merge("unread" => false) : record }
+        prepared = @recovery.prepare(records, current_records: current, allow_retired_keys: false, allow_large_reduction: false)
+        before_write&.call
+        FileStore.write_json(AGENTS_FILE, prepared)
+        @recovery.after_save(prepared, allow_retired_keys: false)
+        after_write&.call(records[index])
+        true
+      end
+    end
+
     def save_unlocked(agents, allow_retired_keys: false, allow_large_reduction: false)
       current = File.exist?(AGENTS_FILE) ? Array(FileStore.read_json(AGENTS_FILE, fallback: [])) : []
       records = @recovery.prepare(
