@@ -130,21 +130,27 @@ module RemoteUIAssetSnapshotTest
   def assert_started_agent_notice_uses_started_label_and_project
     javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
     css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
-    started_renderer = javascript[/function renderDelegationEventBlock.*?^}/m].to_s
+    notice_renderer = javascript[/function renderDelegationEventBlock.*?^}/m].to_s
+    started_branch = notice_renderer[/if \(block\?\.metadata\?\.event === "agent_started"\) \{.*?\n  \}\n/m].to_s
+    sent_branch = notice_renderer[/if \(block\?\.metadata\?\.event === "agent_message_sent"\) \{.*?\n  \}\n/m].to_s
 
     required = [
-      'if (block?.metadata?.event === "agent_started") {',
-      'delegation-started-event',
+      'delegation-notice-event delegation-started-event',
       '<span class="delegation-event-brand">STARTED</span>',
       'renderAgentReference(reference, { projectName })',
       'return findProject(key)?.name || key;',
       '${projectPart} · ${escapeHtml(serverHealth)}'
     ]
-    missing = required.reject { |fragment| javascript.include?(fragment) || started_renderer.include?(fragment) }
+    missing = required.reject { |fragment| javascript.include?(fragment) || notice_renderer.include?(fragment) }
     raise "missing started agent notice contract: #{missing.join(", ")}" unless missing.empty?
-    raise "started agent notice still renders the Started agent text" if started_renderer[/agent_started.*?\n  }\n/m].to_s.include?("Started agent")
-    raise "started agent icon still has a border" unless css.include?(".delegation-started-event .agent-reference .status-mark {") &&
-      css[/\.delegation-started-event \.agent-reference \.status-mark \{.*?\}/m].to_s.include?("border: 0;")
+    raise "started agent notice still renders the Started agent text" if started_branch.include?("Started agent")
+    raise "message sent notice still renders the TYCHO or Message sent text" if sent_branch.include?("TYCHO") || sent_branch.include?("Message sent")
+    raise "message sent notice must use the shared notice class and project name" unless
+      sent_branch.include?('delegation-notice-event delegation-send-event') &&
+      sent_branch.include?('renderAgentReference(reference, { projectName })') &&
+      sent_branch.include?('${queued ? "QUEUED" : "SENT"}')
+    raise "notice icon still has a border" unless css.include?(".delegation-notice-event .agent-reference .status-mark {") &&
+      css[/\.delegation-notice-event \.agent-reference \.status-mark \{.*?\}/m].to_s.include?("border: 0;")
   end
 
   def assert_delegated_summary_attention_icon_is_in_header

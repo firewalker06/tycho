@@ -1482,7 +1482,8 @@ title: !123 value
           const message = event?.querySelector(".delegation-send-message pre");
           const style = message ? getComputedStyle(message) : null;
           return {
-            label: event?.querySelector("strong")?.textContent || "",
+            label: event?.querySelector(".delegation-event-brand")?.textContent || "",
+            header: event?.querySelector(".delegation-event-header")?.innerText || "",
             message: message?.textContent || "",
             link: event?.querySelector(".agent-reference[href]")?.getAttribute("href") || "",
             scripts: event?.querySelectorAll("script").length || 0,
@@ -1490,7 +1491,8 @@ title: !123 value
             messageHeight: message?.getBoundingClientRect().height || 0,
           };
         });
-        if (sendDesktop.label !== "Message sent" || sendDesktop.message !== sendText ||
+        if (sendDesktop.label !== "SENT" || sendDesktop.header.includes("Message sent") || sendDesktop.header.includes("TYCHO") ||
+            sendDesktop.message !== sendText ||
             !sendDesktop.link.includes(delegatedAgentKey) || sendDesktop.scripts !== 0) {
           throw new Error(`Accepted agent-send event did not render safely after reload: ${JSON.stringify(sendDesktop)}`);
         }

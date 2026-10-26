@@ -4419,7 +4419,7 @@ select {
   min-height: 34px;
 }
 
-.delegation-started-event .agent-reference .status-mark {
+.delegation-notice-event .agent-reference .status-mark {
   width: 34px;
   height: 34px;
   border: 0;
@@ -4427,7 +4427,7 @@ select {
   padding: 0;
 }
 
-.delegation-started-event .agent-reference .status-mark .ui-icon {
+.delegation-notice-event .agent-reference .status-mark .ui-icon {
   width: 30px;
   height: 30px;
 }
