@@ -82,6 +82,7 @@ module RemoteServerTest
     assert_remote_project_hung_git_refresh_is_bounded
     assert_remote_server_accepts_requests_while_git_hangs
     assert_remote_project_first_failed_read_is_unknown
+    assert_warm_schedule_setup_and_project_reads_do_bounded_work
     assert_remote_project_reload_refreshes_only_uncached_visible_projects
     assert_remote_project_git_diff_payload
     assert_remote_project_workspace_routes
@@ -4271,33 +4272,108 @@ module RemoteServerTest
     end
   end
 
+  # Synchronized, not timed: git stays hung until this test writes the release file. The GET must answer
+  # while git is still hung. A synchronous startup refresh blocks the accept loop, so the GET times out.
   def assert_remote_server_accepts_requests_while_git_hangs
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
       FileUtils.mkdir_p(File.join(workspace, ".git"))
       registry = registry_for_project(dir, workspace)
-      with_hung_git(dir) do |pid_file|
+      with_controlled_hung_git(dir) do |git|
         port = remote_test_port
         server = HQ::RemoteServer.new(host: "127.0.0.1", port: port, registry: registry, token: "", output: StringIO.new)
         thread = Thread.new { server.start }
         begin
           wait_for_remote_port(port)
-          wait_for_hung_git_start(pid_file)
-          started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-          response = Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/projects/web"))
-          elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
-          assert(response.code == "200" && elapsed < 2,
-                 "expected /projects/web to answer while git hangs, got #{response.code} in #{elapsed.round(2)}s")
+          wait_for_hung_git_start(git.pid_file)
+          response = get_while_git_hangs(port, "/projects/web")
+          assert(response.code == "200", "expected /projects/web to answer while git hangs, got #{response.code}")
           project = JSON.parse(response.body).fetch("project")
           assert(project["git_metadata_known"] == false, "expected unknown git state while git hangs")
         ensure
+          File.write(git.release_file, "")
           server.shutdown
           thread.join(10)
         end
         assert(!thread.alive?, "expected the remote server to stop on shutdown")
-        assert_hung_git_children_gone(pid_file)
+        assert_hung_git_children_gone(git.pid_file)
       end
+    end
+  end
+
+  def get_while_git_hangs(port, path)
+    http = Net::HTTP.new("127.0.0.1", port)
+    http.open_timeout = 5
+    http.read_timeout = 5
+    http.get(path)
+  rescue Net::OpenTimeout, Net::ReadTimeout
+    raise "GET #{path} did not answer within 5 s while git was hung"
+  end
+
+  # Fake git that records its PID and waits for the release file. The child leads its own process group,
+  # so ensure can stop it and its children with one targeted group signal if the test fails early.
+  def with_controlled_hung_git(dir)
+    fake_bin = File.join(dir, "fake-bin")
+    pid_file = File.join(dir, "hung-git.pids")
+    release_file = File.join(dir, "release-git")
+    FileUtils.mkdir_p(fake_bin)
+    git_path = File.join(fake_bin, "git")
+    File.write(git_path, "#!/bin/sh\necho $$ >> \"#{pid_file}\"\nwhile [ ! -e \"#{release_file}\" ]; do sleep 0.05; done\nexit 1\n")
+    File.chmod(0o755, git_path)
+    old_path = ENV["PATH"]
+    old_timeout = replace_constant(HQ::Project, :GIT_COMMAND_TIMEOUT, 60)
+    ENV["PATH"] = "#{fake_bin}#{File::PATH_SEPARATOR}#{old_path}"
+    yield Struct.new(:pid_file, :release_file).new(pid_file, release_file)
+  ensure
+    ENV["PATH"] = old_path if old_path
+    replace_constant(HQ::Project, :GIT_COMMAND_TIMEOUT, old_timeout) if old_timeout
+    kill_owned_fixture_pids(pid_file) if pid_file
+  end
+
+  def kill_owned_fixture_pids(pid_file)
+    return unless File.exist?(pid_file)
+
+    File.read(pid_file).split.map(&:to_i).each do |pid|
+      Process.kill("KILL", -pid)
+    rescue Errno::ESRCH, Errno::EPERM
+      nil
+    end
+  end
+
+  # Card 712 timing requirement, guarded by work rather than wall-clock time: warm reads of the three
+  # endpoints must not load the agent store or run git, however many agents exist.
+  def assert_warm_schedule_setup_and_project_reads_do_bounded_work
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      FileUtils.mkdir_p(File.join(workspace, ".git"))
+      registry = registry_for_project(dir, workspace)
+      agents = Array.new(200) do |index|
+        HQ::ManagedAgent.new(key: "bulk-#{index}", name: "Bulk #{index}", project_key: "web",
+                             template_key: "default", workspace: workspace, prompt: "Work.")
+      end
+      HQ::AgentStore.new([]).save(agents)
+      service = HQ::RemoteService.new(registry: registry, agent_list_cache: HQ::AgentListCache.new(max_age: 60),
+                                      project_metadata_cache: HQ::ProjectGitMetadataCache.new)
+      service.send(:load_all_agents)
+      store = service.instance_variable_get(:@agent_store)
+      store.define_singleton_method(:load_with_poll_events) { |**| raise "unexpected full agent load" }
+      git_reads = 0
+      service.instance_variable_get(:@projects).each do |project|
+        project.define_singleton_method(:read_git_metadata) do
+          git_reads += 1
+          raise "unexpected live git read"
+        end
+      end
+
+      schedules = service.schedules
+      setup = service.setup_summary
+      detail = service.project("web")
+      assert(git_reads.zero?, "expected warm reads to run no git, got #{git_reads}")
+      assert(detail[:managed_agent_count] == agents.length, "expected warm project read to count the cached agents")
+      assert(schedules.is_a?(Hash) || schedules.is_a?(Array), "expected schedules payload")
+      assert(setup.is_a?(Hash), "expected setup summary payload")
     end
   end
 
