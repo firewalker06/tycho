@@ -7104,6 +7104,23 @@ module RemoteServerTest
     assert(provenance.include?("@fontsource-variable/plus-jakarta-sans 5.3.0") &&
            provenance.include?("02b28c06b126c852a5b966b44aef777ca923f6f6"),
            "expected Plus Jakarta Sans provenance to identify its exact Fontsource release")
+    HQ::RemoteUI::HARNESS_LOGO_ASSETS.each do |logo_route, logo_path|
+      logo_request = HQ::RemoteServer.const_get(:Request).new(method: "GET", path: logo_route, headers: {}, body: "")
+      assert(server.send(:ui_request?, logo_request), "expected #{logo_route} to be a public UI route")
+      logo = server.send(:route_ui, logo_route)
+      assert(logo[:content_type] == "image/svg+xml; charset=utf-8", "expected #{logo_route} to use the SVG MIME type")
+      assert(logo[:body] == File.binread(logo_path), "expected #{logo_route} to serve the upstream file byte-for-byte")
+    end
+    assert(File.read(HQ::RemoteUI::JS_PATH).include?("const HARNESS_MARKS = {") &&
+           File.read(HQ::RemoteUI::JS_PATH).include?("function harnessLabelHtml(name)"),
+           "expected Remote UI to map built-in harness marks through the shared label helper")
+    marks = File.read(HQ::RemoteUI::JS_PATH)[/const HARNESS_MARKS = \{.*?\n\};/m].to_s
+    assert(marks.include?('codex: "/harness-logos/openai-blossom-dark.svg"'),
+           "expected Codex to use the official OpenAI blossom mark")
+    assert(marks.include?('claude: "/harness-logos/claude-spark-clay.svg"') &&
+           marks.include?('opencode: "/harness-logos/opencode-logo-dark.svg"') &&
+           marks.include?('pi: "/harness-logos/pi-logo-auto.svg"'),
+           "expected every built-in harness mark to map to its packaged upstream file")
     %w[
       --ds-background-canvas
       --ds-text-primary
@@ -7779,7 +7796,7 @@ module RemoteServerTest
     assert(js[:body].include?("kv-copy-button"),
            "expected copyable key/value rows to render a copy control")
     assert(js[:body].include?('["Raw log", agent.log_path]') &&
-           js[:body].include?('label === "Status" ? agentStatusKv(agent, { copyable: true }) : copyableKv(label, value)'),
+           js[:body].include?('label === "Status" ? agentStatusKv(agent, { copyable: true }) : label === "Harness" ? kv(label, value, { copyable: true, valueHtml: harnessLabelHtml(value) }) : copyableKv(label, value)'),
            "expected Conversation settings rows to be copyable")
     assert(js[:body].include?('copyableKv("Path", project.path)') &&
            js[:body].include?('copyableKv("Templates",'),

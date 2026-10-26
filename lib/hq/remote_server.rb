@@ -754,6 +754,14 @@ module HQ
         )
       end
 
+      if RemoteUI.harness_logo_route?(path)
+        return ui_asset(
+          "image/svg+xml; charset=utf-8",
+          RemoteUI.harness_logo_asset(path),
+          headers: { "Cache-Control" => "public, max-age=3600" }
+        )
+      end
+
       case path
       when "/", "/ui", "/ui/"
         ui_asset("text/html; charset=utf-8", RemoteUI.index)
@@ -807,6 +815,7 @@ module HQ
     def ui_request?(request)
       return false unless request.method == "GET"
       return true if RemoteUI.font_asset_route?(request.path)
+      return true if RemoteUI.harness_logo_route?(request.path)
 
       [
         "/",
