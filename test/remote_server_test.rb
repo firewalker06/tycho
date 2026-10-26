@@ -8065,7 +8065,7 @@ module RemoteServerTest
            "expected local resource ownership to render as an accessible home icon without visible text")
     assert(js[:body].include?('return server.local ? "Host"'),
            "expected local ownership text to use Host")
-    assert(js[:body].include?('renderAgentRow(agent, { serverIcon: true, query })') &&
+    assert(js[:body].include?('renderAgentRow(agent, { serverIcon: true, query, delegationDepth: depth })') &&
            js[:body].include?('class="agent-server-inline"') &&
            css[:body].include?(".agent-server-inline > .ui-icon"),
            "expected flat Agent rows to show the local or peer server icon")

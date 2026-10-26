@@ -24,6 +24,7 @@ module RemoteUIDelegationGroupingTest
         delegation: parentKey ? { parent: { key: parentKey } } : {},
       });
       const keys = (list) => list.map((item) => item.key).join(",");
+      const flatten = (trees) => trees.flatMap((tree) => tree.entries.map((entry) => entry.agent));
 
       const nested = [
         agent("child-old", "2026-10-01T10:00:00Z", "parent-old"),
@@ -33,10 +34,18 @@ module RemoteUIDelegationGroupingTest
         agent("grandchild", "2026-10-04T10:00:00Z", "child-old"),
         agent("orphan", "2026-10-01T08:00:00Z", "missing-parent"),
       ];
-      const grouped = helpers.groupAgentsByDelegation(nested);
+      const trees = helpers.groupAgentsByDelegation(nested);
       const expected = "parent-new,parent-old,child-new,child-old,grandchild,orphan";
-      if (keys(grouped) !== expected) {
-        throw new Error(`delegation grouping order was ${keys(grouped)}, expected ${expected}`);
+      if (keys(flatten(trees)) !== expected) {
+        throw new Error(`delegation grouping order was ${keys(flatten(trees))}, expected ${expected}`);
+      }
+      const depths = trees.flatMap((tree) => tree.entries.map((entry) => `${entry.agent.key}:${entry.depth}`)).join(",");
+      const expectedDepths = "parent-new:0,parent-old:0,child-new:1,child-old:1,grandchild:2,orphan:0";
+      if (depths !== expectedDepths) {
+        throw new Error(`delegation depths were ${depths}, expected ${expectedDepths}`);
+      }
+      if (trees[1].root.key !== "parent-old" || trees.length !== 3) {
+        throw new Error(`delegation trees were not rooted per parent: ${trees.map((tree) => tree.root.key).join(",")}`);
       }
 
       const cycle = [
@@ -44,7 +53,7 @@ module RemoteUIDelegationGroupingTest
         agent("cycle-b", "2026-10-01T11:00:00Z", "cycle-a"),
         agent("self", "2026-10-01T12:00:00Z", "self"),
       ];
-      const cycleGrouped = helpers.groupAgentsByDelegation(cycle);
+      const cycleGrouped = flatten(helpers.groupAgentsByDelegation(cycle));
       if (cycleGrouped.length !== cycle.length || new Set(keys(cycleGrouped).split(",")).size !== cycle.length) {
         throw new Error(`delegation cycle dropped or duplicated agents: ${keys(cycleGrouped)}`);
       }
@@ -53,7 +62,7 @@ module RemoteUIDelegationGroupingTest
         [agent("a", "2026-10-01T10:00:00Z"), agent("b", "2026-10-02T10:00:00Z")],
         (left, right) => left.key.localeCompare(right.key)
       );
-      if (keys(custom) !== "a,b") {
+      if (keys(flatten(custom)) !== "a,b") {
         throw new Error(`delegation grouping ignored the supplied comparator: ${keys(custom)}`);
       }
     JAVASCRIPT
