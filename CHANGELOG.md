@@ -4,6 +4,84 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.14.1 - 2026-10-26
+
+### Agent list and harness marks
+
+- Group the relevancy Agents list by delegation. Delegated agents appear under
+  their parent in a labelled group. Recent parents appear first, and children
+  are ordered by recent activity within each parent. Orphans appear as roots.
+  Search results and explicit sorts stay flat.
+- Show the official Claude, OpenCode, and Pi marks, and the OpenAI blossom for
+  Codex, beside harness names in agent rows, agent cards, agent detail, and
+  Settings. Provenance is recorded in `docs/HARNESS_LOGOS.md`.
+- Show the started and sent notices with clear labels: STARTED, SENT, or QUEUED.
+  The project name appears beside Host.
+
+### Remote UI actions
+
+- Remove archived agents from active views as soon as archive is confirmed.
+  If the request fails, the agent returns with an error message. Bulk archive
+  settles each server group separately.
+- Drop an answered inquiry from cached agent detail when you revisit the agent.
+  Detail responses that were in flight before the answer are discarded.
+
+### Faster Remote reads
+
+- Serve project git metadata from a shared cache that refreshes every 30 seconds.
+  Each git call stops after 5 seconds. A failed read keeps the last good value.
+- Show unknown git state instead of clean in the Remote UI, the CLI, and the
+  terminal project and agent rows until every git field is valid.
+- Serve schedules, setup summary, project reads, and the agent list from the
+  agent cache. Conversation blocks are cached across requests. Delegation
+  references, redaction, and queue state are still computed on each read.
+- Load the newest 50 conversation blocks on first open, then older pages as you
+  scroll near the top. The tail payload is bounded by bytes.
+- Serve Remote requests concurrently, with read deadlines and clean shutdown for
+  client workers.
+- Poll only the visible Remote UI screen. Make `PUT /agents/KEY/reading` cheap.
+- Return `Server-Timing` headers on Remote responses. Requests at or above
+  500 ms log a warning with the stage split.
+
+### Naming and Quick Agent
+
+- Auto-name agents from their first structured result. The managed result schema
+  adds an optional `agent_title_suggestion` field. A suggestion replaces only a
+  default name. A custom name stays unchanged.
+- Move the Quick Agent name into a collapsible Options area. Quick Agent keeps
+  the current project visible, and the modal no longer blurs the page behind it.
+- Set an optional default Quick Agent project in Remote UI Settings >
+  Configuration. In `hq.yml`, this is `quick_agent.default_project_key`.
+- Fix title suggestions for default agent names. Keep the optional title field
+  compatible with Codex strict output.
+
+### Fixes
+
+- Fix source archival in Clone and archive actions.
+- Keep idle-stop reasons visible in Summary details.
+- Preserve terminal delegation reports before a callback resumes the parent.
+- Render Mermaid previews with Mermaid 12 Neo styling and dark Redux colours.
+- Fix macOS startup for relocatable Ruby installs.
+- Update the JWT and DOMPurify dependencies to address published security
+  advisories.
+- Clear inherited managed-agent variables in `bin/test`, so a test run does not
+  inherit an active agent's environment.
+
+### Compatibility
+
+- Ruby 4.0.9 or later is now required. v0.14.0 documented Ruby 3.2 or later.
+  Upgrade Ruby before you run `bundle install` or `bin/setup`.
+- `jwt` (`>= 3.2.0`, `< 4`) is a new direct gem dependency. v0.14.0 documented
+  that no new gem dependency was added.
+- The managed agent result schema adds the optional `agent_title_suggestion`
+  field. Existing results remain valid.
+- The example `hq.yml` adds an optional `quick_agent` block. Existing
+  configuration remains valid.
+- No manual data migration is required. Existing projects, agents, schedules,
+  queues, memory, and attachments remain valid.
+- Bottles still target Apple Silicon macOS and Linux. v0.11.0 remains the final
+  Intel macOS bottle.
+
 ## 0.14.0 - 2026-10-16
 
 ### Local harness catalog CLI

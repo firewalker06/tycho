@@ -7,6 +7,42 @@
 Ruby 4.0.9 or later is required. Upgrade Ruby before running `bundle install`
 or the setup script.
 
+## 0.14.1
+
+Upgrade through Homebrew or update the source checkout. Ruby 4.0.9 or later is
+required. v0.14.0 documented Ruby 3.2 or later; that floor no longer applies.
+Upgrade Ruby before you run `bundle install` or the setup script in a source
+checkout.
+
+This release adds the `jwt` gem (`>= 3.2.0`, `< 4`) as a direct dependency. A
+source checkout installs it with `bundle install`. No manual conversion is
+required for projects, schedules, agents, delegation, QueueWork, memory,
+credentials, notification records, or attachments.
+
+### Optional Quick Agent default project
+
+The example `hq.yml` adds an optional `quick_agent` block:
+
+```yaml
+quick_agent:
+  default_project_key: null
+```
+
+Blank keeps the first available project. Project-scoped launches and manual
+choices take priority. You can also set this in Remote UI Settings > Configuration.
+
+### Verify the upgrade
+
+```bash
+tycho --version
+tycho doctor
+tycho agent list
+tycho schedule list
+```
+
+Remote UI shows unknown git state until the first background git read succeeds.
+This is expected after a restart and is not a data problem.
+
 ## 0.14.0
 
 Upgrade through Homebrew or update the source checkout. Ruby 3.2 or later is
