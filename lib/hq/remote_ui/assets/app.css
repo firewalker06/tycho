@@ -2204,11 +2204,15 @@ select {
   vertical-align: middle;
 }
 
-.harness-mark {
+span.harness-mark {
   flex: none;
   width: 16px;
   height: 16px;
-  object-fit: contain;
+  /* Plain white in the dark Remote UI. A light palette overrides --harness-mark-color. */
+  color: var(--harness-mark-color);
+  background-color: currentColor;
+  -webkit-mask: var(--harness-mark-src) center / contain no-repeat;
+  mask: var(--harness-mark-src) center / contain no-repeat;
 }
 
 .harness-refresh-button {
@@ -8585,6 +8589,7 @@ body:has(.inquiry-form-full-screen) {
 /* ---- Remote UI audit remediation ---- */
 
 :root {
+  --harness-mark-color: #ffffff;
   /* Legacy aliases retained until product selectors move to --ds-* tokens. */
   --control-height: 44px;
   --touch-target: 44px;

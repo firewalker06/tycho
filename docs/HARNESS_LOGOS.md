@@ -23,6 +23,7 @@ This page records where Tycho shows harness marks, where it does not, and why. A
 ## Usage rules applied
 
 - Marks are unchanged upstream files. Tycho does not recolor, crop, or redraw them.
+- Marks render as one plain color: each file is a CSS mask filled with `--harness-mark-color`, which is `#ffffff` in the dark Remote UI. The colored panels and two-tone fills are not shown. A light palette overrides the variable to a dark ink.
 - Marks are decorative (`alt=""`, `aria-hidden="true"`) because the harness name is always shown as adjacent text.
 - The Remote UI is dark only (`color-scheme: dark`), so light-background variants are not shipped.
 - Harness identity is also shown in the agent detail `Harness` row, the agent Settings `Harness` row, and the skill installation rows. Native `<select>` options, prose, and the TUI stay text-only.
