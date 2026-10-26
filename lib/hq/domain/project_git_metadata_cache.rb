@@ -2,7 +2,7 @@
 
 module HQ
   # Shared git metadata for configured projects. Request-scoped services apply
-  # cached values without running git; only refresh runs git, from a background timer.
+  # cached values without running git; only refresh runs git, from the server's timer.
   class ProjectGitMetadataCache
     def initialize
       @entries = {}
@@ -15,15 +15,22 @@ module HQ
       project
     end
 
-    # A failed read returns nil from Project#refresh_metadata!, so the last good entry stays.
+    # Merges the fields that were read successfully, so each field keeps its last valid value.
     def refresh(project)
       metadata = project.refresh_metadata!
-      @mutex.synchronize { @entries[cache_key(project)] = metadata.freeze } if metadata
+      return project if metadata.empty?
+
+      @mutex.synchronize do
+        key = cache_key(project)
+        @entries[key] = (@entries[key] || {}).merge(metadata).freeze
+      end
       project
     end
 
-    def cached?(project)
-      @mutex.synchronize { @entries.key?(cache_key(project)) }
+    # True when every git field has a cached value, so reload does not need to refresh the project.
+    def known?(project)
+      metadata = @mutex.synchronize { @entries[cache_key(project)] }
+      !metadata.nil? && (Project::GIT_FIELDS - metadata.keys).empty?
     end
 
     private

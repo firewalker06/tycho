@@ -63,6 +63,8 @@ module HQ
     AGENT_PUSH_POLL_INTERVAL = 5
     AGENT_LIST_CACHE_MAX_AGE = AGENT_PUSH_POLL_INTERVAL * 3
     PROJECT_METADATA_REFRESH_INTERVAL = 30
+    # A refresh stops after one bounded git command, so this covers the timeout and its terminate grace.
+    PROJECT_METADATA_SHUTDOWN_TIMEOUT = Project::GIT_COMMAND_TIMEOUT + 2
     MAX_CLIENT_WORKERS = 32
     CLIENT_DRAIN_TIMEOUT = 5
     CLIENT_READ_TIMEOUT = 10
@@ -159,7 +161,6 @@ module HQ
       end
       daemonize_after_startup! if @daemonize_after_startup
       warm_resource_catalog!
-      refresh_project_metadata
 
       push_thread = start_push_notification_thread
       metadata_thread = start_project_metadata_thread
@@ -178,7 +179,7 @@ module HQ
     ensure
       @shutdown = true
       push_thread&.join(CLIENT_DRAIN_TIMEOUT)
-      metadata_thread&.join(CLIENT_DRAIN_TIMEOUT)
+      metadata_thread&.join(PROJECT_METADATA_SHUTDOWN_TIMEOUT)
       drain_client_workers
       RemoteServerControl.clear(host: @host, port: @port)
       server&.close unless server&.closed?
@@ -262,14 +263,14 @@ module HQ
       end
     end
 
-    # Project reads serve cached git metadata; this thread is the only periodic git refresh.
-    # start warms the cache once before it accepts requests, so the first refresh waits one interval.
+    # Project reads serve cached git metadata; this thread is the only git refresh outside of writes.
+    # Its first pass warms the cache in the background, so requests never wait for git.
     def start_project_metadata_thread
       Thread.new do
         Thread.current.report_on_exception = false
         until @shutdown
+          refresh_project_metadata
           wait_for_next_project_metadata_refresh
-          refresh_project_metadata unless @shutdown
         end
       end
     end
@@ -4275,7 +4276,7 @@ module HQ
     # so it does not report unknown git state until the next background tick.
     def reload_projects_from_registry!
       @projects = @registry.projects.map { |config| @project_metadata_cache.apply(Project.new(config)) }
-      visible_projects.each { |project| refresh_project!(project) unless @project_metadata_cache.cached?(project) }
+      visible_projects.each { |project| refresh_project!(project) unless @project_metadata_cache.known?(project) }
       @agent_store = AgentStore.new(@projects)
     end
 
@@ -4838,6 +4839,7 @@ module HQ
         branch_url: project.branch_url(project.branch),
         commit_hash: project.commit_hash,
         commit_url: project.commit_url(project.commit_hash),
+        git_metadata_known: project.git_metadata_known?,
         dirty: project.dirty_files.to_i.positive?,
         dirty_files: project.dirty_files.to_i,
         agent: project.config.agent,

@@ -1696,7 +1696,8 @@ module HQ
         git: {
           branch: project.branch,
           commit: project.commit_hash,
-          dirty_files: project.dirty_files
+          dirty_files: project.dirty_files,
+          metadata_known: project.git_metadata_known?
         }
       }
     end
@@ -1718,7 +1719,7 @@ module HQ
         ["Visibility", payload[:hidden] ? "hidden (#{payload[:visibility_source]})" : "visible (#{payload[:visibility_source]})"],
         ["Branch", payload.dig(:git, :branch) || "n/a"],
         ["Commit", payload.dig(:git, :commit) || "n/a"],
-        ["Dirty files", payload.dig(:git, :dirty_files).to_i.to_s]
+        ["Dirty files", payload.dig(:git, :metadata_known) == false ? "unknown" : payload.dig(:git, :dirty_files).to_i.to_s]
       ]
       table = Lipgloss::Table.new
         .rows(rows)
@@ -2654,7 +2655,8 @@ module HQ
         git: {
           branch: payload["branch"],
           commit: payload["commit_hash"],
-          dirty_files: payload["dirty_files"]
+          dirty_files: payload["dirty_files"],
+          metadata_known: payload["git_metadata_known"]
         }
       }
     end

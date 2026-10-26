@@ -1115,7 +1115,7 @@ Sends a test notification to an enabled subscription. Automatic agent-transition
 
 ### `GET /projects`
 
-Returns active projects from cached state. Reads never run git. The server refreshes git metadata (branch, commit, dirty count) once before it accepts requests, about every 30 seconds in the background, and when a visible project has no cached value after a configuration write. A failed read keeps the last good values:
+Returns active projects from cached state. Reads never run git. A background pass refreshes git metadata (branch, commit, dirty count) at startup, about every 30 seconds, and when a visible project has no complete cached value after a configuration write. Each git call has a 5-second limit, and a timed-out call is stopped with its process group. Each field is read on its own, so a failed field keeps its last valid value. Before a project has a valid value for every field, `git_metadata_known` is `false`. Clients must show that state as unknown, not as clean. Requests never wait for git, even when git hangs:
 
 ```json
 {
@@ -1135,7 +1135,7 @@ Returns active projects from cached state. Reads never run git. The server refre
 
 ### `GET /projects/{key}`
 
-Returns the same cached git metadata as `GET /projects`, so branch, commit, and dirty counts can lag the workspace by up to one refresh interval. `GET /projects/{key}/git/status` still runs a live `git status` for the diff view.
+Returns the same cached git metadata as `GET /projects`, plus `git_metadata_known`. When it is `false`, `dirty`, `dirty_files`, `branch`, and `commit_hash` are placeholders, not a clean state. Cached branch, commit, and dirty counts can lag the workspace by up to one refresh interval. `GET /projects/{key}/git/status` still runs a live `git status` for the diff view.
 
 ### `GET /projects/{key}/workspace?path={relative}&offset={n}&limit={n}`
 
