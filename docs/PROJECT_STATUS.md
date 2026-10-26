@@ -119,6 +119,12 @@ Key references:
 
 ## Current Focus
 
+**v0.14.1 release preparation**: a patch release for delegation-grouped Agents,
+harness marks, cached Remote reads, optimistic archive, Quick Agent naming, and
+the Ruby 4.0.9 floor. The floor and the new `jwt` direct dependency are
+compatibility changes that the release notes call out. Website delivery and
+Homebrew publication remain separate gates after the exact tag exists.
+
 **v0.14.0 release preparation**: improves context replacement and schedule
 continuity, safe archive, Read queue evidence, inquiry drafts, attachment review,
 Conversation spacing and FRED states, mobile Settings, retained notification
