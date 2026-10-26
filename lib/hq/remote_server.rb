@@ -18,6 +18,7 @@ require_relative "terminal_qr"
 require_relative "version"
 require_relative "domain/tycho_updater"
 require_relative "domain/project"
+require_relative "domain/project_git_metadata_cache"
 require_relative "domain/project_workspace"
 require_relative "domain/attachment_normalizer"
 require_relative "domain/constants"
@@ -61,6 +62,9 @@ module HQ
     DEFAULT_PORT = 7373
     AGENT_PUSH_POLL_INTERVAL = 5
     AGENT_LIST_CACHE_MAX_AGE = AGENT_PUSH_POLL_INTERVAL * 3
+    PROJECT_METADATA_REFRESH_INTERVAL = 30
+    # A refresh stops after one bounded git command, so this covers the timeout and its terminate grace.
+    PROJECT_METADATA_SHUTDOWN_TIMEOUT = Project::GIT_COMMAND_TIMEOUT + 2
     MAX_CLIENT_WORKERS = 32
     CLIENT_DRAIN_TIMEOUT = 5
     CLIENT_READ_TIMEOUT = 10
@@ -93,7 +97,7 @@ module HQ
                    restart_command: nil, token: HQ.env("REMOTE_TOKEN"), logger: HQ.logger, output: $stdout,
                    daemonize_after_startup: false, daemon_log_path: REMOTE_DAEMON_LOG_FILE, daemonizer: nil,
                    resource_catalog: nil, resource_snapshot_path: nil, agent_activity_snapshot: nil,
-                   agent_list_cache: nil,
+                   agent_list_cache: nil, project_metadata_cache: nil,
                    registry: nil, clock: -> { Time.now }, slow_request_ms: SLOW_REQUEST_THRESHOLD_MS)
       @host = host.to_s.empty? ? DEFAULT_HOST : host.to_s
       @port = port.to_i.positive? ? port.to_i : DEFAULT_PORT
@@ -110,6 +114,7 @@ module HQ
       @agent_activity_snapshot = agent_activity_snapshot || AgentActivitySnapshot.new
       @conversation_blocks_cache = ConversationBlocksCache.new
       @agent_list_cache = agent_list_cache || AgentListCache.new(max_age: AGENT_LIST_CACHE_MAX_AGE)
+      @project_metadata_cache = project_metadata_cache || ProjectGitMetadataCache.new
       @registry = registry
       @clock = clock
       @client_workers = {}
@@ -158,6 +163,7 @@ module HQ
       warm_resource_catalog!
 
       push_thread = start_push_notification_thread
+      metadata_thread = start_project_metadata_thread
       until @shutdown
         begin
           if IO.select([server], nil, nil, 0.25)
@@ -173,6 +179,7 @@ module HQ
     ensure
       @shutdown = true
       push_thread&.join(CLIENT_DRAIN_TIMEOUT)
+      metadata_thread&.join(PROJECT_METADATA_SHUTDOWN_TIMEOUT)
       drain_client_workers
       RemoteServerControl.clear(host: @host, port: @port)
       server&.close unless server&.closed?
@@ -256,6 +263,33 @@ module HQ
       end
     end
 
+    # Project reads serve cached git metadata; this thread is the only git refresh outside of writes.
+    # Its first pass warms the cache in the background, so requests never wait for git.
+    def start_project_metadata_thread
+      Thread.new do
+        Thread.current.report_on_exception = false
+        until @shutdown
+          refresh_project_metadata
+          wait_for_next_project_metadata_refresh
+        end
+      end
+    end
+
+    def refresh_project_metadata
+      service = RemoteService.new(registry: @registry || Registry.new,
+                                  project_metadata_cache: @project_metadata_cache)
+      service.refresh_project_metadata!
+    rescue StandardError => e
+      HQ.logger.warn("Project") { "Project metadata refresh failed: #{e.class} - #{e.message}" }
+    end
+
+    def wait_for_next_project_metadata_refresh
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + PROJECT_METADATA_REFRESH_INTERVAL
+      while !@shutdown && Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
+        sleep(0.25)
+      end
+    end
+
     def handle_client(client)
       timing = RequestTiming.start
       status = nil
@@ -303,7 +337,8 @@ module HQ
         restartable: restartable?,
         agent_activity_snapshot: @agent_activity_snapshot,
         conversation_blocks_cache: @conversation_blocks_cache,
-        agent_list_cache: @agent_list_cache
+        agent_list_cache: @agent_list_cache,
+        project_metadata_cache: @project_metadata_cache
       )
       result = route(service, request.method, request.path, json_body(request), request)
       status = result.fetch(:status, 200)
@@ -1888,10 +1923,12 @@ module HQ
                    agent_activity_snapshot: AgentActivitySnapshot.new,
                    conversation_blocks_cache: ConversationBlocksCache.new,
                    agent_list_cache: AgentListCache.new,
+                   project_metadata_cache: ProjectGitMetadataCache.new,
                    clock: -> { Time.now })
       @registry = registry
       @clock = clock
-      @projects = registry.projects.map { |config| Project.new(config) }
+      @project_metadata_cache = project_metadata_cache
+      @projects = registry.projects.map { |config| @project_metadata_cache.apply(Project.new(config)) }
       @agent_store = AgentStore.new(@projects)
       @agent_archive_store = AgentArchiveStore.new
       state_root = File.dirname(AGENTS_FILE)
@@ -2654,16 +2691,19 @@ module HQ
     end
 
     def projects
-      refresh_projects!(visible_projects)
       agents_by_project = load_agents.group_by(&:project_key)
       visible_projects.map do |project|
         project_list_payload(project, agents: agents_by_project.fetch(project.key, []))
       end
     end
 
+    # Refreshes cached git metadata for every visible project in parallel. Only the server's startup and background timer call this.
+    def refresh_project_metadata!
+      visible_projects.map { |project| Thread.new { refresh_project!(project) } }.each(&:join)
+    end
+
     def project(key)
       target = find_project!(key)
-      refresh_project!(target)
       agents = visible_agents(cached_all_agents || load_all_agents).select { |agent| agent.project_key == target.key }
       project_detail_payload(target, agents:)
     end
@@ -4232,20 +4272,16 @@ module HQ
       @schedule_daemon_supervisor ||= ScheduleDaemonSupervisor.new
     end
 
+    # Runs on writes only. A visible project with no cached value (new, renamed, or unhidden) is refreshed here,
+    # so it does not report unknown git state until the next background tick.
     def reload_projects_from_registry!
-      @projects = @registry.projects.map { |config| Project.new(config) }
+      @projects = @registry.projects.map { |config| @project_metadata_cache.apply(Project.new(config)) }
+      visible_projects.each { |project| refresh_project!(project) unless @project_metadata_cache.known?(project) }
       @agent_store = AgentStore.new(@projects)
     end
 
-    def refresh_projects!(projects = @projects)
-      threads = projects.map do |project|
-        Thread.new { refresh_project!(project) }
-      end
-      threads.each(&:join)
-    end
-
     def refresh_project!(project)
-      project.refresh_metadata!
+      @project_metadata_cache.refresh(project)
       project
     rescue StandardError => e
       HQ.logger.warn("Remote") { "Project refresh failed for #{project.key}: #{e.class} - #{e.message}" }
@@ -4803,6 +4839,7 @@ module HQ
         branch_url: project.branch_url(project.branch),
         commit_hash: project.commit_hash,
         commit_url: project.commit_url(project.commit_hash),
+        git_metadata_known: project.git_metadata_known?,
         dirty: project.dirty_files.to_i.positive?,
         dirty_files: project.dirty_files.to_i,
         agent: project.config.agent,

@@ -1011,9 +1011,7 @@ module HQ
             short = project.commit_hash.to_s[0, 7]
             parts << chip(Styles::ICONS[:commit], short, url: project.commit_url(project.commit_hash))
           end
-          git_clean = project.dirty_files.to_i.positive? ? "#{project.dirty_files} dirty" : "clean"
-          git_style = project.dirty_files.to_i.positive? ? warning_style : success_style
-          parts << git_style.render(git_clean)
+          parts << project_git_state_chip(project)
           parts.join("   ")
         end
 
@@ -1190,6 +1188,14 @@ module HQ
           lines
         end
 
+        # Unknown git state must not read as clean; a failed first read is unknown, not clean.
+        def project_git_state_chip(project)
+          return dim_style.render("unknown") unless project.git_metadata_known?
+          return warning_style.render("#{project.dirty_files} dirty") if project.dirty_files.to_i.positive?
+
+          success_style.render("clean")
+        end
+
         def project_chip_row(project)
           parts = []
           if project.pr_number && project.pr_url
@@ -1202,9 +1208,7 @@ module HQ
             short = project.commit_hash.to_s[0, 7]
             parts << chip(Styles::ICONS[:commit], short, url: project.commit_url(project.commit_hash))
           end
-          git_clean = project.dirty_files.to_i.positive? ? "#{project.dirty_files} dirty" : "clean"
-          git_style = project.dirty_files.to_i.positive? ? warning_style : success_style
-          parts << git_style.render(git_clean)
+          parts << project_git_state_chip(project)
           parts.join("   ")
         end
 

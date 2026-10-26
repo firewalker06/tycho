@@ -1,10 +1,15 @@
 # frozen_string_literal: true
 
+require_relative "command_runner"
 require_relative "constants"
 require_relative "log_paths"
 
 module HQ
   class Project
+    # Bounds every git call. A stalled repository or mount must not hold the refresh for longer than this.
+    GIT_COMMAND_TIMEOUT = 5
+    GIT_FIELDS = %i[commit_hash branch dirty_files].freeze
+
     attr_reader :config, :key, :name, :path, :commit_hash, :branch, :dirty_files, :group
 
     def initialize(config)
@@ -16,6 +21,7 @@ module HQ
       @commit_hash = nil
       @branch = nil
       @dirty_files = 0
+      @git_known_fields = []
     end
 
     def status
@@ -81,8 +87,25 @@ module HQ
       "#{repo}/commit/#{sha}"
     end
 
+    # Runs git, so call it from a background refresh, never from a read path.
+    # Returns only the fields that were read successfully; a failed field keeps its previous value.
     def refresh_metadata!
-      parse_git_status
+      metadata = read_git_metadata
+      apply_git_metadata(metadata)
+      metadata
+    end
+
+    def apply_git_metadata(metadata)
+      @commit_hash = metadata[:commit_hash] if metadata.key?(:commit_hash)
+      @branch = metadata[:branch] if metadata.key?(:branch)
+      @dirty_files = metadata[:dirty_files] if metadata.key?(:dirty_files)
+      @git_known_fields |= metadata.keys
+      self
+    end
+
+    # False until every git field has a valid value, so a failed first read is not shown as clean.
+    def git_metadata_known?
+      (GIT_FIELDS - @git_known_fields).empty?
     end
 
     def log_dir
@@ -109,22 +132,56 @@ module HQ
       slug.empty? ? @key : slug
     end
 
-    def parse_git_status
-      git_dir = File.join(@path, ".git")
-      return unless File.exist?(git_dir)
+    # Reads each field on its own. A failed field is left out of the result, so only fields
+    # that were read successfully overwrite cached values. A timed-out command skips the rest:
+    # a stalled repository is unlikely to answer the next command either.
+    def read_git_metadata
+      return {} unless File.exist?(File.join(@path, ".git"))
 
-      @commit_hash = `git -C #{@path.shellescape} rev-parse --short HEAD 2>/dev/null`.strip
-      @commit_hash = nil if @commit_hash.to_s.empty?
+      metadata = {}
+      status = git_command("status", "--porcelain")
+      if status.success?
+        metadata[:dirty_files] = status.stdout.lines.count
+      else
+        log_failed_git("status", status)
+        return metadata if status.timed_out?
+      end
 
-      @branch = `git -C #{@path.shellescape} branch --show-current 2>/dev/null`.strip
-      @branch = nil if @branch.to_s.empty?
+      commit = git_command("rev-parse", "--verify", "--short", "-q", "HEAD")
+      if commit.success?
+        metadata[:commit_hash] = presence(commit.stdout)
+      elsif commit.exit_code == 1 && !commit.timed_out?
+        # Exit 1 from --verify means the branch has no commit yet.
+        metadata[:commit_hash] = nil
+      else
+        log_failed_git("rev-parse", commit)
+        return metadata if commit.timed_out?
+      end
 
-      porcelain = `git -C #{@path.shellescape} status --porcelain 2>/dev/null`
-      @dirty_files = porcelain.lines.count
-    rescue StandardError
-      @commit_hash = nil
-      @branch = nil
-      @dirty_files = 0
+      branch = git_command("branch", "--show-current")
+      if branch.success?
+        metadata[:branch] = presence(branch.stdout)
+      else
+        log_failed_git("branch", branch)
+      end
+      metadata
+    rescue StandardError => e
+      HQ.logger.warn("Project") { "Git metadata read failed for #{@key}: #{e.class} - #{e.message}; keeping cached values" }
+      {}
+    end
+
+    def git_command(*args)
+      CommandRunner.capture(["git", "-C", @path, *args], timeout: GIT_COMMAND_TIMEOUT)
+    end
+
+    def log_failed_git(command, result)
+      reason = result.timed_out? ? "timed out after #{GIT_COMMAND_TIMEOUT}s" : "exited #{result.exit_code}"
+      HQ.logger.warn("Project") { "Git #{command} #{reason} for #{@key}; keeping cached values" }
+    end
+
+    def presence(output)
+      value = output.strip
+      value.empty? ? nil : value
     end
   end
 end

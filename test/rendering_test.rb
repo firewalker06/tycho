@@ -62,6 +62,8 @@ module RenderingTest
     assert_detail_overlay_opens_full_screen
     assert_agent_detail_omits_conversation_and_recent_runs
     assert_agent_detail_renders_project_git_metadata
+    assert_terminal_git_state_unknown_is_not_clean
+    assert_terminal_known_git_state_keeps_clean_and_dirty
     assert_project_detail_renders_log_locations
     assert_projects_list_renders_group_rows
     assert_log_overlay_renders_in_right_panel
@@ -787,9 +789,7 @@ module RenderingTest
     app = build_chat_app
     agent = app.send(:selected_agent)
     project = app.send(:project_for_key, agent.project_key)
-    project.instance_variable_set(:@branch, "feature/hq-agent-detail")
-    project.instance_variable_set(:@commit_hash, "abc1234")
-    project.instance_variable_set(:@dirty_files, 2)
+    project.apply_git_metadata({ branch: "feature/hq-agent-detail", commit_hash: "abc1234", dirty_files: 2 })
 
     detail = app.send(:current_detail_text)
     plain = Bubbles::ANSI.strip(detail)
@@ -798,6 +798,38 @@ module RenderingTest
     assert(plain.include?("feature/hq-agent-detail"), "expected agent detail to show project branch")
     assert(plain.include?("abc1234"), "expected agent detail to show project commit")
     assert(plain.include?("2 dirty"), "expected agent detail to show project dirty state")
+  end
+
+  # B2: a project whose git state is unknown must not render as clean in the terminal UI.
+  def assert_terminal_git_state_unknown_is_not_clean
+    app = app_with_default_agent(width: 120, height: 30)
+    project = app.send(:project_for_key, app.send(:selected_agent).project_key)
+    assert(!project.git_metadata_known?, "expected a fresh project to have unknown git state")
+
+    agent_plain = Bubbles::ANSI.strip(app.send(:current_detail_text))
+    assert(agent_plain.include?("unknown"), "expected agent detail to show unknown git state")
+    assert(!agent_plain.include?("clean"), "expected agent detail not to show unknown git state as clean")
+
+    app.instance_variable_set(:@screen, :projects)
+    project_plain = Bubbles::ANSI.strip(app.send(:project_detail_text))
+    assert(project_plain.include?("unknown"), "expected project detail to show unknown git state")
+    assert(!project_plain.include?("clean"), "expected project detail not to show unknown git state as clean")
+  end
+
+  def assert_terminal_known_git_state_keeps_clean_and_dirty
+    app = app_with_default_agent(width: 120, height: 30)
+    app.instance_variable_set(:@screen, :projects)
+    project = app.send(:selected_project)
+
+    project.apply_git_metadata({ branch: "main", commit_hash: "abc1234", dirty_files: 0 })
+    clean_plain = Bubbles::ANSI.strip(app.send(:project_detail_text))
+    assert(clean_plain.include?("clean"), "expected known clean git state to render as clean")
+    assert(!clean_plain.include?("unknown"), "expected known clean git state not to render as unknown")
+
+    project.apply_git_metadata({ dirty_files: 3 })
+    dirty_plain = Bubbles::ANSI.strip(app.send(:project_detail_text))
+    assert(dirty_plain.include?("3 dirty"), "expected known dirty git state to show the dirty count")
+    assert(!dirty_plain.include?("unknown"), "expected known dirty git state not to render as unknown")
   end
 
   def assert_project_detail_renders_log_locations

@@ -74,6 +74,16 @@ module RemoteServerTest
     assert_conversation_cache_does_not_serve_stale_delegation_references
     assert_remote_agent_debug_endpoints
     assert_remote_project_payloads_include_status_and_detail
+    assert_remote_project_reads_use_cached_git_metadata
+    assert_remote_project_git_refresh_keeps_last_good_metadata
+    assert_remote_project_metadata_refreshes_in_background
+    assert_remote_project_partial_git_failure_keeps_last_good_metadata
+    assert_remote_project_unborn_branch_reports_no_commit
+    assert_remote_project_hung_git_refresh_is_bounded
+    assert_remote_server_accepts_requests_while_git_hangs
+    assert_remote_project_first_failed_read_is_unknown
+    assert_warm_schedule_setup_and_project_reads_do_bounded_work
+    assert_remote_project_reload_refreshes_only_uncached_visible_projects
     assert_remote_project_git_diff_payload
     assert_remote_project_workspace_routes
     assert_remote_project_update_route_edits_metadata
@@ -4064,6 +4074,414 @@ module RemoteServerTest
              "expected Remote UI project detail to expose full template prompt for agent creation")
       assert(detail.dig(:recent_agent_summary, :key) == agent[:key], "expected recent agent summary")
     end
+  end
+
+  def assert_remote_project_reads_use_cached_git_metadata
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      init_project_git_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      cache = HQ::ProjectGitMetadataCache.new
+      refresher = HQ::RemoteService.new(registry: registry, project_metadata_cache: cache)
+      refresher.refresh_project_metadata!
+      warm = project_detail_from_cache(registry, cache)
+      assert(warm[:branch] == "main" && warm[:commit_hash].to_s.length >= 7 && warm[:dirty_files] == 0,
+             "expected refresh to populate git metadata, got #{warm.slice(:branch, :commit_hash, :dirty_files)}")
+
+      git!(workspace, "checkout", "-q", "-b", "feature/cached")
+      File.write(File.join(workspace, "dirty.txt"), "dirty\n")
+      request = HQ::RemoteService.new(registry: registry, project_metadata_cache: cache)
+      git_reads = 0
+      request.instance_variable_get(:@projects).each do |project|
+        project.define_singleton_method(:read_git_metadata) do
+          git_reads += 1
+          super()
+        end
+      end
+
+      request.projects
+      detail = request.project("web")
+      assert(git_reads.zero?, "expected project reads to skip live git, got #{git_reads} git reads")
+      assert(detail[:branch] == "main" && detail[:dirty] == false && detail[:dirty_files].zero?,
+             "expected project read to serve cached git metadata, got #{detail.slice(:branch, :dirty, :dirty_files)}")
+
+      refresher.refresh_project_metadata!
+      refreshed = project_detail_from_cache(registry, cache)
+      assert(refreshed[:branch] == "feature/cached" && refreshed[:dirty] == true && refreshed[:dirty_files] == 1,
+             "expected refresh to pick up the new branch and dirty file, got #{refreshed.slice(:branch, :dirty, :dirty_files)}")
+    end
+  end
+
+  def assert_remote_project_git_refresh_keeps_last_good_metadata
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      init_project_git_workspace(workspace)
+      File.write(File.join(workspace, "dirty.txt"), "dirty\n")
+      registry = registry_for_project(dir, workspace)
+      cache = HQ::ProjectGitMetadataCache.new
+      refresher = HQ::RemoteService.new(registry: registry, project_metadata_cache: cache)
+      refresher.refresh_project_metadata!
+      good = project_detail_from_cache(registry, cache)
+      assert(good[:branch] == "main" && good[:dirty_files] == 1, "expected a good git refresh first")
+
+      git_dir = File.join(workspace, ".git")
+      saved_git_dir = File.join(dir, "saved-git")
+      FileUtils.mv(git_dir, saved_git_dir)
+      File.write(git_dir, "not a git directory\n")
+      begin
+        refresher.refresh_project_metadata!
+      ensure
+        File.delete(git_dir)
+        FileUtils.mv(saved_git_dir, git_dir)
+      end
+      after_failed_status = project_detail_from_cache(registry, cache)
+      assert(after_failed_status[:branch] == "main" && after_failed_status[:dirty_files] == 1,
+             "expected failed git status to keep cached metadata, got #{after_failed_status.slice(:branch, :dirty_files)}")
+
+      project = refresher.instance_variable_get(:@projects).find { |item| item.key == "web" }
+      project.define_singleton_method(:refresh_metadata!) { raise "simulated refresh crash" }
+      refresher.refresh_project_metadata!
+      assert(HQ::RemoteService.new(registry: registry, project_metadata_cache: cache).projects.any? { |item| item[:key] == "web" },
+             "expected project list to keep working after a refresh failure")
+      after_crash = project_detail_from_cache(registry, cache)
+      assert(after_crash[:branch] == "main" && after_crash[:dirty_files] == 1,
+             "expected project detail to keep cached metadata after a refresh failure, got #{after_crash.slice(:branch, :dirty_files)}")
+    end
+  end
+
+  def assert_remote_project_metadata_refreshes_in_background
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      init_project_git_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      cache = HQ::ProjectGitMetadataCache.new
+      old_interval = replace_constant(HQ::RemoteServer, :PROJECT_METADATA_REFRESH_INTERVAL, 0.1)
+      server = HQ::RemoteServer.new(registry: registry, project_metadata_cache: cache)
+      thread = server.send(:start_project_metadata_thread)
+      begin
+        assert(wait_for_cached_project_branch(registry, cache, "main"),
+               "expected the first background tick to cache the branch without a request")
+        git!(workspace, "checkout", "-q", "-b", "feature/background")
+        assert(wait_for_cached_project_branch(registry, cache, "feature/background"),
+               "expected a later background tick to pick up the new branch")
+      ensure
+        server.shutdown
+        thread.join(5)
+        replace_constant(HQ::RemoteServer, :PROJECT_METADATA_REFRESH_INTERVAL, old_interval)
+      end
+      assert(!thread.alive?, "expected the project metadata thread to stop on shutdown")
+    end
+  end
+
+  def assert_remote_project_partial_git_failure_keeps_last_good_metadata
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      init_project_git_workspace(workspace)
+      File.write(File.join(workspace, "dirty.txt"), "dirty\n")
+      registry = registry_for_project(dir, workspace)
+      cache = HQ::ProjectGitMetadataCache.new
+      refresher = HQ::RemoteService.new(registry: registry, project_metadata_cache: cache)
+      refresher.refresh_project_metadata!
+      good = project_detail_from_cache(registry, cache)
+      assert(good[:branch] == "main" && good[:commit_hash] && good[:dirty_files] == 1,
+             "expected a good git refresh first, got #{good.slice(:branch, :commit_hash, :dirty_files)}")
+
+      failed_status = Open3.capture2("false")[1]
+      project = refresher.instance_variable_get(:@projects).find { |item| item.key == "web" }
+      project.define_singleton_method(:git_command) do |*args|
+        next super(*args) unless args.include?("branch")
+
+        HQ::CommandRunner::Result.new(stdout: "", stderr: "", status: failed_status, timed_out: false)
+      end
+      refresher.refresh_project_metadata!
+      after = project_detail_from_cache(registry, cache)
+      assert(after[:branch] == "main" && after[:commit_hash] == good[:commit_hash] && after[:dirty_files] == 1,
+             "expected a failed branch read to keep every cached value, got #{after.slice(:branch, :commit_hash, :dirty_files)}")
+    end
+  end
+
+  def assert_remote_project_unborn_branch_reports_no_commit
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      git!(workspace, "init", "-q", "-b", "main")
+      registry = registry_for_project(dir, workspace)
+      cache = HQ::ProjectGitMetadataCache.new
+      HQ::RemoteService.new(registry: registry, project_metadata_cache: cache).refresh_project_metadata!
+      detail = project_detail_from_cache(registry, cache)
+      assert(detail[:commit_hash].nil? && detail[:branch] == "main" && detail[:dirty_files].zero?,
+             "expected an unborn branch to report no commit, got #{detail.slice(:branch, :commit_hash, :dirty_files)}")
+    end
+  end
+
+  def assert_remote_project_reload_refreshes_only_uncached_visible_projects
+    with_remote_temp_store do |dir|
+      web = File.join(dir, "web")
+      api = File.join(dir, "api")
+      secret = File.join(dir, "secret")
+      [web, api, secret].each { |path| init_project_git_workspace(path) }
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      File.write(prompts_path, "custom: Default prompt for %{project_key}.\n")
+      File.write(config_path, <<~YAML)
+        projects:
+          - key: web
+            name: Web
+            group: Core
+            path: #{web}
+          - key: api
+            name: Api
+            group: Core
+            path: #{api}
+          - key: secret
+            name: Secret
+            group: Core
+            path: #{secret}
+            hidden: true
+      YAML
+      registry = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path)
+      cache = HQ::ProjectGitMetadataCache.new
+      service = HQ::RemoteService.new(registry: registry, project_metadata_cache: cache)
+      service.send(:reload_projects_from_registry!)
+
+      assert(project_detail_from_cache(registry, cache)[:branch] == "main", "expected reload to warm visible web")
+      api_detail = HQ::RemoteService.new(registry: registry, project_metadata_cache: cache).project("api")
+      assert(api_detail[:branch] == "main", "expected reload to warm visible api, got #{api_detail.slice(:branch)}")
+      hidden = service.instance_variable_get(:@projects).find { |item| item.key == "secret" }
+      assert(!cache.known?(hidden), "expected hidden projects to stay out of the git refresh")
+    end
+  end
+
+  def assert_remote_project_hung_git_refresh_is_bounded
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      FileUtils.mkdir_p(File.join(workspace, ".git"))
+      registry = registry_for_project(dir, workspace)
+      cache = HQ::ProjectGitMetadataCache.new
+      with_hung_git(dir) do |pid_file|
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        HQ::RemoteService.new(registry: registry, project_metadata_cache: cache).refresh_project_metadata!
+        elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+        assert(elapsed < 5, "expected a hung git to stop after its timeout, took #{elapsed.round(2)}s")
+        assert_hung_git_children_gone(pid_file)
+        detail = project_detail_from_cache(registry, cache)
+        assert(detail[:git_metadata_known] == false,
+               "expected a hung first read to report unknown git state, got #{detail.slice(:git_metadata_known)}")
+      end
+    end
+  end
+
+  # Synchronized, not timed: git stays hung until this test writes the release file. The GET must answer
+  # while git is still hung. A synchronous startup refresh blocks the accept loop, so the GET times out.
+  def assert_remote_server_accepts_requests_while_git_hangs
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      FileUtils.mkdir_p(File.join(workspace, ".git"))
+      registry = registry_for_project(dir, workspace)
+      with_controlled_hung_git(dir) do |git|
+        port = remote_test_port
+        server = HQ::RemoteServer.new(host: "127.0.0.1", port: port, registry: registry, token: "", output: StringIO.new)
+        thread = Thread.new { server.start }
+        begin
+          wait_for_remote_port(port)
+          wait_for_hung_git_start(git.pid_file)
+          response = get_while_git_hangs(port, "/projects/web")
+          assert(response.code == "200", "expected /projects/web to answer while git hangs, got #{response.code}")
+          project = JSON.parse(response.body).fetch("project")
+          assert(project["git_metadata_known"] == false, "expected unknown git state while git hangs")
+        ensure
+          File.write(git.release_file, "")
+          server.shutdown
+          thread.join(10)
+        end
+        assert(!thread.alive?, "expected the remote server to stop on shutdown")
+        assert_hung_git_children_gone(git.pid_file)
+      end
+    end
+  end
+
+  def get_while_git_hangs(port, path)
+    http = Net::HTTP.new("127.0.0.1", port)
+    http.open_timeout = 5
+    http.read_timeout = 5
+    http.get(path)
+  rescue Net::OpenTimeout, Net::ReadTimeout
+    raise "GET #{path} did not answer within 5 s while git was hung"
+  end
+
+  # Fake git that records its PID and waits for the release file. The child leads its own process group,
+  # so ensure can stop it and its children with one targeted group signal if the test fails early.
+  def with_controlled_hung_git(dir)
+    fake_bin = File.join(dir, "fake-bin")
+    pid_file = File.join(dir, "hung-git.pids")
+    release_file = File.join(dir, "release-git")
+    FileUtils.mkdir_p(fake_bin)
+    git_path = File.join(fake_bin, "git")
+    File.write(git_path, "#!/bin/sh\necho $$ >> \"#{pid_file}\"\nwhile [ ! -e \"#{release_file}\" ]; do sleep 0.05; done\nexit 1\n")
+    File.chmod(0o755, git_path)
+    old_path = ENV["PATH"]
+    old_timeout = replace_constant(HQ::Project, :GIT_COMMAND_TIMEOUT, 60)
+    ENV["PATH"] = "#{fake_bin}#{File::PATH_SEPARATOR}#{old_path}"
+    yield Struct.new(:pid_file, :release_file).new(pid_file, release_file)
+  ensure
+    ENV["PATH"] = old_path if old_path
+    replace_constant(HQ::Project, :GIT_COMMAND_TIMEOUT, old_timeout) if old_timeout
+    kill_owned_fixture_pids(pid_file) if pid_file
+  end
+
+  def kill_owned_fixture_pids(pid_file)
+    return unless File.exist?(pid_file)
+
+    File.read(pid_file).split.map(&:to_i).each do |pid|
+      Process.kill("KILL", -pid)
+    rescue Errno::ESRCH, Errno::EPERM
+      nil
+    end
+  end
+
+  # Card 712 timing requirement, guarded by work rather than wall-clock time: warm reads of the three
+  # endpoints must not load the agent store or run git, however many agents exist.
+  def assert_warm_schedule_setup_and_project_reads_do_bounded_work
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      FileUtils.mkdir_p(File.join(workspace, ".git"))
+      registry = registry_for_project(dir, workspace)
+      agents = Array.new(200) do |index|
+        HQ::ManagedAgent.new(key: "bulk-#{index}", name: "Bulk #{index}", project_key: "web",
+                             template_key: "default", workspace: workspace, prompt: "Work.")
+      end
+      HQ::AgentStore.new([]).save(agents)
+      service = HQ::RemoteService.new(registry: registry, agent_list_cache: HQ::AgentListCache.new(max_age: 60),
+                                      project_metadata_cache: HQ::ProjectGitMetadataCache.new)
+      service.send(:load_all_agents)
+      store = service.instance_variable_get(:@agent_store)
+      store.define_singleton_method(:load_with_poll_events) { |**| raise "unexpected full agent load" }
+      git_reads = 0
+      service.instance_variable_get(:@projects).each do |project|
+        project.define_singleton_method(:read_git_metadata) do
+          git_reads += 1
+          raise "unexpected live git read"
+        end
+      end
+
+      schedules = service.schedules
+      setup = service.setup_summary
+      detail = service.project("web")
+      assert(git_reads.zero?, "expected warm reads to run no git, got #{git_reads}")
+      assert(detail[:managed_agent_count] == agents.length, "expected warm project read to count the cached agents")
+      assert(schedules.is_a?(Hash) || schedules.is_a?(Array), "expected schedules payload")
+      assert(setup.is_a?(Hash), "expected setup summary payload")
+    end
+  end
+
+  def assert_remote_project_first_failed_read_is_unknown
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      git_file = File.join(workspace, ".git")
+      File.write(git_file, "not a git directory\n")
+      registry = registry_for_project(dir, workspace)
+      cache = HQ::ProjectGitMetadataCache.new
+      HQ::RemoteService.new(registry: registry, project_metadata_cache: cache).refresh_project_metadata!
+      failed = project_detail_from_cache(registry, cache)
+      assert(failed[:git_metadata_known] == false, "expected a failed first read to report unknown git state")
+      failed_list = HQ::RemoteService.new(registry: registry, project_metadata_cache: cache).projects.find { |item| item[:key] == "web" }
+      assert(!failed_list.key?(:dirty) && !failed_list.key?(:git_metadata_known),
+             "expected the project list to omit git state, so the resource snapshot cannot hold stale git values")
+
+      File.delete(git_file)
+      init_project_git_workspace(workspace)
+      HQ::RemoteService.new(registry: registry, project_metadata_cache: cache).refresh_project_metadata!
+      recovered = project_detail_from_cache(registry, cache)
+      assert(recovered[:git_metadata_known] == true && recovered[:branch] == "main",
+             "expected a later successful read to report known git state, got #{recovered.slice(:git_metadata_known, :branch)}")
+    end
+  end
+
+  # Fake git that records its PID and then sleeps. CommandRunner must stop it on timeout and leave no child behind.
+  def with_hung_git(dir)
+    fake_bin = File.join(dir, "fake-bin")
+    pid_file = File.join(dir, "hung-git.pids")
+    FileUtils.mkdir_p(fake_bin)
+    git_path = File.join(fake_bin, "git")
+    File.write(git_path, "#!/bin/sh\necho $$ >> \"#{pid_file}\"\nexec sleep 60\n")
+    File.chmod(0o755, git_path)
+    old_path = ENV["PATH"]
+    old_timeout = replace_constant(HQ::Project, :GIT_COMMAND_TIMEOUT, 0.5)
+    ENV["PATH"] = "#{fake_bin}#{File::PATH_SEPARATOR}#{old_path}"
+    yield pid_file
+  ensure
+    ENV["PATH"] = old_path if old_path
+    replace_constant(HQ::Project, :GIT_COMMAND_TIMEOUT, old_timeout) if old_timeout
+  end
+
+  def wait_for_hung_git_start(pid_file)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+    until File.file?(pid_file)
+      raise "fake git did not start" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+      sleep(0.02)
+    end
+  end
+
+  def assert_hung_git_children_gone(pid_file)
+    pids = File.exist?(pid_file) ? File.read(pid_file).split.map(&:to_i) : []
+    assert(!pids.empty?, "expected the fake git to start")
+    pids.each do |pid|
+      alive = begin
+        Process.kill(0, pid)
+        true
+      rescue Errno::ESRCH
+        false
+      end
+      assert(!alive, "expected fake git #{pid} to be gone after its timeout")
+    end
+  end
+
+  def remote_test_port
+    server = TCPServer.new("127.0.0.1", 0)
+    server.addr[1]
+  ensure
+    server&.close
+  end
+
+  def wait_for_remote_port(port)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+    begin
+      TCPSocket.new("127.0.0.1", port).close
+    rescue SystemCallError
+      raise "remote server did not start" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+      sleep(0.05)
+      retry
+    end
+  end
+
+  def project_detail_from_cache(registry, cache)
+    HQ::RemoteService.new(registry: registry, project_metadata_cache: cache).project("web")
+  end
+
+  def wait_for_cached_project_branch(registry, cache, branch)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10
+    loop do
+      return true if project_detail_from_cache(registry, cache)[:branch] == branch
+      return false if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+      sleep(0.05)
+    end
+  end
+
+  def init_project_git_workspace(workspace)
+    write_project_workspace(workspace)
+    File.write(File.join(workspace, "README.md"), "web\n")
+    git!(workspace, "init", "-q", "-b", "main")
+    git!(workspace, "config", "user.email", "tycho@example.test")
+    git!(workspace, "config", "user.name", "Tycho Test")
+    git!(workspace, "add", ".")
+    git!(workspace, "commit", "-q", "-m", "initial")
   end
 
   def assert_remote_project_git_diff_payload
