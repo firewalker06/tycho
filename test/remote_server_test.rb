@@ -6700,7 +6700,7 @@ module RemoteServerTest
     assert(marks.include?('codex: "/harness-logos/openai-blossom-dark.svg"'),
            "expected Codex to use the official OpenAI blossom mark")
     assert(marks.include?('claude: "/harness-logos/claude-spark-clay.svg"') &&
-           marks.include?('opencode: "/harness-logos/opencode-logo-dark-square.svg"') &&
+           marks.include?('opencode: "/harness-logos/opencode-logo-dark.svg"') &&
            marks.include?('pi: "/harness-logos/pi-logo-auto.svg"'),
            "expected every built-in harness mark to map to its packaged upstream file")
     %w[

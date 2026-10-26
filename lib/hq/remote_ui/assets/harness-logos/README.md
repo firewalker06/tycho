@@ -5,7 +5,7 @@ Tycho shows official upstream marks next to harness names in the Remote UI agent
 | File | Harness | Upstream source | Upstream revision | SHA-256 |
 | --- | --- | --- | --- | --- |
 | `claude-spark-clay.svg` | Claude | Anthropic press kit, "Claude Spark - Clay.svg": https://www.anthropic.com/press-kit | Press kit archive fetched 2026-10-26 | `6d53db4be375e899c937c26cf16684a80d6e869b1928d72b37748bef2560e219` |
-| `opencode-logo-dark-square.svg` | OpenCode | `packages/console/app/src/asset/brand/opencode-logo-dark-square.svg` in https://github.com/anomalyco/opencode | blob `c71a496ff994e5afc52b893b9c20711300e0acfc`, default branch `dev` | `d6a0e3b8a295f413543f41cb73957e670351b5cb088c8d9dbd186b9e9d633cca` |
+| `opencode-logo-dark.svg` | OpenCode | `packages/console/app/src/asset/brand/opencode-logo-dark.svg` in https://github.com/anomalyco/opencode (240x300 rectangle, no gradient) | blob `c28babff1be159160016884695e097d9159d468b`, last changed in commit `37baed99c1ad05aa00fd53462b7d1441ce4a5edb`, default branch `dev` | `5dd4abb4de60204510edf140bbe74b3580d07ebdda79fdb0081cd45acb53d44b` |
 | `openai-blossom-dark.svg` | OpenAI / Codex | `docs/src/assets/dark-logo.svg` in https://github.com/openai/openai-agents-js (MIT, Copyright 2025 OpenAI), blob `d0bed40b1ae251a5f9607da7852985a78b13a09c`, default branch `main` | `b9597643cfa068f73990d5387ac2c77b5fd9e54bb660b81d83a845bb90ec513a` |
 | `pi-logo-auto.svg` | Pi | https://pi.dev/logo-auto.svg, linked from the Pi README in https://github.com/earendil-works/pi | fetched 2026-10-26 | `abd66e7868b2d24f0f0895f9237ee8a6dcb22337583b0dc54aeb595acecb4d6b` |
 

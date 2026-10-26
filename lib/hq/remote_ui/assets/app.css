@@ -2213,6 +2213,7 @@ span.harness-mark {
   background-color: currentColor;
   -webkit-mask: var(--harness-mark-src) center / contain no-repeat;
   mask: var(--harness-mark-src) center / contain no-repeat;
+  mask-mode: var(--harness-mark-mode, alpha);
 }
 
 .harness-refresh-button {

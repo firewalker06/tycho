@@ -16,7 +16,7 @@ This page records where Tycho shows harness marks, where it does not, and why. A
 | Harness | Mark | Reason |
 | --- | --- | --- |
 | Claude (`claude`) | Claude Spark, clay color | Official Anthropic press kit. The clay color reads on light and dark backgrounds. |
-| OpenCode (`opencode`) | Dark square mark | Official asset from the MIT-licensed OpenCode repository. The Remote UI is dark only, so the dark-square variant is used. |
+| OpenCode (`opencode`) | Dark rectangle mark (`opencode-logo-dark.svg`) | Official asset from the MIT-licensed OpenCode repository. The rectangle has no gradient. It is rendered with luminance masking so the frame stays solid and the window stays open. The Remote UI is dark only, so the dark variant is used. |
 | Pi (`pi`) | Pi logo | Official asset linked from the Pi project README. The mark uses fixed colors that read on the dark surface. |
 | OpenAI / Codex (`codex`) | OpenAI blossom, dark-background file | Taken from `docs/src/assets/dark-logo.svg` in the OpenAI-owned MIT repository https://github.com/openai/openai-agents-js. The downloadable brand portal (https://openai.com/brand/) returned HTTP 403 to automated fetches, so the repository file is the official source used. Third-party icon sets were not used. The mark is shown without the wordmark. |
 
