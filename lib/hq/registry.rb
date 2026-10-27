@@ -673,6 +673,17 @@ module HQ
       end
     end
 
+    def project_templates(project)
+      raw = project["agent_templates"]
+      return [] unless raw.is_a?(Array) && !raw.empty?
+
+      raw.map do |template|
+        raise ConfigError, "Project #{project["key"]} agent_templates entries must be mappings" unless template.is_a?(Hash)
+
+        template.merge("key" => (template["key"] || "default").to_s)
+      end
+    end
+
     def hidden_value(hash, label)
       return nil unless hash.is_a?(Hash) && hash.key?("hidden")
 
@@ -712,7 +723,8 @@ module HQ
     end
 
     def build_agent_templates(project, project_key:, project_name:, project_path:)
-      templates = system_prompt_templates
+      templates = project_templates(project)
+      templates = system_prompt_templates if templates.empty?
       templates = [default_template(project)] if templates.empty?
       project_agent = normalize_agent(project["agent"])
       project_model = normalize_model(project["model"])

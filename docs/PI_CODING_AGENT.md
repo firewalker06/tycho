@@ -37,3 +37,5 @@ write, edit, and shell tools.
 That restricted tool list reduces capabilities, but it does not create a
 filesystem boundary or distinguish workspace-write from read-only. Treat Pi's
 restricted modes as a conservative tool allowlist, not as a sandbox.
+`workspace-write` receives the same `read,grep,find,ls` allowlist and keeps
+that restriction until a verified filesystem boundary exists for Pi.

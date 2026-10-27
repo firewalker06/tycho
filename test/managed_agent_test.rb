@@ -3022,6 +3022,20 @@ module ManagedAgentTest
     assert(argument_after(restricted_command, "--tools") == "read,grep,find,ls",
            "expected restricted Pi modes not to silently retain write and bash tools")
 
+    workspace_write_pi = HQ::ManagedAgent.new(
+      key: "pi-workspace-write-agent",
+      name: "Pi Workspace Write Agent",
+      project_key: "demo",
+      template_key: "custom",
+      workspace: Dir.tmpdir,
+      prompt: "System prompt",
+      agent: "pi",
+      sandbox_mode: "workspace-write"
+    )
+    workspace_write_command = workspace_write_pi.send(:build_command)[:command]
+    assert(argument_after(workspace_write_command, "--tools") == "read,grep,find,ls",
+           "expected workspace-write Pi runs to keep the conservative tool allowlist until a verified sandbox boundary exists")
+
     resumed_pi = HQ::ManagedAgent.from_hash(pi.to_hash.merge(
       "session_id" => "00000000-1111-4222-8333-444444444444",
       "session_bootstrapped" => true,
