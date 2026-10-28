@@ -2168,7 +2168,7 @@ module HQ
     end
 
     def structured_output_correction_supported?
-      File.file?(result_schema_path) && %w[codex claude pi].include?(harness_adapter)
+      File.file?(result_schema_path) && %w[codex claude pi agy].include?(harness_adapter)
     end
 
     def structured_output_correction_limit
@@ -3381,7 +3381,7 @@ module HQ
 
     def native_resume?
       return false if @session_id.to_s.empty?
-      return false unless %w[codex claude opencode pi].include?(harness_adapter)
+      return false unless %w[codex claude opencode pi agy].include?(harness_adapter)
 
       claude_like_agent? ? @session_bootstrapped : @runs.any?
     end
@@ -3409,6 +3409,10 @@ module HQ
 
     def pi_agent?
       harness_adapter == "pi"
+    end
+
+    def agy_agent?
+      harness_adapter == "agy"
     end
 
     def prompt_only_structured_output_agent?
@@ -3720,6 +3724,8 @@ module HQ
                  (event["id"] if event["type"].to_s.include?("session"))
              elsif pi_agent?
                event["id"] if event["type"] == "session"
+             elsif agy_agent?
+               AgentStructuredResult.agy_conversation_id(event)
              else
                event["session_id"]
              end

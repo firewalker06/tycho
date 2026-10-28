@@ -24,7 +24,7 @@ form just as you would use `codex` or another built-in harness.
 
 ## Contract
 
-`adapter` is a closed list: `codex`, `claude`, `opencode`, and `pi`. Tycho
+`adapter` is a closed list: `codex`, `claude`, `opencode`, `pi`, and `agy`. Tycho
 rejects any other value while loading configuration. There are deliberately no
 user-configurable parser, flag, resume, or output templates. A wrapper must be
 compatible with the selected adapter's native CLI and event protocol:

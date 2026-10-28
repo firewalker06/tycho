@@ -33,6 +33,8 @@ module HQ
         opencode_check(command, environment:)
       when "pi"
         pi_check(command, environment:)
+      when "agy"
+        result("unknown", "agy has no supported authentication status command; model availability does not verify authentication")
       else
         result("unknown", "Authentication check unavailable for this adapter")
       end

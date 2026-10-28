@@ -9,6 +9,8 @@ module HarnessCatalogTest
   module_function
 
   def run!
+    assert_agy_native_discovery
+    assert_agy_executable_override
     assert_codex_catalog_probe_times_out_hung_cli
     assert_timeout_handles_term_exit_without_double_wait
     assert_opencode_auth_table_strips_status_glyphs
@@ -16,6 +18,54 @@ module HarnessCatalogTest
     assert_pi_empty_model_catalog_reports_auth_not_ready
     assert_custom_profiles_probe_native_catalogs_with_prefix_and_environment
     puts "harness_catalog_test: ok"
+  end
+
+  def assert_agy_executable_override
+    previous = ENV["TYCHO_AGY_BIN"]
+    ENV["TYCHO_AGY_BIN"] = "/fixture/agy"
+    resolution = HQ::ExecutableResolver.resolve_tool("agy")
+    assert(resolution.command == "/fixture/agy" && resolution.source == "env", "expected native agy executable override")
+    assert(HQ::ExecutableResolver.fallback_paths_for("agy").include?(File.join(Dir.home, ".local", "bin", "agy")),
+           "expected agy user install discovery")
+  ensure
+    previous ? ENV["TYCHO_AGY_BIN"] = previous : ENV.delete("TYCHO_AGY_BIN")
+  end
+
+  def assert_agy_native_discovery
+    offline = HQ::HarnessCatalog.build_builtin_catalog("agy", nil, command_prefix: [])
+    assert(offline[:catalog_source] == "agy defaults", "expected independent agy offline catalog")
+    assert(offline[:model_suggestions]&.first == { value: "gemini-3.8-flash-medium", label: "Gemini 3.8 Flash (Medium)" },
+           "expected agy offline catalog to recommend gemini-3.8-flash-medium first")
+    assert(offline[:default_model] == "gemini-3.8-flash-medium", "expected an agy default model")
+    assert(offline[:reasoning_effort_suggestions].empty?, "expected no agy effort suggestions (agy ignores effort)")
+    assert(offline[:safety_gaps].any? { |gap| gap.include?("--mode plan --sandbox") && gap.include?("always-proceed") && gap.include?("unverified") },
+           "expected explicit agy isolation warning")
+    Dir.mktmpdir("hq-agy-catalog-test") do |dir|
+      executable = File.join(dir, "agy")
+      File.write(executable, <<~SH)
+        #!/bin/sh
+        [ "$1" = "--profile" ] && [ "$2" = "fixture" ] || exit 1
+        [ "$AGY_FIXTURE" = "enabled" ] || exit 1
+        [ "$3" = "models" ] && [ "$#" = 3 ] || exit 1
+        printf 'Fetching available models...\n'
+        printf 'gemini-fixture\tGemini Fixture\n'
+        printf 'claude-fixture\tClaude Fixture\n'
+        printf 'gemini-fixture\tDuplicate\n'
+      SH
+      FileUtils.chmod(0o755, executable)
+      resolution = HQ::ExecutableResolver.resolve(executable)
+      catalog = HQ::HarnessCatalog.build_builtin_catalog("agy", resolution,
+        command_prefix: [executable, "--profile", "fixture"], environment: { "AGY_FIXTURE" => "enabled" })
+      assert(catalog[:model_suggestions] == [
+        { value: "gemini-fixture", label: "Gemini Fixture" },
+        { value: "claude-fixture", label: "Claude Fixture" }
+      ], "expected agy tab-separated models without progress messages or duplicates")
+      assert(catalog[:catalog_source] == "agy models", "expected native discovery source")
+      assert(catalog[:auth_ready] != true, "model availability must not claim verified authentication")
+      custom = Struct.new(:adapter).new("agy")
+      assert(HQ::HarnessCatalog.build_custom_catalog(custom, nil, command_prefix: []) == offline,
+             "expected custom agy adapter to use native defaults")
+    end
   end
 
   def assert_timeout_handles_term_exit_without_double_wait

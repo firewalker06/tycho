@@ -3,7 +3,7 @@
 require "shellwords"
 
 module HQ
-  BUILTIN_HARNESSES = %w[codex claude opencode pi].freeze
+  BUILTIN_HARNESSES = %w[codex claude opencode pi agy].freeze
   CUSTOM_HARNESS_ADAPTERS = BUILTIN_HARNESSES
   HarnessCatalogConfig = Struct.new(:key, :models, :reasoning_efforts, keyword_init: true)
 

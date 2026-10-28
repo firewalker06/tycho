@@ -22,6 +22,20 @@ module HQ
     OPENCODE_COMMAND_TIMEOUT = 6
     PI_COMMAND_TIMEOUT = 6
     PI_REASONING_EFFORTS = %w[off minimal low medium high xhigh].freeze
+    AGY_COMMAND_TIMEOUT = 6
+    # gemini-3.8-flash-medium is the recommended managed-agent default: live
+    # testing showed the low-effort default model intermittently ignores the
+    # --json-schema instruction on the first attempt, while medium followed it
+    # in every run. The full list mirrors `agy models` for offline discovery.
+    AGY_DEFAULT_MODEL = "gemini-3.8-flash-medium"
+    AGY_MODEL_SUGGESTIONS = [
+      { value: AGY_DEFAULT_MODEL, label: "Gemini 3.8 Flash (Medium)" },
+      { value: "gemini-3.8-flash-high", label: "Gemini 3.8 Flash (High)" },
+      { value: "gemini-3.8-flash-low", label: "Gemini 3.8 Flash (Low)" },
+      { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (Thinking)" },
+      { value: "claude-opus-4-6-thinking", label: "Claude Opus 4.6 (Thinking)" },
+      { value: "gpt-oss-120b-medium", label: "GPT-OSS 120B (Medium)" }
+    ].freeze
 
     module_function
 
@@ -105,6 +119,8 @@ module HQ
         opencode_catalog(resolution, command_prefix:, environment:)
       when "pi"
         pi_catalog(resolution, command_prefix:, environment:)
+      when "agy"
+        agy_catalog(resolution, command_prefix:, environment:)
       else
         empty_catalog
       end
@@ -120,6 +136,8 @@ module HQ
         opencode_catalog(resolution, command_prefix:, environment:)
       when "pi"
         pi_catalog(resolution, command_prefix:, environment:)
+      when "agy"
+        agy_catalog(resolution, command_prefix:, environment:)
       else
         empty_catalog
       end
@@ -241,6 +259,40 @@ module HQ
         auth_providers: rows.filter_map { |item| item[:provider] }.uniq,
         version: pi_version(command_prefix, environment:)
       )
+    end
+
+    def agy_catalog(resolution, command_prefix: nil, environment: {})
+      base = {
+        model_suggestions: AGY_MODEL_SUGGESTIONS,
+        default_model: AGY_DEFAULT_MODEL,
+        reasoning_effort_suggestions: [],
+        catalog_source: "agy defaults",
+        auth_ready: nil,
+        auth_providers: [],
+        capabilities: [
+          "native stream-json output",
+          "native conversation resume via --conversation",
+          "native model selection; saved reasoning effort is not passed to agy",
+          "native JSON Schema output via --json-schema"
+        ],
+        safety_gaps: [
+          "agy --mode plan --sandbox was observed to report permission_mode always-proceed; isolation is unverified",
+          "agy has no supported authentication status command; model availability does not verify authentication"
+        ]
+      }
+      return base unless resolution&.available?
+
+      command_prefix ||= [resolution.command]
+      output = capture_stdout(Array(command_prefix) + ["models"], timeout: AGY_COMMAND_TIMEOUT, environment:)
+      rows = output.lines.filter_map do |line|
+        value, label = strip_terminal_control(line).strip.split("\t", 2)
+        next if value.to_s.empty? || label.to_s.strip.empty?
+        next unless value.match?(/\A[a-zA-Z0-9][a-zA-Z0-9._:\/-]*\z/)
+
+        { value: value, label: label.strip }
+      end.uniq { |item| item[:value] }
+      base.merge(model_suggestions: rows.empty? ? AGY_MODEL_SUGGESTIONS : rows,
+                 catalog_source: rows.empty? ? "agy defaults" : "agy models")
     end
 
     def claude_help_efforts(command_prefix, environment: {})

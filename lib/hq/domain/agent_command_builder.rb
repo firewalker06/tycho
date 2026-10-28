@@ -26,6 +26,7 @@ module HQ
       return build_codex_command if codex_agent?
       return build_opencode_command if opencode_agent?
       return build_pi_command if pi_agent?
+      return build_agy_command if agy_agent?
 
       raise "Unsupported managed-agent harness #{@agent.inspect}"
     end
@@ -35,6 +36,7 @@ module HQ
       return build_interactive_codex_command if codex_agent?
       return build_interactive_opencode_command if opencode_agent?
       return build_interactive_pi_command if pi_agent?
+      return build_agy_command(interactive: true) if agy_agent?
 
       raise "Unsupported managed-agent harness #{@agent.inspect}"
     end
@@ -96,6 +98,20 @@ module HQ
       command.concat(pi_safety_arguments)
       command.concat(["--session", @session_id]) unless @session_id.empty?
       command << @prompt
+      execution(command)
+    end
+
+    def build_agy_command(interactive: false)
+      # Conservative PoC policy for every Tycho sandbox selection. These flags
+      # request restrictions; they are not a verified filesystem sandbox.
+      command = harness_command_prefix + ["--mode", "plan", "--sandbox"]
+      command.concat(model_arguments)
+      command.concat(["--conversation", @session_id]) unless @session_id.empty?
+      unless interactive
+        command.concat(["--output-format", "stream-json", "--print-timeout", "120s"])
+        command.concat(["--json-schema", @result_schema_path]) if File.file?(@result_schema_path)
+      end
+      command.concat([interactive ? "--prompt-interactive" : "--print", @prompt])
       execution(command)
     end
 
@@ -203,6 +219,10 @@ module HQ
 
     def pi_agent?
       @harness_adapter == "pi"
+    end
+
+    def agy_agent?
+      @harness_adapter == "agy"
     end
   end
 end

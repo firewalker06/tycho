@@ -34,6 +34,10 @@ module HQ
     end
 
     def skill_files(root)
+      # Find.find does not descend into a symlinked root; resolve the root
+      # itself so a symlinked skill directory is still traversed. Reported
+      # paths then use the resolved target path, not the symlink.
+      root = File.join(File.realpath(root), "")
       files = []
       Find.find(root) do |path|
         next if path == root
@@ -51,6 +55,12 @@ module HQ
     def roots_for(kind, workspace)
       workspace = workspace.to_s
       case HQ.harness_adapter(kind)
+      when "agy"
+        [
+          File.expand_path("~/.gemini/config/skills"),
+          File.expand_path("~/.gemini/antigravity-cli/skills"),
+          workspace.empty? ? nil : File.join(workspace, ".agents", "skills")
+        ]
       when "claude"
         [
           File.expand_path("~/.claude/skills"),

@@ -1098,9 +1098,12 @@ module RemoteServerTest
       fetched = server.send(:route, service, "GET", "/skills", {}, nil)
       harnesses = fetched.dig(:body, :skill_installation, :harnesses)
       assert(harnesses.map { |item| item[:harness] } == %w[
-        codex claude opencode pi claude-wrapper codex-wrapper opencode-wrapper pi-wrapper
+        codex claude opencode pi agy claude-wrapper codex-wrapper opencode-wrapper pi-wrapper
       ], "expected Remote skills status for built-ins and configured profiles")
-      assert(harnesses.all? { |item| item[:status] == "missing" }, "expected isolated homes to start missing")
+      assert(harnesses.all? { |item| item[:status] == "missing" }, "expected supported isolated homes to start missing")
+      agy = harnesses.find { |item| item[:harness] == "agy" }
+      assert(agy[:target_path] == File.join(home, ".gemini", "config", "skills"),
+             "expected agy skill installation to target its documented global skill directory")
       codex_profile = harnesses.find { |item| item[:harness] == "codex-wrapper" }
       assert(codex_profile[:adapter] == "codex" && codex_profile[:target_path] == File.join(home, ".agents", "skills"),
              "expected custom skill profile to use its declared adapter root")
@@ -5420,7 +5423,7 @@ module RemoteServerTest
       assert(setup[:refresh_intervals] == { active_ms: 5_000, idle_ms: 10_000, hidden_ms: 30_000 },
              "expected refresh intervals to use the 5s, 10s, and 30s policy")
       assert(setup[:harnesses].map { |item| item[:name] }.sort == %w[
-        claude claude-wrapper codex codex-wrapper opencode opencode-wrapper pi pi-wrapper
+        agy claude claude-wrapper codex codex-wrapper opencode opencode-wrapper pi pi-wrapper
       ],
              "expected harness readiness entries")
       custom_profiles = setup[:harnesses].select { |item| item[:name].end_with?("-wrapper") }
@@ -7064,6 +7067,34 @@ module RemoteServerTest
              "expected Pi discovery to include ~/.pi/agent/skills")
       assert(pi_payload[:skills].any? { |skill| skill["name"] == "teach" },
              "expected Pi discovery to include ~/.agents/skills")
+
+      agy_root = File.join(home, ".gemini", "antigravity-cli", "skills")
+      FileUtils.mkdir_p(File.dirname(agy_root))
+      agy_only_dir = File.join(home, ".gemini", "config", "skills", "agy-only")
+      FileUtils.mkdir_p(agy_only_dir)
+      File.write(File.join(agy_only_dir, "SKILL.md"), "# Agy Only\n")
+      File.symlink(File.join(home, ".agents", "skills"), agy_root)
+      target_only_dir = File.join(home, ".agents", "skills", "target-only")
+      FileUtils.mkdir_p(target_only_dir)
+      File.write(File.join(target_only_dir, "SKILL.md"), "# Target Only\n")
+      agy_payload = service.skills("web", "agy")
+      assert(agy_payload[:skills].any? { |skill| skill["name"] == "teach" },
+             "expected agy discovery through the shared skills symlink")
+      teach = agy_payload[:skills].find { |skill| skill["name"] == "teach" }
+      assert(teach["path"].to_s.start_with?(File.realpath(File.join(home, ".agents", "skills"))),
+             "expected reported paths to use the symlink target directory")
+      target_only = agy_payload[:skills].find { |skill| skill["name"] == "target-only" }
+      assert(target_only,
+             "expected a skill existing only under the symlink target to be discovered through the symlinked root")
+      assert(target_only["path"].to_s.start_with?(File.realpath(File.join(home, ".agents", "skills"))),
+             "expected the symlink-only skill to report the resolved target path")
+      assert(agy_payload[:skills].any? { |skill| skill["name"] == "agy-only" },
+             "expected agy discovery in ~/.gemini/config/skills")
+      assert(agy_payload[:skills].any? { |skill| skill["name"] == "review" },
+             "expected agy workspace .agents skills")
+      assert(agy_payload[:skills].count { |skill| skill["name"] == "teach" } == 1,
+             "expected shared agy skills to be deduplicated")
+      assert(File.symlink?(agy_root), "discovery must preserve the managed skills symlink")
     ensure
       ENV["HOME"] = old_home
     end

@@ -113,12 +113,15 @@ module HQ
     end
 
     def discover_session_id(lines)
+      adapter = @config.fetch("harness_adapter")
       Array(lines).each do |line|
         parsed = JSON.parse(line)
-        id = if @config.fetch("harness_adapter") == "codex"
+        id = if adapter == "codex"
                parsed["thread_id"] || parsed["session_id"]
-             elsif @config.fetch("harness_adapter") == "pi"
+             elsif adapter == "pi"
                parsed["id"] if parsed["type"] == "session"
+             elsif adapter == "agy"
+               AgentStructuredResult.agy_conversation_id(parsed)
              else
                parsed["session_id"] || parsed.dig("session", "id")
              end

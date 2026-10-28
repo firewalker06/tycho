@@ -2919,7 +2919,7 @@ module HQ
       adapter, command, environment = if config
                                         execution = config.resolved_execution
                                         [config.adapter, execution.fetch(:command), execution.fetch(:env)]
-                                      elsif %w[codex claude opencode pi].include?(key)
+                                      elsif HQ::BUILTIN_HARNESSES.include?(key)
                                         [key, [ExecutableResolver.resolve_tool(key).command], {}]
                                       else
                                         raise Error.new("Unknown harness #{harness_key.inspect}", status: 404)
@@ -4920,7 +4920,7 @@ module HQ
     end
 
     def harness_readiness
-      jobs = %w[codex claude opencode pi].map do |name|
+      jobs = HQ::BUILTIN_HARNESSES.map do |name|
         -> { harness_resolver_payload(name, ExecutableResolver.resolve_tool(name)) }
       end
       jobs += HQ.custom_harnesses.values.sort_by(&:key).map do |config|
