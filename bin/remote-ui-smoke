@@ -2148,11 +2148,15 @@ title: !123 value
         await page.click("[data-prompt-queue] > summary");
         await page.waitForSelector("[data-prompt-queue-management]", { state: "visible", timeout: 10_000 });
         const initial = await page.evaluate(() => ({
+          timing: document.querySelector(".prompt-queue-timing")?.textContent.trim(),
           reason: document.querySelector(".prompt-queue-stopped")?.textContent.trim(),
           ids: Array.from(document.querySelectorAll("[data-prompt-queue] [data-prompt-queue-entry]")).map((row) => row.dataset.promptQueueEntry),
           controls: Array.from(document.querySelectorAll("[data-queue-action]")).map((button) => button.textContent.trim()),
           checkboxes: document.querySelectorAll("[data-select-queue-entry]").length,
         }));
+        if (!initial.timing?.includes("Queue processor active") || !initial.timing?.includes("failed") || initial.timing?.includes("about 5 seconds")) {
+          throw new Error(`Blocked queue timing was misleading: ${JSON.stringify(initial)}`);
+        }
         if (initial.reason !== "queue not processed since state is failed" || initial.ids.join(",") !== queueEntryIds.join(",") || initial.checkboxes !== 6 ||
             initial.controls.join("|") !== "Process selected|Remove selected|Process all|Remove all") {
           throw new Error(`Blocked queue controls are incomplete: ${JSON.stringify(initial)}`);
@@ -2239,6 +2243,12 @@ title: !123 value
         releaseProcess();
         await page.waitForFunction(() => !document.querySelector("[data-prompt-queue-management]")?.matches("[aria-busy='true']"));
         await page.unroute("**/prompt-queue/process");
+        await page.waitForFunction(([firstId, thirdId]) =>
+          !document.querySelector(`[data-prompt-queue] [data-prompt-queue-entry='${firstId}']`) &&
+          !document.querySelector(`[data-prompt-queue] [data-prompt-queue-entry='${thirdId}']`), [queueBulkEntryIds[0], queueBulkEntryIds[2]]);
+        // A manual subset delivers only the selected entries; the remaining entry needs its own explicit action.
+        await page.waitForSelector("[data-queue-action='process-all']:enabled", { state: "visible" });
+        await page.click("[data-queue-action='process-all']");
         await page.waitForFunction(() => !document.querySelector("[data-prompt-queue] [data-prompt-queue-entry]"));
         await page.waitForFunction(async (agentKey) => {
           const response = await fetch(`/agents/${encodeURIComponent(agentKey)}`);
@@ -2246,15 +2256,75 @@ title: !123 value
           return agent?.running === false && agent?.prompt_queue?.pending_count === 0;
         }, queueBulkAgentKey, { timeout: 10_000 });
 
+        const delayedKey = await page.evaluate(async () => {
+          const created = await apiPost("/agents", { project_key: "web", template_key: "custom", name: "Delayed queue timing", prompt: "Check timing" });
+          const key = created.agent?.key || created.key;
+          await apiPost(`/agents/${encodeURIComponent(key)}/start`, {});
+          return key;
+        });
+        await page.waitForFunction(async (key) => {
+          const agent = (await (await fetch(`/agents/${encodeURIComponent(key)}`)).json()).agent;
+          return agent && !agent.running && agent.run_count > 0;
+        }, delayedKey);
+        await page.evaluate(async (key) => { await apiPost(`/agents/${encodeURIComponent(key)}/messages`, { prompt: "Check after ten minutes", delay: 600 }); }, delayedKey);
+        await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(delayedKey)}`, { waitUntil: "networkidle" });
+        await page.waitForSelector(".prompt-queue-timing", { state: "visible" });
+        const delayedTiming = await page.locator(".prompt-queue-timing").innerText();
+        if (!delayedTiming.includes("Queue processor active") || !delayedTiming.includes("Eligible after") || delayedTiming.includes("about 5 seconds")) {
+          throw new Error(`Delayed queue timing was misleading: ${delayedTiming}`);
+        }
+        await page.locator("[data-prompt-queue] > summary").focus();
+        await page.keyboard.press("Enter");
+        await page.evaluate(async () => { await refresh({ force: true }); });
+        if (!(await page.locator("[data-prompt-queue]").getAttribute("open")) && !(await page.locator("[data-prompt-queue]").evaluate((node) => node.open))) {
+          throw new Error("Queue timing refresh lost keyboard expansion");
+        }
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "queue-timing-desktop.png"), fullPage: false });
+        await page.setViewportSize({ width: 390, height: 844 });
+        const timingLayout = await page.locator(".prompt-queue-timing").evaluate((node) => {
+          const bounds = node.getBoundingClientRect();
+          return { left: bounds.left, right: bounds.right, width: innerWidth, overflow: document.documentElement.scrollWidth > innerWidth };
+        });
+        if (timingLayout.left < 0 || timingLayout.right > timingLayout.width || timingLayout.overflow) throw new Error(`Queue timing overflow: ${JSON.stringify(timingLayout)}`);
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "queue-timing-mobile.png"), fullPage: false });
+        await page.setViewportSize({ width: 1440, height: 900 });
+
+        // Simulate only the server heartbeat being inactive; the real queue action still reaches the isolated server.
+        let inactiveProcessor = true;
+        const inactivePattern = `**/agents/${encodeURIComponent(queueProcessAllAgentKey)}`;
+        await page.route(inactivePattern, async (route) => {
+          const response = await route.fetch();
+          const body = await response.json();
+          if (inactiveProcessor && body.agent?.prompt_queue?.pending_count) {
+            body.agent.prompt_queue.processing = { processor: "inactive", state: "ready", message: "No recent automatic queue check", can_start: true };
+            body.agent.prompt_queue.processing_stopped = false;
+            body.agent.prompt_queue.unprocessed_reason = null;
+          }
+          await route.fulfill({ response, json: body });
+        });
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(queueProcessAllAgentKey)}`, { waitUntil: "networkidle" });
-        await page.click("[data-prompt-queue] > summary");
-        await page.click("[data-queue-action='process-all']");
+        await page.waitForFunction(() => document.querySelector(".prompt-queue-timing")?.textContent.includes("Queue processor inactive"));
+        await page.locator("[data-prompt-queue] > summary").focus();
+        if (!(await page.locator("[data-prompt-queue]").evaluate((node) => node.open))) await page.keyboard.press("Enter");
+        await page.getByRole("button", { name: "Start queue", exact: true }).waitFor({ state: "visible" });
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "queue-timing-inactive-desktop.png"), fullPage: false });
+        await page.setViewportSize({ width: 390, height: 844 });
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, "queue-timing-inactive-mobile.png"), fullPage: false });
+        await page.setViewportSize({ width: 1440, height: 900 });
+        inactiveProcessor = false;
+        await page.evaluate(async () => { await refresh(); });
+        await page.waitForFunction(() => document.querySelector(".prompt-queue-timing")?.textContent.includes("Queue processor active"));
+        inactiveProcessor = true;
+        await page.evaluate(async () => { await refresh(); });
+        await page.getByRole("button", { name: "Start queue", exact: true }).focus();
+        await page.keyboard.press("Enter");
         await page.waitForFunction(() => !document.querySelector("[data-prompt-queue] [data-prompt-queue-entry]"));
         await page.waitForFunction(async (agentKey) => {
           const response = await fetch(`/agents/${encodeURIComponent(agentKey)}`);
           const agent = (await response.json()).agent;
           return agent?.running === false && agent?.prompt_queue?.pending_count === 0;
         }, queueProcessAllAgentKey, { timeout: 10_000 });
+        await page.unroute(inactivePattern);
       }
 
       if (process.env.TYCHO_REMOTE_UI_SMOKE_RENDERING_ONLY !== "1") await assertLoadingShellFailureRecovery();

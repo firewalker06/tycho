@@ -45,6 +45,7 @@ module RemoteServerTest
     assert_context_replacement_follow_ups_continue_after_each_failure
     assert_remote_context_replacement_archive_race_recovers_handoff
     assert_remote_agent_payload_has_revision
+    assert_remote_queue_processing_status
     assert_remote_agent_payload_distinguishes_running_history_from_never_run
     assert_remote_agent_activity_snapshot
     assert_remote_agent_payload_has_cost_snapshot
@@ -1903,6 +1904,66 @@ module RemoteServerTest
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
       replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+    end
+  end
+
+  def assert_remote_queue_processing_status
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      now = Time.now
+      active = true
+      service = HQ::RemoteService.new(registry:, clock: -> { now }, queue_processor_active: -> { active })
+      agent = HQ::ManagedAgent.new(
+        key: "queue-status", name: "Queue status", project_key: "web", template_key: "custom", workspace:,
+        prompt: "Prompt", runs: [HQ::ManagedAgent::AgentRun.new(status: "success")]
+      )
+      store = HQ::AgentStore.new(registry.projects)
+      due_entry = agent.enqueue_prompt!(prompt: "Due instruction")
+      store.save([agent])
+      payload = -> { service.send(:prompt_queue_payload, agent).fetch("processing") }
+      assert(payload.call.values_at("state", "processor", "can_start") == ["ready", "active", false],
+             "expected due work to report the active processor without a start action")
+      assert(payload.call["message"].include?("about 5 seconds"), "expected a check estimate, not a guaranteed launch time")
+      active = false
+      assert(payload.call.values_at("state", "processor", "can_start") == ["ready", "inactive", true],
+             "expected inactive eligible work to use the existing queue control")
+      agent.enqueue_prompt!(prompt: "Future instruction", not_before: now + 600)
+      assert(!payload.call["can_start"], "expected Start queue not to override delayed entries")
+      agent.define_singleton_method(:running?) { true }
+      assert(payload.call["state"] == "running", "expected a running receiver gate")
+      agent.define_singleton_method(:running?) { false }
+      agent.define_singleton_method(:inquiry_blocking_prompt_queue?) { true }
+      assert(payload.call["state"] == "inquiry", "expected an inquiry gate")
+      agent.define_singleton_method(:inquiry_blocking_prompt_queue?) { false }
+      busy = HQ::ManagedAgent.new(key: "busy", name: "Busy", project_key: "web", template_key: "custom", workspace:, prompt: "Busy")
+      busy.define_singleton_method(:running?) { true }
+      service.define_singleton_method(:cached_all_agents) { [agent, busy] }
+      assert(payload.call["state"] == "workspace", "expected the workspace gate before any time estimate")
+      busy.define_singleton_method(:running?) { false }
+      agent.define_singleton_method(:scheduled?) { true }
+      agent.define_singleton_method(:schedule_key) { "queue-status-schedule" }
+      HQ::ScheduleStore.new.save("queue-status-schedule" => HQ::ScheduleState.new(key: "queue-status-schedule", status: "paused"))
+      assert(payload.call["state"] == "schedule", "expected paused schedules not to promise a queue time")
+      agent.define_singleton_method(:scheduled?) { false }
+      agent.delete_queued_prompt!(due_entry.fetch("id"))
+      assert(payload.call["state"] == "delayed" && Time.parse(payload.call["not_before"]).to_i == (now + 600).to_i,
+             "expected the earliest not-before time for future-only work")
+      delayed_queue = service.send(:prompt_queue_payload, agent)
+      assert(!delayed_queue["processing_stopped"] && delayed_queue["unprocessed_reason"].nil?,
+             "expected delayed work not to be labeled stopped")
+      agent.define_singleton_method(:prompt_queue_dispatch_error) { { "message" => "Failure" } }
+      assert(payload.call["state"] == "failed" && !payload.call["can_start"], "expected failed dispatch to retain retry semantics")
+      agent.define_singleton_method(:prompt_queue_dispatch_error) { nil }
+      agent.define_singleton_method(:effective_status) { "blocked" }
+      assert(payload.call["state"] == "stopped", "expected blocked work not to promise a check time")
+      server = HQ::RemoteServer.new
+      assert(!server.send(:queue_processor_active?), "expected no active processor before a successful poll")
+      server.instance_variable_set(:@queue_processor_last_success, Process.clock_gettime(Process::CLOCK_MONOTONIC))
+      assert(server.send(:queue_processor_active?), "expected a recent poll to prove the processor is active")
+      server.instance_variable_set(:@queue_processor_last_success, Process.clock_gettime(Process::CLOCK_MONOTONIC) - 16)
+      assert(!server.send(:queue_processor_active?), "expected stale polls not to promise automatic processing")
     end
   end
 

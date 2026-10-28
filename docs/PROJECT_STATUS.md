@@ -10,9 +10,16 @@ type: project
 
 ## Last Updated
 
-2026-10-24
+2026-10-28
 
 ## Latest Fix
+
+The Remote UI queue summary shows processor activity from the server's most recent
+successful agent check, plus the applicable queue gate or earliest delayed time.
+The five-second check interval is an estimate of the next check, not a launch
+guarantee. Start queue uses the existing locked manual queue control and appears
+only for eligible, due-only work when the automatic processor has no recent check.
+
 
 Tycho now requires Ruby 4.0.9 or later. The gem requirement, Bundler
 requirement, lockfile, and setup checks use this minimum version.

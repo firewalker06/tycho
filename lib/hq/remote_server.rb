@@ -338,7 +338,8 @@ module HQ
         agent_activity_snapshot: @agent_activity_snapshot,
         conversation_blocks_cache: @conversation_blocks_cache,
         agent_list_cache: @agent_list_cache,
-        project_metadata_cache: @project_metadata_cache
+        project_metadata_cache: @project_metadata_cache,
+        queue_processor_active: -> { queue_processor_active? }
       )
       result = route(service, request.method, request.path, json_body(request), request)
       status = result.fetch(:status, 200)
@@ -390,9 +391,16 @@ module HQ
                                   agent_activity_snapshot: @agent_activity_snapshot,
                                   conversation_blocks_cache: @conversation_blocks_cache,
                                   agent_list_cache: @agent_list_cache)
-      service.dispatch_agent_push_notifications!
+      service.dispatch_agent_push_notifications! do
+        @queue_processor_last_success = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      end
     rescue StandardError => e
       HQ.logger.warn("Push") { "Agent push notification poll failed: #{e.class} - #{e.message}" }
+    end
+
+    def queue_processor_active?
+      last_success = @queue_processor_last_success
+      !!(last_success && Process.clock_gettime(Process::CLOCK_MONOTONIC) - last_success <= AGENT_LIST_CACHE_MAX_AGE)
     end
 
     def route(service, method, path, body, request = nil)
@@ -1933,8 +1941,10 @@ module HQ
                    conversation_blocks_cache: ConversationBlocksCache.new,
                    agent_list_cache: AgentListCache.new,
                    project_metadata_cache: ProjectGitMetadataCache.new,
+                   queue_processor_active: nil,
                    clock: -> { Time.now })
       @registry = registry
+      @queue_processor_active = queue_processor_active
       @clock = clock
       @project_metadata_cache = project_metadata_cache
       @projects = registry.projects.map { |config| @project_metadata_cache.apply(Project.new(config)) }
@@ -3159,6 +3169,7 @@ module HQ
 
     def dispatch_agent_push_notifications!
       agents, events = load_agents_with_events
+      yield if block_given?
       @push_notification_store.reconcile_queue_failures!(active_queue_failure_notification_ids(agents))
       notification_candidates = notification_agents(agents)
       replace_agent_activity_snapshot!(agents)
@@ -5770,17 +5781,90 @@ module HQ
 
     def prompt_queue_payload(agent)
       entries = agent.visible_prompt_queue_entries
+      processing = prompt_queue_processing_payload(agent, entries)
+      stopped_reason = agent.prompt_queue_stopped_reason unless %w[delayed ready workspace running schedule].include?(processing["state"])
       {
         "entries" => entries.each_with_index.map do |entry, index|
           prompt_queue_entry_payload(agent, entry).merge("position" => index + 1)
         end,
         "pending_count" => entries.length,
+        "processing" => processing,
         "queue_work" => agent.queue_work_payload,
-        "unprocessed_reason" => agent.queue_work_unprocessed_reason || agent.prompt_queue_stopped_reason,
-        "processing_stopped" => !agent.prompt_queue_stopped_reason.nil?,
+        "unprocessed_reason" => agent.queue_work_unprocessed_reason || stopped_reason,
+        "processing_stopped" => !stopped_reason.nil?,
         "dispatch_error" => agent.prompt_queue_dispatch_error,
         "blocked_by_inquiry" => agent.inquiry_blocking_prompt_queue?
       }
+    end
+
+    # Report eligibility only. Queue claims and launch decisions stay in AgentStore.
+    def prompt_queue_processing_payload(agent, entries)
+      processor = if @queue_processor_active.nil?
+                    "unknown"
+                  else
+                    @queue_processor_active.call ? "active" : "inactive"
+                  end
+      state, message, not_before = prompt_queue_wait_state(agent, entries)
+      if state == "ready"
+        message = case processor
+                  when "active" then "Next queue check in about #{RemoteServer::AGENT_PUSH_POLL_INTERVAL} seconds"
+                  when "inactive" then "No recent automatic queue check"
+                  else "Waiting for the next Tycho agent check"
+                  end
+      end
+      {
+        "processor" => processor,
+        "state" => state,
+        "message" => message,
+        "not_before" => not_before,
+        "can_start" => state == "ready" && processor == "inactive" && entries.all? do |entry|
+          due = ManagedAgent.parse_time(entry["not_before"])
+          !due || due <= @clock.call
+        end
+      }
+    end
+
+    def prompt_queue_wait_state(agent, entries)
+      return ["empty", "No queued work"] if entries.empty?
+      return ["failed", "Queue dispatch failed. Retry queue to continue."] if agent.prompt_queue_dispatch_error
+      return ["running", "Waiting for this agent to finish"] if agent.running?
+      return ["inquiry", "Waiting for an inquiry answer or your next prompt"] if agent.inquiry_blocking_prompt_queue?
+      if (reason = agent.queue_work_unprocessed_reason)
+        return ["stopped", reason]
+      end
+      if agent.scheduled?
+        schedule = ScheduleStore.new.load[agent.schedule_key.to_s]
+        return ["schedule", "Waiting for the schedule to resume"] if schedule && !schedule.scheduled?
+      end
+      resume_pending = agent.active_queue_work&.fetch("resume_pending", false)
+      if agent.active_queue_work && !resume_pending
+        return ["stopped", "Waiting for you to process the remaining queue work"]
+      end
+      manual_state = ManagedAgent::UNPROCESSED_QUEUE_WORK_STATUSES.include?(agent.effective_status.to_s) && !resume_pending
+      has_context = agent.last_run || entries.first&.fetch("source", nil) == "delegation_callback"
+      if manual_state || !has_context || agent.context_replacement_recovery ||
+         agent.archived?
+        return ["stopped", agent.prompt_queue_stopped_reason || "Automatic queue processing is stopped"]
+      end
+      unless agent.prompt_queue_due?(@clock.call) || agent.prompt_queue_claim || resume_pending
+        earliest = entries.filter_map { |entry| ManagedAgent.parse_time(entry["not_before"]) }.min
+        return ["delayed", "Waiting for the scheduled queue time", earliest&.iso8601]
+      end
+      unless agent.prompt_queue_dispatchable?
+        return ["stopped", agent.prompt_queue_stopped_reason || "Automatic queue processing is stopped"]
+      end
+      agents = cached_all_agents || @agent_store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+      workspace = File.realpath(agent.workspace)
+      busy = agents.any? do |candidate|
+        candidate.key != agent.key && candidate.running? && File.realpath(candidate.workspace) == workspace
+      rescue Errno::ENOENT, Errno::EACCES
+        File.expand_path(candidate.workspace) == File.expand_path(agent.workspace) && candidate.running? && candidate.key != agent.key
+      end
+      return ["workspace", "Waiting for another agent in this workspace to finish"] if busy
+
+      ["ready", nil]
+    rescue Errno::ENOENT, Errno::EACCES
+      ["stopped", "Queue workspace is unavailable"]
     end
 
     def queue_action_entry_ids(attrs, name, allow_empty: false)

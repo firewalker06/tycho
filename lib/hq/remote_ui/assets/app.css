@@ -7052,7 +7052,8 @@ details.queue-read-block:not([open]) > .queue-read-body {
   display: flex;
   min-width: 0;
   align-items: baseline;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
 }
 
 .prompt-queue > summary strong {
@@ -7066,6 +7067,13 @@ details.queue-read-block:not([open]) > .queue-read-body {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.prompt-queue > summary .prompt-queue-timing {
+  flex-basis: 100%;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .prompt-queue-chevron .ui-icon {
