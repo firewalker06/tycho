@@ -58,10 +58,15 @@ module HQ
     end
 
     # after_load runs inside the lock, so it can observe the file state that matches the loaded agents.
-    def load_with_poll_events(process_delegations: true, dispatch_prompt_queues: true, after_load: nil)
+    # on_poll_success certifies the requested pass completed using readable primary/backup data.
+    # Missing stores are healthy empty stores; unreadable fallbacks and rescued errors never certify a pass.
+    def load_with_poll_events(process_delegations: true, dispatch_prompt_queues: true, after_load: nil, on_poll_success: nil)
       with_exclusive_lock do
-        agents, events = load_with_poll_events_unlocked(process_delegations:, dispatch_prompt_queues:)
+        successful = false
+        check = -> { successful = true } if on_poll_success
+        agents, events = load_with_poll_events_unlocked(process_delegations:, dispatch_prompt_queues:, on_poll_success: check)
         after_load&.call(agents)
+        on_poll_success&.call if successful
         [agents, events]
       end
     end
@@ -75,14 +80,26 @@ module HQ
       end
     end
 
-    def load_with_poll_events_unlocked(process_delegations: true, dispatch_prompt_queues: true)
-      return [[], []] unless File.exist?(AGENTS_FILE)
+    def load_with_poll_events_unlocked(process_delegations: true, dispatch_prompt_queues: true, on_poll_success: nil)
+      if on_poll_success
+        begin
+          File.stat(AGENTS_FILE)
+        rescue Errno::ENOENT
+          on_poll_success.call
+          return [[], []]
+        end
+      else
+        return [[], []] unless File.exist?(AGENTS_FILE)
+      end
 
       changed = false
       events = []
       schedule_states = ScheduleStore.new.load
       schedule_keys = schedule_keys_by_agent(schedule_states)
-      raw_records = Array(FileStore.read_json(AGENTS_FILE, fallback: []))
+      unreadable = Object.new
+      records = FileStore.read_json(AGENTS_FILE, fallback: unreadable)
+      readable = !records.equal?(unreadable)
+      raw_records = readable ? Array(records) : []
       raw_records, recovered = @recovery.reconcile_loaded(raw_records)
       changed = recovered
       agents = raw_records.map do |hash|
@@ -150,6 +167,7 @@ module HQ
       changed = @delegation_coordinator.process!(agents) || changed if process_delegations
       changed = dispatch_prompt_queues!(agents, schedule_states:) || changed if dispatch_prompt_queues
       save_unlocked(agents) if changed
+      on_poll_success&.call if readable
       [agents, events]
     rescue StandardError => e
       HQ.logger.warn("AgentStore") { "Failed to load agents from #{AGENTS_FILE}: #{e.class} - #{e.message}" }

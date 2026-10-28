@@ -37,6 +37,16 @@ archives the source. Failed archives retain source work and do not publish a
 replacement. Started and scheduled context replacements retain their existing
 recovery and schedule ownership rules.
 
+The Remote UI queue summary shows processor activity from the server's most recent
+successful agent check, plus the applicable queue gate or earliest delayed time.
+Failures that prevent a successful pass do not refresh the heartbeat. A pass
+completed from a valid backup counts as successful under the existing store rules.
+The five-second check interval is an estimate of the next check, not a launch
+guarantee. Start queue uses the existing locked manual queue control and appears
+only for eligible, due-only work when the automatic processor has no recent check.
+Pending queue times use relative eligibility labels. A local clock updates them
+while polling is paused, without changing queue state or promising a launch time.
+
 ## Strategic Direction
 
 Managed agents support explicit same-server parent references, ownership generations for direct-user takeover and parent reclaim, durable terminal report-back, safe automatic parent resume, reversible callback disconnects, archive-stable navigation, and typed Remote UI relationship links. See [AGENT_DELEGATION.md](./AGENT_DELEGATION.md) for the CLI/API and callback contract.
