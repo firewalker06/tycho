@@ -42,6 +42,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       assert.equal(await actions.locator(".unavailable").count(), 1);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
       assert(!overflow, `Overflow at ${viewport.width}`);
+      assert(await actions.evaluate(element => element.scrollWidth <= element.clientWidth + 1), "Action rows must fit their disclosure");
     };
     await check(actions);
     assert(await popover.evaluate(element => element === document.activeElement), "Keyboard disclosure must focus content");
@@ -60,11 +61,12 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     assert.equal(await trigger.getAttribute("aria-expanded"), "false", "Disclosures must be exclusive");
     await attachment.click();
     await card.evaluate(element => element.scrollIntoView({ block: "start" }));
-    if (captureDir) await page.screenshot({ path: path.join(captureDir, `delegated-summary-controls-${viewport.width}.png`) });
+    if (captureDir) await card.screenshot({ path: path.join(captureDir, `delegated-summary-controls-${viewport.width}.png`) });
     await trigger.click();
     await check(actions);
     if (captureDir) await page.screenshot({ path: path.join(captureDir, `delegated-summary-conversation-${viewport.width}.png`) });
-    await card.getByRole("button", { name: "Open full summary" }).click();
+    await open.focus();
+    await page.keyboard.press("Enter");
     const detail = page.locator("[data-agent-summary-page]");
     await detail.waitFor({ state: "visible" });
     await check(detail.locator(".summary-delegated-actions"));
