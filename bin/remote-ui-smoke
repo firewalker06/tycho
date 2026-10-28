@@ -2350,11 +2350,14 @@ title: !123 value
         if (timingLayout.left < 0 || timingLayout.right > timingLayout.width || timingLayout.overflow) throw new Error(`Queue timing overflow: ${JSON.stringify(timingLayout)}`);
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "queue-timing-mobile.png"), fullPage: false });
         await page.setViewportSize({ width: 1440, height: 900 });
+        // Freeze the activity feed so unrelated fixture agents cannot supply a new revision.
+        await page.route("**/servers/activity", (route) => route.fulfill({ json: { revision: null, servers: [] } }));
         await page.evaluate(() => { clearTimeout(state.timer); clearTimeout(state.activityTimer); });
         await page.waitForFunction(() => !state.refreshInFlight && !state.activityInFlight);
         const activityBeforeClock = await page.evaluate(() => {
           clearTimeout(state.timer);
           clearTimeout(state.activityTimer);
+          state.activityRevision = null;
           return String(state.activityRevision || "");
         });
         await page.locator("[data-prompt-queue] > summary").focus();
@@ -2373,6 +2376,7 @@ title: !123 value
         await page.evaluate(() => { document.querySelector(".prompt-queue-timing [data-queue-eligible-at]").dataset.queueEligibleAt = "invalid-date"; });
         await page.waitForFunction(() => document.querySelector(".prompt-queue-timing")?.textContent.includes("Queue time unavailable"));
         await page.clock.setFixedTime(new Date());
+        await page.unroute("**/servers/activity");
         await page.evaluate(async () => { await refresh({ force: true }); await pollAgentActivity(); });
 
         // Simulate only the server heartbeat being inactive; the real queue action still reaches the isolated server.
