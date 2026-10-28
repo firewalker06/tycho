@@ -14,11 +14,19 @@ module HQ
       @adapter = HQ.harness_adapter(agent_type)
       @run_id = run_id.to_s
       @claude_tool_names = {}
+      # agy's finish step arrives on an earlier line than the terminal
+      # result. parse_stream is per-line, so the projector owns the
+      # cross-line finish state and annotates agy result lines with it.
+      @agy_finish_seen = false
     end
 
     def project_line(line, source_sequence:, raw_offset: nil, occurred_at: Time.now)
       text = line.to_s.encode("UTF-8", invalid: :replace, undef: :replace)
       remember_claude_tools(text)
+      if @adapter == "agy"
+        track_agy_finish!(text)
+        text = annotate_agy_finish(text)
+      end
       conversation, system = Parser.parse_stream([text], agent_type: @agent_type)
       restore_claude_tool_names(system)
       normalized = normalize(conversation, system, source_sequence:, raw_offset:, occurred_at:)
@@ -28,6 +36,28 @@ module HQ
     end
 
     private
+
+    def track_agy_finish!(text)
+      event = safe_parse(text)
+      return unless event.is_a?(Hash)
+
+      step = event["step_update"]
+      @agy_finish_seen = true if step.is_a?(Hash) && step["step_type"] == "finish" && step["state"] == "DONE"
+    end
+
+    def annotate_agy_finish(text)
+      event = safe_parse(text)
+      return text unless event.is_a?(Hash) && event["event"] == "result"
+
+      event["agy_finish_seen"] = @agy_finish_seen
+      JSON.generate(event)
+    end
+
+    def safe_parse(text)
+      JSON.parse(text)
+    rescue JSON::ParserError
+      nil
+    end
 
     def normalize(conversation, system, source_sequence:, raw_offset:, occurred_at:)
       source = {
