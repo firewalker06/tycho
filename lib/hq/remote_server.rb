@@ -3843,7 +3843,7 @@ module HQ
       target = find_agent!(key)
       target = associate_delegation_from_attrs!(target, attrs, actor:)
       @agent_store.accept_prompt_from!(target, actor:) if target.delegation_parent
-      target = @agent_store.start_agent!(target.key, prefer_queued: true) unless target.running?
+      target = @agent_store.start_agent!(target.key, prefer_queued: true, actor:) unless target.running?
       @agent_activity_snapshot.upsert!(target)
       { agent: agent_payload(target) }
     end
@@ -3884,7 +3884,7 @@ module HQ
         candidate.preserve_name! unless attrs["name"].to_s.strip.empty?
         @agent_store.ensure_project_context_prompt!(candidate, project)
       end
-      target = @agent_store.start_agent!(target.key) if truthy?(attrs["start"])
+      target = @agent_store.start_agent!(target.key, actor:) if truthy?(attrs["start"])
       @agent_activity_snapshot.upsert!(target)
       agent_payload(target)
     rescue DelegationStore::Error => e
@@ -5482,6 +5482,13 @@ module HQ
 
     def sanitized_delegation_block(content, metadata, reference_context:)
       data = metadata.is_a?(Hash) ? metadata.dup : metadata
+      if data.is_a?(Hash) && data["delegated_actions"].is_a?(Array)
+        data["delegated_actions"] = data["delegated_actions"].filter_map do |action|
+          next unless action.is_a?(Hash) && action["agent_reference"].is_a?(Hash)
+
+          action.merge("agent_reference" => reference_payload(action["agent_reference"], reference_context:).transform_keys(&:to_s))
+        end
+      end
       author = data.is_a?(Hash) ? data["message_author"] : nil
       if author.is_a?(Hash) && author["type"] == "agent" && !author["agent_key"].to_s.empty?
         payload = reference_payload(author, reference_context:)

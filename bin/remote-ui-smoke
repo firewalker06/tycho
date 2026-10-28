@@ -558,6 +558,58 @@ def seed_large_conversation_fixture(env, agent_key, total_bytes)
   raise "Failed to seed large conversation fixture: #{out}" unless status.success?
 end
 
+def write_delegated_summary_fixture(fixture)
+  agent_key = "web-agent-delegated-summary"
+  script = <<~RUBY
+    require #{File.join(ROOT, "lib/hq/domain/managed_agent").inspect}
+    require #{File.join(ROOT, "lib/hq/domain/server_identity").inspect}
+    root = ENV.fetch("TYCHO_LOGS_ROOT")
+    FileUtils.mkdir_p(File.join(root, "agents"))
+    parent = HQ::ManagedAgent.new(
+      key: #{agent_key.inspect}, name: "Release coordinator", project_key: "web", template_key: "custom",
+      workspace: #{fixture.fetch(:workspace).inspect}, prompt: "Synthetic only",
+      log_path: File.join(root, "agents", "summary.raw.log"), summary: "Review work is complete.",
+      structured_result: { "status" => "partial", "summary" => "Review work is complete.", "attachments" => 3.times.map { |index| { "type" => "link", "title" => "Review receipt \#{index + 1}", "url" => "https://example.test/receipt/\#{index + 1}" } }, "summary_sections" => [{ "type" => "text", "text" => "The API review is complete. The release needs operator review." }] }
+    )
+    child = HQ::ManagedAgent.new(
+      key: "web-agent-api-review", name: "API contract review", project_key: "web", template_key: "custom",
+      workspace: #{fixture.fetch(:workspace).inspect}, prompt: "Synthetic only",
+      log_path: File.join(root, "agents", "child.raw.log")
+    )
+    memory = HQ::AgentMemory.new(parent)
+    at = Time.now - 600
+    memory.append_run_summary!(summary: "Historical summary is unchanged.", status: "success", created_at: at - 60,
+                               metadata: { "summary_id" => "legacy", "run_id" => "legacy", "run_number" => 1 })
+    run = HQ::ManagedAgent::AgentRun.new(run_id: "delegated-run", status: "running", started_at: at, log_path: parent.log_path)
+    parent.runs << run
+    memory.append_run_started!(run_id: run.run_id, created_at: at)
+    reference = { "server_id" => HQ::ServerIdentity.load.fetch("id"), "agent_key" => child.key, "name" => child.name, "project_key" => "web" }
+    %w[agent_created agent_started agent_message_sent].each_with_index do |action, index|
+      memory.append_delegation_event!("Synthetic delegated action", event_id: action, created_at: at + index + 1,
+                                     metadata: { "event" => action, "agent_reference" => reference, "message" => "PRIVATE_PROMPT_SENTINEL", "delivery_status" => "queued" })
+    end
+    memory.append_delegation_event!("Message sent", event_id: "missing-target", created_at: at + 4,
+                                   metadata: { "event" => "agent_message_sent", "agent_reference" => reference.merge("agent_key" => "removed-review", "name" => "Removed review"), "delivery_status" => "accepted" })
+    memory.append_delegation_event!("Started again", event_id: "agent-start:api-review:second-run", created_at: at + 5,
+                                   metadata: { "event" => "agent_started", "agent_reference" => reference })
+    memory.append_delegation_event!("Created only", event_id: "created-only", created_at: at + 6,
+                                   metadata: { "event" => "agent_created", "agent_reference" => reference.merge("agent_key" => "pending-review", "name" => "Pending review") })
+    run.status = "partial"
+    run.finished_at = at + 30
+    parent.send(:capture_run_memory!, run)
+    # The next run has no delegated actions; it must not inherit the prior run.
+    next_run = HQ::ManagedAgent::AgentRun.new(run_id: "empty-run", status: "success", started_at: at + 60, finished_at: at + 90, log_path: parent.log_path)
+    parent.runs << next_run
+    parent.send(:capture_run_memory!, next_run)
+    File.write(File.join(root, "managed_agents.json"), JSON.generate([parent.to_hash, child.to_hash]))
+  RUBY
+  env = { "TYCHO_HOME" => fixture.fetch(:tycho_home_dir), "TYCHO_LOGS_ROOT" => fixture.fetch(:logs_dir) }
+  out, status = Open3.capture2e(env, RbConfig.ruby, "-e", script, chdir: ROOT)
+  raise "Failed to seed delegated Summary fixture: #{out}" unless status.success?
+
+  agent_key
+end
+
 def write_summary_idle_stop_fixture(logs_dir, agent_key)
   path = File.join(logs_dir, "managed_agents.json")
   agents = JSON.parse(File.read(path))
@@ -10674,6 +10726,7 @@ end
 
 Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   fixture = write_fixture(dir)
+  agent_key = write_delegated_summary_fixture(fixture) if ENV["TYCHO_REMOTE_UI_DELEGATED_SUMMARY_ONLY"] == "1"
   if ENV["TYCHO_REMOTE_UI_SUMMARY_IDLE_STOP_ONLY"] == "1"
     agent_key = "web-agent-summary-idle-fixture"
     logs_dir = fixture.fetch(:logs_dir)
@@ -10717,6 +10770,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     wait_for_remote(base_url, log_path)
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key ||= create_agent(base_url)
+    if ENV["TYCHO_REMOTE_UI_DELEGATED_SUMMARY_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "delegated_summary_smoke")
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_AUTO_NAME_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "agent_auto_name_smoke")
       next

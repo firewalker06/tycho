@@ -17,7 +17,7 @@ module HQ
 
     attr_reader :delegation_store
 
-    def attach!(agents:, child:, parent_key:, parent_server_id: nil, now: Time.now)
+    def attach!(agents:, child:, parent_key:, parent_server_id: nil, now: Time.now, created_agent: false)
       key = parent_key.to_s.strip
       raise DelegationStore::Error, "Missing parent agent key" if key.empty?
 
@@ -34,12 +34,12 @@ module HQ
       )
       child.associate_parent!(relation.fetch("parent"))
       AgentMemory.new(parent).append_delegation_event!(
-        "Started agent #{child.display_name}",
+        "#{created_agent ? "Created" : "Delegated"} agent #{child.display_name}",
         event_id: "delegation-created:#{relation.fetch("id")}",
         created_at: now,
         metadata: {
           "relationship_id" => relation.fetch("id"),
-          "event" => "agent_started",
+          "event" => created_agent ? "agent_created" : "agent_delegated",
           "agent_reference" => relation.fetch("child")
         }
       )

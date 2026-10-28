@@ -136,7 +136,7 @@ module RemoteUIAssetSnapshotTest
 
     required = [
       'delegation-notice-event delegation-started-event',
-      '<span class="delegation-event-brand">STARTED</span>',
+      '<span class="delegation-event-brand">${block.metadata.event === "agent_created" ? "CREATED" : "STARTED"}</span>',
       'renderAgentReference(reference, { projectName })',
       'return findProject(key)?.name || key;',
       '${projectPart} · ${escapeHtml(serverHealth)}'

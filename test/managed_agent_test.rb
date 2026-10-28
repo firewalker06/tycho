@@ -30,6 +30,7 @@ module ManagedAgentTest
     assert_structured_output_summary_beats_later_agent_message
     assert_claude_scalar_json_structured_output_normalizes
     assert_summary_sections_normalize_and_persist_with_run
+    assert_delegated_actions_are_saved_per_run
     assert_opencode_assistant_json_structured_output_normalizes
     assert_completed_run_persists_cost_snapshot
     assert_large_completed_run_persists_cost_snapshot
@@ -1501,6 +1502,46 @@ module ManagedAgentTest
       assert(grilling_inquiry.dig("fields", 0, "input_type") == "select" &&
              grilling_inquiry.dig("fields", 0, "options") == ["LLM-only", "LLM plus detector", "Detector-only"],
              "expected question-shaped Claude inquiries to become selectable fields")
+    end
+  end
+
+  def assert_delegated_actions_are_saved_per_run
+    Dir.mktmpdir("hq-delegated-summary") do |dir|
+      first = HQ::ManagedAgent::AgentRun.new(run_id: "first", status: "running")
+      agent = HQ::ManagedAgent.new(
+        key: "parent", name: "Parent", project_key: "demo", template_key: "custom", workspace: dir,
+        prompt: "Coordinate", log_path: File.join(dir, "parent.raw.log"), runs: [first],
+        summary: "Done", structured_result: { "status" => "success", "summary" => "Done", "inquiry" => { "message" => "Choose" } }
+      )
+      memory = HQ::AgentMemory.new(agent)
+      reference = { "agent_key" => "child", "name" => "Original name", "server_id" => "local-id", "native_session_id" => "SECRET_SESSION" }
+      memory.append_delegation_event!("Created", event_id: "created", metadata: { "event" => "agent_created", "agent_reference" => reference })
+      2.times do
+        memory.append_delegation_event!("Sent", event_id: "sent", metadata: {
+          "event" => "agent_message_sent", "delivery_status" => "queued", "agent_reference" => reference, "message" => "SECRET_PROMPT"
+        })
+      end
+      first.status = "success"
+      agent.send(:capture_run_memory!, first)
+      saved = memory.events.find { |event| event["type"] == "run_summary" }
+      actions = saved.dig("metadata", "delegated_actions")
+      assert(actions.map { |action| action["action"] } == %w[agent_created agent_message_sent], "expected each accepted action once")
+      assert(actions.last["delivery_status"] == "queued", "expected accurate queued delivery")
+      assert(!JSON.generate(actions).include?("SECRET"), "expected only safe reference fields, without prompts or sessions")
+      assert(saved.dig("metadata", "inquiry", "message") == "Choose", "expected inquiry preservation")
+      reference["name"] = "Changed later"
+      memory.append_delegation_event!("Outside run", event_id: "outside", metadata: { "event" => "agent_created", "agent_reference" => reference })
+      agent.send(:capture_run_memory!, first)
+      assert(memory.events.find { |event| event["type"] == "run_summary" } == saved, "expected immutable Summary on replay")
+      second = HQ::ManagedAgent::AgentRun.new(run_id: "second", status: "running")
+      agent.runs << second
+      memory.append_delegation_event!("Started", event_id: "started-second", metadata: { "event" => "agent_started", "agent_reference" => reference })
+      second.status = "success"
+      agent.send(:capture_run_memory!, second)
+      restored = HQ::AgentMemory.new(HQ::ManagedAgent.from_hash(agent.to_hash)).events.select { |event| event["type"] == "run_summary" }
+      assert(restored.length == 2, "expected replay to keep one Summary per run")
+      assert(restored.last.dig("metadata", "delegated_actions").map { |action| action["event_id"] } == ["started-second"], "expected no cross-run or idle action leakage")
+      assert(restored.first.dig("metadata", "delegated_actions", 0, "agent_reference", "name") == "Original name", "expected the saved name to survive reload")
     end
   end
 
