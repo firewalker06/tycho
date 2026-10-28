@@ -741,6 +741,30 @@ module HQ
       last_run&.metadata&.fetch("native_launch_prepared", nil)
     end
 
+    # These files are atomically published by the native launch/status producers.
+    # Read their evidence before poll! consumes it; do not use poll time as exit time.
+    def native_start_recorded_at
+      return if last_run&.run_id.to_s.empty?
+
+      path = run_native_started_file_path(last_run.run_id)
+      File.mtime(path) if File.file?(path)
+    rescue SystemCallError
+      nil
+    end
+
+    def run_exit_recorded_at
+      return unless last_run&.run_scoped_status && !last_run.run_id.to_s.empty?
+
+      return unless valid_status_file?(run_status_file_path(last_run.run_id))
+
+      run_id, recorded_at = File.read(run_native_exit_file_path(last_run.run_id)).split("\n", 2)
+      return unless run_id == last_run.run_id
+
+      Time.at(Rational(recorded_at))
+    rescue ArgumentError, TypeError, ZeroDivisionError, RangeError, SystemCallError
+      nil
+    end
+
     def begin_queue_delivery_rollback!(metadata)
       return unless last_run
 
@@ -1450,6 +1474,7 @@ module HQ
       FileUtils.rm_f(run_native_release_file_path(last_run.run_id)) if last_run&.run_id
       FileUtils.rm_f(run_native_started_file_path(last_run.run_id)) if last_run&.run_id
       FileUtils.rm_f(run_native_owned_file_path(last_run.run_id)) if last_run&.run_id
+      FileUtils.rm_f(run_native_exit_file_path(last_run.run_id)) if last_run&.run_id
       finalize_latest_run!
       HQ.logger.info("Agent") { "#{@key} exited (code=#{@last_exit_code})" }
       @pid = nil
@@ -1472,6 +1497,7 @@ module HQ
       FileUtils.rm_f(run_native_release_file_path(last_run.run_id))
       FileUtils.rm_f(run_native_started_file_path(last_run.run_id))
       FileUtils.rm_f(run_native_owned_file_path(last_run.run_id))
+      FileUtils.rm_f(run_native_exit_file_path(last_run.run_id))
       @pid = nil
       finalize_latest_run!
       @pid = nil
@@ -1594,6 +1620,7 @@ module HQ
         derived_log_path("codex_result_schema.json"),
         *status_file_paths,
         *@runs.filter_map { |run| run_status_file_path(run.run_id) unless run.run_id.to_s.empty? },
+        *@runs.filter_map { |run| run_native_exit_file_path(run.run_id) unless run.run_id.to_s.empty? },
         *@runs.filter_map { |run| run_pid_file_path(run.run_id) unless run.run_id.to_s.empty? },
         *@runs.filter_map { |run| run_native_release_file_path(run.run_id) unless run.run_id.to_s.empty? },
         *@runs.filter_map { |run| run_native_started_file_path(run.run_id) unless run.run_id.to_s.empty? },
@@ -2255,6 +2282,10 @@ module HQ
       derived_log_path("run-#{token}.status")
     end
 
+    def run_native_exit_file_path(run_id)
+      "#{run_status_file_path(run_id)}.native-exit"
+    end
+
     def run_pid_file_path(run_id)
       token = Digest::SHA256.hexdigest(run_id.to_s)[0, 24]
       derived_log_path("run-#{token}.pid")
@@ -2347,6 +2378,18 @@ module HQ
                      1
                    end
                  end
+        # A separate receipt proves this time was observed by the still-live
+        # native wrapper. Monitor fallback status writes do not produce it.
+        begin
+          exit_path = "\#{ENV.fetch("TYCHO_STATUS_PATH")}.native-exit"
+          exit_temporary = "\#{exit_path}.tmp-\#{Process.pid}"
+          File.write(exit_temporary, [ENV.fetch("TYCHO_RUN_ID"), Time.now.to_r.to_s].join("\\n"))
+          File.rename(exit_temporary, exit_path)
+        rescue StandardError
+          nil
+        ensure
+          File.delete(exit_temporary) if exit_temporary && File.exist?(exit_temporary)
+        end
         begin
           path = ENV.fetch("TYCHO_STATUS_PATH")
           temporary_path = "\#{path}.tmp-\#{Process.pid}"
@@ -2454,6 +2497,7 @@ module HQ
       FileUtils.rm_f(run_native_release_file_path(run.run_id))
       FileUtils.rm_f(run_native_started_file_path(run.run_id))
       FileUtils.rm_f(run_native_owned_file_path(run.run_id))
+      FileUtils.rm_f(run_native_exit_file_path(run.run_id))
       before_spawn&.call(run)
       if @usage_metrics_store
         UsageMetrics.record_run(agent: self, run:, usage_entries: [], metrics_store: @usage_metrics_store)

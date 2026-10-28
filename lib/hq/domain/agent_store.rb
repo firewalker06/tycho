@@ -96,6 +96,17 @@ module HQ
         end
         agent
       end
+      # Recover already-confirmed launches before any parent poll can freeze its
+      # Summary and consume its exit evidence. Unconfirmed launches keep their
+      # existing per-agent recovery path and are not released by this pass.
+      agents.each do |agent|
+        next unless agent.prepared_native_launch.is_a?(Hash) || agent.staged_queue_delivery.is_a?(Hash)
+        next if agent.queue_delivery_rollback.is_a?(Hash)
+        next unless agent.native_start_recorded_at
+
+        changed = recover_staged_native_launch!(agent, agents) || changed
+        changed = recover_prepared_native_launch!(agent, agents) || changed
+      end
       agents.each_with_index do |agent, index|
         hash = raw_records.fetch(index)
         changed = true if hash != agent.to_hash
@@ -585,7 +596,7 @@ module HQ
     def recover_prepared_native_launch!(target, agents)
       target.recover_prepared_native_launch!(
         native_started: lambda do |_run|
-          record_started_delegated_agent!(target:, agents:)
+          record_started_delegated_agent!(target:, agents:, recovering: true)
           save_unlocked(agents)
         end,
         native_failed: lambda do |_run|
@@ -605,7 +616,7 @@ module HQ
       target.recover_staged_native_launch!(
         native_started: lambda do |_run, _delivery|
           # Persist acknowledgement before polling can finalize the run or complete its queue claim.
-          record_started_delegated_agent!(target:, agents:)
+          record_started_delegated_agent!(target:, agents:, recovering: true)
           save_unlocked(agents)
         end,
         native_failed: lambda do |_run, delivery|
@@ -1307,7 +1318,7 @@ module HQ
       { "parent_agent_key" => parent.key, "parent_run_id" => run.run_id }
     end
 
-    def record_started_delegated_agent!(target:, agents:)
+    def record_started_delegated_agent!(target:, agents:, recovering: false)
       run = target.last_run
       return unless run&.metadata.to_h["native_start_acknowledged"]
 
@@ -1316,17 +1327,37 @@ module HQ
 
       parent = agents.find { |agent| agent.key == origin["parent_agent_key"] }
       # Queued work belongs to the run that accepted it, never a later run.
-      return unless parent && delegated_action_origin(parent) == origin
+      return unless parent
       return unless target.delegation_parent&.fetch("agent_key", nil) == parent.key
+
+      confirmed_at = target.native_start_recorded_at if recovering
+      unless delegated_action_origin(parent) == origin
+        return unless recovering && confirmed_start_within_parent_run?(parent, origin, confirmed_at)
+      end
 
       AgentMemory.new(parent).append_delegation_event!(
         "Started agent #{target.display_name}",
         event_id: "agent-start:#{target.key}:#{target.last_run.run_id}",
+        created_at: confirmed_at || Time.now,
         metadata: {
           "event" => "agent_started",
           "agent_reference" => @delegation_coordinator.delegation_store.relation_for_child(target.key)&.fetch("child", nil)
         }
       )
+    end
+
+    def confirmed_start_within_parent_run?(parent, origin, confirmed_at)
+      run = parent.last_run
+      return false unless run&.status == "running" && run.run_id == origin["parent_run_id"]
+
+      exited_at = parent.run_exit_recorded_at
+      # Equal or missing source times cannot prove that the launch preceded exit.
+      return false unless confirmed_at && exited_at && run.started_at &&
+                          run.started_at <= confirmed_at && confirmed_at < exited_at
+
+      !AgentMemory.new(parent).events.any? do |event|
+        event["type"] == "run_summary" && event.dig("metadata", "run_id") == run.run_id
+      end
     end
 
     # A parent-declared prompt is a durable operator action. Keep this event on

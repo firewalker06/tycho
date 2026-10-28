@@ -13,6 +13,7 @@ module PromptQueueTest
   def run!
     assert_queue_persists_and_reconciles_across_clients
     assert_queued_launches_save_only_the_originating_parent_run
+    assert_confirmed_starts_recover_before_parent_summary
     assert_delayed_remote_acceptance_is_durable
     assert_due_entries_bypass_future_entries_in_fifo_order
     assert_self_delayed_continuation_preserves_delegation_ownership
@@ -168,6 +169,149 @@ module PromptQueueTest
         assert(!JSON.generate(actions).include?("Queued private instruction"), "expected Summary actions to exclude prompt text")
       ensure
         pids&.each { |pid| stop_process(pid) }
+        pids = nil
+        previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
+      end
+    end
+  end
+
+  def assert_confirmed_starts_recover_before_parent_summary(modes: %w[confirmed-before-parent-exit stale-origin missing-exit-receipt])
+    modes.each do |mode|
+      with_queue_store do |registry, workspace|
+        parent_workspace = File.join(workspace, "parent")
+        FileUtils.mkdir_p(parent_workspace)
+        harness = File.join(workspace, "recovery-codex")
+        File.write(harness, <<~'RUBY')
+          #!/usr/bin/env ruby
+          require "json"
+          gate = File.join(Dir.pwd, "#{ENV.fetch("TYCHO_RUN_ID")}.release")
+          deadline = Time.now + 60
+          sleep 0.01 until File.exist?(gate) || Time.now >= deadline
+          payload = { "status" => "success", "summary" => "Finished gated work", "inquiry" => nil,
+                      "attachments" => nil, "summary_sections" => nil, "memory_handoff" => nil }
+          output_index = ARGV.index("-o")
+          File.write(ARGV[output_index + 1], JSON.generate(payload)) if output_index
+          puts JSON.generate("type" => "item.completed", "item" => { "type" => "agent_message", "text" => JSON.generate(payload) })
+          puts JSON.generate("type" => "turn.completed")
+        RUBY
+        File.chmod(0o755, harness)
+        previous_codex_bin = ENV["TYCHO_CODEX_BIN"]
+        ENV["TYCHO_CODEX_BIN"] = harness
+        store = HQ::AgentStore.new(registry.projects)
+        parent = HQ::ManagedAgent.new(
+          key: "recovery-parent", name: "Recovery parent", project_key: "web", template_key: "custom",
+          workspace: parent_workspace, prompt: "Coordinate", log_path: File.join(parent_workspace, "parent.raw.log")
+        )
+        child = HQ::ManagedAgent.new(
+          key: "recovery-child", name: "Recovery child", project_key: "web", template_key: "custom",
+          workspace:, prompt: "Initial work", log_path: File.join(workspace, "child.raw.log")
+        )
+        store.associate_delegation!(agents: [parent, child], child:, parent_key: parent.key)
+        store.save([parent, child])
+        pids = []
+        parent = store.start_agent!(parent.key)
+        pids << parent.pid
+        child = store.start_agent!(child.key)
+        pids << child.pid
+        initial_child_run_id = child.last_run.run_id
+        parent_run_id = parent.last_run.run_id
+        queued = store.accept_or_abort_prompt!(child.key, prompt: "Queued recovery work", start: true,
+                                              actor: HQ::DelegationActor.parent_actor(parent.key), event_id: "recovery-send")
+        assert(queued[:status] == :queued, "expected actual acceptance behind the gated busy child")
+        parent_status_path = parent.send(:run_status_file_path, parent_run_id)
+        exit_at = nil
+        finish_parent = lambda do
+          File.write(File.join(parent_workspace, "#{parent_run_id}.release"), "finish")
+          deadline = Time.now + 10
+          until File.file?(parent_status_path)
+            raise "gated parent did not publish its exit status" if Time.now >= deadline
+
+            sleep 0.01
+          end
+          exit_at = parent.run_exit_recorded_at
+          assert(exit_at && exit_at <= File.mtime(parent_status_path), "expected an exit receipt written by the live native wrapper before status publication")
+        end
+        finish_parent.call if mode == "stale-origin"
+        File.write(File.join(workspace, "#{initial_child_run_id}.release"), "finish")
+        initial_status_path = child.send(:run_status_file_path, initial_child_run_id)
+        deadline = Time.now + 10
+        until File.file?(initial_status_path)
+          raise "initial child did not publish its exit status" if Time.now >= deadline
+
+          sleep 0.01
+        end
+        # Stop the Tycho owner after the real marker exists, before it can
+        # acknowledge in memory, record the parent event, or save the ack.
+        owner = Process.fork do
+          original_ack = HQ::ManagedAgent.instance_method(:acknowledge_native_start!)
+          HQ::ManagedAgent.define_method(:acknowledge_native_start!) do
+            Process.exit!(86) if key == "recovery-child" && last_run.run_id != initial_child_run_id
+
+            original_ack.bind_call(self)
+          end
+          store.load_with_poll_events(process_delegations: false)
+          Process.exit!(87)
+        end
+        _waited, crashed = Process.wait2(owner)
+        assert(crashed.exitstatus == 86, "expected interruption after the native marker and before ack persistence")
+        records = HQ::FileStore.read_json(HQ::AGENTS_FILE, fallback: [])
+        assert(records.map { |item| item["key"] } == [parent.key, child.key], "expected the parent-before-child recovery order")
+        saved_child = HQ::ManagedAgent.from_hash(records.last)
+        pids << saved_child.pid
+        marker_path = saved_child.send(:run_native_started_file_path, saved_child.last_run.run_id)
+        marker_at = File.mtime(marker_path)
+        assert(File.read(marker_path).match?(/\A\d+\z/) && saved_child.staged_queue_delivery.is_a?(Hash) &&
+               !saved_child.last_run.metadata["native_start_acknowledged"], "expected genuine durable marker evidence and an unacknowledged staged run")
+        finish_parent.call unless mode == "stale-origin"
+        FileUtils.rm_f(parent.send(:run_native_exit_file_path, parent_run_id)) if mode == "missing-exit-receipt"
+        assert(mode == "stale-origin" ? exit_at < marker_at : marker_at < exit_at,
+               "expected gated source marker ordering for #{mode}")
+        assert(!HQ::ManagedAgent.from_hash(records.first).running?, "expected the original parent to finish before recovery")
+        before = HQ::AgentMemory.new(parent).events.select { |event| event["type"] == "run_summary" }
+        assert(before.length == (mode == "stale-origin" ? 1 : 0), "expected no prematurely finalized positive-control Summary")
+        expected_id = "agent-start:#{child.key}:#{saved_child.last_run.run_id}"
+        recovered_agents, = HQ::AgentStore.new(registry.projects).load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false)
+        recovered_child = recovered_agents.find { |agent| agent.key == child.key }
+        assert(recovered_child.last_run.metadata["native_start_acknowledged"] == true &&
+               recovered_child.staged_queue_delivery.nil? && recovered_child.run_count == 2 &&
+               recovered_child.last_run.delegation_generation == saved_child.last_run.delegation_generation,
+               "expected unchanged native acknowledgement, delivery, and generation recovery")
+        first_summary = HQ::AgentMemory.new(parent).events.select { |event| event["type"] == "run_summary" }
+        2.times { HQ::AgentStore.new(registry.projects).load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false) }
+        events = HQ::AgentMemory.new(parent).events
+        assert(events.select { |event| event["type"] == "run_summary" } == first_summary,
+               "expected repeated recovery to leave the first persisted Summary unchanged")
+        summary = events.find { |event| event["type"] == "run_summary" && event.dig("metadata", "run_id") == parent_run_id }
+        starts = summary.dig("metadata", "delegated_actions").select { |action| action["action"] == "agent_started" }
+        puts "confirmed-start-recovery: #{JSON.generate(mode:, marker_at: marker_at.iso8601(9), parent_exit_at: exit_at.iso8601(9), starts: starts.length)}"
+        if mode != "confirmed-before-parent-exit"
+          assert(starts.empty? && events.none? { |event| event["event_id"] == expected_id }, "expected no guessed action for stale or missing exit evidence")
+          if mode == "stale-origin"
+            assert(events.select { |event| event["type"] == "run_summary" } == before, "expected the completed Summary to remain immutable")
+          end
+        else
+          assert(starts.map { |action| action["event_id"] } == [expected_id], "expected one recovered start in the original immutable Summary")
+          recovered_events = events.select { |event| event["event_id"] == expected_id }
+          assert(recovered_events.length == 1 && recovered_events.first["created_at"] == marker_at.iso8601 &&
+                 recovered_events.first.dig("metadata", "parent_run_id") == parent_run_id,
+                 "expected one original-run event dated from the durable source marker after repeated recovery")
+        end
+      ensure
+        Array(pids).compact.uniq.each do |pid|
+          stop_process(pid)
+          deadline = Time.now + 5
+          loop do
+            Process.kill(0, -pid)
+            raise "recovery fixture process group did not exit" if Time.now >= deadline
+
+            sleep 0.01
+          rescue Errno::ESRCH, Errno::EPERM
+            break
+          end
+        end
+        [parent, child].compact.each do |agent|
+          agent.instance_variable_get(:@process_monitors).to_h.each_value { |monitor| monitor.join(2) }
+        end
         pids = nil
         previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
       end
