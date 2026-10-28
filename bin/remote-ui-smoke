@@ -2145,7 +2145,12 @@ title: !123 value
         await page.setViewportSize({ width: 1440, height: 900 });
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(queueAgentKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector("[data-prompt-queue]", { state: "visible", timeout: 10_000 });
-        await page.click("[data-prompt-queue] > summary");
+        await page.locator("[data-prompt-queue] > summary").focus();
+        await page.evaluate(async () => { await refresh({ force: true }); });
+        if (!(await page.evaluate(() => document.activeElement?.matches("[data-prompt-queue] > summary")))) {
+          throw new Error("Queue summary lost keyboard focus across refresh");
+        }
+        await page.keyboard.press("Enter");
         await page.waitForSelector("[data-prompt-queue-management]", { state: "visible", timeout: 10_000 });
         const initial = await page.evaluate(() => ({
           timing: document.querySelector(".prompt-queue-timing")?.textContent.trim(),
