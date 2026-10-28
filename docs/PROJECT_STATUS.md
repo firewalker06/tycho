@@ -18,7 +18,9 @@ Run Summaries now keep a snapshot of delegated create, confirmed start, and
 accepted or queued send actions from the parent run. Tycho builds this snapshot
 from durable domain events at Summary generation. Conversation and the full
 Summary show the saved actions and target links. Reads apply current reference
-visibility without rebuilding actions; older summaries remain unchanged.
+visibility without rebuilding actions; older summaries remain unchanged. Queued
+launches retain the accepting parent run ID, so an unrelated later parent run
+does not inherit their confirmed start actions.
 
 Tycho now requires Ruby 4.0.9 or later. The gem requirement, Bundler
 requirement, lockfile, and setup checks use this minimum version.

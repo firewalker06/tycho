@@ -352,14 +352,12 @@ module HQ
 
         target.cancel_pending_sleep_recovery!
         unless target.running?
-          previous_run_id = target.last_run&.run_id
           if prefer_queued && target.pending_prompts?
             target.clear_prompt_queue_dispatch_error!
             dispatch_prompt_queue!(target, agents)
           else
-            start_target!(target, agents, run_metadata:)
+            start_target!(target, agents, run_metadata:, delegated_action_origin: delegated_action_origin(parent))
           end
-          record_started_delegated_agent!(parent:, target:) if parent && target.last_run&.run_id != previous_run_id
         end
         target
       end
@@ -428,7 +426,6 @@ module HQ
         parent = active_prompt_parent_unlocked!(target, agents, actor:)
         paths << parent.memory_path if parent
         FileTransaction.run(paths.compact) do |transaction|
-          previous_run_id = target.last_run&.run_id
           replay = prompt_replay_unlocked(target, event_id)
           result = replay || accept_active_prompt_unlocked!(
             target, agents, prompt:, actor:, event_id:, message_metadata:, attachments:,
@@ -438,9 +435,6 @@ module HQ
           record_accepted_agent_send!(
             parent:, target:, prompt:, event_id:, result:
           ) if actor&.parent? && !result.fetch(:replayed)
-          if parent && target.last_run&.run_id != previous_run_id
-            record_started_delegated_agent!(parent:, target:)
-          end
           save_unlocked(agents)
           result
         end
@@ -459,7 +453,7 @@ module HQ
       end
     end
 
-    def start_target!(target, agents, run_metadata:, delegation_stamp: :current)
+    def start_target!(target, agents, run_metadata:, delegation_stamp: :current, delegated_action_origin: nil)
       raise ArgumentError, "Context replacement recovery is pending" if target.context_replacement_recovery
       return if target.running?
 
@@ -471,7 +465,8 @@ module HQ
       options = {}
       stamp = delegation_stamp == :current ? @delegation_coordinator.ownership_stamp(target.key) : delegation_stamp
       options[:delegation_stamp] = stamp if stamp
-      options[:run_metadata] = run_metadata if run_metadata
+      metadata = (run_metadata || {}).merge("delegated_action_origin" => delegated_action_origin).compact
+      options[:run_metadata] = metadata unless metadata.empty?
       if target.method(:start!).parameters.any? { |_kind, name| name == :before_spawn }
         options[:before_spawn] = ->(_run) { save_unlocked(agents) }
       end
@@ -488,7 +483,9 @@ module HQ
           )
         end
       end
-      target.start!(**options)
+      accepted = target.start!(**options)
+      record_started_delegated_agent!(target:, agents:) if accepted
+      accepted
     end
 
     def stage_queue_delivery!(target, agents)
@@ -587,7 +584,10 @@ module HQ
 
     def recover_prepared_native_launch!(target, agents)
       target.recover_prepared_native_launch!(
-        native_started: ->(_run) { save_unlocked(agents) },
+        native_started: lambda do |_run|
+          record_started_delegated_agent!(target:, agents:)
+          save_unlocked(agents)
+        end,
         native_failed: lambda do |_run|
           target.fail_prompt_queue_dispatch!(
             dispatch_failure_message("Native agent harness did not start")
@@ -605,6 +605,7 @@ module HQ
       target.recover_staged_native_launch!(
         native_started: lambda do |_run, _delivery|
           # Persist acknowledgement before polling can finalize the run or complete its queue claim.
+          record_started_delegated_agent!(target:, agents:)
           save_unlocked(agents)
         end,
         native_failed: lambda do |_run, delivery|
@@ -785,9 +786,10 @@ module HQ
         raise ArgumentError, "Agent is no longer running" if require_running && !target.running?
 
         FileTransaction.run([AGENTS_FILE, DELEGATIONS_FILE, target.memory_path]) do
+          parent = active_prompt_parent_unlocked!(target, agents, actor:)
           entry = enqueue_prompt_from_unlocked!(
             target, prompt:, attachments:, actor:, accepted_at:, id:, client_request_id:,
-            message_metadata:, source:, not_before:
+            message_metadata:, source:, not_before:, delegated_action_origin: delegated_action_origin(parent)
           )
           save_unlocked(agents)
           [target, entry]
@@ -1214,13 +1216,16 @@ module HQ
       metadata["prompt_arrival_event_id"] = event_id unless event_id.to_s.empty?
       metadata["client_request_id"] = client_request_id unless client_request_id.to_s.empty?
 
+      parent = active_prompt_parent_unlocked!(target, agents, actor:)
+      origin = delegated_action_origin(parent)
       if delayed
         seconds = prompt_delay_seconds!(delay)
         accepted_at = Time.now
         entry = enqueue_prompt_from_unlocked!(
           target, prompt:, attachments:, actor:, accepted_at:, not_before: accepted_at + seconds,
           id: client_request_id, client_request_id:, message_metadata: metadata,
-          source: source || (actor&.internal? ? "internal_continuation" : actor&.parent? ? "parent" : "user")
+          source: source || (actor&.internal? ? "internal_continuation" : actor&.parent? ? "parent" : "user"),
+          delegated_action_origin: origin
         )
         return { status: :queued, agent: target, entry:, replayed: false }
       end
@@ -1228,7 +1233,8 @@ module HQ
       if target.running?
         entry = enqueue_prompt_from_unlocked!(
           target, prompt:, attachments:, actor:, id: client_request_id, client_request_id:,
-          message_metadata: metadata, source: source || (actor&.parent? ? "parent" : "user")
+          message_metadata: metadata, source: source || (actor&.parent? ? "parent" : "user"),
+          delegated_action_origin: origin
         )
         return { status: :queued, agent: target, entry:, replayed: false }
       end
@@ -1236,7 +1242,7 @@ module HQ
       accept_ordinary_prompt_unlocked!(
         target, text: prompt, attachments:, actor:, retire_inquiry_id:, metadata:, event_id:
       )
-      start_target!(target, agents, run_metadata: nil) if start && !target.running?
+      start_target!(target, agents, run_metadata: nil, delegated_action_origin: origin) if start && !target.running?
       { status: :accepted, agent: target, entry: nil, replayed: false }
     end
 
@@ -1246,10 +1252,13 @@ module HQ
     end
 
     def enqueue_prompt_from_unlocked!(target, prompt:, attachments:, actor:, accepted_at: nil, id: nil,
-                                      client_request_id: nil, message_metadata: nil, source: nil, not_before: nil)
+                                      client_request_id: nil, message_metadata: nil, source: nil, not_before: nil,
+                                      delegated_action_origin: nil)
       accept_prompt_from_unlocked!(target, actor:)
       metadata = target.message_author_metadata(actor) || {}
       metadata.merge!(message_metadata) if message_metadata.is_a?(Hash)
+      metadata.delete("delegated_action_origin")
+      metadata["delegated_action_origin"] = delegated_action_origin if delegated_action_origin
       attributes = {
         prompt:,
         attachments:,
@@ -1291,8 +1300,24 @@ module HQ
       target
     end
 
-    def record_started_delegated_agent!(parent:, target:)
-      return unless target.last_run&.metadata.to_h["native_start_acknowledged"]
+    def delegated_action_origin(parent)
+      run = parent&.last_run
+      return unless run&.status == "running" && !run.run_id.to_s.empty? && parent.running?
+
+      { "parent_agent_key" => parent.key, "parent_run_id" => run.run_id }
+    end
+
+    def record_started_delegated_agent!(target:, agents:)
+      run = target.last_run
+      return unless run&.metadata.to_h["native_start_acknowledged"]
+
+      origin = run.metadata["delegated_action_origin"]
+      return unless origin.is_a?(Hash)
+
+      parent = agents.find { |agent| agent.key == origin["parent_agent_key"] }
+      # Queued work belongs to the run that accepted it, never a later run.
+      return unless parent && delegated_action_origin(parent) == origin
+      return unless target.delegation_parent&.fetch("agent_key", nil) == parent.key
 
       AgentMemory.new(parent).append_delegation_event!(
         "Started agent #{target.display_name}",
@@ -1515,8 +1540,11 @@ module HQ
         "prompt_queue_entry_ids" => Array(claim["entries"]).map { |entry| entry["id"].to_s }
       }
       accepted = begin
-        stamp = Array(claim["entries"]).last&.fetch("authority", nil)
-        start_target!(agent, agents, run_metadata:, delegation_stamp: stamp)
+        # The newest entry supplies both batch ownership and the action origin.
+        newest = Array(claim["entries"]).last
+        stamp = newest&.fetch("authority", nil)
+        origin = newest&.dig("message_metadata", "delegated_action_origin")
+        start_target!(agent, agents, run_metadata:, delegation_stamp: stamp, delegated_action_origin: origin)
       rescue StandardError => e
         agent.fail_prompt_queue_dispatch!(dispatch_failure_message(e.message))
         save_unlocked(agents)

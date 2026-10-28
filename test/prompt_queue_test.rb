@@ -12,6 +12,7 @@ module PromptQueueTest
 
   def run!
     assert_queue_persists_and_reconciles_across_clients
+    assert_queued_launches_save_only_the_originating_parent_run
     assert_delayed_remote_acceptance_is_durable
     assert_due_entries_bypass_future_entries_in_fifo_order
     assert_self_delayed_continuation_preserves_delegation_ownership
@@ -66,6 +67,111 @@ module PromptQueueTest
     assert_active_and_restorable_inquiries_block_dispatch
     assert_manual_prompt_retires_inquiry_without_dropping_queue
     puts "prompt_queue_test: ok"
+  end
+
+  def assert_queued_launches_save_only_the_originating_parent_run
+    %w[same-run later-run later-run-explicit].each do |mode|
+      with_queue_store do |registry, workspace|
+        parent_workspace = File.join(workspace, "parent")
+        FileUtils.mkdir_p(parent_workspace)
+        harness = File.join(workspace, "gated-codex")
+        File.write(harness, <<~'RUBY')
+          #!/usr/bin/env ruby
+          require "json"
+          gate = File.join(Dir.pwd, "#{ENV.fetch("TYCHO_RUN_ID")}.release")
+          deadline = Time.now + 60
+          sleep 0.01 until File.exist?(gate) || Time.now >= deadline
+          payload = { "status" => "success", "summary" => "Processed the queued work", "inquiry" => nil,
+                      "attachments" => nil, "summary_sections" => nil, "memory_handoff" => nil }
+          output_index = ARGV.index("-o")
+          File.write(ARGV[output_index + 1], JSON.generate(payload)) if output_index
+          puts JSON.generate("type" => "item.completed", "item" => { "type" => "agent_message", "text" => JSON.generate(payload) })
+          puts JSON.generate("type" => "turn.completed")
+        RUBY
+        File.chmod(0o755, harness)
+        previous_codex_bin = ENV["TYCHO_CODEX_BIN"]
+        ENV["TYCHO_CODEX_BIN"] = harness
+        store = HQ::AgentStore.new(registry.projects)
+        parent = HQ::ManagedAgent.new(
+          key: "summary-parent", name: "Summary parent", project_key: "web", template_key: "custom",
+          workspace: parent_workspace, prompt: "Coordinate", log_path: File.join(parent_workspace, "parent.raw.log")
+        )
+        child = HQ::ManagedAgent.new(
+          key: "summary-child", name: "Summary child", project_key: "web", template_key: "custom",
+          workspace:, prompt: "Initial work", log_path: File.join(workspace, "child.raw.log")
+        )
+        store.associate_delegation!(agents: [parent, child], child:, parent_key: parent.key)
+        store.save([parent, child])
+        pids = []
+        parent = store.start_agent!(parent.key)
+        pids << parent.pid
+        child = store.start_agent!(child.key)
+        pids << child.pid
+        original_parent_run_id = parent.last_run.run_id
+        initial_child_run_id = child.last_run.run_id
+        actor = HQ::DelegationActor.parent_actor(parent.key)
+        request = { prompt: "Queued private instruction", actor:, event_id: "queued-summary-send", start: true }
+        queued = store.accept_or_abort_prompt!(child.key, **request)
+        assert(queued[:status] == :queued, "#{mode}: expected a queued send behind a busy native child")
+        expected_origin = { "parent_agent_key" => parent.key, "parent_run_id" => original_parent_run_id }
+        assert(queued[:entry].dig("message_metadata", "delegated_action_origin") == expected_origin,
+               "#{mode}: expected durable parent run attribution at acceptance")
+
+        if mode != "same-run"
+          store.stop_context_replacement!(parent.key)
+          parent = store.start_agent!(parent.key)
+          pids << parent.pid
+          assert(parent.last_run.run_id != original_parent_run_id, "expected a distinct later parent run")
+        end
+        # A fresh store must recover acceptance metadata before it dispatches.
+        store = HQ::AgentStore.new(registry.projects)
+        File.write(File.join(workspace, "#{initial_child_run_id}.release"), "finish")
+        deadline = Time.now + 10
+        loop do
+          agents, = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: mode != "later-run-explicit")
+          child = agents.find { |agent| agent.key == child.key }
+          break if mode == "later-run-explicit" ? !child.running? : child.run_count == 2
+          raise "#{mode}: queued native child did not advance" if Time.now >= deadline
+
+          sleep 0.01
+        end
+        if mode == "later-run-explicit"
+          child = store.start_agent!(child.key, prefer_queued: true, actor:)
+        end
+        pids << child.pid
+        assert(child.run_count == 2 && child.last_run.metadata["native_start_acknowledged"],
+               "#{mode}: expected a confirmed second native child launch")
+        assert(child.last_run.metadata["delegated_action_origin"] == expected_origin,
+               "#{mode}: expected the confirmed child run to keep its original acceptance stamp")
+        confirmed_id = "agent-start:#{child.key}:#{child.last_run.run_id}"
+        assert(store.accept_or_abort_prompt!(child.key, **request)[:replayed], "#{mode}: expected send replay")
+        2.times { store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false) }
+        store.start_agent!(child.key, actor:)
+        store.stop_context_replacement!(parent.key)
+        restored = HQ::ManagedAgent.from_hash(HQ::FileStore.read_json(HQ::AGENTS_FILE, fallback: []).find { |item| item["key"] == parent.key })
+        summaries = HQ::AgentMemory.new(restored).events.select { |event| event["type"] == "run_summary" }
+        original = summaries.find { |event| event.dig("metadata", "run_id") == original_parent_run_id }
+        actions = original.dig("metadata", "delegated_actions")
+        assert(actions.count { |action| action["action"] == "agent_message_sent" && action["delivery_status"] == "queued" } == 1,
+               "#{mode}: expected one persisted queued-send action")
+        starts = actions.select { |action| action["action"] == "agent_started" }
+        if mode == "same-run"
+          assert(starts.map { |action| action["event_id"] } == [confirmed_id],
+                 "expected one confirmed queued start in the saved and reloaded parent Summary")
+          assert(actions.map { |action| action["action"] } == %w[agent_message_sent agent_started],
+                 "expected the actual producers to record one send and one start, without replay duplicates")
+        else
+          assert(starts.empty?, "#{mode}: expected the completed original Summary to remain unchanged")
+          later = summaries.find { |event| event.dig("metadata", "run_id") == restored.last_run.run_id }
+          assert(later.dig("metadata", "delegated_actions").empty?, "#{mode}: stale queued work leaked into the later parent Summary")
+        end
+        assert(!JSON.generate(actions).include?("Queued private instruction"), "expected Summary actions to exclude prompt text")
+      ensure
+        pids&.each { |pid| stop_process(pid) }
+        pids = nil
+        previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
+      end
+    end
   end
 
   def assert_queue_persists_and_reconciles_across_clients

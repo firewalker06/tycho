@@ -177,8 +177,8 @@ module CLICommandTest
              "expected create, send, and start events to use the active parent run")
       assert(actions.count { |event| event.dig("metadata", "event") == "agent_created" } == 2,
              "expected one event for each creation, without reattachment duplicates")
-      assert(actions.count { |event| event.dig("metadata", "event") == "agent_started" } == 2,
-             "expected actual starts from send and explicit run, without queued-send duplicates")
+      assert(actions.count { |event| event.dig("metadata", "event") == "agent_started" } == 3,
+             "expected actual starts from send, queue dispatch, and explicit run without duplicates")
       run_tycho(env, "agent", "stop", parent.fetch("key"), "--json")
     end
   end
