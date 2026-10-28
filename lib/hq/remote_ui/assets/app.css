@@ -9634,15 +9634,19 @@ body:has(.inquiry-form-full-screen) {
   }
 
   .agent-form .form-actions-submit-group {
-    width: 100%;
+    flex: 0 0 auto;
+    width: max-content;
+    justify-self: end;
   }
 
   .agent-form .form-actions-submit-group > button {
-    flex: 1 1 0;
+    flex: 0 0 auto;
     justify-content: center;
   }
 
   .agent-form > .form-actions {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
     position: sticky;
     z-index: 3;
     bottom: env(safe-area-inset-bottom, 0px);
