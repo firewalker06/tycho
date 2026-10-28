@@ -23,6 +23,7 @@ module ParserTest
     assert_agent_tool
     assert_skill_tool
     assert_structured_output_tool
+    assert_agy_assistant_structured_text
     assert_opencode_basic_stream
     assert_opencode_tool_use_stream
     assert_opencode_structured_stream
@@ -95,6 +96,47 @@ module ParserTest
                        "Report written to /tmp/hq-public-review.md and opened for user."
     assert_call(call, "StructuredOutput", expected_summary)
     assert_result(result, "StructuredOutput", "Structured output provided successfully")
+  end
+
+  def assert_agy_assistant_structured_text
+    payload = { "status" => "success", "summary" => "Read **README.md** successfully.",
+                "attachments" => [{ "type" => "file", "path" => "/tmp/example.md" }] }
+    cases = [
+      [JSON.generate(payload), [payload.fetch("summary")]],
+      ["```json\n#{JSON.generate(payload)}\n```", [payload.fetch("summary")]],
+      [JSON.generate("status" => "input_required", "summary" => "", "inquiry" => { "message" => "Which branch?" }), ["Which branch?"]],
+      [JSON.generate("status" => "success", "summary" => ""), []],
+      ['{"answer":42}', ['{"answer":42}']],
+      ["Ordinary assistant prose.", ["Ordinary assistant prose."]]
+    ]
+    cases.each do |text, expected|
+      lines = [
+        JSON.generate("event" => "step_update", "step_update" => { "step_index" => 1, "step_type" => "finish", "state" => "DONE" }),
+        JSON.generate("event" => "result", "result" => {
+          "status" => "SUCCESS", "response" => text
+        })
+      ]
+      conversation, = HQ::Parser.parse_stream(lines, agent_type: "agy")
+      assert(conversation.map(&:content) == expected,
+             "expected readable assistant text #{expected.inspect}, got #{conversation.map(&:content).inspect}")
+    end
+    # A SUCCESS result without a finish step is partial or echoed; its
+    # response must not be shown as the final assistant answer.
+    partial_lines = [JSON.generate("event" => "result", "result" => {
+      "status" => "SUCCESS", "response" => "Ordinary assistant prose."
+    })]
+    partial_conversation, partial_system = HQ::Parser.parse_stream(partial_lines, agent_type: "agy")
+    assert(partial_conversation.empty?, "no-finish SUCCESS response must not become assistant text")
+    assert(partial_system.any? { |entry| entry.metadata["status"] == "incomplete" },
+           "no-finish SUCCESS run must be marked incomplete")
+    lines = [
+      JSON.generate("event" => "step_update", "step_update" => { "step_index" => 1, "step_type" => "finish", "state" => "DONE" }),
+      JSON.generate("event" => "result", "result" => {
+        "status" => "SUCCESS", "response" => JSON.generate(payload), "structured_output" => payload, "conversation_id" => "fixture-agy"
+      })
+    ]
+    structured = HQ::AgentStructuredResult.from_log_lines(lines)
+    assert(structured == payload, "display normalization must preserve the complete structured result")
   end
 
   def assert_opencode_basic_stream

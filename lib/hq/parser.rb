@@ -38,6 +38,8 @@ module HQ
         OpenCode.new
       when "pi"
         Pi.new
+      when "agy"
+        Agy.new
       else
         raise ArgumentError, "Unsupported agent parser #{agent_type.inspect}"
       end
@@ -563,3 +565,4 @@ require_relative "parser/claude"
 require_relative "parser/codex"
 require_relative "parser/opencode"
 require_relative "parser/pi"
+require_relative "parser/agy"

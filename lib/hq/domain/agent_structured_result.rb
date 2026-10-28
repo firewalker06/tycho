@@ -6,8 +6,11 @@ module HQ
   class AgentStructuredResult
     class << self
       def candidate_from_log_lines(lines)
-        Array(lines).reverse_each do |line|
+        all_lines = Array(lines)
+        finish_seen = agy_finish_before_last_result?(all_lines)
+        all_lines.reverse_each do |line|
           parsed = JSON.parse(line.to_s.strip)
+          parsed = parsed.merge("agy_finish_seen" => finish_seen) if agy_result_event?(parsed)
           candidate = structured_candidate_from_event(parsed)
           return candidate unless candidate.nil?
         rescue JSON::ParserError
@@ -26,11 +29,14 @@ module HQ
       end
 
       def from_log_lines(lines)
-        Array(lines).reverse_each do |line|
+        all_lines = Array(lines)
+        finish_seen = agy_finish_before_last_result?(all_lines)
+        all_lines.reverse_each do |line|
           stripped = line.to_s.strip
           next unless stripped.start_with?("{") && stripped.end_with?("}")
 
           parsed = JSON.parse(stripped)
+          parsed = parsed.merge("agy_finish_seen" => finish_seen) if agy_result_event?(parsed)
           normalized = normalize_payload(parsed)
           return normalized if normalized
         rescue JSON::ParserError
@@ -42,8 +48,58 @@ module HQ
         nil
       end
 
+      # agy names its native session identity conversation_id, at the envelope
+      # top level or inside the terminal result event.
+      def agy_conversation_id(parsed)
+        return nil unless parsed.is_a?(Hash)
+
+        id = parsed["conversation_id"] || parsed.dig("result", "conversation_id")
+        id.is_a?(String) && !id.empty? ? id : nil
+      end
+
+      private
+
+      def agy_result_event?(parsed)
+        parsed.is_a?(Hash) && parsed["event"] == "result" && parsed["result"].is_a?(Hash) &&
+          parsed.dig("result", "conversation_id").is_a?(String)
+      end
+
+      # agy's terminal envelope can echo the previous invocation's
+      # structured_output when its CLI times out mid-turn. A fresh result is
+      # present only when a DONE finish step appears before the last result
+      # event.
+      def agy_finish_before_last_result?(lines)
+        seen_last_result = false
+        Array(lines).reverse_each do |line|
+          parsed = begin
+            JSON.parse(line.to_s.strip)
+          rescue JSON::ParserError
+            next
+          end
+          step = parsed.is_a?(Hash) ? parsed["step_update"] : nil
+          is_finish = step.is_a?(Hash) && step["step_type"] == "finish" && step["state"] == "DONE"
+          return true if seen_last_result && is_finish
+
+          seen_last_result = true if !seen_last_result && agy_result_event?(parsed)
+        end
+        false
+      end
+
       def normalize_payload(parsed)
         return nil unless parsed.is_a?(Hash)
+
+        if parsed["event"] == "result" && parsed["result"].is_a?(Hash)
+          result = parsed["result"]
+          unless result["status"] == "SUCCESS"
+            return { "status" => "failed", "summary" => result["response"].to_s }
+          end
+          # Trust structured_output only when fresh (see
+          # agy_finish_before_last_result?) — a timed-out envelope can echo the
+          # previous run's output.
+          return nil unless parsed["agy_finish_seen"] == true
+
+          return canonical_payload(result["structured_output"]) || normalize_payload(parse_json_string(result["response"]))
+        end
 
         canonical = canonical_payload(parsed)
         return canonical if canonical
@@ -63,10 +119,17 @@ module HQ
         result_event_payload(parsed)
       end
 
-      private
+      public :normalize_payload
 
       def structured_candidate_from_event(parsed)
         return nil unless parsed.is_a?(Hash)
+        if parsed["event"] == "result" && parsed["result"].is_a?(Hash)
+          result = parsed["result"]
+          # Trust the payload only when the projector marked the run fresh.
+          return nil unless parsed["agy_finish_seen"] == true
+
+          return result["structured_output"] || result["response"]
+        end
         return parsed["structured_output"] if parsed.key?("structured_output")
 
         if parsed["type"] == "assistant"
