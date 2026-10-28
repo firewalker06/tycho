@@ -7369,8 +7369,7 @@ module RemoteServerTest
     assert(css[:body].include?(".summary-message-content p {\n    display: -webkit-box;") &&
            css[:body].include?("-webkit-line-clamp: 5;") &&
            css[:body].include?(".summary-message-actions {\n    flex-direction: column;") &&
-           css[:body].include?(".summary-message-open {\n    width: var(--touch-target);") &&
-           css[:body].include?(".summary-message-open span {\n    position: absolute;"),
+           css[:body].include?(".summary-message-open {\n    width: var(--touch-target);"),
            "expected mobile Summary cards to clamp previews and stack icon-only touch actions")
     assert(css[:body].include?(".summary-attachment-menu-popover"),
            "expected Conversation summary attachments to open as a menu")
@@ -9256,7 +9255,7 @@ module RemoteServerTest
     assert(js[:body].include?("data-open-agent-summary-id"),
            "expected run summary rows to open their own full summary")
     assert(js[:body].include?('aria-label="Open full summary" title="Open full summary"') &&
-           js[:body].include?("<span>Open</span>"),
+           js[:body].include?("summary-message-open ui-button primary"),
            "expected run summary rows to keep an accessible Open label and tooltip")
     assert(js[:body].include?("queueRunSummaryConversationScroll"),
            "expected per-summary pages to scroll the conversation to the opened summary")
@@ -9271,7 +9270,7 @@ module RemoteServerTest
     assert(js[:body].include?("Choose summary attachment"),
            "expected Conversation summary attachment menus to be accessible")
     assert(js[:body].include?("data-preserve-scroll data-state-key=\"summary-attachment-menu-list:") &&
-           js[:body].include?("role=\"region\" tabindex=\"0\" aria-label=\"Summary attachments\""),
+           js[:body].include?('role="region" tabindex="0" aria-label="${escapeAttr(regionLabel)}"'),
            "expected Summary attachment menus to retain scroll position and accept keyboard focus")
     assert(js[:body].include?("summaryAttachmentScroll: {}") &&
            js[:body].scan("[data-summary-attachment-menu-popover][data-state-key]").length >= 2,

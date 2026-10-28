@@ -5429,6 +5429,7 @@ details.queue-read-block:not([open]) > .queue-read-body {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
+  flex-direction: column;
   flex-wrap: nowrap;
   gap: 10px;
   margin-left: auto;
@@ -5510,7 +5511,15 @@ details.queue-read-block:not([open]) > .queue-read-body {
 }
 
 .summary-message-open {
-  white-space: nowrap;
+  width: var(--touch-target);
+  min-width: var(--touch-target);
+  height: var(--touch-target);
+  padding: 0;
+}
+
+.summary-attachment-menu-popover .summary-delegated-actions {
+  margin: 0;
+  padding: 6px;
 }
 
 @media (max-width: 640px) {
@@ -5545,16 +5554,6 @@ details.queue-read-block:not([open]) > .queue-read-body {
   .summary-message-open .ui-icon {
     width: 20px;
     height: 20px;
-  }
-
-  .summary-message-open span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    clip-path: inset(50%);
-    white-space: nowrap;
   }
 }
 

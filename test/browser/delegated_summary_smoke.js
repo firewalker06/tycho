@@ -14,10 +14,25 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     const page = await context.newPage();
     page.on("pageerror", error => errors.push(error.message));
     await page.goto(`${baseUrl}/ui#agent/${agentKey}`, { waitUntil: "networkidle" });
-    const card = page.locator(".message.run_summary").filter({ hasText: "Created" });
+    const card = page.locator(".message.run_summary").filter({ hasText: "Review work is complete." }).first();
     await card.waitFor({ state: "visible" });
-    assert.equal(await card.locator(".summary-delegated-actions li").count(), 4);
-    const actions = card.locator(".summary-delegated-actions");
+    const trigger = card.getByRole("button", { name: "Show delegated actions (4)", exact: true });
+    const open = card.getByRole("button", { name: "Open full summary", exact: true });
+    assert.equal(await open.innerText(), "", "Summary button must be icon only");
+    assert.equal(await open.getAttribute("title"), "Open full summary");
+    assert(await open.evaluate(element => element.classList.contains("primary") && getComputedStyle(element).backgroundColor === getComputedStyle(document.querySelector("button.primary")).backgroundColor));
+    assert.equal(await trigger.locator(".attachment-count").innerText(), "4");
+    assert.equal(await trigger.getAttribute("aria-expanded"), "false");
+    const attachment = card.getByRole("button", { name: "Choose summary attachment" });
+    assert.equal(await attachment.locator(".attachment-count").innerText(), "3");
+    const controls = await Promise.all([open, attachment, trigger].map(control => control.boundingBox()));
+    assert(controls[0].y + controls[0].height <= controls[1].y && controls[1].y + controls[1].height <= controls[2].y, "Summary controls must stack vertically");
+    assert(controls.every(box => Math.abs(box.x - controls[0].x) < 2), "Summary controls must align");
+    await trigger.focus();
+    await page.keyboard.press("Enter");
+    const popover = page.getByRole("region", { name: "Summary delegated actions", exact: true });
+    await popover.waitFor({ state: "visible" });
+    const actions = popover.locator(".summary-delegated-actions");
     const check = async (actions) => {
       assert.equal(await actions.locator("li").count(), 4);
       const text = await actions.innerText();
@@ -29,7 +44,25 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       assert(!overflow, `Overflow at ${viewport.width}`);
     };
     await check(actions);
-    await card.evaluate(element => element.scrollIntoView({ block: "center" }));
+    assert(await popover.evaluate(element => element === document.activeElement), "Keyboard disclosure must focus content");
+    await page.keyboard.press("Tab");
+    assert(await popover.locator("a").first().evaluate(element => element === document.activeElement), "Action links must be keyboard reachable");
+    await page.keyboard.press("Escape");
+    assert(await trigger.evaluate(element => element === document.activeElement), "Escape must return focus");
+    assert.equal(await trigger.getAttribute("aria-expanded"), "false");
+    await trigger.click();
+    await page.evaluate(async () => { await refresh({ force: true }); });
+    await popover.waitFor({ state: "visible" });
+    await check(actions);
+    assert.equal(await trigger.getAttribute("aria-expanded"), "true");
+    await attachment.click();
+    await page.getByRole("region", { name: "Summary attachments", exact: true }).waitFor({ state: "visible" });
+    assert.equal(await trigger.getAttribute("aria-expanded"), "false", "Disclosures must be exclusive");
+    await attachment.click();
+    await card.evaluate(element => element.scrollIntoView({ block: "start" }));
+    if (captureDir) await page.screenshot({ path: path.join(captureDir, `delegated-summary-controls-${viewport.width}.png`) });
+    await trigger.click();
+    await check(actions);
     if (captureDir) await page.screenshot({ path: path.join(captureDir, `delegated-summary-conversation-${viewport.width}.png`) });
     await card.getByRole("button", { name: "Open full summary" }).click();
     const detail = page.locator("[data-agent-summary-page]");
@@ -51,7 +84,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       }, other.metadata.summary_id);
       assert.equal(await page.locator("[data-agent-summary-page] .summary-delegated-actions").count(), 0, `${runId} inherited actions`);
     }
-    results.push({ width: viewport.width, actions: 4, coldReload: true, polling: true, runIsolation: true, legacy: true, missingTarget: true });
+    results.push({ width: viewport.width, actions: 4, coldReload: true, polling: true, runIsolation: true, legacy: true, missingTarget: true, verticalControls: true, keyboard: true, exclusiveDisclosures: true, counts: true });
     await context.close();
   }
   const after = (await (await fetch(`${baseUrl}/agents/${agentKey}/conversation`)).json()).conversation;

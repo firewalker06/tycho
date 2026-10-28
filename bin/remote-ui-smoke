@@ -569,7 +569,7 @@ def write_delegated_summary_fixture(fixture)
       key: #{agent_key.inspect}, name: "Release coordinator", project_key: "web", template_key: "custom",
       workspace: #{fixture.fetch(:workspace).inspect}, prompt: "Synthetic only",
       log_path: File.join(root, "agents", "summary.raw.log"), summary: "Review work is complete.",
-      structured_result: { "status" => "partial", "summary" => "Review work is complete.", "summary_sections" => [{ "type" => "text", "text" => "The API review is complete. The release needs operator review." }] }
+      structured_result: { "status" => "partial", "summary" => "Review work is complete.", "attachments" => 3.times.map { |index| { "type" => "link", "title" => "Review receipt \#{index + 1}", "url" => "https://example.test/receipt/\#{index + 1}" } }, "summary_sections" => [{ "type" => "text", "text" => "The API review is complete. The release needs operator review." }] }
     )
     child = HQ::ManagedAgent.new(
       key: "web-agent-api-review", name: "API contract review", project_key: "web", template_key: "custom",
