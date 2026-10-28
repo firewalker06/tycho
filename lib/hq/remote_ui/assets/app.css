@@ -8664,6 +8664,33 @@ body:has(.inquiry-form-full-screen) {
   box-shadow: none;
 }
 
+.agent-options {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.agent-options > summary {
+  min-height: var(--ds-touch-target);
+  padding: var(--ds-space-3);
+  cursor: pointer;
+  color: var(--ds-text-primary);
+  font-weight: 600;
+}
+
+.agent-options-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ds-space-3);
+  border-top: var(--ds-border-width) solid var(--ds-border-subtle);
+  padding: var(--ds-space-3);
+}
+
+.agent-form .form-actions-submit-group {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .search-box.ui-search-field {
   min-height: var(--ds-control-height-md);
   padding: 0 var(--ds-space-3);
@@ -9625,7 +9652,24 @@ body:has(.inquiry-form-full-screen) {
     gap: 10px;
   }
 
+  .agent-options-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-form .form-actions-submit-group {
+    flex: 0 0 auto;
+    width: max-content;
+    justify-self: end;
+  }
+
+  .agent-form .form-actions-submit-group > button {
+    flex: 0 0 auto;
+    justify-content: center;
+  }
+
   .agent-form > .form-actions {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
     position: sticky;
     z-index: 3;
     bottom: env(safe-area-inset-bottom, 0px);
