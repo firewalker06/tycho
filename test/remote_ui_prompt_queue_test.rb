@@ -81,12 +81,12 @@ module RemoteUIPromptQueueTest
 
       const now = Date.parse("2026-10-28T03:00:00Z");
       const relativeCases = [
-        [1, "Eligible in 1 second"], [30000, "Eligible in 30 seconds"],
-        [59000, "Eligible in 59 seconds"], [60000, "Eligible in 1 minute"],
-        [60001, "Eligible in 1 minute"], [90000, "Eligible in 2 minutes"],
-        [300000, "Eligible in 5 minutes"], [300001, "Eligible in 5 minutes"],
-        [3600000, "Eligible in 1 hour"], [86400000, "Eligible in 1 day"],
-        [0, "Eligible now"], [-30000, "Eligible now"],
+        [1, "in 1 second"], [30000, "in 30 seconds"],
+        [59000, "in 59 seconds"], [60000, "in 1 minute"],
+        [60001, "in 1 minute"], [90000, "in 2 minutes"],
+        [300000, "in 5 minutes"], [300001, "in 5 minutes"],
+        [3600000, "in 1 hour"], [86400000, "in 1 day"],
+        [0, "now"], [-30000, "now"],
       ];
       relativeCases.forEach(([delta, expected]) => {
         const actual = context.queueEligibilityText(new Date(now + delta).toISOString(), now);
@@ -99,11 +99,11 @@ module RemoteUIPromptQueueTest
       const element = { dataset: { queueEligibleAt: new Date(now + 30000).toISOString() }, textContent: "stale" };
       context.document = { querySelectorAll: () => [element] };
       context.updateQueueEligibilityLabels(now);
-      if (element.textContent !== "Eligible in 30 seconds") throw new Error("queue clock did not refresh without a new activity revision");
+      if (element.textContent !== "in 30 seconds") throw new Error("queue clock did not refresh without a new activity revision");
       context.updateQueueEligibilityLabels(now + 30000);
-      if (element.textContent !== "Eligible now") throw new Error("queue clock did not cross the due boundary");
+      if (element.textContent !== "now") throw new Error("queue clock did not cross the due boundary");
       context.updateQueueEligibilityLabels(now + 60000);
-      if (element.textContent !== "Eligible now") throw new Error("past queue time became negative");
+      if (element.textContent !== "now") throw new Error("past queue time became negative");
 
       context.Date = class extends Date { static now() { return now; } };
       const agent = { key: "queue-agent" };
@@ -117,7 +117,7 @@ module RemoteUIPromptQueueTest
         id: "delayed", prompt: "Continue later", source: "internal_continuation", state: "queued",
         not_before: "2026-09-20T01:02:03.000000Z"
       }, 0);
-      if (!delayed.includes('data-queue-eligible-at="2026-09-20T01:02:03.000000Z"') || !delayed.includes("Eligible now") ||
+      if (!delayed.includes('data-queue-eligible-at="2026-09-20T01:02:03.000000Z"') || !delayed.includes("now") ||
           delayed.includes('data-edit-queued-prompt="delayed" data-agent-key="queue-agent" disabled') ||
           delayed.includes('data-delete-queued-prompt="delayed" data-agent-key="queue-agent" disabled')) {
         throw new Error("delayed entries must show relative eligibility and retain edit/delete controls");
