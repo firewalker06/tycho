@@ -13,6 +13,7 @@ module SkillInstallerTest
     assert_bundled_source_manifest_is_valid
     assert_bundled_skill_documents_project_creation_and_delegation_capabilities
     assert_supported_harness_paths_and_idempotent_install
+    assert_agy_installs_to_gemini_config_skills
     assert_custom_profiles_use_declared_skill_roots
     assert_outdated_skill_updates_without_removing_extra_files
     assert_unowned_and_locally_modified_skills_are_preserved
@@ -23,10 +24,25 @@ module SkillInstallerTest
 
   def assert_bundled_source_manifest_is_valid
     Dir.mktmpdir("tycho-bundled-skill-test") do |home|
-      statuses = HQ::SkillInstaller.new(home: home).statuses
+      statuses = HQ::SkillInstaller.new(home: home).statuses(harnesses: HQ::SkillInstaller::SUPPORTED_HARNESSES.keys)
       assert(statuses.all? { |item| item[:status] == "missing" }, "expected valid bundled skill source")
       assert(statuses.all? { |item| item[:source].include?("lib/hq/skill_assets") },
              "expected packaged non-dotfile skill source")
+    end
+  end
+
+  def assert_agy_skill_installation_is_explicitly_unsupported
+    Dir.mktmpdir("tycho-agy-skills") do |home|
+      installer = HQ::SkillInstaller.new(home: home)
+      item = installer.status("agy")
+      assert(item[:status] == "unsupported" && item[:adapter] == "agy", "expected unsupported capability, not runtime error")
+      assert(item[:detail].include?("not supported") && !item[:actions][:install] && item[:actions][:blocked], "expected clear explanation without install action")
+      begin
+        installer.apply(harness: "agy", action: "install")
+        raise "unverified agy skill installation was allowed"
+      rescue HQ::SkillInstaller::InstallError
+        assert(Dir.children(home).empty?, "unsupported installation must not write files")
+      end
     end
   end
 
@@ -45,16 +61,31 @@ module SkillInstallerTest
     assert(missing.empty?, "expected bundled project-creation and delegation guidance: #{missing.join(", ")}")
   end
 
+  def assert_agy_installs_to_gemini_config_skills
+    Dir.mktmpdir("tycho-agy-skills") do |home|
+      installer = HQ::SkillInstaller.new(home: home)
+      item = installer.status("agy")
+      assert(item[:target_path] == File.join(home, ".gemini/config/skills"),
+             "agy skill installation must target the documented agy global skill directory")
+      assert(item[:status] == "missing" && item[:actions][:install], "expected installable agy capability")
+      result = installer.apply(harness: "agy", action: "install")
+      assert(result[:changed_skills].any?, "expected agy install to change skills")
+      assert(File.file?(File.join(home, ".gemini/config/skills", "tycho", "SKILL.md")),
+             "expected installed skill file under agy global skill root")
+    end
+  end
+
   def assert_supported_harness_paths_and_idempotent_install
     with_installer do |installer, home, _source, _manifest|
       expected = {
         "codex" => File.join(home, ".agents", "skills"),
         "claude" => File.join(home, ".claude", "skills"),
         "opencode" => File.join(home, ".config", "opencode", "skills"),
-        "pi" => File.join(home, ".pi", "agent", "skills")
+        "pi" => File.join(home, ".pi", "agent", "skills"),
+        "agy" => File.join(home, ".gemini", "config", "skills")
       }
-      statuses = installer.statuses
-      assert(statuses.map { |item| item[:harness] } == %w[codex claude opencode pi], "expected supported harness order")
+      statuses = installer.statuses(harnesses: expected.keys)
+      assert(statuses.map { |item| item[:harness] } == %w[codex claude opencode pi agy], "expected supported harness order")
       statuses.each do |item|
         assert(item[:status] == "missing", "expected #{item[:harness]} to start missing")
         assert(item[:target_path] == expected.fetch(item[:harness]), "expected official #{item[:harness]} skill path")

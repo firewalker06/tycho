@@ -15,7 +15,8 @@ module HQ
       "codex" => ".agents/skills",
       "claude" => ".claude/skills",
       "opencode" => ".config/opencode/skills",
-      "pi" => ".pi/agent/skills"
+      "pi" => ".pi/agent/skills",
+      "agy" => ".gemini/config/skills"
     }.freeze
     DEFAULT_SOURCE_ROOT = File.expand_path("../skill_assets", __dir__)
     DEFAULT_MANIFEST_PATH = File.expand_path("../skill_assets.json", __dir__)
@@ -416,7 +417,7 @@ module HQ
       adapter = HQ.harness_adapter(value)
       return [value, adapter] if HQ.supported_harness?(value) && SUPPORTED_HARNESSES.key?(adapter)
 
-      raise InstallError.new("Unsupported skill harness #{harness.inspect}; choose codex, claude, opencode, pi, or a configured custom profile",
+      raise InstallError.new("Unsupported skill harness #{harness.inspect}; choose codex, claude, opencode, pi, agy, or a configured custom profile",
                              category: "compatibility")
     end
 
