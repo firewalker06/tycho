@@ -135,6 +135,8 @@ Source-checkout users can replace `tycho` with `bin/tycho` in these examples.
   profiles, paths, and environment overrides.
 - [Custom harness profiles](docs/CUSTOM_HARNESSES.md) — compatible Codex,
   Claude, OpenCode, and Pi wrapper configuration.
+- [Experimental native agy adapter](docs/AGY.md) — isolated Antigravity CLI
+  PoC, native conversation resume, and unverified safety boundaries.
 - [Remote Sessions](docs/REMOTE_SERVER.md) — Remote UI, API, authentication,
   Tailscale, and multiserver operation.
 - [Scheduled Runs](docs/SCHEDULED_RUNS.md) — recurring agent configuration and

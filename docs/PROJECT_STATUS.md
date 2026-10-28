@@ -12,6 +12,14 @@ type: project
 
 2026-10-28
 
+## Experimental native agy support
+
+Tycho adds a native Antigravity CLI adapter with independent
+event parsing, model discovery, native conversation resume, and structured
+result validation. Claude and Pi behavior is unchanged. agy always requests
+plan mode and terminal restrictions, but filesystem isolation is unverified.
+This is not a production deployment. See [AGY.md](AGY.md).
+
 ## Latest Fix
 
 Run Summaries now keep a snapshot of delegated create, confirmed start, and
@@ -97,8 +105,8 @@ Key references:
 | Queue ingestion with direct input | Atomically claim due QueueWork when an inquiry answer or ordinary prompt is accepted, append one structured Read queue block after the direct message, and deliver both in the same native run | Pending delegated replies and user queue entries inform the answer immediately without a second run; concurrent arrivals remain queued, while canonical IDs, sources, attachments, targets, and dispositions stay available without raw-contract duplication |
 | Input handling | `BubbleteaInput` patches `Bubbletea::Program#poll_event` with a Ruby-side queue | Fixes multi-byte / bracketed paste truncation in Bubbles `TextInput`/`TextArea` |
 | Logging | Centralized `HQ.logger` (stdlib `Logger`), daily rotation, 7-day retention | Single sink for lifecycle, config, process, and silently-rescued errors |
-| Skill discovery | Resolve the configured harness key through its native adapter, then enumerate that adapter's Codex, Claude, OpenCode, or Pi skill roots | Per-agent trigger character and roots stay protocol-correct for built-ins and custom profiles |
-| Tycho skill installation | Keep a checksummed bundled source manifest behind `SkillInstaller`; install to `~/.agents/skills` (Codex), `~/.claude/skills` (Claude Code), `~/.config/opencode/skills` (OpenCode), or `~/.pi/agent/skills` (Pi), and update only files proven Tycho-owned | One deep module owns current path conventions, status comparison, staged/atomic replacement, exact change reporting, and collision/error safety for Remote API/UI callers |
+| Skill discovery | Resolve the configured harness key through its native adapter, then enumerate that adapter's Codex, Claude, OpenCode, Pi, or agy skill roots | Per-agent trigger character and roots stay protocol-correct for built-ins and custom profiles |
+| Tycho skill installation | Keep a checksummed bundled source manifest behind `SkillInstaller`; install to `~/.agents/skills` (Codex), `~/.claude/skills` (Claude Code), `~/.config/opencode/skills` (OpenCode), `~/.pi/agent/skills` (Pi), or `~/.gemini/config/skills` (agy), and update only files proven Tycho-owned | One deep module owns current path conventions, status comparison, staged/atomic replacement, exact change reporting, and collision/error safety for Remote API/UI callers |
 | Agent auto-name | The first launch requests an optional `agent_title_suggestion`. A valid terminal result can replace a title only while it exactly matches the stored default-name provenance, on any run. Once a suggestion or manual rename gives the agent a custom title, later suggestions do nothing. Legacy records without provenance and clones keep their names. Manual renames invalidate pending suggestions, including rename-and-restore. Each run processes its title at most once, including after reload and summary rebuilds. Quick Agent keeps the current project name visible as read-only text; a separate editable Project selector and optional Name stay inside initially collapsed Options. Selection changes update the summary and create target together. Alphabetical project choices use a stable key tie-break. A server-owned `quick_agent.default_project_key` preference in `hq.yml` governs global launches on that host, with explicit scoped/manual choices taking priority and a valid available-project fallback. The modal backdrop uses a darker translucent fill without blur. Codex receives a required-nullable schema copy while canonical validation still accepts omitted titles. | Reduces form input while preserving user names and making title handling durable across reloads and summary rebuilds |
 | Remote Sessions | Local JSON API and web UI via `tycho serve`; Tailscale auto-bind; terminal QR startup URL | Remote clients can inspect and control managed agents through the same `AgentStore` / `ManagedAgent` paths as the TUI |
 | Homebrew update lifecycle | A successful Homebrew update resolves the stable `.../bin/tycho` launcher, restarts any running scheduler with that launcher, and asks a running local Remote server to self-replace through its authenticated restart endpoint; absent local services are reported as no-ops | Homebrew Cellar paths are versioned and may disappear during upgrade, so replacement server and daemon processes must never inherit the old Cellar executable; server lifecycle remains local rather than broker-proxied |

@@ -13,11 +13,20 @@ module HarnessAuthCheckTest
   end
 
   def run!
+    assert_agy_auth_is_not_claude_auth
     assert_status_check_persists_no_command_output
     assert_opencode_check_requires_provider
     assert_pi_check_requires_model
     assert_unknown_command_stays_unknown
     puts "harness_auth_check_test: ok"
+  end
+
+  def assert_agy_auth_is_not_claude_auth
+    runner = FakeRunner.new(Capture.new("private account output", "", true, false))
+    snapshot = HQ::HarnessAuthCheck.new(runner:).check(adapter: "agy", command: ["agy"])
+    assert(snapshot.state == "unknown" && snapshot.detail.include?("no supported authentication status command"),
+           "expected honest agy authentication status without an undocumented probe")
+    assert(runner.command.nil?, "agy must not inherit Claude auth status or infer auth from models")
   end
 
   def assert_status_check_persists_no_command_output

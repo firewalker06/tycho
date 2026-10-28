@@ -11,6 +11,7 @@ module HQ
     end
 
     ENV_NAMES = {
+      "agy" => "AGY_BIN",
       "claude" => "CLAUDE_BIN",
       "codex" => "CODEX_BIN",
       "gh" => "GH_BIN",
@@ -60,7 +61,7 @@ module HQ
 
     def fallback_paths_for(name)
       case name.to_s
-      when "claude", "codex", "opencode", "pi"
+      when "agy", "claude", "codex", "opencode", "pi"
         [
           File.join(Dir.home, ".local", "bin", name.to_s),
           File.join(Dir.home, ".local", "share", "mise", "shims", name.to_s),

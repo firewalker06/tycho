@@ -62,7 +62,7 @@ module CLICommandTest
       payload = JSON.parse(result[:stdout])
       assert(payload["discovery"] == "offline", "expected offline default")
       assert(!File.exist?(marker), "offline list must not execute harnesses")
-      assert(payload["harnesses"].map { |row| row["name"] } == %w[codex claude opencode pi private-codex], "expected built-in and custom harnesses")
+      assert(payload["harnesses"].map { |row| row["name"] } == %w[codex claude opencode pi agy private-codex], "expected built-in and custom harnesses")
       custom = payload["harnesses"].last
       assert(custom["models"].map { |row| row["value"] } == ["Configured/Exact"], "expected exact configured model")
       assert(custom["reasoning_efforts"].include?("turbo"), "expected configured reasoning effort")
