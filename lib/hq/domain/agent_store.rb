@@ -280,13 +280,14 @@ module HQ
       )
     end
 
-    def associate_delegation!(agents:, child:, parent_key:, parent_server_id: nil, now: Time.now)
+    def associate_delegation!(agents:, child:, parent_key:, parent_server_id: nil, now: Time.now, created_agent: false)
       @delegation_coordinator.attach!(
         agents:,
         child:,
         parent_key:,
         parent_server_id:,
-        now:
+        now:,
+        created_agent:
       )
     end
 
@@ -315,7 +316,7 @@ module HQ
         parent = current.find { |agent| agent.key == key }
         paths = [AGENTS_FILE, DELEGATIONS_FILE, child.memory_path, parent&.memory_path].compact
         FileTransaction.run(paths) do
-          _relation, created = associate_delegation!(agents: current, child:, parent_key: key, parent_server_id:)
+          _relation, created = associate_delegation!(agents: current, child:, parent_key: key, parent_server_id:, created_agent: creating)
           @delegation_coordinator.accept_prompt!(child:, owner: "user") if created && actor&.user?
           save_unlocked(current)
         end
@@ -341,20 +342,24 @@ module HQ
       with_exclusive_lock { @recovery.restore!(path) }
     end
 
-    def start_agent!(key, run_metadata: nil, prefer_queued: false)
+    def start_agent!(key, run_metadata: nil, prefer_queued: false, actor: nil)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
         raise ArgumentError, "Context replacement recovery is pending" if target.context_replacement_recovery
 
+        parent = active_prompt_parent_unlocked!(target, agents, actor:)
+
         target.cancel_pending_sleep_recovery!
         unless target.running?
+          previous_run_id = target.last_run&.run_id
           if prefer_queued && target.pending_prompts?
             target.clear_prompt_queue_dispatch_error!
             dispatch_prompt_queue!(target, agents)
           else
             start_target!(target, agents, run_metadata:)
           end
+          record_started_delegated_agent!(parent:, target:) if parent && target.last_run&.run_id != previous_run_id
         end
         target
       end
@@ -423,6 +428,7 @@ module HQ
         parent = active_prompt_parent_unlocked!(target, agents, actor:)
         paths << parent.memory_path if parent
         FileTransaction.run(paths.compact) do |transaction|
+          previous_run_id = target.last_run&.run_id
           replay = prompt_replay_unlocked(target, event_id)
           result = replay || accept_active_prompt_unlocked!(
             target, agents, prompt:, actor:, event_id:, message_metadata:, attachments:,
@@ -432,6 +438,9 @@ module HQ
           record_accepted_agent_send!(
             parent:, target:, prompt:, event_id:, result:
           ) if actor&.parent? && !result.fetch(:replayed)
+          if parent && target.last_run&.run_id != previous_run_id
+            record_started_delegated_agent!(parent:, target:)
+          end
           save_unlocked(agents)
           result
         end
@@ -1282,6 +1291,19 @@ module HQ
       target
     end
 
+    def record_started_delegated_agent!(parent:, target:)
+      return unless target.last_run&.metadata.to_h["native_start_acknowledged"]
+
+      AgentMemory.new(parent).append_delegation_event!(
+        "Started agent #{target.display_name}",
+        event_id: "agent-start:#{target.key}:#{target.last_run.run_id}",
+        metadata: {
+          "event" => "agent_started",
+          "agent_reference" => @delegation_coordinator.delegation_store.relation_for_child(target.key)&.fetch("child", nil)
+        }
+      )
+    end
+
     # A parent-declared prompt is a durable operator action. Keep this event on
     # the parent transcript only after the target has accepted or queued it.
     # The target key scopes the parent event to the same child as prompt replay.
@@ -1440,7 +1462,7 @@ module HQ
       paths = [AGENTS_FILE, DELEGATIONS_FILE, child.memory_path, parent.memory_path]
       FileTransaction.run(paths) do
         relation, = @delegation_coordinator.attach!(
-          agents:, child:, parent_key:, parent_server_id: delegation[:parent_server_id]
+          agents:, child:, parent_key:, parent_server_id: delegation[:parent_server_id], created_agent: true
         )
         child.associate_parent!(relation.fetch("parent"))
         @delegation_coordinator.accept_prompt_from!(child:, actor: delegation[:actor]) if delegation[:actor]

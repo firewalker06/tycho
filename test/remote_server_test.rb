@@ -3963,6 +3963,14 @@ module RemoteServerTest
         blocks.find { |block| block.dig(:metadata, "agent_reference", "agent_key") == key }
       end
 
+      parent_agent = new_service.call.instance_variable_get(:@agent_store).load.find { |agent| agent.key == parent[:key] }
+      summary_memory = HQ::AgentMemory.new(parent_agent)
+      summary_memory.append_run_summary!(summary: "Done", status: "success", metadata: {
+        "delegated_actions" => [visible_child, secret_child].map do |child|
+          { "action" => "agent_created", "agent_reference" => { "agent_key" => child[:key], "name" => child[:name], "project_key" => child[:project_key] } }
+        end
+      })
+      persisted_summary = File.read(parent_agent.memory_path)
       initial = references.call
       assert(reference_for.call(initial, visible_child[:key]).dig(:metadata, "agent_reference", "state") == "active",
              "expected the visible child to start active")
@@ -3980,6 +3988,12 @@ module RemoteServerTest
       assert(hidden.dig(:metadata, "agent_reference", "state") == "hidden" && hidden[:content] == "Started hidden agent",
              "expected a child hidden after caching to be redacted from the parent conversation")
       assert(!hidden.dig(:metadata, "delegation_report"), "expected hidden child report to be removed")
+      summary_actions = new_service.call.conversation(parent[:key]).find { |block| block[:kind] == "run_summary" }.dig(:metadata, "delegated_actions")
+      assert(summary_actions.first.dig("agent_reference", "state") == "archived", "expected archived Summary target links")
+      secret_action = summary_actions.last.fetch("agent_reference")
+      assert(secret_action["state"] == "hidden" && !secret_action.key?("name") && !secret_action.key?("project_key"),
+             "expected hidden Summary targets to remove private names and projects")
+      assert(File.read(parent_agent.memory_path) == persisted_summary, "expected reference projection to leave saved Summary untouched")
       assert(builds[parent[:key]] == parent_builds,
              "expected reference changes to be projected without rebuilding the parent's cached blocks")
     end

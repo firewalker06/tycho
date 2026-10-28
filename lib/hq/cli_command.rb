@@ -1781,7 +1781,7 @@ module HQ
       agent_store.accept_prompt_from!(agent, actor: opts.fetch(:actor), agents: existing) if agent.delegation_parent
 
       if opts[:run]
-        agent = agent_store.start_agent!(agent.key)
+        agent = agent_store.start_agent!(agent.key, actor: opts.fetch(:actor))
         unless agent.running?
           out.puts "Status: start failed — #{agent.last_run&.error || "unknown error"}" unless opts[:json]
           return 1
@@ -1940,7 +1940,7 @@ module HQ
 
       agent = persist_agents_with_parent!(store, agents, agent, opts)
       store.accept_prompt_from!(agent, actor: opts.fetch(:actor), agents: agents) if agent.delegation_parent
-      agent = store.start_agent!(agent.key, prefer_queued: true)
+      agent = store.start_agent!(agent.key, prefer_queued: true, actor: opts.fetch(:actor))
       if agent.running?
         print_started_agent(agent_cli_payload(agent), json: opts[:json], out: out)
       else

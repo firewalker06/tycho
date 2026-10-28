@@ -99,7 +99,8 @@ module CLICommandTest
     Dir.mktmpdir("hq-cli-parent-send-events") do |dir|
       workspace = File.join(dir, "workspace")
       logs_root = File.join(dir, "logs")
-      FileUtils.mkdir_p([workspace, File.join(logs_root, "agents")])
+      parent_workspace = File.join(dir, "coordinator")
+      FileUtils.mkdir_p([workspace, parent_workspace, File.join(logs_root, "agents")])
       config_path = File.join(dir, "hq.yml")
       prompts_path = File.join(dir, "system_prompts.yml")
       runner = File.join(dir, "fake-codex")
@@ -108,6 +109,10 @@ module CLICommandTest
           - key: demo
             name: Demo
             path: #{workspace}
+            agent: codex
+          - key: coordinator
+            name: Coordinator
+            path: #{parent_workspace}
             agent: codex
       YAML
       File.write(prompts_path, "{}\n")
@@ -120,9 +125,12 @@ module CLICommandTest
         "TYCHO_CODEX_BIN" => runner
       }
 
-      parent = JSON.parse(run_tycho(env, "agent", "create", "demo", "Coordinate", "--name", "Parent", "--json").fetch(:stdout))
-      child = JSON.parse(run_tycho(env, "agent", "create", "demo", "Work", "--name", "Child",
-                                   "--parent-agent", parent.fetch("key"), "--json").fetch(:stdout))
+      parent = JSON.parse(run_tycho(env, "agent", "create", "coordinator", "Coordinate", "--name", "Parent", "--run", "--json").fetch(:stdout))
+      parent_run_id = JSON.parse(File.read(File.join(logs_root, "managed_agents.json"))).first.fetch("runs").last.fetch("run_id")
+      child_result = run_tycho(env, "agent", "create", "demo", "Work", "--name", "Child",
+                               "--parent-agent", parent.fetch("key"), "--json")
+      assert(child_result.fetch(:status).success?, "expected child create: #{child_result}")
+      child = JSON.parse(child_result.fetch(:stdout))
       accepted_text = "Accepted line one\nAccepted line two"
       accepted = run_tycho(env, "agent", "send", child.fetch("key"), accepted_text,
                            "--parent-agent", parent.fetch("key"), "--json")
@@ -157,6 +165,21 @@ module CLICommandTest
       assert(rejected_events.none? { |event| event.dig("metadata", "event") == "agent_message_sent" },
              "expected a rejected parent send to leave no misleading Conversation event")
       run_tycho(env, "agent", "stop", child.fetch("key"), "--json")
+      run_child = JSON.parse(run_tycho(env, "agent", "create", "demo", "Work", "--name", "Run child",
+                                       "--parent-agent", parent.fetch("key"), "--json").fetch(:stdout))
+      restarted = run_tycho(env, "agent", "run", run_child.fetch("key"), "--parent-agent", parent.fetch("key"), "--json")
+      assert(restarted.fetch(:status).success?, "expected an explicit delegated start: #{restarted}")
+      run_tycho(env, "agent", "stop", run_child.fetch("key"), "--json")
+      run_tycho(env, "agent", "stop", child.fetch("key"), "--json")
+      actions = File.readlines(parent_memory, chomp: true).map { |line| JSON.parse(line) }
+                    .select { |event| event["type"] == "delegation_event" }
+      assert(actions.all? { |event| event.dig("metadata", "parent_run_id") == parent_run_id },
+             "expected create, send, and start events to use the active parent run")
+      assert(actions.count { |event| event.dig("metadata", "event") == "agent_created" } == 2,
+             "expected one event for each creation, without reattachment duplicates")
+      assert(actions.count { |event| event.dig("metadata", "event") == "agent_started" } == 2,
+             "expected actual starts from send and explicit run, without queued-send duplicates")
+      run_tycho(env, "agent", "stop", parent.fetch("key"), "--json")
     end
   end
 

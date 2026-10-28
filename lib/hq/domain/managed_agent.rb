@@ -3631,6 +3631,7 @@ module HQ
       attachments = current_structured_attachments
       attachments.empty? ? metadata.delete("attachments") : metadata["attachments"] = attachments
       metadata["run_number"] = run_count
+      metadata["delegated_actions"] = memory_store.delegated_actions_for_run(durable_run_id(run))
       metadata["_stream_sequence"] = current_run_log_lines.length + 1
       metadata["cost_snapshot"] = @cost_snapshot if @cost_snapshot.is_a?(Hash) && !@cost_snapshot.empty?
       if run&.delegation_owner == "parent"

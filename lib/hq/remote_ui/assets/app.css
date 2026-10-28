@@ -5389,6 +5389,30 @@ details.queue-read-block:not([open]) > .queue-read-body {
   text-decoration: none;
 }
 
+.summary-delegated-actions {
+  margin-top: 1rem;
+  min-width: 0;
+}
+
+.summary-delegated-actions ul {
+  list-style: none;
+  margin: .5rem 0 0;
+  padding: 0;
+}
+
+.summary-delegated-actions li {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .5rem;
+  margin-top: .4rem;
+  overflow-wrap: anywhere;
+}
+
+.summary-delegated-actions li > span {
+  color: var(--muted);
+}
+
 .message.run_summary {
   border-color: color-mix(in srgb, var(--accent-alt) 60%, var(--border));
   background: color-mix(in srgb, var(--accent-alt) 12%, var(--panel));
