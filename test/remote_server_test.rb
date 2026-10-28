@@ -9275,7 +9275,7 @@ module RemoteServerTest
     assert(js[:body].include?("summaryAttachmentScroll: {}") &&
            js[:body].scan("[data-summary-attachment-menu-popover][data-state-key]").length >= 2,
            "expected refresh state capture to preserve portaled Summary attachment scroll")
-    assert(js[:body].include?('data-state-key="summary-attachment-menu:${escapeAttr(summaryId)}"'),
+    assert(js[:body].include?('data-state-key="summary-attachment-menu:${escapeAttr(menuKey)}"'),
            "expected Conversation summary attachment menus to preserve open state across polling")
     assert(js[:body].include?("function repositionOpenSummaryAttachmentMenus"),
            "expected restored summary attachment menus to recompute viewport-safe popover coordinates")
