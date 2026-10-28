@@ -83,7 +83,8 @@ module RemoteUIPromptQueueTest
       const relativeCases = [
         [1, "Eligible in 1 second"], [30000, "Eligible in 30 seconds"],
         [59000, "Eligible in 59 seconds"], [60000, "Eligible in 1 minute"],
-        [60001, "Eligible in 2 minutes"], [300000, "Eligible in 5 minutes"],
+        [60001, "Eligible in 1 minute"], [90000, "Eligible in 2 minutes"],
+        [300000, "Eligible in 5 minutes"], [300001, "Eligible in 5 minutes"],
         [3600000, "Eligible in 1 hour"], [86400000, "Eligible in 1 day"],
         [0, "Eligible now"], [-30000, "Eligible now"],
       ];
