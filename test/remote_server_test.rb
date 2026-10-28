@@ -7708,8 +7708,12 @@ module RemoteServerTest
     end
     assert(js[:body].include?('<span>Create and run</span>') && js[:body].include?('type="submit"'),
            "expected Quick Agent to expose a visible primary submit action")
-    assert(js[:body].include?("Create without running") && js[:body].include?('class="secondary-submit-menu"'),
-           "expected create-only agent submission to live behind a secondary option")
+    assert(js[:body].include?('type="submit" value="create">${iconSvg("plus")}<span>Create</span>') &&
+           js[:body].include?('type="submit" value="create-run">${iconSvg("loaderPinwheel")}<span>Create and Run</span>') &&
+           js[:body].include?('class="agent-options ui-surface"') &&
+           js[:body].include?('id="agent-project-name"') &&
+           js[:body].include?('readonly'),
+           "expected New Agent to show a read-only project, optional options, and both create actions")
     assert(js[:content_type].include?("javascript"), "expected /ui.js to return JavaScript")
     assert(js[:body].include?("DEFAULT_REFRESH_INTERVALS"), "expected UI JavaScript to define refresh defaults")
     activity_loader = js[:body][/async function loadAgentActivity\(options = \{\}\).*?^}/m].to_s
