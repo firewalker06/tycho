@@ -16,12 +16,12 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await page.goto(`${baseUrl}/ui#agent/${agentKey}`, { waitUntil: "networkidle" });
     const card = page.locator(".message.run_summary").filter({ hasText: "Review work is complete." }).first();
     await card.waitFor({ state: "visible" });
-    const trigger = card.getByRole("button", { name: "Show delegated actions (4)", exact: true });
+    const trigger = card.getByRole("button", { name: "Show delegated actions (5)", exact: true });
     const open = card.getByRole("button", { name: "Open full summary", exact: true });
     assert.equal(await open.innerText(), "", "Summary button must be icon only");
     assert.equal(await open.getAttribute("title"), "Open full summary");
     assert(await open.evaluate(element => element.classList.contains("primary") && getComputedStyle(element).backgroundColor === getComputedStyle(document.querySelector("button.primary")).backgroundColor));
-    assert.equal(await trigger.locator(".attachment-count").innerText(), "4");
+    assert.equal(await trigger.locator(".attachment-count").innerText(), "5");
     assert.equal(await trigger.getAttribute("aria-expanded"), "false");
     const attachment = card.getByRole("button", { name: "Choose summary attachment" });
     assert.equal(await attachment.locator(".attachment-count").innerText(), "3");
@@ -34,12 +34,16 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await popover.waitFor({ state: "visible" });
     const actions = popover.locator(".summary-delegated-actions");
     const check = async (actions) => {
-      assert.equal(await actions.locator("li").count(), 4);
+      assert.equal(await actions.locator("li").count(), 5);
       const text = await actions.innerText();
       for (const label of ["Created", "Started", "Message queued", "Message sent", "API contract review", "Removed review"]) assert(text.includes(label), label);
       assert(!text.includes("PRIVATE_PROMPT_SENTINEL"));
+      assert.equal(await actions.locator("li").filter({ hasText: "API contract review" }).filter({ hasText: "Created" }).count(), 0);
+      assert.equal(await actions.locator("li").filter({ hasText: "API contract review" }).filter({ hasText: "Started" }).count(), 2, "Distinct starts must remain");
+      assert.equal(await actions.locator("li").filter({ hasText: "Pending review" }).filter({ hasText: "Created" }).count(), 1, "Create-only must remain truthful");
+      assert.equal(await actions.locator("li").filter({ hasText: "Pending review" }).filter({ hasText: "Started" }).count(), 0);
       assert.equal(await actions.locator('a[href="#agent/web-agent-api-review"]').count(), 3);
-      assert.equal(await actions.locator(".unavailable").count(), 1);
+      assert.equal(await actions.locator(".unavailable").count(), 2);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
       assert(!overflow, `Overflow at ${viewport.width}`);
       assert(await actions.evaluate(element => element.scrollWidth <= element.clientWidth + 1), "Action rows must fit their disclosure");
@@ -86,7 +90,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       }, other.metadata.summary_id);
       assert.equal(await page.locator("[data-agent-summary-page] .summary-delegated-actions").count(), 0, `${runId} inherited actions`);
     }
-    results.push({ width: viewport.width, actions: 4, coldReload: true, polling: true, runIsolation: true, legacy: true, missingTarget: true, verticalControls: true, keyboard: true, exclusiveDisclosures: true, counts: true });
+    results.push({ width: viewport.width, actions: 5, coldReload: true, polling: true, runIsolation: true, legacy: true, missingTarget: true, verticalControls: true, keyboard: true, exclusiveDisclosures: true, counts: true, creationProjection: true, distinctStarts: true, createOnly: true });
     await context.close();
   }
   const after = (await (await fetch(`${baseUrl}/agents/${agentKey}/conversation`)).json()).conversation;

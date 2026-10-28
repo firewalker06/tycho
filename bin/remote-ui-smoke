@@ -590,6 +590,10 @@ def write_delegated_summary_fixture(fixture)
     end
     memory.append_delegation_event!("Message sent", event_id: "missing-target", created_at: at + 4,
                                    metadata: { "event" => "agent_message_sent", "agent_reference" => reference.merge("agent_key" => "removed-review", "name" => "Removed review"), "delivery_status" => "accepted" })
+    memory.append_delegation_event!("Started again", event_id: "agent-start:api-review:second-run", created_at: at + 5,
+                                   metadata: { "event" => "agent_started", "agent_reference" => reference })
+    memory.append_delegation_event!("Created only", event_id: "created-only", created_at: at + 6,
+                                   metadata: { "event" => "agent_created", "agent_reference" => reference.merge("agent_key" => "pending-review", "name" => "Pending review") })
     run.status = "partial"
     run.finished_at = at + 30
     parent.send(:capture_run_memory!, run)
