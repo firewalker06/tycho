@@ -478,11 +478,36 @@ module HQ
       id = event_id.to_s.strip
       return false if text.empty? || id.empty?
 
+      details = (metadata.is_a?(Hash) ? metadata : {}).merge("event_id" => id)
+      run = @agent.last_run
+      details["parent_run_id"] = run.run_id if run.respond_to?(:status) && run.status == "running" && !run.run_id.to_s.empty?
       append_unique_event!(id,
                            "type" => "delegation_event",
                            "content" => text,
                            "created_at" => created_at.iso8601,
-                           "metadata" => (metadata.is_a?(Hash) ? metadata : {}).merge("event_id" => id))
+                           "metadata" => details)
+    end
+
+    # Snapshot only accepted domain events stamped by the active parent run.
+    # Never copy prompt text or arbitrary event metadata into the Summary.
+    def delegated_actions_for_run(run_id)
+      return [] if run_id.to_s.empty?
+
+      read_events.filter_map do |event|
+        metadata = event["metadata"] || {}
+        next unless event["type"] == "delegation_event" && metadata["parent_run_id"] == run_id
+        next unless %w[agent_created agent_started agent_message_sent].include?(metadata["event"])
+
+        reference = metadata["agent_reference"]
+        next unless reference.is_a?(Hash) && !reference["agent_key"].to_s.empty?
+
+        {
+          "event_id" => event["event_id"],
+          "action" => metadata["event"],
+          "delivery_status" => metadata["delivery_status"],
+          "agent_reference" => reference.slice("server_id", "server_name", "agent_key", "name", "project_key")
+        }.compact
+      end.uniq { |action| action["event_id"] }
     end
 
     def append_delegation_report!(content, report_id:, created_at: Time.now, metadata: nil)
