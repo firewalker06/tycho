@@ -54,6 +54,7 @@ module RemoteUIPromptQueueTest
         URL,
       };
       vm.createContext(context);
+      vm.runInContext(`${extractFunction("queueEligibilityText")}\n${extractFunction("renderQueueEligibilityTime")}\n${extractFunction("updateQueueEligibilityLabels")}`, context);
       vm.runInContext(extractFunction("renderQueueWorkAttachments"), context);
       Object.assign(context, {
         primaryConversationBlock: () => true,
@@ -78,6 +79,32 @@ module RemoteUIPromptQueueTest
         throw new Error("a delivered queue callback must use the delegation callback presentation");
       }
 
+      const now = Date.parse("2026-10-28T03:00:00Z");
+      const relativeCases = [
+        [1, "Eligible in 1 second"], [30000, "Eligible in 30 seconds"],
+        [59000, "Eligible in 59 seconds"], [60000, "Eligible in 1 minute"],
+        [60001, "Eligible in 2 minutes"], [300000, "Eligible in 5 minutes"],
+        [3600000, "Eligible in 1 hour"], [86400000, "Eligible in 1 day"],
+        [0, "Eligible now"], [-30000, "Eligible now"],
+      ];
+      relativeCases.forEach(([delta, expected]) => {
+        const actual = context.queueEligibilityText(new Date(now + delta).toISOString(), now);
+        if (actual !== expected) throw new Error(`relative queue time for ${delta}: ${actual}`);
+      });
+      [undefined, null, "", "bad-date", "2026-99-99T00:00:00Z"].forEach((value) => {
+        if (context.queueEligibilityText(value, now) !== "Queue time unavailable") throw new Error(`invalid queue date ${value}`);
+      });
+      if (context.queueEligibilityText("2026-10-28T03:00:00Z", NaN) !== "Queue time unavailable") throw new Error("invalid queue clock");
+      const element = { dataset: { queueEligibleAt: new Date(now + 30000).toISOString() }, textContent: "stale" };
+      context.document = { querySelectorAll: () => [element] };
+      context.updateQueueEligibilityLabels(now);
+      if (element.textContent !== "Eligible in 30 seconds") throw new Error("queue clock did not refresh without a new activity revision");
+      context.updateQueueEligibilityLabels(now + 30000);
+      if (element.textContent !== "Eligible now") throw new Error("queue clock did not cross the due boundary");
+      context.updateQueueEligibilityLabels(now + 60000);
+      if (element.textContent !== "Eligible now") throw new Error("past queue time became negative");
+
+      context.Date = class extends Date { static now() { return now; } };
       const agent = { key: "queue-agent" };
       const legacy = context.renderPromptQueueEntry(agent, { id: "legacy", prompt: "Queued before state" }, 0);
       if (!legacy.includes("Message · Queued</span>") || legacy.includes('data-edit-queued-prompt="legacy" data-agent-key="queue-agent" disabled') ||
@@ -89,10 +116,10 @@ module RemoteUIPromptQueueTest
         id: "delayed", prompt: "Continue later", source: "internal_continuation", state: "queued",
         not_before: "2026-09-20T01:02:03.000000Z"
       }, 0);
-      if (!delayed.includes("Agent continuation · Queued · due 2026-09-20T01:02:03.000000Z") ||
+      if (!delayed.includes('data-queue-eligible-at="2026-09-20T01:02:03.000000Z"') || !delayed.includes("Eligible now") ||
           delayed.includes('data-edit-queued-prompt="delayed" data-agent-key="queue-agent" disabled') ||
           delayed.includes('data-delete-queued-prompt="delayed" data-agent-key="queue-agent" disabled')) {
-        throw new Error("delayed entries must show exact due time and retain edit/delete controls");
+        throw new Error("delayed entries must show relative eligibility and retain edit/delete controls");
       }
 
       const claimed = context.renderPromptQueueEntry(agent, { id: "claimed", prompt: "Already claimed", state: "dispatching" }, 0);

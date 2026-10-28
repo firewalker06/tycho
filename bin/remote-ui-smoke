@@ -2274,8 +2274,12 @@ title: !123 value
         await page.evaluate(async (key) => { await apiPost(`/agents/${encodeURIComponent(key)}/messages`, { prompt: "Check after ten minutes", delay: 600 }); }, delayedKey);
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(delayedKey)}`, { waitUntil: "networkidle" });
         await page.waitForSelector(".prompt-queue-timing", { state: "visible" });
+        const eligibleAt = await page.locator(".prompt-queue-timing [data-queue-eligible-at]").getAttribute("data-queue-eligible-at");
+        const eligibleTime = Date.parse(eligibleAt);
+        await page.clock.setFixedTime(new Date(eligibleTime - 300_000));
+        await page.waitForFunction(() => document.querySelector(".prompt-queue-timing")?.textContent.includes("Eligible in 5 minutes"));
         const delayedTiming = await page.locator(".prompt-queue-timing").innerText();
-        if (!delayedTiming.includes("Queue processor active") || !delayedTiming.includes("Eligible after") || delayedTiming.includes("about 5 seconds")) {
+        if (!delayedTiming.includes("Queue processor active") || !delayedTiming.includes("Eligible in 5 minutes") || delayedTiming.includes("about 5 seconds") || /[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]+:[0-9]{2}|Invalid Date/.test(delayedTiming)) {
           throw new Error(`Delayed queue timing was misleading: ${delayedTiming}`);
         }
         await page.locator("[data-prompt-queue] > summary").focus();
@@ -2293,6 +2297,28 @@ title: !123 value
         if (timingLayout.left < 0 || timingLayout.right > timingLayout.width || timingLayout.overflow) throw new Error(`Queue timing overflow: ${JSON.stringify(timingLayout)}`);
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "queue-timing-mobile.png"), fullPage: false });
         await page.setViewportSize({ width: 1440, height: 900 });
+        const activityBeforeClock = await page.evaluate(() => {
+          clearTimeout(state.timer);
+          clearTimeout(state.activityTimer);
+          return state.activityRevision;
+        });
+        await page.locator("[data-prompt-queue] > summary").focus();
+        await page.clock.setFixedTime(new Date(eligibleTime - 30_000));
+        await page.waitForFunction(() => document.querySelector(".prompt-queue-timing")?.textContent.includes("Eligible in 30 seconds"));
+        await page.clock.setFixedTime(new Date(eligibleTime + 1));
+        await page.waitForFunction(() => document.querySelector(".prompt-queue-timing")?.textContent.includes("Eligible now"));
+        const dueClock = await page.evaluate(() => ({
+          revision: state.activityRevision,
+          focused: document.activeElement?.matches("[data-prompt-queue] > summary"),
+          text: document.querySelector(".prompt-queue-timing")?.textContent,
+        }));
+        if (dueClock.revision !== activityBeforeClock || !dueClock.focused || !dueClock.text.includes("Checked when the agent and workspace are free") || /in -|Invalid Date/.test(dueClock.text)) {
+          throw new Error(`Queue countdown needs activity or loses its gate/focus: ${JSON.stringify(dueClock)}`);
+        }
+        await page.evaluate(() => { document.querySelector(".prompt-queue-timing [data-queue-eligible-at]").dataset.queueEligibleAt = "invalid-date"; });
+        await page.waitForFunction(() => document.querySelector(".prompt-queue-timing")?.textContent.includes("Queue time unavailable"));
+        await page.clock.setFixedTime(new Date());
+        await page.evaluate(async () => { await refresh({ force: true }); await pollAgentActivity(); });
 
         // Simulate only the server heartbeat being inactive; the real queue action still reaches the isolated server.
         let inactiveProcessor = true;

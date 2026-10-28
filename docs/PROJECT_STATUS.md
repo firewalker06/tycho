@@ -14,14 +14,19 @@ type: project
 
 ## Latest Fix
 
-The Remote UI queue summary shows processor activity from the server's most recent
-successful agent check, plus the applicable queue gate or earliest delayed time.
-Read, reconciliation, and dispatch failures do not refresh that heartbeat. A pass
-completed from a valid backup counts as successful under the existing store rules.
-The five-second check interval is an estimate of the next check, not a launch
-guarantee. Start queue uses the existing locked manual queue control and appears
-only for eligible, due-only work when the automatic processor has no recent check.
-
+Run Summaries now keep a snapshot of delegated create, confirmed start, and
+accepted or queued send actions from the parent run. Tycho builds this snapshot
+from durable domain events at Summary generation. Conversation and the full
+Summary show the saved actions and target links. Reads apply current reference
+visibility without rebuilding actions; older summaries remain unchanged. Queued
+launches retain the accepting parent run ID, so an unrelated later parent run
+does not inherit their confirmed start actions. Already-confirmed native markers
+are recovered before parent polling can finalize a Summary. Recovery of a finished
+but unpolled parent requires the matching origin and a marker file time strictly
+before a matching native-wrapper exit receipt and a valid run-scoped status.
+The receipt is an internal `.status.native-exit` run artifact; monitor fallback
+status writes do not produce it. Missing or equal source times do not justify
+attribution, and completed summaries are never rewritten.
 
 Tycho now requires Ruby 4.0.9 or later. The gem requirement, Bundler
 requirement, lockfile, and setup checks use this minimum version.
@@ -31,6 +36,16 @@ independent clones become active in the same locked store transaction that
 archives the source. Failed archives retain source work and do not publish a
 replacement. Started and scheduled context replacements retain their existing
 recovery and schedule ownership rules.
+
+The Remote UI queue summary shows processor activity from the server's most recent
+successful agent check, plus the applicable queue gate or earliest delayed time.
+Failures that prevent a successful pass do not refresh the heartbeat. A pass
+completed from a valid backup counts as successful under the existing store rules.
+The five-second check interval is an estimate of the next check, not a launch
+guarantee. Start queue uses the existing locked manual queue control and appears
+only for eligible, due-only work when the automatic processor has no recent check.
+Pending queue times use relative eligibility labels. A local clock updates them
+while polling is paused, without changing queue state or promising a launch time.
 
 ## Strategic Direction
 
