@@ -3168,8 +3168,8 @@ module HQ
     end
 
     def dispatch_agent_push_notifications!
-      agents, events = load_agents_with_events
-      yield if block_given?
+      checked = block_given? ? -> { yield } : nil
+      agents, events = load_agents_with_events(on_poll_success: checked)
       @push_notification_store.reconcile_queue_failures!(active_queue_failure_notification_ids(agents))
       notification_candidates = notification_agents(agents)
       replace_agent_activity_snapshot!(agents)
@@ -4324,9 +4324,10 @@ module HQ
       agents
     end
 
-    def load_agents_with_events
+    def load_agents_with_events(on_poll_success: nil)
       @agent_store.load_with_poll_events(
-        after_load: ->(agents) { @agent_list_cache.replace!(agents, signature: @agent_list_cache.signature) }
+        after_load: ->(agents) { @agent_list_cache.replace!(agents, signature: @agent_list_cache.signature) },
+        on_poll_success:
       )
     end
 

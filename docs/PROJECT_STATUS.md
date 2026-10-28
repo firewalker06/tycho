@@ -16,6 +16,8 @@ type: project
 
 The Remote UI queue summary shows processor activity from the server's most recent
 successful agent check, plus the applicable queue gate or earliest delayed time.
+Read, reconciliation, and dispatch failures do not refresh that heartbeat. A pass
+completed from a valid backup counts as successful under the existing store rules.
 The five-second check interval is an estimate of the next check, not a launch
 guarantee. Start queue uses the existing locked manual queue control and appears
 only for eligible, due-only work when the automatic processor has no recent check.

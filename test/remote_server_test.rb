@@ -46,6 +46,7 @@ module RemoteServerTest
     assert_remote_context_replacement_archive_race_recovers_handoff
     assert_remote_agent_payload_has_revision
     assert_remote_queue_processing_status
+    assert_queue_processor_poll_requires_successful_store_pass
     assert_remote_agent_payload_distinguishes_running_history_from_never_run
     assert_remote_agent_activity_snapshot
     assert_remote_agent_payload_has_cost_snapshot
@@ -1904,6 +1905,109 @@ module RemoteServerTest
       replace_constant(HQ, :AGENTS_FILE, old_agents_file) if old_agents_file
       replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
       replace_constant(HQ, :AGENT_ARCHIVE_DIR, old_archive_dir) if old_archive_dir
+    end
+  end
+
+  def assert_queue_processor_poll_requires_successful_store_pass
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      monotonic = 1000.0
+      deny_read = false
+      deny_stat = false
+      reconciliation_error = nil
+      dispatch_error = nil
+      original_dispatch = HQ::AgentStore.instance_method(:dispatch_prompt_queues!)
+      original_clock = Process.method(:clock_gettime)
+      original_read = HQ::FileStore.method(:read_text)
+      original_stat = File.method(:stat)
+      original_process = HQ::DelegationCoordinator.instance_method(:process!)
+      Process.define_singleton_method(:clock_gettime) do |clock, *args|
+        clock == Process::CLOCK_MONOTONIC ? monotonic : original_clock.call(clock, *args)
+      end
+      HQ::FileStore.define_singleton_method(:read_text) do |path|
+        raise Errno::EACCES, "poll fixture cannot read agents" if deny_read && path == HQ::AGENTS_FILE
+
+        original_read.call(path)
+      end
+      File.define_singleton_method(:stat) do |path, *args|
+        raise Errno::EACCES, "poll fixture cannot stat agents" if deny_stat && path == HQ::AGENTS_FILE
+
+        original_stat.call(path, *args)
+      end
+      HQ::DelegationCoordinator.define_method(:process!) do |agents, **options|
+        raise reconciliation_error if reconciliation_error
+
+        original_process.bind_call(self, agents, **options)
+      end
+      HQ::AgentStore.define_method(:dispatch_prompt_queues!) do |agents, **options|
+        raise dispatch_error if dispatch_error
+
+        original_dispatch.bind_call(self, agents, **options)
+      end
+      HQ::AgentStore.send(:private, :dispatch_prompt_queues!)
+      server = HQ::RemoteServer.new(registry:, token: "", output: StringIO.new)
+      poll = lambda do
+        monotonic += HQ::RemoteServer::AGENT_PUSH_POLL_INTERVAL
+        server.send(:poll_agent_push_notifications!)
+        server.instance_variable_get(:@queue_processor_last_success)
+      end
+      File.write(HQ::AGENTS_FILE, "invalid JSON")
+      assert(poll.call.nil?, "expected corrupt initial data not to fabricate a successful heartbeat")
+      File.write(HQ::AGENTS_FILE, "[]")
+      successful_at = poll.call
+      assert(successful_at == monotonic && server.send(:queue_processor_active?),
+             "expected the real production poll to certify a healthy empty store")
+      deny_read = true
+      assert(poll.call == successful_at, "expected unreadable primary without backup not to refresh success")
+      assert(HQ::AgentStore.new(registry.projects).load_with_poll_events == [[], []],
+             "expected ordinary callers to retain the existing empty fallback")
+      deny_read = false
+      deny_stat = true
+      assert(poll.call == successful_at, "expected access failure not to certify an empty store")
+      deny_stat = false
+      reconciliation_error = Errno::EACCES.new("poll fixture cannot reconcile")
+      assert(poll.call == successful_at, "expected rescued reconciliation failure not to refresh success")
+      reconciliation_error = nil
+      File.write(HQ::AGENTS_FILE, "invalid JSON")
+      assert(poll.call == successful_at, "expected corrupt primary without backup not to refresh success")
+      assert(!server.send(:queue_processor_active?), "expected elapsed failed passes to expire processor activity")
+      File.write(HQ::FileStore.backup_path(HQ::AGENTS_FILE), "also invalid")
+      assert(poll.call == successful_at, "expected an invalid backup not to certify the pass")
+      File.write(HQ::FileStore.backup_path(HQ::AGENTS_FILE), "[]")
+      assert(poll.call == monotonic && server.send(:queue_processor_active?),
+             "expected a valid recovered backup to certify a completed pass, as normal store reads permit")
+      deny_read = true
+      assert(poll.call == monotonic, "expected an unreadable primary with a valid backup to complete the pass")
+      successful_at = monotonic
+      File.write(HQ::FileStore.backup_path(HQ::AGENTS_FILE), "invalid")
+      assert(poll.call == successful_at, "expected unreadable primary and invalid backup not to refresh success")
+      deny_read = false
+      File.write(HQ::AGENTS_FILE, "[]")
+      reconciliation_error = IOError.new("poll fixture reconciliation failed")
+      assert(poll.call == successful_at, "expected propagated reconciliation failure not to refresh success")
+      begin
+        HQ::AgentStore.new(registry.projects).load_with_poll_events
+        raise "expected ordinary caller IOError semantics to be preserved"
+      rescue IOError => error
+        assert(error.message == "poll fixture reconciliation failed", "expected the original store error")
+      end
+      reconciliation_error = nil
+      dispatch_error = RuntimeError.new("poll fixture dispatch failed")
+      assert(poll.call == successful_at, "expected queue dispatch failure not to refresh success")
+      dispatch_error = nil
+      FileUtils.rm_f(HQ::AGENTS_FILE)
+      assert(poll.call == monotonic, "expected a missing store to retain healthy empty-store semantics")
+    ensure
+      Process.define_singleton_method(:clock_gettime, original_clock) if original_clock
+      HQ::FileStore.define_singleton_method(:read_text, original_read) if original_read
+      File.define_singleton_method(:stat, original_stat) if original_stat
+      HQ::DelegationCoordinator.define_method(:process!, original_process) if original_process
+      if original_dispatch
+        HQ::AgentStore.define_method(:dispatch_prompt_queues!, original_dispatch)
+        HQ::AgentStore.send(:private, :dispatch_prompt_queues!)
+      end
     end
   end
 
