@@ -798,7 +798,7 @@ module PromptQueueTest
         deadline = Time.now + 10
         until Time.now >= deadline
           terminal = store.load_with_poll_events(process_delegations: false).first.first
-          break unless terminal.running?
+          break unless terminal.running? || terminal.last_run&.status == "running"
 
           sleep 0.01
         end

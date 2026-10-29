@@ -1757,7 +1757,14 @@ module HQ
     end
 
     def template_for(project, template_key)
-      project.agent_templates.find { |template| template.key == template_key } || project.agent_templates.first
+      templates = project.agent_templates
+      templates.find { |template| template.key == template_key } || begin
+        requested = template_key.to_s.empty? ? "no template key" : template_key.inspect
+        available = templates.map(&:key).join(", ")
+        warn("[AgentStore] project #{project.key}: requested #{requested} not found " \
+             "(available: #{available}); falling back to #{templates.first&.key.inspect}")
+        templates.first
+      end
     end
 
     def backfill_project_context_prompt!(agent)

@@ -21,6 +21,7 @@ module RegistryTest
     assert_registry_ignores_hq_env_aliases
     assert_registry_uses_tycho_home_defaults
     assert_registry_resolves_hidden_groups_and_project_overrides
+    assert_registry_prefers_project_agent_templates
     assert_registry_loads_custom_harness_profiles
     assert_registry_persists_remote_servers
     assert_registry_persists_session_loop_settings
@@ -371,6 +372,47 @@ module RegistryTest
       assert(projects["web-charlie"].hidden_config == false, "expected explicit project visibility override")
       assert(projects["lab"].hidden == true, "expected project-level hidden to hide project")
       assert(projects["lab"].group_hidden.nil?, "expected missing group config to stay nil")
+    end
+  end
+
+  def assert_registry_prefers_project_agent_templates
+    Dir.mktmpdir("hq-project-templates-test") do |dir|
+      config_path = File.join(dir, "hq.yml")
+      prompts_path = File.join(dir, "system_prompts.yml")
+      FileUtils.mkdir_p(File.join(dir, "demo"))
+
+      File.write(config_path, <<~YAML)
+        projects:
+          - key: demo
+            name: Demo
+            path: #{File.join(dir, "demo")}
+            agent: pi
+            agent_templates:
+              - key: default
+                name: Default
+                prompt: Project default template.
+                sandbox_mode: workspace-write
+              - key: careful
+                name: Careful
+                prompt: Careful template.
+                sandbox_mode: read-only
+      YAML
+      File.write(prompts_path, <<~YAML)
+        read-only:
+          name: Read only
+          sandbox_mode: read-only
+          agent: pi
+          prompt: Global read-only template.
+      YAML
+
+      project = HQ::Registry.new(path: config_path, system_prompts_path: prompts_path).projects.fetch(0)
+      templates = project.agent_templates.to_h { |template| [template.key, template] }
+      assert(templates.keys.sort == %w[careful default],
+             "expected project agent_templates to replace global templates, got #{templates.keys.inspect}")
+      assert(templates.fetch("default").sandbox_mode == "workspace-write",
+             "expected project template sandbox_mode to load")
+      assert(templates.fetch("default").agent == "pi",
+             "expected project template to inherit the project agent")
     end
   end
 
