@@ -23,6 +23,8 @@ module HQ
 
       def parse_event(event, conversation, system)
         case event["type"]
+        when "system"
+          @claude_code_version = event["claude_code_version"] if event["subtype"] == "init"
         when "item.completed"
           parse_item_completed(event, conversation)
         when "assistant"
@@ -102,6 +104,7 @@ module HQ
         output_tokens = usage.is_a?(Hash) ? usage["output_tokens"] : nil
 
         meta = { "event_type" => "result" }
+        meta["claude_code_version"] = @claude_code_version if @claude_code_version
         meta["subtype"] = event["subtype"] if event["subtype"]
         meta["is_error"] = event["is_error"] unless event["is_error"].nil?
         meta["api_error_status"] = event["api_error_status"] if event["api_error_status"]

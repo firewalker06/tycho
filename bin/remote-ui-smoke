@@ -10764,6 +10764,12 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     "TYCHO_GITHUB_API_URL" => github_api_url
   }
 
+  if ENV["TYCHO_REMOTE_UI_CLAUDE_COST_ONLY"] == "1"
+    agent_key = "web-agent-claude-cost"
+    out, status = Open3.capture2e(env, RbConfig.ruby, "test/browser/claude_cost_fixture.rb", fixture.fetch(:workspace), "--with-legacy", chdir: ROOT)
+    raise "Failed to seed Claude cost fixture: #{out}" unless status.success?
+  end
+
   @server_pid = Process.spawn(
     env,
     RbConfig.ruby, "bin/tycho", "serve", "--host", "127.0.0.1", "--port", port.to_s,
@@ -10777,6 +10783,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     wait_for_remote(base_url, log_path)
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key ||= create_agent(base_url)
+    if ENV["TYCHO_REMOTE_UI_CLAUDE_COST_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "claude_cost_smoke")
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_DELEGATED_SUMMARY_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "delegated_summary_smoke")
       next

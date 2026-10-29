@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "time"
+require "shellwords"
 
 require_relative "../harness_registry"
 require_relative "openai_model_pricing"
@@ -17,6 +18,11 @@ module HQ
       prior_session_runs = agent.runs[0...-1].count { |candidate| candidate.session_id.to_s == session_id }
       adapter = HQ.harness_adapter(run.respond_to?(:agent) && !run.agent.to_s.empty? ? run.agent : agent.agent)
       usage = Array(usage_entries)
+      if adapter == "claude" && (claude_session_totals?(usage) ||
+                                (usage.none? { |entry| event_type(entry) == "result" } &&
+                                 previous&.fetch("reported_cost_scope", nil) == "session"))
+        return claude_session_snapshot(agent:, run:, usage:, previous:, prior_session_runs:)
+      end
       token_snapshot, run_tokens = codex_token_snapshots(adapter, usage, previous:, prior_session_runs:)
       run_model = run.respond_to?(:model) ? run.model : nil
       run_model = agent_model(agent) if run_model.to_s.strip.empty?
@@ -35,6 +41,7 @@ module HQ
         "currency" => "USD",
         "amount_usd" => amount,
         "run_amount_usd" => run_cost,
+        "run_cost_scope" => run_cost_scope(adapter, usage),
         "basis" => basis_for(adapter, run_cost, previous),
         "coverage" => coverage,
         "source" => cost_result.fetch("source"),
@@ -50,6 +57,91 @@ module HQ
         "run_tokens" => run_tokens
       }.compact
     end
+
+    def run_cost_scope(adapter, entries)
+      return "run" unless adapter == "claude"
+
+      entry = entries.reverse.find { |candidate| event_type(candidate) == "result" }
+      metadata(entry)["claude_code_version"].to_s.match?(/\A\d+\.\d+\.\d+\z/) ? "run" : "reported"
+    end
+    private_class_method :run_cost_scope
+
+    # Claude Code >= 2.1.277 restores cost totals on native resume. Older
+    # versions and compatible wrappers retain the existing per-call path.
+    def claude_session_totals?(entries)
+      entry = entries.reverse.find { |candidate| event_type(candidate) == "result" }
+      version = metadata(entry)["claude_code_version"].to_s
+      return false unless version.match?(/\A\d+\.\d+\.\d+\z/)
+
+      (version.split(".").map(&:to_i) <=> [2, 1, 277]) >= 0
+    end
+
+    def claude_resume_requested?(run)
+      return false unless run.respond_to?(:command)
+
+      arguments = Shellwords.split(run.command.to_s)
+      return true if arguments.empty?
+
+      # ManagedAgent saves Shellwords.join(argv), so even a multi-line prompt
+      # stays one argument. Quoting does not turn a native option into text;
+      # the explicit -- separator does.
+      arguments.take_while { |argument| argument != "--" }.any? do |argument|
+        %w[--resume --continue -r -c].include?(argument) ||
+          argument.start_with?("--resume=") || argument.match?(/\A-r.+/)
+      end
+    rescue ArgumentError
+      true
+    end
+    private_class_method :claude_resume_requested?
+
+    def claude_session_snapshot(agent:, run:, usage:, previous:, prior_session_runs:)
+      return previous if previous && previous["through_run_count"].to_i == agent.run_count
+
+      entry = usage.reverse.find { |candidate| event_type(candidate) == "result" }
+      reported = numeric_cost(metadata(entry)["total_cost_usd"])
+      baseline = previous && numeric_cost(previous["reported_amount_usd"])
+      baseline_decreased = baseline && reported && reported < baseline
+      adjacent = previous && previous["through_run_count"].to_i == agent.run_count - 1
+      reason = nil
+      run_cost = nil
+      if reported.nil?
+        reason = "Claude did not report a session cost"
+      elsif metadata(entry)["subtype"] == "error_during_execution" && reported.zero?
+        reported = nil
+        reason = "Claude crash result may contain a zeroed cost"
+      elsif !metadata(entry)["session_id"].to_s.empty? && metadata(entry)["session_id"].to_s != run.session_id.to_s
+        reported = nil
+        reason = "Claude result belongs to a different native session"
+      elsif run.session_id.to_s.empty?
+        reason = "Claude did not report a native session ID"
+      elsif prior_session_runs.zero? && previous.nil? &&
+            !claude_resume_requested?(run)
+        run_cost = reported
+      elsif baseline && adjacent && previous["reported_cost_scope"] == "session" && reported >= baseline
+        run_cost = reported - baseline
+      else
+        reason = "Claude session cost has no consecutive compatible baseline"
+      end
+      {
+        "currency" => "USD",
+        "amount_usd" => reported || previous&.fetch("amount_usd", nil),
+        "run_amount_usd" => run_cost,
+        "reported_amount_usd" => baseline_decreased ? nil : reported,
+        "reported_cost_scope" => "session",
+        "run_cost_scope" => "run",
+        "basis" => "harness_estimate",
+        "coverage" => reported.nil? ? previous ? "partial" : "unavailable" : "complete",
+        "source" => "claude_session_result",
+        "run_id" => run.respond_to?(:run_id) ? run.run_id : nil,
+        "session_id" => run.session_id.to_s,
+        "as_of" => (run.finished_at || agent.finished_at || Time.now).iso8601,
+        "through_run_count" => agent.run_count,
+        "tracked_run_count" => previous&.fetch("tracked_run_count", 0).to_i + (run_cost.nil? ? 0 : 1),
+        "missing_run_count" => previous&.fetch("missing_run_count", 0).to_i + (run_cost.nil? ? 1 : 0),
+        "reason_unavailable" => reason
+      }.compact
+    end
+    private_class_method :claude_session_snapshot
 
     def normalize(value)
       normalize_snapshot(value)
