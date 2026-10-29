@@ -3893,6 +3893,10 @@ module HQ
         candidate.update!(**agent_attrs(candidate, attrs, project: project, creating: true, effective: effective_settings))
         candidate.preserve_name! unless attrs["name"].to_s.strip.empty?
         @agent_store.ensure_project_context_prompt!(candidate, project)
+      rescue Error => e
+        # This block runs under the store lock only after receipt lookup found
+        # no accepted request. Earlier validation failures cannot prove that.
+        raise Error.new(e.message, status: e.status, details: (e.details || {}).merge(creation_rejected: true))
       end
       if target.archived? && !archived_agent_visible?(target)
         raise Error.new("Creation request is unavailable", status: 404)
@@ -3900,11 +3904,6 @@ module HQ
       target = @agent_store.start_agent!(target.key, actor:) if newly_created && truthy?(attrs["start"])
       @agent_activity_snapshot.upsert!(target) unless target.archived?
       agent_payload(target)
-    rescue Error => e
-      # An error before the store commits permits correction with a new ID.
-      raise e if target
-
-      raise Error.new(e.message, status: e.status, details: (e.details || {}).merge(creation_rejected: true))
     rescue ArgumentError => e
       raise Error.new(e.message, status: 409)
     rescue DelegationStore::Error => e

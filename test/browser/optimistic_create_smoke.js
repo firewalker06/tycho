@@ -193,6 +193,83 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     assert.equal(await page.evaluate(() => parseRoute().key), accepted.key);
     assert.equal(await createCount(), beforeLoss + 1, "lost response retry duplicated agent");
 
+    // Acceptance survives later project/workspace failure. Never offer a new-ID correction.
+    for (const quick of [false, true]) {
+      await openForm(quick);
+      const beforeUnavailable = await createCount();
+      let originalId;
+      let originalAgent;
+      let originalPayload;
+      await page.route(`${baseUrl}/agents`, async route => {
+        originalPayload = route.request().postDataJSON();
+        originalId = originalPayload.client_request_id;
+        const response = await route.fetch();
+        assert.equal(response.status(), 201);
+        originalAgent = (await response.json()).agent;
+        await route.abort("connectionfailed");
+      }, { times: 1 });
+      await page.locator(quick ? "#quick-agent-form button[type=submit]" : "#agent-form button[value=create-run]").click();
+      await retry.waitFor();
+      await page.waitForFunction(async ({ baseUrl, key }) => !(await (await fetch(`${baseUrl}/agents/${key}`)).json()).agent.running, { baseUrl, key: originalAgent.key });
+      const workspace = originalAgent.workspace;
+      assert(path.isAbsolute(workspace) && workspace.includes("remote-ui"), "workspace mutation must use the isolated smoke fixture");
+      const workspaceMode = fs.statSync(workspace).mode & 0o777;
+      try {
+        if (quick) fs.chmodSync(workspace, 0);
+        else assert((await context.request.patch(`${baseUrl}/settings/hidden`, { data: { scope: "project", key: "web", hidden: true } })).ok());
+        if (!quick) await page.reload({ waitUntil: "networkidle" });
+        await retry.waitFor();
+        const [unavailable] = await Promise.all([
+          page.waitForResponse(r => r.url() === `${baseUrl}/agents` && r.request().method() === "POST"),
+          retry.click(),
+        ]);
+        assert.equal(unavailable.request().postDataJSON().client_request_id, originalId);
+        const unavailableBody = await unavailable.json();
+        assert(!unavailableBody.details?.creation_rejected, "accepted unavailable retry was marked safe to replace");
+        assert(!JSON.stringify(unavailableBody).includes(originalAgent.key) && !JSON.stringify(unavailableBody).includes(originalPayload.prompt), "unavailable response leaked accepted target");
+        await retry.waitFor();
+        assert.equal(await page.locator("[data-edit-agent-create], [data-discard-agent-create]").count(), 0);
+        if (!quick) await page.evaluate(() => refresh({ force: true }));
+        await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
+        await page.waitForFunction(() => location.hash === "#agents");
+        assert.equal(await page.locator("#agent-form").count(), 0, "navigation exposed a replacement form");
+        await page.goBack();
+        await retry.waitFor();
+        await page.reload({ waitUntil: "networkidle" });
+        await retry.waitFor();
+        const pending = await page.evaluate(() => JSON.parse(sessionStorage.getItem(AGENT_CREATION_STORAGE_KEY)).filter(entry => entry.payload));
+        assert.equal(pending.length, 1);
+        assert.equal(pending[0].id, originalId);
+        assert.equal(pending[0].payload.prompt, originalPayload.prompt);
+        assert.equal(await page.locator("[data-edit-agent-create], [data-discard-agent-create]").count(), 0);
+        await capture(quick ? "accepted-workspace-unavailable" : "accepted-project-hidden");
+      } finally {
+        if (quick) fs.chmodSync(workspace, workspaceMode);
+        else assert((await context.request.patch(`${baseUrl}/settings/hidden`, { data: { scope: "project", key: "web", hidden: false } })).ok());
+      }
+      assert((await context.request.post(`${baseUrl}/servers/resources/refresh`, { data: { force: true, tokens: {} } })).ok());
+      await page.waitForFunction(async baseUrl => {
+        const snapshot = await (await fetch(`${baseUrl}/servers/resources`)).json();
+        return snapshot.servers.find(server => server.key === "local")?.projects.some(project => project.key === "web");
+      }, baseUrl);
+      await page.reload({ waitUntil: "networkidle" });
+      await retry.waitFor();
+      await page.evaluate(() => navigate({ type: "agentForm", mode: "create", projectKey: "web" }));
+      await retry.waitFor();
+      assert.equal(await page.locator("#agent-form").count(), 0, "restoration exposed a replacement form");
+      const restoreResponse = page.waitForResponse(r => r.url() === `${baseUrl}/agents` && r.request().method() === "POST");
+      await retry.click();
+      const restored = await restoreResponse;
+      assert.equal(restored.request().postDataJSON().client_request_id, originalId);
+      assert.equal((await restored.json()).agent.key, originalAgent.key);
+      await page.waitForFunction(() => location.hash.startsWith("#agent/"));
+      const agent = (await (await context.request.get(`${baseUrl}/agents/${originalAgent.key}`)).json()).agent;
+      assert.equal(agent.run_count, 1);
+      assert.equal(agent.prompt, originalPayload.prompt);
+      assert.equal(await createCount(), beforeUnavailable + 1);
+      receipts.push({ width, flow: quick ? "accepted-quick-unavailable" : "accepted-project-hidden", sameRequestId: true, sameAgent: true, runCount: agent.run_count, noReplacementActions: true, reloadAndBack: true });
+    }
+
     // The real API rejects whitespace. The user can correct or discard it,
     // including after navigation and reload, without reusing its rejected ID.
     await openForm(false);

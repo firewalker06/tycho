@@ -22,6 +22,7 @@ module RemoteServerTest
   def run!
     assert_remote_agent_lifecycle
     assert_remote_creation_retries
+    assert_accepted_creation_retry_stays_uncertain
     assert_creation_receipt_preserves_hidden_archive_visibility
     assert_slow_request_does_not_block_activity
     assert_remote_responses_include_server_timing_stages
@@ -1165,6 +1166,59 @@ module RemoteServerTest
       assert(HQ::AgentStore.new(registry.projects).load.empty?, "expected retry not to create an active replacement")
       assert(HQ::AgentArchiveStore.new.all.length == 1, "expected exactly one retained archive")
     end
+  end
+
+  def assert_accepted_creation_retry_stays_uncertain
+    classifications = []
+    [false, true].each do |quick|
+      with_remote_temp_store do |dir|
+        workspace = File.join(dir, "workspace")
+        FileUtils.mkdir_p(workspace)
+        registry = registry_for(dir, workspace)
+        service = HQ::RemoteService.new(registry: registry)
+        attrs = { "project_key" => "web", "prompt" => "Private accepted request",
+                  "client_request_id" => "client-accepted-unavailable", "start" => true }
+        attrs["quick_agent"] = true if quick
+        with_stubbed_agent_start do
+          # The client loses this successful response. Only the durable store knows acceptance.
+          accepted = service.create_agent(attrs)
+          port = remote_test_port
+          server = HQ::RemoteServer.new(host: "127.0.0.1", port: port, registry: registry, token: "", output: StringIO.new)
+          thread = Thread.new { server.start }
+          begin
+            wait_for_remote_port(port)
+            if quick
+              FileUtils.mv(workspace, "#{workspace}-unavailable")
+            else
+              service.update_hidden_setting("scope" => "project", "key" => "web", "hidden" => true)
+            end
+            [attrs, attrs.merge("prompt" => "Changed private request")].each do |retry_attrs|
+              response = Net::HTTP.post(URI("http://127.0.0.1:#{port}/agents"), JSON.generate(retry_attrs), "Content-Type" => "application/json")
+              body = JSON.parse(response.body)
+              classifications << [quick ? "quick-unavailable" : "project-hidden", body.dig("details", "creation_rejected")]
+              assert(response.code.to_i >= 400, "expected unavailable retry to fail")
+              assert(!response.body.include?("Private") && !response.body.include?(accepted[:key]) && !body.key?("agent"), "expected no private target payload")
+            end
+          ensure
+            FileUtils.mv("#{workspace}-unavailable", workspace) if File.exist?("#{workspace}-unavailable")
+            service.update_hidden_setting("scope" => "project", "key" => "web", "hidden" => false) unless quick
+            server.shutdown
+            assert(thread.join(10), "expected retry fixture server to stop")
+          end
+          recovered = 2.times.map { Thread.new { HQ::RemoteService.new(registry: registry).create_agent(attrs) } }.map(&:value)
+          assert(recovered.all? { |agent| agent[:key] == accepted[:key] && agent[:run_count] == 1 }, "expected same target and one native start after concurrent recovery")
+          assert(service.agents.length == 1, "expected no duplicate accepted request")
+          begin
+            service.create_agent(attrs.merge("prompt" => "Changed private request"))
+            raise "expected fingerprint conflict after restoration"
+          rescue HQ::RemoteService::Error => e
+            assert(e.status == 409 && !e.details&.dig(:creation_rejected), "expected changed fingerprint to remain unsafe to replace")
+          end
+        end
+      end
+    end
+    puts "accepted retry classifications: #{JSON.generate(classifications)}"
+    assert(classifications.none? { |_flow, rejected| rejected }, "accepted unavailable retry must never permit replacement")
   end
 
   def assert_remote_creation_retries
