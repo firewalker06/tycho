@@ -721,6 +721,7 @@ module PromptQueueTest
                first_terminal.metadata["queue_work_auto_completed"] == true &&
                partial_summary&.fetch("content", "").include?("Some requested work remains") &&
                settled_batch.fetch("state") == "resolved" && batch &&
+               settled_batch.dig("dispositions", "first-batch-instruction", "outcome") == "completed" &&
                batch.fetch("entries").map { |entry| entry["id"] } == entries.map(&:first) &&
                batch.fetch("entries").map { |entry| entry["source"] } == entries.map(&:last) &&
                dispatched.prompt_queue.map { |entry| entry["id"] } == ["future-entry"],
@@ -734,12 +735,17 @@ module PromptQueueTest
         arguments = File.readlines(capture).map { |line| JSON.parse(line) }
         read_events = HQ::AgentMemory.new(finished).events.select { |event| event.dig("metadata", "queue_read") == true }
         resolved = finished.queue_work_batch(batch.fetch("id"))
+        expected_dispositions = entries.to_h do |id, source|
+          [id, source == "delegation_callback" ? "incorporated" : "completed"]
+        end
+        actual_dispositions = resolved.fetch("dispositions").transform_values { |item| item["outcome"] }
         assert(finished.run_count == 3 && finished.session_id == "partial-queue-session" &&
                arguments.length == 2 && arguments.last.join(" ").include?("TYCHO QUEUE WORK CONTRACT") &&
                arguments.last.include?("partial-queue-session") &&
                entries.all? { |id, _source| arguments.last.join(" ").include?(id) } &&
                !arguments.last.join(" ").include?("future-entry") && read_events.length == 2 &&
-               resolved.fetch("state") == "resolved" && finished.prompt_queue.map { |entry| entry["id"] } == ["future-entry"],
+               resolved.fetch("state") == "resolved" && actual_dispositions == expected_dispositions &&
+               finished.prompt_queue.map { |entry| entry["id"] } == ["future-entry"],
                "expected #{name} restart/replay to keep both batches resolved once and one future entry; " \
                "runs=#{finished.run_count}, session=#{finished.session_id.inspect}, captures=#{arguments.length}, " \
                "reads=#{read_events.length}, batch=#{resolved['state']}, " \
