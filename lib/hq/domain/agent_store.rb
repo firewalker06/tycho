@@ -247,9 +247,20 @@ module HQ
     # Keep the read, construction, and commit of a new agent in one store
     # transaction so a concurrent foreground write cannot be overwritten by a
     # worker's stale agent list.
-    def create_from_template_and_persist!(project, template_key, delegation: nil)
+    def create_from_template_and_persist!(project, template_key, delegation: nil, creation_request: nil)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
+        if creation_request
+          matches_request = ->(agent) { agent.creation_request&.fetch("id", nil) == creation_request.fetch("id") }
+          existing = agents.find(&matches_request) || AgentArchiveStore.new.find_creation_request(creation_request.fetch("id"))&.agent
+          if existing
+            unless existing.creation_request == creation_request
+              raise ArgumentError, "This creation request was already used with different options"
+            end
+            next existing
+          end
+        end
         target = create_from_template(project, template_key, existing_agents: agents)
+        target.creation_request = creation_request
         yield target, agents if block_given?
         if delegation
           delegation[:validate]&.call(agents)

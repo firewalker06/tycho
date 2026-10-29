@@ -21,6 +21,10 @@ module RemoteServerTest
 
   def run!
     assert_remote_agent_lifecycle
+    assert_remote_creation_retries
+    assert_creation_receipt_requires_complete_archive_scan
+    assert_accepted_creation_retry_stays_uncertain
+    assert_creation_receipt_preserves_hidden_archive_visibility
     assert_slow_request_does_not_block_activity
     assert_remote_responses_include_server_timing_stages
     assert_slow_requests_log_stage_split
@@ -1124,6 +1128,251 @@ module RemoteServerTest
              "expected Remote custom Codex install to use the isolated official path")
       assert(service.setup.dig(:skill_installation, :harnesses, 0, :status) == "installed",
              "expected setup to expose current skill status")
+    end
+  end
+
+  def assert_creation_receipt_preserves_hidden_archive_visibility
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      registry = registry_for(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      attrs = { "project_key" => "web", "prompt" => "Private archived prompt", "name" => "Private archive",
+                "client_request_id" => "client-hidden-archive" }
+      created = service.create_agent(attrs)
+      service.update_hidden_setting("scope" => "project", "key" => "web", "hidden" => true)
+      service.archive_agent(created[:key])
+      service.update_hidden_setting("scope" => "project", "key" => "web", "hidden" => false)
+      assert(service.archived_agents.dig(:pagination, :total) == 0, "expected normal archive discovery to stay hidden")
+      begin
+        leaked = service.create_agent(attrs)
+        raise "receipt leaked hidden payload: #{leaked.slice(:key, :name, :prompt)}"
+      rescue HQ::RemoteService::Error => e
+        assert(e.status == 404, "expected unreadable receipt target to be unavailable")
+        assert(!JSON.generate([e.message, e.details]).include?("Private"), "expected no private payload in error")
+      end
+      port = remote_test_port
+      server = HQ::RemoteServer.new(host: "127.0.0.1", port: port, registry: registry, token: "", output: StringIO.new)
+      thread = Thread.new { server.start }
+      begin
+        wait_for_remote_port(port)
+        response = Net::HTTP.post(URI("http://127.0.0.1:#{port}/agents"), JSON.generate(attrs), "Content-Type" => "application/json")
+        assert(response.code == "404", "expected HTTP receipt retry to remain unavailable")
+        assert(!response.body.include?("Private") && !response.body.include?(created[:key]), "expected no private HTTP payload")
+        assert(!JSON.parse(response.body).key?("agent"), "expected no hidden agent response")
+      ensure
+        server.shutdown
+        assert(thread.join(10), "expected fixture server to stop")
+      end
+      assert(HQ::AgentStore.new(registry.projects).load.empty?, "expected retry not to create an active replacement")
+      assert(HQ::AgentArchiveStore.new.all.length == 1, "expected exactly one retained archive")
+    end
+  end
+
+  def assert_creation_receipt_requires_complete_archive_scan
+    observations = []
+    [false, true].each do |backup|
+      [false, true].each do |invalid|
+        with_remote_temp_store do |dir|
+          workspace = File.join(dir, "workspace")
+          FileUtils.mkdir_p(workspace)
+          registry = registry_for(dir, workspace)
+          service = HQ::RemoteService.new(registry: registry)
+          attrs = { "project_key" => "web", "prompt" => "Private archived receipt prompt", "start" => true,
+                    "client_request_id" => "client-cold-archive-retry" }
+          with_stubbed_agent_start do
+            accepted = service.create_agent(attrs)
+            service.archive_agent(accepted[:key])
+            record = HQ::AgentArchiveStore.new.find(accepted[:key])
+            manifest = record.manifest_path
+            paths = [manifest]
+            if backup
+              FileUtils.cp(manifest, "#{manifest}.bak")
+              paths << "#{manifest}.bak"
+            end
+            paths.each { |path| File.chmod(0, path) }
+            retry_attrs = invalid ? attrs.merge("prompt" => "   ") : attrs
+            port = remote_test_port
+            server = HQ::RemoteServer.new(host: "127.0.0.1", port: port, registry: registry, token: "", output: StringIO.new)
+            thread = Thread.new { server.start }
+            begin
+              wait_for_remote_port(port)
+              HQ::AgentArchiveStore.cache_mutex.synchronize { HQ::AgentArchiveStore.snapshot_cache.clear }
+              response = Net::HTTP.post(URI("http://127.0.0.1:#{port}/agents"), JSON.generate(retry_attrs), "Content-Type" => "application/json")
+              body = JSON.parse(response.body)
+              observations << { backup: backup, invalid: invalid, status: response.code.to_i, run_count: body.dig("agent", "run_count"),
+                                rejected: body.dig("details", "creation_rejected"), active: HQ::AgentStore.new(registry.projects).load.length }
+              # Also exercise a fresh production service with a cold cache.
+              HQ::AgentArchiveStore.cache_mutex.synchronize { HQ::AgentArchiveStore.snapshot_cache.clear }
+              begin
+                HQ::RemoteService.new(registry: registry).create_agent(retry_attrs)
+                observations.last[:service_uncertain] = false
+              rescue HQ::RemoteService::Error => e
+                observations.last[:service_uncertain] = e.status == 503 && !e.details&.dig(:creation_rejected)
+              end
+              observations.last[:private_payload] = response.body.include?(accepted[:key]) || response.body.include?(attrs["prompt"])
+            ensure
+              paths.each { |path| File.chmod(0600, path) }
+              server.shutdown
+              assert(thread.join(10), "expected cold archive server to stop")
+            end
+            HQ::AgentArchiveStore.cache_mutex.synchronize { HQ::AgentArchiveStore.snapshot_cache.clear }
+            restored = HQ::RemoteService.new(registry: registry).create_agent(attrs)
+            observations.last[:original_recovered] = restored[:key] == accepted[:key] && restored[:archived] && restored[:run_count] == 1
+            if backup
+              begin
+                File.chmod(0, manifest)
+                from_backup = HQ::RemoteService.new(registry: registry).create_agent(attrs)
+                assert(from_backup[:key] == accepted[:key] && from_backup[:run_count] == 1, "expected readable backup to recover the original receipt")
+              ensure
+                File.chmod(0600, manifest)
+              end
+            end
+            begin
+              File.chmod(0, HQ::AGENT_ARCHIVE_DIR)
+              service.create_agent(attrs)
+              raise "expected archive enumeration failure"
+            rescue HQ::RemoteService::Error => e
+              assert(e.status == 503 && !e.details&.dig(:creation_rejected), "expected failed archive enumeration to remain uncertain")
+            ensure
+              File.chmod(0700, HQ::AGENT_ARCHIVE_DIR)
+            end
+            begin
+              service.create_agent(attrs.merge("prompt" => "Changed request"))
+              raise "expected readable archive fingerprint conflict"
+            rescue HQ::RemoteService::Error => e
+              assert(e.status == 409 && !e.details&.dig(:creation_rejected), "expected readable fingerprint conflict without safe rejection")
+            end
+          end
+        end
+      end
+    end
+    puts "cold archive receipt observations: #{JSON.generate(observations)}"
+    assert(observations.all? { |o| o[:status] == 503 && !o[:rejected] && o[:active].zero? && o[:service_uncertain] && !o[:private_payload] && o[:original_recovered] },
+           "incomplete archive scans must remain uncertain without duplicate creation or private payload")
+  end
+
+  def assert_accepted_creation_retry_stays_uncertain
+    classifications = []
+    [false, true].each do |quick|
+      with_remote_temp_store do |dir|
+        workspace = File.join(dir, "workspace")
+        FileUtils.mkdir_p(workspace)
+        registry = registry_for(dir, workspace)
+        service = HQ::RemoteService.new(registry: registry)
+        attrs = { "project_key" => "web", "prompt" => "Private accepted request",
+                  "client_request_id" => "client-accepted-unavailable", "start" => true }
+        attrs["quick_agent"] = true if quick
+        with_stubbed_agent_start do
+          # The client loses this successful response. Only the durable store knows acceptance.
+          accepted = service.create_agent(attrs)
+          port = remote_test_port
+          server = HQ::RemoteServer.new(host: "127.0.0.1", port: port, registry: registry, token: "", output: StringIO.new)
+          thread = Thread.new { server.start }
+          begin
+            wait_for_remote_port(port)
+            if quick
+              FileUtils.mv(workspace, "#{workspace}-unavailable")
+            else
+              service.update_hidden_setting("scope" => "project", "key" => "web", "hidden" => true)
+            end
+            [attrs, attrs.merge("prompt" => "Changed private request")].each do |retry_attrs|
+              response = Net::HTTP.post(URI("http://127.0.0.1:#{port}/agents"), JSON.generate(retry_attrs), "Content-Type" => "application/json")
+              body = JSON.parse(response.body)
+              classifications << [quick ? "quick-unavailable" : "project-hidden", body.dig("details", "creation_rejected")]
+              assert(response.code.to_i >= 400, "expected unavailable retry to fail")
+              assert(!response.body.include?("Private") && !response.body.include?(accepted[:key]) && !body.key?("agent"), "expected no private target payload")
+            end
+          ensure
+            FileUtils.mv("#{workspace}-unavailable", workspace) if File.exist?("#{workspace}-unavailable")
+            service.update_hidden_setting("scope" => "project", "key" => "web", "hidden" => false) unless quick
+            server.shutdown
+            assert(thread.join(10), "expected retry fixture server to stop")
+          end
+          recovered = 2.times.map { Thread.new { HQ::RemoteService.new(registry: registry).create_agent(attrs) } }.map(&:value)
+          assert(recovered.all? { |agent| agent[:key] == accepted[:key] && agent[:run_count] == 1 }, "expected same target and one native start after concurrent recovery")
+          assert(service.agents.length == 1, "expected no duplicate accepted request")
+          begin
+            service.create_agent(attrs.merge("prompt" => "Changed private request"))
+            raise "expected fingerprint conflict after restoration"
+          rescue HQ::RemoteService::Error => e
+            assert(e.status == 409 && !e.details&.dig(:creation_rejected), "expected changed fingerprint to remain unsafe to replace")
+          end
+        end
+      end
+    end
+    puts "accepted retry classifications: #{JSON.generate(classifications)}"
+    assert(classifications.none? { |_flow, rejected| rejected }, "accepted unavailable retry must never permit replacement")
+  end
+
+  def assert_remote_creation_retries
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      registry = registry_for(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      attrs = { "project_key" => "web", "prompt" => "Keep this exact request.",
+                "client_request_id" => "client-creation-retry", "start" => true }
+      begin
+        service.create_agent(attrs.merge("client_request_id" => "invalid request id"))
+        raise "expected invalid creation ID to fail"
+      rescue HQ::RemoteService::Error => e
+        assert(e.status == 400 && service.agents.empty?, "expected invalid ID to fail before persistence")
+      end
+      begin
+        service.create_agent(attrs.merge("prompt" => "   ", "client_request_id" => "client-blank-prompt"))
+        raise "expected empty prompt rejection"
+      rescue HQ::RemoteService::Error => e
+        assert(e.status == 400 && e.details[:creation_rejected], "expected definite validation rejection before save")
+        assert(service.agents.empty?, "expected rejected prompt not to persist an agent")
+      end
+      with_stubbed_agent_start do
+        created = service.create_agent(attrs)
+        # A fresh service has no in-memory receipt; retry must use the store.
+        retried = HQ::RemoteService.new(registry: registry).create_agent(attrs)
+        assert(retried[:key] == created[:key], "expected retry to return the same persisted agent")
+        assert(retried[:run_count] == 1, "expected retry not to start a second run")
+        assert(service.agents.length == 1, "expected one agent after retry")
+        begin
+          service.create_agent(attrs.merge("prompt" => "Different request"))
+          raise "expected changed retry to fail"
+        rescue HQ::RemoteService::Error => e
+          assert(e.status == 409, "expected conflicting request ID to return 409")
+        end
+      end
+      only_attrs = attrs.merge("client_request_id" => "client-create-only", "start" => false)
+      only = service.create_agent(only_attrs)
+      assert(only[:run_count] == 0, "expected Create only not to run")
+      service.archive_agent(only[:key])
+      archived = service.create_agent(only_attrs)
+      assert(archived[:key] == only[:key] && archived[:archived], "expected archived retry not to recreate the agent")
+
+      concurrent_attrs = only_attrs.merge("client_request_id" => "client-concurrent-create")
+      results = 2.times.map { Thread.new { HQ::RemoteService.new(registry: registry).create_agent(concurrent_attrs) } }.map(&:value)
+      assert(results.map { |result| result[:key] }.uniq.length == 1, "expected concurrent retry to create once")
+      failing_attrs = attrs.merge("client_request_id" => "client-start-failure")
+      with_stubbed_agent_start_error("Fixture native start failed") do
+        begin
+          service.create_agent(failing_attrs)
+          raise "expected fixture startup failure"
+        rescue RuntimeError => e
+          assert(e.message.include?("Fixture native start failed"), "expected startup error")
+        end
+      end
+      recovered = service.create_agent(failing_attrs)
+      saved_error_attrs = attrs.merge("client_request_id" => "client-saved-error", "prompt" => "Saved before startup error")
+      with_stubbed_agent_start_error(HQ::RemoteService::Error.new("Launch rejected after save", status: 400)) do
+        begin
+          service.create_agent(saved_error_attrs)
+          raise "expected launch error"
+        rescue HQ::RemoteService::Error => e
+          assert(e.status == 400 && !e.details&.dig(:creation_rejected), "expected saved creation error to remain uncertain")
+        end
+      end
+      saved = service.create_agent(saved_error_attrs)
+      assert(saved[:run_count] == 0, "expected retry not to start a saved agent after a launch error")
+      assert(recovered[:prompt] == attrs["prompt"], "expected retry to retain the accepted prompt")
+      assert(service.agents.count { |agent| agent[:prompt] == attrs["prompt"] } == 3, "expected no duplicate after startup failure")
     end
   end
 

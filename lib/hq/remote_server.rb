@@ -3879,14 +3879,35 @@ module HQ
                        validate: ->(agents) { validate_delegation_parent!(attrs, agents:, actor:) }
                      }
                    end
-      target = @agent_store.create_from_template_and_persist!(project, template_key, delegation:) do |candidate, _current|
+      request_id = prompt_client_request_id(attrs)
+      if attrs.key?("client_request_id") && !request_id
+        raise Error.new("Invalid creation request ID", status: 400)
+      end
+      creation_request = if request_id
+                           fingerprint = Digest::SHA256.hexdigest(JSON.generate([attrs.sort.to_h, actor&.agent_key]))
+                           { "id" => request_id, "fingerprint" => fingerprint }
+                         end
+      newly_created = false
+      target = @agent_store.create_from_template_and_persist!(project, template_key, delegation:, creation_request:) do |candidate, _current|
+        newly_created = true
         candidate.update!(**agent_attrs(candidate, attrs, project: project, creating: true, effective: effective_settings))
         candidate.preserve_name! unless attrs["name"].to_s.strip.empty?
         @agent_store.ensure_project_context_prompt!(candidate, project)
+      rescue Error => e
+        # This block runs under the store lock only after receipt lookup found
+        # no accepted request. Earlier validation failures cannot prove that.
+        raise Error.new(e.message, status: e.status, details: (e.details || {}).merge(creation_rejected: true))
       end
-      target = @agent_store.start_agent!(target.key, actor:) if truthy?(attrs["start"])
-      @agent_activity_snapshot.upsert!(target)
+      if target.archived? && !archived_agent_visible?(target)
+        raise Error.new("Creation request is unavailable", status: 404)
+      end
+      target = @agent_store.start_agent!(target.key, actor:) if newly_created && truthy?(attrs["start"])
+      @agent_activity_snapshot.upsert!(target) unless target.archived?
       agent_payload(target)
+    rescue AgentArchiveStore::ReceiptLookupError
+      raise Error.new("Could not check creation request. Try again.", status: 503)
+    rescue ArgumentError => e
+      raise Error.new(e.message, status: 409)
     rescue DelegationStore::Error => e
       raise Error.new(e.message, status: actor&.parent? ? 403 : 409)
     end
