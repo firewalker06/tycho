@@ -340,12 +340,12 @@ Auto-refresh reads the in-memory `/servers/resources` catalog first, so slow or 
 
 A bounded background worker pool refreshes local and peer snapshots with short timeouts. Failed, unauthorized, incompatible, and incomplete responses retain the last successful snapshot and use exponential retry backoff. A valid response must contain both complete `agents` and `projects` arrays; it replaces the prior snapshot atomically, so resources missing from that successful response are treated as deleted or archived. Removing a peer or choosing **Forget cached data** removes its persisted snapshot.
 
-- `/servers/resources` is polled while the page is visible.
+- Periodic catalog and agent activity requests run only while the browser window is visible and focused (`!document.hidden && document.hasFocus()`). Blur or hide clears both timers immediately. In-flight requests can finish, but cannot restart timers while inactive. Returning to an active window starts one timer per loop; repeated focus and visibility events do not add timers.
 - `/setup` and `/schedules` refresh separately as local server state.
 - The selected agent's `/conversation` is fetched only when that agent's `revision` changes.
-- Polling uses three server-advertised refresh intervals from `/setup`: active views every 5 seconds, idle views every 10 seconds, and hidden tabs every 30 seconds.
+- While the window is active, catalog polling uses server-advertised refresh intervals from `/setup`: active views every 5 seconds and idle views every 10 seconds. The 30-second interval remains available for error backoff; hidden or unfocused windows do not poll.
 - Agent conversations, running agents, and pending server refreshes are active. The scheduler uses one interval at a time and backs off to 10 or 30 seconds after network errors.
-- Start, stop, and send operations trigger an immediate refresh.
+- Start, stop, send, and manual refresh actions still trigger an immediate refresh, including while inactive. Draft saves, explicit notification actions, backend managed agents, and schedules continue to work.
 
 ## Screenshot Safety
 
