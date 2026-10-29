@@ -28,7 +28,7 @@ module RemoteUIArchiveCloneTest
       assert.equal(enabled.disabled, false, "Repeated pending render must permit retry after failure");
       assert.equal(disabled.disabled, true, "Previously disabled controls must stay disabled");
       (async () => {
-        for (const mode of ["clone", "edit", "create"]) {
+        for (const mode of ["clone", "edit"]) {
           for (const outcome of ["archived", "active", "rejected"]) {
             const calls = [];
             let pending;
@@ -41,6 +41,7 @@ module RemoteUIArchiveCloneTest
             const context = {
               event: { target: form, submitter: { value: mode === "create" ? "create-run" : mode } },
               agentFormPayload: () => ({ name: "Edited name" }),
+              formPending: () => false,
               mutate: callback => { pending = callback(); },
               apiPost: request, apiPatch: request,
               retireArchivedAgent: key => calls.push(["retire", key]),
@@ -48,7 +49,7 @@ module RemoteUIArchiveCloneTest
               clearFormDraft: () => calls.push(["clear"]),
               navigate: route => calls.push(["navigate", route.key]),
             };
-            vm.runInNewContext(source.slice(start, end), context);
+            vm.runInNewContext(`(() => {${source.slice(start, end)}\n})()`, context);
             if (outcome === "rejected") await assert.rejects(pending, /Save failed/);
             else await pending;
             const payload = calls[0][2];
@@ -60,6 +61,28 @@ module RemoteUIArchiveCloneTest
             assert.equal(calls.some(c => c[0] === "clear"), outcome !== "rejected");
             assert.equal(calls.some(c => c[0] === "navigate"), outcome !== "rejected");
             if (outcome === "rejected") assert.equal(calls.length, 1, "Rejected save must retain source and form");
+          }
+        }
+        for (const action of ["create", "create-run"]) {
+          for (const alreadyPending of [false, true]) {
+            const calls = [];
+            const form = { id: "agent-form", dataset: { mode: "create", projectKey: "web" } };
+            const context = {
+              event: { target: form, submitter: { value: action } },
+              formPending: () => alreadyPending,
+              agentFormPayload: () => ({ name: "Optional name", prompt: "Keep prompt" }),
+              beginAgentCreation: (payload, submittedForm) => calls.push({ payload, submittedForm }),
+              mutate: () => { throw new Error("Create must use pending Conversation"); },
+            };
+            vm.runInNewContext(`(() => {${source.slice(start, end)}\n})()`, context);
+            assert.equal(calls.length, alreadyPending ? 0 : 1, "Pending form must not create twice");
+            if (!alreadyPending) {
+              assert.equal(calls[0].submittedForm, form);
+              assert.equal(calls[0].payload.project_key, "web");
+              assert.equal(calls[0].payload.name, "Optional name");
+              assert.equal(calls[0].payload.prompt, "Keep prompt");
+              assert.equal(calls[0].payload.start, action === "create-run");
+            }
           }
         }
       })().catch(error => { console.error(error); process.exit(1); });
