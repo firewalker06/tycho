@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "time"
+require "shellwords"
 
 require_relative "../harness_registry"
 require_relative "openai_model_pricing"
@@ -75,6 +76,24 @@ module HQ
       (version.split(".").map(&:to_i) <=> [2, 1, 277]) >= 0
     end
 
+    def claude_resume_requested?(run)
+      return false unless run.respond_to?(:command)
+
+      arguments = Shellwords.split(run.command.to_s)
+      return true if arguments.empty?
+
+      # ManagedAgent saves Shellwords.join(argv), so even a multi-line prompt
+      # stays one argument. Quoting does not turn a native option into text;
+      # the explicit -- separator does.
+      arguments.take_while { |argument| argument != "--" }.any? do |argument|
+        %w[--resume --continue -r -c].include?(argument) ||
+          argument.start_with?("--resume=") || argument.match?(/\A-r.+/)
+      end
+    rescue ArgumentError
+      true
+    end
+    private_class_method :claude_resume_requested?
+
     def claude_session_snapshot(agent:, run:, usage:, previous:, prior_session_runs:)
       return previous if previous && previous["through_run_count"].to_i == agent.run_count
 
@@ -96,7 +115,7 @@ module HQ
       elsif run.session_id.to_s.empty?
         reason = "Claude did not report a native session ID"
       elsif prior_session_runs.zero? && previous.nil? &&
-            !(run.respond_to?(:command) && run.command.to_s.match?(/--(?:resume|continue)\b/))
+            !claude_resume_requested?(run)
         run_cost = reported
       elsif baseline && adjacent && previous["reported_cost_scope"] == "session" && reported >= baseline
         run_cost = reported - baseline

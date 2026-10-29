@@ -42,6 +42,7 @@ module ClaudeCostTest
              "expected loading to preserve saved summaries and latest total")
     end
     assert_edges
+    assert_resume_option_boundaries
     puts "claude_cost_test: ok"
   end
 
@@ -97,6 +98,49 @@ module ClaudeCostTest
     old_entries = [helper.usage("result", "total_cost_usd" => 0.75, "claude_code_version" => "2.1.276")]
     snapshot = HQ::AgentCostSnapshot.advance(agent:, run: fifth, usage_entries: old_entries)
     assert(snapshot["run_amount_usd"] == 0.75, "expected older Claude to retain per-call semantics")
+  end
+
+  def assert_resume_option_boundaries
+    fresh_commands = [
+      Shellwords.join(["claude", "--print", "Explain the --resume option"]),
+      Shellwords.join(["claude", "--print", "Explain the --continue option"]),
+      Shellwords.join(["claude", "--print", "Explain '--resume' and \"--continue\"; don't run them.\nUse -r or -c?"]),
+      "claude --print 'Explain the --resume option'",
+      "claude --print \"Explain the --continue option\"",
+      Shellwords.join(["claude", "--print", "--", "--resume"]),
+      Shellwords.join(["claude", "--print", "--", "--continue"])
+    ]
+    fresh_commands.each do |command|
+      snapshot = first_observed_cost(command)
+      assert(snapshot["run_amount_usd"] == 1.25,
+             "expected a fresh prompt to retain its known estimate: #{command.inspect}")
+    end
+    resumed_commands = [
+      ["claude", "--print", "--resume", "prior-session", "Continue the task"],
+      ["claude", "--print", "--resume=prior-session", "Continue the task"],
+      ["claude", "--print", "-r", "prior-session", "Continue the task"],
+      ["claude", "--print", "-rprior-session", "Continue the task"],
+      ["claude", "--print", "--continue", "Continue the task"],
+      ["claude", "--print", "-c", "Continue the task"],
+      ["claude", "--print", "--continue"],
+      ["claude", "--print", "--resume", "prior-session"]
+    ]
+    resumed_commands.each do |arguments|
+      snapshot = first_observed_cost(Shellwords.join(arguments))
+      assert(snapshot["run_amount_usd"].nil? && snapshot["amount_usd"] == 1.25,
+             "expected a real resume without a baseline to remain unavailable: #{arguments.inspect}")
+    end
+    [nil, "", "claude --print 'unclosed"].each do |command|
+      snapshot = first_observed_cost(command)
+      assert(snapshot["run_amount_usd"].nil?, "expected an unknown legacy command to stay conservative")
+    end
+  end
+
+  def first_observed_cost(command)
+    run = HQ::ManagedAgent::AgentRun.new(session_id: "session", command:, finished_at: Time.utc(2026, 10, 29))
+    agent = AgentCostSnapshotTest.agent("claude", [run])
+    entries = [AgentCostSnapshotTest.usage("result", "total_cost_usd" => 1.25, "claude_code_version" => "2.1.311")]
+    HQ::AgentCostSnapshot.advance(agent:, run:, usage_entries: entries)
   end
 
   def assert(condition, message)
