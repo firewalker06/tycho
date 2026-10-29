@@ -21,6 +21,7 @@ module RemoteServerTest
 
   def run!
     assert_remote_agent_lifecycle
+    assert_remote_creation_retries
     assert_slow_request_does_not_block_activity
     assert_remote_responses_include_server_timing_stages
     assert_slow_requests_log_stage_split
@@ -1124,6 +1125,59 @@ module RemoteServerTest
              "expected Remote custom Codex install to use the isolated official path")
       assert(service.setup.dig(:skill_installation, :harnesses, 0, :status) == "installed",
              "expected setup to expose current skill status")
+    end
+  end
+
+  def assert_remote_creation_retries
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      registry = registry_for(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      attrs = { "project_key" => "web", "prompt" => "Keep this exact request.",
+                "client_request_id" => "client-creation-retry", "start" => true }
+      begin
+        service.create_agent(attrs.merge("client_request_id" => "invalid request id"))
+        raise "expected invalid creation ID to fail"
+      rescue HQ::RemoteService::Error => e
+        assert(e.status == 400 && service.agents.empty?, "expected invalid ID to fail before persistence")
+      end
+      with_stubbed_agent_start do
+        created = service.create_agent(attrs)
+        # A fresh service has no in-memory receipt; retry must use the store.
+        retried = HQ::RemoteService.new(registry: registry).create_agent(attrs)
+        assert(retried[:key] == created[:key], "expected retry to return the same persisted agent")
+        assert(retried[:run_count] == 1, "expected retry not to start a second run")
+        assert(service.agents.length == 1, "expected one agent after retry")
+        begin
+          service.create_agent(attrs.merge("prompt" => "Different request"))
+          raise "expected changed retry to fail"
+        rescue HQ::RemoteService::Error => e
+          assert(e.status == 409, "expected conflicting request ID to return 409")
+        end
+      end
+      only_attrs = attrs.merge("client_request_id" => "client-create-only", "start" => false)
+      only = service.create_agent(only_attrs)
+      assert(only[:run_count] == 0, "expected Create only not to run")
+      service.archive_agent(only[:key])
+      archived = service.create_agent(only_attrs)
+      assert(archived[:key] == only[:key] && archived[:archived], "expected archived retry not to recreate the agent")
+
+      concurrent_attrs = only_attrs.merge("client_request_id" => "client-concurrent-create")
+      results = 2.times.map { Thread.new { HQ::RemoteService.new(registry: registry).create_agent(concurrent_attrs) } }.map(&:value)
+      assert(results.map { |result| result[:key] }.uniq.length == 1, "expected concurrent retry to create once")
+      failing_attrs = attrs.merge("client_request_id" => "client-start-failure")
+      with_stubbed_agent_start_error("Fixture native start failed") do
+        begin
+          service.create_agent(failing_attrs)
+          raise "expected fixture startup failure"
+        rescue RuntimeError => e
+          assert(e.message.include?("Fixture native start failed"), "expected startup error")
+        end
+      end
+      recovered = service.create_agent(failing_attrs)
+      assert(recovered[:prompt] == attrs["prompt"], "expected retry to retain the accepted prompt")
+      assert(service.agents.count { |agent| agent[:prompt] == attrs["prompt"] } == 3, "expected no duplicate after startup failure")
     end
   end
 

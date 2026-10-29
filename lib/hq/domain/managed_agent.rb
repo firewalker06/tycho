@@ -180,7 +180,8 @@ module HQ
                    archived: false, archive_path: nil, archived_at: nil, project_hidden_at_archive: nil,
                    prompt_queue: nil, prompt_queue_claim: nil, prompt_queue_dispatch_error: nil, queue_work: nil, role: nil,
                    context_pressure_acknowledged_signal: nil, context_pressure_dismissed: false,
-                   context_replacement_recovery: nil, auto_name_default: nil)
+                   context_replacement_recovery: nil, auto_name_default: nil, creation_request: nil)
+      @creation_request = creation_request.is_a?(Hash) ? creation_request.slice("id", "fingerprint") : nil
       @key = key
       @name = name
       @auto_name_default = auto_name_default.is_a?(String) ? auto_name_default : nil
@@ -327,6 +328,7 @@ module HQ
         cost_snapshot: hash["cost_snapshot"],
         total_run_count: hash["total_run_count"],
         auto_name_default: hash["auto_name_default"],
+        creation_request: hash["creation_request"],
         project_group: hash["project_group"],
         delegation_parent: hash["delegation_parent"],
         archived: hash["archived"],
@@ -430,6 +432,8 @@ module HQ
                          :reasoning_effort_from_config, :unquote_argument,
                          :nonempty_argument
 
+    attr_accessor :creation_request
+
     def to_hash
       result = {
         "key" => @key,
@@ -468,6 +472,7 @@ module HQ
       result["project_group"] = @project_group unless @project_group.empty?
       result["role"] = @role unless @role.to_s.empty?
       result["delegation_parent"] = @delegation_parent if @delegation_parent
+      result["creation_request"] = @creation_request if @creation_request
       result["archived"] = true if archived?
       result["archive_path"] = @archive_path if archived? && @archive_path
       result["archived_at"] = @archived_at&.iso8601 if archived? && @archived_at

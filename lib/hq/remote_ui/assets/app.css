@@ -9965,3 +9965,7 @@ body:has(.inquiry-form-full-screen) {
 @media (max-width: 560px) {
   .notification-debugger .kv-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+.pending-agent-conversation { min-height: 55vh; overflow-wrap: anywhere; }
+.pending-agent-conversation details { margin-block: 1.5rem; }
+.creation-request-prompt { white-space: pre-wrap; }
