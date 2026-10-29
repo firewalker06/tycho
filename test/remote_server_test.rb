@@ -9753,8 +9753,8 @@ module RemoteServerTest
            js[:body].include?('attachment?.filename || attachment?.original_filename') &&
            js[:body].include?('target.split(/[\\\\/]/).filter(Boolean).pop()'),
            "expected Remote UI downloads to prefer original filenames over display titles")
-    assert(js[:body].include?('kv("Est. Cost", sessionCostSnapshotText(summary.costSnapshot))'),
-           "expected detailed Summary pages to render the finalized session-cost snapshot")
+    assert(js[:body].include?('kv(summaryCostLabel(summary.costSnapshot), summaryCostSnapshotText(summary.costSnapshot))'),
+           "expected detailed Summary pages to render the finalized run-cost snapshot")
     assert(!js[:body].include?('kv("Completed", timeShort(summary.createdAt'),
            "expected detailed Summary pages to avoid repeating the header timestamp")
     assert(js[:body].include?('return "Untracked";'),

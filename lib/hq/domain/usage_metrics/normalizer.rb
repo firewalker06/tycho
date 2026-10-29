@@ -6,6 +6,7 @@ require "time"
 
 require_relative "../../harness_registry"
 require_relative "provider_telemetry"
+require_relative "../agent_cost_snapshot"
 require_relative "values"
 
 module HQ
@@ -115,6 +116,15 @@ module HQ
                  elsif cost.nil?
                    "#{adapter_label(adapter)} did not report a run cost"
                  end
+        if adapter == "claude" && HQ::AgentCostSnapshot.claude_session_totals?(entries)
+          snapshot = @agent.respond_to?(:cost_snapshot) ? @agent.cost_snapshot : nil
+          snapshot = nil unless snapshot && snapshot["through_run_count"].to_i == @agent.run_count &&
+                                snapshot["source"] == "claude_session_result" && snapshot["session_id"] == @run.session_id &&
+                                present(snapshot["run_id"]) && snapshot["run_id"] == @run.run_id
+          cost = snapshot && snapshot["run_amount_usd"]
+          reason = cost.nil? ? snapshot&.fetch("reason_unavailable", nil) || "Claude run cost has no compatible snapshot" : nil
+          attribution.each { |item| item["scope"] = "session" }
+        end
         {
           "tokens" => tokens,
           "cumulative_tokens" => nil,
@@ -239,7 +249,7 @@ module HQ
       def safe_usage_metadata(value)
         allowed = %w[
           event_type total_cost_usd usage model model_usage subtype is_error duration_ms duration_api_ms
-          num_turns session_id provider
+          num_turns session_id provider claude_code_version
         ]
         value.select { |key, _entry| allowed.include?(key.to_s) }
       end
