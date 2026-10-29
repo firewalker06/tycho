@@ -24,6 +24,18 @@ but interrupted startup returns the existing agent for explicit inspection or
 start. Measurements and limits are in
 `docs/research/agent-creation-card-750.md`.
 
+## Quick Agent opening
+
+Quick Agent opens an editable prompt before option reads finish. A local
+`GET /quick-agent/options` supplies eligible projects, template defaults, and
+shared offline harness catalogs without Settings discovery. Cached peer choices
+arrive through the existing resource catalog; only the selected peer needs a
+project detail read. Creation waits for the selected project's known options,
+with server validation unchanged. Session/request guards reject stale replies.
+Close retains the in-memory draft until submission or explicit discard; reload
+starts a new opening draft. The existing creation receipt protocol is unchanged.
+See [Card 770 evidence](research/quick-agent-options-card-770.md).
+
 ## Experimental native agy support
 
 Tycho adds a native Antigravity CLI adapter with independent
