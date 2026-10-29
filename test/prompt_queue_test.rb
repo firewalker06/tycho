@@ -21,6 +21,8 @@ module PromptQueueTest
     assert_pending_queue_visibility_tracks_processing_state
     assert_result_statuses_apply_queue_release_policy
     assert_partial_release_matrix_preserves_fifo_and_later_work
+    assert_terminal_partial_run_dispatches_pending_work_once
+    assert_input_required_terminal_result_keeps_pending_work_gated
     assert_selected_processing_preserves_fifo_and_prevents_duplicate_dispatch
     assert_stale_selected_process_preserves_inquiry
     assert_bulk_removal_is_audited_and_stale_snapshots_do_nothing
@@ -625,6 +627,183 @@ module PromptQueueTest
         assert(resolved_later["state"] == "resolved" && later_run.active_queue_work.nil? &&
                resolved_later["entries"].map { |entry| entry["id"] } == later_entries.map(&:first),
                "expected later successful #{name} work to resolve without duplicate delivery")
+      end
+    end
+  end
+
+  def assert_terminal_partial_run_dispatches_pending_work_once
+    cases = {
+      "user" => [["user-first", "user"], ["user-second", "user"]],
+      "delegated" => [["delegated-result", "delegation_callback"]],
+      "mixed" => [["mixed-user-first", "user"], ["mixed-result", "delegation_callback"],
+                  ["mixed-user-last", "user"]]
+    }
+
+    cases.each do |name, entries|
+      with_queue_store do |registry, workspace|
+        previous_codex_bin = ENV["TYCHO_CODEX_BIN"]
+        gate = File.join(workspace, "release-first-run")
+        capture = File.join(workspace, "native-inputs.jsonl")
+        count = File.join(workspace, "run-count")
+        harness = File.join(workspace, "partial-codex")
+        File.write(harness, <<~RUBY)
+          #!/usr/bin/env ruby
+          require "json"
+          count_path = #{count.to_json}
+          run_number = (File.exist?(count_path) ? File.read(count_path).to_i : 0) + 1
+          File.write(count_path, run_number.to_s)
+          File.open(#{capture.to_json}, "a") { |file| file.puts JSON.generate(ARGV) }
+          File.write(#{File.join(workspace, 'first-run-ready').to_json}, "ready") if run_number == 1
+          deadline = Time.now + 20
+          sleep 0.01 until run_number != 1 || File.exist?(#{gate.to_json}) || Time.now >= deadline
+          raise "first-run gate timed out" if run_number == 1 && !File.exist?(#{gate.to_json})
+          result = if run_number == 1
+                     { "status" => "partial", "summary" => "Some requested work remains",
+                       "summary_sections" => nil, "inquiry" => nil, "attachments" => nil,
+                       "memory_handoff" => nil }
+                   else
+                     { "status" => "success", "summary" => "Processed queued work",
+                       "summary_sections" => nil, "inquiry" => nil, "attachments" => nil,
+                       "memory_handoff" => nil }
+                   end
+          output_index = ARGV.index("-o")
+          File.write(ARGV[output_index + 1], JSON.generate(result)) if output_index
+          puts JSON.generate("type" => "item.completed", "item" => {
+            "type" => "agent_message", "text" => JSON.generate(result)
+          })
+          puts JSON.generate("type" => "turn.completed", "session_id" => "partial-queue-session")
+        RUBY
+        FileUtils.chmod(0o755, harness)
+        ENV["TYCHO_CODEX_BIN"] = harness
+
+        agent = terminal_agent(workspace, structured_result: {
+          "status" => "success", "summary" => "Initial work completed"
+        })
+        agent.enqueue_prompt!(prompt: "first-batch-instruction", id: "first-batch-instruction", source: "user")
+        store = HQ::AgentStore.new(registry.projects)
+        store.save([agent])
+        first = store.load_with_poll_events(process_delegations: false).first.first
+        ready_deadline = Time.now + 5
+        sleep 0.01 until File.exist?(File.join(workspace, "first-run-ready")) || Time.now >= ready_deadline
+        assert(File.exist?(File.join(workspace, "first-run-ready")) && first.running?,
+               "expected #{name} fixture's real queue-dispatched harness run to be active")
+        first_batch_id = first.active_queue_work.fetch("id")
+
+        entries.each do |id, source|
+          store.enqueue_prompt!(agent.key, prompt: id, id:, source:)
+        end
+        store.enqueue_prompt_from!(agent.key, prompt: "future-entry", id: "future-entry", source: "user",
+                                   actor: HQ::DelegationActor.user_actor, not_before: Time.now + 3600)
+        File.write(gate, "continue")
+
+        dispatched = nil
+        deadline = Time.now + 10
+        until Time.now >= deadline
+          dispatched = store.load_with_poll_events(process_delegations: false).first
+                           .find { |candidate| candidate.key == agent.key }
+          break if dispatched.run_count == 3
+
+          sleep 0.01
+        end
+        assert(dispatched&.run_count == 3 && dispatched.last_run.metadata["prompt_queue_claim_id"],
+               "expected #{name} Partial queue run to dispatch a real successor run; " \
+               "runs=#{dispatched&.run_count}, status=#{dispatched&.status}, " \
+               "last=#{dispatched&.last_run&.status}, queued=#{dispatched&.prompt_queue&.map { |entry| entry['id'] }}, " \
+               "summary=#{dispatched&.last_summary.inspect}, exit=#{dispatched&.last_exit_code}, " \
+               "dispatch_error=#{dispatched&.prompt_queue_dispatch_error.inspect}")
+        first_terminal = dispatched.runs[-2]
+        batch = dispatched.active_queue_work
+        settled_batch = dispatched.queue_work_batch(first_batch_id)
+        partial_summary = HQ::AgentMemory.new(dispatched).events.find do |event|
+          event["type"] == "run_summary" && event.dig("metadata", "run_id") == first_terminal.run_id
+        end
+        assert(first_terminal.status == "partial" &&
+               first_terminal.metadata["queue_work_auto_completed"] == true &&
+               partial_summary&.fetch("content", "").include?("Some requested work remains") &&
+               settled_batch.fetch("state") == "resolved" && batch &&
+               batch.fetch("entries").map { |entry| entry["id"] } == entries.map(&:first) &&
+               batch.fetch("entries").map { |entry| entry["source"] } == entries.map(&:last) &&
+               dispatched.prompt_queue.map { |entry| entry["id"] } == ["future-entry"],
+               "expected #{name} dispatch to preserve Partial, FIFO source data, and future eligibility")
+
+        wait_for_agent_process(dispatched)
+        replay = HQ::AgentStore.new(registry.projects)
+        finished = replay.load_with_poll_events(process_delegations: false).first.find { |candidate| candidate.key == agent.key }
+        2.times { replay.load_with_poll_events(process_delegations: false) }
+        finished = replay.load_with_poll_events(process_delegations: false).first.find { |candidate| candidate.key == agent.key }
+        arguments = File.readlines(capture).map { |line| JSON.parse(line) }
+        read_events = HQ::AgentMemory.new(finished).events.select { |event| event.dig("metadata", "queue_read") == true }
+        resolved = finished.queue_work_batch(batch.fetch("id"))
+        assert(finished.run_count == 3 && finished.session_id == "partial-queue-session" &&
+               arguments.length == 2 && arguments.last.join(" ").include?("TYCHO QUEUE WORK CONTRACT") &&
+               arguments.last.include?("partial-queue-session") &&
+               entries.all? { |id, _source| arguments.last.join(" ").include?(id) } &&
+               !arguments.last.join(" ").include?("future-entry") && read_events.length == 2 &&
+               resolved.fetch("state") == "resolved" && finished.prompt_queue.map { |entry| entry["id"] } == ["future-entry"],
+               "expected #{name} restart/replay to keep both batches resolved once and one future entry; " \
+               "runs=#{finished.run_count}, session=#{finished.session_id.inspect}, captures=#{arguments.length}, " \
+               "reads=#{read_events.length}, batch=#{resolved['state']}, " \
+               "pending=#{finished.prompt_queue.map { |entry| entry['id'] }}")
+      ensure
+        previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
+      end
+    end
+  end
+
+  def assert_input_required_terminal_result_keeps_pending_work_gated
+    %w[input_required].each do |status|
+      with_queue_store do |registry, workspace|
+        previous_codex_bin = ENV["TYCHO_CODEX_BIN"]
+        gate = File.join(workspace, "release-first-run")
+        harness = File.join(workspace, "terminal-codex")
+        File.write(harness, <<~RUBY)
+          #!/usr/bin/env ruby
+          require "json"
+          File.write(#{File.join(workspace, 'first-run-ready').to_json}, "ready")
+          deadline = Time.now + 20
+          sleep 0.01 until File.exist?(#{gate.to_json}) || Time.now >= deadline
+          raise "first-run gate timed out" unless File.exist?(#{gate.to_json})
+          inquiry = #{status.to_json} == "input_required" ? { "message" => "Need an operator answer", "fields" => [] } : nil
+          result = { "status" => #{status.to_json}, "summary" => "The run needs operator attention",
+                     "summary_sections" => nil, "inquiry" => inquiry, "attachments" => nil,
+                     "memory_handoff" => nil }
+          output_index = ARGV.index("-o")
+          File.write(ARGV[output_index + 1], JSON.generate(result)) if output_index
+          puts JSON.generate("type" => "item.completed", "item" => {
+            "type" => "agent_message", "text" => JSON.generate(result)
+          })
+          puts JSON.generate("type" => "turn.completed")
+        RUBY
+        FileUtils.chmod(0o755, harness)
+        ENV["TYCHO_CODEX_BIN"] = harness
+        agent = HQ::ManagedAgent.new(
+          key: "queue-agent", name: "Queue agent", project_key: "web", template_key: "custom",
+          workspace:, prompt: "Initial work", agent: "codex", log_path: File.join(workspace, "raw.log")
+        )
+        store = HQ::AgentStore.new(registry.projects)
+        store.save([agent])
+        store.start_agent!(agent.key)
+        ready_deadline = Time.now + 5
+        sleep 0.01 until File.exist?(File.join(workspace, "first-run-ready")) || Time.now >= ready_deadline
+        store.enqueue_prompt!(agent.key, prompt: "Pending user instruction", id: "pending-user", source: "user")
+        File.write(gate, "continue")
+
+        terminal = nil
+        deadline = Time.now + 10
+        until Time.now >= deadline
+          terminal = store.load_with_poll_events(process_delegations: false).first.first
+          break unless terminal.running?
+
+          sleep 0.01
+        end
+        assert(terminal && !terminal.running? && terminal.run_count == 1 && terminal.effective_status == status &&
+               terminal.prompt_queue.map { |entry| entry["id"] } == ["pending-user"] &&
+               terminal.active_queue_work.nil?,
+               "expected #{status} terminal result to retain pending work without automatic dispatch; " \
+               "status=#{terminal&.status}, result=#{terminal&.structured_result.inspect}, " \
+               "queue=#{terminal&.prompt_queue&.map { |entry| entry['id'] }}")
+      ensure
+        previous_codex_bin ? ENV["TYCHO_CODEX_BIN"] = previous_codex_bin : ENV.delete("TYCHO_CODEX_BIN")
       end
     end
   end
