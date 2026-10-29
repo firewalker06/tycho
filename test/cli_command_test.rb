@@ -131,6 +131,10 @@ module CLICommandTest
                                "--parent-agent", parent.fetch("key"), "--json")
       assert(child_result.fetch(:status).success?, "expected child create: #{child_result}")
       child = JSON.parse(child_result.fetch(:stdout))
+      persisted_parent = JSON.parse(File.read(File.join(logs_root, "managed_agents.json"))).find { |item| item["key"] == parent["key"] }
+      parent_agent = HQ::ManagedAgent.from_hash(persisted_parent)
+      assert(HQ::AgentChatLog.new(parent_agent).chat_blocks.none? { |block| block.kind == :delegation_event },
+             "expected real CLI create-only to add neither Created nor Started to Conversation")
       accepted_text = "Accepted line one\nAccepted line two"
       accepted = run_tycho(env, "agent", "send", child.fetch("key"), accepted_text,
                            "--parent-agent", parent.fetch("key"), "--json")
@@ -165,6 +169,10 @@ module CLICommandTest
       assert(rejected_events.none? { |event| event.dig("metadata", "event") == "agent_message_sent" },
              "expected a rejected parent send to leave no misleading Conversation event")
       run_tycho(env, "agent", "stop", child.fetch("key"), "--json")
+      immediate = run_tycho(env, "agent", "create", "demo", "Work", "--name", "Immediate child", "--run",
+                            "--parent-agent", parent.fetch("key"), "--json")
+      assert(immediate.fetch(:status).success?, "expected delegated Create and Run: #{immediate}")
+      run_tycho(env, "agent", "stop", JSON.parse(immediate.fetch(:stdout)).fetch("key"), "--json")
       run_child = JSON.parse(run_tycho(env, "agent", "create", "demo", "Work", "--name", "Run child",
                                        "--parent-agent", parent.fetch("key"), "--json").fetch(:stdout))
       restarted = run_tycho(env, "agent", "run", run_child.fetch("key"), "--parent-agent", parent.fetch("key"), "--json")
@@ -175,10 +183,14 @@ module CLICommandTest
                     .select { |event| event["type"] == "delegation_event" }
       assert(actions.all? { |event| event.dig("metadata", "parent_run_id") == parent_run_id },
              "expected create, send, and start events to use the active parent run")
-      assert(actions.count { |event| event.dig("metadata", "event") == "agent_created" } == 2,
+      assert(actions.count { |event| event.dig("metadata", "event") == "agent_created" } == 3,
              "expected one event for each creation, without reattachment duplicates")
-      assert(actions.count { |event| event.dig("metadata", "event") == "agent_started" } == 3,
-             "expected actual starts from send, queue dispatch, and explicit run without duplicates")
+      assert(actions.count { |event| event.dig("metadata", "event") == "agent_started" } == 4,
+             "expected actual starts from send, queue dispatch, Create and Run, and explicit run without duplicates")
+      visible = HQ::AgentChatLog.new(parent_agent).chat_blocks.select { |block| block.kind == :delegation_event }
+      assert(visible.none? { |block| block.metadata["event"] == "agent_created" } &&
+             visible.count { |block| block.metadata["event"] == "agent_started" } == 4,
+             "expected Conversation to show only actual starts while audit records keep creation attribution")
       run_tycho(env, "agent", "stop", parent.fetch("key"), "--json")
     end
   end

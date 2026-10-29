@@ -231,7 +231,8 @@ module HQ
             tool_name: nil,
             metadata: merge_sequence_metadata(event["metadata"], sequence)
           )
-          chat_system << entry
+          chat_system << entry unless event.dig("metadata", "event") == "agent_created" &&
+                                     event.dig("metadata", "conversation_visible") == false
           system_log << entry
         when "run_summary"
           run_summary_number += 1
