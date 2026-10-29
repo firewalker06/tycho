@@ -270,6 +270,62 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       receipts.push({ width, flow: quick ? "accepted-quick-unavailable" : "accepted-project-hidden", sameRequestId: true, sameAgent: true, runCount: agent.run_count, noReplacementActions: true, reloadAndBack: true });
     }
 
+    // An accepted archived receipt must not disappear when its manifest is unreadable.
+    await openForm(false);
+    const beforeArchiveLoss = await createCount();
+    let archivedAccepted;
+    let archiveRequestId;
+    await page.route(`${baseUrl}/agents`, async route => {
+      archiveRequestId = route.request().postDataJSON().client_request_id;
+      const response = await route.fetch();
+      assert.equal(response.status(), 201);
+      archivedAccepted = (await response.json()).agent;
+      await route.abort("connectionfailed");
+    }, { times: 1 });
+    await page.locator("#agent-form button[value=create-run]").click();
+    await retry.waitFor();
+    await page.waitForFunction(async ({ baseUrl, key }) => !(await (await fetch(`${baseUrl}/agents/${key}`)).json()).agent.running, { baseUrl, key: archivedAccepted.key });
+    const archivedResponse = await context.request.post(`${baseUrl}/agents/${archivedAccepted.key}/archive`, { data: {} });
+    assert(archivedResponse.ok());
+    const archivePath = (await archivedResponse.json()).archive_path;
+    assert(path.isAbsolute(archivePath) && archivePath.includes("tycho-remote-ui-smoke"), "archive mutation must use the isolated fixture");
+    const manifest = path.join(archivePath, "agent_manifest.json");
+    assert(!fs.existsSync(`${manifest}.bak`), "fixture requires no readable backup");
+    const manifestMode = fs.statSync(manifest).mode & 0o777;
+    try {
+      fs.chmodSync(manifest, 0);
+      await page.reload({ waitUntil: "networkidle" });
+      await retry.waitFor();
+      const failedResponse = page.waitForResponse(r => r.url() === `${baseUrl}/agents` && r.request().method() === "POST");
+      await retry.click();
+      const failed = await failedResponse;
+      const body = await failed.json();
+      assert.equal(failed.status(), 503);
+      assert.equal(failed.request().postDataJSON().client_request_id, archiveRequestId);
+      assert(!body.details?.creation_rejected && !body.agent);
+      assert(!JSON.stringify(body).includes(archivedAccepted.key) && !JSON.stringify(body).includes(archivedAccepted.prompt));
+      await retry.waitFor();
+      assert.equal(await page.locator("[data-edit-agent-create], [data-discard-agent-create]").count(), 0);
+      await page.evaluate(() => refresh({ force: true }));
+      await page.reload({ waitUntil: "networkidle" });
+      await retry.waitFor();
+      assert.equal(await page.locator("[data-edit-agent-create], [data-discard-agent-create]").count(), 0);
+      await capture("archive-receipt-unavailable");
+    } finally {
+      fs.chmodSync(manifest, manifestMode);
+    }
+    const recoveredArchiveResponse = page.waitForResponse(r => r.url() === `${baseUrl}/agents` && r.request().method() === "POST");
+    await retry.click();
+    const recoveredArchive = await recoveredArchiveResponse;
+    assert.equal(recoveredArchive.request().postDataJSON().client_request_id, archiveRequestId);
+    const archivedAgent = (await recoveredArchive.json()).agent;
+    assert.equal(archivedAgent.key, archivedAccepted.key);
+    assert.equal(archivedAgent.archived, true);
+    assert.equal(archivedAgent.run_count, 1);
+    await page.waitForFunction(() => location.hash.startsWith("#agent/"));
+    assert.equal(await createCount(), beforeArchiveLoss, "archive retry created an active replacement");
+    receipts.push({ width, flow: "accepted-archive-unreadable", sameRequestId: true, sameAgent: true, runCount: 1, noReplacementActions: true, reload: true });
+
     // The real API rejects whitespace. The user can correct or discard it,
     // including after navigation and reload, without reusing its rejected ID.
     await openForm(false);

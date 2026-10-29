@@ -3904,6 +3904,8 @@ module HQ
       target = @agent_store.start_agent!(target.key, actor:) if newly_created && truthy?(attrs["start"])
       @agent_activity_snapshot.upsert!(target) unless target.archived?
       agent_payload(target)
+    rescue AgentArchiveStore::ReceiptLookupError
+      raise Error.new("Could not check creation request. Try again.", status: 503)
     rescue ArgumentError => e
       raise Error.new(e.message, status: 409)
     rescue DelegationStore::Error => e

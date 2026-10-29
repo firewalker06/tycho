@@ -251,7 +251,7 @@ module HQ
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         if creation_request
           matches_request = ->(agent) { agent.creation_request&.fetch("id", nil) == creation_request.fetch("id") }
-          existing = agents.find(&matches_request) || AgentArchiveStore.new.all.map(&:agent).find(&matches_request)
+          existing = agents.find(&matches_request) || AgentArchiveStore.new.find_creation_request(creation_request.fetch("id"))&.agent
           if existing
             unless existing.creation_request == creation_request
               raise ArgumentError, "This creation request was already used with different options"
