@@ -40,6 +40,8 @@ module HQ
         metadata: {
           "relationship_id" => relation.fetch("id"),
           "event" => created_agent ? "agent_created" : "agent_delegated",
+          # Retain creation attribution for Summary and audit, without a Conversation entry.
+          "conversation_visible" => !created_agent,
           "agent_reference" => relation.fetch("child")
         }
       )

@@ -1516,6 +1516,19 @@ module ManagedAgentTest
       memory = HQ::AgentMemory.new(agent)
       reference = { "agent_key" => "child", "name" => "Original name", "server_id" => "local-id", "native_session_id" => "SECRET_SESSION" }
       memory.append_delegation_event!("Created", event_id: "created", metadata: { "event" => "agent_created", "agent_reference" => reference })
+      memory.append_delegation_event!("New creation audit", event_id: "new-created", metadata: {
+        "event" => "agent_created", "agent_reference" => reference, "conversation_visible" => false
+      })
+      original_memory = File.binread(agent.memory_path)
+      reloaded = HQ::ManagedAgent.from_hash(agent.to_hash)
+      assert(HQ::AgentChatLog.new(reloaded).chat_blocks.any? { |block| block.content == "Created" } &&
+             HQ::AgentChatLog.new(reloaded).chat_blocks.none? { |block| block.content == "New creation audit" },
+             "expected old Created logs to stay visible and new creation audit records to be absent from Conversation")
+      assert(File.binread(agent.memory_path) == original_memory, "expected Conversation reads to preserve saved memory bytes")
+      chat_log = HQ::AgentChatLog.new(reloaded)
+      assert(!chat_log.chat_text.include?("New creation audit"), "expected text Conversation to omit new creation records")
+      chat_log.ensure_generated
+      assert(File.read(reloaded.system_log_path).include?("New creation audit"), "expected the system log to retain creation audit evidence")
       2.times do
         memory.append_delegation_event!("Sent", event_id: "sent", metadata: {
           "event" => "agent_message_sent", "delivery_status" => "queued", "agent_reference" => reference, "message" => "SECRET_PROMPT"
@@ -1525,7 +1538,8 @@ module ManagedAgentTest
       agent.send(:capture_run_memory!, first)
       saved = memory.events.find { |event| event["type"] == "run_summary" }
       actions = saved.dig("metadata", "delegated_actions")
-      assert(actions.map { |action| action["action"] } == %w[agent_created agent_message_sent], "expected each accepted action once")
+      assert(actions.map { |action| action["action"] } == %w[agent_created agent_created agent_message_sent],
+             "expected each accepted action once, including new creation attribution excluded from Conversation")
       assert(actions.last["delivery_status"] == "queued", "expected accurate queued delivery")
       assert(!JSON.generate(actions).include?("SECRET"), "expected only safe reference fields, without prompts or sessions")
       assert(saved.dig("metadata", "inquiry", "message") == "Choose", "expected inquiry preservation")

@@ -317,8 +317,11 @@ module RemoteServerTest
              "expected soft-disconnected delegation to reconnect")
       conversation = service.conversation(parent[:key])
       event = conversation.find { |block| block[:kind] == "delegation_event" }
-      assert(event && event.dig(:metadata, "agent_reference", "agent_key") == child[:key],
-             "expected explicit typed creation event")
+      assert(event.nil?, "expected create-only to add neither Created nor Started to Conversation")
+      parent_record = service.instance_variable_get(:@agent_store).load.find { |agent| agent.key == parent[:key] }
+      creation = HQ::AgentMemory.new(parent_record).events.find { |item| item.dig("metadata", "event") == "agent_created" }
+      assert(creation.dig("metadata", "agent_reference", "agent_key") == child[:key],
+             "expected the creation audit record to retain the child reference")
 
       repeated = service.submit_prompt(child[:key], "prompt" => "Continue", "parent_agent_key" => parent[:key])
       assert(repeated[:agent].dig(:delegation, :parent, :agent_key) == parent[:key],
@@ -4382,6 +4385,12 @@ module RemoteServerTest
 
       parent_agent = new_service.call.instance_variable_get(:@agent_store).load.find { |agent| agent.key == parent[:key] }
       summary_memory = HQ::AgentMemory.new(parent_agent)
+      # Historical creation records still supply Conversation references after reload.
+      [visible_child, secret_child].each do |child|
+        summary_memory.append_delegation_event!("Created agent #{child[:name]}", event_id: "legacy-created:#{child[:key]}", metadata: {
+          "event" => "agent_created", "agent_reference" => { "agent_key" => child[:key], "name" => child[:name], "project_key" => child[:project_key] }
+        })
+      end
       summary_memory.append_run_summary!(summary: "Done", status: "success", metadata: {
         "delegated_actions" => [visible_child, secret_child].map do |child|
           { "action" => "agent_created", "agent_reference" => { "agent_key" => child[:key], "name" => child[:name], "project_key" => child[:project_key] } }
