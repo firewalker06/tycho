@@ -81,6 +81,7 @@ module HQ
       entry = usage.reverse.find { |candidate| event_type(candidate) == "result" }
       reported = numeric_cost(metadata(entry)["total_cost_usd"])
       baseline = previous && numeric_cost(previous["reported_amount_usd"])
+      baseline_decreased = baseline && reported && reported < baseline
       adjacent = previous && previous["through_run_count"].to_i == agent.run_count - 1
       reason = nil
       run_cost = nil
@@ -106,7 +107,7 @@ module HQ
         "currency" => "USD",
         "amount_usd" => reported || previous&.fetch("amount_usd", nil),
         "run_amount_usd" => run_cost,
-        "reported_amount_usd" => reported,
+        "reported_amount_usd" => baseline_decreased ? nil : reported,
         "reported_cost_scope" => "session",
         "run_cost_scope" => "run",
         "basis" => "harness_estimate",

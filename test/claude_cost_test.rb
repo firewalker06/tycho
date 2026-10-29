@@ -88,6 +88,12 @@ module ClaudeCostTest
     agent.cost_snapshot = { "reported_amount_usd" => 40, "reported_cost_scope" => "session", "session_id" => "session", "through_run_count" => 4 }
     snapshot = HQ::AgentCostSnapshot.advance(agent:, run: fifth, usage_entries: entries)
     assert(snapshot["run_amount_usd"].nil?, "expected a decreasing total not to fabricate a run cost")
+    agent.cost_snapshot = snapshot
+    sixth = helper.run("session", 6)
+    agent.runs << sixth
+    entries = [helper.usage("result", "total_cost_usd" => 41, "claude_code_version" => "2.1.311")]
+    snapshot = HQ::AgentCostSnapshot.advance(agent:, run: sixth, usage_entries: entries)
+    assert(snapshot["run_amount_usd"].nil?, "expected a lower prior total not to become a new subtraction baseline")
     old_entries = [helper.usage("result", "total_cost_usd" => 0.75, "claude_code_version" => "2.1.276")]
     snapshot = HQ::AgentCostSnapshot.advance(agent:, run: fifth, usage_entries: old_entries)
     assert(snapshot["run_amount_usd"] == 0.75, "expected older Claude to retain per-call semantics")
