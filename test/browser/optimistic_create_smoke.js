@@ -14,6 +14,48 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "horizontal overflow");
       if (captureDir) await page.screenshot({ path: path.join(captureDir, `create-${label}-${width}.png`) });
     };
+    const checkErrorComposition = async expectedLabels => {
+      const layout = await page.locator(".agent-creation-error").evaluate(card => {
+        const content = card.querySelector(".agent-creation-error-content");
+        const actions = card.querySelector(".agent-creation-error-actions");
+        const buttons = [...actions.querySelectorAll("button")];
+        const rect = el => { const r = el.getBoundingClientRect(); return { top: r.top, right: r.right, bottom: r.bottom, left: r.left }; };
+        return {
+          card: rect(card), content: rect(content), reason: rect(content.querySelector("p")), reasonFits: content.querySelector("p").scrollWidth <= content.querySelector("p").clientWidth, actions: rect(actions), buttons: buttons.map(rect),
+          labels: buttons.map(button => button.textContent),
+          titleAlign: getComputedStyle(content.querySelector("h2")).textAlign,
+          reasonAlign: getComputedStyle(content.querySelector("p")).textAlign,
+          borderWidth: getComputedStyle(actions).borderTopWidth,
+          borderColor: getComputedStyle(actions).borderTopColor,
+          borderToken: getComputedStyle(card).borderTopColor,
+          justify: getComputedStyle(actions).justifyContent,
+          rightPadding: parseFloat(getComputedStyle(actions).paddingRight),
+        };
+      });
+      assert.deepEqual(layout.labels, expectedLabels);
+      assert.equal(layout.titleAlign, "center");
+      assert.equal(layout.reasonAlign, "center");
+      assert(layout.reasonFits && layout.reason.left >= layout.card.left && layout.reason.right <= layout.card.right, "server reason must remain readable inside the card");
+      assert.equal(layout.borderWidth, "1px");
+      assert.equal(layout.borderColor, layout.borderToken, "divider must use the existing border color");
+      assert.equal(layout.justify, "flex-end");
+      assert(layout.actions.top >= layout.content.bottom - 1, "actions overlap error content");
+      const last = layout.buttons.at(-1);
+      assert(Math.abs(last.right - (layout.actions.right - layout.rightPadding)) < 2, "actions are not right aligned");
+      for (const button of layout.buttons) {
+        assert(button.top > layout.content.bottom && button.bottom < layout.actions.bottom);
+        assert(button.left >= layout.card.left && button.right <= layout.card.right);
+      }
+      if (layout.buttons.length === 2) {
+        assert(layout.buttons[0].left < layout.buttons[1].left, "Edit request must precede Discard");
+        assert(Math.abs(layout.buttons[0].top - layout.buttons[1].top) < 1, "mobile actions must fit one row");
+      }
+      assert.equal(await page.locator("#screen-title").innerText(), "New agent");
+      assert.equal(await page.locator("#screen-subtitle").innerText(), "Web");
+      assert(await page.locator("#back-button").isVisible());
+      assert.equal(await page.locator(".pending-agent-conversation h1, .pending-agent-conversation details").count(), 0);
+      return layout;
+    };
     const createCount = async () => (await (await context.request.get(`${baseUrl}/agents`)).json()).agents.length;
     const openForm = async quick => {
       await page.goto(`${baseUrl}/ui#${quick ? "agents" : "project/web"}`, { waitUntil: "networkidle" });
@@ -96,7 +138,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await page.route(`${baseUrl}/agents`, async route => {
       failureRequestId = route.request().postDataJSON().client_request_id;
       await failureHeld;
-      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Fixture create service unavailable" }) });
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Fixture create service unavailable. This longer server reason checks readable wrapping on a narrow screen. Please try again when the service is ready." }) });
     }, { times: 1 });
     await page.locator("#agent-form button[value=create-run]").click();
     await page.locator(".pending-agent-conversation").waitFor();
@@ -108,6 +150,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     assert.equal(await page.evaluate(() => [...pendingAgentCreations.values()].find(entry => entry.error)?.payload.prompt), `Keep project prompt ${width}`);
     assert.equal(await page.locator("[data-edit-agent-create], [data-discard-agent-create]").count(), 0, "uncertain response must keep the same request");
     await page.evaluate(() => refresh({ force: true }));
+    await checkErrorComposition(["Try again"]);
     await capture("error");
     let releaseRetry;
     const retryHeld = new Promise(resolve => { releaseRetry = resolve; });
@@ -166,6 +209,12 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await page.locator("[data-edit-agent-create]").waitFor();
     assert.match(await page.locator("[role=alert]").innerText(), /Prompt is required/);
     assert.equal(await page.locator("[data-edit-agent-create]").evaluate(el => el === document.activeElement), true);
+    const errorLayout = await checkErrorComposition(["Edit request", "Discard"]);
+    await page.keyboard.press("Tab");
+    assert.equal(await page.locator("[data-discard-agent-create]").evaluate(el => el === document.activeElement), true);
+    await page.keyboard.press("Shift+Tab");
+    assert.equal(await page.locator("[data-edit-agent-create]").evaluate(el => el === document.activeElement), true);
+    receipts.push({ width, flow: "error-composition", divider: errorLayout.borderWidth, rightAligned: true, contentSeparate: true, actionOrder: errorLayout.labels, keyboardOrder: true });
     await capture("rejected");
     await page.goBack();
     await page.locator("[data-edit-agent-create]").waitFor();

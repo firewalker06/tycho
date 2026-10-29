@@ -9967,3 +9967,8 @@ body:has(.inquiry-form-full-screen) {
 }
 
 .pending-agent-conversation { min-height: 55vh; overflow-wrap: anywhere; }
+
+.agent-creation-error { padding: 0; gap: 0; }
+.agent-creation-error-content { display: grid; gap: 10px; padding: 28px 12px 24px; text-align: center; }
+.agent-creation-error-content :is(h2, p) { margin: 0; }
+.agent-creation-error-actions { padding: 12px; border-top: 1px solid var(--border); }
