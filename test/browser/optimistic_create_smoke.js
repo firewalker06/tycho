@@ -39,6 +39,10 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         await held;
         await route.continue();
       });
+      await page.evaluate(() => {
+        resourceServer("local").agents = [{ key: "unrelated", prompt: "PRIVATE_UNRELATED_PROMPT" }];
+        resourceServer("local").token = "PRIVATE_UNRELATED_BEARER";
+      });
       const before = await createCount();
       const start = Date.now();
       const submit = quick ? "#quick-agent-form button[type=submit]" : "#agent-form button[value=create]";
@@ -48,14 +52,17 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       assert(visibleMs < 1500, `pending view took ${visibleMs}ms`);
       assert.equal(await page.locator("#quick-agent-dialog").evaluate(el => el.open), false);
       assert.match(await page.locator(".pending-agent-conversation").innerText(), /Creating your agent/);
-      assert.equal(await page.locator(".pending-agent-conversation h1").evaluate(el => el === document.activeElement), true, "pending heading did not receive focus");
+      assert.equal(await page.locator(".pending-agent-conversation").evaluate(el => el === document.activeElement), true, "pending view did not receive focus");
+      assert.equal(await page.locator(".pending-agent-conversation h1, .pending-agent-conversation details").count(), 0);
+      assert(!(await page.locator(".pending-agent-conversation").innerText()).includes("Your request"));
       assert.equal(await page.locator("#composer").count(), 0, "pending request must not allow agent actions");
-      await page.locator(".pending-agent-conversation summary").click();
-      assert.match(await page.locator(".creation-request-prompt").innerText(), new RegExp(`Keep ${quick ? "quick" : "project"} prompt ${width}`));
       await page.evaluate(() => refresh({ force: true }));
-      assert.equal(await page.locator(".pending-agent-conversation details").getAttribute("open"), "");
+      assert.equal(await page.locator(".pending-agent-conversation").count(), 1);
       assert.equal(calls, 1);
       assert.equal(await createCount(), before);
+      const stored = await page.evaluate(() => sessionStorage.getItem(AGENT_CREATION_STORAGE_KEY));
+      assert(!stored.includes("PRIVATE_UNRELATED"), "storage retained unrelated server data");
+      assert.equal(JSON.parse(stored).filter(entry => entry.payload).length, 1);
       await capture(quick ? "quick-pending" : "project-pending");
       if (!quick) {
         // Going Back to the create form must retain this request and must not submit again.
@@ -74,16 +81,20 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       assert.equal(agent.run_count, quick ? 1 : 0);
       assert.equal(await createCount(), before + 1);
       await capture(quick ? "quick-success" : "project-success");
+      const completed = await page.evaluate(() => JSON.parse(sessionStorage.getItem(AGENT_CREATION_STORAGE_KEY)));
+      assert(completed.every(entry => Object.keys(entry).sort().join(",") === "agentKey,id"), "completed requests retained payloads");
       receipts.push({ width, flow: quick ? "quick" : "project-create-only", visibleMs, postCount: calls, runCount: agent.run_count });
       await page.unroute(`${baseUrl}/agents`);
     }
 
-    // A definitive server error preserves request data and supports keyboard retry.
+    // A server error with uncertain acceptance keeps the request ID for keyboard retry.
     await openForm(false);
     const beforeFailure = await createCount();
+    let failureRequestId;
     let releaseFailure;
     const failureHeld = new Promise(resolve => { releaseFailure = resolve; });
     await page.route(`${baseUrl}/agents`, async route => {
+      failureRequestId = route.request().postDataJSON().client_request_id;
       await failureHeld;
       await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Fixture create service unavailable" }) });
     }, { times: 1 });
@@ -94,14 +105,14 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await retry.waitFor();
     assert.equal(await retry.evaluate(el => el === document.activeElement), true, "failure did not focus retry");
     assert.match(await page.locator("[role=alert]").innerText(), /Fixture create service unavailable/);
-    await page.locator(".pending-agent-conversation summary").click();
-    assert.equal(await page.locator(".creation-request-prompt").innerText(), `Keep project prompt ${width}`);
+    assert.equal(await page.evaluate(() => [...pendingAgentCreations.values()].find(entry => entry.error)?.payload.prompt), `Keep project prompt ${width}`);
+    assert.equal(await page.locator("[data-edit-agent-create], [data-discard-agent-create]").count(), 0, "uncertain response must keep the same request");
     await page.evaluate(() => refresh({ force: true }));
     await capture("error");
     let releaseRetry;
     const retryHeld = new Promise(resolve => { releaseRetry = resolve; });
     let retryCalls = 0;
-    await page.route(`${baseUrl}/agents`, async route => { retryCalls++; await retryHeld; await route.continue(); });
+    await page.route(`${baseUrl}/agents`, async route => { retryCalls++; assert.equal(route.request().postDataJSON().client_request_id, failureRequestId); await retryHeld; await route.continue(); });
     await retry.focus();
     await page.keyboard.press("Enter");
     await page.locator(".pending-agent-conversation[aria-busy=true]").waitFor();
@@ -120,7 +131,9 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await openForm(false);
     const beforeLoss = await createCount();
     let accepted;
+    let acceptedRequestId;
     await page.route(`${baseUrl}/agents`, async route => {
+      acceptedRequestId = route.request().postDataJSON().client_request_id;
       const response = await route.fetch();
       assert.equal(response.status(), 201);
       accepted = (await response.json()).agent;
@@ -130,10 +143,69 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await retry.waitFor();
     await page.reload({ waitUntil: "networkidle" });
     await retry.waitFor();
+    const recoveredResponse = page.waitForResponse(r => r.url() === `${baseUrl}/agents` && r.request().method() === "POST");
     await retry.click();
+    assert.equal((await recoveredResponse).request().postDataJSON().client_request_id, acceptedRequestId);
     await page.waitForFunction(() => location.hash.startsWith("#agent/"));
     assert.equal(await page.evaluate(() => parseRoute().key), accepted.key);
     assert.equal(await createCount(), beforeLoss + 1, "lost response retry duplicated agent");
+
+    // The real API rejects whitespace. The user can correct or discard it,
+    // including after navigation and reload, without reusing its rejected ID.
+    await openForm(false);
+    const beforeCorrection = await createCount();
+    await page.locator("#agent-form > details.agent-options > summary").click();
+    await page.locator("#agent-name").fill("Correction name");
+    await page.locator("#agent-prompt").fill("   ");
+    const rejectedResponse = page.waitForResponse(r => r.url() === `${baseUrl}/agents` && r.request().method() === "POST");
+    await page.locator("#agent-form button[value=create]").click();
+    const rejected = await rejectedResponse;
+    assert.equal(rejected.status(), 400);
+    assert.equal((await rejected.json()).details.creation_rejected, true);
+    const rejectedId = rejected.request().postDataJSON().client_request_id;
+    await page.locator("[data-edit-agent-create]").waitFor();
+    assert.match(await page.locator("[role=alert]").innerText(), /Prompt is required/);
+    assert.equal(await page.locator("[data-edit-agent-create]").evaluate(el => el === document.activeElement), true);
+    await capture("rejected");
+    await page.goBack();
+    await page.locator("[data-edit-agent-create]").waitFor();
+    await page.reload({ waitUntil: "networkidle" });
+    await page.locator("[data-edit-agent-create]").click();
+    await page.locator("#agent-prompt").fill(`Corrected prompt ${width}`);
+    await page.locator("#agent-form > details.agent-options > summary").click();
+    assert.equal(await page.locator("#agent-name").inputValue(), "Correction name");
+    await page.evaluate(() => refresh({ force: true }));
+    assert.equal(await page.locator("#agent-prompt").inputValue(), `Corrected prompt ${width}`);
+    await page.evaluate(() => navigate({ type: "project", key: "web" }));
+    await page.locator("#view [data-create-agent=web]").first().click();
+    await page.locator("#agent-form").waitFor();
+    assert.equal(await page.locator("#agent-prompt").inputValue(), `Corrected prompt ${width}`);
+    await page.reload({ waitUntil: "networkidle" });
+    assert.equal(await page.locator("#agent-prompt").inputValue(), `Corrected prompt ${width}`);
+    await capture("correction");
+    const correctedResponse = page.waitForResponse(r => r.url() === `${baseUrl}/agents` && r.request().method() === "POST");
+    await page.locator("#agent-form button[value=create]").click();
+    const corrected = await correctedResponse;
+    assert.equal(corrected.status(), 201);
+    assert.notEqual(corrected.request().postDataJSON().client_request_id, rejectedId);
+    assert.equal((await corrected.json()).agent.prompt, `Corrected prompt ${width}`);
+    await page.waitForFunction(() => location.hash.startsWith("#agent/"));
+    assert.equal(await createCount(), beforeCorrection + 1);
+
+    await openForm(false);
+    await page.locator("#agent-prompt").fill("   ");
+    await page.locator("#agent-form button[value=create]").click();
+    await page.locator("[data-discard-agent-create]").waitFor();
+    await page.reload({ waitUntil: "networkidle" });
+    await page.locator("[data-edit-agent-create]").click();
+    await page.locator("#agent-prompt").fill("Discarded draft");
+    await page.goBack();
+    await page.locator("[data-discard-agent-create]").click();
+    await page.locator("#agent-form").waitFor();
+    await page.reload({ waitUntil: "networkidle" });
+    assert.equal(await page.locator("#agent-form").count(), 1, "discard restored the rejected trap");
+    assert.notEqual(await page.locator("#agent-prompt").inputValue(), "Discarded draft", "discard restored an old correction draft");
+    assert.equal(await page.evaluate(() => [...pendingAgentCreations.values()].filter(entry => entry.payload).length), 0);
 
     // A user who leaves the pending view keeps their chosen page after success.
     await openForm(false);

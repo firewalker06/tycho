@@ -3894,9 +3894,17 @@ module HQ
         candidate.preserve_name! unless attrs["name"].to_s.strip.empty?
         @agent_store.ensure_project_context_prompt!(candidate, project)
       end
+      if target.archived? && !archived_agent_visible?(target)
+        raise Error.new("Creation request is unavailable", status: 404)
+      end
       target = @agent_store.start_agent!(target.key, actor:) if newly_created && truthy?(attrs["start"])
       @agent_activity_snapshot.upsert!(target) unless target.archived?
       agent_payload(target)
+    rescue Error => e
+      # An error before the store commits permits correction with a new ID.
+      raise e if target
+
+      raise Error.new(e.message, status: e.status, details: (e.details || {}).merge(creation_rejected: true))
     rescue ArgumentError => e
       raise Error.new(e.message, status: 409)
     rescue DelegationStore::Error => e

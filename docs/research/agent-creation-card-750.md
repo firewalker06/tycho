@@ -5,10 +5,15 @@ Related: [Fizzy Card 750](https://fizzy.startkit.tech/1/cards/750).
 ## Result
 
 Quick Agent and Project → New agent open an empty Conversation before the
-create request returns. The pending view has a loading message and a collapsed
-copy of the request. A failure shows the server error and a retry button.
-The client keeps the prompt, options, project, server, and request ID in tab
-session storage. A reload can retry the same request.
+create request returns. The pending view has a loading message. It has no
+Conversation heading or request disclosure, as the owner requested. A failure
+shows the server error. Uncertain acceptance offers retry; a definite validation
+rejection offers Edit request and Discard. Corrections use a new request ID.
+The client keeps the pending prompt, options, project, fixed destination, a
+minimal server descriptor, and request ID in tab session storage. A reload can
+retry the same uncertain request or restore a rejected correction. Completed
+entries retain at most 20 small ID/agent-key route records; they retain no agent
+snapshot, server catalog, or completed prompt. Old drafts are compacted on read.
 
 A pending request is separate from catalog agents. It has no native session,
 ownership edge, run, or persisted agent key. Only the server response binds the
@@ -92,7 +97,10 @@ users can inspect and start it through the usual controls. If the server stops
 between creation and start, retry also returns the saved idle agent. It does
 not silently launch a second run. This is the deliberate at-most-once startup
 tradeoff. Archive manifests retain the receipt so an archived agent cannot be
-recreated by a late retry. Clones use a new ManagedAgent and do not inherit it.
+recreated by a late retry. Before returning an archived receipt target, the
+service applies the same immutable hidden-at-archive visibility rule as normal
+archive reads. An unreadable target returns a generic unavailable response and
+creates no replacement. Clones use a new ManagedAgent and do not inherit it.
 
 The existing no-ID API behavior remains supported. Create only stays idle;
 Quick Agent starts once. Optional names and scoped project defaults remain.
@@ -109,13 +117,16 @@ TYCHO_REMOTE_UI_CAPTURE_DIR=/tmp/tycho-card-750-browser bin/remote-ui-smoke
 ```
 
 They use desktop (1440 px) and mobile (390 px), a held create request, immediate
-loading, request disclosure, focus, polling, browser Back, Create only/Run,
-server error, keyboard retry, duplicate retry protection, lost response plus
+loading without the rejected heading/disclosure, focus, polling, browser Back, Create only/Run,
+server error, keyboard retry, actual whitespace rejection and correction,
+discard, minimal storage, duplicate retry protection, lost response plus
 reload, preserved prompt/project, navigation away, and overflow checks.
 The existing auto-name smoke also checks optional names, scoped project
 selection, persisted defaults, and mobile/desktop creation.
 
-Server regressions cover a new service instance retry, one run only, conflicting
+Server regressions cover hidden-at-archive receipt visibility through the real
+service sequence and HTTP, pre-save versus post-save rejection classification,
+a new service instance retry, one run only, conflicting
 options, archived receipts, concurrent requests, and failure after persistence.
 
 Local profiling evidence is retained outside the checkout in

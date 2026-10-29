@@ -16,7 +16,9 @@ type: project
 
 Quick Agent and Project New agent now open a pending Conversation immediately.
 Requests keep their prompt, options, and server binding through retry and tab
-reload. A durable creation receipt returns the same active or archived agent
+reload. Definite rejections permit correction or discard; uncertain acceptance
+keeps the original retry ID. Completed tab records retain no prompt or catalog.
+A durable creation receipt returns the same readable active or archived agent
 after a lost response and prevents a second run. A retry after a saved creation
 but interrupted startup returns the existing agent for explicit inspection or
 start. Measurements and limits are in
