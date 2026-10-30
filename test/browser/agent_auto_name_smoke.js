@@ -148,7 +148,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await toggle.click();
     await checkCollapsed();
     const responsePromise = page.waitForResponse(response => response.url() === `${baseUrl}/agents` && response.request().method() === "POST");
-    await page.locator("#quick-agent-form button[type=submit]").click();
+    await page.locator("#quick-agent-form button[value=create-run]").click();
     const response = await responsePromise;
     assert(response.ok());
     assert(!Object.hasOwn(response.request().postDataJSON(), "name"));
@@ -203,7 +203,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await checkProject("web", "Web");
     await capture("changed");
     const explicitResponse = page.waitForResponse(response => response.url() === `${baseUrl}/agents` && response.request().method() === "POST");
-    await page.locator("#quick-agent-form button[type=submit]").click();
+    await page.locator("#quick-agent-form button[value=create-run]").click();
     const explicitResult = await explicitResponse;
     assert(explicitResult.ok());
     assert.equal(explicitResult.request().postDataJSON().name, "Manual Export");

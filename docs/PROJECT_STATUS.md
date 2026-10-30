@@ -32,8 +32,10 @@ shared offline harness catalogs without Settings discovery. Cached peer choices
 arrive through the existing resource catalog; only the selected peer needs a
 project detail read. Creation waits for the selected project's known options,
 with server validation unchanged. Session/request guards reject stale replies.
-Close retains the in-memory draft until submission or explicit discard; reload
-starts a new opening draft. The existing creation receipt protocol is unchanged.
+Close retains the in-memory draft until submission; reload starts a new opening
+draft. Create saves an idle agent with `start: false`. Create and run and Enter
+use `start: true`. Both footer actions share readiness and pending gates and the
+existing creation snapshot and receipt protocol.
 See [Card 770 evidence](research/quick-agent-options-card-770.md).
 
 ## Experimental native agy support

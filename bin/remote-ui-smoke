@@ -71,6 +71,7 @@ def write_fixture(dir)
     #!/usr/bin/env ruby
     require "json"
     exit 0 if ARGV == ["auth", "status"]
+    File.open("#{__FILE__}.launches", "a") { |file| file.puts(ENV["TYCHO_AGENT_KEY"]) }
     arguments = ARGV.join(" ")
     hold_marker = "#{__FILE__}.#{ENV.fetch("TYCHO_AGENT_KEY", "unknown")}.held"
     prior_queue_smoke_runs = File.exist?(hold_marker) ? File.read(hold_marker).to_i : 0

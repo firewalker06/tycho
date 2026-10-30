@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 module.exports = async ({ browser, baseUrl, captureDir }) => {
+  await require("./quick_agent_create_actions_smoke")({ browser, baseUrl, captureDir });
   const results = [];
   for (const width of [1440, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 900 } });
@@ -47,7 +48,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       await route.fulfill({ status: rejected ? 503 : 200, json: rejected ? { error: "Fixture peer unavailable" } : { project: { ...options.projects.find(p => p.key === "web"), agent: "peer-wrapper", model: "peer-default", agent_template_summaries: [{key:"peer-template",agent:"peer-wrapper",model:"peer-default"}] } } });
     });
     const ready = async () => { try { await page.waitForFunction(() => quickAgentCanSubmit(), null, {timeout: 5000}); } catch (error) { console.log("options diagnostic", await page.evaluate(() => ({draft: quickAgent.draft, current: quickAgentReadState(), localReady: quickAgent.localReady, localError: quickAgent.localError, projectError: quickAgent.projectError, loadingKey: quickAgent.loadingKey, projects: quickAgentEligibleProjects().map(p=>p.key), requests:[...quickAgent.projectRequests.keys()]}))); throw error; } };
-    const discard = () => page.evaluate(() => closeQuickAgent(true));
+    const resetDraft = () => page.evaluate(() => closeQuickAgent(true));
     const expand = async () => {
       if (await page.locator("#quick-agent-options").isHidden()) await page.locator("[data-quick-agent-toggle]").click();
     };
@@ -61,13 +62,13 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     };
     const capture = async label => {
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "page overflow");
-      const rect = await page.locator('#quick-agent-form button[type=submit]').boundingBox();
+      const rect = await page.locator('#quick-agent-form button[value=create-run]').boundingBox();
       assert(rect.x >= 0 && rect.x + rect.width <= width + 1, "submit horizontal overflow");
       if (captureDir) await page.screenshot({ path: path.join(captureDir, `quick-options-${label}-${width}.png`) });
     };
     // Cold/warm editable time is distinct from actual local option readiness.
     for (const cold of [true, false]) {
-      await discard();
+      await resetDraft();
       const timing = await page.evaluate(async cold => {
         state.setupDetailed = !cold;
         const start = performance.now();
@@ -79,7 +80,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         input.setSelectionRange(4, 9);
         input.dispatchEvent(new CompositionEvent("compositionstart", {bubbles:true}));
         window.quickPromptProbe = input;
-        return { editableMs: performance.now() - start, enabled: !input.disabled, createDisabled: document.querySelector('#quick-agent-form button[type=submit]').disabled };
+        return { editableMs: performance.now() - start, enabled: !input.disabled, createDisabled: document.querySelector('#quick-agent-form button[value=create-run]').disabled };
       }, cold);
       assert(timing.editableMs < 100, JSON.stringify(timing));
       assert(timing.enabled && timing.createDisabled);
@@ -95,7 +96,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     }
     // A contextual peer opens before either source responds. A late Host default
     // must not reroute it, including when Host finishes after peer defaults.
-    await addPeers(); await discard(); peerDelay = 200; delay = 600;
+    await addPeers(); await resetDraft(); peerDelay = 200; delay = 600;
     const peerOpening = await page.evaluate(() => {
       history.replaceState(null, "", "#project/fixture-peer0%2Fweb");
       const start = performance.now(); openQuickAgent();
@@ -109,28 +110,28 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     assert.equal(await page.locator("#quick-agent-project").inputValue(), "fixture-peer0/web");
     assert.equal(await page.locator("#quick-agent-prompt").inputValue(), "Context peer draft");
     results.push({width, contextualPeer:peerOpening, lateHostDefaultPreserved:true});
-    await discard();
+    await resetDraft();
     await page.evaluate(() => history.replaceState(null, "", "#agents"));
     peerDelay = 800;
     // Local failure/retry, no eligible local, and revoked eligibility retain text.
-    await discard(); fail = true;
+    await resetDraft(); fail = true;
     await page.evaluate(() => openQuickAgent());
     await page.locator("#quick-agent-prompt").fill("Keep failed local draft");
     await page.locator("[data-quick-agent-retry]").waitFor({ state: "visible" });
-    assert(await page.locator('#quick-agent-form button[type=submit]').isDisabled());
+    assert(await page.locator('#quick-agent-form button[value=create-run]').isDisabled());
     fail = false; delay = 40;
     await page.locator("[data-quick-agent-retry]").click(); await ready();
     assert.equal(await page.locator("#quick-agent-prompt").inputValue(), "Keep failed local draft");
-    await discard(); empty = true;
+    await resetDraft(); empty = true;
     await page.evaluate(() => openQuickAgent());
     await page.waitForFunction(() => quickAgent.localReady);
-    assert(await page.locator('#quick-agent-form button[type=submit]').isDisabled());
-    await discard(); empty = false;
+    assert(await page.locator('#quick-agent-form button[value=create-run]').isDisabled());
+    await resetDraft(); empty = false;
     await page.evaluate(() => openQuickAgent()); await ready();
     await page.locator("#quick-agent-prompt").fill("Keep revoked draft");
     empty = true;
     await page.evaluate(() => loadQuickAgentLocalOptions());
-    assert(await page.locator('#quick-agent-form button[type=submit]').isDisabled());
+    assert(await page.locator('#quick-agent-form button[value=create-run]').isDisabled());
     assert.equal(await page.locator("#quick-agent-prompt").inputValue(), "Keep revoked draft");
     empty = false;
     await page.evaluate(() => loadQuickAgentLocalOptions()); await ready();
@@ -139,7 +140,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await page.locator("#quick-agent-name").fill("Keep name");
     await page.evaluate(() => { window.formProbe = document.querySelector("#quick-agent-form"); });
     await addPeers("loading");
-    assert(await page.locator('#quick-agent-form button[type=submit]').isEnabled());
+    assert(await page.locator('#quick-agent-form button[value=create-run]').isEnabled());
     await addPeers();
     assert.equal(await page.locator('#quick-agent-project option[value^="fixture-peer"]').count(), 3);
     assert(await page.evaluate(() => formProbe === document.querySelector("#quick-agent-form")));
@@ -158,7 +159,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     // Explicit peer selection cannot change to Host when a peer disappears.
     await addPeers("offline");
     assert.equal(await page.locator("#quick-agent-project").inputValue(), "fixture-peer0/web");
-    assert(await page.locator('#quick-agent-form button[type=submit]').isDisabled());
+    assert(await page.locator('#quick-agent-form button[value=create-run]').isDisabled());
     const peerRefreshes = [];
     await page.route(`${baseUrl}/servers/*/resources/refresh`, async route => {
       peerRefreshes.push(new URL(route.request().url()).pathname);
@@ -203,7 +204,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     assert.equal(await page.locator("#quick-agent-dialog").evaluate(el => el.open), false);
     await page.evaluate(() => openQuickAgent()); await ready();
     assert.equal(await page.locator("#quick-agent-prompt").inputValue(), "Keep revoked draft");
-    await discard(); delay = 30;
+    await resetDraft(); delay = 30;
     await page.evaluate(() => openQuickAgent()); await ready();
     assert.equal(await page.locator("#quick-agent-prompt").inputValue(), "");
     // All peer detail reads stay held while a real local fake-harness create completes once.
@@ -221,7 +222,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     const sent = [];
     page.on("request", req => { if (req.method() === "POST" && /\/agents$/.test(req.url())) sent.push({url:req.url(),body:req.postDataJSON()}); });
     const responsePromise = page.waitForResponse(r => r.url() === `${baseUrl}/agents` && r.request().method() === "POST");
-    await page.locator('#quick-agent-form button[type=submit]').click();
+    await page.locator('#quick-agent-form button[value=create-run]').click();
     const response = await responsePromise;
     assert(response.ok(), await response.text());
     const created = (await response.json()).agent;
@@ -243,7 +244,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await page.evaluate(() => { history.replaceState(null,"","#project/fixture-peer0%2Fweb"); openQuickAgent(); });
     await ready();
     await page.locator("#quick-agent-prompt").fill("Peer target snapshot");
-    await page.locator('#quick-agent-form button[type=submit]').click();
+    await page.locator('#quick-agent-form button[value=create]').click();
     await page.locator("[data-retry-agent-create]").waitFor({state:"visible"});
     const peerRecord = await page.evaluate(() => {
       const entry = [...pendingAgentCreations.values()].find(e=>e.payload?.prompt === "Peer target snapshot");
@@ -252,6 +253,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     assert.equal(peerRecord.path,"/servers/fixture-peer0/agents");
     assert.equal(peerRecord.body.project_key,"web");
     assert.equal(peerRecord.body.agent,"peer-wrapper");
+    assert.equal(peerRecord.body.start,false);
     assert.equal(peerRecord.server.key,"fixture-peer0");
     assert.equal(peerRecord.rejected,false);
     results.push({width,peerRecord});

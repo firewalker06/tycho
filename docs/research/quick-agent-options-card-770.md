@@ -3,7 +3,7 @@
 [Card 770](https://fizzy.startkit.tech/1/cards/770) covers the Quick form fix and a
 separate completed inventory. The inventory and its original fixtures are in
 [the inventory report](/Users/didik/Code/personal/pull-request-reviews/firewalker06/tycho/agent-create-archive-inventory-770.md).
-This change covers Quick opening and options only. Clone, archive, schedules,
+This change covers Quick opening, options, and the two footer create actions. Clone, archive, schedules,
 TUI, CLI, and creation receipt/store transitions keep their existing behavior.
 
 ## Cause and change
@@ -29,7 +29,11 @@ An unavailable explicit peer remains selected and disables Create.
 The dialog uses an in-memory draft, session generation, project request sequence,
 and coalesced local/project reads. Async updates keep the prompt, name, focus,
 selection and composition nodes. Only untouched options receive late defaults.
-Close retains the draft for this page. Explicit discard and submission clear it.
+Close retains the draft for this page. Submission clears it. The footer has
+Create (idle) and Create and run actions. Both use the shared creation snapshot
+and receipt path with an explicit `start: false` or `start: true`. Enter in the
+prompt or name keeps the run default; activating Create never runs. Both buttons
+wait for the same option readiness and pending gates.
 Reload starts a new opening draft; PR 281's existing pending-create persistence
 continues to handle submitted requests. Drafts contain no provider credentials.
 
@@ -77,7 +81,13 @@ defaults, explicit harness/model/effort edits, explicit Default selection, field
 and composition retention, close/reopen/double open, A/B/A switching, stale
 replies, peer retry and responsive overflow. With all three peer detail reads
 held, a local create must finish with one local request and one fake-harness run. A fixture-only peer submission also verifies the
-raw project key, custom default harness, broker path and uncertain creation record.
+raw project key, custom default harness, broker path and uncertain Create-only record.
+The create-actions checks also count actual fake-harness invocations: Create
+makes one request, leaves the agent idle with zero runs and zero harness launches;
+Create and run and Enter make one request and one launch. Both actions retain
+their exact body through lost-response, reload, and receipt retry. Rejection
+allows correction with a new request ID. Both buttons share readiness and pending
+disabled states. X, Escape, and overlay close preserve the page draft.
 
 Run from the repository root:
 
@@ -94,5 +104,5 @@ custom harnesses, shared offline catalogs, and absence of provider auth metadata
 The existing optimistic-create browser suite checks definite rejection,
 lost-response retry, hidden/unavailable accepted targets and archive receipt
 failure at both widths. No real agents, stores, peer hosts or paid providers are
-used. Screenshots are temporary files outside the checkout and go into the draft
+used. Screenshots are temporary files outside the checkout and go into the published
 PR as native GitHub attachments. Independent review belongs to the parent.
