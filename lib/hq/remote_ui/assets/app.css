@@ -8693,7 +8693,8 @@ body:has(.inquiry-form-full-screen) {
   padding: var(--ds-space-3);
 }
 
-.agent-form .form-actions-submit-group {
+.agent-form .form-actions-submit-group,
+.quick-agent-actions .form-actions-submit-group {
   display: flex;
   gap: 8px;
   margin-left: auto;
@@ -9664,13 +9665,15 @@ body:has(.inquiry-form-full-screen) {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .agent-form .form-actions-submit-group {
+  .agent-form .form-actions-submit-group,
+  .quick-agent-actions .form-actions-submit-group {
     flex: 0 0 auto;
     width: max-content;
     justify-self: end;
   }
 
-  .agent-form .form-actions-submit-group > button {
+  .agent-form .form-actions-submit-group > button,
+  .quick-agent-actions .form-actions-submit-group > button {
     flex: 0 0 auto;
     justify-content: center;
   }
@@ -9758,10 +9761,6 @@ body:has(.inquiry-form-full-screen) {
 
   .quick-agent-actions > span {
     text-align: center;
-  }
-
-  .quick-agent-actions button {
-    width: 100%;
   }
 
   .agent-dock {

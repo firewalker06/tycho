@@ -11,6 +11,9 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
     await page.goto(`${baseUrl}/ui#agents`, { waitUntil: "networkidle" });
+    await page.goto(`${baseUrl}/ui#project/web`, { waitUntil: "networkidle" });
+    await page.locator("#view [data-create-agent=web]").first().click();
+    const projectGap = await page.locator(".agent-form .form-actions-submit-group").evaluate(group => parseFloat(getComputedStyle(group).gap));
     const project = (await (await context.request.get(`${baseUrl}/projects/web`)).json()).project;
     const workspace = project.path;
     assert(workspace.includes("tycho-remote-ui-smoke"));
@@ -54,11 +57,14 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       await page.locator("#quick-agent-prompt").press("Enter");
       assert(await page.locator("#quick-agent-dialog").evaluate(dialog => dialog.open));
       await page.evaluate(() => { quickAgent.localReady = true; syncQuickAgentOptions(); });
-      if (captureDir && action === "create") {
+      if (action === "create") {
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
         const boxes = await buttons().evaluateAll(nodes => nodes.map(node => { const r = node.getBoundingClientRect(); return {left:r.left,right:r.right,top:r.top,bottom:r.bottom}; }));
         assert(boxes.every(box => box.left >= 0 && box.right <= width && box.top >= 0 && box.bottom <= 900));
-        await page.screenshot({path:path.join(captureDir, `quick-create-actions-${width}.png`), animations:"disabled"});
+        assert.equal(boxes[1].left - boxes[0].right, projectGap, "Quick buttons must use the compact Project action gap");
+        assert.equal(boxes[0].top, boxes[1].top, "Quick actions must stay together on one row");
+        results.push({width,action:"footer-spacing",gap:boxes[1].left-boxes[0].right,projectGap,noOverlap:true,noOverflow:true});
+        if (captureDir) await page.screenshot({path:path.join(captureDir, `quick-create-actions-${width}.png`), animations:"disabled"});
       }
       let release;
       const held = new Promise(resolve => { release = resolve; });
