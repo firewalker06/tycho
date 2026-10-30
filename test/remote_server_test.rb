@@ -8438,8 +8438,8 @@ module RemoteServerTest
            "expected Project diff routes to be parsed")
     assert(js[:body].include?("function ensureProjectDiff"),
            "expected Remote UI to load project Git diffs from the API")
-    assert(js[:body].include?("ensureProjectDiff(route.key, route.scope, options.forceProjectDiff || options.force)"),
-           "expected polling to preserve loaded project Git diffs unless refresh is explicit")
+    assert(js[:body].include?("ensureProjectDiff(route.key, route.scope, options.forceProjectDiff || options.force || retryError)"),
+           "expected loaded Git diffs to stay cached while initial transient errors can retry")
     assert(js[:body].include?("function renderProjectDiff"),
            "expected Remote UI to render project Git diffs")
     assert(js[:body].include?('/git/diff?scope='),
@@ -9280,7 +9280,7 @@ module RemoteServerTest
            js[:body].include?('els.view.querySelector("#inquiry-form")') &&
            js[:body].include?("if (preservedInquiryAgent) state.agentDetails[inquiryAgentKey] = preservedInquiryAgent") &&
            js[:body].include?("const preserveCurrentWorkspace = routeChangedDuringRefresh || preserveWorkspaceDuringPoll(options)") &&
-           js[:body].include?("if (!preserveCurrentWorkspace) await ensureRouteData(options)") &&
+           js[:body].include?("if (!preserveCurrentWorkspace) await ensureRouteData({ ...options, initializing: !state.initialRouteLoaded })") &&
            js[:body].include?("syncFocusedWorkspaceCatalog(currentRoute)"),
            "expected focused workspace polling to reconcile catalog state without fetching or rendering route data")
     assert(js[:body].include?("state.preservePollContentDuringRender") &&
