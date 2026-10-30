@@ -10816,7 +10816,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       attachments_path = agent.fetch("log_path").sub(/\.raw\.log\z/, ".attachments.json")
       records = JSON.parse(File.read(attachments_path))
       records.fetch("attachments") << { "type" => "file", "title" => "Cold route guide", "path" => File.join(workspace, "docs", "guide.md"), "created_at" => Time.now.iso8601 }
+      records.fetch("attachments") << { "type" => "file", "title" => "Retry image", "path" => File.join(workspace, "diagram.png"), "created_at" => Time.now.iso8601 }
       File.write(attachments_path, JSON.pretty_generate(records))
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "route_retry_smoke")
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "cold_workspace_smoke")
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "active_window_smoke")
       next
