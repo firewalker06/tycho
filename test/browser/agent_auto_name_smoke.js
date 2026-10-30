@@ -24,7 +24,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     };
     const checkProject = async (key, label) => {
       assert.equal(await currentProject.isVisible(), true);
-      assert.equal(await currentProject.innerText(), label);
+      assert.equal(await currentProject.innerText(), `${label} · Host`);
       assert.equal(await currentProject.getAttribute("data-project-key"), key);
       assert.equal(await currentProject.evaluate(el => el.isContentEditable || el.matches("input, select, textarea")), false);
       assert.equal(await project.inputValue(), key);
@@ -36,7 +36,6 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       assert.equal(await name.isVisible(), false);
       assert.equal(await project.isVisible(), false);
       assert.equal(await page.locator("#quick-agent-harness").isVisible(), false);
-      assert.equal(await prompt.evaluate(el => document.activeElement === el), true);
       await checkOverflow();
     };
     const api = async (url, method, body) => {
@@ -48,8 +47,10 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await page.goto(`${baseUrl}/ui#agents`, { waitUntil: "networkidle" });
     await page.locator("#quick-agent-fab").click();
     await prompt.waitFor({ state: "visible" });
+    await page.waitForFunction(() => quickAgentCanSubmit());
     await checkCollapsed();
     await checkProject("web", "Web");
+    assert(await prompt.evaluate(el => document.activeElement === el), "opening focuses prompt");
     assert.deepEqual(await page.evaluate(() => {
       const original = state.projects;
       try {
@@ -81,6 +82,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     // Scoped starts keep their project, but must still offer the selector.
     await page.goto(`${baseUrl}/ui#project/web`, { waitUntil: "networkidle" });
     await page.evaluate(() => openQuickAgent());
+    await page.waitForFunction(() => quickAgentCanSubmit());
     await checkCollapsed();
     await checkProject("web", "Web");
     await toggle.click();
@@ -99,18 +101,21 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     // Even a one-project catalog keeps summary and selection as separate controls.
     await page.evaluate(() => {
       const original = state.projects;
+      const local = quickAgent.local;
       try {
+        quickAgent.local = { ...local, projects: local.projects.filter(p => p.key === "web") };
         state.projects = original.filter(project => project.key === "web");
         renderQuickAgentDialog("web", {advancedOpen: true});
-      } finally { state.projects = original; }
+      } finally { state.projects = original; quickAgent.local = local; }
     });
     assert.equal(await project.isVisible(), true);
     assert.equal(await project.locator("option").count(), 1);
     await checkProject("web", "Web");
-    await page.keyboard.press("Escape");
+    await page.evaluate(() => closeQuickAgent(true));
     await page.goto(`${baseUrl}/ui#agents`, { waitUntil: "networkidle" });
     await page.locator("#quick-agent-fab").click();
     await prompt.waitFor({ state: "visible" });
+    await page.waitForFunction(() => quickAgentCanSubmit());
     await checkCollapsed();
     await checkProject("alpha-b", "alpha");
     assert.equal(await page.evaluate(() => quickAgentInitialProject({type: "project", key: "web"}).key), "web", "project scope lost its override");
@@ -143,7 +148,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await toggle.click();
     await checkCollapsed();
     const responsePromise = page.waitForResponse(response => response.url() === `${baseUrl}/agents` && response.request().method() === "POST");
-    await page.locator("#quick-agent-form button[type=submit]").click();
+    await page.locator("#quick-agent-form button[value=create-run]").click();
     const response = await responsePromise;
     assert(response.ok());
     assert(!Object.hasOwn(response.request().postDataJSON(), "name"));
@@ -162,6 +167,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await page.goto(`${baseUrl}/ui#agents`, { waitUntil: "networkidle" });
     await page.locator("#quick-agent-fab").click();
     await prompt.waitFor({ state: "visible" });
+    await page.waitForFunction(() => quickAgentCanSubmit());
     await checkCollapsed();
     await prompt.fill("Keep this name and project.");
     await toggle.click();
@@ -178,7 +184,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       await checkCollapsed();
       await checkProject("web", "Web");
     } finally { releaseProject(); }
-    await page.waitForFunction(() => Boolean(state.projectDetails.web));
+    await page.waitForFunction(() => quickAgentCanSubmit());
     await page.unroute(`${baseUrl}/projects/web`);
     await toggle.click();
     assert.equal(await name.inputValue(), "Manual Export");
@@ -197,7 +203,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await checkProject("web", "Web");
     await capture("changed");
     const explicitResponse = page.waitForResponse(response => response.url() === `${baseUrl}/agents` && response.request().method() === "POST");
-    await page.locator("#quick-agent-form button[type=submit]").click();
+    await page.locator("#quick-agent-form button[value=create-run]").click();
     const explicitResult = await explicitResponse;
     assert(explicitResult.ok());
     assert.equal(explicitResult.request().postDataJSON().name, "Manual Export");
@@ -210,7 +216,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     }, { baseUrl, key: explicit.agent.key });
     assert.deepEqual(errors, []);
     results.push({ viewport: viewport.width, currentProjectVisible: true, selectorAndNameHidden: true, scopedSelector: true, singleProjectSelector: true,
-      labelMatchesCreateTarget: true, delayedProjectConsistency: true, promptFocus: true, alphabeticProjectKeys: sortedKeys,
+      labelMatchesCreateTarget: true, delayedProjectConsistency: true, openingPromptFocus: true, toggleRetainsFocus: true, alphabeticProjectKeys: sortedKeys,
       persistedDefault: "alpha-b", scopedOverride: "web", manualSelectionPreserved: true, collapsedBlankAutoName: "Export Check",
       collapsedExplicitName: "Manual Export", overlay, overflow: false });
     await context.close();

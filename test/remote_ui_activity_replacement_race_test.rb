@@ -47,7 +47,9 @@ module RemoteUIActivityReplacementRaceTest
       const catalogStart = source.indexOf("function applyResourceCatalog");
       const catalogEnd = source.indexOf("\nfunction mergeAgentActivity", catalogStart);
       if (catalogStart < 0 || catalogEnd < 0) throw new Error("missing catalog reconciliation function");
+      let quickOptionSyncs = 0;
       Object.assign(context, {
+        syncQuickAgentOptions: () => { quickOptionSyncs += 1; },
         normalizeProjectResource: (project, server) => ({ ...project, server_key: server.key }),
         reconcileOptimisticPromptQueue: () => {},
         prunePullRequestDiffState: () => {},
@@ -77,6 +79,7 @@ module RemoteUIActivityReplacementRaceTest
           !context.state.archivedAgentCatalogConfirmedKeys.has("source")) {
         throw new Error("fresh catalog response did not preserve replacement state");
       }
+      if (quickOptionSyncs !== 1) throw new Error("only accepted catalogs may update open Quick options");
       if (context.applyResourceCatalog(catalog, { sequence: 1, mutationGeneration: 1 }) !== false) {
         throw new Error("older catalog response was not rejected");
       }

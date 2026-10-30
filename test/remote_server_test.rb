@@ -949,6 +949,24 @@ module RemoteServerTest
              "expected no preference to preserve original first-project behavior")
       assert(defaults[:projects].map { |project| project[:key] } == %w[alpha-a alpha-b web zulu],
              "expected visible available choices sorted by case-insensitive name then key")
+      service.define_singleton_method(:harness_readiness) { raise "Quick options must not discover harnesses" }
+      service.define_singleton_method(:tool_readiness) { raise "Quick options must not discover tools" }
+      service.define_singleton_method(:setup) { raise "Quick options must not load Settings" }
+      options = server.send(:route, service, "GET", "/quick-agent/options", {}, nil).fetch(:body)
+      assert(options[:quick_agent] == defaults, "Quick options must use actual local eligibility and saved defaults")
+      assert(options[:projects].map { |project| project[:key] }.sort == %w[alpha-a alpha-b web zulu],
+             "Quick options must exclude hidden and missing workspaces")
+      web_options = options[:projects].find { |project| project[:key] == "web" }
+      assert(web_options[:agent] == service.project("web")[:agent] &&
+             web_options[:agent_template_summaries] == service.project("web")[:agent_template_summaries],
+             "Quick options must preserve real project and template defaults")
+      assert(options[:harnesses].map { |harness| harness[:name] } == HQ.harness_keys,
+             "Quick options must include configured custom harnesses")
+      options[:harnesses].each do |harness|
+        assert(harness[:model_suggestions] == HQ::HarnessCatalog.for_listing(harness[:name], registry: registry)[:model_suggestions],
+               "Quick options must use shared offline model catalogs")
+      end
+      assert(!JSON.generate(options).include?("auth_snapshot"), "Quick options must omit provider auth metadata")
       updated = server.send(:route, service, "PATCH", "/settings/quick-agent", { "default_project_key" => "alpha-b" }, nil)
       assert(updated.dig(:body, :quick_agent, :effective_project_key) == "alpha-b", "expected saved global default")
       persisted = YAML.safe_load_file(registry.path)
@@ -8483,8 +8501,8 @@ module RemoteServerTest
            "expected Remote UI to expose Quick Agent creation")
     assert(js[:body].include?("function quickAgentProjectDefaults"),
            "expected Quick Agent to derive project-specific defaults")
-    assert(js[:body].include?("await ensureProject(newKey)"),
-           "expected Quick Agent project changes to load project detail defaults")
+    assert(js[:body].include?("void loadQuickAgentProject(newKey)"),
+           "expected selected peer defaults to load asynchronously")
     assert(js[:body].include?("Tycho build"),
            "expected Settings screen to display the Tycho build")
     assert(js[:body].include?("function tychoBuildLabel"),

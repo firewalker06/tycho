@@ -87,7 +87,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       });
       const before = await createCount();
       const start = Date.now();
-      const submit = quick ? "#quick-agent-form button[type=submit]" : "#agent-form button[value=create]";
+      const submit = quick ? "#quick-agent-form button[value=create-run]" : "#agent-form button[value=create]";
       await page.locator(submit).click();
       await page.locator(".pending-agent-conversation").waitFor();
       const visibleMs = Date.now() - start;
@@ -208,7 +208,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         originalAgent = (await response.json()).agent;
         await route.abort("connectionfailed");
       }, { times: 1 });
-      await page.locator(quick ? "#quick-agent-form button[type=submit]" : "#agent-form button[value=create-run]").click();
+      await page.locator(quick ? "#quick-agent-form button[value=create-run]" : "#agent-form button[value=create-run]").click();
       await retry.waitFor();
       await page.waitForFunction(async ({ baseUrl, key }) => !(await (await fetch(`${baseUrl}/agents/${key}`)).json()).agent.running, { baseUrl, key: originalAgent.key });
       const workspace = originalAgent.workspace;
@@ -231,10 +231,13 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         assert.equal(await page.locator("[data-edit-agent-create], [data-discard-agent-create]").count(), 0);
         if (!quick) await page.evaluate(() => refresh({ force: true }));
         await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
-        await page.waitForFunction(() => location.hash === "#agents");
+        await page.waitForFunction(() => location.hash === "#agents" && document.querySelector("#screen-title")?.textContent === "Agents");
         assert.equal(await page.locator("#agent-form").count(), 0, "navigation exposed a replacement form");
         await page.goBack();
-        await retry.waitFor();
+        try { await retry.waitFor(); } catch (error) {
+          console.log("creation back diagnostic", {width,quick}, await page.evaluate(() => ({hash:location.hash,title:document.querySelector("#screen-title")?.textContent,pending:[...pendingAgentCreations.values()].map(entry=>({id:entry.id,pending:entry.pending,rejected:entry.rejected,error:entry.error,agentKey:entry.agentKey}))})));
+          throw error;
+        }
         await page.reload({ waitUntil: "networkidle" });
         await retry.waitFor();
         const pending = await page.evaluate(() => JSON.parse(sessionStorage.getItem(AGENT_CREATION_STORAGE_KEY)).filter(entry => entry.payload));

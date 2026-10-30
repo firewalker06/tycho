@@ -513,6 +513,7 @@ module HQ
       end
       return ok(hidden: service.hidden_settings) if method == "GET" && parts == ["settings", "hidden"]
       return ok(hidden: service.update_hidden_setting(body)) if %w[PATCH PUT].include?(method) && parts == ["settings", "hidden"]
+      return ok(service.quick_agent_options) if method == "GET" && parts == ["quick-agent", "options"]
       return ok(quick_agent: service.quick_agent_settings) if method == "GET" && parts == ["settings", "quick-agent"]
       if %w[PATCH PUT].include?(method) && parts == ["settings", "quick-agent"]
         return ok(quick_agent: service.update_quick_agent_settings(body))
@@ -3012,6 +3013,28 @@ module HQ
           { key: project.key, name: project.name }
         end
       }
+    end
+
+    # Creation metadata only: no executable, tool, skill, or peer discovery.
+    def quick_agent_options
+      settings = quick_agent_settings
+      projects = @registry.quick_agent_projects.map do |config|
+        project = find_project!(config.key)
+        {
+          key: project.key,
+          name: project.name,
+          agent: project.config.agent,
+          model: project.config.model,
+          reasoning_effort: project.config.reasoning_effort,
+          agent_template_summaries: agent_template_summaries(project)
+        }
+      end
+      harnesses = HQ.harness_keys.map do |name|
+        { name: name, adapter: HQ.custom_harness(name)&.adapter || name }.merge(
+          HarnessCatalog.for_listing(name, registry: @registry, discover: false)
+        )
+      end
+      { quick_agent: settings, projects: projects, harnesses: harnesses }
     end
 
     def update_quick_agent_settings(attrs)
