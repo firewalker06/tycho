@@ -56,7 +56,7 @@ script = <<~'JS'
         if (status === 404) {
           assert.equal(f.calls(), 1, "permanent errors do not produce route request storms");
           assert.equal(f.state.initialRouteLoaded, false);
-          await f.c.refresh({ force: true, forcePullRequests: true, forceAttachment: true });
+          await f.c.refresh({ force: true });
         }
         assert.equal(f.calls(), 2, `${type}: next active attempt must retry actual endpoint`);
         assert.equal(f.state.initialRouteLoaded, true);

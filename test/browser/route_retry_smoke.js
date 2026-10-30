@@ -17,7 +17,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
   const evidence = [];
   for (const [viewportName, viewport] of [["desktop", { width: 1440, height: 900 }], ["mobile", { width: 390, height: 844 }]]) {
     for (const route of routes) {
-      const scenarios = ["active-503", ...(routes.indexOf(route) < 2 ? ["inactive-503", "active-rejected", "inactive-rejected", "blur-failure", "blur-recovery", "backoff"] : [])];
+      const scenarios = ["active-503", "permanent-retry", ...(routes.indexOf(route) < 2 ? ["inactive-503", "active-rejected", "inactive-rejected", "blur-failure", "blur-recovery", "backoff"] : [])];
       for (const scenario of scenarios) {
         const context = await browser.newContext({ viewport, isMobile: viewportName === "mobile", hasTouch: viewportName === "mobile" });
         const page = await context.newPage();
@@ -40,7 +40,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           if (!healthy) {
             if (scenario === "blur-failure") { signalFailure(); await failureBarrier; }
             if (scenario.endsWith("rejected")) return r.abort("failed");
-            return r.fulfill({ status: 503, contentType: "application/json", body: '{"error":"Temporary selected-route failure"}' });
+            return r.fulfill({ status: scenario === "permanent-retry" ? 404 : 503, contentType: "application/json", body: '{"error":"Temporary selected-route failure"}' });
           }
           const response = await r.fetch();
           if (scenario === "blur-recovery") { signalRecovery(); await recoveryBarrier; }
@@ -67,6 +67,11 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         }
         const failedAttempts = attempts;
         healthy = true;
+        if (scenario === "permanent-retry") {
+          await page.waitForTimeout(350);
+          assert.equal(attempts, failedAttempts, "permanent error stays cached during automatic polls");
+          await page.locator("#tycho-boot-retry").click();
+        }
         if (scenario === "blur-failure") {
           await page.waitForTimeout(250); assert.equal(attempts, failedAttempts);
           assert.equal(await page.evaluate(() => state.timer), null);
@@ -101,7 +106,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           if (await file.count() && !(await file.evaluate(el => el.open))) await file.locator("summary").click();
           await page.screenshot({ path: path.join(captureDir, `recovered-${route.name}-${viewportName}.png`) });
         }
-        evidence.push({ viewport: viewportName, route: route.name, scenario, failedAttempts, recoveredAttempts, automaticRecovery: true, readyAfterFailure: false, selectedRoutePreserved: true, fixtureIntervalsMs: { active: 120, idle: 120, backoff: 500 } });
+        evidence.push({ viewport: viewportName, route: route.name, scenario, failedAttempts, recoveredAttempts, automaticRecovery: scenario !== "permanent-retry", explicitBootRetry: scenario === "permanent-retry", readyAfterFailure: false, selectedRoutePreserved: true, fixtureIntervalsMs: { active: 120, idle: 120, backoff: 500 } });
         await context.close();
       }
     }
