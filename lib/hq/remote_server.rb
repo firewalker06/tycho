@@ -797,6 +797,10 @@ module HQ
         ui_asset("image/png", RemoteUI.png_asset("remote-logo"))
       when "/remote-logo-horizontal.png"
         ui_asset("image/png", RemoteUI.png_asset("remote-logo-horizontal"))
+      when "/remote-logo-light.png"
+        ui_asset("image/png", RemoteUI.png_asset("remote-logo-light"))
+      when "/remote-logo-horizontal-light.png"
+        ui_asset("image/png", RemoteUI.png_asset("remote-logo-horizontal-light"))
       when "/apple-touch-icon.png"
         ui_asset("image/png", RemoteUI.png_asset("apple-touch-icon"))
       when "/pwa-icon-192.png"
@@ -839,6 +843,8 @@ module HQ
         "/manifest.webmanifest",
         "/remote-logo.png",
         "/remote-logo-horizontal.png",
+        "/remote-logo-light.png",
+        "/remote-logo-horizontal-light.png",
         "/apple-touch-icon.png",
         "/pwa-icon-192.png",
         "/pwa-icon-512.png",

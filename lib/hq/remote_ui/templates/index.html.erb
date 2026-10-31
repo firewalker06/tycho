@@ -13,6 +13,8 @@
     <link rel="manifest" href="/manifest.webmanifest?v=<%= HQ::RemoteUI.asset_version %>">
     <link rel="icon" href="/favicon.png?v=<%= HQ::RemoteUI.asset_version %>" type="image/png">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=<%= HQ::RemoteUI.asset_version %>">
+    <link rel="preload" as="image" href="/remote-logo-light.png?v=<%= HQ::RemoteUI.asset_version %>">
+    <link rel="preload" as="image" href="/remote-logo-horizontal-light.png?v=<%= HQ::RemoteUI.asset_version %>">
     <link rel="stylesheet" href="/ui.css?v=<%= HQ::RemoteUI.asset_version %>">
     <style>
       :root { background: #282a36; color-scheme: dark; --boot-bg: #282a36; --boot-text: #f8f8f2; }
@@ -29,6 +31,9 @@
       .tycho-boot-mark .tycho-boot-light { stroke: #f3f1ea; }
       .tycho-boot-mark .tycho-boot-muted { stroke: #9c9c9c; }
       .tycho-boot-mark rect { fill: #f3f1ea; }
+      :root[data-appearance="light"] .tycho-boot-mark .tycho-boot-light { stroke: #2e3440; }
+      :root[data-appearance="light"] .tycho-boot-mark .tycho-boot-muted { stroke: #4c566a; }
+      :root[data-appearance="light"] .tycho-boot-mark rect { fill: #2e3440; }
       @keyframes tycho-boot-orbit { 0%, 25% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
       @keyframes tycho-boot-particle { from { opacity: .95; transform: translate(-50%, -50%) scale(.7); } 55% { opacity: .95; } to { opacity: 0; transform: translate(calc(-50% + var(--tycho-particle-x)), calc(-50% + var(--tycho-particle-y))) scale(.2); } }
       @media (prefers-reduced-motion: reduce) { .tycho-boot-shell { transition: none; } .tycho-boot-mark { animation: none; } .tycho-boot-particles { display: none; } }

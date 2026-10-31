@@ -4,6 +4,8 @@
  */
 :root[data-appearance="light"] {
   color-scheme: light;
+  --tycho-logo-light: url("/remote-logo-light.png?v=__TYCHO_ASSET_VERSION__");
+  --tycho-logo-horizontal-light: url("/remote-logo-horizontal-light.png?v=__TYCHO_ASSET_VERSION__");
   --nord0: #2e3440;
   --nord1: #3b4252;
   --nord2: #434c5e;
@@ -143,3 +145,14 @@
 :root[data-appearance="light"] .agent-dock { box-shadow: 0 -8px 20px rgb(46 52 64 / 0.10); }
 :root[data-appearance="light"] .hidden-toggle-button.active.hidden-state { background: var(--nord6); border-color: var(--nord11); }
 :root[data-appearance="light"] .hidden-toggle-button.active.visible-state { background: var(--nord14); color: var(--nord0); }
+
+/* CSS uses the resolved app preference, including System, before app startup.
+ * Keep the original img, alt text, layout, and loading animation in both modes. */
+:root[data-appearance="light"] .brand-logo,
+:root[data-appearance="light"] .tycho-loading-logo {
+  content: var(--tycho-logo-light);
+}
+
+:root[data-appearance="light"] .onboarding-logo-horizontal {
+  content: var(--tycho-logo-horizontal-light);
+}

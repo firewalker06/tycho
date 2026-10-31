@@ -65,3 +65,47 @@ draft and inquiry preservation, and desktop/mobile states. Set
 `TYCHO_REMOTE_UI_CAPTURE_DIR` to a directory outside the repository to retain
 screenshots. Use isolated fixtures; do not create production agents for visual
 checks. Browser and contrast evidence does not measure physical sunlight.
+
+## Tycho logo artwork
+
+Card 773 uses separate light PNG exports. The original symbol and wordmark
+remain the Dark assets. Light uses nord0 `#2e3440` for pale details and lettering,
+and nord3 `#4c566a` for the muted ring segment. Alpha, dimensions, geometry, and
+all orange pixels are preserved. The boot shell's existing inline SVG uses the
+same Light colors without changing its paths or animation.
+
+The website project has SVG versions at
+`tycho-site/public/assets/tycho-logo-only.svg` and
+`tycho-site/public/assets/tycho-logo-horizontal.svg` (introduced in website commit
+`f78daae75cd9027ec65d5ebf4d961ffa7ddcaac5`). Their raster edges differ from these
+PNGs, so they are not treated as the exact source. The symbol PNG entered this
+repository in `092de464f19eddfe1aa64172a5b533295f7d61f4`; the wordmark entered in
+`50aa6e6` (first-run onboarding). Do not trace or redraw them to make variants.
+
+Run `bin/generate-light-logos` from the repository root to reproduce the Light
+exports. It requires ImageMagick's `magick` command, uses the original PNGs,
+changes RGB channels only, and does not resample. Its orange mask covers the
+complete upper-left outer ring, including antialiasing. Keep original geometry
+and mask coordinates together if approved source artwork changes later.
+
+CSS selects the light PNG from the resolved app appearance. The main template preloads
+both light assets. The shared rendered stylesheet supplies the versioned image
+URLs to every consumer, including the Design System preview. The image
+nodes, decorative alt text, sizing, and loading pulse remain intact. No JavaScript
+image replacement or OS-only media query can override the selected app theme.
+
+Favicon PNG/ICO, Apple touch icons, and PWA/maskable icons remain unchanged.
+Installed and notification icons are controlled by the browser or OS and do not
+follow the app preference. Apple/PWA exports already include a dark background;
+the transparent favicon can still be pale on a light browser tab. Its separate
+SVG endpoint is not the exact source artwork and is not selected by the page.
+This change addresses in-app logos only. Browser chrome can also retain cached
+installed icons independently of the shared in-app asset version.
+
+Run `TYCHO_REMOTE_UI_LOGO_ONLY=1 bin/remote-ui-smoke` for Chrome pixel preservation,
+first-paint boot colors, live header/onboarding/loading states, desktop/mobile
+layout, reduced motion, System changes, and reload checks. The same command also
+checks rendered Design System logo pixels with saved Light, System/Light, Dark,
+and System/Dark at desktop and mobile sizes. Set
+`TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository to retain before/after
+screenshots.

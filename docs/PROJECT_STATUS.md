@@ -18,7 +18,9 @@ Card 772 selects Nord Light alongside the existing default Dark appearance.
 The selected conversation mapping is nord5 canvas, nord6 assistant surfaces,
 and nord8 user messages with nord0 text. Settings offers an explicit local
 Dark/Light/System preference; System follows the OS only when selected.
-Persistence, platform limits, and verification are documented in
+Card 773 adds faithful Light PNG variants for the symbol and wordmark, with
+Polar Night details and the original orange segment. Dark and installed icons
+remain unchanged. Persistence, platform limits, and verification are documented in
 [Remote UI appearance](REMOTE_UI_APPEARANCE.md).
 
 ## Optimistic agent creation

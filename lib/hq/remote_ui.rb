@@ -36,6 +36,8 @@ module HQ
     PNG_ASSETS = {
       "remote-logo" => LOGO_PATH,
       "remote-logo-horizontal" => HORIZONTAL_LOGO_PATH,
+      "remote-logo-light" => File.join(ROOT, "assets", "tycho-logo-light.png"),
+      "remote-logo-horizontal-light" => File.join(ROOT, "assets", "tycho-logo-horizontal-light.png"),
       "apple-touch-icon" => APPLE_TOUCH_ICON_PATH,
       "pwa-icon-192" => PWA_ICON_192_PATH,
       "pwa-icon-512" => PWA_ICON_512_PATH,
@@ -92,7 +94,8 @@ module HQ
     end
 
     def self.css
-      [asset_content(DESIGN_SYSTEM_CSS_PATH), asset_content(CSS_PATH), asset_content(LIGHT_CSS_PATH)].join("\n")
+      [asset_content(DESIGN_SYSTEM_CSS_PATH), asset_content(CSS_PATH),
+       asset_content(LIGHT_CSS_PATH).gsub("__TYCHO_ASSET_VERSION__", asset_version)].join("\n")
     end
 
     def self.appearance_js
