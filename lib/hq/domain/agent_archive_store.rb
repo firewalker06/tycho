@@ -9,6 +9,8 @@ require "time"
 module HQ
   class AgentArchiveStore
     ReceiptLookupError = Class.new(StandardError)
+    # Start of the first receipt-capable source day (0429119, +07:00).
+    RECEIPT_CAPABILITY_BOUNDARY = Time.iso8601("2026-10-29T00:00:00+07:00").freeze
     Record = Struct.new(:agent, :directory, :manifest_path, keyword_init: true)
     @cache_mutex = Mutex.new
     @snapshot_cache = {}
@@ -17,8 +19,11 @@ module HQ
       attr_reader :cache_mutex, :snapshot_cache
     end
 
+    attr_reader :receipt_scan_health
+
     def initialize(root: AGENT_ARCHIVE_DIR)
       @root = root
+      @receipt_scan_health = {}
     end
 
     def all
@@ -59,6 +64,8 @@ module HQ
     # Creation needs proven absence, not the best-effort browsing snapshot.
     # The caller holds the agent-store mutation lock through lookup and save.
     def find_creation_request(id)
+      @receipt_scan_health = {}
+      missing_manifests = 0
       entries = begin
         Dir.children(@root)
       rescue Errno::ENOENT
@@ -66,12 +73,25 @@ module HQ
       end
       records = entries.sort.filter_map do |entry|
         directory = File.join(@root, entry)
+        raise ReceiptLookupError, "Archive directory is a symbolic link" if File.symlink?(directory)
         next unless File.stat(directory).directory?
 
         path = File.join(directory, "agent_manifest.json")
-        next if legacy_log_archive?(entry, path)
+        if pre_receipt_archive_without_manifest?(entry, path)
+          missing_manifests += 1
+          next
+        end
 
         load_record(path, strict: true)
+      end
+      if missing_manifests.positive?
+        @receipt_scan_health = {
+          status: "history_unavailable", missing_manifests:,
+          message: "Some older archive history is unavailable."
+        }
+        HQ.logger.warn("AgentArchiveStore") do
+          "#{missing_manifests} pre-receipt archives have no manifest or backup; archive history is unavailable, not verified healthy"
+        end
       end
       records.find { |record| record.agent.creation_request&.fetch("id", nil) == id }
     rescue StandardError
@@ -86,14 +106,19 @@ module HQ
 
     private
 
-    # Archive manifests shipped on 2026-08-14 (398bc51), before creation
-    # receipts existed. Earlier log-only archives cannot contain a receipt.
-    # Keep unknown/newer missing manifests uncertain, as with unreadable ones.
-    def legacy_log_archive?(entry, path)
-      return false unless entry.match?(/\A\d{8}-\d{6}-.+\z/) && entry < "20260814-000000"
+    # Manifest writing began in e04dcfb (Aug 8); it does not prove receipt support.
+    # Receipts first appear in 0429119 (Oct 29), merged as e5eed8b / PR 281.
+    # Exclude only missing files in strictly dated, unchanged pre-capability
+    # archives. Report unavailable archive history separately above.
+    def pre_receipt_archive_without_manifest?(entry, path)
+      return false unless entry.match?(/\A\d{8}-\d{6}-.+\z/) && entry < "20261029-000000"
 
-      Time.strptime(entry[0, 15], "%Y%m%d-%H%M%S")
-      !archive_file_present?(path) && !archive_file_present?("#{path}.bak")
+      timestamp = entry[0, 15]
+      parsed = Time.strptime(timestamp, "%Y%m%d-%H%M%S")
+      return false unless parsed.strftime("%Y%m%d-%H%M%S") == timestamp
+
+      !archive_file_present?(path) && !archive_file_present?("#{path}.bak") &&
+        File.mtime(File.dirname(path)) < RECEIPT_CAPABILITY_BOUNDARY
     rescue ArgumentError
       false
     end

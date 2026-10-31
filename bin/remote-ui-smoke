@@ -10797,9 +10797,13 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       next
     end
     if ENV["TYCHO_REMOTE_UI_OPTIMISTIC_CREATE_ONLY"] == "1"
-      legacy_archive = File.join(fixture.fetch(:logs_dir), "agents", "archive", "20260813-221259-web-agent-legacy")
-      FileUtils.mkdir_p(legacy_archive)
-      File.write(File.join(legacy_archive, "web-agent-legacy.raw.log"), "Legacy log-only archive\n")
+      %w[20260807-221259 20260808-204817 20260809-115049 20260813-221259].each do |timestamp|
+        legacy_archive = File.join(fixture.fetch(:logs_dir), "agents", "archive", "#{timestamp}-web-agent-legacy")
+        FileUtils.mkdir_p(legacy_archive)
+        File.write(File.join(legacy_archive, "web-agent-legacy.raw.log"), "Historical archive without a manifest\n")
+        archived_at = Time.strptime(timestamp, "%Y%m%d-%H%M%S")
+        File.utime(archived_at, archived_at, legacy_archive)
+      end
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "optimistic_create_smoke")
       next
     end
