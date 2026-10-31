@@ -120,6 +120,11 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       receipts.push({ width, flow: "legacy-archive", quick, startAgent, status: response.status() });
       if (captureDir) fs.writeFileSync(path.join(captureDir, "browser-receipts.json"), JSON.stringify(receipts, null, 2));
       assert.equal(response.status(), 201, "legacy log-only archive blocked creation");
+      const health = (await response.json()).agent.creation_archive_health;
+      assert.equal(health.status, "history_unavailable");
+      assert.equal(health.missing_manifests, 4);
+      assert.match(await page.locator("#growl.warning").innerText(), /Your agent is ready.*archive history is unavailable/);
+      receipts.push({ width, flow: "archive-health-warning", missingManifests: health.missing_manifests, warningVisible: true });
       await page.waitForFunction(() => location.hash.startsWith("#agent/"));
       await page.locator("#composer").waitFor();
       const key = await page.evaluate(() => parseRoute().key);

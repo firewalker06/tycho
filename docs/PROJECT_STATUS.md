@@ -24,6 +24,16 @@ but interrupted startup returns the existing agent for explicit inspection or
 start. Measurements and limits are in
 `docs/research/agent-creation-card-750.md`.
 
+Receipt lookup separates missing historical records from receipt uncertainty.
+A missing manifest and backup can be excluded only for an exactly dated archive
+whose name and directory modification time precede receipt capability on
+2026-10-29 (first source `0429119`, merged in PR 281). Creation reports unavailable
+archive history through API metadata, a UI warning, and the application log.
+This does not certify archive health. Invalid or unknown dates, recent metadata,
+symlinked directories, present damaged records, access failures, and missing
+receipt-era records remain strict. Manifest writing began earlier, in `e04dcfb`
+on 2026-08-08; the 2026-08-14 change added archive browsing.
+
 ## Quick Agent opening
 
 Quick Agent opens an editable prompt before option reads finish. A local

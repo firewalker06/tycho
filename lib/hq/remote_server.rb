@@ -3911,7 +3911,8 @@ module HQ
                            { "id" => request_id, "fingerprint" => fingerprint }
                          end
       newly_created = false
-      target = @agent_store.create_from_template_and_persist!(project, template_key, delegation:, creation_request:) do |candidate, _current|
+      creation_archive_health = {}
+      target = @agent_store.create_from_template_and_persist!(project, template_key, delegation:, creation_request:, creation_archive_health:) do |candidate, _current|
         newly_created = true
         candidate.update!(**agent_attrs(candidate, attrs, project: project, creating: true, effective: effective_settings))
         candidate.preserve_name! unless attrs["name"].to_s.strip.empty?
@@ -3926,7 +3927,9 @@ module HQ
       end
       target = @agent_store.start_agent!(target.key, actor:) if newly_created && truthy?(attrs["start"])
       @agent_activity_snapshot.upsert!(target) unless target.archived?
-      agent_payload(target)
+      payload = agent_payload(target)
+      payload[:creation_archive_health] = creation_archive_health unless creation_archive_health.empty?
+      payload
     rescue AgentArchiveStore::ReceiptLookupError
       raise Error.new("Could not check creation request. Try again.", status: 503)
     rescue ArgumentError => e
