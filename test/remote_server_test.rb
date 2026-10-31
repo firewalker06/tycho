@@ -22,6 +22,7 @@ module RemoteServerTest
   def run!
     assert_remote_agent_lifecycle
     assert_remote_creation_retries
+    assert_creation_with_legacy_archives
     assert_creation_receipt_requires_complete_archive_scan
     assert_accepted_creation_retry_stays_uncertain
     assert_creation_receipt_preserves_hidden_archive_visibility
@@ -1187,6 +1188,52 @@ module RemoteServerTest
       end
       assert(HQ::AgentStore.new(registry.projects).load.empty?, "expected retry not to create an active replacement")
       assert(HQ::AgentArchiveStore.new.all.length == 1, "expected exactly one retained archive")
+    end
+  end
+
+  def assert_creation_with_legacy_archives
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      registry = registry_for(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      legacy = File.join(HQ::AGENT_ARCHIVE_DIR, "20260813-221259-web-agent-legacy")
+      FileUtils.mkdir_p(legacy)
+      File.write(File.join(legacy, "web-agent-legacy.raw.log"), "Legacy log without a manifest")
+      with_stubbed_agent_start do
+        [false, true].each do |start|
+          attrs = { "project_key" => "web", "prompt" => "Legacy archive creation", "start" => start,
+                    "client_request_id" => "client-legacy-archive-#{start}" }
+          accepted = service.create_agent(attrs)
+          assert(accepted[:run_count] == (start ? 1 : 0), "expected the requested launch count")
+          retried = HQ::RemoteService.new(registry: registry).create_agent(attrs)
+          assert(retried[:key] == accepted[:key], "expected active receipt replay without a duplicate")
+          service.archive_agent(accepted[:key])
+          archived = HQ::RemoteService.new(registry: registry).create_agent(attrs)
+          assert(archived[:key] == accepted[:key] && archived[:archived], "expected archived receipt replay beside legacy logs")
+          assert(archived[:run_count] == (start ? 1 : 0), "expected no second launch on archived replay")
+        end
+        # Missing current receipts and damaged old manifests remain uncertain.
+        [
+          ["20261031-000000-web-agent-missing", nil],
+          ["unknown-archive", nil],
+          ["20260799-000000-web-agent-invalid-date", nil],
+          ["20260813-000000-web-agent-corrupt", "{}"]
+        ].each_with_index do |(name, manifest), index|
+          directory = File.join(HQ::AGENT_ARCHIVE_DIR, name)
+          FileUtils.mkdir_p(directory)
+          File.write(File.join(directory, "agent_manifest.json"), manifest) if manifest
+          begin
+            service.create_agent("project_key" => "web", "prompt" => "Uncertain receipt", "client_request_id" => "client-missing-#{index}")
+            raise "expected uncertain receipt to block creation"
+          rescue HQ::RemoteService::Error => e
+            assert(e.status == 503 && !e.details&.dig(:creation_rejected), "expected uncertain receipt to remain blocked")
+          ensure
+            FileUtils.remove_entry(directory)
+          end
+        end
+      end
+      assert(File.read(File.join(legacy, "web-agent-legacy.raw.log")) == "Legacy log without a manifest", "expected legacy logs preserved")
     end
   end
 

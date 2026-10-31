@@ -68,7 +68,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         assert.equal(await page.locator("#agent-form select[name=project_key]").count(), 0, "removed Project field returned");
       }
     };
-    for (const quick of [true, false]) {
+    for (const [quick, startAgent] of [[true, false], [true, true], [false, false]]) {
       await openForm(quick);
       let release;
       const held = new Promise(resolve => { release = resolve; });
@@ -87,7 +87,8 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       });
       const before = await createCount();
       const start = Date.now();
-      const submit = quick ? "#quick-agent-form button[value=create-run]" : "#agent-form button[value=create]";
+      const submit = quick ? `#quick-agent-form button[value=${startAgent ? "create-run" : "create"}]` : "#agent-form button[value=create]";
+      const creationResponse = page.waitForResponse(response => response.url() === `${baseUrl}/agents` && response.request().method() === "POST");
       await page.locator(submit).click();
       await page.locator(".pending-agent-conversation").waitFor();
       const visibleMs = Date.now() - start;
@@ -113,19 +114,25 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         assert.equal(await page.locator("#agent-form").count(), 0);
       }
       release();
+      const response = await creationResponse;
+      await page.waitForFunction(() => [...pendingAgentCreations.values()].every(entry => !entry.pending));
+      await capture(`legacy-${quick ? "quick" : "project"}-${startAgent ? "run" : "idle"}-response`);
+      receipts.push({ width, flow: "legacy-archive", quick, startAgent, status: response.status() });
+      if (captureDir) fs.writeFileSync(path.join(captureDir, "browser-receipts.json"), JSON.stringify(receipts, null, 2));
+      assert.equal(response.status(), 201, "legacy log-only archive blocked creation");
       await page.waitForFunction(() => location.hash.startsWith("#agent/"));
       await page.locator("#composer").waitFor();
       const key = await page.evaluate(() => parseRoute().key);
       const agent = (await (await context.request.get(`${baseUrl}/agents/${key}`)).json()).agent;
       assert.equal(agent.project_key, "web");
       assert.equal(agent.prompt, payload.prompt);
-      assert.equal(payload.start, quick);
-      assert.equal(agent.run_count, quick ? 1 : 0);
+      assert.equal(payload.start, startAgent);
+      assert.equal(agent.run_count, startAgent ? 1 : 0);
       assert.equal(await createCount(), before + 1);
-      await capture(quick ? "quick-success" : "project-success");
+      await capture(quick ? `quick-${startAgent ? "run" : "idle"}-success` : "project-success");
       const completed = await page.evaluate(() => JSON.parse(sessionStorage.getItem(AGENT_CREATION_STORAGE_KEY)));
       assert(completed.every(entry => Object.keys(entry).sort().join(",") === "agentKey,id"), "completed requests retained payloads");
-      receipts.push({ width, flow: quick ? "quick" : "project-create-only", visibleMs, postCount: calls, runCount: agent.run_count });
+      receipts.push({ width, flow: quick ? `quick-${startAgent ? "run" : "idle"}` : "project-create-only", visibleMs, postCount: calls, runCount: agent.run_count });
       await page.unroute(`${baseUrl}/agents`);
     }
 
@@ -170,28 +177,40 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     assert.equal(await createCount(), beforeFailure + 1);
     await page.unroute(`${baseUrl}/agents`);
 
-    // The server accepts, but the response is lost. Reload then retry with the same ID.
-    await openForm(false);
-    const beforeLoss = await createCount();
-    let accepted;
-    let acceptedRequestId;
-    await page.route(`${baseUrl}/agents`, async route => {
-      acceptedRequestId = route.request().postDataJSON().client_request_id;
-      const response = await route.fetch();
-      assert.equal(response.status(), 201);
-      accepted = (await response.json()).agent;
-      await route.abort("connectionfailed");
-    }, { times: 1 });
-    await page.locator("#agent-form button[value=create]").click();
-    await retry.waitFor();
-    await page.reload({ waitUntil: "networkidle" });
-    await retry.waitFor();
-    const recoveredResponse = page.waitForResponse(r => r.url() === `${baseUrl}/agents` && r.request().method() === "POST");
-    await retry.click();
-    assert.equal((await recoveredResponse).request().postDataJSON().client_request_id, acceptedRequestId);
-    await page.waitForFunction(() => location.hash.startsWith("#agent/"));
-    assert.equal(await page.evaluate(() => parseRoute().key), accepted.key);
-    assert.equal(await createCount(), beforeLoss + 1, "lost response retry duplicated agent");
+    // Both Quick actions replay the frozen request after a lost response.
+    for (const startAgent of [false, true]) {
+      await openForm(true);
+      const beforeLoss = await createCount();
+      let accepted;
+      let acceptedPayload;
+      await page.route(`${baseUrl}/agents`, async route => {
+        acceptedPayload = route.request().postDataJSON();
+        const response = await route.fetch();
+        assert.equal(response.status(), 201);
+        accepted = (await response.json()).agent;
+        await route.abort("connectionfailed");
+      }, { times: 1 });
+      await page.locator(`#quick-agent-form button[value=${startAgent ? "create-run" : "create"}]`).click();
+      await retry.waitFor();
+      await page.reload({ waitUntil: "networkidle" });
+      await retry.waitFor();
+      const recoveredResponse = page.waitForResponse(r => r.url() === `${baseUrl}/agents` && r.request().method() === "POST");
+      await retry.click();
+      const recovered = await recoveredResponse;
+      assert.deepEqual(recovered.request().postDataJSON(), acceptedPayload, "retry changed the frozen request");
+      assert.equal((await recovered.json()).agent.key, accepted.key);
+      await page.waitForFunction(() => location.hash.startsWith("#agent/"));
+      assert.equal(await page.evaluate(() => parseRoute().key), accepted.key);
+      assert.equal(await createCount(), beforeLoss + 1, "lost response retry duplicated agent");
+      await page.waitForFunction(async ({ baseUrl, key }) => !(await (await fetch(`${baseUrl}/agents/${key}`)).json()).agent.running, { baseUrl, key: accepted.key });
+      const saved = (await (await context.request.get(`${baseUrl}/agents/${accepted.key}`)).json()).agent;
+      const launchFile = path.join(path.dirname(saved.workspace), "fake-codex.launches");
+      const launches = fs.existsSync(launchFile) ? fs.readFileSync(launchFile, "utf8").split("\n").filter(key => key === saved.key).length : 0;
+      assert.equal(saved.run_count, startAgent ? 1 : 0);
+      assert.equal(launches, startAgent ? 1 : 0);
+      await capture(`quick-${startAgent ? "run" : "idle"}-receipt-recovered`);
+      receipts.push({ width, flow: "quick-lost-response", startAgent, sameBody: true, sameAgent: true, launches });
+    }
 
     // Acceptance survives later project/workspace failure. Never offer a new-ID correction.
     for (const quick of [false, true]) {

@@ -54,6 +54,10 @@ def write_fixture(dir)
       config << "  - key: #{key}\n    name: #{name}\n    path: #{workspace.inspect}\n    agent: codex\n"
     end
   end
+  if ENV["TYCHO_REMOTE_UI_OPTIMISTIC_CREATE_ONLY"] == "1"
+    # Keep Agents available while the receipt test hides its target project.
+    config << "  - key: zz-recovery\n    name: ZZ Recovery\n    path: #{workspace.inspect}\n    agent: codex\n"
+  end
   File.write(config_path, config)
   File.write(prompts_path, "---\ncustom: \"Check the workspace.\"\n")
   File.write(schedules_path, <<~YAML)
@@ -10793,6 +10797,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       next
     end
     if ENV["TYCHO_REMOTE_UI_OPTIMISTIC_CREATE_ONLY"] == "1"
+      legacy_archive = File.join(fixture.fetch(:logs_dir), "agents", "archive", "20260813-221259-web-agent-legacy")
+      FileUtils.mkdir_p(legacy_archive)
+      File.write(File.join(legacy_archive, "web-agent-legacy.raw.log"), "Legacy log-only archive\n")
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "optimistic_create_smoke")
       next
     end
