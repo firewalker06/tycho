@@ -1,0 +1,36 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "open3"
+
+# Recolor the original PNGs without resampling. ImageMagick is only the PNG codec.
+root = File.expand_path("../lib/hq/remote_ui/assets", __dir__)
+[
+  ["tycho-logo", 260, 260, 130, 130, 65],
+  ["tycho-logo-horizontal", 760, 220, 118.5, 112.5, 50]
+].each do |name, width, height, center_x, center_y, radius|
+  source = File.join(root, "#{name}.png")
+  target = File.join(root, "#{name}-light.png")
+  pixels, error, status = Open3.capture3("magick", source, "-depth", "8", "rgba:-", binmode: true)
+  abort(error) unless status.success?
+  raise "Unexpected dimensions for #{source}" unless pixels.bytesize == width * height * 4
+
+  (width * height).times do |index|
+    offset = index * 4
+    next if pixels.getbyte(offset + 3).zero?
+
+    x = index % width - center_x
+    y = index / width - center_y
+    outer = x * x + y * y > radius * radius
+    next if outer && x.negative? && y.negative? # Preserve the whole orange segment, including edge pixels.
+
+    color = outer && x.negative? && y.positive? ? [76, 86, 106] : [46, 52, 64]
+    color.each_with_index { |value, channel| pixels.setbyte(offset + channel, value) }
+  end
+  _output, error, status = Open3.capture3(
+    "magick", "-size", "#{width}x#{height}", "-depth", "8", "rgba:-", "-strip", "PNG32:#{target}",
+    stdin_data: pixels, binmode: true
+  )
+  abort(error) unless status.success?
+  puts target
+end

@@ -10220,6 +10220,16 @@ module RemoteServerTest
     assert(horizontal_logo[:content_type].include?("image/png"), "expected Remote UI horizontal logo route to return PNG")
     assert(horizontal_logo[:body].bytesize.positive?, "expected Remote UI horizontal logo route to return image bytes")
 
+    %w[remote-logo-light remote-logo-horizontal-light].each do |name|
+      request = HQ::RemoteServer.const_get(:Request).new(method: "GET", path: "/#{name}.png", headers: {}, body: "")
+      assert(server.send(:ui_request?, request), "expected light logo to be a public UI asset")
+      asset = server.send(:route_ui, request.path)
+      assert(asset[:content_type] == "image/png", "expected light logo PNG content type")
+      assert(asset[:body] == HQ::RemoteUI.png_asset(name), "expected exact light logo bytes")
+      assert(asset[:headers]["X-Tycho-Asset-Version"] == HQ::RemoteUI.asset_version,
+             "expected light logos to use the shared cache version")
+    end
+
     manifest_request = HQ::RemoteServer.const_get(:Request).new(
       method: "GET",
       path: "/manifest.webmanifest",

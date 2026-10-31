@@ -36,6 +36,8 @@ module HQ
     PNG_ASSETS = {
       "remote-logo" => LOGO_PATH,
       "remote-logo-horizontal" => HORIZONTAL_LOGO_PATH,
+      "remote-logo-light" => File.join(ROOT, "assets", "tycho-logo-light.png"),
+      "remote-logo-horizontal-light" => File.join(ROOT, "assets", "tycho-logo-horizontal-light.png"),
       "apple-touch-icon" => APPLE_TOUCH_ICON_PATH,
       "pwa-icon-192" => PWA_ICON_192_PATH,
       "pwa-icon-512" => PWA_ICON_512_PATH,
