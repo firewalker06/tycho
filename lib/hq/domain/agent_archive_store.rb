@@ -68,7 +68,10 @@ module HQ
         directory = File.join(@root, entry)
         next unless File.stat(directory).directory?
 
-        load_record(File.join(directory, "agent_manifest.json"), strict: true)
+        path = File.join(directory, "agent_manifest.json")
+        next if legacy_log_archive?(entry, path)
+
+        load_record(path, strict: true)
       end
       records.find { |record| record.agent.creation_request&.fetch("id", nil) == id }
     rescue StandardError
@@ -82,6 +85,25 @@ module HQ
     end
 
     private
+
+    # Archive manifests shipped on 2026-08-14 (398bc51), before creation
+    # receipts existed. Earlier log-only archives cannot contain a receipt.
+    # Keep unknown/newer missing manifests uncertain, as with unreadable ones.
+    def legacy_log_archive?(entry, path)
+      return false unless entry.match?(/\A\d{8}-\d{6}-.+\z/) && entry < "20260814-000000"
+
+      Time.strptime(entry[0, 15], "%Y%m%d-%H%M%S")
+      !archive_file_present?(path) && !archive_file_present?("#{path}.bak")
+    rescue ArgumentError
+      false
+    end
+
+    def archive_file_present?(path)
+      File.lstat(path)
+      true
+    rescue Errno::ENOENT
+      false
+    end
 
     def root_signature
       mtime = File.mtime(@root)
