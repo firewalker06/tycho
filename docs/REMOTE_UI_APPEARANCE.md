@@ -88,8 +88,9 @@ changes RGB channels only, and does not resample. Its orange mask covers the
 complete upper-left outer ring, including antialiasing. Keep original geometry
 and mask coordinates together if approved source artwork changes later.
 
-CSS selects the light PNG from the resolved app appearance. The template preloads
-both light assets and gives their URLs the shared asset version. The image
+CSS selects the light PNG from the resolved app appearance. The main template preloads
+both light assets. The shared rendered stylesheet supplies the versioned image
+URLs to every consumer, including the Design System preview. The image
 nodes, decorative alt text, sizing, and loading pulse remain intact. No JavaScript
 image replacement or OS-only media query can override the selected app theme.
 
@@ -103,6 +104,8 @@ installed icons independently of the shared in-app asset version.
 
 Run `TYCHO_REMOTE_UI_LOGO_ONLY=1 bin/remote-ui-smoke` for Chrome pixel preservation,
 first-paint boot colors, live header/onboarding/loading states, desktop/mobile
-layout, reduced motion, System changes, and reload checks. Set
+layout, reduced motion, System changes, and reload checks. The same command also
+checks rendered Design System logo pixels with saved Light, System/Light, Dark,
+and System/Dark at desktop and mobile sizes. Set
 `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository to retain before/after
 screenshots.

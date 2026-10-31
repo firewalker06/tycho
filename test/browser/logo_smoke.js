@@ -2,7 +2,50 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
+async function designSystemLogos({ browser, baseUrl, captureDir }) {
+  const results = [];
+  for (const [preference, os, mode] of [["light", "light", "light"], ["system", "light", "light"], ["dark", "light", "dark"], ["system", "dark", "dark"]]) {
+    const context = await browser.newContext({ colorScheme: os, reducedMotion: "reduce", serviceWorkers: "block" });
+    await context.addInitScript((preference) => localStorage.setItem("hq.remote.appearance", preference), preference);
+    const page = await context.newPage();
+    try {
+      for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height: 900 }, mobile: { width: 390, height: 844 } })) {
+        await page.setViewportSize(viewport);
+        await page.goto(`${baseUrl}/design-system`);
+        const logo = page.locator(".tycho-loading-logo");
+        await logo.scrollIntoViewIfNeeded();
+        const state = await logo.evaluate((el) => ({ mode: document.documentElement.dataset.appearance, content: getComputedStyle(el).content, version: document.documentElement.dataset.assetVersion }));
+        const image = await logo.screenshot();
+        const visiblePixels = await page.evaluate(async ({ png, mode }) => {
+          const image = new Image(); image.src = `data:image/png;base64,${png}`; await image.decode();
+          const canvas = document.createElement("canvas"); canvas.width = image.width; canvas.height = image.height;
+          const ctx = canvas.getContext("2d"); ctx.drawImage(image, 0, 0);
+          const pixels = ctx.getImageData(0, 0, image.width, image.height).data;
+          let count = 0;
+          for (let i = 0; i < pixels.length; i += 4) {
+            const [r, g, b] = pixels.slice(i, i + 3);
+            if (Math.max(r, g, b) - Math.min(r, g, b) < 35 && (mode === "light" ? Math.max(r, g, b) < 130 : Math.min(r, g, b) > 190)) count++;
+          }
+          return count;
+        }, { png: image.toString("base64"), mode });
+        if (captureDir) {
+          fs.mkdirSync(captureDir, { recursive: true });
+          await logo.locator("..").screenshot({ path: path.join(captureDir, `design-system-${preference}-${os}-${device}.png`) });
+        }
+        results.push({ preference, os, device, expectedMode: mode, ...state, visiblePixels });
+      }
+    } finally { await context.close(); }
+  }
+  console.log("Design System rendered logos:", JSON.stringify(results));
+  for (const result of results) {
+    assert.equal(result.mode, result.expectedMode);
+    assert(result.visiblePixels > 20, `Design System ${result.preference}/${result.os}/${result.device}: visible ${result.expectedMode} details (${result.visiblePixels} pixels)`);
+    assert.equal(result.content, result.mode === "light" ? `url("${baseUrl}/remote-logo-light.png?v=${result.version}")` : "normal");
+  }
+}
+
 module.exports = async function logoSmoke({ browser, baseUrl, captureDir = "" }) {
+  await designSystemLogos({ browser, baseUrl, captureDir });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce", serviceWorkers: "block" });
   await context.addInitScript(() => localStorage.setItem("hq.remote.appearance", "light"));
   const page = await context.newPage();

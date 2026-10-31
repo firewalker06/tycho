@@ -94,7 +94,8 @@ module HQ
     end
 
     def self.css
-      [asset_content(DESIGN_SYSTEM_CSS_PATH), asset_content(CSS_PATH), asset_content(LIGHT_CSS_PATH)].join("\n")
+      [asset_content(DESIGN_SYSTEM_CSS_PATH), asset_content(CSS_PATH),
+       asset_content(LIGHT_CSS_PATH).gsub("__TYCHO_ASSET_VERSION__", asset_version)].join("\n")
     end
 
     def self.appearance_js

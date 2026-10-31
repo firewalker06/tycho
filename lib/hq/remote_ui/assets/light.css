@@ -4,6 +4,8 @@
  */
 :root[data-appearance="light"] {
   color-scheme: light;
+  --tycho-logo-light: url("/remote-logo-light.png?v=__TYCHO_ASSET_VERSION__");
+  --tycho-logo-horizontal-light: url("/remote-logo-horizontal-light.png?v=__TYCHO_ASSET_VERSION__");
   --nord0: #2e3440;
   --nord1: #3b4252;
   --nord2: #434c5e;
