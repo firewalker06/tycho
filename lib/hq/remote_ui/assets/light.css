@@ -1,0 +1,145 @@
+/* Nord light mapping for Tycho. Palette: https://www.nordtheme.com/docs/colors-and-palettes/
+ * Polar Night supplies readable text; Frost and Aurora supply fills and state cues.
+ * These roles are Tycho's mapping, not an official Nord port. Dark rules stay in app.css.
+ */
+:root[data-appearance="light"] {
+  color-scheme: light;
+  --nord0: #2e3440;
+  --nord1: #3b4252;
+  --nord2: #434c5e;
+  --nord3: #4c566a;
+  --nord4: #d8dee9;
+  --nord5: #e5e9f0;
+  --nord6: #eceff4;
+  --nord7: #8fbcbb;
+  --nord8: #88c0d0;
+  --nord9: #81a1c1;
+  --nord10: #5e81ac;
+  --nord11: #bf616a;
+  --nord12: #d08770;
+  --nord13: #ebcb8b;
+  --nord14: #a3be8c;
+  --nord15: #b48ead;
+  --ds-background-canvas: var(--nord5);
+  --ds-background-surface: var(--nord6);
+  --ds-background-surface-raised: var(--nord6);
+  --ds-background-surface-sunken: var(--nord4);
+  --ds-background-overlay: var(--nord6);
+  --ds-background-backdrop: rgb(46 52 64 / 0.22);
+  --ds-text-primary: var(--nord0);
+  --ds-text-secondary: var(--nord1);
+  --ds-text-muted: var(--nord3);
+  --ds-text-disabled: var(--nord3);
+  --ds-text-inverse: var(--nord0);
+  --ds-border-subtle: var(--nord3);
+  --ds-border-default: var(--nord3);
+  --ds-border-strong: var(--nord0);
+  --ds-action-brand: var(--nord8);
+  --ds-action-brand-hover: var(--nord7);
+  --ds-action-brand-active: var(--nord9);
+  --ds-action-brand-subtle: var(--nord5);
+  --ds-action-neutral-hover: var(--nord4);
+  --ds-feedback-info: var(--nord3);
+  --ds-feedback-success: var(--nord0);
+  --ds-feedback-warning: var(--nord1);
+  --ds-feedback-danger: var(--nord0);
+  --ds-selection: var(--nord8);
+  --ds-link: var(--nord0);
+  --ds-focus-ring: var(--nord3);
+  --ds-shadow-raised: 0 8px 18px rgb(46 52 64 / 0.10);
+  --ds-shadow-overlay: 0 14px 32px rgb(46 52 64 / 0.16);
+  /* Legacy product rules still address these primitives directly. */
+  --ds-color-dracula-950: var(--nord4);
+  --ds-color-dracula-900: var(--nord5);
+  --ds-color-dracula-700: var(--nord4);
+  --ds-color-dracula-500: var(--nord3);
+  --ds-color-white: var(--nord0);
+  --ds-color-lavender: var(--nord8);
+  --ds-color-cyan: var(--nord10);
+  --ds-color-green: var(--nord14);
+  --ds-color-orange: var(--nord13);
+  --ds-color-red: var(--nord11);
+  --ds-color-pink: var(--nord15);
+  --ds-color-yellow: var(--nord13);
+  --panel-soft: var(--nord4);
+  --accent: var(--nord0);
+  --accent-soft: var(--nord5);
+  --accent-contrast: var(--nord6);
+  --pink: var(--nord3);
+  --yellow: var(--nord1);
+  --harness-mark-color: var(--nord3);
+}
+
+:root[data-appearance="light"] :is(button, input, select, textarea, summary, a):focus-visible {
+  outline: 3px solid var(--ds-focus-ring);
+  outline-offset: 3px;
+}
+
+:root[data-appearance="light"] :is(button.primary, .button.primary, .ui-button[data-variant="brand"], .quick-agent-fab) {
+  background: var(--ds-action-brand);
+  color: var(--nord0);
+  border: 1px solid var(--nord3);
+}
+
+:root[data-appearance="light"] :is(button.primary, .button.primary, .ui-button[data-variant="brand"]):not(:disabled):hover { background: var(--nord7); border-color: var(--nord3); }
+:root[data-appearance="light"] :is(button.primary, .button.primary, .ui-button[data-variant="brand"]):not(:disabled):active { background: var(--nord9); border-color: var(--nord3); }
+
+:root[data-appearance="light"] :is(button, .ui-button):disabled {
+  opacity: 1;
+  background: var(--nord4);
+  color: var(--nord3);
+  border-color: var(--nord3);
+  border-style: dashed;
+  box-shadow: none;
+}
+
+:root[data-appearance="light"] :is(button, .ui-button):disabled .ui-icon { opacity: 1; }
+:root[data-appearance="light"] :is(input, select, textarea):disabled { opacity: 1; background: var(--nord4); color: var(--nord3); border-color: var(--nord3); border-style: dashed; }
+:root[data-appearance="light"] :is(input, textarea)::placeholder { color: var(--nord3); opacity: 1; }
+
+:root[data-appearance="light"] .message.assistant { background: var(--nord6); }
+:root[data-appearance="light"] .message.user { background: var(--nord8); color: var(--nord0); border-color: var(--nord3); }
+:root[data-appearance="light"] :is(.message-time, .message-group .message-time) { color: var(--nord3); opacity: 1; }
+:root[data-appearance="light"] .message.user :is(.message-role, .message-time, a) { color: var(--nord0); }
+:root[data-appearance="light"] [data-conversation-marker="complete"] > span { color: var(--nord3); }
+:root[data-appearance="light"] .ui-section-nav button[aria-current="location"] { background: var(--nord8); color: var(--nord0); border-color: var(--nord3); }
+:root[data-appearance="light"] .agent-advanced-config > summary::after { color: var(--nord3); }
+
+:root[data-appearance="light"] :is(.inquiry-banner, .mobile-inquiry > summary) {
+  background: var(--nord13);
+  border-color: var(--nord3);
+}
+:root[data-appearance="light"] :is(.inquiry-banner p, .mobile-inquiry-summary-copy strong, .mobile-inquiry-summary-copy > span, .inquiry-mark) { color: var(--nord0); }
+:root[data-appearance="light"] .inquiry-requirement.required { background: var(--nord13); color: var(--nord0); border-color: var(--nord3); }
+:root[data-appearance="light"] :is(.inquiry-field.invalid, .ui-input[aria-invalid="true"], input[aria-invalid="true"], textarea[aria-invalid="true"]) { border-color: var(--nord11); }
+:root[data-appearance="light"] .inquiry-validation:not(.ready) { border-left: 4px solid var(--nord11); padding-left: 8px; }
+:root[data-appearance="light"] .inquiry-validation.ready { color: var(--nord0); border-left: 4px solid var(--nord14); padding-left: 8px; }
+:root[data-appearance="light"] .attachment-count { background: var(--nord8); color: var(--nord0); border-color: var(--nord3); }
+
+/* Small state labels use Polar Night text. Aurora cues retain their semantic meaning. */
+:root[data-appearance="light"] :is(.ui-badge[data-intent="warning"], .pill.need, .chip.need) { background: var(--nord13); color: var(--nord0); border-color: var(--nord3); }
+:root[data-appearance="light"] :is(.ui-badge[data-intent="success"], .pill.done, .chip.done) { background: var(--nord14); color: var(--nord0); border-color: var(--nord3); }
+:root[data-appearance="light"] :is(.ui-badge[data-intent="danger"], .pill.fail, .chip.fail) { background: var(--nord6); color: var(--nord0); border-color: var(--nord11); }
+:root[data-appearance="light"] :is(.ui-badge[data-intent="active"], .ui-badge[data-intent="info"]) { background: var(--nord8); color: var(--nord0); border-color: var(--nord3); }
+:root[data-appearance="light"] :is(.status-mark, .type-mark)[data-intent="active"] { color: var(--nord3); }
+:root[data-appearance="light"] .ui-alert[data-intent="warning"] { border-left: 4px solid var(--nord13); }
+:root[data-appearance="light"] .ui-alert[data-intent="success"] { border-left: 4px solid var(--nord14); }
+:root[data-appearance="light"] .ui-alert[data-intent="danger"] { border-left: 4px solid var(--nord11); }
+:root[data-appearance="light"] .ui-alert[data-intent="info"] { border-left: 4px solid var(--nord10); }
+:root[data-appearance="light"] :is(button.danger, .ui-button[data-variant="danger"]) { color: var(--nord0); border-color: var(--nord11); }
+
+:root[data-appearance="light"] .diff-line.added { background: color-mix(in srgb, var(--nord14) 30%, var(--nord6)); }
+:root[data-appearance="light"] .diff-line.removed { background: color-mix(in srgb, var(--nord11) 18%, var(--nord6)); }
+:root[data-appearance="light"] :is(.code-viewer, .markdown-viewer pre, .markdown-viewer .mermaid, .markdown-frontmatter-rejected) { background: var(--nord6); }
+:root[data-appearance="light"] .code-line::before { background: var(--nord6); }
+:root[data-appearance="light"] .code-viewer .token.keyword { font-weight: 700; }
+:root[data-appearance="light"] .code-viewer .token.comment { font-style: italic; }
+:root[data-appearance="light"] .markdown-viewer :is(th, td) { border-color: var(--nord3); }
+:root[data-appearance="light"] .markdown-viewer a { text-decoration-color: currentColor; }
+
+/* These product rules contain dark literals, rather than semantic surface roles. */
+:root[data-appearance="light"] .quick-agent-dialog::backdrop { background: var(--ds-background-backdrop); }
+:root[data-appearance="light"] .quick-agent-dialog { box-shadow: var(--ds-shadow-overlay); }
+:root[data-appearance="light"] .agent-dock { box-shadow: 0 -8px 20px rgb(46 52 64 / 0.10); }
+:root[data-appearance="light"] .hidden-toggle-button.active.hidden-state { background: var(--nord6); border-color: var(--nord11); }
+:root[data-appearance="light"] .hidden-toggle-button.active.visible-state { background: var(--nord14); color: var(--nord0); }

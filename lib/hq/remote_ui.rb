@@ -11,6 +11,8 @@ module HQ
     DESIGN_SYSTEM_TEMPLATE_PATH = File.join(ROOT, "templates", "design_system.html.erb")
     DESIGN_SYSTEM_CSS_PATH = File.join(ROOT, "assets", "design_system.css")
     CSS_PATH = File.join(ROOT, "assets", "app.css")
+    LIGHT_CSS_PATH = File.join(ROOT, "assets", "light.css")
+    APPEARANCE_JS_PATH = File.join(ROOT, "assets", "appearance.js")
     HELPERS_JS_PATH = File.join(ROOT, "assets", "app_helpers.js")
     JS_PATH = File.join(ROOT, "assets", "app.js")
     LOGO_PATH = File.join(ROOT, "assets", "tycho-logo.png")
@@ -50,6 +52,8 @@ module HQ
       DESIGN_SYSTEM_TEMPLATE_PATH,
       DESIGN_SYSTEM_CSS_PATH,
       CSS_PATH,
+      LIGHT_CSS_PATH,
+      APPEARANCE_JS_PATH,
       HELPERS_JS_PATH,
       JS_PATH,
       SERVICE_WORKER_PATH,
@@ -88,7 +92,11 @@ module HQ
     end
 
     def self.css
-      [asset_content(DESIGN_SYSTEM_CSS_PATH), asset_content(CSS_PATH)].join("\n")
+      [asset_content(DESIGN_SYSTEM_CSS_PATH), asset_content(CSS_PATH), asset_content(LIGHT_CSS_PATH)].join("\n")
+    end
+
+    def self.appearance_js
+      asset_content(APPEARANCE_JS_PATH)
     end
 
     def self.js
