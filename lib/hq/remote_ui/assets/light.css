@@ -95,6 +95,12 @@
   box-shadow: none;
 }
 
+/* Disabled utility actions keep their fill and text cues without a border. */
+:root[data-appearance="light"] .agent-summary-navigation button:disabled,
+:root[data-appearance="light"] .local-server-list-item .server-row-actions [data-copy]:disabled {
+  border-color: transparent;
+}
+
 :root[data-appearance="light"] :is(button, .ui-button):disabled .ui-icon { opacity: 1; }
 :root[data-appearance="light"] :is(input, select, textarea):disabled { opacity: 1; background: var(--nord4); color: var(--nord3); border-color: var(--nord3); border-style: dashed; }
 :root[data-appearance="light"] :is(input, textarea)::placeholder { color: var(--nord3); opacity: 1; }

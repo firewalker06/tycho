@@ -10739,7 +10739,7 @@ end
 
 Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   fixture = write_fixture(dir)
-  agent_key = write_delegated_summary_fixture(fixture) if ENV["TYCHO_REMOTE_UI_DELEGATED_SUMMARY_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_BUTTON_BORDERS_ONLY"] == "1"
+  agent_key = write_delegated_summary_fixture(fixture) if ENV["TYCHO_REMOTE_UI_DELEGATED_SUMMARY_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_BUTTON_BORDERS_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_UTILITY_BORDERS_ONLY"] == "1"
   if ENV["TYCHO_REMOTE_UI_SUMMARY_IDLE_STOP_ONLY"] == "1"
     agent_key = "web-agent-summary-idle-fixture"
     logs_dir = fixture.fetch(:logs_dir)
@@ -10789,9 +10789,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     wait_for_remote(base_url, log_path)
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key ||= create_agent(base_url)
-    if ENV["TYCHO_REMOTE_UI_BUTTON_BORDERS_ONLY"] == "1"
+    if ENV["TYCHO_REMOTE_UI_BUTTON_BORDERS_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_UTILITY_BORDERS_ONLY"] == "1"
       associate_agent_pull_request(fixture.fetch(:logs_dir), agent_key)
-      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "button_borders_smoke")
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: ENV["TYCHO_REMOTE_UI_UTILITY_BORDERS_ONLY"] == "1" ? "utility_borders_smoke" : "button_borders_smoke")
       next
     end
     if ENV["TYCHO_REMOTE_UI_CLAUDE_COST_ONLY"] == "1"
