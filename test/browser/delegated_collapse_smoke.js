@@ -34,6 +34,13 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       const originalActivity = applyAgentActivity;
       applyAgentActivity = (data, ...args) => originalActivity({ ...data, servers: data.servers.map(server => ({ ...server, agents: window.collapseFixtureAgents })) }, ...args);
       // Polling runs the real refresh lifecycle; inject synthetic catalog data at its boundary.
+      const originalGet = apiGet;
+      apiGet = async (...args) => {
+        const data = await originalGet(...args);
+        const fixture = window.collapseFixtureAgents?.find(agent => agent.key === data.agent?.key);
+        if (fixture) Object.assign(data.agent, { name: fixture.name, delegation: structuredClone(fixture.delegation) });
+        return data;
+      };
       const originalCatalog = loadResourceCatalog;
       loadResourceCatalog = async (...args) => {
         const data = await originalCatalog(...args);
@@ -91,6 +98,39 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       await page.keyboard.press("ArrowDown");
       assert.equal(await keyboardPanel.locator("[data-open-agent].selected").getAttribute("data-open-agent"), "keyboard-grand");
       await page.keyboard.press("ArrowUp");
+      assert.equal(await keyboardPanel.locator("[data-open-agent].selected").getAttribute("data-open-agent"), agentKey);
+      const beforeActivityHtml = await keyboardPanel.locator(".unread-panel-list").innerHTML();
+      const activitySelection = await page.evaluate(key => {
+        const raw = structuredClone(state.agents);
+        const child = raw.find(agent => agent.key === key);
+        child.updated_at = "2026-11-01T05:00:01Z";
+        const sibling = { ...structuredClone(child), key: "activity-sibling", resource_key: "activity-sibling", name: "Other worker", updated_at: "2026-11-01T05:00:02Z", delegation: { parent: { key: "keyboard-parent", agent_key: "keyboard-parent" }, children: [] } };
+        raw.push(sibling);
+        window.collapseFixtureAgents = raw;
+        const accepted = applyAgentActivity({ revision: `fixture-${Date.now()}`, servers: [{ key: "local", name: "Local", local: true, ready: true }] }, state.activityAppliedSequence + 1);
+        return { accepted, selected: state.unreadPanelSelectedKey, index: state.unreadPanelSelectedIndex, visible: filterQuickSwitchAgents().map(agent => agent.key) };
+      }, agentKey);
+      assert.equal(activitySelection.accepted, true, "real activity update must run");
+      assert.deepEqual(activitySelection.visible, ["keyboard-parent", "activity-sibling", agentKey, "keyboard-grand"]);
+      assert.notEqual(await keyboardPanel.locator(".unread-panel-list").innerHTML(), beforeActivityHtml, "activity must change the actual rendered list");
+      assert.equal(await keyboardPanel.locator("[data-open-agent].selected").getAttribute("data-open-agent"), agentKey);
+      assert.equal(activitySelection.index, 2);
+      if (captureDir) await page.screenshot({ path: path.join(captureDir, `${device}-${theme}-activity-search.png`) });
+      await page.keyboard.press("Enter");
+      assert.equal(await keyboardPanel.isVisible(), false);
+      assert.equal(new URL(page.url()).hash, `#agent/${agentKey}`, "activity insertion must not change the opened child key");
+      await page.keyboard.press("Control+k");
+      await page.waitForFunction(() => document.activeElement?.matches("[data-unread-agent-search]"));
+      await page.keyboard.type("Needle child");
+      // A catalog refresh must preserve an intentional nonmatching context selection too.
+      await page.keyboard.press("ArrowUp");
+      assert.equal(await keyboardPanel.locator("[data-open-agent].selected").getAttribute("data-open-agent"), "activity-sibling");
+      await page.evaluate(() => refresh({ force: true }));
+      assert.equal(await keyboardPanel.locator("[data-open-agent].selected").getAttribute("data-open-agent"), "activity-sibling");
+      // Query changes choose the match again; ordinary rendering preserves arrow intent.
+      await keyboardSearch.fill("Needle");
+      await keyboardSearch.fill("Needle child");
+      await page.evaluate(() => syncUnreadAlert());
       assert.equal(await keyboardPanel.locator("[data-open-agent].selected").getAttribute("data-open-agent"), agentKey);
       if (captureDir) await page.screenshot({ path: path.join(captureDir, `${device}-${theme}-child-search.png`) });
       await page.keyboard.press("Enter");
@@ -166,8 +206,10 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       if (device === "mobile") await toggle.tap();
       else await toggle.click();
       await search.focus();
+      const beforeArrow = await page.evaluate(() => state.unreadPanelSelectedIndex);
+      const visibleCount = await rows.count();
       await page.keyboard.press("ArrowDown");
-      assert.equal(await page.evaluate(() => state.unreadPanelSelectedIndex), 1);
+      assert.equal(await page.evaluate(() => state.unreadPanelSelectedIndex), (beforeArrow + 1) % visibleCount);
       const bounds = await panel.boundingBox();
       assert(bounds.x >= 0 && bounds.x + bounds.width <= viewport.width + 1);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -176,7 +218,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       await panel.locator(`[data-open-agent="${agentKey}"]`).click();
       assert.equal(await panel.isVisible(), false);
       assert.equal(new URL(page.url()).hash, `#agent/${agentKey}`);
-      results.push({ device, theme, collapsed: 4, expanded: 7, search: "pass", keyboard: "pass", refresh: "pass", nativeTraversal: "pass", exactChildEnter: "pass", linkedShortcut: "Alt+Right" });
+      results.push({ device, theme, collapsed: 4, expanded: 7, search: "pass", keyboard: "pass", refresh: "pass", nativeTraversal: "pass", exactChildEnter: "pass", linkedShortcut: "Alt+Right", activityIdentity: "pass", catalogArrowIntent: "pass" });
     }
     assert.deepEqual(errors, []);
     await context.close();

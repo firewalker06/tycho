@@ -36,7 +36,7 @@ handlers.input({ target: { closest: () => input } });
 const visible = context.filterQuickSwitchAgents();
 context.openSelectedSwitcherAgent();
 const selection = { rankedMatches: context.rankMatchingAgents([parent, child], input.value, context.compareQuickSwitchAgents).map(agent => agent.key), displayOrder: visible.map(agent => agent.key), enterOpens: opened };
-state.unreadPanelQuery = ""; state.unreadPanelSelectedIndex = 0;
+state.unreadPanelQuery = ""; state.unreadPanelSelectedIndex = 0; state.unreadPanelSelectedKey = "";
 const keyProbe = (key, shiftKey = false, altKey = false) => {
  let prevented = false; linked = null;
  const handled = context.handleUnreadPanelKeydown({ key, shiftKey, altKey, target: { closest: () => null }, preventDefault: () => { prevented = true; } });

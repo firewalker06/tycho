@@ -11,3 +11,12 @@ output, status = Open3.capture2e(
 raise "switcher keyboard regression failed:\n#{output}" unless status.success?
 
 puts "remote_ui_switcher_keyboard_test: ok"
+
+output, status = Open3.capture2e(
+  "node", File.join(root, "test/support/switcher_selection_probe.js"),
+  File.join(root, "lib/hq/remote_ui/assets/app.js"),
+  File.join(root, "lib/hq/remote_ui/assets/app_helpers.js"), "--assert"
+)
+raise "switcher selection rebuild regression failed:\n#{output}" unless status.success?
+
+puts "remote_ui_switcher_selection_rebuild: ok"

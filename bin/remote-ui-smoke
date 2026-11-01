@@ -4212,6 +4212,7 @@ title: !123 value
         await page.evaluate((key) => {
           const agents = filterQuickSwitchAgents();
           state.unreadPanelSelectedIndex = agents.findIndex((agent) => agent.key === key);
+          state.unreadPanelSelectedKey = key;
           renderUnreadPanelResults(agents);
         }, orchestratorAgentKey);
         await page.keyboard.press("Alt+ArrowRight");
