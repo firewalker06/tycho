@@ -4214,10 +4214,10 @@ title: !123 value
           state.unreadPanelSelectedIndex = agents.findIndex((agent) => agent.key === key);
           renderUnreadPanelResults(agents);
         }, orchestratorAgentKey);
-        await page.keyboard.press("Tab");
+        await page.keyboard.press("Alt+ArrowRight");
         await page.waitForSelector(".unread-panel-header.linked", { state: "visible", timeout: 10_000 });
         if (await page.locator(".unread-panel-list [data-open-agent]").count() !== 3) {
-          throw new Error("Tab did not switch quick agent navigation to linked agents");
+          throw new Error("Alt+Right did not switch quick agent navigation to linked agents");
         }
         await page.keyboard.press("Escape");
         await page.setViewportSize({ width: 390, height: 844 });
