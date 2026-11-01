@@ -2,7 +2,58 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
+async function assertFocusKeyIsolation(browser) {
+  const source = fs.readFileSync(path.join(__dirname, "../../lib/hq/remote_ui/assets/app.js"), "utf8");
+  const range = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
+  const page = await browser.newPage();
+  try {
+    await page.setContent('<main id="view"></main>');
+    await page.addScriptTag({ path: path.join(__dirname, "../../lib/hq/remote_ui/assets/app_helpers.js") });
+    await page.addScriptTag({ content: `
+      const REMOTE_HELPERS = window.TychoRemoteHelpers;
+      const els = { view: document.querySelector("#view") };
+      const attachmentTypeFilters = new Map();
+      const escapeAttr = value => String(value).replaceAll("&", "&amp;").replaceAll('"', "&quot;");
+      const escapeHtml = String;
+      const attachmentKind = item => item.type, attachmentFormat = item => item.format;
+      const elementStateKey = (element, index) => REMOTE_HELPERS.elementStateKey(element, index);
+      const restorePageScroll = () => {};
+      const repositionOpenSummaryAttachmentMenus = () => {};
+      const restoreSkillAutocompleteAfterRender = () => {};
+      ${range("function attachmentFilterType(", "function renderAgentAttachments(")}
+      ${range("function captureViewState(", "function syncPreservedOpenState(")}
+    ` });
+    const result = await page.evaluate(() => {
+      const groups = [["agent:a", "flyout"], ["agent:a", "navigation"], ["agent:b", "flyout"], ["agent:b", "navigation"]];
+      const rows = [{ type: "file", format: "image" }];
+      const html = (entries, items) => entries.map(([key, surface]) => renderAttachmentTypeFilters({ key }, items, surface)).join("");
+      const target = () => [...els.view.querySelectorAll('[data-attachment-type-filter="images"]')]
+        .find(element => element.dataset.agentKey === "agent:b" && element.closest("[data-attachment-filter-surface]").dataset.attachmentFilterSurface === "navigation");
+      els.view.innerHTML = html(groups, rows);
+      const keys = [...els.view.querySelectorAll("[data-preserve-focus]")].map(element => element.dataset.stateKey);
+      target().focus();
+      const snapshot = captureViewState();
+      els.view.innerHTML = html([...groups].reverse(), [...rows, ...rows]);
+      restoreViewState(snapshot);
+      const matched = document.activeElement === target();
+      const countChanged = target().textContent.includes("2");
+      const removedResults = [];
+      for (const entries of [groups.filter(([key]) => key !== "agent:b"), groups.filter(([, surface]) => surface !== "navigation")]) {
+        els.view.innerHTML = html(groups, rows);
+        target().focus();
+        const saved = captureViewState();
+        els.view.innerHTML = html(entries, rows);
+        restoreViewState(saved);
+        removedResults.push(document.activeElement === document.body);
+      }
+      return { unique: new Set(keys).size === keys.length, matched, countChanged, removedResults };
+    });
+    assert.deepEqual(result, { unique: true, matched: true, countChanged: true, removedResults: [true, true] });
+  } finally { await page.close(); }
+}
+
 module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
+  await assertFocusKeyIsolation(browser);
   const results = [];
   for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height: 1000 }, mobile: { width: 390, height: 844 } })) {
     const context = await browser.newContext({ viewport, hasTouch: device === "mobile" });
@@ -42,6 +93,40 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     if (before) await page.reload({ waitUntil: "networkidle" });
     const flyout = page.locator("[data-attachment-flyout]");
     const button = (root, type) => root.locator(`[data-attachment-type-filter="${type}"]`);
+    async function assertChangedDataFocus(root, surface) {
+      const filter = button(root, "images");
+      await filter.focus();
+      await page.keyboard.press("Enter");
+      for (const mode of ["keyboard", "pointer", "programmatic"]) {
+        if (mode === "pointer") await filter.click();
+        if (mode === "programmatic") await filter.evaluate(element => { element.blur(); element.focus({ preventScroll: true }); });
+        const result = await page.evaluate(({ key, surface }) => {
+          const selector = `[data-attachment-filter-surface="${surface}"] [data-attachment-type-filter="images"]`;
+          const original = document.querySelector(selector);
+          const focusVisible = original.matches(":focus-visible");
+          const agent = findAgent(key);
+          const originalRows = agent.attachments;
+          agent.attachments = [...originalRows, { id: "focus-update", type: "file", format: "image", path: "/synthetic/focus-update.png", title: "Focus update" }];
+          render();
+          const replacement = document.querySelector(selector);
+          const result = {
+            replaced: replacement !== original && !original.isConnected,
+            focused: document.activeElement === replacement,
+            sameFocusVisible: replacement.matches(":focus-visible") === focusVisible,
+            pressed: replacement.getAttribute("aria-pressed"),
+            count: replacement.textContent.trim(),
+          };
+          agent.attachments = originalRows;
+          render();
+          result.focusedAfterRemoval = document.activeElement === document.querySelector(selector);
+          return result;
+        }, { key: agentKey, surface });
+        assert.deepEqual(result, { replaced: true, focused: true, sameFocusVisible: true, pressed: "true", count: "Images 2", focusedAfterRemoval: true }, `${surface} ${mode} changed metadata keeps replacement focus`);
+      }
+      await filter.focus();
+      await page.keyboard.press("Enter");
+      await capture(`changed-data-${surface}-focus`);
+    }
     for (const preference of ["dark", "light", "system"]) {
       await page.evaluate(preference => window.TychoAppearance.setPreference(preference), preference);
       if (preference === "system") {
@@ -63,6 +148,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       const focus = await button(flyout, "images").evaluate(el => ({ width: getComputedStyle(el).outlineWidth, visible: el.matches(":focus-visible") }));
       assert(focus.visible && parseFloat(focus.width) >= 2);
       await capture(`${preference}-images-focus`);
+      await assertChangedDataFocus(flyout, "flyout");
       await page.evaluate(async () => { await refresh({ force: true }); });
       assert.equal(await button(flyout, "images").getAttribute("aria-pressed"), "true");
       assert.equal(await flyout.locator(".attachment-item").count(), 1);
@@ -82,6 +168,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       const drawer = page.locator(".attachment-nav-drawer");
       await drawer.locator("summary").click();
       assert.equal(await drawer.locator("[aria-current='page']").count(), 1);
+      await assertChangedDataFocus(drawer, "navigation");
       await button(drawer, "links").click();
       assert.equal(await drawer.locator(".attachment-nav-item").count(), 1);
       assert.equal(new URL(page.url()).hash, first);
@@ -122,7 +209,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await button(flyout, "all").click();
     assert.equal(await flyout.locator(".attachment-item").count(), 3);
     assert.deepEqual(errors, []);
-    results.push({ device, themes: ["dark", "light", "system"], checks: "counts, keyboard, touch, focus, polling, selection, reset, updates, duplicates, unknown, empty, borders, overflow" });
+    results.push({ device, themes: ["dark", "light", "system"], checks: "changed-data replacement focus, keyboard/pointer/programmatic focus semantics, agent/surface focus key isolation, counts, keyboard, touch, focus, polling, selection, reset, updates, duplicates, unknown, empty, borders, overflow" });
     await context.close();
   }
   if (captureDir) fs.writeFileSync(path.join(captureDir, "browser-results.json"), JSON.stringify(results, null, 2));
