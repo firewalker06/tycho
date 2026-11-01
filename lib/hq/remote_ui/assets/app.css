@@ -2819,8 +2819,24 @@ span.harness-mark {
 .agent-mobile-toolbar-trigger:focus-visible,
 .agent-bulk-select-button:hover,
 .agent-bulk-select-button:focus-visible {
-  border-color: var(--accent);
   background: var(--panel-soft);
+}
+
+.agent-mobile-toolbar-menu[open] .agent-mobile-toolbar-trigger,
+.agent-mobile-toolbar-trigger:hover,
+.agent-mobile-toolbar-trigger:focus-visible {
+  border-color: var(--accent);
+}
+
+/* Transparent borders retain the approved utility controls' dimensions. */
+.agent-sort-trigger,
+.agent-bulk-select-button,
+.copy-url-button,
+.local-server-list-item .server-row-actions [data-copy],
+.agent-summary-navigation button,
+button[data-toggle-pr-diff-full-view],
+.pr-diff-title-actions a.icon-button {
+  border-color: transparent;
 }
 
 .agent-sort-trigger .ui-icon,
@@ -6012,6 +6028,7 @@ details.queue-read-block:not([open]) > .queue-read-body {
 }
 
 .agent-summary-navigation button:disabled {
+  border-color: transparent;
   opacity: .35;
   cursor: default;
 }
