@@ -114,3 +114,5 @@ Pull requests should include a brief summary, manual verification steps, and scr
 Also call out changes to Bubbletea input handling, bracketed paste behavior, or Bubbles text components because they affect chat, inquiry, and agent editor typing flows.
 
 - Set `TYCHO_REMOTE_UI_SESSION_ID_COPY_ONLY=1` with `bin/remote-ui-smoke` to check canonical Tycho Session ID copying, duplicate titles, clipboard errors, and desktop/mobile appearance modes. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` to retain evidence outside the repository.
+
+- Set `TYCHO_REMOTE_UI_ATTACHMENT_FILTER_ONLY=1` with `bin/remote-ui-smoke` to check attachment flyout and navigation type filters, counts, reset, updates, duplicate targets, unknown types, empty results, focus, polling, and desktop/mobile Dark, Light, and System views. Use `TYCHO_REMOTE_UI_CAPTURE_DIR` for evidence outside the repository. Optional `TYCHO_REMOTE_UI_FILTER_BEFORE_DIR` points to an external directory with baseline `app.js` and `app.css` for before screenshots.
