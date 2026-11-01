@@ -5611,7 +5611,7 @@ details.queue-read-block:not([open]) > .queue-read-body {
   height: 42px;
   min-height: 42px;
   padding: 0;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 8px;
   background: var(--panel);
   list-style: none;
@@ -6800,6 +6800,28 @@ details.queue-read-block:not([open]) > .queue-read-body {
 .agent-floating-pill.stop-fab {
   border-color: color-mix(in srgb, var(--warning) 55%, var(--border));
   color: var(--warning);
+}
+
+/* Keep control geometry and keyboard focus while removing decorative borders. */
+#back-button,
+.agent-floating-pill[data-open-agent-summary],
+.agent-floating-pill[data-open-agent-pr-diffs] {
+  border-color: transparent;
+}
+
+#back-button:not(:disabled):hover,
+.summary-attachment-menu > .summary-attachment-trigger:not(:disabled):hover,
+.agent-floating-pill[data-open-agent-summary]:not(:disabled):hover,
+.agent-floating-pill[data-open-agent-pr-diffs]:not(:disabled):hover {
+  background: var(--ds-action-neutral-hover);
+}
+
+#back-button:not(:disabled):active,
+.summary-attachment-menu > .summary-attachment-trigger:not(:disabled):active,
+.summary-attachment-menu > .summary-attachment-trigger[aria-expanded="true"],
+.agent-floating-pill[data-open-agent-summary]:not(:disabled):active,
+.agent-floating-pill[data-open-agent-pr-diffs]:not(:disabled):active {
+  background: var(--ds-background-surface-sunken);
 }
 
 @media (min-width: 900px) {
