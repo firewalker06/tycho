@@ -10011,3 +10011,17 @@ body:has(.inquiry-form-full-screen) {
   display: grid;
   gap: 6px;
 }
+
+.switcher-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: calc(var(--switcher-depth, 0) * 12px);
+  min-width: 0;
+}
+.switcher-tree-row > .switcher-agent-row { flex: 1; min-width: 0; }
+.switcher-group-toggle { min-width: 44px; min-height: 44px; padding: 6px; }
+.switcher-delegation-toggle { min-height: 44px; padding: 6px 8px; gap: 4px; }
+.switcher-delegation-toggle .ui-icon, .switcher-group-toggle .ui-icon { width: 16px; height: 16px; }
+.switcher-delegation-toggle[aria-expanded="true"] .ui-icon,
+.switcher-group-toggle[aria-expanded="true"] .ui-icon { transform: rotate(180deg); }

@@ -10860,6 +10860,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "mermaid_smoke")
       next
     end
+    if ENV["TYCHO_REMOTE_UI_DELEGATED_COLLAPSE_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "delegated_collapse_smoke")
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_LINKED_AGENTS_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "linked_agents_smoke")
       next
