@@ -4212,12 +4212,13 @@ title: !123 value
         await page.evaluate((key) => {
           const agents = filterQuickSwitchAgents();
           state.unreadPanelSelectedIndex = agents.findIndex((agent) => agent.key === key);
+          state.unreadPanelSelectedKey = key;
           renderUnreadPanelResults(agents);
         }, orchestratorAgentKey);
-        await page.keyboard.press("Tab");
+        await page.keyboard.press("Alt+ArrowRight");
         await page.waitForSelector(".unread-panel-header.linked", { state: "visible", timeout: 10_000 });
         if (await page.locator(".unread-panel-list [data-open-agent]").count() !== 3) {
-          throw new Error("Tab did not switch quick agent navigation to linked agents");
+          throw new Error("Alt+Right did not switch quick agent navigation to linked agents");
         }
         await page.keyboard.press("Escape");
         await page.setViewportSize({ width: 390, height: 844 });
@@ -10858,6 +10859,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     end
     if ENV["TYCHO_REMOTE_UI_MERMAID_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "mermaid_smoke")
+      next
+    end
+    if ENV["TYCHO_REMOTE_UI_DELEGATED_COLLAPSE_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "delegated_collapse_smoke")
       next
     end
     if ENV["TYCHO_REMOTE_UI_LINKED_AGENTS_ONLY"] == "1"
