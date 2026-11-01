@@ -44,6 +44,7 @@ bundle exec bin/tycho project create <key> [options]
 bundle exec bin/tycho metrics query [filters] [--json]
 bundle exec bin/tycho metrics backfill [--timezone ZONE]
 bin/test
+TYCHO_REMOTE_UI_BUTTON_BORDERS_ONLY=1 bin/remote-ui-smoke
 TYCHO_REMOTE_UI_WORKSPACE_ONLY=1 bin/remote-ui-smoke
 TYCHO_REMOTE_UI_WORKSPACE_ONLY=1 TYCHO_REMOTE_UI_CAPTURE_DIR=/tmp/tycho-workspace-captures bin/remote-ui-smoke
 TYCHO_REMOTE_UI_DELEGATION_ONLY=1 bin/remote-ui-smoke
