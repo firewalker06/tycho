@@ -10,7 +10,18 @@ type: project
 
 ## Last Updated
 
-2026-10-31
+2026-11-01
+
+## Agent read latency
+
+Agent detail, conversation, setup summary, and project reference reads use a
+committed store snapshot when the shared cache expires or an unrelated write
+invalidates it. These reads do not acquire the lifecycle maintenance lock.
+Polling and mutation paths keep recovery, queue dispatch, and delegation work.
+Initial agent routes render before nonessential setup and schedule reads finish.
+Shell completion preserves the current route, draft, focus, and scroll; shell
+failures still use the authentication and retry flow. See
+[Remote Sessions](REMOTE_SERVER.md) for snapshot and timing details.
 
 ## Remote UI appearance
 

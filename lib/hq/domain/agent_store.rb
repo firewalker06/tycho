@@ -11,6 +11,7 @@ require_relative "delegation_coordinator"
 require_relative "schedule_store"
 require_relative "visibility"
 require_relative "../ui/rendering/styles"
+require_relative "request_timing"
 require "securerandom"
 require "shellwords"
 
@@ -57,6 +58,28 @@ module HQ
       agents
     end
 
+    # Writers publish the primary file with an atomic rename. An open descriptor
+    # reads one committed generation without waiting for lifecycle maintenance.
+    # Do not recover backups here: an old backup can contain an archived agent.
+    def read_snapshot
+      records, signature = RequestTiming.measure("record_read") do
+        File.open(AGENTS_FILE, "r:UTF-8") do |file|
+          stat = file.stat
+          [JSON.parse(file.read), [stat.ino, stat.size, stat.mtime.to_i, stat.mtime.nsec]]
+        end
+      end
+      raise IOError, "Invalid agent store" unless records.is_a?(Array) && records.all? { |record| record.is_a?(Hash) }
+
+      agents = RequestTiming.measure("record_build") do
+        records.map { |record| attach_usage_metrics_store(ManagedAgent.from_hash(record)) }
+      end
+      [agents, signature]
+    rescue Errno::ENOENT
+      [[], nil]
+    rescue JSON::ParserError => e
+      raise IOError, "Invalid agent store: #{e.class}"
+    end
+
     # after_load runs inside the lock, so it can observe the file state that matches the loaded agents.
     # on_poll_success certifies the requested pass completed using readable primary/backup data.
     # Missing stores are healthy empty stores; unreadable fallbacks and rescued errors never certify a pass.
@@ -64,7 +87,9 @@ module HQ
       with_exclusive_lock do
         successful = false
         check = -> { successful = true } if on_poll_success
-        agents, events = load_with_poll_events_unlocked(process_delegations:, dispatch_prompt_queues:, on_poll_success: check)
+        agents, events = RequestTiming.measure("lifecycle") do
+          load_with_poll_events_unlocked(process_delegations:, dispatch_prompt_queues:, on_poll_success: check)
+        end
         after_load&.call(agents)
         on_poll_success&.call if successful
         [agents, events]
@@ -97,21 +122,23 @@ module HQ
       schedule_states = ScheduleStore.new.load
       schedule_keys = schedule_keys_by_agent(schedule_states)
       unreadable = Object.new
-      records = FileStore.read_json(AGENTS_FILE, fallback: unreadable)
+      records = RequestTiming.measure("record_read") { FileStore.read_json(AGENTS_FILE, fallback: unreadable) }
       readable = !records.equal?(unreadable)
       raw_records = readable ? Array(records) : []
       raw_records, recovered = @recovery.reconcile_loaded(raw_records)
       changed = recovered
-      agents = raw_records.map do |hash|
-        agent = ManagedAgent.from_hash(hash)
-        agent.usage_metrics_store = @usage_metrics_store
-        if agent.missing_native_session_identity?
-          HQ.logger.warn("AgentStore") do
-            "#{agent.key} has prior #{agent.agent} runs without a recoverable native session ID; " \
-              "its next run will start fresh"
+      agents = RequestTiming.measure("record_build") do
+        raw_records.map do |hash|
+          agent = ManagedAgent.from_hash(hash)
+          agent.usage_metrics_store = @usage_metrics_store
+          if agent.missing_native_session_identity?
+            HQ.logger.warn("AgentStore") do
+              "#{agent.key} has prior #{agent.agent} runs without a recoverable native session ID; " \
+                "its next run will start fresh"
+            end
           end
+          agent
         end
-        agent
       end
       # Recover already-confirmed launches before any parent poll can freeze its
       # Summary and consume its exit evidence. Unconfirmed launches keep their
@@ -274,6 +301,7 @@ module HQ
         else
           agents.unshift(target)
         end
+        backfill_agent_system_context_prompt!(target)
         target
       end
     end
@@ -1662,7 +1690,7 @@ module HQ
     def with_exclusive_lock
       FileUtils.mkdir_p(File.dirname(AGENTS_FILE))
       File.open("#{AGENTS_FILE}.lock", File::RDWR | File::CREAT, 0o600) do |file|
-        file.flock(File::LOCK_EX)
+        RequestTiming.measure("store_lock_wait") { file.flock(File::LOCK_EX) }
         yield
       ensure
         file.flock(File::LOCK_UN)

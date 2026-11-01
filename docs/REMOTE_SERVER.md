@@ -2,6 +2,33 @@
 
 The Remote Sessions server is HQ's local JSON API for inspecting and controlling managed agents without opening the Bubbletea TUI. It is intentionally small and local-first: the API reuses the same `AgentStore` and `ManagedAgent` domain objects as the TUI, so agent state continues to live in `~/.tycho/logs/managed_agents.json` and per-agent artifacts under `~/.tycho/logs/agents/`.
 
+## Agent read snapshots
+
+Agent detail and conversation GETs reuse the shared agent cache while its file
+signature and age are valid. On a miss, reads open the primary agents file and
+parse one committed generation. Store writers use atomic rename, so readers
+need no lifecycle lock. The snapshot signature comes from that open descriptor;
+a later commit invalidates the cache on the next lookup. A malformed primary
+returns an error instead of serving an old backup that can contain retired
+agents. Background polling and locked mutation paths retain recovery, launch
+reconciliation, delegation, queue dispatch, and notification ownership.
+New-agent creation persists its trusted system context before its first GET.
+
+Setup summary, project counts, relationship references, and queue readiness use
+the same read path. Queue readiness is a display estimate; dispatch still
+validates current state under its existing mutation lock. On agent routes, setup
+and schedule reads run alongside target loading. Conversation content can render
+before shell completion. Shell completion uses the current route and preserves
+editor state. Auth, setup-required, and retry handling still apply. A failed route
+finishes shell readiness before scheduling its retry.
+
+`Server-Timing` splits `agent_cache`, `record_read`, `record_build`,
+`store_lock_wait`, and `lifecycle`. Detail also reports `detail_relationships`,
+`detail_inquiry`, and `detail_attachments`. Durations are exclusive; absent
+maintenance stages mean that request did not enter maintenance. These metrics
+contain no transcript or credential data. The conversation window and history
+limits are unchanged.
+
 ## Tech Stack
 
 - Runtime: Ruby stdlib only for the server loop.
