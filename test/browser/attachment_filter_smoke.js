@@ -15,6 +15,8 @@ async function assertFocusKeyIsolation(browser) {
       const attachmentTypeFilters = new Map();
       const escapeAttr = value => String(value).replaceAll("&", "&amp;").replaceAll('"', "&quot;");
       const escapeHtml = String;
+      ${source.slice(source.indexOf("const ICONS ="), source.indexOf("\n};", source.indexOf("const ICONS =")) + 3)}
+      ${range("function iconSvg(", "// Official upstream marks;")}
       const attachmentKind = item => item.type, attachmentFormat = item => item.format;
       const elementStateKey = (element, index) => REMOTE_HELPERS.elementStateKey(element, index);
       const restorePageScroll = () => {};
@@ -36,7 +38,7 @@ async function assertFocusKeyIsolation(browser) {
       els.view.innerHTML = html([...groups].reverse(), [...rows, ...rows]);
       restoreViewState(snapshot);
       const matched = document.activeElement === target();
-      const countChanged = target().textContent.includes("2");
+      const countChanged = target().querySelector(".attachment-type-filter-count").textContent === "2";
       const removedResults = [];
       for (const entries of [groups.filter(([key]) => key !== "agent:b"), groups.filter(([, surface]) => surface !== "navigation")]) {
         els.view.innerHTML = html(groups, rows);
@@ -93,6 +95,57 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     if (before) await page.reload({ waitUntil: "networkidle" });
     const flyout = page.locator("[data-attachment-flyout]");
     const button = (root, type) => root.locator(`[data-attachment-type-filter="${type}"]`);
+    async function assertIconFilters(root) {
+      const result = await root.evaluate(async element => {
+        await Promise.allSettled(element.getAnimations({ subtree: true }).map(animation => animation.finished));
+        const controls = [...element.querySelectorAll("[data-attachment-type-filter]")];
+        const shapes = { all: "paperclip", images: "image", files: "fileText", links: "link" };
+        const buttons = controls.map(button => {
+          const type = button.dataset.attachmentTypeFilter;
+          const expectedIcon = new DOMParser().parseFromString(iconSvg(shapes[type]), "text/html").querySelector("svg");
+          const badge = button.querySelector(".attachment-type-filter-count");
+          const rect = button.getBoundingClientRect();
+          const style = getComputedStyle(button);
+          return {
+            type, icon: button.querySelector("svg")?.outerHTML === expectedIcon.outerHTML,
+            badge: badge?.classList.contains("ui-badge"),
+            visibleText: button.textContent.trim() === badge?.textContent.trim(),
+            name: button.getAttribute("aria-label"), title: button.title,
+            count: badge?.textContent.trim(), border: style.borderTopWidth,
+            hitArea: rect.width >= 38 && rect.height >= 38,
+            selectedBadge: badge?.dataset.intent === (button.getAttribute("aria-pressed") === "true" ? "active" : "neutral"),
+          };
+        });
+        const selected = controls.find(button => button.getAttribute("aria-pressed") === "true");
+        const disabled = controls.find(button => button !== selected);
+        const enabledColor = getComputedStyle(disabled).color;
+        disabled.disabled = true;
+        const pressed = disabled.getAttribute("aria-pressed");
+        disabled.click();
+        const blocked = disabled.getAttribute("aria-pressed") === pressed && selected.getAttribute("aria-pressed") === "true";
+        getComputedStyle(disabled).color;
+        await Promise.allSettled(disabled.getAnimations().map(animation => animation.finished));
+        const disabledStyle = getComputedStyle(disabled);
+        const disabledVisible = (Number(disabledStyle.opacity) < 1 || disabledStyle.color !== enabledColor) && disabledStyle.cursor === "not-allowed" && disabledStyle.borderTopWidth === "0px";
+        const disabledObserved = { opacity: disabledStyle.opacity, cursor: disabledStyle.cursor, border: disabledStyle.borderTopWidth };
+        disabled.disabled = false;
+        getComputedStyle(disabled).color;
+        await Promise.allSettled(disabled.getAnimations().map(animation => animation.finished));
+        const distinctSelected = getComputedStyle(selected).backgroundColor !== getComputedStyle(disabled).backgroundColor;
+        return { buttons, blocked, disabledVisible, disabledObserved, distinctSelected };
+      });
+      assert(result.blocked && result.disabledVisible && result.distinctSelected, `native disabled and selected feedback remain clear: ${JSON.stringify(result)}`);
+      assert.equal(result.buttons.length, 4);
+      for (const item of result.buttons) {
+        assert(item.icon && item.badge && item.visibleText && item.hitArea && item.selectedBadge, `${item.type} uses known icon, badge-only text, selected style and hit area`);
+        assert.equal(item.border, "0px", "filter button is borderless");
+        assert.equal(item.name, item.title, "tooltip preserves the full accessible name");
+        assert(item.name.includes(`(${item.count})`));
+      }
+      await button(root, "images").locator(".attachment-type-filter-count").click();
+      assert.equal(await button(root, "images").getAttribute("aria-pressed"), "true", "badge click activates its filter");
+      await button(root, "all").click();
+    }
     async function assertChangedDataFocus(root, surface) {
       const filter = button(root, "images");
       await filter.focus();
@@ -114,14 +167,14 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
             focused: document.activeElement === replacement,
             sameFocusVisible: replacement.matches(":focus-visible") === focusVisible,
             pressed: replacement.getAttribute("aria-pressed"),
-            count: replacement.textContent.trim(),
+            count: replacement.querySelector(".attachment-type-filter-count").textContent.trim(),
           };
           agent.attachments = originalRows;
           render();
           result.focusedAfterRemoval = document.activeElement === document.querySelector(selector);
           return result;
         }, { key: agentKey, surface });
-        assert.deepEqual(result, { replaced: true, focused: true, sameFocusVisible: true, pressed: "true", count: "Images 2", focusedAfterRemoval: true }, `${surface} ${mode} changed metadata keeps replacement focus`);
+        assert.deepEqual(result, { replaced: true, focused: true, sameFocusVisible: true, pressed: "true", count: "2", focusedAfterRemoval: true }, `${surface} ${mode} changed metadata keeps replacement focus`);
       }
       await filter.focus();
       await page.keyboard.press("Enter");
@@ -138,6 +191,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       await openFlyout();
       await button(flyout, "all").click();
       assert.equal(await flyout.locator(".attachment-item").count(), 7);
+      await assertIconFilters(flyout);
       await capture(`${preference}-all`);
       const requestsBefore = attachmentRequests.length;
       await button(flyout, "images").focus();
@@ -167,6 +221,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       await page.goto(`${baseUrl}/ui${first}`, { waitUntil: "networkidle" });
       const drawer = page.locator(".attachment-nav-drawer");
       await drawer.locator("summary").click();
+      await assertIconFilters(drawer);
       assert.equal(await drawer.locator("[aria-current='page']").count(), 1);
       await assertChangedDataFocus(drawer, "navigation");
       await button(drawer, "links").click();
@@ -209,7 +264,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await button(flyout, "all").click();
     assert.equal(await flyout.locator(".attachment-item").count(), 3);
     assert.deepEqual(errors, []);
-    results.push({ device, themes: ["dark", "light", "system"], checks: "changed-data replacement focus, keyboard/pointer/programmatic focus semantics, agent/surface focus key isolation, counts, keyboard, touch, focus, polling, selection, reset, updates, duplicates, unknown, empty, borders, overflow" });
+    results.push({ device, themes: ["dark", "light", "system"], checks: "borderless type icons, count badges, accessible names/tooltips, disabled and selected feedback, hit areas, badge activation, changed-data replacement focus, keyboard/pointer/programmatic focus semantics, agent/surface focus key isolation, counts, keyboard, touch, focus, polling, selection, reset, updates, duplicates, unknown, empty, borders, overflow" });
     await context.close();
   }
   if (captureDir) fs.writeFileSync(path.join(captureDir, "browser-results.json"), JSON.stringify(results, null, 2));

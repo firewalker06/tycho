@@ -12,7 +12,7 @@ module RemoteUIAttachmentFilterTest
       const assert = require("node:assert/strict");
       const source = fs.readFileSync("lib/hq/remote_ui/assets/app.js", "utf8");
       const context = { window: {}, URL, URLSearchParams, attachmentTypeFilters: new Map(),
-        escapeAttr: String, escapeHtml: String };
+        iconSvg: (name) => `<svg aria-hidden="true" data-icon="${name}"></svg>`, escapeAttr: String, escapeHtml: String };
       vm.createContext(context);
       vm.runInContext(fs.readFileSync("lib/hq/remote_ui/assets/app_helpers.js", "utf8"), context);
       context.REMOTE_HELPERS = context.window.TychoRemoteHelpers;
@@ -52,6 +52,8 @@ module RemoteUIAttachmentFilterTest
         const html = context.renderAttachmentTypeFilters(agent, list, "flyout");
         assert(html.includes(`aria-label="${type[0].toUpperCase() + type.slice(1)} (${count})`));
         assert(html.includes(`${count} of 8 shown`));
+        assert(html.includes('class="ui-badge attachment-type-filter-count"'), "counts use badge labels");
+        assert(html.includes('data-icon="' + ({ images: "image", files: "fileText", links: "link" })[type] + '"'), "known type icon");
       }
       assert.equal(context.attachmentFilterType({ type: "future", path: "/unknown" }), "files");
       context.attachmentTypeFilters.set(agent.key, "images");

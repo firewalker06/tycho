@@ -10002,24 +10002,33 @@ body:has(.inquiry-form-full-screen) {
 }
 
 .attachment-type-filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 38px;
+  min-width: var(--ds-touch-target);
+  min-height: var(--ds-touch-target);
+  gap: 6px;
   padding: 4px 7px;
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 6px;
-  background: var(--panel);
+  background: transparent;
   color: var(--text);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
 }
 
 .attachment-type-filter[aria-pressed="true"] {
-  border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, var(--panel));
-  font-weight: 700;
+  color: var(--accent);
+}
+
+.attachment-type-filter[aria-pressed="true"]:not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 24%, var(--panel));
+}
+
+.attachment-type-filter-count {
+  justify-content: center;
+  min-width: 18px;
+  min-height: 18px;
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 16px;
 }
 
 .attachment-type-filter:focus-visible {
