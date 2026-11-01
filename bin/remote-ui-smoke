@@ -5686,12 +5686,12 @@ title: !123 value
             configurable: true,
             value: {
               writeText: async (value) => {
-                window.__smokeCopiedAgentTitle = value;
+                window.__smokeCopiedSessionId = value;
               },
             },
           });
         });
-        const expectedAgentTitle = await agentsRegressionPage.locator("#screen-title .agent-name-label").textContent();
+        const expectedAgentTitle = agentKey;
         const titleCopyButton = agentsRegressionPage.locator("#header-title-copy");
         const mobileTitleCopyContract = await titleCopyButton.evaluate((button) => {
           const rect = button.getBoundingClientRect();
@@ -5708,8 +5708,8 @@ title: !123 value
         });
         if (!mobileTitleCopyContract.visible ||
             mobileTitleCopyContract.copyValue !== expectedAgentTitle ||
-            mobileTitleCopyContract.label !== "Copy agent title" ||
-            mobileTitleCopyContract.title !== "Copy agent title" ||
+            mobileTitleCopyContract.label !== "Copy Session ID" ||
+            mobileTitleCopyContract.title !== "Copy Session ID" ||
             mobileTitleCopyContract.width < 44 ||
             mobileTitleCopyContract.height < 44 ||
             mobileTitleCopyContract.conversationPaddingTop !== "0px" ||
@@ -5718,9 +5718,9 @@ title: !123 value
         }
         await titleCopyButton.click();
         await agentsRegressionPage.waitForSelector(".growl.done", { state: "visible", timeout: 10_000 });
-        const copiedAgentTitle = await agentsRegressionPage.evaluate(() => window.__smokeCopiedAgentTitle);
+        const copiedAgentTitle = await agentsRegressionPage.evaluate(() => window.__smokeCopiedSessionId);
         if (copiedAgentTitle !== expectedAgentTitle ||
-            await agentsRegressionPage.locator(".growl.done").textContent() !== "Copied to clipboard") {
+            await agentsRegressionPage.locator(".growl.done").textContent() !== "Session ID copied") {
           throw new Error(`Agent-title copy lost its exact value or success feedback: ${JSON.stringify(copiedAgentTitle)}`);
         }
         await agentsRegressionPage.evaluate(() => {
@@ -10858,6 +10858,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     end
     if ENV["TYCHO_REMOTE_UI_MERMAID_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "mermaid_smoke")
+      next
+    end
+    if ENV["TYCHO_REMOTE_UI_SESSION_ID_COPY_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "session_id_copy_smoke")
       next
     end
     if ENV["TYCHO_REMOTE_UI_LOGO_ONLY"] == "1"

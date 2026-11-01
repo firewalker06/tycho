@@ -8400,17 +8400,17 @@ module RemoteServerTest
     assert(js[:body].include?("function showGrowl"), "expected UI JavaScript to expose growl notifications")
     assert(js[:body].include?("function handleDocumentCopyClick"),
            "expected copy buttons to be handled outside the main view")
-    assert(js[:body].include?('showGrowl("Copied to clipboard", "done")'),
+    assert(js[:body].include?('showGrowl(successMessage, "done")'),
            "expected copy success to use growl feedback")
     assert(response[:body].include?('id="header-title-copy"') &&
-           response[:body].include?('aria-label="Copy agent title"') &&
-           response[:body].include?('<span class="sr-only">Copy agent title</span>'),
-           "expected the Conversation header to expose an accessible agent-title copy control")
-    assert(js[:body].include?('setHeader(agent.name || agent.key, agentHeaderLabel(agent), "A", { agentTitle: agent, copyTitle: agent.name || agent.key })') &&
+           response[:body].include?('aria-label="Copy Session ID"') &&
+           response[:body].include?('<span class="sr-only">Copy Session ID</span>'),
+           "expected the Conversation header to expose an accessible Session ID copy control")
+    assert(js[:body].include?('setHeader(agent.name || agent.key, agentHeaderLabel(agent), "A", { agentTitle: agent, copySessionId: agent.key })') &&
            js[:body].include?("function setHeaderTitleCopy") &&
            js[:body].include?("els.titleCopy.dataset.copy = value") &&
            js[:body].include?('els.titleCopy.removeAttribute("data-copy")'),
-           "expected only Agent conversation headers to copy the exact rendered title and clear stale copy data")
+           "expected only Agent conversation headers to copy the canonical Tycho key and clear stale copy data")
     assert(css[:body].include?(".header-title-row") &&
            css[:body].include?(".header-title-copy") &&
            css[:body].include?("flex: 0 0 auto") &&
