@@ -9992,7 +9992,7 @@ module RemoteServerTest
     assert(!js[:body].include?("function renderAgentRelationshipContext") &&
            !js[:body].include?("${renderAgentRelationshipContext(agent)}") &&
            js[:body].include?("function renderLinkedAgentsFlyout") &&
-           js[:body].include?("renderAgentRelationshipRow(agent, reference, reference.key)"),
+           js[:body].include?("function renderLinkedAgentSections"),
            "expected linked agents to stay in the composer flyout without a redundant conversation-top list")
     assert(js[:body].include?("function parentAgentMessageAuthor") &&
            js[:body].include?('parentAgentMessage(block) ? "parent-agent-message"') &&
