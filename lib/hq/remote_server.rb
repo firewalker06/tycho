@@ -2730,7 +2730,7 @@ module HQ
 
     def project(key)
       target = find_project!(key)
-      agents = visible_agents(cached_all_agents || load_all_agents).select { |agent| agent.project_key == target.key }
+      agents = visible_agents(cached_all_agents).select { |agent| agent.project_key == target.key }
       project_detail_payload(target, agents:)
     end
 
@@ -2840,7 +2840,7 @@ module HQ
     end
 
     def setup_payload
-      all_agents = cached_all_agents || load_all_agents
+      all_agents = cached_all_agents
       agents = visible_agents(all_agents)
       hidden_projects = HQ::Visibility.hidden_projects(@projects)
       hidden_agent_count = HQ::Visibility.hidden_agents(all_agents, @projects).length
@@ -4384,15 +4384,26 @@ module HQ
       )
     end
 
-    # Shared read-only agents from a valid snapshot, or nil; callers must not mutate them.
+    # Reuse a valid snapshot or read the latest committed file without maintenance.
+    # Callers must not mutate these agents.
     def cached_all_agents
-      @agent_list_cache.readonly_agents(usage_metrics_store: @agent_store.usage_metrics_store)
+      RequestTiming.measure("agent_cache") do
+        @agent_list_cache.readonly_agents(usage_metrics_store: @agent_store.usage_metrics_store)
+      end || read_all_agents
+    end
+
+    def read_all_agents
+      agents, signature = @agent_store.read_snapshot
+      @agent_list_cache.replace!(agents, signature:)
+      agents
     end
 
     # Cached lookup that skips the full load and its reconciliation; the push timer refreshes the snapshot.
     def cached_agent(key)
       RequestTiming.measure("agent_load") do
-        @agent_list_cache.fetch(key, usage_metrics_store: @agent_store.usage_metrics_store)
+        RequestTiming.measure("agent_cache") do
+          @agent_list_cache.fetch(key, usage_metrics_store: @agent_store.usage_metrics_store)
+        end
       end
     end
 
@@ -4577,7 +4588,7 @@ module HQ
       cached = cached_agent(key)
       return cached if cached.is_a?(ManagedAgent)
 
-      (cached == :unknown ? nil : load_all_agents.find { |agent| agent.key == key.to_s }) ||
+      (cached == :unknown ? nil : read_all_agents.find { |agent| agent.key == key.to_s }) ||
         readable_archived_agent(key) ||
         raise(Error.new("Unknown agent: #{key}", status: 404))
     end
@@ -5309,9 +5320,11 @@ module HQ
     end
 
     def agent_payload(agent, reference_context: nil, relationship_context: nil)
-      delegation = delegation_payload(agent, reference_context:, relationship_context:)
+      delegation = RequestTiming.measure("detail_relationships") do
+        delegation_payload(agent, reference_context:, relationship_context:)
+      end
       status = agent.status
-      inquiry = inquiry_payload(agent)
+      inquiry = RequestTiming.measure("detail_inquiry") { inquiry_payload(agent) }
       {
         key: agent.key,
         name: agent.display_name,
@@ -5348,7 +5361,7 @@ module HQ
         latest_inquiry: inquiry,
         suspended_inquiry: suspended_inquiry_payload(agent),
         prompt_queue: prompt_queue_payload(agent),
-        attachments: attachment_payloads(agent),
+        attachments: RequestTiming.measure("detail_attachments") { attachment_payloads(agent) },
         skills: agent.skills,
         skill_trigger: SkillDiscovery.trigger_for(agent.agent),
         session_id: agent.session_id.to_s.empty? ? nil : agent.session_id,
@@ -5446,9 +5459,7 @@ module HQ
     end
 
     def delegation_reference_context(active_agents = nil)
-      active_agents ||= RequestTiming.measure("agent_load") do
-        @agent_list_cache.readonly_agents(usage_metrics_store: @agent_store.usage_metrics_store)
-      end || load_all_agents
+      active_agents ||= cached_all_agents
       active = active_agents.to_h { |agent| [agent.key, agent] }
       archived = @agent_archive_store.all.to_h { |record| [record.agent.key, record.agent] }
       {
@@ -5914,7 +5925,7 @@ module HQ
       unless agent.prompt_queue_dispatchable?
         return ["stopped", agent.prompt_queue_stopped_reason || "Automatic queue processing is stopped"]
       end
-      agents = cached_all_agents || @agent_store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+      agents = cached_all_agents
       workspace = File.realpath(agent.workspace)
       busy = agents.any? do |candidate|
         candidate.key != agent.key && candidate.running? && File.realpath(candidate.workspace) == workspace

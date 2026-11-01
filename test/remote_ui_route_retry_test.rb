@@ -12,7 +12,8 @@ script = <<~'JS'
     let calls = 0;
     const state = { initialRouteLoaded: false, projectDiffs: {}, pullRequests: {}, attachmentDetails: {}, attachmentRequestGenerations: {},
       attachmentImageErrors: {}, attachmentImageErrorStatuses: {}, attachmentImageRequestGenerations: {}, attachmentImageUrls: {},
-      agents: [], resourceRequestSequence: 0, resourceMutationGeneration: 0, failureCount: 0, setup: {}, lastShellUpdatedAt: new Date(), setupDetailed: true };
+      agents: [], resourceRequestSequence: 0, resourceMutationGeneration: 0, failureCount: 0, setup: {}, lastShellUpdatedAt: new Date(), setupDetailed: true,
+      setupRequestSequence: 0, setupResponseSequence: 0 };
     const request = async () => { calls++; if (failing) throw Object.assign(Error("endpoint failed"), status !== undefined ? { status } : {});
       return { diff: { files: [] }, pull_requests: [], attachment: { kind: "file", format: "markdown", content: "Loaded" } }; };
     const c = { state, location: { hash: `#${type}`, href: "http://fixture/ui", origin: "http://fixture" }, globalThis: {},
@@ -36,6 +37,7 @@ script = <<~'JS'
     function include(start, end) { const a = source.indexOf(start), b = source.indexOf(end, a); assert(a >= 0 && b > a); vm.runInContext(source.slice(a, b), c); }
     include("function preserveWorkspaceDuringPoll(options = {})", "\nfunction focusedWorkspacePreservedDuringPoll");
     include("async function refresh(options = {})", "\nfunction detailedSetupRoute");
+    include("function applySetupResponse(", "\nasync function ensureDetailedSetup");
     // Includes the real route dispatcher and its initialization helpers.
     include("async function ensureRouteData(options = {})", "\nasync function ensureAgentDetail");
     include("async function ensureProjectDiff(", "\nasync function ensurePullRequestDiff");
