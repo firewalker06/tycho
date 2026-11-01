@@ -52,7 +52,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
   }
 
   for (const [label, viewport] of [["desktop", { width: 1440, height: 900 }], ["mobile", { width: 390, height: 844 }]]) {
-    for (const mode of ["success", "auth", "error", "setup", "navigate", "stale"]) {
+    for (const mode of ["success", "auth", "error", "setup", "navigate", "stale", "settings"]) {
       const context = await browser.newContext({ viewport, isMobile: label === "mobile", hasTouch: label === "mobile" });
       const page = await context.newPage();
       const errors = [];
@@ -91,10 +91,48 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         return el.scrollTop;
       });
       if (captureDir && mode === "success") await page.screenshot({ path: path.join(captureDir, `cold-agent-before-shell-${label}.png`) });
+      let settingsBefore = null, settingsAfter = null;
+      if (mode === "settings") {
+        const catalogSequence = await page.evaluate(() => state.resourceRequestSequence);
+        await page.evaluate(() => navigate({ type: "tab", tab: "settings" }));
+        await page.waitForFunction(() => state.setupDetailed && !document.body.dataset.routeLoading);
+        await page.locator('[aria-controls="settings-panel-automation"]').click();
+        await page.locator("[data-harness-name]").first().waitFor({ state: "visible" });
+        settingsBefore = await page.evaluate(() => ({
+          hash: location.hash, detailed: state.setupDetailed,
+          harnesses: state.setup.harnesses.length, tools: state.setup.tools.length,
+          harnessRows: document.querySelectorAll("[data-harness-name]").length,
+          catalogSequence: state.resourceRequestSequence,
+        }));
+        assert(settingsBefore.harnesses > 0 && settingsBefore.tools > 0 && settingsBefore.harnessRows > 0,
+          "full Settings readiness must complete before the old shell is released");
+        assert.equal(settingsBefore.catalogSequence, catalogSequence,
+          "setup ordering must remain independent of catalog generations");
+      }
       if (mode === "navigate") await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
       if (mode === "stale") await page.evaluate(() => refresh({ force: true }));
       release();
       await page.waitForFunction(() => !state.refreshInFlight);
+      if (mode === "settings") {
+        settingsAfter = await page.evaluate(() => ({
+          hash: location.hash, detailed: state.setupDetailed,
+          harnesses: state.setup.harnesses.length, tools: state.setup.tools.length,
+          harnessRows: document.querySelectorAll("[data-harness-name]").length,
+          catalogSequence: state.resourceRequestSequence,
+        }));
+        console.log(JSON.stringify({ label, mode, settingsBefore, settingsAfter }));
+        assert.deepEqual(settingsAfter, settingsBefore,
+          "late initial setup summary must not erase newer detailed Settings readiness");
+        assert(await page.locator("[data-harness-name]").first().isVisible(), "Settings readiness stays visible");
+        if (captureDir) {
+          await page.locator("[data-harness-name]").first().evaluate(el => el.scrollIntoView({ block: "center", behavior: "instant" }));
+          await page.screenshot({ path: path.join(captureDir, `cold-agent-settings-after-shell-${label}.png`) });
+        }
+        // Return through real navigation; the conversation draft remains available.
+        await page.evaluate(hash => { location.hash = hash; }, routeBefore);
+        await page.waitForSelector("#prompt-input");
+        assert.equal(await page.locator("#prompt-input").inputValue(), draft);
+      }
       if (mode === "stale") {
         assert.equal(await page.locator("#auth-panel").isVisible(), false, "old shell auth error must not replace a newer success");
         assert.equal(await page.evaluate(() => state.failureCount), 0);
@@ -120,7 +158,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       }
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       assert.deepEqual(errors, []);
-      evidence.push({ label, mode, contentBeforeShell: true, shellResponsesHeld: held, draftPreserved: true, passed: true });
+      evidence.push({ label, mode, contentBeforeShell: true, shellResponsesHeld: held, draftPreserved: true, settingsBefore, settingsAfter, passed: true });
       await page.unrouteAll({ behavior: "ignoreErrors" });
       await context.close();
     }

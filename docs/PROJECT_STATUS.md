@@ -20,7 +20,8 @@ invalidates it. These reads do not acquire the lifecycle maintenance lock.
 Polling and mutation paths keep recovery, queue dispatch, and delegation work.
 Initial agent routes render before nonessential setup and schedule reads finish.
 Shell completion preserves the current route, draft, focus, and scroll; shell
-failures still use the authentication and retry flow. See
+failures still use the authentication and retry flow. Setup responses use their
+own request order, so a late summary cannot erase newer detailed Settings data. See
 [Remote Sessions](REMOTE_SERVER.md) for snapshot and timing details.
 
 ## Remote UI appearance

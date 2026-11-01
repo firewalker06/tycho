@@ -20,7 +20,11 @@ validates current state under its existing mutation lock. On agent routes, setup
 and schedule reads run alongside target loading. Conversation content can render
 before shell completion. Shell completion uses the current route and preserves
 editor state. Auth, setup-required, and retry handling still apply. A failed route
-finishes shell readiness before scheduling its retry.
+finishes shell readiness before scheduling its retry. Setup responses have
+request ordering separate from catalog refreshes. Only a newer successful setup
+response can replace the current setup, so a delayed initial summary cannot
+erase detailed Settings data loaded through navigation. Schedules still apply
+independently, and a failed setup request does not mark readiness complete.
 
 `Server-Timing` splits `agent_cache`, `record_read`, `record_build`,
 `store_lock_wait`, and `lifecycle`. Detail also reports `detail_relationships`,
