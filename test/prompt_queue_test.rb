@@ -968,7 +968,12 @@ module PromptQueueTest
         store.save([agent])
         service = HQ::RemoteService.new(registry:)
 
-        with_stubbed_start { service.agent(agent.key) }
+        service.agent(agent.key)
+        assert(HQ::AgentMemory.new(agent).events.none? { |event| event.dig("metadata", "queue_read") == true },
+               "expected GET to leave automatic queue dispatch to the background poll")
+        # Direct service fixtures have no Remote server timer. Run its lifecycle
+        # pass explicitly, then verify the same persisted dispatch and read block.
+        with_stubbed_start { service.send(:load_all_agents) }
         persisted = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
                          .find { |candidate| candidate.key == agent.key }
         claim_events = HQ::AgentMemory.new(persisted).events.select do |event|
@@ -1023,7 +1028,7 @@ module PromptQueueTest
       stop_process(pid)
       service = HQ::RemoteService.new(registry:)
 
-      with_stubbed_start(error: "temporary launch failure") { service.agent(agent.key) }
+      with_stubbed_start(error: "temporary launch failure") { service.send(:load_all_agents) }
       failed = service.agent(agent.key)
       assert(failed.dig(:prompt_queue, "entries", 0, "state") == "failed",
              "expected failed dispatch entries to remain visible")
@@ -1052,7 +1057,7 @@ module PromptQueueTest
       store.save([agent])
       service = HQ::RemoteService.new(registry:)
 
-      with_stubbed_start(error: "spawn failed after claim persistence") { service.agent(agent.key) }
+      with_stubbed_start(error: "spawn failed after claim persistence") { service.send(:load_all_agents) }
       failed = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
       failed.enqueue_prompt!(prompt: "newer second", id: "newer-second")
       store.save([failed])
@@ -1074,7 +1079,7 @@ module PromptQueueTest
 
       before_runs = reconciled.run_count
       prompts = []
-      with_stubbed_start(prompts:) { service.agent(agent.key) }
+      with_stubbed_start(prompts:) { service.send(:load_all_agents) }
       drained = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first.first
       reads = HQ::AgentMemory.new(drained).events.select { |event| event.dig("metadata", "queue_read") == true }
       includes_newer = prompts.first&.include?("newer second")
@@ -1094,7 +1099,7 @@ module PromptQueueTest
       store = HQ::AgentStore.new(registry.projects)
       store.save([agent])
       service = HQ::RemoteService.new(registry:)
-      with_stubbed_start(error: "temporary launch failure") { service.agent(agent.key) }
+      with_stubbed_start(error: "temporary launch failure") { service.send(:load_all_agents) }
 
       response = HQ::RemoteServer.allocate.send(
         :route, service, "POST", "/agents/#{agent.key}/prompt-queue/discard",
@@ -1116,7 +1121,7 @@ module PromptQueueTest
       store = HQ::AgentStore.new(registry.projects)
       store.save([agent])
       service = HQ::RemoteService.new(registry:)
-      with_stubbed_start(error: "temporary launch failure") { service.agent(agent.key) }
+      with_stubbed_start(error: "temporary launch failure") { service.send(:load_all_agents) }
 
       error = begin
         store.discard_prompt_queue!(agent.key)
@@ -1188,7 +1193,7 @@ module PromptQueueTest
       store.save([agent])
 
       service = HQ::RemoteService.new(registry:)
-      with_stubbed_start { service.agent(agent.key) }
+      with_stubbed_start { service.send(:load_all_agents) }
       restored = HQ::RemoteService.new(registry:).agent(agent.key)
       assert(restored.dig(:prompt_queue, "blocked_by_inquiry") == true &&
              restored.dig(:prompt_queue, "entries").length == 1,
@@ -1202,7 +1207,7 @@ module PromptQueueTest
           "answer" => '{"path":"safe"}',
           "start" => true
         )
-        service.agent(agent.key)
+        poll_agent(service, agent.key)
       end
       persisted = store.load.find { |candidate| candidate.key == agent.key }
       events = HQ::AgentMemory.new(persisted).events
@@ -1231,7 +1236,7 @@ module PromptQueueTest
 
       follow_up_pid = nil
       with_stubbed_running_start do |pids|
-        dispatched = service.agent(agent.key)
+        dispatched = poll_agent(service, agent.key)
         follow_up_pid = pids.last
         assert(dispatched[:running], "expected the first claimed batch to start a follow-up run")
         queued = service.submit_prompt(agent.key, "prompt" => "next batch", "start" => true)
@@ -1246,7 +1251,7 @@ module PromptQueueTest
       store.complete_queue_work!(agent.key, batch_id: first_batch.fetch("id"), dispositions: [
                                    { "entry_id" => first_batch.dig("entries", 0, "id"), "outcome" => "completed" }
                                  ])
-      with_stubbed_start { service.agent(agent.key) }
+      with_stubbed_start { service.send(:load_all_agents) }
 
       persisted = store.load.find { |candidate| candidate.key == agent.key }
       messages = queued_memory_events(agent.key, store)
@@ -1270,7 +1275,7 @@ module PromptQueueTest
 
       follow_up_pid = nil
       with_stubbed_running_start do |pids|
-        service.agent(agent.key)
+        poll_agent(service, agent.key)
         follow_up_pid = pids.last
         service.submit_prompt(agent.key, "prompt" => "next batch", "start" => true)
 
@@ -1283,7 +1288,7 @@ module PromptQueueTest
         # The previous run's monitor can finish after its finalizer starts the
         # successor. Its late status write must not apply to that successor.
         File.write(stale_status_path, "0")
-        current = service.agent(agent.key)
+        current = poll_agent(service, agent.key)
         assert(current[:running], "expected a late status write not to finish the successor run")
         assert(current.dig(:prompt_queue, "entries").any? { |entry| entry["prompt"] == "next batch" && entry["state"] == "queued" },
                "expected the next batch to remain queued behind the successor run")
@@ -1315,7 +1320,7 @@ module PromptQueueTest
         assert(manual.dig(:agent, :prompt_queue, "entries").length == 1 &&
                manual.dig(:agent, :prompt_queue, "entries", 0, "state") == "in_progress",
                "expected a manual ordinary prompt to claim the suspended queue into the same run")
-        service.agent(agent.key)
+        poll_agent(service, agent.key)
       end
 
       persisted = store.load.find { |candidate| candidate.key == agent.key }
@@ -1354,7 +1359,7 @@ module PromptQueueTest
              "expected parent, Takeover, and reclaim authority generations to be captured at acceptance")
 
       stop_process(pid)
-      with_stubbed_start { service.agent(child.key) }
+      with_stubbed_start { service.send(:load_all_agents) }
       persisted = store.load.find { |agent| agent.key == child.key }
       stamp = persisted.runs.last.then { |run| [run.delegation_owner, run.delegation_generation] }
       assert(stamp == ["parent", 3],
@@ -2558,14 +2563,14 @@ module PromptQueueTest
           service = HQ::RemoteService.new(registry:)
 
           # Polling discovers C's terminal run and queues its report behind B.
-          service.agent(middle.key)
+          poll_agent(service, middle.key)
           queued = store.load.find { |agent| agent.key == middle.key }.queued_prompts
           assert(queued.length == 1 && queued.first["source"] == "delegation_callback" &&
                    queued.first["authority"].values_at("owner", "generation") == ["parent", 1],
                  "expected server polling to enqueue a nested callback with B's upstream authority")
           service.submit_prompt(middle.key, "prompt" => "Real user control", "start" => true) if takeover
           stop_process(pid)
-          service.agent(middle.key)
+          poll_agent(service, middle.key)
           persisted = store.load.find { |agent| agent.key == middle.key }
           expected = takeover ? ["user", 2] : ["parent", 1]
           relation = coordinator.delegation_store.relation_for_child(middle.key)
@@ -2946,6 +2951,13 @@ module PromptQueueTest
     owner.send(:remove_const, name)
     owner.const_set(name, value)
     previous
+  end
+
+  # Direct service fixtures have no Remote server timer. Exercise its real
+  # maintenance entry point when a test needs lifecycle progress or dispatch.
+  def poll_agent(service, key)
+    service.send(:load_all_agents)
+    service.agent(key)
   end
 
   def assert(condition, message)

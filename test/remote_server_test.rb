@@ -127,6 +127,8 @@ module RemoteServerTest
     assert_remote_push_subscription_lifecycle
     assert_remote_agent_push_notifications
     assert_cached_agent_reads_skip_agent_load
+    assert_agent_get_after_unrelated_write_skips_maintenance
+    assert_agent_read_snapshot_atomic_commits
     assert_queue_failure_notification_lifecycle
     assert_remote_search_index_includes_agents_and_projects
     assert_remote_skills_payload_uses_discovery
@@ -7125,6 +7127,83 @@ module RemoteServerTest
     end
   end
 
+  def assert_agent_read_snapshot_atomic_commits
+    with_remote_temp_store do |dir|
+      store = HQ::AgentStore.new([])
+      agent = HQ::ManagedAgent.new(key: "atomic-read", name: "0", project_key: "web",
+                                   template_key: "default", workspace: dir, prompt: "0")
+      HQ::FileStore.write_json(HQ::AGENTS_FILE, [agent.to_hash])
+      writer = Thread.new do
+        60.times do |generation|
+          record = agent.to_hash.merge("name" => generation.to_s, "prompt" => generation.to_s)
+          store.send(:with_exclusive_lock) { HQ::FileStore.write_json(HQ::AGENTS_FILE, [record]) }
+        end
+      end
+      120.times do
+        snapshot, signature = store.read_snapshot
+        current = snapshot.fetch(0)
+        assert(current.name == current.prompt, "snapshot mixed concurrent record generations")
+        assert(signature.length == 4, "expected a signature from the opened file descriptor")
+      end
+      writer.value
+      snapshot, = store.read_snapshot
+      assert(snapshot.first.name == "59", "snapshot must observe the last committed generation")
+      File.write(HQ::AGENTS_FILE, "invalid synthetic JSON")
+      begin
+        store.read_snapshot
+        raise "read used a stale backup"
+      rescue IOError
+        # Recovery belongs to maintenance. Reads fail without restoring retired data.
+      end
+    ensure
+      writer&.join
+    end
+  end
+
+  def assert_agent_get_after_unrelated_write_skips_maintenance
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      agent = HQ::ManagedAgent.new(key: "read-target", name: "Original", project_key: "web",
+                                   template_key: "default", workspace: workspace, prompt: "Work.")
+      store = HQ::AgentStore.new([])
+      store.save([agent])
+      service = HQ::RemoteService.new(registry: registry, web_push_notifier: RecordingPushNotifier.new,
+                                      agent_list_cache: HQ::AgentListCache.new(max_age: 60))
+      service.send(:load_all_agents)
+      service.instance_variable_get(:@agent_store).define_singleton_method(:load_with_poll_events) do |**|
+        raise "GET entered lifecycle maintenance"
+      end
+      assert(service.agent(agent.key)[:name] == "Original", "expected the primed cache to be readable")
+      record = agent.to_hash.merge("name" => "Committed")
+      HQ::FileStore.write_json(HQ::AGENTS_FILE, [record])
+      locked = Queue.new
+      release = Queue.new
+      holder = Thread.new do
+        store.send(:with_exclusive_lock) { locked << true; release.pop }
+      end
+      locked.pop
+      begin
+        reader = Thread.new { service.agent(agent.key) }
+        assert(reader.join(2), "GET waited for the global maintenance lock")
+        assert(reader.value[:name] == "Committed", "GET must see the latest committed record")
+        assert(service.conversation_snapshot(agent.key)[:conversation].is_a?(Array), "conversation must use the read path")
+      ensure
+        release << true
+        holder.join
+        reader&.join
+      end
+      HQ::FileStore.write_json(HQ::AGENTS_FILE, [])
+      begin
+        service.agent(agent.key)
+        raise "removed agent remained visible"
+      rescue HQ::RemoteService::Error => error
+        assert(error.status == 404, "expected missing agent after committed removal")
+      end
+    end
+  end
+
   def assert_cached_agent_reads_skip_agent_load
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
@@ -9992,7 +10071,7 @@ module RemoteServerTest
     assert(!js[:body].include?("function renderAgentRelationshipContext") &&
            !js[:body].include?("${renderAgentRelationshipContext(agent)}") &&
            js[:body].include?("function renderLinkedAgentsFlyout") &&
-           js[:body].include?("renderAgentRelationshipRow(agent, reference, reference.key)"),
+           js[:body].include?("function renderLinkedAgentSections"),
            "expected linked agents to stay in the composer flyout without a redundant conversation-top list")
     assert(js[:body].include?("function parentAgentMessageAuthor") &&
            js[:body].include?('parentAgentMessage(block) ? "parent-agent-message"') &&
@@ -10697,6 +10776,9 @@ module RemoteServerTest
   def wait_for_agent_terminal_status(service, key, timeout: 15.0)
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
     loop do
+      # Service fixtures have no server poll timer. Advance lifecycle explicitly;
+      # GET reads only the committed state, as the production timer supplies it.
+      service.send(:load_all_agents)
       payload = service.agent(key)
       return payload if %w[succeeded failed stopped blocked].include?(payload[:status].to_s)
       now = Process.clock_gettime(Process::CLOCK_MONOTONIC)

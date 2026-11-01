@@ -65,6 +65,29 @@ module RemoteUIDelegationGroupingTest
       if (keys(flatten(custom)) !== "a,b") {
         throw new Error(`delegation grouping ignored the supplied comparator: ${keys(custom)}`);
       }
+
+      const assert = require("node:assert/strict");
+      const visible = options => helpers.switcherDelegationEntries(nested, options);
+      const visibleKeys = options => keys(visible(options).map(entry => entry.agent));
+      assert.equal(visibleKeys({}), "parent-new,parent-old,orphan");
+      const overrides = new Map([["parent-old", true]]);
+      assert.equal(visibleKeys({ overrides }), "parent-new,parent-old,child-new,child-old,orphan");
+      overrides.set("child-old", true);
+      assert.equal(visibleKeys({ overrides }), expected);
+      assert.equal(visible({ overrides })[1].childCount, 3);
+      assert.equal(visibleKeys({ expanded: true }), expected);
+      for (const match of ["parent-old", "child-new", "grandchild"]) {
+        assert.equal(visibleKeys({ matches: new Set([match]) }), "parent-old,child-new,child-old,grandchild");
+      }
+      assert.equal(visibleKeys({ matches: new Set() }), "");
+      assert.equal(visibleKeys({}), "parent-new,parent-old,orphan", "search does not change normal state");
+      assert.equal(visibleKeys({ overrides }), expected, "search preserves explicit expansion");
+      const collision = [agent("one", "", "unknown"), agent("two", "", "absent")];
+      collision.forEach(item => item.name = "Same title");
+      collision[1].server_key = "peer";
+      assert.equal(helpers.switcherDelegationEntries([...collision, collision[0]]).length, 2);
+      assert.equal(helpers.switcherDelegationEntries(cycle, { expanded: true }).length, 3);
+      assert.equal(helpers.switcherDelegationEntries(nested.concat(agent("fresh", "", "parent-old")), { expanded: true }).length, 7);
     JAVASCRIPT
 
     output, status = Open3.capture2e("node", "-e", script, HELPERS_PATH)

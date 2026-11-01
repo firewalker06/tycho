@@ -121,7 +121,7 @@ module RemoteUIAssetSnapshotTest
       "function detailedSetupRoute(route = parseRoute())",
       '["hiddenSettings", "agentForm", "projectForm"].includes(route.type)',
       "if (detailedSetupRoute(route)) await ensureDetailedSetup();",
-      "state.setupDetailed = loadDetailedSetup"
+      "applySetupResponse(setupData.setup || null, { sequence: setupSequence, detailed: loadDetailedSetup });"
     ]
     missing = required.reject { |fragment| javascript.include?(fragment) }
     raise "missing lightweight setup bootstrap contract: #{missing.join(', ')}" unless missing.empty?
