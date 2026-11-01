@@ -3,6 +3,31 @@ const path = require("node:path");
 
 module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
   const results = [];
+  const integratedFacts = button => button.evaluate(toggle => {
+    const row = toggle.parentElement;
+    const main = row.querySelector(":scope > [data-open-agent]");
+    const rect = node => { const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height }; };
+    const style = getComputedStyle(toggle);
+    return { row: rect(row), main: rect(main), toggle: rect(toggle), divider: Number.parseFloat(style.borderLeftWidth), dividerStyle: style.borderLeftStyle, dividerColor: style.borderLeftColor, outerRight: Number.parseFloat(getComputedStyle(row).borderRightWidth), outerTop: Number.parseFloat(getComputedStyle(row).borderTopWidth), outerBottom: Number.parseFloat(getComputedStyle(row).borderBottomWidth), role: row.getAttribute("role"), siblings: main.parentElement === toggle.parentElement, nested: row.querySelectorAll("button button").length, controlled: document.getElementById(toggle.getAttribute("aria-controls"))?.contains(row) === true };
+  });
+  const assertIntegrated = facts => {
+    assert.equal(facts.siblings, true);
+    assert.equal(facts.role, "group");
+    assert.equal(facts.nested, 0);
+    assert.equal(facts.controlled, true);
+    assert(Math.abs(facts.main.right - facts.toggle.x) <= 1, "actions must meet without a floating gap");
+    assert(Math.abs(facts.main.y - facts.toggle.y) <= 1);
+    assert(Math.abs(facts.main.height - facts.toggle.height) <= 1, "disclosure hit area must fill the row height");
+    assert(Math.abs(facts.toggle.right + facts.outerRight - facts.row.right) <= 1);
+    assert(Math.abs(facts.toggle.y - facts.row.y - facts.outerTop) <= 1);
+    assert(Math.abs(facts.toggle.height + facts.outerTop + facts.outerBottom - facts.row.height) <= 1);
+    assert(facts.toggle.width >= 44 && facts.toggle.height >= 44);
+    assert(facts.divider >= 1 && facts.dividerStyle === "solid" && facts.dividerColor !== "rgba(0, 0, 0, 0)");
+  };
+  const assertVisibleFocus = async page => {
+    const focus = await page.evaluate(() => { const element = document.activeElement; const s = getComputedStyle(element); return { visible: element.matches(":focus-visible"), width: Number.parseFloat(s.outlineWidth), style: s.outlineStyle }; });
+    assert(focus.visible && focus.width >= 2 && focus.style !== "none", "each native action needs visible keyboard focus");
+  };
   for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height: 900 }, mobile: { width: 390, height: 844 } })) {
     const context = await browser.newContext({ viewport, hasTouch: device === "mobile", colorScheme: "light", reducedMotion: "reduce" });
     const page = await context.newPage();
@@ -78,8 +103,11 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       assert.equal(await focused("[data-unread-agent-search]"), true);
       await page.keyboard.press("Tab");
       assert.equal(await focused('[data-open-agent="keyboard-parent"]'), true);
+      await assertVisibleFocus(page);
       await page.keyboard.press("Tab");
       assert.equal(await focused('[data-switcher-group="keyboard-parent"]'), true, "Tab must reach parent control");
+      await assertVisibleFocus(page);
+      assertIntegrated(await integratedFacts(keyboardGroup));
       await page.keyboard.press("Space");
       assert.equal(await keyboardPanel.locator("[data-open-agent]").count(), 1);
       await page.evaluate(() => syncUnreadAlert());
@@ -165,6 +193,38 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       assert.equal((await keys()).length, 4, "new children stay collapsed");
       assert.match(await toggle.getAttribute("aria-label"), /\(4\)/);
       await page.evaluate(() => { state.agents = state.agents.filter(agent => agent.key !== "fixture-arriving"); syncUnreadAlert(); });
+      const rowGroup = panel.locator(`[data-switcher-group="${agentKey}"]`);
+      const layout = await integratedFacts(rowGroup);
+      assertIntegrated(layout);
+      assert.equal(await panel.locator("button button").count(), 0);
+      assert.match(await rowGroup.getAttribute("aria-label"), /Tree parent \(3\)/);
+      await page.evaluate(key => {
+        const template = state.agents.find(agent => agent.key === "fixture-child");
+        for (let i = 0; i < 100; i++) state.agents.push({ ...structuredClone(template), key: `fixture-count-${i}`, resource_key: `fixture-count-${i}`, delegation: { parent: { key, agent_key: key }, children: [] } });
+        syncUnreadAlert();
+      }, agentKey);
+      assert.match(await rowGroup.getAttribute("aria-label"), /\(103\)/);
+      assertIntegrated(await integratedFacts(rowGroup));
+      const countFits = await rowGroup.evaluate(button => {
+        const outer = button.getBoundingClientRect();
+        return [...button.children].every(child => { const r = child.getBoundingClientRect(); return r.x >= outer.x && r.right <= outer.right; });
+      });
+      assert.equal(countFits, true, "chevron and a larger count must stay inside the segment");
+      await page.evaluate(() => { state.agents = state.agents.filter(agent => !agent.key.startsWith("fixture-count-")); syncUnreadAlert(); });
+      const routeBeforeToggle = page.url();
+      // The top and bottom of the segment must both toggle, without opening the agent.
+      await rowGroup[device === "mobile" ? "tap" : "click"]({ position: { x: layout.toggle.width / 2, y: 2 } });
+      assert.equal(await rowGroup.getAttribute("aria-expanded"), "true");
+      assert.equal((await keys()).length, 6);
+      assert.equal(page.url(), routeBeforeToggle);
+      assert.equal(await panel.isVisible(), true);
+      const openedLayout = await integratedFacts(rowGroup);
+      assertIntegrated(openedLayout);
+      await rowGroup[device === "mobile" ? "tap" : "click"]({ position: { x: openedLayout.toggle.width / 2, y: openedLayout.toggle.height - 2 } });
+      assert.equal(await rowGroup.getAttribute("aria-expanded"), "false");
+      assert.equal((await keys()).length, 4);
+      assert.equal(page.url(), routeBeforeToggle);
+      await page.mouse.move(0, 0);
       if (captureDir) await page.screenshot({ path: path.join(captureDir, `${device}-${theme}-collapsed.png`) });
       for (const query of ["Nested needle", "Hidden child", "Tree parent", "Peer sibling"]) {
         await search.fill(query);
@@ -181,6 +241,8 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       await page.keyboard.press("Enter");
       assert.equal((await keys()).length, 7);
       assert.equal(await toggle.evaluate(node => node === document.activeElement), true, await page.evaluate(() => document.activeElement.tagName));
+      assertIntegrated(await integratedFacts(rowGroup));
+      if (captureDir) await page.screenshot({ path: path.join(captureDir, `${device}-${theme}-expanded.png`) });
       assert.equal(conversationReads, readsBeforeControls, "menu controls must not fetch conversations");
       await page.evaluate(() => refresh({ force: true }));
       assert.equal((await keys()).length, 7);
@@ -215,10 +277,12 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.keyboard.press("Escape");
       await page.evaluate(() => openUnreadPanelFromKeyboard());
-      await panel.locator(`[data-open-agent="${agentKey}"]`).click();
+      const mainAction = panel.locator(`[data-open-agent="${agentKey}"]`);
+      const mainBounds = await mainAction.boundingBox();
+      await mainAction.click({ position: { x: mainBounds.width - 2, y: mainBounds.height / 2 } });
       assert.equal(await panel.isVisible(), false);
       assert.equal(new URL(page.url()).hash, `#agent/${agentKey}`);
-      results.push({ device, theme, collapsed: 4, expanded: 7, search: "pass", keyboard: "pass", refresh: "pass", nativeTraversal: "pass", exactChildEnter: "pass", linkedShortcut: "Alt+Right", activityIdentity: "pass", catalogArrowIntent: "pass" });
+      results.push({ device, theme, collapsed: 4, expanded: 7, search: "pass", keyboard: "pass", refresh: "pass", nativeTraversal: "pass", exactChildEnter: "pass", linkedShortcut: "Alt+Right", activityIdentity: "pass", catalogArrowIntent: "pass", integratedRow: layout, segmentHitAreas: "pass" });
     }
     assert.deepEqual(errors, []);
     await context.close();
