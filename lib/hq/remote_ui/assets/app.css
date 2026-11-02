@@ -10151,3 +10151,24 @@ body:has(.inquiry-form-full-screen) {
 .switcher-group-toggle[aria-expanded="true"] .ui-icon { transform: rotate(180deg); }
 
 .switcher-keyboard-hint { margin: 0; color: var(--muted); font-size: 12px; }
+
+.summary-usage {
+  margin-block: 16px;
+}
+
+.summary-usage .section-label {
+  margin-top: 16px;
+  margin-bottom: 6px;
+}
+
+.summary-usage p,
+.summary-usage details {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-block: 8px;
+}
+
+.summary-usage summary {
+  cursor: pointer;
+}

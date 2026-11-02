@@ -16,6 +16,7 @@ module AgentCostSnapshotTest
   FakeRun = Struct.new(:session_id, :finished_at, :agent, :model, keyword_init: true)
 
   def run!
+    assert_recorded_usage_scopes
     assert_claude_cost_accumulates_per_session
     assert_session_change_resets_cost
     assert_opencode_sums_step_costs
@@ -27,6 +28,40 @@ module AgentCostSnapshotTest
     assert_unknown_custom_codex_model_stays_unpriced
     assert_missing_cost_is_not_treated_as_zero
     puts "agent_cost_snapshot_test: ok"
+  end
+
+  def assert_recorded_usage_scopes
+    previous = {
+      "session_id" => "recorded-session", "amount_usd" => 30.11317, "coverage" => "complete",
+      "through_run_count" => 125,
+      "token_snapshot" => { "input_tokens" => 202731123, "cached_input_tokens" => 199693440,
+                             "output_tokens" => 406846 }
+    }
+    runs = (1..126).map { |number| run("recorded-session", number) }
+    agent = agent("codex", runs, previous, model: "gpt-6.1-sol")
+    entries = [usage("turn.completed", "usage" => {
+      "input_tokens" => 203236472, "cached_input_tokens" => 200196608, "output_tokens" => 407172
+    })]
+    snapshot = advance(agent, runs.last, entries)
+    assert((snapshot["run_amount_usd"] - 0.0579388).abs < 1e-9, "expected recorded run 126 estimate")
+    assert((snapshot["amount_usd"] - 30.1711088).abs < 1e-9, "expected separate recorded session estimate")
+    assert(snapshot.dig("run_tokens", "input_tokens") == 505349, "expected only run 126 input")
+    assert(snapshot.dig("token_snapshot", "input_tokens") == 203236472, "expected session input retained")
+    agent.cost_snapshot = nil
+    missing = advance(agent, runs.last, entries)
+    assert(missing["run_tokens"].nil? && missing["run_amount_usd"].nil?, "expected missing baseline to stay unknown")
+    assert(missing["coverage"] == "unavailable", "expected unpriced session coverage")
+    assert(missing.dig("token_snapshot", "input_tokens") == 203236472, "expected reported session tokens despite missing run baseline")
+    agent.cost_snapshot = snapshot
+    new_run = run("reset-session", 127)
+    agent.runs << new_run
+    reset = advance(agent, new_run, [usage("turn.completed", "usage" => {
+      "input_tokens" => 100, "cached_input_tokens" => 40, "output_tokens" => 10
+    })])
+    assert(reset.dig("run_tokens", "input_tokens") == 100 && reset["amount_usd"] < 0.01,
+           "expected native-session change to exclude old tokens and cost")
+    assert(snapshot["through_run_count"] == 126 && snapshot["amount_usd"] > 30,
+           "expected retained historical snapshot to stay unchanged after run 127")
   end
 
   def assert_codex_prices_gpt_6_astra_cache_writes
@@ -227,7 +262,7 @@ module AgentCostSnapshotTest
   end
 
   def run(session_id, index, agent: nil, model: nil)
-    time = Time.utc(2026, 7, 22, 10, index, 0)
+    time = Time.utc(2026, 7, 22, 10, 0, 0) + index * 60
     FakeRun.new(session_id: session_id, finished_at: time, agent: agent, model: model)
   end
 
