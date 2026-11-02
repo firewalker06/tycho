@@ -5,6 +5,39 @@ require_relative "../../lib/hq/registry"
 
 registry = HQ::Registry.new(path: ENV.fetch("TYCHO_CONFIG_PATH"), system_prompts_path: ENV.fetch("TYCHO_SYSTEM_PROMPTS_PATH"))
 store = HQ::AgentStore.new(registry.projects)
+raise "Temporary smoke store required" unless HQ::AGENTS_FILE.include?("tycho-remote-ui-smoke")
+
+if ARGV.first == "--wait"
+  deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 15
+  observed = []
+  loop do
+    agents, = store.read_snapshot
+    pids = agents.flat_map do |agent|
+      agent.runs.filter_map do |run|
+        next if run.run_id.to_s.empty?
+
+        path = agent.send(:run_pid_file_path, run.run_id)
+        Integer(File.read(path).strip) if File.exist?(path)
+      rescue Errno::ENOENT
+        nil
+      end
+    end.select { |pid| pid > 1 }.uniq
+    observed |= pids
+    alive = pids.select do |pid|
+      Process.kill(0, pid)
+      true
+    rescue Errno::ESRCH
+      false
+    end
+    break if alive.empty?
+    raise "Synthetic inquiry runners did not exit before teardown" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+    sleep 0.05
+  end
+  puts "Synthetic inquiry runners settled (#{observed.length} recorded PIDs)"
+  exit
+end
+
 if ARGV.first == "--advance"
   key = ARGV.fetch(1)
   raise "Synthetic inquiry key required" unless key.start_with?("web-inquiry-recovery-")

@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-module.exports = async ({browser, baseUrl, captureDir, advanceInquiry}) => {
+module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForInquiryRuns}) => {
   assert.equal(new URL(baseUrl).hostname,"127.0.0.1");
   const baseline = process.env.TYCHO_REMOTE_UI_INQUIRY_BASELINE;
   const evidence = [];
@@ -98,5 +98,6 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry}) => {
   }
   if(captureDir) fs.writeFileSync(path.join(captureDir,"inquiry-browser.json"),JSON.stringify(evidence,null,2));
   if (!baseline) await require("./inquiry_recovery_corrections_smoke")({browser, baseUrl, captureDir, advanceInquiry});
+  if (waitForInquiryRuns) console.log(waitForInquiryRuns());
   console.log("inquiry_receipt_smoke: ok");
 };
