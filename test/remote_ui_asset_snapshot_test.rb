@@ -44,11 +44,11 @@ module RemoteUIAssetSnapshotTest
       'if (form.dataset.submitting === "true") return;',
       'form.dataset.submitting = "true";',
       'if (navigatedOptimistically) navigate({ type: "agent", key });',
-      'if (!navigatedOptimistically) navigate({ type: "agent", key });',
-      "restoreComposerSubmissionFailure(key, draftChanged ? null : originRoute)",
+      "function acceptComposerPrompt(entry, receipt)",
+      "state.composerRecoveryDrafts.set(entry.key, entry.payload.prompt)",
       'role="alert" data-composer-submission-error',
-      'role="status" aria-live="polite" aria-atomic="true">sending...',
-      'block.pending ? \' aria-busy="true"\' : ""',
+      'escapeHtml(block.send_status || "sending...")',
+      'block.pending && !block.accepted ? \' aria-busy="true"\' : ""',
     ]
     missing = required.reject { |fragment| javascript.include?(fragment) }
     raise "missing optimistic detail-composer contract: #{missing.join(", ")}" unless missing.empty?

@@ -42,6 +42,8 @@ module HQ
       format(scheduled_system_prompt_template, title:)
     end
 
+    class PromptInputRejected < ArgumentError; end
+
     attr_reader :delegation_coordinator, :usage_metrics_store
 
     def initialize(projects, usage_metrics_store: nil, delegation_coordinator: nil, recovery: nil)
@@ -480,13 +482,21 @@ module HQ
       target
     end
 
-    # Accept active work or record its terminal archive result while holding the
-    # same lock used by archive. Every active mutation stays inside this method
-    # so callers cannot keep and later save a stale agent snapshot.
+    # Resolve committed acceptance before revalidating inputs that can expire after a lost reply.
+    def replay_prompt_receipt(key, event_id:, fingerprint:)
+      with_exclusive_lock do
+        agents, = read_snapshot
+        target = agents.find { |agent| agent.key == key.to_s }
+        target && prompt_replay_unlocked(target, event_id, fingerprint:)
+      end
+    end
+
+    # Accept active work or record its terminal archive result under the archive lock.
+    # Callers must not retain and later save a stale agent snapshot.
     def accept_or_abort_prompt!(key, prompt:, actor:, event_id:, archive_metadata: {}, message_metadata: {},
                                 attachments: nil, delayed: false, delay: nil, client_request_id: nil,
                                 source: nil, retire_inquiry_id: nil, start: false, parent_server_id: nil,
-                                attachment_importer: nil)
+                                attachment_importer: nil, receipt_fingerprint: nil, input_preparer: nil, receipt_schedule_targets_for: nil)
       with_exclusive_lock do
         agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
         target = agents.find { |agent| agent.key == key.to_s }
@@ -500,18 +510,61 @@ module HQ
         parent = active_prompt_parent_unlocked!(target, agents, actor:)
         paths << parent.memory_path if parent
         FileTransaction.run(paths.compact) do |transaction|
-          replay = prompt_replay_unlocked(target, event_id)
-          result = replay || accept_active_prompt_unlocked!(
-            target, agents, prompt:, actor:, event_id:, message_metadata:, attachments:,
-            delayed:, delay:, client_request_id:, source:, retire_inquiry_id:, start:, parent_server_id:,
-            attachment_importer:, transaction:
-          )
+          replay = prompt_replay_unlocked(target, event_id, fingerprint: receipt_fingerprint)
+          if receipt_fingerprint && !replay
+            resume_targets = receipt_schedule_targets_for ? receipt_schedule_targets_for.call(target) : []
+            message_metadata = (message_metadata || {}).merge("prompt_receipt" => {
+              "fingerprint" => receipt_fingerprint, "accepted_at" => Time.now.utc.iso8601(6), "source" => source,
+              "schedule_resume_targets" => resume_targets,
+              "schedule_resume_complete" => resume_targets.empty?,
+              "schedule_resume_result" => []
+            })
+          end
+          begin
+            if !replay && input_preparer
+              prepared = input_preparer.call(target)
+              prompt = prepared.fetch(:prompt)
+              attachment_importer = prepared[:attachment_importer]
+            end
+            result = replay || accept_active_prompt_unlocked!(
+              target, agents, prompt:, actor:, event_id:, message_metadata:, attachments:,
+              delayed:, delay:, client_request_id:, source:, retire_inquiry_id:, start:, parent_server_id:,
+              attachment_importer:, transaction:
+            )
+          rescue ArgumentError => e
+            raise PromptInputRejected, e.message if receipt_fingerprint
+            raise
+          end
+          if receipt_fingerprint && !replay
+            receipt = result[:entry]&.dig("message_metadata", "prompt_receipt") || result[:receipt_metadata]
+            target.prompt_receipts[event_id] = receipt
+          end
           record_accepted_agent_send!(
             parent:, target:, prompt:, event_id:, result:
           ) if actor&.parent? && !result.fetch(:replayed)
           save_unlocked(agents)
           result
         end
+      rescue PromptInputRejected => e
+        # The failed transaction has rolled back. Fence this ID before another attempt can accept it.
+        restored, = read_snapshot
+        target = find_agent_in!(restored, key)
+        receipt = { "fingerprint" => receipt_fingerprint, "rejected" => true, "reason" => e.message }
+        target.prompt_receipts[event_id] = receipt
+        save_unlocked(restored)
+        { status: :rejected, agent: target, replayed: false, receipt_metadata: receipt }
+      end
+    end
+
+    def complete_prompt_receipt_effect!(key, event_id:, resumed_schedules:)
+      with_exclusive_lock do
+        agents, = read_snapshot
+        target = find_agent_in!(agents, key)
+        receipt = target.prompt_receipts.fetch(event_id)
+        receipt["schedule_resume_result"] = resumed_schedules.map { |schedule| schedule.transform_keys(&:to_s) }
+        receipt["schedule_resume_complete"] = true
+        save_unlocked(agents)
+        target
       end
     end
 
@@ -1317,7 +1370,7 @@ module HQ
         target, text: prompt, attachments:, actor:, retire_inquiry_id:, metadata:, event_id:
       )
       start_target!(target, agents, run_metadata: nil, delegated_action_origin: origin) if start && !target.running?
-      { status: :accepted, agent: target, entry: nil, replayed: false }
+      { status: :accepted, agent: target, entry: nil, replayed: false, receipt_metadata: metadata["prompt_receipt"] }
     end
 
     def accept_prompt_from_unlocked!(target, actor:, now: Time.now)
@@ -1344,6 +1397,10 @@ module HQ
       }
       attributes[:id] = id if id
       attributes[:client_request_id] = client_request_id if client_request_id
+      if (receipt = metadata["prompt_receipt"])
+        receipt["accepted_at"] = attributes[:accepted_at].utc.iso8601(6)
+        receipt["authority"] = attributes[:authority]
+      end
       target.enqueue_prompt!(**attributes)
     end
 
@@ -1366,6 +1423,9 @@ module HQ
       end
 
       accept_prompt_from_unlocked!(target, actor:)
+      if (receipt = metadata&.fetch("prompt_receipt", nil))
+        receipt["authority"] = @delegation_coordinator.ownership_stamp(target.key)
+      end
       author_metadata = target.message_author_metadata(actor)
       merged = [author_metadata, metadata].select { |value| value.is_a?(Hash) }
                                           .reduce({}) { |result, value| result.merge(value) }
@@ -1510,15 +1570,37 @@ module HQ
       { status: :archived, agent:, entry: nil, replayed: !user_added && !abort_added }
     end
 
-    def prompt_replay_unlocked(target, event_id)
+    def prompt_replay_unlocked(target, event_id, fingerprint: nil)
       id = event_id.to_s
       return nil if id.empty?
 
-      entry = target.queued_prompts.find { |candidate| candidate.dig("message_metadata", "prompt_arrival_event_id") == id }
-      return { status: :queued, agent: target, entry:, replayed: true } if entry
+      if fingerprint && (receipt = target.prompt_receipts[id])
+        raise ArgumentError, "Message request ID belongs to a different message" unless receipt["fingerprint"] == fingerprint
+        return { status: :rejected, agent: target, replayed: true, receipt_metadata: receipt } if receipt["rejected"]
+        entry = target.prompt_queue.find { |candidate| candidate.dig("message_metadata", "prompt_arrival_event_id") == id }
+        return { status: entry ? :queued : :accepted, agent: target, entry:, replayed: true, receipt_metadata: receipt }
+      end
+      entries = fingerprint ? target.prompt_queue : target.queued_prompts
+      entry = entries.find { |candidate| candidate.dig("message_metadata", "prompt_arrival_event_id") == id }
+      recorded = nil
+      metadata = entry&.fetch("message_metadata", nil)
+      if !entry && fingerprint
+        # Queue reads move entries into durable batches, not individual message events.
+        delivered = Array(target.queue_work["batches"]).flat_map { |batch| Array(batch["entries"]) }
+                         .find { |candidate| candidate.dig("message_metadata", "prompt_arrival_event_id") == id }
+        metadata = delivered&.fetch("message_metadata", nil)
+      end
+      unless entry || metadata
+        recorded = AgentMemory.new(target).events.find { |event| event["event_id"].to_s == id }
+        metadata = recorded&.fetch("metadata", nil)
+      end
+      return nil unless entry || metadata || recorded
 
-      recorded = AgentMemory.new(target).events.any? { |event| event["event_id"].to_s == id }
-      { status: :accepted, agent: target, entry: nil, replayed: true } if recorded
+      receipt = metadata&.fetch("prompt_receipt", nil)
+      if fingerprint && receipt&.fetch("fingerprint", nil) != fingerprint
+        raise ArgumentError, "Message request ID belongs to a different message"
+      end
+      { status: entry ? :queued : :accepted, agent: target, entry:, replayed: true, receipt_metadata: receipt }
     end
 
     def prompt_delay_seconds!(delay)

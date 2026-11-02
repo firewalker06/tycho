@@ -3,6 +3,7 @@
 require "json"
 require "fileutils"
 require "time"
+require "securerandom"
 
 require_relative "constants"
 require_relative "file_store"
@@ -37,6 +38,7 @@ module HQ
     :last_status, :last_error, :last_target_kind, :last_target_key, :previous_target_key,
     :next_due_at, :run_count, :skip_count, :first_success_notified_at, :failure_started_at,
     :recovery_notified_at, :resumed_at, :stopped_reason, :last_resume_reason,
+    :stop_id, :user_message_resumptions,
     keyword_init: true
   ) do
     OPERATOR_STATUSES = %w[scheduled paused stopped].freeze
@@ -73,7 +75,9 @@ module HQ
         recovery_notified_at: parse_time(hash["recovery_notified_at"]),
         resumed_at: parse_time(hash["resumed_at"]),
         stopped_reason: hash["stopped_reason"],
-        last_resume_reason: hash["last_resume_reason"]
+        last_resume_reason: hash["last_resume_reason"],
+        stop_id: hash["stop_id"],
+        user_message_resumptions: hash["user_message_resumptions"]
       )
     end
 
@@ -125,7 +129,9 @@ module HQ
         "recovery_notified_at" => recovery_notified_at&.iso8601,
         "resumed_at" => resumed_at&.iso8601,
         "stopped_reason" => stopped_reason,
-        "last_resume_reason" => last_resume_reason
+        "last_resume_reason" => last_resume_reason,
+        "stop_id" => stop_id,
+        "user_message_resumptions" => user_message_resumptions
       }.compact
     end
 
@@ -174,6 +180,7 @@ module HQ
       self.enabled = false
       self.paused_at ||= now
       self.stopped_reason = reason
+      self.stop_id = SecureRandom.uuid
       self.last_resume_reason = nil
     end
 
