@@ -3836,6 +3836,12 @@ module HQ
       attrs = attribute_keywords.transform_keys(&:to_s).merge(attrs)
       raise Error.new("Parent-declared requests cannot answer user inquiries", status: 403) if actor.parent?
 
+      if attrs["response_mode"] == "answer_receipt"
+        raise Error.new("Only users can answer inquiries", status: 403) unless actor.user?
+
+        return answer_inquiry_with_receipt(key, inquiry_id, attrs)
+      end
+
       answer = required_text(attrs, "answer", fallback: "prompt")
       feedback = attrs["feedback"].to_s.strip
       answer, feedback_embedded = inquiry_answer_with_feedback(answer, feedback, supplied: attrs.key?("feedback"))
@@ -3855,6 +3861,63 @@ module HQ
       { agent: agent_payload(target), conversation: conversation(target.key), resumed_schedules: resumed_schedules }
     rescue ArgumentError => e
       raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
+    end
+
+    def answer_inquiry_with_receipt(key, inquiry_id, attrs)
+      request_id = prompt_client_request_id(attrs)
+      raise Error.new("A valid answer request ID is required", status: 400) unless request_id
+
+      server_id = @agent_store.delegation_coordinator.delegation_store.server_identity.fetch("id")
+      raise Error.new("Answer destination has changed", status: 409) unless attrs["expected_server_id"] == server_id
+
+      find_agent!(key)
+      begin
+        created_at = Time.iso8601(attrs.fetch("intent_created_at"))
+      rescue KeyError, ArgumentError, TypeError
+        raise Error.new("A valid answer creation time is required", status: 400)
+      end
+      fingerprint = Digest::SHA256.hexdigest(JSON.generate([key, inquiry_id, attrs.sort.to_h, "user"]))
+      result = scheduler.store.with_lock do
+        accepted = @agent_store.accept_inquiry_intent!(
+          key, inquiry_id:, intent_id: request_id, fingerprint:, created_at:, start: truthy?(attrs["start"]),
+          schedule_targets_for: ->(target) { target.scheduled? ? scheduler.user_message_resume_targets(key) : [] },
+          prepare: lambda { |target|
+            begin
+              answer = required_text(attrs, "answer", fallback: "prompt")
+              feedback = attrs["feedback"].to_s.strip
+              answer, embedded = inquiry_answer_with_feedback(answer, feedback, supplied: attrs.key?("feedback"))
+              { answer:, feedback:, feedback_embedded: embedded,
+                attachments: import_prompt_attachments(target, attrs, dedupe_key: "inquiry-#{request_id}") }
+            rescue Error => e
+              raise AgentStore::PromptInputRejected, e.message if [400, 404, 409].include?(e.status)
+              raise
+            end
+          }
+        )
+        record = accepted.fetch(:receipt)
+        unless record["rejected"]
+          target = @agent_store.finish_inquiry_start!(key, intent_id: request_id)
+          record = target.inquiry_receipts.fetch(request_id)
+          unless record["schedule_resume_complete"]
+            target = @agent_store.complete_inquiry_schedule_effect!(key, intent_id: request_id) do |original, allow_resume|
+              scheduler.resume_after_user_message(key, effect_id: "#{key}/inquiry/#{created_at.to_i}/#{request_id}", stops: original.fetch("schedule_resume_targets"), allow_resume:)
+            end
+          end
+          accepted[:agent] = target
+          accepted[:receipt] = target.inquiry_receipts.fetch(request_id)
+        end
+        accepted
+      end
+      record = result.fetch(:receipt)
+      binding = { version: 1, client_request_id: request_id, agent_key: key, inquiry_id:, server_id: }
+      return { error: record.fetch("reason"), answer_rejection: binding } if record["rejected"]
+
+      target = result.fetch(:agent)
+      @agent_activity_snapshot.upsert!(target)
+      # Keep the existing display response. Card789 owns removal of duplicate reads.
+      { agent: agent_payload(target), conversation: conversation(key), resumed_schedules: record.fetch("schedule_resume_result"),
+        answer_receipt: binding.merge(accepted: true, replayed: result.fetch(:replayed), accepted_at: record.fetch("accepted_at"),
+                                      start_result: record.fetch("start_result"), authority: record["authority"]) }
     end
 
     def dismiss_inquiry(key, inquiry_id, actor: DelegationActor.user_actor)
@@ -5373,6 +5436,7 @@ module HQ
       {
         key: agent.key,
         prompt_receipt_version: 1,
+        inquiry_receipt_version: 1,
         name: agent.display_name,
         project_key: agent.project_key,
         template_key: agent.template_key,
@@ -5426,6 +5490,7 @@ module HQ
       {
         key: agent.key,
         prompt_receipt_version: 1,
+        inquiry_receipt_version: 1,
         name: agent.display_name,
         project_key: agent.project_key,
         template_key: agent.template_key,

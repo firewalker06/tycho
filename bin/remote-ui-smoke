@@ -500,17 +500,29 @@ def associate_agent_download_fixture(logs_dir, agent_key, workspace)
   File.write(attachments_path, JSON.pretty_generate(records))
 end
 
-def run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name:)
+def run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name:, fixture_env: nil)
   node_dir = File.join(dir, "node")
   install_playwright!(node_dir)
   script = File.join(node_dir, "#{test_name}.js")
+  inquiry_fixture = if fixture_env
+                      <<~JS
+                        (mode, ...args) => require("node:child_process").execFileSync(
+                          #{RbConfig.ruby.inspect},
+                          [#{File.join(ROOT, "test/browser/inquiry_receipt_fixture.rb").inspect}, mode, ...args],
+                          {cwd: #{ROOT.inspect}, env: {...process.env, ...#{JSON.generate(fixture_env)}}}
+                        ).toString().trim()
+                      JS
+                    else
+                      "null"
+                    end
   File.write(script, <<~JS)
     const { chromium } = require("playwright");
     const smoke = require(#{File.join(ROOT, "test", "browser", "#{test_name}.js").inspect});
+    const inquiryFixture = #{inquiry_fixture.strip};
     (async () => {
       const browser = await chromium.launch({ executablePath: #{browser.inspect}, headless: true });
       try {
-        await smoke({ browser, baseUrl: #{base_url.inspect}, agentKey: #{agent_key.inspect}, captureDir: process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "" });
+        await smoke({ browser, baseUrl: #{base_url.inspect}, agentKey: #{agent_key.inspect}, captureDir: process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "", advanceInquiry: inquiryFixture ? key => inquiryFixture("--advance", key) : null, waitForInquiryRuns: inquiryFixture ? () => inquiryFixture("--wait") : null });
       } finally { await browser.close(); }
     })().catch((error) => { console.error(error); process.exit(1); });
   JS
@@ -10774,6 +10786,11 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     "TYCHO_GITHUB_API_URL" => github_api_url
   }
 
+  if ENV["TYCHO_REMOTE_UI_INQUIRY_RECEIPT_ONLY"] == "1"
+    out, status = Open3.capture2e(env, RbConfig.ruby, "test/browser/inquiry_receipt_fixture.rb", fixture.fetch(:workspace), chdir: ROOT)
+    raise "Failed to seed inquiry receipt fixture: #{out}" unless status.success?
+  end
+
   if ENV["TYCHO_REMOTE_UI_USAGE_SCOPE_ONLY"] == "1"
     agent_key = "web-agent-usage-scope"
     out, status = Open3.capture2e(env, RbConfig.ruby, "test/browser/usage_scope_fixture.rb", fixture.fetch(:workspace), chdir: ROOT)
@@ -10802,6 +10819,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     if ENV["TYCHO_REMOTE_UI_BUTTON_BORDERS_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_UTILITY_BORDERS_ONLY"] == "1"
       associate_agent_pull_request(fixture.fetch(:logs_dir), agent_key)
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: ENV["TYCHO_REMOTE_UI_UTILITY_BORDERS_ONLY"] == "1" ? "utility_borders_smoke" : "button_borders_smoke")
+      next
+    end
+    if ENV["TYCHO_REMOTE_UI_INQUIRY_RECEIPT_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "inquiry_receipt_smoke", fixture_env: env)
       next
     end
     if ENV["TYCHO_REMOTE_UI_PROMPT_RECEIPT_ONLY"] == "1"

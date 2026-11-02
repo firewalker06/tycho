@@ -10151,3 +10151,14 @@ body:has(.inquiry-form-full-screen) {
 .switcher-group-toggle[aria-expanded="true"] .ui-icon { transform: rotate(180deg); }
 
 .switcher-keyboard-hint { margin: 0; color: var(--muted); font-size: 12px; }
+
+[data-inquiry-answer-recovery] details {
+  max-height: 35vh;
+  overflow: auto;
+}
+
+[data-inquiry-answer-recovery] dd {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
