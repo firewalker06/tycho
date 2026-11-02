@@ -887,10 +887,15 @@ reclaim ownership, append history, import attachments again, or start another
 run. A different payload with the same ID conflicts. Accepted retries are found
 before old PR snapshots or retired inquiry inputs are revalidated. Required
 schedule resume and activity publication still finish before a receipt returns;
-a later failure remains uncertain and can be retried with the same ID.
+a later failure remains uncertain and can be retried with the same ID. The accepted
+record binds schedule resume to the original awaiting-input stop IDs. Schedule
+state commits the effect result with the resume, then the receipt records completion.
+A retry recovers an interrupted original effect or its saved result. It cannot resume
+a newer stop. Existing receipts without a bound stop never resume a later stop.
 
-An input validation failure inside acceptance rolls back first, then records a
-rejection for that ID while the store lock is held. The API returns 409 with an
+New PR context is validated under the acceptance lock after replay lookup. A removed
+reference or replaced snapshot is a definite local input failure. An input validation
+failure inside acceptance rolls back first, then records a rejection for that ID while the store lock is held. The API returns 409 with an
 error and bound `rejection` containing version, request ID, agent key and server
 ID. Only that verified rejection permits the browser to release the failed
 intent for correction. Generic HTTP errors, invalid JSON, missing receipt data,
@@ -909,7 +914,10 @@ force navigation back to the originating route. Canonical queue controls remain
 disabled on local rows until a later canonical detail read replaces them.
 
 Run the isolated service checks with `bundle exec ruby test/prompt_receipt_test.rb`
-and the browser checks with `TYCHO_REMOTE_UI_PROMPT_RECEIPT_ONLY=1 bin/remote-ui-smoke`.
+and `bundle exec ruby test/prompt_receipt_recovery_test.rb`. Run the browser checks
+with `TYCHO_REMOTE_UI_PROMPT_RECEIPT_ONLY=1 bin/remote-ui-smoke`. They include removed
+PRs, replaced snapshots, visible draft/context correction, and accepted replay after
+context removal.
 
 ### `POST /agents/{key}/messages`
 

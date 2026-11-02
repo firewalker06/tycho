@@ -106,6 +106,22 @@ module RemoteUIPromptReceiptsTest
         assert.equal(negative.entries.size,0,"Bound durable rejection releases correction");
         assert.deepEqual(rejected,[true]);
         assert.equal(disk.size,0,"Rejected payload leaves browser storage");
+        for (const status of [404,409]) {
+          for (const unbound of [null,{version:1,client_request_id:"client-other",agent_key:"agent",server_id:"server"}]) {
+            const retained = new Map(), attempts = [], flags = [];
+            const uncertain = new Outbox({storage:{all:async()=>[],put:async entry=>retained.set(entry.id,entry),remove:async id=>retained.delete(id)},
+              send:async entry=>{attempts.push(entry.id);const error=new Error("Unbound context error");error.status=status;error.data={rejection:unbound};throw error;},
+              onError:(_entry,error)=>flags.push(error.rejected)});
+            await uncertain.ready;
+            await uncertain.add({id:"client-unbound",key:"peer/agent",destination,payload:{prompt:"retain exact context"}});
+            await uncertain.add({id:"client-after-unbound",key:"peer/agent",destination,payload:{prompt:"next"}});
+            await tick();await tick();
+            assert.equal(uncertain.entries.get("client-unbound").status,"uncertain");
+            assert.deepEqual(attempts,["client-unbound"],"Plain or mismatched 404/409 must not release later writes");
+            assert(retained.has("client-unbound"));
+            assert(flags.every(flag=>flag!==true));
+          }
+        }
         let reads = 0, readRelease;
         const reconciler = createReconciler(async () => { reads++; if(reads===1) await new Promise(resolve=>{readRelease=resolve}); else throw Error("read failed after accepted write"); });
         reconciler.request(); await tick();

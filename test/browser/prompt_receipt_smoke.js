@@ -8,7 +8,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
   if (captureDir) fs.mkdirSync(captureDir, { recursive: true });
   const gate = () => { let release; const promise = new Promise(resolve => {release = resolve;}); return {promise, release}; };
   for (const width of [1440, 390]) {
-    for (const scenario of ["ordered-held-refresh", "lost-processed-reload", "malformed", "wrong-server", "read-auth-navigation", "immediate", "input-rejection", "consumed-before-read"]) {
+    for (const scenario of ["ordered-held-refresh", "lost-processed-reload", "malformed", "wrong-server", "read-auth-navigation", "immediate", "input-rejection", "consumed-before-read", "pr-removed", "pr-stale", "pr-lost-removed"]) {
       const context = await browser.newContext({ viewport: {width, height: 900}, isMobile: width < 500, hasTouch: width < 500 });
       const page = await context.newPage();
       page.setDefaultTimeout(10000);
@@ -23,7 +23,34 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       let writes = 0, heldReads = 0, refreshes = 0;
       const ids = [], outcomes = [], sizes = [], payloads = [];
       let holdReads = false;
+      let prContext, correctedPrContext, removePr;
       try {
+        if (scenario.startsWith("pr-")) {
+          let listing = await (await context.request.get(`${baseUrl}/agents/${key}/pull-requests`)).json();
+          if (!listing.pull_requests.length) {
+            const added = await context.request.post(`${baseUrl}/agents/${key}/pull-requests`,{data:{url:"https://github.com/example/web/pull/123",catalog_revision:listing.catalog_revision}});
+            assert.equal(added.status(),201);
+            listing = await added.json();
+          }
+          const reference = listing.pull_requests[0];
+          const diffResponse = await context.request.post(`${baseUrl}/agents/${key}/pull-requests/${encodeURIComponent(reference.id)}/refresh`, {data:{}});
+          assert.equal(diffResponse.status(),200);
+          const diffData = await diffResponse.json();
+          const diff = diffData.diff || diffData;
+          prContext = {id:"synthetic-context",pull_request_id:reference.id,snapshot_id:diff.snapshot_id,repository:diff.repository,number:diff.number,
+            comment:"Synthetic PR comment",lines:[{path:diff.files[0].path,hunk_index:0,line_index:0}]};
+          removePr = async () => {
+            const current = await (await context.request.get(`${baseUrl}/agents/${key}/pull-requests`)).json();
+            const removed = await context.request.delete(`${baseUrl}/agents/${key}/pull-requests/${encodeURIComponent(reference.id)}`, {data:{catalog_revision:current.catalog_revision}});
+            assert.equal(removed.status(),200);
+          };
+          if (scenario === "pr-removed") await removePr();
+          if (scenario === "pr-stale") {
+            const replaced = await (await context.request.post(`${baseUrl}/agents/${key}/pull-requests/${encodeURIComponent(reference.id)}/refresh`, {data:{}})).json();
+            assert.notEqual(replaced.diff.snapshot_id,prContext.snapshot_id,"real provider refresh replaces the server snapshot");
+            correctedPrContext = {...prContext,snapshot_id:replaced.diff.snapshot_id};
+          }
+        }
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(key)}`, {waitUntil: "networkidle"});
         await page.waitForSelector("#composer");
         await page.evaluate(() => { clearTimeout(state.timer); const original = refresh; globalThis.__receiptRefreshes = 0; refresh = async (...args) => {globalThis.__receiptRefreshes++; return original(...args);}; });
@@ -47,8 +74,13 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
           assert.equal(body.response_mode, "receipt");
           assert.equal(body.expected_server_id, agent.delegation.server_id);
           const response = await route.fetch();
-          if (scenario === "input-rejection" && writes === 1) {
+          if (["input-rejection","pr-removed","pr-stale"].includes(scenario) && writes === 1) {
             assert.equal(response.status(),409);
+            const rejection = await response.json();
+            assert.equal(rejection.rejection.client_request_id,body.client_request_id);
+            const retry = await context.request.post(`${baseUrl}/agents/${key}/messages`,{data:body});
+            assert.equal(retry.status(),409,"rejected intent remains fenced");
+            assert.deepEqual(await retry.json(),rejection);
             outcomes.push("rejected"); sizes.push((await response.body()).length);
             return route.fulfill({response});
           }
@@ -58,6 +90,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
           sizes.push((await response.body()).length);
           if (writes === 1) {
             holdReads = true;
+            if (scenario === "pr-lost-removed") { await removePr(); return route.abort("connectionreset"); }
             if (scenario === "lost-processed-reload") return route.abort("connectionreset");
             if (scenario === "malformed") return route.fulfill({status: 200,contentType:"application/json",body:"invalid"});
             if (scenario === "wrong-server") return route.fulfill({status:202,contentType:"application/json",body:JSON.stringify({...data, receipt:{...data.receipt,server_id:"wrong-server"}})});
@@ -74,17 +107,32 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
           await page.locator("[data-prompt-attachment-input]").setInputFiles({name:"receipt-note.txt",mimeType:"text/plain",buffer:Buffer.from("Synthetic receipt attachment")});
           await page.waitForFunction(key => pendingAttachmentsFor(key).length === 1,key);
         }
+        if (prContext) await page.evaluate(({key,context}) => {
+          state.pendingPullRequestContexts[key] = [context]; render();
+        },{key,context:prContext});
         if(scenario === "input-rejection") await page.evaluate(key => {findAgent(key).suspended_inquiry = {id:"stale"};},key);
         await send(`Synthetic first message ${scenario}`);
-        if (scenario === "input-rejection") {
+        if (["input-rejection","pr-removed","pr-stale"].includes(scenario)) {
           await page.locator("[data-composer-submission-error]").waitFor();
           assert.equal(await page.locator("[data-retry-prompt]").count(),0,"Bound rejection allows correction, not uncertain retry");
           assert.equal(await page.locator("#prompt-input").inputValue(),`Synthetic first message ${scenario}`);
-          await page.waitForFunction(key => !findAgent(key).suspended_inquiry,key);
+          if (scenario === "input-rejection") await page.waitForFunction(key => !findAgent(key).suspended_inquiry,key);
+          else {
+            await page.waitForFunction(key => pendingPullRequestContextsFor(key).length === 1,key);
+            await page.locator("[data-remove-pr-context]").click();
+            assert.equal(await page.evaluate(key => pendingPullRequestContextsFor(key).length,key),0,"invalid context can be removed safely");
+            if (scenario === "pr-stale") await page.evaluate(({key,context})=>{state.pendingPullRequestContexts[key]=[context];render();},{key,context:correctedPrContext});
+          }
           await send("Synthetic corrected message");
           await page.waitForFunction(() => globalThis.__receiptSecondObserved || state.promptOutbox.entries.size > 0);
           await page.waitForFunction(() => state.promptOutbox.entries.size === 0);
           assert.notEqual(ids[0],ids[1],"A corrected rejected message is a new intent");
+          if (scenario.startsWith("pr-")) {
+            await send("Synthetic second message after correction");
+            await page.waitForFunction(() => state.promptOutbox.entries.size === 0);
+            assert.equal(writes,3,"next ordered send is released");
+            assert.equal(new Set(ids).size,3);
+          }
           readGate.release();
         } else if (["ordered-held-refresh", "read-auth-navigation", "immediate", "consumed-before-read"].includes(scenario)) {
           await page.waitForFunction(() => state.promptOutbox?.entries.size === 1);
@@ -151,6 +199,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
           assert.equal(ids[0],ids[1],"Retry must preserve exact request identity");
           assert.equal(payloads[0],payloads[1],"Retry must preserve the exact message, files and contexts");
           if (scenario === "lost-processed-reload") assert.equal(outcomes[1],"replayed","Consumed prompt cannot be queued twice");
+          if (scenario === "pr-lost-removed") assert.equal(outcomes[1],"queued","accepted context replays after PR removal");
           readGate.release();
         }
         if (scenario === "ordered-held-refresh") {

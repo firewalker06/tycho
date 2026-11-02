@@ -97,10 +97,30 @@ module HQ
       end
     end
 
+    # The caller holds this lock through acceptance, so a later stop cannot enter the receipt.
+    def user_message_resume_targets(agent_key)
+      store.with_lock do
+        states = store.load
+        changed = false
+        targets = schedule_registry.schedules.filter_map do |schedule|
+          state = states[schedule.key]
+          next unless state&.stopped_for_awaiting_input? && state.last_target_key.to_s == agent_key.to_s
+
+          if state.stop_id.to_s.empty?
+            state.stop_id = SecureRandom.uuid
+            changed = true
+          end
+          { "key" => schedule.key, "stop_id" => state.stop_id }
+        end
+        store.save(states) if changed
+        targets
+      end
+    end
+
     # Re-enable only schedules that this scheduler explicitly stopped while their
     # own managed session awaited a user's reply. Manual pauses and all other
     # stopped conditions intentionally remain unchanged.
-    def resume_after_user_message(agent_key, now: Time.now)
+    def resume_after_user_message(agent_key, now: Time.now, effect_id: nil, stops: nil)
       key = agent_key.to_s
       return [] if key.empty?
 
@@ -108,16 +128,35 @@ module HQ
         states = store.load
         resumed = schedule_registry.schedules.filter_map do |schedule|
           state = states[schedule.key]
+          if effect_id
+            original = Array(stops).find { |stop| stop["key"] == schedule.key }
+            next unless state && original
+
+            state.user_message_resumptions ||= {}
+            if state.user_message_resumptions.key?(effect_id)
+              next state.user_message_resumptions[effect_id]&.transform_keys(&:to_sym)
+            end
+            result = nil
+            if state.stopped_for_awaiting_input? && state.last_target_key.to_s == key && state.stop_id == original["stop_id"]
+              resume_state!(schedule, state, now:, reason: "user_message")
+              result = schedule_payload(schedule, state).slice(:key, :name).transform_keys(&:to_s)
+            end
+            # Commit the result together with the state change. Recovery cannot apply it twice.
+            state.user_message_resumptions[effect_id] = result
+            next result&.transform_keys(&:to_sym)
+          end
           next unless state&.stopped_for_awaiting_input?
           next unless state.last_target_key.to_s == key
 
           resume_state!(schedule, state, now:, reason: "user_message")
           schedule_payload(schedule, state)
         end
-        store.save(states) if resumed.any?
+        store.save(states) if resumed.any? || effect_id
         resumed
       end
     rescue ScheduleRegistry::Error => e
+      raise if effect_id
+
       HQ.logger.warn("Scheduler") { "Skipped auto-resume after user message: #{e.message}" }
       []
     end

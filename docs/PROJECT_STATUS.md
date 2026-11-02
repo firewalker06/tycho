@@ -18,7 +18,9 @@ The Remote UI uses an opt-in small message receipt. Durable acceptance and
 required schedule/activity effects finish before acknowledgment. Other callers
 keep the full response. Accepted IDs and request fingerprints remain with the
 agent, so retry after queue consumption does not append another message.
-Definite input rejections fence their IDs after transaction rollback.
+Definite input rejections, including stale PR context, fence their IDs after
+transaction rollback. Schedule resume effects bind to the original stop and
+persist their completion and result; old retries cannot resume a newer stop.
 Pending browser messages retain their exact destination and payload in
 IndexedDB until acceptance or a bound rejection. Credentials are never stored
 with them. Writes stay ordered per agent; coalesced background reads do not

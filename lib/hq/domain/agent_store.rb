@@ -496,7 +496,7 @@ module HQ
     def accept_or_abort_prompt!(key, prompt:, actor:, event_id:, archive_metadata: {}, message_metadata: {},
                                 attachments: nil, delayed: false, delay: nil, client_request_id: nil,
                                 source: nil, retire_inquiry_id: nil, start: false, parent_server_id: nil,
-                                attachment_importer: nil, receipt_fingerprint: nil)
+                                attachment_importer: nil, receipt_fingerprint: nil, input_preparer: nil, receipt_schedule_targets: nil)
       with_exclusive_lock do
         agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
         target = agents.find { |agent| agent.key == key.to_s }
@@ -513,10 +513,18 @@ module HQ
           replay = prompt_replay_unlocked(target, event_id, fingerprint: receipt_fingerprint)
           if receipt_fingerprint && !replay
             message_metadata = (message_metadata || {}).merge("prompt_receipt" => {
-              "fingerprint" => receipt_fingerprint, "accepted_at" => Time.now.utc.iso8601(6), "source" => source
+              "fingerprint" => receipt_fingerprint, "accepted_at" => Time.now.utc.iso8601(6), "source" => source,
+              "schedule_resume_targets" => receipt_schedule_targets || [],
+              "schedule_resume_complete" => Array(receipt_schedule_targets).empty?,
+              "schedule_resume_result" => []
             })
           end
           begin
+            if !replay && input_preparer
+              prepared = input_preparer.call(target)
+              prompt = prepared.fetch(:prompt)
+              attachment_importer = prepared[:attachment_importer]
+            end
             result = replay || accept_active_prompt_unlocked!(
               target, agents, prompt:, actor:, event_id:, message_metadata:, attachments:,
               delayed:, delay:, client_request_id:, source:, retire_inquiry_id:, start:, parent_server_id:,
@@ -544,6 +552,18 @@ module HQ
         target.prompt_receipts[event_id] = receipt
         save_unlocked(restored)
         { status: :rejected, agent: target, replayed: false, receipt_metadata: receipt }
+      end
+    end
+
+    def complete_prompt_receipt_effect!(key, event_id:, resumed_schedules:)
+      with_exclusive_lock do
+        agents, = read_snapshot
+        target = find_agent_in!(agents, key)
+        receipt = target.prompt_receipts.fetch(event_id)
+        receipt["schedule_resume_result"] = resumed_schedules.map { |schedule| schedule.transform_keys(&:to_s) }
+        receipt["schedule_resume_complete"] = true
+        save_unlocked(agents)
+        target
       end
     end
 

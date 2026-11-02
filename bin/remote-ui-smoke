@@ -228,6 +228,10 @@ def fake_github_response(method, path, headers, request_body)
     "deletions" => 1,
     "updated_at" => "2026-07-28T00:00:00Z"
   }
+  if ENV["TYCHO_REMOTE_UI_PROMPT_RECEIPT_ONLY"] == "1" && method == "GET" && path == "/repos/example/web/pulls/123"
+    @receipt_snapshot_generation = @receipt_snapshot_generation.to_i + 1
+    pull["head"]["sha"] = "synthetic-receipt-head-#{@receipt_snapshot_generation}"
+  end
   return ["200 OK", "application/json", JSON.generate(pull)] if method == "GET" && path == "/repos/example/web/pulls/123"
 
   if method == "POST" && path == "/graphql"
