@@ -1,12 +1,12 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-module.exports = async ({browser, baseUrl, captureDir}) => {
+module.exports = async ({browser, baseUrl, captureDir, advanceInquiry}) => {
   assert.equal(new URL(baseUrl).hostname,"127.0.0.1");
   const baseline = process.env.TYCHO_REMOTE_UI_INQUIRY_BASELINE;
   const evidence = [];
   let fixtureIndex = 0;
-  for (const width of (baseline ? [1440] : [1440,390])) for (const theme of (baseline ? ["dark"] : ["dark","light"])) {
+  for (const width of (process.env.TYCHO_REMOTE_UI_INQUIRY_CORRECTION_CASE ? [] : baseline ? [1440] : [1440,390])) for (const theme of (baseline ? ["dark"] : ["dark","light"])) {
     for (const scenario of (baseline ? ["lost"] : ["lost", "malformed", "empty", "wrong-server", "wrong-inquiry", "auth", "unbound-conflict", "rejection"])) {
       console.log(`Inquiry recovery: ${width} ${theme} ${scenario}`);
       const context = await browser.newContext({viewport:{width,height:900},isMobile:width<500,hasTouch:width<500});
@@ -97,5 +97,6 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
     }
   }
   if(captureDir) fs.writeFileSync(path.join(captureDir,"inquiry-browser.json"),JSON.stringify(evidence,null,2));
+  if (!baseline) await require("./inquiry_recovery_corrections_smoke")({browser, baseUrl, captureDir, advanceInquiry});
   console.log("inquiry_receipt_smoke: ok");
 };
