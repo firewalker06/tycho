@@ -8,7 +8,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
   if (captureDir) fs.mkdirSync(captureDir, { recursive: true });
   const gate = () => { let release; const promise = new Promise(resolve => {release = resolve;}); return {promise, release}; };
   for (const width of [1440, 390]) {
-    for (const scenario of ["ordered-held-refresh", "lost-processed-reload", "malformed", "wrong-server", "read-auth-navigation", "immediate", "input-rejection"]) {
+    for (const scenario of ["ordered-held-refresh", "lost-processed-reload", "malformed", "wrong-server", "read-auth-navigation", "immediate", "input-rejection", "consumed-before-read"]) {
       const context = await browser.newContext({ viewport: {width, height: 900}, isMobile: width < 500, hasTouch: width < 500 });
       const page = await context.newPage();
       page.setDefaultTimeout(10000);
@@ -86,7 +86,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
           await page.waitForFunction(() => state.promptOutbox.entries.size === 0);
           assert.notEqual(ids[0],ids[1],"A corrected rejected message is a new intent");
           readGate.release();
-        } else if (["ordered-held-refresh", "read-auth-navigation", "immediate"].includes(scenario)) {
+        } else if (["ordered-held-refresh", "read-auth-navigation", "immediate", "consumed-before-read"].includes(scenario)) {
           await page.waitForFunction(() => state.promptOutbox?.entries.size === 1);
           await page.waitForFunction(() => [...state.promptOutbox.entries.values()][0].status === "sending");
           if (scenario === "immediate") {
@@ -103,6 +103,13 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
             await page.evaluate(() => {location.hash="#settings";});
             await page.waitForFunction(() => parseRoute().tab === "settings");
           }
+          if (scenario === "consumed-before-read") {
+            const read = await context.request.post(`${baseUrl}/agents/${key}/prompt-queue/read`,{data:{}});
+            assert.equal(read.status(),200);
+            const batch = await read.json();
+            const complete = await context.request.post(`${baseUrl}/agents/${key}/queue-work/${batch.batch.batch_id}/complete`,{data:{dispositions:batch.entries.map(entry=>({entry_id:entry.id,outcome:"completed"}))}});
+            assert.equal(complete.status(),200);
+          }
           receiptGate.release();
           await page.waitForFunction(() => state.promptOutbox.entries.size === 0);
           if (scenario === "ordered-held-refresh") {
@@ -117,6 +124,9 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
             assert(heldReads > 0, "A real detail response was held");
           }
           readGate.release();
+          if (scenario === "consumed-before-read") {
+            await page.waitForFunction(key => optimisticPromptQueueEntries(key).length === 0 && findAgent(key).prompt_queue.entries.length === 0,key);
+          }
           if (scenario === "read-auth-navigation") {
             await page.waitForFunction(() => !document.querySelector("#auth-panel").classList.contains("hidden"));
             assert.equal(await page.evaluate(() => parseRoute().tab), "settings", "Acceptance must not steal navigation");

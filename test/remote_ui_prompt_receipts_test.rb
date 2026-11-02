@@ -18,10 +18,18 @@ module RemoteUIPromptReceiptsTest
       const receipt = { version: 1, accepted: true, client_request_id: "client-one", agent_key: "agent", server_id: "server", outcome: "accepted", replayed: false, accepted_at: "2026-01-01T00:00:00Z", revision: "1", running: false, source: "user", authority: null, queue_entry: null };
       const valid = { accepted: true, queued: false, receipt };
       validateReceipt(valid, { id: "client-one", destination });
-      for (const change of [{ accepted: false }, { receipt: null }, { receipt: {...receipt, server_id: "other"} }, { receipt: {...receipt, agent_key: "other"} }, { receipt: {...receipt, client_request_id: "client-two"} }, { receipt: {...receipt, outcome: "completed"} }, { receipt: {...receipt, accepted_at: "bad"} }, { receipt: {...receipt, accepted_at: "1"} }, { receipt: {...receipt, outcome: "replayed", replayed: false} }, { receipt: {...receipt, authority: { owner: "parent", generation: -1 }} }]) {
+      for (const change of [{ accepted: false }, { receipt: null }, { receipt: {...receipt, server_id: "other"} }, { receipt: {...receipt, agent_key: "other"} }, { receipt: {...receipt, client_request_id: "client-two"} }, { receipt: {...receipt, outcome: "completed"} }, { receipt: {...receipt, revision: "bad"} }, { receipt: {...receipt, accepted_at: "bad"} }, { receipt: {...receipt, accepted_at: "1"} }, { receipt: {...receipt, outcome: "replayed", replayed: false} }, { receipt: {...receipt, authority: { owner: "parent", generation: -1 }} }]) {
         assert.throws(() => validateReceipt({...valid, ...change}, { id: "client-one", destination }));
       }
       const app = fs.readFileSync("lib/hq/remote_ui/assets/app.js", "utf8");
+      let localRows = [{id:"client-consumed",state:"queued",receipt_revision:"2",local_pending:true}];
+      const reconcileContext = {state:{},arrayValue:value=>Array.isArray(value)?value:[],optimisticPromptQueueEntries:()=>localRows,persistOptimisticPromptQueue:(_key,rows)=>{localRows=rows;}};
+      vm.createContext(reconcileContext);
+      vm.runInContext(app.match(/^function reconcileOptimisticPromptQueue\([^]*?^}/m)[0],reconcileContext);
+      reconcileContext.reconcileOptimisticPromptQueue({key:"agent",revision:"1",prompt_queue:{entries:[]}},{confirmedRead:true});
+      assert.equal(localRows.length,1,"A stale read cannot erase an accepted receipt row");
+      reconcileContext.reconcileOptimisticPromptQueue({key:"agent",revision:"2",prompt_queue:{entries:[]}},{confirmedRead:true});
+      assert.equal(localRows.length,0,"Current empty queue confirms that accepted work has left the queue");
       const queued = [];
       const callContext = {
         crypto: { randomUUID: () => "00000000-0000-4000-8000-000000000001" },
