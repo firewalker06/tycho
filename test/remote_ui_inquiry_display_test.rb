@@ -23,14 +23,16 @@ script = <<~'JS'
         reconcileOptimisticPromptQueue: () => {},
         apiGet: async () => {reads++; return held;},
         refresh: async () => {refreshes++; await held;}};
-      vm.createContext(context); vm.runInContext("let inquiryAnswers;",context);
-      for (const name of ["upsertAgent","ensureAgentDetail","agentDetailGeneration","refreshAnsweredInquiry","inquirySubmissionKey","inquiryAnswerStore"]) vm.runInContext(source(name),context);
+      vm.createContext(context); vm.runInContext("let inquiryAnswers; const inquiryAnswerDisplaySnapshots = new WeakMap();",context);
+      for (const name of ["upsertAgent","ensureAgentDetail","agentDetailGeneration","inquiryAnswerDisplayState","inquiryAnswerDisplayUnchanged","refreshAnsweredInquiry","inquirySubmissionKey","inquiryAnswerStore"]) vm.runInContext(source(name),context);
       const stale = context.ensureAgentDetail(key,true);
       const receipt = {start_result:"not_started"};
       const data = {agent:{key:"agent",latest_inquiry:null,awaiting_input:false,status:"idle"},answer_receipt:receipt};
       if(projection==="missing") delete data.agent;
       if(projection==="wrong-agent") data.agent.key="unrelated";
       if(projection==="answered-A") data.agent.latest_inquiry={id:"A"};
+      vm.runInContext("this.bindDisplay = (data,key) => inquiryAnswerDisplaySnapshots.set(data,inquiryAnswerDisplayState(key));",context);
+      context.bindDisplay(data,key);
       context.inquiryAnswerStore().accepted({key,inquiryId:"A",payload:{},destination:{agent_key:"agent"}},receipt,data);
       await Promise.resolve();
       assert.equal(context.state.agentDetails[key].latest_inquiry?.id || null,current==="B"?"B":null,"accepted result applied before held display reads");
@@ -39,6 +41,32 @@ script = <<~'JS'
       assert.equal(refreshes,1,"one background reconciliation starts without waiting for detail");
       release({agent:{key,latest_inquiry:{id:"A"},awaiting_input:true}}); await stale;
       assert.equal(context.state.agentDetails[key].latest_inquiry?.id || null,current==="B"?"B":null,"older read cannot resurrect A or overwrite B");
+    }
+    for (const update of ["detail", "activity", "mutation", "retire", "removed", "same-value-read"]) {
+      const initial={key:"agent",name:"Old",running:false,latest_inquiry:{id:"A"},awaiting_input:true};
+      const state={agentDetails:{agent:initial},agents:[initial],activityAgents:new Map([["agent",{...initial}]]),
+        activityReadyServerKeys:new Set(),archivedAgentKeys:new Set(),archivedAgentCatalogConfirmedKeys:new Set(),
+        agentDetailGenerations:new Map(),resourceMutationGeneration:0};
+      const ctx={state,reconcileOptimisticPromptQueue:()=>{},activityFields:agent=>({...agent}),
+        resourceRequest:()=>({server:{key:"local"}}),scopeApiResponse:data=>data,
+        apiGet:async()=>({agent:{...initial,name:"New",running:false,latest_inquiry:null,awaiting_input:false}})};
+      vm.createContext(ctx);
+      for(const name of ["findAgent","removeAgent","upsertAgent","retireArchivedAgent","agentDetailGeneration","ensureAgentDetail","inquiryAnswerDisplayState","inquiryAnswerDisplayUnchanged","refreshAnsweredInquiry"]) vm.runInContext(source(name),ctx);
+      const dispatched=ctx.inquiryAnswerDisplayState("agent");
+      if(update==="detail") await ctx.ensureAgentDetail("agent",true);
+      if(update==="activity") Object.assign(state.agentDetails.agent,{name:"New",running:false,latest_inquiry:null,awaiting_input:false});
+      if(update==="mutation") ctx.upsertAgent({...initial,name:"New",running:false,latest_inquiry:null,awaiting_input:false});
+      if(update==="retire") ctx.retireArchivedAgent("agent");
+      if(update==="removed") ctx.removeAgent("agent");
+      if(update==="same-value-read") state.agentDetails.agent={...initial};
+      const before=state.agentDetails.agent;
+      const activeBefore=state.agents.map(agent=>agent.key);
+      const listBefore=state.agents[0];
+      ctx.refreshAnsweredInquiry("agent","A",{agent:{...initial,name:"Old POST",running:true,archived:false,latest_inquiry:null,awaiting_input:false}},{destination:{agent_key:"agent"}},dispatched);
+      assert.equal(state.agentDetails.agent?.name,before?.name,`${update}: later fields survive`);
+      assert.equal(state.agentDetails.agent?.running,before?.running,`${update}: later completion/retirement survives`);
+      assert.deepEqual(state.agents.map(agent=>agent.key),activeBefore,`${update}: no active reinsert`);
+      assert.equal(state.agents[0],listBefore,`${update}: identity cleanup does not replace newer list/activity state`);
     }
     console.log("inquiry display response and held reconciliation: ok");
   })().catch(error=>{console.error(error);process.exitCode=1;});

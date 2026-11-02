@@ -1,0 +1,98 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+
+module.exports = async ({browser, baseUrl, captureDir, waitForInquiryRuns}) => {
+  assert.equal(new URL(baseUrl).hostname,"127.0.0.1");
+  const selected=process.env.TYCHO_REMOTE_UI_INQUIRY_DELAYED_CASE;
+  const results=[];
+  const gate=()=>{let release;const promise=new Promise(resolve=>{release=resolve;});return {promise,release};};
+  let index=0;
+  for(const width of (selected?[1440]:[1440,390])) for(const theme of (selected?["dark"]:["dark","light"])) for(const peer of (selected?[false]:[false,true])) for(const scenario of (selected?[selected]:["detail","activity","mutation","retire"])) {
+    const rawKey=`web-inquiry-recovery-${index++}`,key=peer?`fixture-peer/${rawKey}`:rawKey;
+    const context=await browser.newContext({viewport:{width,height:900},isMobile:width<500,hasTouch:width<500});
+    const page=await context.newPage();page.setDefaultTimeout(10000);
+    const answer=gate(),captured=gate(),reads=gate();let holdReads=false,projection,writes=0,activityAgent;
+    const errors=[];page.on("pageerror",error=>errors.push(error.message));
+    console.log(`Delayed answer: ${width} ${theme} ${peer?"peer":"local"} ${scenario}`);
+    try {
+      await page.addInitScript(theme=>localStorage.setItem("hq.remote.appearance",theme),theme);
+      await page.route("**/*",async route=>{
+        const request=route.request(),url=new URL(request.url());
+        const routed=url.pathname.startsWith("/servers/fixture-peer/");
+        const pathname=routed?url.pathname.replace("/servers/fixture-peer",""):url.pathname;
+        const fetchRoute=()=>route.fetch(routed?{url:`${baseUrl}${pathname}${url.search}`} : {});
+        if(request.method()==="POST" && pathname.match(new RegExp(`/agents/${rawKey}/inquiries/[^/]+/answer$`))) {
+          assert.equal(routed,peer);writes++;
+          const response=await fetchRoute();assert.equal(response.status(),200);
+          projection=(await response.json()).agent;captured.release();await answer.promise;
+          return route.fulfill({response});
+        }
+        if(holdReads && request.method()==="GET" && /^\/(agents|servers|setup|schedules|projects)(\/|$)/.test(pathname)) await reads.promise;
+        const response=await fetchRoute();
+        if(peer && url.pathname==="/servers/resources") {
+          const data=await response.json(),local=data.servers.find(server=>server.local);
+          data.servers.push({...local,key:"fixture-peer",name:"Synthetic peer",local:false,url:baseUrl});
+          return route.fulfill({response,json:data});
+        }
+        if(url.pathname==="/servers/activity" && (peer || activityAgent)) {
+          const data=await response.json(),local=data.servers.find(server=>server.key==="local");
+          // Deliver the current real HTTP agent through the activity consumer without
+          // waiting for the service's separate background snapshot refresh.
+          if(local && activityAgent) {local.ready=true; local.agents=local.agents.map(agent=>agent.key===rawKey ? activityAgent : agent); data.revision="synthetic-newer-activity";}
+          if(local && peer) data.servers.push({...local,key:"fixture-peer",name:"Synthetic peer",local:false,url:baseUrl});
+          return route.fulfill({response,json:data});
+        }
+        return route.fulfill({response});
+      });
+      await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(key)}`,{waitUntil:"networkidle"});
+      await page.waitForSelector("#inquiry-form",{state:"attached"});
+      if(!await page.locator("#inquiry-form").isVisible()) await page.locator("details.mobile-inquiry > summary").click();
+      await page.evaluate(()=>{clearTimeout(state.timer);clearTimeout(state.activityTimer);const original=refresh;globalThis.__answerRefreshes=0;refresh=async(...args)=>{globalThis.__answerRefreshes++;return original(...args);};});
+      await page.locator('#inquiry-form input[type="text"]').fill("Synthetic delayed answer");
+      await page.locator('#inquiry-form button[type="submit"]').click();await captured.promise;
+      if(waitForInquiryRuns) console.log(waitForInquiryRuns());
+      if(scenario==="retire") {
+        const response=await context.request.post(`${baseUrl}/agents/${rawKey}/archive`,{data:{}});assert.equal(response.status(),200);
+        await page.evaluate(key=>retireArchivedAgent(key),key);
+      } else {
+        const response=await context.request.patch(`${baseUrl}/agents/${rawKey}`,{data:{name:"Newer canonical name"}});assert.equal(response.status(),200);
+        const changed=await response.json();
+        if(scenario==="detail") await page.evaluate(key=>ensureAgentDetail(key,true),key);
+        if(scenario==="activity") {activityAgent=changed.agent; await page.evaluate(()=>pollAgentActivity({manual:true}));}
+        if(scenario==="mutation") await page.evaluate(({key,agent})=>upsertAgent(normalizeAgentResource(agent,resourceRequest(`/agents/${encodeURIComponent(key)}`).server)),{key,agent:changed.agent});
+      }
+      // Exercise retained canonical state through navigation while POST is still held.
+      if(scenario!=="activity") {
+        await page.evaluate(()=>navigate({type:"tab",tab:"agents"}));
+        await page.evaluate(key=>navigate({type:"agent",key}),key);
+      }
+      const snapshot=()=>page.evaluate(key=>({name:state.agentDetails[key]?.name,status:state.agentDetails[key]?.status,running:state.agentDetails[key]?.running,
+        archived:state.agentDetails[key]?.archived,active:state.agents.some(agent=>agent.key===key),retired:state.archivedAgentKeys.has(key),
+        pending:inquiryAnswerStore().entries.size,refreshes:globalThis.__answerRefreshes}),key);
+      const before=await snapshot();
+      if(scenario==="retire") {assert.equal(before.active,false);assert.equal(before.archived,true);}
+      else {assert.equal(before.name,"Newer canonical name");assert.equal(before.running,false);}
+      holdReads=true;answer.release();
+      await page.waitForFunction(()=>inquiryAnswerStore().entries.size===0);
+      const after=await snapshot();
+      assert.equal(after.name,before.name,"delayed POST must preserve newer canonical name");
+      assert.equal(after.status,before.status,"delayed POST must preserve completion");
+      assert.equal(after.running,before.running,"delayed POST must preserve running state");
+      assert.equal(after.archived,before.archived,"delayed POST must preserve archive state");
+      assert.equal(after.active,before.active,"delayed POST must not reinsert retired agent");
+      assert.equal(after.retired,before.retired);assert.equal(after.pending,0);assert.equal(after.refreshes,1);assert.equal(writes,1);
+      const persisted=(await (await context.request.get(`${baseUrl}/agents/${rawKey}`)).json()).agent;
+      assert.equal(persisted.archived,scenario==="retire");
+      assert.equal(after.name,persisted.name);assert.equal(after.running,persisted.running);
+      if(captureDir && !peer && scenario==="detail") await page.screenshot({path:path.join(captureDir,`delayed-${width}-${theme}.png`)});
+      reads.release();await page.waitForFunction(()=>!state.refreshInFlight);
+      assert.deepEqual(errors,[]);results.push({width,theme,peer,scenario,before,projection:{name:projection.name,status:projection.status,running:projection.running,archived:projection.archived},after,writes,passed:true});
+    } catch(error) {
+      if(captureDir) fs.writeFileSync(path.join(captureDir,`delayed-failure-${scenario}.json`),JSON.stringify({scenario,errors,message:error.message},null,2));
+      throw error;
+    } finally {answer.release();reads.release();await page.unrouteAll({behavior:"ignoreErrors"});await context.close();}
+  }
+  if(captureDir) fs.writeFileSync(path.join(captureDir,"inquiry-delayed.json"),JSON.stringify({synthetic:true,results},null,2));
+  if(waitForInquiryRuns) console.log(waitForInquiryRuns());console.log("inquiry_delayed_answer_smoke: ok");
+};

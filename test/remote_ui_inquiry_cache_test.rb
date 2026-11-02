@@ -78,13 +78,14 @@ module RemoteUIInquiryCacheTest
         };
         const requireRefresh = () => {
           if (!context.refreshAnsweredInquiry) throw new Error("app.js has no answer refresh (refreshAnsweredInquiry)");
-          return key => context.refreshAnsweredInquiry(key, "inq-1", {agent:serverAgent}, {destination:{agent_key:key}});
+          return key => context.refreshAnsweredInquiry(key, "inq-1", {agent:serverAgent}, {destination:{agent_key:key}}, context.inquiryAnswerDisplayState(key));
         };
         const reset = (detail) => {
           calls.length = 0;
           context.apiGet = fetchServerAgent;
           context.state.agentDetails = detail ? { a: { ...detail } } : {};
           context.state.agentDetailGenerations = new Map();
+          context.state.resourceMutationGeneration = 0;
         };
 
         await check("activity poll marks an answered cached inquiry stale, so a revisit refetches it", async () => {
