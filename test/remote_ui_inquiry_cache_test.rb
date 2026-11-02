@@ -45,6 +45,9 @@ module RemoteUIInquiryCacheTest
           ],
           state: { agentDetails: {}, agentDetailGenerations: new Map() },
           reconcileOptimisticPromptQueue: () => {},
+          resourceRequest: () => ({server:{key:"local"}}),
+          scopeApiResponse: data => data,
+          upsertAgent: agent => { context.state.agentDetails[agent.key] = agent; },
           apiGet: fetchServerAgent,
         };
         vm.createContext(context);
@@ -75,13 +78,14 @@ module RemoteUIInquiryCacheTest
         };
         const requireRefresh = () => {
           if (!context.refreshAnsweredInquiry) throw new Error("app.js has no answer refresh (refreshAnsweredInquiry)");
-          return context.refreshAnsweredInquiry;
+          return key => context.refreshAnsweredInquiry(key, "inq-1", {agent:serverAgent}, {destination:{agent_key:key}}, context.inquiryAnswerDisplayState(key));
         };
         const reset = (detail) => {
           calls.length = 0;
           context.apiGet = fetchServerAgent;
           context.state.agentDetails = detail ? { a: { ...detail } } : {};
           context.state.agentDetailGenerations = new Map();
+          context.state.resourceMutationGeneration = 0;
         };
 
         await check("activity poll marks an answered cached inquiry stale, so a revisit refetches it", async () => {
@@ -96,16 +100,17 @@ module RemoteUIInquiryCacheTest
           }
         });
 
-        await check("submit reloads the detail even when the revision is unchanged", async () => {
+        await check("submit uses the returned detail even when the revision is unchanged", async () => {
           reset(pending);
           serverAgent = answeredServer;
           await requireRefresh()("a");
-          if (calls.length !== 1) throw new Error(`answer did not reload the detail (fetches: ${calls.length})`);
+          if (calls.length !== 0) throw new Error(`answer fetched duplicate detail (fetches: ${calls.length})`);
           if (context.state.agentDetails.a.latest_inquiry !== null) throw new Error("answered inquiry still cached after submit");
         });
 
         await check("an in-flight detail response from before the answer cannot restore the inquiry", async () => {
           reset(pending);
+          serverAgent = answeredServer;
           let release;
           const staleResponse = new Promise((resolve) => { release = resolve; });
           context.apiGet = async (path) => {

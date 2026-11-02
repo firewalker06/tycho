@@ -47,11 +47,12 @@ module RemoteUIInquiryRecoveryTest
               TychoInquirySubmissions:{storage:()=>({}),Answers:function(options){this.ready=Promise.resolve();this.accepted=options.accepted;}},
               pendingAttachmentsFor:()=>context.state.pendingPromptAttachments.agent,
               revokePendingAttachment:file=>revoked.push(file.id),safeLocalStorageRemove:key=>removed.push(key),
+              upsertAgent:agent=>{context.state.agentDetails.agent=agent;},
               ensureAgentDetail:async()=>{if(fail) throw Error("Synthetic read failure");},
               refresh:async()=>{if(fail) throw Error("Synthetic shell failure");},render:()=>{},setConnection:()=>{},showGrowl:()=>{}};
             vm.createContext(context);
-            vm.runInContext("let inquiryAnswers;",context);
-            for(const name of ["agentDetailGeneration","refreshAnsweredInquiry","inquirySubmissionKey","inquiryAnswerStore"]) vm.runInContext(source(name),context);
+            vm.runInContext("let inquiryAnswers; const inquiryAnswerDisplaySnapshots = new WeakMap();",context);
+            for(const name of ["agentDetailGeneration","inquiryAnswerDisplayState","inquiryAnswerDisplayUnchanged","refreshAnsweredInquiry","inquirySubmissionKey","inquiryAnswerStore"]) vm.runInContext(source(name),context);
             context.inquiryAnswerStore().accepted({key:"agent",inquiryId:"A",attachmentIds:["file-A"],draftStorageKey:"draft-A"},{start_result:"started"});
             await new Promise(resolve=>setTimeout(resolve,0));
             assert.deepEqual(context.state.pendingPromptAttachments.agent.map(file=>file.id),["file-B"]);
