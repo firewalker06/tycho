@@ -27,6 +27,17 @@ with them. Writes stay ordered per agent; coalesced background reads do not
 hold that write lane. Receipt-only queue rows stay read-only until canonical
 queue data arrives. See [Remote Sessions](REMOTE_SERVER.md#small-message-receipts).
 
+## Inquiry answer recovery
+
+Remote UI inquiry answers use a separate bounded intent contract. Exact retry
+resolves the original answer after an uncertain response. The record binds the
+inquiry, server, payload, ownership, run decision and schedule stop IDs. Newer
+inquiries, user stops and ownership changes supersede unfinished effects.
+Browser recovery retains form values, feedback and file bytes through reload
+and navigation, and requires an explicit Retry answer action. Unbound errors
+remain uncertain. The existing display response and read remain for Card789.
+See [Inquiry answer recovery](INQUIRY_ANSWER_RECOVERY.md) for bounds and limits.
+
 ## Agent read latency
 
 Agent detail, conversation, setup summary, and project reference reads use a

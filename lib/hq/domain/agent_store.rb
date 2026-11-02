@@ -785,6 +785,10 @@ module HQ
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
 
+        target.inquiry_receipts.each_value do |receipt|
+          receipt["start_result"] ||= "superseded"
+          receipt["schedule_resume_superseded"] = true
+        end
         target.stop! if target.running?
         dispatch_prompt_queue!(target, agents) if prompt_queue_dispatchable?(target, ScheduleStore.new.load)
         target
@@ -1931,3 +1935,5 @@ module HQ
     end
   end
 end
+
+require_relative "inquiry_receipts"

@@ -120,7 +120,7 @@ module HQ
     # Re-enable only schedules that this scheduler explicitly stopped while their
     # own managed session awaited a user's reply. Manual pauses and all other
     # stopped conditions intentionally remain unchanged.
-    def resume_after_user_message(agent_key, now: Time.now, effect_id: nil, stops: nil)
+    def resume_after_user_message(agent_key, now: Time.now, effect_id: nil, stops: nil, allow_resume: true)
       key = agent_key.to_s
       return [] if key.empty?
 
@@ -133,11 +133,17 @@ module HQ
             next unless state && original
 
             state.user_message_resumptions ||= {}
+            if effect_id.include?("/inquiry/")
+              state.user_message_resumptions.delete_if do |id, _result|
+                match = id.match(%r{/inquiry/(\d+)/})
+                match && match[1].to_i <= now.to_i - 7 * 24 * 60 * 60
+              end
+            end
             if state.user_message_resumptions.key?(effect_id)
               next state.user_message_resumptions[effect_id]&.transform_keys(&:to_sym)
             end
             result = nil
-            if state.stopped_for_awaiting_input? && state.last_target_key.to_s == key && state.stop_id == original["stop_id"]
+            if allow_resume && state.stopped_for_awaiting_input? && state.last_target_key.to_s == key && state.stop_id == original["stop_id"]
               resume_state!(schedule, state, now:, reason: "user_message")
               result = schedule_payload(schedule, state).slice(:key, :name).transform_keys(&:to_s)
             end
