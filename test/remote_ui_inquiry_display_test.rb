@@ -11,6 +11,7 @@ script = <<~'JS'
       let release, reads = 0, refreshes = 0;
       const held = new Promise(resolve => release = resolve);
       const context = {state: {agentDetails: {[key]: {key, latest_inquiry: {id: current}, awaiting_input: true}},
+        agents: [], activityAgents: new Map([[key,{key,awaiting_input:false}]]), activityReadyServerKeys: new Set(),
         agentDetailGenerations: new Map(), resourceMutationGeneration: 0,
         pendingPromptAttachments: {}, pendingInquirySubmissionDrafts: new Map()},
         TychoInquirySubmissions: {storage: () => ({}), Answers: function(options) {Object.assign(this,options); this.ready=Promise.resolve();}},
@@ -18,12 +19,12 @@ script = <<~'JS'
         render: () => {}, showGrowl: () => {}, setConnection: () => {},
         resourceRequest: () => ({server:{key:"peer"}}),
         scopeApiResponse: data => ({...data, agent: {...data.agent,key}}),
-        upsertAgent: agent => {context.state.agentDetails[agent.key]=agent;},
+        activityFields: agent => ({awaiting_input:agent.awaiting_input}),
         reconcileOptimisticPromptQueue: () => {},
         apiGet: async () => {reads++; return held;},
         refresh: async () => {refreshes++; await held;}};
       vm.createContext(context); vm.runInContext("let inquiryAnswers;",context);
-      for (const name of ["ensureAgentDetail","agentDetailGeneration","refreshAnsweredInquiry","inquirySubmissionKey","inquiryAnswerStore"]) vm.runInContext(source(name),context);
+      for (const name of ["upsertAgent","ensureAgentDetail","agentDetailGeneration","refreshAnsweredInquiry","inquirySubmissionKey","inquiryAnswerStore"]) vm.runInContext(source(name),context);
       const stale = context.ensureAgentDetail(key,true);
       const receipt = {start_result:"not_started"};
       const data = {agent:{key:"agent",latest_inquiry:null,awaiting_input:false,status:"idle"},answer_receipt:receipt};
@@ -33,6 +34,7 @@ script = <<~'JS'
       context.inquiryAnswerStore().accepted({key,inquiryId:"A",payload:{},destination:{agent_key:"agent"}},receipt,data);
       await Promise.resolve();
       assert.equal(context.state.agentDetails[key].latest_inquiry?.id || null,current==="B"?"B":null,"accepted result applied before held display reads");
+      assert.equal(context.state.activityAgents.get(key).awaiting_input,current==="B","canonical activity preserves B instead of replaying old A activity");
       assert.equal(reads,1,"no standalone answer detail GET");
       assert.equal(refreshes,1,"one background reconciliation starts without waiting for detail");
       release({agent:{key,latest_inquiry:{id:"A"},awaiting_input:true}}); await stale;

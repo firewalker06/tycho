@@ -47,6 +47,7 @@ module RemoteUIInquiryRecoveryTest
               TychoInquirySubmissions:{storage:()=>({}),Answers:function(options){this.ready=Promise.resolve();this.accepted=options.accepted;}},
               pendingAttachmentsFor:()=>context.state.pendingPromptAttachments.agent,
               revokePendingAttachment:file=>revoked.push(file.id),safeLocalStorageRemove:key=>removed.push(key),
+              upsertAgent:agent=>{context.state.agentDetails.agent=agent;},
               ensureAgentDetail:async()=>{if(fail) throw Error("Synthetic read failure");},
               refresh:async()=>{if(fail) throw Error("Synthetic shell failure");},render:()=>{},setConnection:()=>{},showGrowl:()=>{}};
             vm.createContext(context);
