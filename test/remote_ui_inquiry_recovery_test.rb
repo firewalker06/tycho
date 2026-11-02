@@ -32,6 +32,10 @@ module RemoteUIInquiryRecoveryTest
         assert.deepEqual(controls.map(control=>control.value),["NEW answer","NEW feedback"],"editable correction wins over immutable retry snapshot");
         raw=null;context.restoreFormDrafts();
         assert.deepEqual(controls.map(control=>control.value),["OLD answer","OLD feedback"],"snapshot remains a fallback when no editable draft exists");
+        for(const otherForm of [{dataset:{agentKey:"agent"}},{dataset:{}},null]) {
+          assert.doesNotThrow(()=>context.restoreInquirySubmissionDraft(otherForm),"non-inquiry forms never use an inquiry snapshot");
+          assert.deepEqual(controls.map(control=>control.value),["OLD answer","OLD feedback"],"composer restoration leaves inquiry controls alone");
+        }
       }
       (async()=>{
         for(const fail of [false,true]) {
