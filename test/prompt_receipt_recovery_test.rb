@@ -42,6 +42,17 @@ module PromptReceiptRecoveryTest
         store.save(states)
       end
       stop.call
+      # The initial service reference can predate schedule adoption. Acceptance must use current state.
+      find_reference = service.method(:find_agent_reference!)
+      stale_once = true
+      service.define_singleton_method(:find_agent_reference!) do |*args|
+        reference = find_reference.call(*args)
+        if stale_once
+          stale_once = false
+          reference.define_singleton_method(:scheduled?) { false }
+        end
+        reference
+      end
       first = service.submit_prompt(key, attrs)
       check(first.dig(:resumed_schedules, 0, :key) == "weekday", "original resume result")
       check(store.load.fetch("weekday").scheduled?, "original stop resumed durably")

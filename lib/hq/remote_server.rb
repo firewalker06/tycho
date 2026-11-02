@@ -3620,11 +3620,11 @@ module HQ
         "prompt_arrival_event_id" => event_id, "client_request_id" => request_id, "source" => source,
         "authority" => actor.parent? ? { "owner" => actor.agent_key } : nil
       }.compact
-      accept = lambda do |schedule_targets|
+      accept = lambda do |schedule_targets_for|
         prepared = receipt_mode ? { prompt: attrs["prompt"].to_s } : prepare_input.call(reference)
         @agent_store.accept_or_abort_prompt!(
           key, **prepared, actor:, event_id:, archive_metadata:, receipt_fingerprint: fingerprint,
-          input_preparer: receipt_mode ? prepare_input : nil, receipt_schedule_targets: schedule_targets,
+          input_preparer: receipt_mode ? prepare_input : nil, receipt_schedule_targets_for: schedule_targets_for,
           delayed: attrs.key?("delay"), delay: attrs["delay"], client_request_id: request_id,
           source:, retire_inquiry_id: attrs["retire_inquiry_id"],
           start: truthy?(attrs["start"]), parent_server_id: attrs["parent_server_id"]
@@ -3634,8 +3634,9 @@ module HQ
         # Scheduler paths already take schedule -> agent locks. Keep that order here.
         result, resumed_schedules = scheduler.store.with_lock do
           replay = @agent_store.replay_prompt_receipt(key, event_id:, fingerprint:)
-          targets = !replay && actor.user? && reference.scheduled? ? scheduler.user_message_resume_targets(key) : []
-          accepted = replay || accept.call(targets)
+          accepted = replay || accept.call(lambda { |current_target|
+            actor.user? && current_target.scheduled? ? scheduler.user_message_resume_targets(key) : []
+          })
           metadata = accepted[:receipt_metadata] || accepted[:entry]&.dig("message_metadata", "prompt_receipt")
           resumed = []
           if metadata && !metadata["rejected"]

@@ -496,7 +496,7 @@ module HQ
     def accept_or_abort_prompt!(key, prompt:, actor:, event_id:, archive_metadata: {}, message_metadata: {},
                                 attachments: nil, delayed: false, delay: nil, client_request_id: nil,
                                 source: nil, retire_inquiry_id: nil, start: false, parent_server_id: nil,
-                                attachment_importer: nil, receipt_fingerprint: nil, input_preparer: nil, receipt_schedule_targets: nil)
+                                attachment_importer: nil, receipt_fingerprint: nil, input_preparer: nil, receipt_schedule_targets_for: nil)
       with_exclusive_lock do
         agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
         target = agents.find { |agent| agent.key == key.to_s }
@@ -512,10 +512,11 @@ module HQ
         FileTransaction.run(paths.compact) do |transaction|
           replay = prompt_replay_unlocked(target, event_id, fingerprint: receipt_fingerprint)
           if receipt_fingerprint && !replay
+            resume_targets = receipt_schedule_targets_for ? receipt_schedule_targets_for.call(target) : []
             message_metadata = (message_metadata || {}).merge("prompt_receipt" => {
               "fingerprint" => receipt_fingerprint, "accepted_at" => Time.now.utc.iso8601(6), "source" => source,
-              "schedule_resume_targets" => receipt_schedule_targets || [],
-              "schedule_resume_complete" => Array(receipt_schedule_targets).empty?,
+              "schedule_resume_targets" => resume_targets,
+              "schedule_resume_complete" => resume_targets.empty?,
               "schedule_resume_result" => []
             })
           end
