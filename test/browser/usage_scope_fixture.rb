@@ -12,15 +12,11 @@ module UsageScopeFixture
       126 => {
         "currency" => "USD", "run_cost_scope" => "run", "session_id" => "fixture-session",
         "basis" => "api_list_price_estimate", "coverage" => "complete", "through_run_count" => 126,
-        "run_amount_usd" => 0.0579388, "amount_usd" => 30.1711088,
-        "run_tokens" => { "input_tokens" => 505349, "cached_input_tokens" => 503168, "output_tokens" => 326 },
-        "token_snapshot" => { "input_tokens" => 203236472, "cached_input_tokens" => 200196608, "output_tokens" => 407172 }
+        "run_amount_usd" => 0.0579388, "amount_usd" => 30.1711088
       },
-      # Only the input and cost total were supplied for run 127. Other counters remain unknown.
       127 => {
         "run_cost_scope" => "run", "session_id" => "fixture-session", "coverage" => "partial",
-        "through_run_count" => 127, "amount_usd" => 30.774118,
-        "token_snapshot" => { "input_tokens" => 204255421 }
+        "through_run_count" => 127, "amount_usd" => 30.774118
       }
     }
   end

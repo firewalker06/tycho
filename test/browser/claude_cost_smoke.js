@@ -22,10 +22,10 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       const check = async () => {
         const text = await summary.innerText();
         if (item.run === 0) {
-          assert(text.includes("Saved est. cost") && text.includes("$458.58+"), text);
+          assert(text.includes("Est. total cost") && text.includes("$458.58+"), text);
         } else {
-          const expected = ["$1.25", "$0.75", "$0.50"][item.run - 1];
-          assert(text.includes("Run est. cost") && text.includes(expected), text);
+          const expected = ["$1.25", "$2.00", "$2.50"][item.run - 1];
+          assert(text.includes("Est. total cost") && text.includes(expected), text);
           assert(!text.includes("$3.25") && !text.includes("$5.75"), text);
         }
         const layout = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth }));
@@ -44,7 +44,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         await page.screenshot({ path: path.join(captureDir, `claude-cost-${viewport.width}.png`) });
       }
     }
-    assert.equal(await page.evaluate(() => summaryCostSnapshotText({ run_cost_scope: "run", run_amount_usd: null })), "Unavailable");
+    assert.equal(await page.evaluate(() => sessionCostSnapshotText({ run_cost_scope: "run", run_amount_usd: null })), "Unavailable");
     assert.equal(await page.evaluate(() => sessionCostSnapshotText({ amount_usd: null })), "Unavailable");
     await context.close();
   }

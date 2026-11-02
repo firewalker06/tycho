@@ -69,9 +69,3 @@ tycho metrics query --timezone Asia/Jakarta --json
 Agent and project archive operations keep global metrics in place and mark matching records `archived: true`, so active and archived runs use one query path and totals do not move. Each agent archive also receives `agent_manifest.json` and a v1 `usage_metrics.json` snapshot beside its logs. The manifest preserves the exact harness/model/run attribution present at archive time.
 
 Metrics are maintained during managed runs. If a query exposes recovery information, preserve the primary and backup, upgrade Tycho, and do not hand-edit unknown monetary or model fields into place. `metrics backfill` is deprecated and intentionally does not modify data.
-
-## Saved Summary scopes
-
-Remote UI Summary shows the selected run number separately from **Agent runs now**, the current lifetime count across native sessions. Run token counters and the run estimate come from that Summary's saved cost snapshot. Native session counters and cost have their own section and coverage label. A session change resets this total; it is not an all-session agent total. Partial cost covers only tracked usage and can cover fewer tokens than the reported session token total.
-
-Old summaries are not recalculated. Missing run baselines, counters, or session identity remain unavailable. A legacy saved estimate keeps its original value with an unknown run scope. Claude and other harnesses can have a known cost without saved matching token counters. The UI does not substitute current agent values into historical summaries. Codex Turn completed events explicitly show native session token totals. Cached input is included in input, and reasoning is included in output; neither is charged again. All costs remain estimates, not invoices, actual charges, or subscription usage.
