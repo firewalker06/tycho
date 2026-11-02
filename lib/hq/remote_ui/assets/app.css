@@ -10157,7 +10157,8 @@ body:has(.inquiry-form-full-screen) {
   overflow: auto;
 }
 
-[data-inquiry-answer-recovery] pre {
+[data-inquiry-answer-recovery] dd {
+  margin: 0 0 8px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

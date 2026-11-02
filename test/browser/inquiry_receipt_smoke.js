@@ -74,7 +74,9 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
           assert.equal(payloads.length,1,"reload/navigation does not write automatically");
           await page.locator("[data-inquiry-answer-recovery] summary").click();
           const text = await page.locator("[data-inquiry-answer-recovery]").innerText();
+          assert.match(text,/Your answer/);
           assert.match(text,/Synthetic answer retained/);
+          assert(!text.includes("user_feedback"),"saved preview uses field labels instead of serialized payload keys");
           assert.match(text,/Synthetic feedback retained/);
           assert.match(text,/synthetic.txt/);
           assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),"no horizontal overflow");
