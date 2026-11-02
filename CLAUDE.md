@@ -115,6 +115,8 @@ Also call out changes to Bubbletea input handling, bracketed paste behavior, or 
 
 - Set `TYCHO_REMOTE_UI_SESSION_ID_COPY_ONLY=1` with `bin/remote-ui-smoke` to check canonical Tycho Session ID copying, duplicate titles, clipboard errors, and desktop/mobile appearance modes. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` to retain evidence outside the repository.
 
+- Set `TYCHO_REMOTE_UI_ATTACHMENT_FILTER_ONLY=1` with `bin/remote-ui-smoke` to check attachment flyout and navigation type filters, counts, reset, updates, duplicate targets, unknown types, empty results, focus, polling, and desktop/mobile Dark, Light, and System views. Use `TYCHO_REMOTE_UI_CAPTURE_DIR` for evidence outside the repository. Optional `TYCHO_REMOTE_UI_FILTER_BEFORE_DIR` points to an external directory with baseline `app.js` and `app.css` for before screenshots.
+
 - Set `TYCHO_REMOTE_UI_DELEGATED_COLLAPSE_ONLY=1` with `bin/remote-ui-smoke` to check logo-menu delegation collapse, nested and peer search, clear-search restoration, keyboard controls, focus across refresh, and desktop/mobile Dark/Light/System layout. Use `TYCHO_REMOTE_UI_CAPTURE_DIR` for evidence outside the repository.
 
 - Set `TYCHO_REMOTE_UI_COLD_AGENT_LOAD_ONLY=1` with `bin/remote-ui-smoke` to check visible conversation content before held shell responses, auth/setup/error recovery, late summary arrival after detailed Settings, navigation, focus, drafts, scroll, and desktop/mobile layout. Use `TYCHO_REMOTE_UI_CAPTURE_DIR` for evidence outside the repository.

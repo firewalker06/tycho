@@ -672,7 +672,7 @@ def run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser
   script = File.join(node_dir, "attachment-preview.js")
   File.write(script, <<~JS)
     const { chromium } = require("playwright");
-    const smoke = require(#{File.join(ROOT, "test", "browser", "attachment_preview_smoke.js").inspect});
+    const smoke = require(#{File.join(ROOT, "test", "browser", ENV["TYCHO_REMOTE_UI_ATTACHMENT_FILTER_ONLY"] == "1" ? "attachment_filter_smoke.js" : "attachment_preview_smoke.js").inspect});
     (async () => {
       const browser = await chromium.launch({ executablePath: #{browser.inspect}, headless: true });
       try {
@@ -10921,7 +10921,7 @@ if ENV["TYCHO_REMOTE_UI_CONVERSATION_ANIMATION_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "conversation_animation_smoke")
       exit 0
     end
-    if ENV["TYCHO_REMOTE_UI_ATTACHMENT_PREVIEW_ONLY"] == "1"
+    if ENV["TYCHO_REMOTE_UI_ATTACHMENT_PREVIEW_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_FILTER_ONLY"] == "1"
       run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser:)
       exit 0
     end
