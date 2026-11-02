@@ -629,6 +629,7 @@ module HQ
         end
         if method == "POST" && [%w[messages], %w[prompt]].include?(tail)
           result = service.submit_prompt(key, body, actor:)
+          return { status: 409, body: result } if result[:rejection]
           return result[:queued] ? accepted(result) : ok(result)
         end
         return ok(service.start_agent(key, body, actor:)) if method == "POST" && tail == ["start"]
@@ -3586,43 +3587,60 @@ module HQ
         actor = DelegationActor.internal_actor(key)
       end
       reference = find_agent_reference!(key)
-      pull_request_context = render_prompt_pull_request_contexts(reference, attrs)
       request_id = prompt_client_request_id(attrs)
-      uploads = prompt_uploads(attrs)
-      text = prompt_text(attrs, attachments: uploads)
-      text = [text, pull_request_context].reject(&:empty?).join("\n")
+      receipt_mode = attrs["response_mode"] == "receipt"
+      source = actor.internal? ? "internal_continuation" : actor.parent? ? "parent" : "user"
       event_id = request_id ? "prompt-arrival:#{request_id}" : "prompt-arrival:#{SecureRandom.uuid}"
-      source = if actor&.internal?
-                 "internal_continuation"
-               elsif actor&.parent?
-                 "parent"
-               else
-                 "user"
-               end
-      archive_metadata = {
-        "archived_arrival" => true,
-        "archive_abort_message" => ManagedAgent::ARCHIVE_ABORT_MESSAGE,
-        "prompt_arrival_event_id" => event_id,
-        "client_request_id" => request_id,
-        "source" => source,
-        "authority" => actor&.parent? ? { "owner" => actor.agent_key } : nil
-      }.compact
-      result = @agent_store.accept_or_abort_prompt!(
-        key, prompt: text, actor:, event_id:, archive_metadata:,
-        delayed: attrs.key?("delay"), delay: attrs["delay"], client_request_id: request_id,
-        source:, retire_inquiry_id: attrs["retire_inquiry_id"],
-        start: truthy?(attrs["start"]), parent_server_id: attrs["parent_server_id"],
-        attachment_importer: uploads.empty? ? nil : lambda { |target|
-          import_prompt_attachments(target, attrs, dedupe_key: request_id)
-        }
-      )
+      if receipt_mode
+        raise Error.new("A valid message request ID is required", status: 400) unless request_id
+        unless attrs["expected_server_id"] == @agent_store.delegation_coordinator.delegation_store.server_identity.fetch("id")
+          raise Error.new("Message destination has changed; refresh and try again", status: 409)
+        end
+        fingerprint = Digest::SHA256.hexdigest(JSON.generate([
+          key, attrs.reject { |name, _| %w[client_request_id response_mode expected_server_id].include?(name) }.sort.to_h,
+          source, actor.agent_key
+        ]))
+        result = @agent_store.replay_prompt_receipt(key, event_id:, fingerprint:)
+      end
+      unless result
+        pull_request_context = render_prompt_pull_request_contexts(reference, attrs)
+        uploads = prompt_uploads(attrs)
+        text = prompt_text(attrs, attachments: uploads)
+        text = [text, pull_request_context].reject(&:empty?).join("\n")
+        archive_metadata = {
+          "archived_arrival" => true,
+          "archive_abort_message" => ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+          "prompt_arrival_event_id" => event_id,
+          "client_request_id" => request_id,
+          "source" => source,
+          "authority" => actor.parent? ? { "owner" => actor.agent_key } : nil
+        }.compact
+        result = @agent_store.accept_or_abort_prompt!(
+          key, prompt: text, actor:, event_id:, archive_metadata:, receipt_fingerprint: fingerprint,
+          delayed: attrs.key?("delay"), delay: attrs["delay"], client_request_id: request_id,
+          source:, retire_inquiry_id: attrs["retire_inquiry_id"],
+          start: truthy?(attrs["start"]), parent_server_id: attrs["parent_server_id"],
+          attachment_importer: uploads.empty? ? nil : lambda { |target|
+            import_prompt_attachments(target, attrs, dedupe_key: request_id)
+          }
+        )
+      end
       if result.fetch(:status) == :archived
         raise Error.new(ManagedAgent::ARCHIVE_ABORT_MESSAGE, status: 409)
       end
 
       target = result.fetch(:agent)
+      if receipt_mode && result[:status] == :rejected
+        return {
+          error: result.fetch(:receipt_metadata).fetch("reason"),
+          rejection: { version: 1, client_request_id: request_id, agent_key: key,
+                       server_id: @agent_store.delegation_coordinator.delegation_store.server_identity.fetch("id") }
+        }
+      end
       resumed_schedules = actor.user? && target.scheduled? ? scheduler.resume_after_user_message(target.key) : []
       @agent_activity_snapshot.upsert!(target)
+      return prompt_acceptance_receipt(target, request_id, result, resumed_schedules) if receipt_mode
+
       if result.fetch(:status) == :queued
         entry = result.fetch(:entry)
         visible_entries = target.queued_prompts
@@ -5327,6 +5345,7 @@ module HQ
       inquiry = RequestTiming.measure("detail_inquiry") { inquiry_payload(agent) }
       {
         key: agent.key,
+        prompt_receipt_version: 1,
         name: agent.display_name,
         project_key: agent.project_key,
         template_key: agent.template_key,
@@ -5379,6 +5398,7 @@ module HQ
       visible_queue_entries = agent.visible_prompt_queue_entries
       {
         key: agent.key,
+        prompt_receipt_version: 1,
         name: agent.display_name,
         project_key: agent.project_key,
         template_key: agent.template_key,
@@ -5949,6 +5969,30 @@ module HQ
       raise ArgumentError, "#{name} must not be empty" if ids.empty? && !allow_empty
 
       ids
+    end
+
+    def prompt_acceptance_receipt(target, request_id, result, resumed_schedules)
+      queued = result.fetch(:status) == :queued
+      entry = result[:entry]
+      metadata = entry&.dig("message_metadata", "prompt_receipt") || result.fetch(:receipt_metadata)
+      queue_entry = if queued
+                      entry.slice("id", "client_request_id", "accepted_at", "state", "source").merge(
+                        "state" => "queued", "not_before" => entry["not_before"], "authority" => entry["authority"]
+                      )
+                    end
+      {
+        accepted: true,
+        queued:,
+        receipt: {
+          version: 1, accepted: true, client_request_id: request_id, agent_key: target.key,
+          server_id: @agent_store.delegation_coordinator.delegation_store.server_identity.fetch("id"),
+          outcome: queued ? "queued" : result[:replayed] ? "replayed" : "accepted",
+          replayed: result.fetch(:replayed), accepted_at: metadata.fetch("accepted_at"),
+          source: metadata.fetch("source"), authority: metadata["authority"],
+          queue_entry:, revision: agent_revision(target), running: target.running?
+        },
+        resumed_schedules: resumed_schedules.map { |schedule| schedule.slice(:key, :name, "key", "name") }
+      }
     end
 
     def prompt_client_request_id(attrs)

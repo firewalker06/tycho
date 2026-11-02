@@ -10,7 +10,20 @@ type: project
 
 ## Last Updated
 
-2026-11-01
+2026-11-02
+
+## Message acceptance and background reads
+
+The Remote UI uses an opt-in small message receipt. Durable acceptance and
+required schedule/activity effects finish before acknowledgment. Other callers
+keep the full response. Accepted IDs and request fingerprints remain with the
+agent, so retry after queue consumption does not append another message.
+Definite input rejections fence their IDs after transaction rollback.
+Pending browser messages retain their exact destination and payload in
+IndexedDB until acceptance or a bound rejection. Credentials are never stored
+with them. Writes stay ordered per agent; coalesced background reads do not
+hold that write lane. Receipt-only queue rows stay read-only until canonical
+queue data arrives. See [Remote Sessions](REMOTE_SERVER.md#small-message-receipts).
 
 ## Agent read latency
 

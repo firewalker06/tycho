@@ -8630,7 +8630,7 @@ module RemoteServerTest
     assert(js[:body].include?("function runInquiryLifecycleAction") &&
            js[:body].include?('showGrowl(`Could not ${label} inquiry: ${error.message}`, "need")'),
            "expected inquiry lifecycle actions to announce failures")
-    assert(js[:body].include?('retire_inquiry_id: retireInquiryId') &&
+    assert(js[:body].include?('retire_inquiry_id: options.retireInquiryId') &&
            js[:body].include?('findAgent(key)?.suspended_inquiry?.id'),
            "expected ordinary prompts to retire only the suspended inquiry rendered by that client")
     assert(css[:body].include?(".composer-action-menu") && css[:body].include?(".composer-action-popover"),
@@ -10123,9 +10123,10 @@ module RemoteServerTest
            "expected Remote UI to clear ordinary prompts before optimistic rendering and omit queued prompts from conversation")
     assert(js[:body].include?("pendingConversationMessages"),
            "expected Remote UI to render optimistic pending chat messages")
-    assert(js[:body].include?("pull_request_contexts: pullRequestContexts") &&
-           js[:body].include?("removePendingConversationMessage(key, pendingMessageId, { render: false });"),
-           "expected Remote UI to remove optimistic chat before refreshing server-backed conversation")
+    assert(js[:body].include?("pull_request_contexts: options.submittedPullRequestContexts.map") &&
+           js[:body].include?("block.send_status = \"Sent\"") &&
+           js[:body].include?("state.promptReconciler.request()"),
+           "expected accepted local chat to remain visible until separate server-backed reconciliation")
     assert(js[:body].include?("loadingConversations"),
            "expected Remote UI to track conversation loading per agent")
     assert(js[:body].include?("state.loadingConversation = Object.keys(state.loadingConversations).length > 0;"),
@@ -10166,7 +10167,7 @@ module RemoteServerTest
            css[:body].include?(".pr-diff-add-form") &&
            css[:body].match?(/\.pr-diff-title-actions\s*\{[^}]*flex-direction:\s*row;/m),
            "expected aligned PR actions, removal safety copy, optimistic state, revision guards, and responsive form styling")
-    assert(js[:body].include?('class="message-send-status" role="status" aria-live="polite" aria-atomic="true">sending...</div>'),
+    assert(js[:body].include?('class="message-send-status" role="status" aria-live="polite" aria-atomic="true">${escapeHtml(block.send_status || "sending...")}</div>'),
            "expected Remote UI pending chat status copy to stay concise and announce progress")
     assert(js[:body].include?("clearFormDraft(form)"),
            "expected Remote UI to clear submitted or cancelled form drafts")

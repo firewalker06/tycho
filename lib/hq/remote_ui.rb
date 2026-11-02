@@ -15,6 +15,7 @@ module HQ
     APPEARANCE_JS_PATH = File.join(ROOT, "assets", "appearance.js")
     HELPERS_JS_PATH = File.join(ROOT, "assets", "app_helpers.js")
     JS_PATH = File.join(ROOT, "assets", "app.js")
+    PROMPT_SUBMISSIONS_PATH = File.join(ROOT, "assets", "prompt_submissions.js")
     LOGO_PATH = File.join(ROOT, "assets", "tycho-logo.png")
     HORIZONTAL_LOGO_PATH = File.join(ROOT, "assets", "tycho-logo-horizontal.png")
     APPLE_TOUCH_ICON_PATH = File.join(ROOT, "assets", "apple-touch-icon.png")
@@ -58,6 +59,7 @@ module HQ
       APPEARANCE_JS_PATH,
       HELPERS_JS_PATH,
       JS_PATH,
+      PROMPT_SUBMISSIONS_PATH,
       SERVICE_WORKER_PATH,
       NOTIFICATION_TRACE_PATH,
       *FONT_ASSETS.values,
@@ -103,7 +105,7 @@ module HQ
     end
 
     def self.js
-      asset_content(JS_PATH)
+      [asset_content(PROMPT_SUBMISSIONS_PATH), asset_content(JS_PATH)].join("\n")
     end
 
     def self.helpers_js

@@ -848,6 +848,69 @@ Marks an agent as read after the user has visibly visited its rendered conversat
 curl -X PUT http://127.0.0.1:7373/agents/web-charlie-agent-8/reading
 ```
 
+### Small message receipts
+
+Agent detail and list responses advertise `prompt_receipt_version: 1`. The
+browser requires this capability before sending to a peer; it does not fall
+back to an older host's full-response retry behavior.
+
+Opt in on `POST /agents/{key}/messages` with `response_mode: "receipt"`, a valid
+`client_request_id`, and `expected_server_id` from the agent's delegation
+metadata. The server rejects a mismatched instance before accepting a message.
+Other callers retain the existing full response. No authentication credential is
+included in the receipt.
+
+A successful receipt returns `accepted: true`, `queued`, `resumed_schedules`
+(key/name only), and `receipt` with:
+
+- `version: 1`, `accepted: true`, the same `client_request_id`, raw `agent_key`,
+  and stable `server_id`;
+- `outcome`: `queued`, `accepted` for a new immediate acceptance, or `replayed`
+  when a previously accepted message is no longer in the pending queue;
+- `replayed`, `accepted_at`, original `source` and `authority`, current
+  `revision` and `running`, and nullable `queue_entry`;
+- for queued work, canonical `queue_entry.id`, `client_request_id`,
+  `accepted_at`, `state: "queued"`, `source`, nullable `authority`, and nullable
+  `not_before`. A replay still in the pending queue uses outcome `queued` and
+  `replayed: true`.
+
+HTTP 202 identifies queued acceptance; immediate and processed replays use 200.
+Neither status alone is a validated receipt. The browser checks the explicit
+shape and intent/agent/server binding before it confirms the message. Queued
+work can still wait for its eligibility time, the agent, or the workspace.
+
+The store persists a private `prompt_receipts` map in the agent record, in the
+same transaction as acceptance. Each record has a request fingerprint and
+acceptance stamp, not prompt or attachment content. Queue removal, queue reads,
+and later ownership changes do not erase acceptance. Exact retry does not
+reclaim ownership, append history, import attachments again, or start another
+run. A different payload with the same ID conflicts. Accepted retries are found
+before old PR snapshots or retired inquiry inputs are revalidated. Required
+schedule resume and activity publication still finish before a receipt returns;
+a later failure remains uncertain and can be retried with the same ID.
+
+An input validation failure inside acceptance rolls back first, then records a
+rejection for that ID while the store lock is held. The API returns 409 with an
+error and bound `rejection` containing version, request ID, agent key and server
+ID. Only that verified rejection permits the browser to release the failed
+intent for correction. Generic HTTP errors, invalid JSON, missing receipt data,
+or lost replies retain the original ID and payload for Retry. The rejected ID
+cannot later become an accepted write. Legacy error contracts stay unchanged.
+
+The browser stores only pending message data and its destination in a dedicated
+IndexedDB store. It stores no bearer token or resource catalog. Accepted payloads
+are removed; failed local cleanup can only cause an exact replay after reload.
+Reloaded pending messages require an explicit retry. An uncertain message blocks
+later writes to that agent. Each agent's write lane ends after receipt validation,
+not after full resource refresh. Background refreshes coalesce, retain existing
+401/offline/backoff handling, and use mutation/detail generations to reject
+pre-acceptance reads. They never turn an accepted write into a rejected send or
+force navigation back to the originating route. Canonical queue controls remain
+disabled on local rows until a later canonical detail read replaces them.
+
+Run the isolated service checks with `bundle exec ruby test/prompt_receipt_test.rb`
+and the browser checks with `TYCHO_REMOTE_UI_PROMPT_RECEIPT_ONLY=1 bin/remote-ui-smoke`.
+
 ### `POST /agents/{key}/messages`
 
 Appends a user prompt. The agent is not started unless `start` is truthy.
