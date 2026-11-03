@@ -75,7 +75,10 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
         });
         if(!await page.locator("#prompt-input").isVisible())await page.locator("details.focused-composer > summary").click();
         await page.locator("#prompt-input").fill(text);
-        await page.locator("#composer").evaluate(form=>form.requestSubmit());
+        await page.locator("#composer").evaluate(form=>{
+          __retryEvents.push({event:"request-submit",connected:form.isConnected,valid:form.checkValidity(),invalid_fields:[...form.elements].filter(field=>field.validity&&!field.validity.valid).map(field=>({name:field.name,type:field.type}))});
+          form.requestSubmit();
+        });
       };
       const refresh=()=>page.evaluate(key=>ensureAgentDetail(key,true),key);
       await send("Same synthetic message");
