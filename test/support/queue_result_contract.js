@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const source = fs.readFileSync(process.argv[2], "utf8");
 const fn = name => source.match(new RegExp(`^(?:async )?function ${name}\\([^]*?^}`, "m"))[0];
-const functions = ["promptQueueSelection", "promptQueueActionResult", "promptQueueActionMessage", "runPromptQueueAction", "reconcilePromptQueueAction", "inquiryAnswerDisplayState", "inquiryAnswerDisplayUnchanged", "agentDetailGeneration"].map(fn).join("\n");
+const functions = ["promptQueueSelection", "promptQueueActionResult", "promptQueueActionMessage", "runPromptQueueAction", "reconcilePromptQueueAction", "inquiryAnswerDisplayState", "inquiryAnswerDisplayUnchanged", "agentDetailGeneration", "ensureAgentDetail"].map(fn).join("\n");
 let cases = 0;
 function fixture(kind = "process") {
   let resolve, reject, reads = 0, writes = 0, refreshes = 0;
@@ -14,7 +14,7 @@ function fixture(kind = "process") {
   const messages = [], applied = [];
   const c = { state, console, location: { hash: "#agent/fixture" }, clearTimeout, arrayValue: x => x || [],
     findAgent: () => state.agentDetails.fixture, render() {}, schedule() {}, syncPendingPromptQueueActions() {},
-    confirmAction: async () => true, showGrowl: (message, level) => messages.push({ message, level }),
+    reconcileOptimisticPromptQueue() {}, confirmAction: async () => true, showGrowl: (message, level) => messages.push({ message, level }),
     upsertAgent: value => { applied.push(value); state.agentDetails.fixture = value; },
     apiPost: async (path, body) => { writes++; assert.deepEqual(JSON.parse(JSON.stringify(body)), { entry_ids: ["a", "b"], expected_entry_ids: ["a", "b"] }); return new Promise((yes, no) => { resolve = yes; reject = no; }); },
     apiGet: async () => { reads++; return c.readResponse; },
@@ -126,5 +126,13 @@ function fixture(kind = "process") {
   assert(panel.messages.at(-1).message.includes("Started 2"), "show confirmed result before final read");
   finishRefresh(); await completed;
   assert.equal(panel.state.pendingPromptQueueActions.size, 0); cases++;
+  const race = fixture(), action = await race.start();
+  let releaseOldRead;
+  race.c.apiGet = () => new Promise(resolve => { releaseOldRead = resolve; });
+  const oldRead = race.run('ensureAgentDetail("fixture", true)');
+  race.state.agentDetails.fixture = { ...race.state.agentDetails.fixture, name: "Newer observed canonical state" };
+  await race.finish(action, race.response("started"));
+  releaseOldRead({agent: race.response("accepted").agent}); await oldRead;
+  assert.equal(race.state.agentDetails.fixture.name, "Newer observed canonical state", "pre-result detail read cannot replace newer canonical state after confirmed action"); cases++;
   console.log(`remote_ui_queue_result_test: ${cases} cases passed`);
 })().catch(error => { console.error(error); process.exitCode = 1; });
