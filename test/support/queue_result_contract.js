@@ -117,5 +117,14 @@ function fixture(kind = "process") {
     assert.equal(f.state.agentDetails.fixture.name, "Newer canonical read");
     assert.equal(f.stats().writes, 1); cases++;
   }
+  const panel = fixture(), pending = await panel.start();
+  let finishRefresh;
+  panel.c.refresh = () => new Promise(resolve => { finishRefresh = resolve; });
+  const completed = panel.finish(pending, panel.response("started"));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(panel.state.pendingPromptQueueActions.get("fixture").phase, "confirmed", "keep panel during final read");
+  assert(panel.messages.at(-1).message.includes("Started 2"), "show confirmed result before final read");
+  finishRefresh(); await completed;
+  assert.equal(panel.state.pendingPromptQueueActions.size, 0); cases++;
   console.log(`remote_ui_queue_result_test: ${cases} cases passed`);
 })().catch(error => { console.error(error); process.exitCode = 1; });
