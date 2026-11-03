@@ -209,6 +209,13 @@ module RemoteUIPromptReceiptsTest
           assert.deepEqual(laneErrors,[]);
           assert.equal(laneBox.lanes.size,0);
         }
+        const readonlyError=new Error("Synthetic file read error");
+        Object.defineProperty(readonlyError,"message",{value:"Synthetic file read error",writable:false});
+        const readonlyBox=new Outbox({storage:{all:async()=>[],put:async()=>{},remove:async()=>{}},send:async()=>{throw readonlyError;}});
+        await readonlyBox.ready;
+        await readonlyBox.add({id:"client-readonly",key:"agent",destination,payload:{prompt:"keep exact intent"}});
+        await tick();await tick();
+        assert.equal(readonlyBox.entries.get("client-readonly").status,"uncertain","Read-only error properties must not break uncertain recovery");
         let reads = 0, readRelease;
         const reconciler = createReconciler(async () => { reads++; if(reads===1) await new Promise(resolve=>{readRelease=resolve}); else throw Error("read failed after accepted write"); });
         reconciler.request(); await tick();
