@@ -23,7 +23,7 @@ module RemoteUIScheduleSaveTest
           FormData: class { get() { return "body"; } },
           formPending: () => pending,
           formDraftStorageKey: () => "draft", safeLocalStorageGet: () => "draft value",
-          setFormPending: (_, value) => { pending = value; }, setConnection: () => {}, render: () => {}, schedule: () => {},
+          setFormPending: (_, value) => { pending = value; }, setConnection: () => {}, render: () => {}, schedule: () => {}, showGrowl: () => {},
           refresh: async () => { reads++; },
           apiPost: async () => { writes++; return new Promise(resolve => { resolveWrite = resolve; }); },
           apiPatch: async () => { writes++; return new Promise(resolve => { resolveWrite = resolve; }); },
@@ -35,24 +35,46 @@ module RemoteUIScheduleSaveTest
           navigate: () => { context.location.hash = "#now"; },
         };
         vm.createContext(context);
-        vm.runInContext(`let scheduleFormNavigationGeneration = 0;\n${fn("mutate")}\n${fn("saveScheduleForm")}\nconst originalMutate = mutate; mutate = (...args) => { mutationResult = originalMutate(...args); };`, context);
+        vm.runInContext(`let scheduleFormNavigationGeneration = 0; const scheduleStateVersions = new Map(); const scheduleMessageReadGenerations = new Map();\n${fn("invalidateScheduleMessageReads")}\n${fn("mutate")}\n${fn("saveScheduleForm")}\nconst originalMutate = mutate; mutate = (...args) => { mutationResult = originalMutate(...args); };`, context);
         vm.runInContext(handlers, context);
         assert.equal(writes, 1);
         assert.equal(pending, true);
         vm.runInContext(handlers, context);
         assert.equal(writes, 1, "pending submit must not issue another write");
         if (scenario === "stale") vm.runInContext('scheduleFormNavigationGeneration++; location.hash = "#form";', context);
+        if (["newer", "deleted"].includes(scenario)) vm.runInContext('scheduleStateVersions.set("saved", 1);', context);
         resolveWrite(scenario === "invalid" ? {} : response);
         await context.mutationResult;
         assert.equal(pending, false);
-        assert.equal(reads, scenario === "ok" ? 1 : 0, "one reconciliation only after a current valid save");
+        assert.equal(reads, ["ok", "newer", "deleted"].includes(scenario) ? 1 : 0, "one reconciliation after a current valid save");
         assert.equal(clears, scenario === "ok" ? 1 : 0);
         assert.equal(context.location.hash, scenario === "ok" ? "#now" : "#form");
         assert.equal(applied, scenario === "ok" && kind !== "message" ? 1 : 0);
         assert.equal(Boolean(state.scheduleMessages.saved), scenario === "ok" && kind === "message");
       }
+      async function checkMessageReads(failOld, acceptSave) {
+        const pending = [];
+        const state = { scheduleMessages: {} };
+        const context = { state, apiGet: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) };
+        vm.createContext(context);
+        vm.runInContext(`const scheduleMessageReadGenerations = new Map();\n${fn("invalidateScheduleMessageReads")}\n${fn("ensureScheduleMessage")}`, context);
+        const old = vm.runInContext('ensureScheduleMessage("saved", true)', context);
+        if (acceptSave) {
+          vm.runInContext('invalidateScheduleMessageReads("saved"); state.scheduleMessages.saved = { content: "Accepted body" };', context);
+        } else {
+          const newer = vm.runInContext('ensureScheduleMessage("saved", true)', context);
+          pending[1].resolve({ message: { content: "Accepted body" } });
+          await newer;
+        }
+        if (failOld) pending[0].reject(new Error("Old read failed"));
+        else pending[0].resolve({ message: { content: "Old body" } });
+        await old;
+        assert.equal(state.scheduleMessages.saved.content, "Accepted body");
+        assert.equal(state.scheduleMessages.saved.error, undefined);
+      }
       (async () => {
-        for (const kind of ["create", "edit", "message"]) for (const scenario of ["ok", "invalid", "stale"]) await check(kind, scenario);
+        for (const kind of ["create", "edit", "message"]) for (const scenario of ["ok", "invalid", "stale", "newer", "deleted"]) await check(kind, scenario);
+        for (const fail of [false, true]) for (const accept of [false, true]) await checkMessageReads(fail, accept);
       })().catch(error => { console.error(error); process.exitCode = 1; });
     JAVASCRIPT
     root = File.expand_path("..", __dir__)

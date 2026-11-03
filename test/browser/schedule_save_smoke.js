@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 module.exports = async ({ browser, baseUrl, captureDir }) => {
+  await require("./schedule_ordering_smoke")({ browser, baseUrl, captureDir });
   const results = [];
   const barrier = () => { let release; const promise = new Promise(resolve => { release = resolve; }); return { promise, release }; };
   for (const width of [1440, 390]) for (const theme of ["dark", "light"]) {
