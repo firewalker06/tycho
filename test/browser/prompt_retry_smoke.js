@@ -12,6 +12,10 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
     const page=await context.newPage();page.setDefaultTimeout(12000);
     let late=gate();const errors=[];page.on("pageerror",e=>errors.push(e.message));
     let writes=0,mode="lost", readFailure=false, captured, allowProof=false, baselineServed=false;
+    const trace=[];
+    const acceptedGates=new Map();
+    const acceptanceFor=id=>{if(!acceptedGates.has(id))acceptedGates.set(id,gate());return acceptedGates.get(id);};
+    const note=(event,fields={})=>trace.push({event,elapsed_ms:Date.now(),...fields});
     const created=await context.request.post(`${baseUrl}/agents`,{data:{project_key:"web",name:"Retry fixture",prompt:delivery==="queued"?"QUEUE_SMOKE_HOLD":"Synthetic idle",start:delivery==="queued"}});
     assert.equal(created.status(),201);
     const agent=(await created.json()).agent, raw=agent.key, key=peer?`fixture-peer/${raw}`:raw;
@@ -32,15 +36,19 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
         if(pathname===`/agents/${raw}` && request.method()==="GET"){
           if(readFailure)return route.fulfill({status:503,json:{error:"Synthetic read failure"}});
           const response=await fetchRoute(),data=await response.json();
+          note("detail",{allowProof,proof_ids:(data.agent.prompt_acceptances||[]).map(p=>p.receipt?.client_request_id),revision:data.agent.revision});
           if(!allowProof) delete data.agent.prompt_acceptances;
           return route.fulfill({response,json:data});
         }
         if(pathname===`/agents/${raw}/messages`){
           writes++;assert.equal(routed,peer);captured=request.postDataJSON();
+          note("post-start",{id:captured.client_request_id,mode});
           assert.equal(captured.expected_server_id,agent.delegation.server_id);
           if(mode==="auth")return route.fulfill({status:401,json:{error:"Synthetic auth error"}});
           if(mode==="unbound")return route.fulfill({status:409,json:{error:"Synthetic unbound conflict"}});
           const response=await fetchRoute();assert([200,202].includes(response.status()));
+          note("post-accepted",{id:request.postDataJSON().client_request_id,mode,status:response.status()});
+          acceptanceFor(request.postDataJSON().client_request_id).release();
           if(mode==="lost")return route.abort("connectionreset");
           if(mode==="malformed")return route.fulfill({status:200,body:"invalid",contentType:"application/json"});
           if(mode==="held")await late.promise;
@@ -139,6 +147,11 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
       const waitingId=await page.evaluate(()=>[...state.promptOutbox.entries.values()].find(e=>e.status==="waiting").id);
       await page.evaluate(id=>promptSubmissionOutbox().cancel(id),waitingId);
       await page.waitForFunction(()=>state.promptOutbox.entries.size===1);
+      const heldId=await page.evaluate(()=>[...state.promptOutbox.entries.values()][0].id);
+      // Sending status precedes server acceptance. Test a proof only after the
+      // server commits it, while the browser's HTTP response is still held.
+      let acceptanceTimeout;
+      await Promise.race([acceptanceFor(heldId).promise,new Promise((_,reject)=>{acceptanceTimeout=setTimeout(()=>reject(Error("Synthetic acceptance was not reached")),12000);})]).finally(()=>clearTimeout(acceptanceTimeout));
       allowProof=true;await refresh();
       await page.waitForFunction(()=>state.promptOutbox.entries.size===0);
       assert.equal(writes,beforeHeld+1,"waiting cancellation does not send a new message");
@@ -158,6 +171,8 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
       assert.deepEqual(errors,[]);
       evidence.push({width,theme,peer,delivery,writes,firstId,secondId,proof_without_replay:true,cancel_kept_server_queue:true});
     } catch(error){
+      note("failure-state",await page.evaluate(()=>({entries:[...(state.promptOutbox?.entries.values()||[])].map(e=>({id:e.id,status:e.status})),lanes:[...(state.promptOutbox?.lanes.keys()||[])],detail_proofs:Object.values(state.agentDetails).flatMap(a=>(a.prompt_acceptances||[]).map(p=>p.receipt?.client_request_id))})).catch(()=>({unavailable:true})));
+      if(captureDir)fs.writeFileSync(path.join(captureDir,`retry-trace-${width}-${theme}-${peer}-${delivery}.json`),JSON.stringify(trace,null,2));
       if(captureDir)await page.screenshot({path:path.join(captureDir,`retry-failure-${width}-${theme}-${peer}-${delivery}.png`)}).catch(()=>{});
       throw error;
     } finally {late.release();await context.close();}

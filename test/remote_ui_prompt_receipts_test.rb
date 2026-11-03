@@ -13,7 +13,22 @@ module RemoteUIPromptReceiptsTest
       const context = { console, setTimeout, clearTimeout, structuredClone };
       vm.createContext(context);
       vm.runInContext(fs.readFileSync("lib/hq/remote_ui/assets/prompt_submissions.js", "utf8"), context);
-      const { validateReceipt, Outbox, createReconciler } = context.TychoPromptSubmissions;
+      const { validateReceipt, Outbox: RealOutbox, createReconciler } = context.TychoPromptSubmissions;
+      // In-memory adapters implement the same atomic storage decisions as IndexedDB.
+      function Outbox(options) {
+        const storage = options.storage;
+        const stopped = new Set();
+        return new RealOutbox({...options,storage:{...storage,
+          put: async entry => {
+            if(stopped.has(entry.id)) return false;
+            await storage.put(entry); return true;
+          },
+          cancel: async id => {await storage.put({id,status:"cancelled"});stopped.add(id);},
+          isCancelled: async id => stopped.has(id),
+          remove: async id => {if(stopped.has(id))return false;await storage.remove(id);return true;},
+          start: async (id,send) => stopped.has(id) ? {started:false} : {started:true,result:send()},
+        }});
+      }
       const destination = { agent_key: "agent", server_id: "server" };
       const receipt = { version: 1, accepted: true, client_request_id: "client-one", agent_key: "agent", server_id: "server", outcome: "accepted", replayed: false, accepted_at: "2026-01-01T00:00:00Z", revision: "1", running: false, source: "user", authority: null, queue_entry: null };
       const valid = { accepted: true, queued: false, receipt };
@@ -30,6 +45,15 @@ module RemoteUIPromptReceiptsTest
       assert.equal(localRows.length,1,"A stale read cannot erase an accepted receipt row");
       reconcileContext.reconcileOptimisticPromptQueue({key:"agent",revision:"2",prompt_queue:{entries:[]}},{confirmedRead:true});
       assert.equal(localRows.length,0,"Current empty queue confirms that accepted work has left the queue");
+      const boundProofs=[];
+      const proofContext={
+        promptSubmissionOutbox:()=>({intentFor:id=>id==="client-one"?{destination:{url:"https://peer.example.test"}}:null,reconcile:(key,proofs)=>boundProofs.push({key,proofs})}),
+        resourceServer:()=>({url:"https://peer.example.test"}),resourceRawKey:agent=>agent.resource_key,
+      };
+      vm.createContext(proofContext);
+      vm.runInContext(app.match(/^function reconcilePromptSubmissions\([^]*?^}/m)[0],proofContext);
+      proofContext.reconcilePromptSubmissions({key:"peer/agent",resource_key:"agent",delegation:{server_id:"server"},prompt_acceptances:[valid]});
+      assert.equal(boundProofs[0].proofs.length,1,"Controller passes proof for an owned in-flight intent after its retry was cancelled");
       const queued = [];
       const callContext = {
         crypto: { randomUUID: () => "00000000-0000-4000-8000-000000000001" },
@@ -160,6 +184,31 @@ module RemoteUIPromptReceiptsTest
         await tick();
         await assert.rejects(()=>failedCancel.cancel("client-failed-cancel"));
         assert.equal(failedCancel.entries.get("client-failed-cancel").status,"uncertain","Failed cancellation keeps a truthful recoverable intent");
+        for (const lateMode of ["success","error","invalid"]) {
+          const laneSent=[], laneAccepted=[], laneErrors=[], replies={};
+          const laneBox = new Outbox({storage:{all:async()=>[],put:async()=>{},remove:async()=>{}},
+            send:entry=>{laneSent.push(entry.id);return new Promise((resolve,reject)=>{replies[entry.id]={resolve,reject};});},
+            onAccepted:entry=>laneAccepted.push(entry.id),onError:entry=>laneErrors.push(entry.id)});
+          await laneBox.add({id:"client-one",key:"agent",destination,payload:{prompt:"one"}});
+          await tick();
+          await laneBox.add({id:"client-two",key:"agent",destination,payload:{prompt:"two"}});
+          await laneBox.reconcile("agent",[valid]);
+          await tick();
+          assert.deepEqual(laneSent,["client-one","client-two"],"Proof releases A without its HTTP response");
+          await laneBox.add({id:"client-three",key:"agent",destination,payload:{prompt:"three"}});
+          if(lateMode==="error")replies["client-one"].reject(Error("late"));
+          else replies["client-one"].resolve(lateMode==="invalid"?{}:valid);
+          await tick();
+          assert.deepEqual(laneSent,["client-one","client-two"],"Old A cannot unlock B's lane");
+          replies["client-two"].resolve({...valid,receipt:{...receipt,client_request_id:"client-two"}});
+          await tick();await tick();
+          assert.deepEqual(laneSent,["client-one","client-two","client-three"]);
+          replies["client-three"].resolve({...valid,receipt:{...receipt,client_request_id:"client-three"}});
+          await tick();await tick();
+          assert.deepEqual(laneAccepted,laneSent);
+          assert.deepEqual(laneErrors,[]);
+          assert.equal(laneBox.lanes.size,0);
+        }
         let reads = 0, readRelease;
         const reconciler = createReconciler(async () => { reads++; if(reads===1) await new Promise(resolve=>{readRelease=resolve}); else throw Error("read failed after accepted write"); });
         reconciler.request(); await tick();

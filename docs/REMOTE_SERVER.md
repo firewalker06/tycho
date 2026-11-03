@@ -920,6 +920,33 @@ other intents stay separate. Uncertain payloads stay in the outbox rather than
 being copied back into a composer that could create another ID. Only a bound
 rejection restores a correction draft.
 
+The cancellation decision is shared by updated tabs on this browser origin.
+IndexedDB read/write transactions preserve an existing stop during intent writes
+and cleanup. After attachment encoding is saved, a final transaction reads the
+stop and synchronously begins the HTTP request only if no stop exists. The
+transaction ends without waiting for HTTP. Thus cancellation commits first and
+prevents dispatch, or dispatch begins first and its already-issued request can
+still be accepted. Cancellation does not abort that request. BroadcastChannel
+(or a storage-event fallback) updates live views after checking the saved stop;
+missed notifications cannot bypass the dispatch check. Tabs running older code
+must reload to use this contract.
+
+Each drain owns a lane token. A valid response or read proof settles that intent
+and releases only its token, including when its old HTTP response is still held.
+A late success, error, or invalid response cannot release a newer token or apply
+the older intent's effects twice. A cancelled request with no acceptance proof
+still owns its lane until HTTP settles; later proof can release it without
+restoring its composer effects.
+
+Cancellation markers contain only the intent ID and cancelled status. They have
+no age expiry or fixed count bound: a suspended tab can retain a stale intent
+indefinitely. Startup uses a cursor and collects/sorts only active entries, but
+still scans stored markers. Retention is limited by the browser's origin quota;
+no lifetime quota or startup-latency bound is claimed. A failed write reports
+failure and leaves uncertainty. There is no automatic clearing, age-only cleanup,
+or claim that a failed cancellation succeeded. Safe future collection requires
+a way to fence every older writer before deleting its stop authority.
+
 An uncertain message blocks
 later writes to that agent. Each agent's write lane ends after receipt validation,
 not after full resource refresh. Background refreshes coalesce, retain existing
@@ -933,6 +960,16 @@ and `bundle exec ruby test/prompt_receipt_recovery_test.rb`. Run the browser che
 with `TYCHO_REMOTE_UI_PROMPT_RECEIPT_ONLY=1 bin/remote-ui-smoke`. They include removed
 PRs, replaced snapshots, visible draft/context correction, and accepted replay after
 context removal.
+
+For lane ownership and shared IndexedDB cancellation checks, run
+`TYCHO_REMOTE_UI_PROMPT_RECEIPT_ONLY=1 TYCHO_REMOTE_UI_PROMPT_CONCURRENCY_ONLY=1 bin/remote-ui-smoke`.
+This runs held-response/proof/late-response ordering, two-tab waiting and stale
+retry cases with and without notifications, both dispatch/cancel transaction
+orders and concurrent races, cancellation during file preparation, and desktop/
+mobile Dark/Nord Light two-tab composer preservation. Optional
+`TYCHO_REMOTE_UI_PROMPT_CONCURRENCY_CASE=lane|tabs` selects the focused cases;
+`TYCHO_REMOTE_UI_PROMPT_OUTBOX_BASELINE=/absolute/path/prompt_submissions.js`
+serves a pinned module for before checks. Use an outside-checkout capture path.
 
 For delivery-proof and local cancellation checks, run
 `TYCHO_REMOTE_UI_PROMPT_RECEIPT_ONLY=1 TYCHO_REMOTE_UI_PROMPT_RETRY_ONLY=1 bin/remote-ui-smoke`.
