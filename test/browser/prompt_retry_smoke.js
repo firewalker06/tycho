@@ -7,7 +7,11 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
   const evidence=[];
   const baseline=process.env.TYCHO_REMOTE_UI_PROMPT_RETRY_BASELINE;
   const gate=()=>{let release;const promise=new Promise(resolve=>{release=resolve;});return {promise,release};};
-  for(const width of (baseline?[390]:[1440,390])) for(const theme of (baseline?["dark"]:["dark","light"])) for(const peer of (baseline?[false]:[false,true])) for(const delivery of (baseline?["queued"]:["queued","immediate"])) {
+  const repeats=Number(process.env.TYCHO_REMOTE_UI_PROMPT_RETRY_REPEATS||1);
+  assert(Number.isInteger(repeats)&&repeats>=1&&repeats<=20);
+  for(let repeat=0;repeat<repeats;repeat++) for(const width of (baseline?[390]:[1440,390])) for(const theme of (baseline?["dark"]:["dark","light"])) for(const peer of (baseline?[false]:[false,true])) for(const delivery of (baseline?["queued"]:["queued","immediate"])) {
+    const selected=process.env.TYCHO_REMOTE_UI_PROMPT_RETRY_CASE;
+    if(selected && selected!==`${width}:${theme}:${peer?"peer":"local"}:${delivery}`) continue;
     const context=await browser.newContext({viewport:{width,height:900},isMobile:width<500,hasTouch:width<500});
     const page=await context.newPage();page.setDefaultTimeout(12000);
     let late=gate();const errors=[];page.on("pageerror",e=>errors.push(e.message));
@@ -62,6 +66,13 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
       if(baseline)assert(baselineServed,"pinned baseline bundle was served");
       await page.evaluate(()=>clearTimeout(state.timer));
       const send=async text=>{
+        await page.evaluate(()=>{
+          if(globalThis.__retryEvents) return;
+          globalThis.__retryEvents=[];
+          const original=showGrowl;
+          showGrowl=(message,...args)=>{__retryEvents.push({event:"growl",message});return original(message,...args);};
+          document.addEventListener("submit",event=>{if(event.target.id==="composer")__retryEvents.push({event:"submit",submitting:event.target.dataset.submitting});},true);
+        });
         if(!await page.locator("#prompt-input").isVisible())await page.locator("details.focused-composer > summary").click();
         await page.locator("#prompt-input").fill(text);
         await page.locator("#composer").evaluate(form=>form.requestSubmit());
@@ -169,9 +180,10 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
       }
       assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),"no horizontal overflow");
       assert.deepEqual(errors,[]);
-      evidence.push({width,theme,peer,delivery,writes,firstId,secondId,proof_without_replay:true,cancel_kept_server_queue:true});
+      evidence.push({repeat,width,theme,peer,delivery,writes,firstId,secondId,proof_without_replay:true,cancel_kept_server_queue:true});
     } catch(error){
-      note("failure-state",await page.evaluate(()=>({entries:[...(state.promptOutbox?.entries.values()||[])].map(e=>({id:e.id,status:e.status})),lanes:[...(state.promptOutbox?.lanes.keys()||[])],detail_proofs:Object.values(state.agentDetails).flatMap(a=>(a.prompt_acceptances||[]).map(p=>p.receipt?.client_request_id))})).catch(()=>({unavailable:true})));
+      note("failure-state",await page.evaluate(()=>({entries:[...(state.promptOutbox?.entries.values()||[])].map(e=>({id:e.id,status:e.status})),lanes:[...(state.promptOutbox?.lanes.keys()||[])],detail_proofs:Object.values(state.agentDetails).flatMap(a=>(a.prompt_acceptances||[]).map(p=>p.receipt?.client_request_id)),events:globalThis.__retryEvents,form:document.querySelector("#composer")?.dataset,pending_composer:[...state.pendingComposerKeys],pending_comments:[...state.pendingPullRequestCommentKeys]})).catch(()=>({unavailable:true})));
+      note("page-errors",{errors});
       if(captureDir)fs.writeFileSync(path.join(captureDir,`retry-trace-${width}-${theme}-${peer}-${delivery}.json`),JSON.stringify(trace,null,2));
       if(captureDir)await page.screenshot({path:path.join(captureDir,`retry-failure-${width}-${theme}-${peer}-${delivery}.png`)}).catch(()=>{});
       throw error;

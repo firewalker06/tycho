@@ -980,6 +980,10 @@ Dark and Nord Light. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the checkout to
 save screenshots and request-count evidence. For a before comparison,
 `TYCHO_REMOTE_UI_PROMPT_RETRY_BASELINE=/absolute/path/ui.js` serves the pinned
 full UI bundle (prompt submissions, inquiry submissions, then app).
+For a focused repeat of a timing case, set
+`TYCHO_REMOTE_UI_PROMPT_RETRY_CASE=1440:dark:peer:immediate` and optional
+`TYCHO_REMOTE_UI_PROMPT_RETRY_REPEATS=10` (1–20). Failure traces contain IDs,
+receipt revisions, timing, and synthetic UI status, without prompt/file bodies.
 
 
 ### `POST /agents/{key}/messages`
