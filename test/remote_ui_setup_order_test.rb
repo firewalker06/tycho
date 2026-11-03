@@ -14,7 +14,7 @@ script = <<~'JS'
   };
   function fixture() {
     const summary = deferred(), schedules = deferred(), detail = [];
-    const state = { agents: [], resourceRequestSequence: 0, resourceMutationGeneration: 0,
+    const state = { schedules: [], agents: [], resourceRequestSequence: 0, resourceMutationGeneration: 0,
       setupRequestSequence: 0, setupResponseSequence: 0, setupDetailed: false, setup: null,
       failureCount: 0, initialRouteLoaded: false, timer: null };
     let route = { type: "agent", key: "a" }, renders = 0;
@@ -43,6 +43,8 @@ script = <<~'JS'
       const a = source.indexOf(start), b = source.indexOf(end, a);
       assert(a >= 0 && b > a); vm.runInContext(source.slice(a, b), c);
     }
+    vm.runInContext("const scheduleStateVersions = new Map();", c);
+    include("function noteScheduleStateChange(", "\nfunction saveScheduleForm");
     include("async function refresh(options = {})", "\nfunction detailedSetupRoute");
     include("function applySetupResponse(", "\nasync function ensureRouteData");
     return { c, state, summary, schedules, detail, renders: () => renders,
