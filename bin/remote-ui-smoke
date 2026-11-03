@@ -71,6 +71,22 @@ def write_fixture(dir)
           project_key: web
           message: "Exercise scheduled agent controls."
   YAML
+  if ENV["TYCHO_REMOTE_UI_SCHEDULE_SAVE_ONLY"] == "1"
+    FileUtils.mkdir_p(File.join(tycho_home_dir, "schedules"))
+    File.write(File.join(tycho_home_dir, "schedules", "message.md"), "Original synthetic message.\n")
+    File.open(schedules_path, "a") do |file|
+      file.write((<<~YAML).lines.map { |line| "  #{line}" }.join)
+          - key: file-message
+            name: File message schedule
+            cron: "0 9 * * 1-5"
+            target:
+              type: agent
+              project_key: web
+              message_source: file
+              message_file: schedules/message.md
+      YAML
+    end
+  end
   File.write(fake_codex_path, <<~'RUBY')
     #!/usr/bin/env ruby
     require "json"
@@ -10816,6 +10832,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     wait_for_remote(base_url, log_path)
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key ||= create_agent(base_url)
+    if ENV["TYCHO_REMOTE_UI_SCHEDULE_SAVE_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "schedule_save_smoke")
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_BUTTON_BORDERS_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_UTILITY_BORDERS_ONLY"] == "1"
       associate_agent_pull_request(fixture.fetch(:logs_dir), agent_key)
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: ENV["TYCHO_REMOTE_UI_UTILITY_BORDERS_ONLY"] == "1" ? "utility_borders_smoke" : "button_borders_smoke")
