@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 module.exports = async ({ browser, baseUrl, captureDir }) => {
+  await require("./schedule_message_ordering_smoke")({ browser, baseUrl, captureDir });
   await require("./schedule_ordering_smoke")({ browser, baseUrl, captureDir });
   const results = [];
   const barrier = () => { let release; const promise = new Promise(resolve => { release = resolve; }); return { promise, release }; };
@@ -123,7 +124,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         await page.locator(selector).fill(`Draft ${fault}`);
         if (fault === "validation") await page.locator("#schedule-cron").fill("bad cron");
         const endpoint = `${baseUrl}/schedules/${isMessage ? "file-message/message" : key}`;
-        const fail = route => route.fulfill({ json: fault === "wrong-key" ? { schedule: { key: "other" } } : fault === "bad-message" ? { message: { key: "file-message", content: null } } : {} });
+        const fail = route => route.request().method() === "GET" ? route.continue() : route.fulfill({ json: fault === "wrong-key" ? { schedule: { key: "other" } } : fault === "bad-message" ? { message: { key: "file-message", content: null } } : {} });
         if (fault !== "validation") await page.route(endpoint, fail);
         await page.locator(isMessage ? "#schedule-message-form button[type=submit]" : "#schedule-form button[type=submit]").click();
         await settle();

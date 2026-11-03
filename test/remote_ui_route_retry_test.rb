@@ -10,7 +10,7 @@ script = <<~'JS'
   function fixture(type, status, image = false) {
     let active = true, failing = true, route = { type, key: "web", scope: "worktree", id: "file", attachmentId: "file" };
     let calls = 0;
-    const state = { schedules: [], initialRouteLoaded: false, projectDiffs: {}, pullRequests: {}, attachmentDetails: {}, attachmentRequestGenerations: {},
+    const state = { schedules: [], scheduleMessages: {}, initialRouteLoaded: false, projectDiffs: {}, pullRequests: {}, attachmentDetails: {}, attachmentRequestGenerations: {},
       attachmentImageErrors: {}, attachmentImageErrorStatuses: {}, attachmentImageRequestGenerations: {}, attachmentImageUrls: {},
       agents: [], resourceRequestSequence: 0, resourceMutationGeneration: 0, failureCount: 0, setup: {}, lastShellUpdatedAt: new Date(), setupDetailed: true,
       setupRequestSequence: 0, setupResponseSequence: 0 };
@@ -36,7 +36,7 @@ script = <<~'JS'
     vm.createContext(c);
     function include(start, end) { const a = source.indexOf(start), b = source.indexOf(end, a); assert(a >= 0 && b > a); vm.runInContext(source.slice(a, b), c); }
     include("function preserveWorkspaceDuringPoll(options = {})", "\nfunction focusedWorkspacePreservedDuringPoll");
-    vm.runInContext("const scheduleStateVersions = new Map();", c);
+    vm.runInContext("const scheduleStateVersions = new Map(); const scheduleMessageOrders = new Map();", c);
     include("function noteScheduleStateChange(", "\nfunction saveScheduleForm");
     include("async function refresh(options = {})", "\nfunction detailedSetupRoute");
     include("function applySetupResponse(", "\nasync function ensureDetailedSetup");
