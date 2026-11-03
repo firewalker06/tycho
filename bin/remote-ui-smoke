@@ -10846,7 +10846,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       next
     end
     if ENV["TYCHO_REMOTE_UI_PROMPT_RECEIPT_ONLY"] == "1"
-      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "prompt_receipt_smoke")
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: ENV["TYCHO_REMOTE_UI_PROMPT_RETRY_ONLY"] == "1" ? "prompt_retry_smoke" : "prompt_receipt_smoke")
       next
     end
     if ENV["TYCHO_REMOTE_UI_COLD_AGENT_LOAD_ONLY"] == "1"

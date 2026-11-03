@@ -904,8 +904,23 @@ cannot later become an accepted write. Legacy error contracts stay unchanged.
 
 The browser stores only pending message data and its destination in a dedicated
 IndexedDB store. It stores no bearer token or resource catalog. Accepted payloads
-are removed; failed local cleanup can only cause an exact replay after reload.
-Reloaded pending messages require an explicit retry. An uncertain message blocks
+are removed. Agent detail includes `prompt_acceptances`: read-only receipts from
+that durable index, without payloads or fingerprints. Proofs retain the original
+request/agent/server identity and report queued work as queued, not delivered.
+Records with incomplete original schedule effects are excluded so an exact retry
+can still finish those effects. A matching proof removes the local retry without
+another POST. The browser also checks its original server URL. Equal text or a
+nearby timestamp is never proof for an outbox intent. Missing proof and read/auth
+errors keep uncertainty. Reloaded pending messages are never sent automatically.
+
+Cancel retry persists a local cancellation marker before hiding that retry. It
+makes no server queue mutation and cannot retract an accepted message. Late send
+responses cannot restore or apply a cancelled intent. Newer drafts, files, and
+other intents stay separate. Uncertain payloads stay in the outbox rather than
+being copied back into a composer that could create another ID. Only a bound
+rejection restores a correction draft.
+
+An uncertain message blocks
 later writes to that agent. Each agent's write lane ends after receipt validation,
 not after full resource refresh. Background refreshes coalesce, retain existing
 401/offline/backoff handling, and use mutation/detail generations to reject
@@ -918,6 +933,17 @@ and `bundle exec ruby test/prompt_receipt_recovery_test.rb`. Run the browser che
 with `TYCHO_REMOTE_UI_PROMPT_RECEIPT_ONLY=1 bin/remote-ui-smoke`. They include removed
 PRs, replaced snapshots, visible draft/context correction, and accepted replay after
 context removal.
+
+For delivery-proof and local cancellation checks, run
+`TYCHO_REMOTE_UI_PROMPT_RECEIPT_ONLY=1 TYCHO_REMOTE_UI_PROMPT_RETRY_ONLY=1 bin/remote-ui-smoke`.
+The fixture covers lost/malformed replies, a proof before the held response,
+read/auth errors, same-text distinct IDs, multiple ordered intents, cancellation,
+late replies, reload/navigation, and local/synthetic peer routes in desktop/mobile
+Dark and Nord Light. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the checkout to
+save screenshots and request-count evidence. For a before comparison,
+`TYCHO_REMOTE_UI_PROMPT_RETRY_BASELINE=/absolute/path/ui.js` serves the pinned
+full UI bundle (prompt submissions, inquiry submissions, then app).
+
 
 ### `POST /agents/{key}/messages`
 

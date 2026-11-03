@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-11-02
+2026-11-03
 
 ## Message acceptance and background reads
 
@@ -26,6 +26,13 @@ IndexedDB until acceptance or a bound rejection. Credentials are never stored
 with them. Writes stay ordered per agent; coalesced background reads do not
 hold that write lane. Receipt-only queue rows stay read-only until canonical
 queue data arrives. See [Remote Sessions](REMOTE_SERVER.md#small-message-receipts).
+
+Agent detail now supplies read-only acceptance proofs bound to the original
+request, raw agent, and server IDs. A matching proof clears a stale browser retry
+without another write; text equality is not evidence. Incomplete schedule effects
+still require exact retry. Cancel retry persists a local stop, keeps accepted
+server work, and ignores late responses. Uncertain payloads stay separate from
+new drafts; only bound rejections restore correction drafts.
 
 ## Inquiry answer recovery
 
