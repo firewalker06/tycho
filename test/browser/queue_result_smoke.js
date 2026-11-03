@@ -22,6 +22,17 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         prompt_queue: { entries: ["a", "b", "protected"].map(id => ({ id, prompt: `Synthetic ${id}`, source: id === "protected" ? "delegation_callback" : "user", state: "queued" })),
           processing_stopped: true, unprocessed_reason: "Synthetic queue requires review", processing: { state: "workspace", message: "Waiting for the workspace." } } });
       canonical = raw();
+      await page.route(/\/servers\/(resources|activity)(\?.*)?$/, async route => {
+        const response = await route.fetch();
+        if (!response.ok()) return route.fulfill({ response });
+        const replace = value => {
+          if (Array.isArray(value)) return value.map(replace);
+          if (!value || typeof value !== "object") return value;
+          if (value.key === agentKey && (value.project_key || value.prompt_queue)) return structuredClone(canonical);
+          return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, replace(child)]));
+        };
+        return route.fulfill({ response, json: replace(await response.json()) });
+      });
       await page.route(`${baseUrl}/agents/${agentKey}`, route => route.fulfill({ json: { agent: canonical } }));
       await page.goto(`${baseUrl}/ui#agent/${agentKey}`, { waitUntil: "networkidle" });
       for (const kind of ["process", "remove"]) for (const scenario of kind === "process"
@@ -67,6 +78,10 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         assert((await page.locator('[data-prompt-queue]').innerText()).includes("Waiting for the result"));
         await page.evaluate(async () => refresh({ force: true }));
         assert.equal(await page.locator('[data-queue-action="process-all"]').isEnabled(), false);
+        if (scenario === "started") {
+          await page.evaluate(() => { replaceView("<p>Synthetic conversation reload</p>"); state.renderedViewHtml = ""; render(); });
+          assert.equal(await page.locator("[data-prompt-queue]").evaluate(node => node.open), true, "keep queue disclosure through a transient loading view");
+        }
         if (captureDir && kind === "process" && scenario === "busy") await page.screenshot({ path: path.join(captureDir, `queue-pending-${width}-${theme}.png`) });
         if (scenario === "newer") {
           canonical.name = "Newer canonical name";
@@ -86,6 +101,14 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         const after = await page.evaluate(key => ({ selected: [...promptQueueSelection(key)], name: findAgent(key)?.name,
           ids: findAgent(key)?.prompt_queue?.entries.map(e => e.id), growl: document.querySelector("[role=status].growl")?.textContent || document.querySelector(".growl")?.textContent || "",
           hash: location.hash }), agentKey);
+        if (scenario === "started") {
+          await page.evaluate(() => { replaceView("<p>Synthetic post-result reload</p>"); state.renderedViewHtml = ""; render(); });
+          assert.equal(await page.locator("[data-prompt-queue]").evaluate(node => node.open), true, "retain disclosure after confirmation and a temporary empty view");
+          await page.locator("[data-prompt-queue] > summary").focus(); await page.keyboard.press("Enter");
+          await page.evaluate(() => { replaceView("<p>Synthetic reload after operator close</p>"); state.renderedViewHtml = ""; render(); });
+          assert.equal(await page.locator("[data-prompt-queue]").evaluate(node => node.open), false, "respect the operator's later close");
+          await page.locator("[data-prompt-queue] > summary").focus(); await page.keyboard.press("Enter");
+        }
         const text = after.growl;
         if (scenario === "started") assert(text.includes("Started 2 queued entries"));
         if (scenario === "busy") assert(text.includes("Accepted 2 queued entries") && text.includes("Waiting for the workspace") && !text.includes("Started"));
