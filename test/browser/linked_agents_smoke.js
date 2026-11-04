@@ -43,6 +43,30 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         state.renderedViewHtml = "";
         render();
       };
+      window.installLongLinkedFixture = () => {
+        const owner = structuredClone(window.linkedFixtureOwner);
+        const refs = Array.from({ length: 12 }, (_, index) => ({
+          key: `fixture-long-${index}`,
+          agent_key: `fixture-long-${index}`,
+          name: `Long list child ${index + 1}`,
+          server_key: "local",
+          state: "active",
+          connected: true,
+          status: "idle",
+        }));
+        owner.delegation = { children: refs };
+        window.linkedFixtureDelegation = owner.delegation;
+        window.linkedFixtureAgents = refs.map(reference => ({
+          ...reference,
+          archived: false,
+          delegation: { parent: { key: owner.key, owner: "agent" } },
+        }));
+        state.agents = state.agents.filter(agent => !agent.key.startsWith("fixture-"));
+        state.agents.push(...structuredClone(window.linkedFixtureAgents));
+        state.agentDetails[owner.key] = owner;
+        state.renderedViewHtml = "";
+        render();
+      };
       window.installLinkedFixture();
       const originalFindAgent = findAgent;
       findAgent = lookupKey => originalFindAgent(lookupKey) || window.linkedFixtureAgents.find(agent => agent.key === lookupKey) || null;
@@ -170,6 +194,65 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     assert.equal(await liveFlyout.locator("[data-set-delegation-connection='fixture-input']").count(), 0, "archived row has no connection action");
     assert(await liveHistory.evaluate(element => element === document.activeElement), "focus moves to visible history summary after archive");
     assert.equal(await page.locator("#prompt-input").inputValue(), "Keep this live refresh draft", "draft survives archive refresh");
+
+    const longToggle = page.locator("[data-toggle-linked-agents]");
+    await page.evaluate(() => window.installLongLinkedFixture());
+    await page.locator("#prompt-input").fill("Keep the long list draft");
+    await longToggle.click();
+    const longFlyout = page.locator("[data-linked-agents-flyout]");
+    const longHistory = longFlyout.locator(".linked-agent-history > summary");
+    await longFlyout.locator(".linked-agents-flyout-list").evaluate(element => { element.scrollTop = 0; });
+    const firstDisconnect = longFlyout.locator("[data-set-delegation-connection='fixture-long-0']");
+    await firstDisconnect.focus();
+    assert(await firstDisconnect.evaluate(element => element === document.activeElement), "long-list disconnect action starts focused");
+    const disconnectPageScroll = await page.evaluate(() => window.scrollY);
+    await page.evaluate(() => window.updateLinkedFixtureReference("fixture-long-0", { connected: false }));
+    await page.evaluate(() => refresh({ force: true }));
+    await page.waitForFunction(() => document.querySelector(".linked-agents-count")?.textContent === "11");
+    assert(await longHistory.evaluate(element => element === document.activeElement), "long-list disconnect focuses the history summary");
+    assert(!await longFlyout.locator("details").evaluate(element => element.open), "long-list disconnect keeps history closed");
+    const disconnectGeometry = await page.evaluate(() => {
+      const list = document.querySelector(".linked-agents-flyout-list");
+      const summary = document.querySelector(".linked-agent-history > summary");
+      const listRect = list.getBoundingClientRect();
+      const summaryRect = summary.getBoundingClientRect();
+      const top = listRect.top + list.clientTop;
+      const bottom = top + list.clientHeight;
+      return { top, bottom, summaryTop: summaryRect.top, summaryBottom: summaryRect.bottom, scrollTop: list.scrollTop, pageScroll: window.scrollY, viewportHeight: innerHeight };
+    });
+    assert(disconnectGeometry.summaryTop >= disconnectGeometry.top - 1 && disconnectGeometry.summaryBottom <= disconnectGeometry.bottom + 1, `disconnect fallback is inside the popover scroll area: ${JSON.stringify(disconnectGeometry)}`);
+    assert(disconnectGeometry.summaryTop >= 0 && disconnectGeometry.summaryBottom <= disconnectGeometry.viewportHeight, `disconnect fallback is inside the viewport: ${JSON.stringify(disconnectGeometry)}`);
+    assert(disconnectGeometry.scrollTop > 0, "disconnect scrolls the popover list to its focused fallback");
+    assert.equal(disconnectGeometry.pageScroll, disconnectPageScroll, "disconnect does not scroll the page behind the popover");
+    assert.equal(await page.locator("#prompt-input").inputValue(), "Keep the long list draft", "long-list disconnect keeps the draft");
+
+    await page.evaluate(() => window.installLongLinkedFixture());
+    if (await page.locator("[data-linked-agents-flyout]").evaluate(element => element.classList.contains("hidden"))) await longToggle.click();
+    await longFlyout.locator(".linked-agents-flyout-list").evaluate(element => { element.scrollTop = 0; });
+    const firstArchive = longFlyout.locator("[data-set-delegation-connection='fixture-long-0']");
+    await firstArchive.focus();
+    assert(await firstArchive.evaluate(element => element === document.activeElement), "long-list archive action starts focused");
+    const archivePageScroll = await page.evaluate(() => window.scrollY);
+    await page.evaluate(() => window.updateLinkedFixtureReference("fixture-long-0", { state: "archived", archived: true }));
+    await page.evaluate(() => refresh({ force: true }));
+    await page.waitForFunction(() => document.querySelector(".linked-agents-count")?.textContent === "11");
+    assert(await longHistory.evaluate(element => element === document.activeElement), "long-list archive focuses the history summary");
+    assert.equal(await longFlyout.locator("[data-set-delegation-connection='fixture-long-0']").count(), 0, "long-list archived row loses its action");
+    assert(!await longFlyout.locator("details").evaluate(element => element.open), "long-list archive keeps history closed");
+    const archiveGeometry = await page.evaluate(() => {
+      const list = document.querySelector(".linked-agents-flyout-list");
+      const summary = document.querySelector(".linked-agent-history > summary");
+      const listRect = list.getBoundingClientRect();
+      const summaryRect = summary.getBoundingClientRect();
+      const top = listRect.top + list.clientTop;
+      const bottom = top + list.clientHeight;
+      return { top, bottom, summaryTop: summaryRect.top, summaryBottom: summaryRect.bottom, scrollTop: list.scrollTop, pageScroll: window.scrollY, viewportHeight: innerHeight };
+    });
+    assert(archiveGeometry.summaryTop >= archiveGeometry.top - 1 && archiveGeometry.summaryBottom <= archiveGeometry.bottom + 1, `archive fallback is inside the popover scroll area: ${JSON.stringify(archiveGeometry)}`);
+    assert(archiveGeometry.summaryTop >= 0 && archiveGeometry.summaryBottom <= archiveGeometry.viewportHeight, `archive fallback is inside the viewport: ${JSON.stringify(archiveGeometry)}`);
+    assert(archiveGeometry.scrollTop > 0, "archive scrolls the popover list to its focused fallback");
+    assert.equal(archiveGeometry.pageScroll, archivePageScroll, "archive does not scroll the page behind the popover");
+
     await page.evaluate(() => window.installLinkedFixture("old"));
     if (await page.locator("[data-linked-agents-flyout]").evaluate(element => element.classList.contains("hidden"))) {
       await page.locator("[data-toggle-linked-agents]").click();
