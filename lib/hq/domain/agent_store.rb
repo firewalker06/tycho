@@ -1003,6 +1003,12 @@ module HQ
       if expected_batch_id && expected_batch_id.to_s != target.active_queue_work&.fetch("id", nil).to_s
         raise ArgumentError, "Queue changed; refresh and try again"
       end
+      if expected_batch_id && target.prompt_queue_claim
+        # A guarded recovery cannot replay work with a durable outcome.
+        unresolved = target.active_queue_work ? QueueWork.unresolved_ids(target.active_queue_work) : []
+        claimed = Array(target.prompt_queue_claim["entries"]).map { |entry| entry["id"].to_s }
+        raise ArgumentError, "Queue changed; refresh and try again" if (claimed - unresolved).any?
+      end
     end
 
     def process_prompt_queue_entries!(key, entry_ids:, expected_entry_ids:)

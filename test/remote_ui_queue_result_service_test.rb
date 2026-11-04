@@ -107,6 +107,35 @@ module RemoteUIQueueResultServiceTest
     puts "uncertain discard and later retry: ok"
   end
 
+  def assert_guarded_retry_rejects_a_legacy_disposed_claim_entry
+    PromptQueueTest.with_queue_store do |registry, workspace|
+      target = PromptQueueTest.terminal_agent(workspace, status: "blocked")
+      %w[a b].each { |id| target.enqueue_prompt!(id:, prompt: "Message #{id}", source: "user") }
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([target])
+      service = HQ::RemoteService.new(registry:)
+      service.instance_variable_set(:@agent_store, store)
+      PromptQueueTest.with_stubbed_start(error: IOError.new("Controlled launch refusal")) do
+        service.process_prompt_queue(target.key, "entry_ids" => %w[a b], "expected_entry_ids" => %w[a b])
+      end
+      current = service.send(:find_agent_reference!, target.key)
+      batch_id = current.active_queue_work.fetch("id")
+      # An older client can leave a disposed entry in its failed claim. New guarded recovery must refuse it.
+      service.remove_prompt_queue(target.key, "entry_ids" => ["a"], "expected_entry_ids" => %w[a b])
+      prompts = []
+      PromptQueueTest.with_stubbed_start(prompts:) do
+        begin
+          service.retry_prompt_queue(target.key, "expected_entry_ids" => ["b"], "expected_batch_id" => batch_id)
+          raise "Disposed claim entry must not be replayed"
+        rescue HQ::RemoteService::Error => e
+          assert(e.status == 409, "inconsistent legacy claim must stop before dispatch")
+        end
+      end
+      assert(prompts.empty?, "a durably discarded instruction must not reach execution")
+    end
+    puts "legacy disposed claim guarded retry: ok"
+  end
+
   def run!
     %w[started busy refusal].each do |scenario|
       PromptQueueTest.with_queue_store do |registry, workspace|
@@ -150,6 +179,7 @@ module RemoteUIQueueResultServiceTest
     end
     assert_guarded_failed_actions
     assert_uncertain_discard_cannot_remove_part_of_a_failed_claim
+    assert_guarded_retry_rejects_a_legacy_disposed_claim_entry
     # Exercise the unchanged source-appropriate dispositions and protected callback rules.
     PromptQueueTest.assert_bulk_removal_is_audited_and_stale_snapshots_do_nothing
     PromptQueueTest.assert_failed_claim_can_be_discarded_except_for_delegation_callbacks

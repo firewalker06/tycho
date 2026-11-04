@@ -65,7 +65,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           if (kind === "remove" && scenario !== "stale") returned.prompt_queue.entries = returned.prompt_queue.entries.filter(e => !ids.includes(e.id));
           if (scenario === "refusal") {
             returned.prompt_queue.dispatch_error = { message: "Synthetic token-secret /private/file" };
-            returned.prompt_queue.queue_work = {batch_id:"batch", entry_ids:["a","b"], unresolved_entry_ids:["a","b"], entries:returned.prompt_queue.entries.filter(e=>e.id!=="protected")};
+            returned.prompt_queue.queue_work = {batch_id:"batch", entry_ids:["a","b"], unresolved_entry_ids:["a","b"], dispositions:{}, entries:returned.prompt_queue.entries.filter(e=>e.id!=="protected")};
           }
           const status = scenario === "unknown" ? "unknown" : scenario === "stale" ? "stale" : kind === "remove" ? "removed" : scenario === "started" ? "started" : "accepted";
           if (!["newer", "navigation", "unknown"].includes(scenario)) canonical = structuredClone(returned);
