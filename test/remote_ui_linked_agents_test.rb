@@ -12,9 +12,9 @@ module RemoteUILinkedAgentsTest
       const vm = require("node:vm");
       const source = fs.readFileSync(process.argv[1], "utf8");
       const context = { state: { agents: [], agentDetails: {} }, escapeHtml: String, escapeAttr: String,
-        renderAgentRelationshipRow: (owner, ref, child) => `<a data-child="${child}">${ref.key}</a>` };
+        iconSvg: () => "", renderAgentRelationshipRow: (owner, ref, child) => `<a data-child="${child}">${ref.key}</a>` };
       vm.createContext(context);
-      for (const name of ["findAgent", "linkedAgentReferences", "resolvedAgentReference", "linkedAgentFlyoutGroups", "renderLinkedAgentSections", "renderLinkedAgentsFlyout"]) {
+      for (const name of ["findAgent", "linkedAgentReferences", "resolvedAgentReference", "linkedAgentFlyoutGroups", "renderLinkedAgentSections", "renderLinkedAgentsFlyout", "renderLinkedAgentsToggle"]) {
         const start = source.indexOf(`function ${name}(`);
         const end = source.indexOf("\nfunction ", start + 1);
         assert(start >= 0 && end > start);
@@ -33,6 +33,9 @@ module RemoteUILinkedAgentsTest
       assert.equal(groups.inactive.map(e => e.reference.key).join(","), "archived,disconnected,both,shared");
       const html = context.renderLinkedAgentsFlyout(owner);
       assert(html.includes("Archived or disconnected (4)"));
+      const toggle = context.renderLinkedAgentsToggle(owner);
+      assert(toggle.includes('<span class="linked-agents-count">6</span>'), "badge counts current linked agents only");
+      assert(html.includes("10 agents"), "popover retains the total linked-agent count");
       assert(html.includes('data-child="owner"'), "parent control targets the owner child");
       assert(html.indexOf("peer/shared") < html.indexOf("<details"), "peer key must not resolve to local archived key");
       assert(!/<details[^>]*\sopen(?:\s|>)/.test(html), "history starts collapsed");
@@ -44,6 +47,7 @@ module RemoteUILinkedAgentsTest
       assert.equal(context.renderLinkedAgentsFlyout({ key: "empty" }), "");
       const allOld = context.renderLinkedAgentsFlyout({ key: "old", delegation: { children: [ref("old-child", { connected: false })] } });
       assert(allOld.includes("Archived or disconnected (1)"));
+      assert(context.renderLinkedAgentsToggle({ key: "old", delegation: { children: [ref("old-child", { connected: false })] } }).includes('<span class="linked-agents-count">0</span>'), "inactive-only links keep the badge control available with zero active agents");
       assert(!allOld.slice(0, allOld.indexOf("<details")).includes("Delegated agents"));
       console.log("linked-agent renderer: lifecycle, ownership, connection, identity, deduplication, missing catalog and empty groups passed");
     JS

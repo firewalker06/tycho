@@ -75,6 +75,8 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       await page.locator("[data-toggle-linked-agents]").click();
       const flyout = page.locator("[data-linked-agents-flyout]");
       await flyout.waitFor({ state: "visible" });
+      assert.equal(await page.locator(".linked-agents-count").innerText(), "4", "badge counts active linked agents only");
+      assert.equal(await flyout.locator(".attachment-panel-header span").innerText(), "6 agents", "popover shows all linked agents");
       const summary = flyout.locator(".linked-agent-history > summary");
       assert.equal(await summary.innerText(), "Archived or disconnected (2)");
       for (const key of ["idle", "input", "running"]) assert(await flyout.locator(`[data-open-agent='fixture-${key}']`).isVisible(), `linked ${key} stays visible`);
@@ -120,8 +122,9 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     }
     await page.evaluate(() => window.installLinkedFixture("old"));
     await page.locator("[data-toggle-linked-agents]").click();
-    assert.equal(await page.locator(".linked-agent-history > summary").innerText(), "Archived or disconnected (2)");
+    assert.equal(await page.locator(".linked-agents-count").innerText(), "0", "inactive-only links retain a zero-count badge control");
     assert.equal(await page.locator("[data-linked-agents-flyout] .agent-reference:visible").count(), 0);
+    assert.equal(await page.locator(".linked-agent-history > summary").innerText(), "Archived or disconnected (2)");
     await page.evaluate(() => window.installLinkedFixture("empty"));
     assert.equal(await page.locator("[data-toggle-linked-agents]").count(), 0);
     // Restore the server-backed fixture and check a real forced refresh.
