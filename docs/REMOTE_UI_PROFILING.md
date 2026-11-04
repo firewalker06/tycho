@@ -1,5 +1,7 @@
 # Remote UI profiling
 
+For selected actions and expected-state timing with screenshot reports, use the optional [Interaction Profiler](/Users/didik/Code/personal/tycho/docs/REMOTE_UI_INTERACTION_PROFILER.md).
+
 `bin/remote-ui-profile` is an opt-in browser performance suite for every Remote UI route. It is intentionally outside `bin/test` and normal CI because it installs Playwright in a temporary directory, launches local Chrome, and profiles a throwaway `tycho serve` fixture.
 
 The fixture contains an 800-event conversation, a Markdown attachment, a changed Git workspace, a schedule, and two unavailable peer servers. That combination covers ordinary page cost and the degraded-peer condition that previously blocked the single-threaded local HTTP loop.

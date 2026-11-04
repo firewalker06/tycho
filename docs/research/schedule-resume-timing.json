@@ -1,0 +1,62 @@
+{
+  "expectedText": "Pause",
+  "immediateMs": 100,
+  "outcome": "observed",
+  "events": [
+    {
+      "ms": 0,
+      "text": "Resume"
+    },
+    {
+      "ms": 12588.2,
+      "text": "Pause"
+    }
+  ],
+  "requests": [
+    {
+      "route": "/servers/:segment",
+      "startMs": 4693.6,
+      "durationMs": 4935.2,
+      "status": 200
+    },
+    {
+      "route": "/schedules/:segment/:segment",
+      "startMs": 0.6,
+      "durationMs": 10611.6,
+      "status": 200
+    },
+    {
+      "route": "/servers/:segment",
+      "startMs": 10612.8,
+      "durationMs": 10.1,
+      "status": 200
+    },
+    {
+      "route": "/schedules",
+      "startMs": 10624.1,
+      "durationMs": 308,
+      "status": 200
+    },
+    {
+      "route": "/servers/:segment/:segment",
+      "startMs": 11780.2,
+      "durationMs": 69.6,
+      "status": 202
+    },
+    {
+      "route": "/setup/:segment",
+      "startMs": 10624.1,
+      "durationMs": 1953.6,
+      "status": 200
+    },
+    {
+      "route": "/servers/:segment",
+      "startMs": 21634,
+      "durationMs": 7.3,
+      "status": 200
+    }
+  ],
+  "labelMs": 12588.2,
+  "immediate": false,
+  "frameMs": 12589.1
+}

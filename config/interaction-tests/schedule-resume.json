@@ -1,0 +1,24 @@
+{
+  "name": "Schedule Resume",
+  "url": "https://macbookpro-gi041.tail952bf7.ts.net/",
+  "timeoutMs": 30000,
+  "steps": [
+    { "action": "open", "url": "/" },
+    { "action": "expand", "selector": "details[data-state-key='schedule-now-details']" },
+    {
+      "action": "measure",
+      "name": "Resume changes to Pause",
+      "trigger": {
+        "action": "click",
+        "selector": ".schedule-toggle-button[data-schedule-key='secondbrain-memory-reconciliation']",
+        "text": "Resume"
+      },
+      "expect": {
+        "selector": ".schedule-toggle-button[data-schedule-key='secondbrain-memory-reconciliation']",
+        "text": "Pause"
+      },
+      "screenshot": ".schedule-row:has([data-schedule-key='secondbrain-memory-reconciliation'])",
+      "withinMs": 100
+    }
+  ]
+}

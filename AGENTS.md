@@ -11,6 +11,13 @@ Runtime artifacts are written to `~/.tycho/logs/`, including app state files suc
 
 ## Build, Test, and Development Commands
 
+The **Interaction Profiler** is optional verification when adding or changing a UI interaction. Profiler runs and its Chrome smoke check are not required for every change or CI run and are not part of the local CI signoff. See [the process guide](/Users/didik/Code/personal/tycho/docs/REMOTE_UI_INTERACTION_PROFILER.md). Lightweight profiler configuration/report-code checks remain in `bin/test`.
+
+- Load `bin/remote-ui-interaction-probe.js` as a Chrome DevTools Snippet to measure click-to-label and request timings. See `docs/REMOTE_UI_INTERACTION_PROBE.md` for the runnable Console commands and timing limits.
+- `bin/remote-ui-interaction-report --url URL --schedule KEY --output /tmp/tycho-schedule-report.html`: click one Resume control and save a standalone HTML timing report with embedded screenshots. Requires Chrome and Playwright; see `docs/REMOTE_UI_INTERACTION_PROBE.md` for setup, token handling, and exit codes.
+- `bin/remote-ui-interaction-report --config config/interaction-tests/schedule-resume.json --output /tmp/tycho-schedule-report.html`: run configurable open/click/fill/expand/wait/measure steps and save an HTML report with screenshots. See `docs/REMOTE_UI_INTERACTION_PROBE.md` for the JSON format.
+- `node test/browser/interaction_report_smoke.js`: run the optional configurable interaction runner checks against a temporary local page. Set `TYCHO_PLAYWRIGHT_PATH` if needed and `TYCHO_REMOTE_UI_CAPTURE_DIR` to keep the sample reports and preview outside the repository.
+
 - `bundle install`: install Ruby gems declared for Ruby 4.0.9+.
 - `bin/tycho`: start the TUI locally.
 - `bundle exec bin/tycho`: run through Bundler when debugging gem resolution issues.

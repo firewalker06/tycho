@@ -6,6 +6,8 @@ GitHub's enforced `signoff` ruleset on the default branch requires the
 force pushes and branch deletion. This is a trusted-maintainer workflow, not a
 replacement for independent review where that is needed.
 
+The [Interaction Profiler](/Users/didik/Code/personal/tycho/docs/REMOTE_UI_INTERACTION_PROFILER.md) is optional verification for interaction feature work. Its profiling runs and Chrome smoke check are outside `bin/test`, normal CI, and the required signoff. Lightweight configuration and report-code checks remain in `bin/test`; they do not launch Chrome or run feature profiles.
+
 ## Test notification safety
 
 `bin/test` gives each command a fresh temporary Tycho home and logs root,

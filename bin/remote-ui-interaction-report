@@ -1,0 +1,258 @@
+#!/usr/bin/env node
+"use strict";
+
+const fs = require("node:fs/promises");
+const path = require("node:path");
+const { parseArgs } = require("node:util");
+let stage = "arguments";
+
+const help = `Usage: bin/remote-ui-interaction-report --config PATH [--output PATH]
+       bin/remote-ui-interaction-report --url URL --schedule KEY [options]
+
+Run ordered open, click, fill, expand, wait, and measure steps from JSON.
+Each measure step arms the probe before its trigger click. Actions change the target.
+
+  --config PATH        JSON scenario (see config/interaction-tests/schedule-resume.json)
+  --output PATH        Standalone HTML (default: /tmp/tycho-interaction-report.html)
+  --timeout-ms MS      Legacy schedule timeout (default: 30000)
+  --immediate-ms MS    Legacy schedule limit (default: 100)
+  --headed            Show Chrome
+  --help              Show help
+
+Environment:
+  TYCHO_REMOTE_TOKEN     Optional token for the configured origin; never use CLI tokens
+  TYCHO_PLAYWRIGHT_PATH  Playwright module path if not installed locally
+  CHROME_PATH            Chrome executable override (default: installed Chrome)
+`;
+
+const escapeHtml = (value) => String(value ?? "—").replace(/[&<>"']/g, (char) => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+}[char]));
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const string = (value) => typeof value === "string" && value.trim().length > 0;
+const passed = (result) => result.outcome === "observed" && result.immediate === true;
+
+function fields(value, allowed) {
+  check(value && typeof value === "object" && !Array.isArray(value), "Expected an object.");
+  check(Object.keys(value).every((key) => allowed.includes(key)), "Unknown configuration field.");
+}
+
+function safeUrl(value, base) {
+  const url = new URL(value, base);
+  check(["http:", "https:"].includes(url.protocol) && !url.username && !url.password && !url.search, "Use HTTP(S) without credentials or query strings.");
+  if (base) check(url.origin === new URL(base).origin, "Open steps must stay on the configured origin.");
+  return url.href;
+}
+
+function expectation(value) {
+  fields(value, ["selector", "text", "visible", "attribute"]);
+  check(string(value.selector), "An expectation needs a selector.");
+  check(["text", "visible", "attribute"].filter((key) => Object.hasOwn(value, key)).length === 1, "Choose one expectation: text, visible, or attribute.");
+  if (Object.hasOwn(value, "text")) check(typeof value.text === "string", "Expected text must be a string.");
+  if (Object.hasOwn(value, "visible")) check(typeof value.visible === "boolean", "Expected visibility must be boolean.");
+  if (value.attribute) {
+    fields(value.attribute, ["name", "value"]);
+    check(string(value.attribute.name) && (value.attribute.value === null || typeof value.attribute.value === "string"), "An attribute needs a name and a string or null value.");
+  } else check(!Object.hasOwn(value, "attribute"), "Invalid attribute expectation.");
+}
+
+function validateConfig(config) {
+  fields(config, ["name", "url", "timeoutMs", "steps"]);
+  check(string(config.url), "A scenario needs a URL.");
+  const url = safeUrl(config.url);
+  const timeoutMs = config.timeoutMs ?? 30000;
+  check(Number.isFinite(timeoutMs) && timeoutMs >= 100 && timeoutMs <= 120000, "Timeout must be 100–120000 ms.");
+  check(config.name === undefined || string(config.name), "The name must be text.");
+  check(Array.isArray(config.steps) && config.steps.length > 0 && config.steps.length <= 100, "Use 1–100 steps.");
+  let measurements = 0;
+  const steps = config.steps.map((step) => {
+    fields(step, {
+      open: ["action", "url"], click: ["action", "selector", "text"], fill: ["action", "selector", "value"],
+      expand: ["action", "selector"], wait: ["action", "expect"],
+      measure: ["action", "name", "trigger", "expect", "screenshot", "withinMs", "timeoutMs"]
+    }[step?.action] || []);
+    check(["open", "click", "fill", "expand", "wait", "measure"].includes(step.action), "Unknown action.");
+    if (step.action === "open") {
+      check(string(step.url), "Open needs a URL or path.");
+      return { ...step, url: safeUrl(step.url, url) };
+    }
+    if (["click", "fill", "expand"].includes(step.action)) check(string(step.selector), "Action needs a selector.");
+    if (step.action === "click" && step.text !== undefined) check(typeof step.text === "string", "Click text must be a string.");
+    if (step.action === "fill") check(typeof step.value === "string", "Fill needs a value.");
+    if (["wait", "measure"].includes(step.action)) expectation(step.expect);
+    if (step.action !== "measure") return { ...step };
+    measurements += 1;
+    check(string(step.name) && string(step.screenshot), "A measurement needs a name and screenshot selector.");
+    fields(step.trigger, ["action", "selector", "text"]);
+    check(step.trigger.action === "click" && string(step.trigger.selector), "A measurement trigger must be a click.");
+    check(step.trigger.text === undefined || typeof step.trigger.text === "string", "Trigger text must be a string.");
+    const limit = step.withinMs ?? 100;
+    const timeout = step.timeoutMs ?? timeoutMs;
+    check(Number.isFinite(timeout) && timeout >= 100 && timeout <= 120000 && Number.isFinite(limit) && limit >= 0 && limit < timeout, "Use a nonnegative limit below a 100–120000 ms timeout.");
+    return { ...step, withinMs: limit, timeoutMs: timeout };
+  });
+  check(measurements > 0, "Add at least one measure step.");
+  return { name: config.name || "Interaction report", url, timeoutMs, steps };
+}
+
+function scheduleConfig(url, key, timeoutMs, withinMs) {
+  const selector = `.schedule-toggle-button[data-schedule-key=${JSON.stringify(key)}]`;
+  return validateConfig({ name: "Schedule Resume", url, timeoutMs, steps: [
+    { action: "expand", selector: 'details[data-state-key="schedule-now-details"]' },
+    { action: "measure", name: "Resume → Pause", trigger: { action: "click", selector, text: "Resume" }, expect: { selector, text: "Pause" }, screenshot: `.schedule-row:has(${selector})`, withinMs }
+  ] });
+}
+
+function renderReport(data) {
+  const rows = (items, keys) => items.map((item) => `<tr>${keys.map((key) => `<td>${escapeHtml(item[key])}</td>`).join("")}</tr>`).join("");
+  const pass = !data.error && data.measurements.length > 0 && data.measurements.every((item) => passed(item.result));
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">
+<title>${escapeHtml(data.name)}</title><style>
+body{font:16px system-ui,sans-serif;line-height:1.5;max-width:960px;margin:40px auto;padding:0 20px;color:#202838;background:#f5f7fa}
+section,figure{background:white;border:1px solid #dce2eb;border-radius:12px;padding:20px;margin:20px 0}h1,h2{line-height:1.2}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}th,td{text-align:left;padding:8px;border-bottom:1px solid #e5e9ef;overflow-wrap:anywhere}
+img{display:block;width:100%;height:auto;margin-top:16px}.pass{color:#12643a}.fail{color:#a12525}a{color:#2450a4}code{overflow-wrap:anywhere}
+</style><h1>${escapeHtml(data.name)}</h1><p><strong class="${pass ? "pass" : "fail"}">${data.error ? "ERROR" : pass ? "PASS" : "FAIL"}</strong></p>
+<p>Target: <a href="${escapeHtml(data.url)}">Test target</a><br>Captured: ${escapeHtml(data.capturedAt)}</p>
+${data.error ? `<section><h2>Stopped</h2><p>${escapeHtml(data.error)}</p></section>` : ""}
+<section><h2>Steps</h2><table><tr><th>Step</th><th>Action</th><th>Outcome</th></tr>${rows(data.steps, ["number", "action", "outcome"])}</table></section>
+${data.measurements.map(({ name, result, images }) => `<section><h2>${escapeHtml(name)}</h2><p><strong class="${passed(result) ? "pass" : "fail"}">${passed(result) ? "PASS" : "FAIL"}</strong> — limit ${escapeHtml(result.immediateMs)} ms</p>
+<table><tr><th>Measurement</th><th>Result</th></tr><tr><td>Expected value</td><td>${escapeHtml(result.expectedText)}</td></tr><tr><td>First expected state</td><td>${escapeHtml(result.labelMs)} ms</td></tr><tr><td>Next frame callback</td><td>${escapeHtml(result.frameMs)} ms</td></tr><tr><td>Outcome</td><td>${escapeHtml(result.outcome)}</td></tr></table>
+${images.map(({ caption, bytes }) => `<figure><figcaption>${escapeHtml(caption)}</figcaption><img alt="${escapeHtml(caption)}" src="data:image/png;base64,${bytes.toString("base64")}"></figure>`).join("")}
+<h3>State events</h3><table><tr><th>After click (ms)</th><th>Value</th></tr>${rows(result.events, ["ms", "text"])}</table>
+<h3>Completed requests</h3><table><tr><th>Route</th><th>Start (ms)</th><th>Duration (ms)</th><th>Status</th></tr>${rows(result.requests, ["route", "startMs", "durationMs", "status"])}</table></section>`).join("")}
+<p>One sample per measurement. The default 100 ms limit is diagnostic. DOM and frame timing do not prove screen paint. Screenshots can add overhead and are captured after the named event. Polling can appear in the request list. In-flight requests are absent. Review selected screenshot and target text before sharing. Actions are not undone.</p></html>`;
+}
+
+async function unique(page, selector) {
+  const locator = page.locator(selector);
+  await locator.waitFor({ state: "visible" });
+  check(await locator.count() === 1, "Selector must match one element.");
+  return locator;
+}
+
+async function click(page, step) {
+  const control = await unique(page, step.selector);
+  if (step.text !== undefined) check((await control.textContent()).trim() === step.text, "Click text did not match.");
+  await control.click();
+}
+
+async function matches(page, expect) {
+  await page.waitForFunction((expect) => {
+    const elements = document.querySelectorAll(expect.selector);
+    if (elements.length > 1) throw new Error("Ambiguous expectation.");
+    const element = elements[0];
+    if (Object.hasOwn(expect, "visible")) {
+      const style = element && getComputedStyle(element);
+      return Boolean(element && element.getClientRects().length && !["hidden", "collapse"].includes(style.visibility)) === expect.visible;
+    }
+    if (expect.attribute) return Boolean(element) && element.getAttribute(expect.attribute.name) === expect.attribute.value;
+    return Boolean(element) && element.textContent.trim() === expect.text;
+  }, expect);
+}
+
+async function measure(page, step, data) {
+  const target = await unique(page, step.screenshot);
+  const images = [{ caption: "Before trigger", bytes: await target.screenshot() }];
+  const measurement = { name: step.name, images, result: { outcome: "error", immediateMs: step.withinMs, events: [], requests: [] } };
+  data.measurements.push(measurement);
+  let armed = false;
+  try {
+    await unique(page, step.trigger.selector);
+    const { selector, ...expect } = step.expect;
+    await page.evaluate((options) => window.tychoInteractionProbe.arm(options), {
+      selector, triggerSelector: step.trigger.selector, expect, timeoutMs: step.timeoutMs, immediateMs: step.withinMs
+    });
+    armed = true;
+    await click(page, step.trigger);
+    images.push({ caption: "After trigger — browser automation capture", bytes: await target.screenshot() });
+    await page.waitForFunction(() => ["observed", "timeout", "ambiguous"].includes(window.tychoInteractionProbe.read()?.outcome), null, { timeout: step.timeoutMs + 5000 });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    measurement.result = await page.evaluate(() => window.tychoInteractionProbe.read());
+    images.push({ caption: `Final state — ${measurement.result.outcome}`, bytes: await target.screenshot() });
+  } finally {
+    const latest = armed && await page.evaluate(() => {
+      const result = window.tychoInteractionProbe.read();
+      window.tychoInteractionProbe.stop();
+      return result;
+    }).catch(() => null);
+    if (latest) measurement.result = latest;
+  }
+  return passed(measurement.result) ? "pass" : "fail";
+}
+
+async function runScenario(page, config, data) {
+  page.setDefaultTimeout(config.timeoutMs);
+  stage = "open start URL";
+  if (config.steps[0].action !== "open") await page.goto(config.url, { waitUntil: "domcontentloaded" });
+  for (const [index, step] of config.steps.entries()) {
+    stage = `step ${index + 1} (${step.action})`;
+    const entry = { number: index + 1, action: step.action, outcome: "error" };
+    data.steps.push(entry);
+    if (step.action === "open") await page.goto(step.url, { waitUntil: "domcontentloaded" });
+    if (step.action === "click") await click(page, step);
+    if (step.action === "fill") await (await unique(page, step.selector)).fill(step.value);
+    if (step.action === "wait") await matches(page, step.expect);
+    if (step.action === "expand") {
+      const details = await unique(page, step.selector);
+      check(await details.evaluate((element) => element.tagName === "DETAILS"), "Expand needs a details element.");
+      if (!await details.evaluate((element) => element.open)) await details.locator(":scope > summary").click();
+    }
+    entry.outcome = step.action === "measure" ? await measure(page, step, data) : "done";
+    if (entry.outcome === "fail") break;
+  }
+}
+
+async function main() {
+  const { values } = parseArgs({ options: {
+    config: { type: "string" }, url: { type: "string" }, schedule: { type: "string" }, output: { type: "string", default: "/tmp/tycho-interaction-report.html" },
+    "timeout-ms": { type: "string" }, "immediate-ms": { type: "string" }, headed: { type: "boolean" }, help: { type: "boolean" }
+  } });
+  if (values.help) { console.log(help); return; }
+  stage = "configuration";
+  let config;
+  if (values.config) {
+    check(!values.url && !values.schedule && !values["timeout-ms"] && !values["immediate-ms"], "Do not mix scenario and legacy options.");
+    config = validateConfig(JSON.parse(await fs.readFile(values.config, "utf8")));
+  } else {
+    check(string(values.url) && string(values.schedule), "Use --config or --url and --schedule.");
+    config = scheduleConfig(values.url, values.schedule, Number(values["timeout-ms"] ?? 30000), Number(values["immediate-ms"] ?? 100));
+  }
+  stage = "load Playwright";
+  const { chromium } = require(process.env.TYCHO_PLAYWRIGHT_PATH || "playwright");
+  stage = "launch Chrome";
+  const browser = await chromium.launch({ headless: !values.headed, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : { channel: "chrome" }) });
+  const data = { name: config.name, url: config.url, capturedAt: new Date().toISOString(), steps: [], measurements: [] };
+  try {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce" });
+    await context.addInitScript(({ token, origin }) => {
+      if (location.origin === origin && token) localStorage.setItem("hq.remote.token", token);
+    }, { token: process.env.TYCHO_REMOTE_TOKEN || "", origin: new URL(config.url).origin });
+    await context.addInitScript({ path: path.join(__dirname, "remote-ui-interaction-probe.js") });
+    const page = await context.newPage();
+    await page.route("**/*", (route) => {
+      if (route.request().isNavigationRequest() && new URL(route.request().url()).origin !== new URL(config.url).origin) return route.abort();
+      return route.continue();
+    });
+    try { await runScenario(page, config, data); }
+    catch {
+      data.error = `Stopped at ${stage}. Check the selector, current state, and server access. The action may have completed; inspect the target before retry.`;
+    }
+    stage = "write HTML report";
+    const output = path.resolve(values.output);
+    await fs.mkdir(path.dirname(output), { recursive: true });
+    await fs.writeFile(output, renderReport(data), { mode: 0o600 });
+    await fs.chmod(output, 0o600);
+    const pass = !data.error && data.measurements.length > 0 && data.measurements.every((item) => passed(item.result));
+    console.log(`${data.error ? "ERROR" : pass ? "PASS" : "FAIL"}: ${data.measurements.length} measurement(s). Report: ${output}`);
+    process.exitCode = data.error ? 2 : pass ? 0 : 1;
+  } finally { await browser.close(); }
+}
+
+module.exports = { validateConfig, scheduleConfig, renderReport, runScenario };
+if (require.main === module) main().catch(() => {
+  // Browser errors can contain input values. Keep credentials out of logs.
+  console.error(`Report failed at: ${stage}. Check configuration, Chrome, and Playwright. See --help.`);
+  process.exitCode = 2;
+});
