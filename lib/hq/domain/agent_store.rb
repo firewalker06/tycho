@@ -1029,10 +1029,11 @@ module HQ
       end
     end
 
-    def remove_prompt_queue_entries!(key, entry_ids:, expected_entry_ids:, reason: nil)
+    def remove_prompt_queue_entries!(key, entry_ids:, expected_entry_ids:, reason: nil, expected_batch_id: nil)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = find_agent_in!(agents, key)
         raise ArgumentError, "Agent is running" if target.running?
+        validate_failed_queue_snapshot!(target, nil, expected_batch_id)
 
         current_ids = target.visible_prompt_queue_entries.map { |entry| entry["id"].to_s }
         expected = Array(expected_entry_ids).map(&:to_s)

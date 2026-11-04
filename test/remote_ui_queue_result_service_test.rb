@@ -69,6 +69,44 @@ module RemoteUIQueueResultServiceTest
     puts "guarded failed queue retry/discard: ok"
   end
 
+  def assert_uncertain_discard_cannot_remove_part_of_a_failed_claim
+    PromptQueueTest.with_queue_store do |registry, workspace|
+      target = PromptQueueTest.terminal_agent(workspace, status: "blocked")
+      %w[a b].each { |id| target.enqueue_prompt!(id:, prompt: "Message #{id}", source: "user") }
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([target])
+      service = HQ::RemoteService.new(registry:)
+      service.instance_variable_set(:@agent_store, store)
+      PromptQueueTest.with_stubbed_start(error: IOError.new("Controlled launch refusal")) do
+        service.process_prompt_queue(target.key, "entry_ids" => %w[a b], "expected_entry_ids" => %w[a b])
+        service.process_prompt_queue(target.key, "entry_ids" => ["a"], "expected_entry_ids" => %w[a b])
+      end
+      current = service.send(:find_agent_reference!, target.key)
+      batch_id = current.active_queue_work.fetch("id")
+      begin
+        service.remove_prompt_queue(target.key, "entry_ids" => ["a"], "expected_entry_ids" => %w[a b], "expected_batch_id" => "")
+        raise "A claim created after the recovery read must block subset removal"
+      rescue HQ::RemoteService::Error => e
+        assert(e.status == 409, "claim race must preserve both instructions")
+      end
+      prompts = []
+      PromptQueueTest.with_stubbed_start(prompts:) do
+        removed = service.discard_prompt_queue(target.key, "expected_entry_ids" => %w[a b], "expected_batch_id" => batch_id)
+        assert(removed[:discarded] && removed[:batch]["unresolved_entry_ids"].empty?, "whole failed batch must be resolved")
+        assert(removed[:batch]["dispositions"].values.all? { |item| item["outcome"] == "declined_with_reason" }, "discard must be durable")
+        begin
+          service.retry_prompt_queue(target.key)
+          raise "Discarded claim must not be retried"
+        rescue HQ::RemoteService::Error => e
+          assert(e.status == 409, "no discarded claim can remain available for retry")
+        end
+      end
+      assert(prompts.empty?, "discarded instructions must never reach a retry prompt")
+      assert(service.send(:find_agent_reference!, target.key).prompt_queue_claim.nil?, "discard must retire the claim")
+    end
+    puts "uncertain discard and later retry: ok"
+  end
+
   def run!
     %w[started busy refusal].each do |scenario|
       PromptQueueTest.with_queue_store do |registry, workspace|
@@ -111,6 +149,7 @@ module RemoteUIQueueResultServiceTest
       end
     end
     assert_guarded_failed_actions
+    assert_uncertain_discard_cannot_remove_part_of_a_failed_claim
     # Exercise the unchanged source-appropriate dispositions and protected callback rules.
     PromptQueueTest.assert_bulk_removal_is_audited_and_stale_snapshots_do_nothing
     PromptQueueTest.assert_failed_claim_can_be_discarded_except_for_delegation_callbacks

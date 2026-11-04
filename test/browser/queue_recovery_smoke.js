@@ -18,7 +18,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
       await page.locator("[data-appearance-preference]").selectOption(theme);
       const original = (await (await page.request.get(`${baseUrl}/agents/${agentKey}`)).json()).agent;
-      let canonical, failRead = false;
+      let canonical, failRead = false, preflight = null;
       const raw = (protectedReply = false) => {
         const first = { id: "first", prompt: protectedReply ? "Reply from another agent" : "Prepare the summary", source: protectedReply ? "delegation_callback" : "user", state: "failed" };
         return { ...structuredClone(original), name: "Queue messages", running: false,
@@ -28,7 +28,13 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
             queue_work: { batch_id: "batch", entry_ids: ["first"], unresolved_entry_ids: ["first"], entries: [first] } } };
       };
       canonical = raw();
-      await page.route(`${baseUrl}/agents/${agentKey}`, route => failRead ? route.fulfill({status:401,json:{error:"token-secret prompt-secret"}}) : route.fulfill({ json: { agent: canonical } }));
+      await page.route(`${baseUrl}/agents/${agentKey}`, route => {
+        if (preflight === "read-error" || failRead) return route.fulfill({status:failRead ? 401 : 503,json:{error:"token-secret prompt-secret"}});
+        if (preflight === "invalid") return route.fulfill({json:{}});
+        const agent = structuredClone(canonical);
+        if (preflight === "changed-batch") agent.prompt_queue.queue_work.batch_id = "new-batch";
+        return route.fulfill({ json: { agent } });
+      });
       await page.route(/\/servers\/(resources|activity)(\?.*)?$/, async route => {
         const response = await route.fetch();
         if (!response.ok()) return route.fulfill({ response });
@@ -125,7 +131,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         const endpoint = `${baseUrl}/agents/${agentKey}/prompt-queue/remove`;
         const remove = async route => {
           writes++;
-          assert.deepEqual(route.request().postDataJSON(), {entry_ids:["first"],expected_entry_ids:["first","later"]});
+          assert.deepEqual(route.request().postDataJSON(), {entry_ids:["first"],expected_entry_ids:["first","later"],expected_batch_id:""});
           canonical.prompt_queue.entries = canonical.prompt_queue.entries.filter(entry => entry.id !== "first");
           return route.fulfill({json:{status:"removed", removed_entry_ids:["first"],current_entry_ids:["later"],agent:canonical}});
         };
@@ -149,6 +155,59 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         await page.unroute(endpoint, remove);
         results.push({width,theme,scenario:`uncertain-${scenario}`,writes});
       }
+      for (const failure of ["read-error", "invalid", "changed-batch"]) {
+        canonical = raw(); failRead = false; preflight = null;
+        await page.evaluate(async key => {
+          state.pendingPromptQueueActions.delete(key); await ensureAgentDetail(key,true);
+          state.renderedViewHtml="";render();clearTimeout(state.timer);clearTimeout(state.activityTimer);
+          document.querySelector("[data-prompt-queue]").open=true;
+        },agentKey);
+        let writes=0;
+        const deny = async route => {writes++;return route.fulfill({status:500,json:{error:"Unexpected mutation"}});};
+        await page.route("**/prompt-queue/**",deny);
+        preflight=failure;
+        await page.locator("[data-retry-prompt-queue]").press("Enter");
+        await page.waitForFunction(key=>state.pendingPromptQueueActions.get(key)?.phase==="uncertain",agentKey);
+        assert.deepEqual(await page.evaluate(key=>state.pendingPromptQueueActions.get(key).entryIds,agentKey),["first"]);
+        await page.waitForFunction(()=>!state.refreshInFlight && !state.activityInFlight);
+        await page.evaluate(()=>{clearTimeout(state.timer);clearTimeout(state.activityTimer);});
+        assert(!/token-secret|prompt-secret/.test(await page.locator("body").innerText()), "queue read errors must remain outside product text");
+        preflight=null;
+        await page.locator("[data-discard-queue-action]").press("Enter");
+        await page.waitForFunction(key=>!state.pendingPromptQueueActions.has(key),agentKey);
+        assert.equal(writes,0);assert(canonical.prompt_queue.entries.some(entry=>entry.id==="later"));
+        assert.equal(await page.locator("[data-discard-prompt-queue]").isVisible(),true,"return to guarded failed-batch actions");
+        await page.unroute("**/prompt-queue/**",deny);
+        results.push({width,theme,scenario:`failed-preflight-${failure}`,writes});
+      }
+      canonical=raw();
+      canonical.prompt_queue.queue_work={batch_id:"batch",entry_ids:["first","later"],unresolved_entry_ids:["first","later"],entries:structuredClone(canonical.prompt_queue.entries)};
+      await page.evaluate(async key=>{
+        state.pendingPromptQueueActions.delete(key);await ensureAgentDetail(key,true);
+        state.pendingPromptQueueActions.set(key,{kind:"process",entryIds:["first"],phase:"uncertain",expanded:true,message:"Could not confirm queue processing."});
+        state.renderedViewHtml="";render();clearTimeout(state.timer);document.querySelector("[data-prompt-queue]").open=true;
+      },agentKey);
+      let subsetWrites=0;
+      const denySubset=async route=>{subsetWrites++;return route.fulfill({status:500,json:{error:"Unexpected subset removal"}});};
+      await page.route("**/prompt-queue/remove",denySubset);
+      await page.locator("[data-discard-queue-action]").press("Enter");
+      await page.waitForFunction(key=>!state.pendingPromptQueueActions.has(key),agentKey);
+      assert.equal(subsetWrites,0);
+      let batchWrites=0;
+      const discardBatch=async route=>{
+        batchWrites++;assert.deepEqual(route.request().postDataJSON(),{expected_entry_ids:["first","later"],expected_batch_id:"batch"});
+        canonical.prompt_queue.entries=[];canonical.prompt_queue.dispatch_error=null;canonical.prompt_queue.queue_work=null;
+        return route.fulfill({json:{discarded:true,agent:canonical,batch:{batch_id:"batch",unresolved_entry_ids:[],dispositions:{first:{outcome:"declined_with_reason",reason:"Operator discarded"},later:{outcome:"declined_with_reason",reason:"Operator discarded"}}}}});
+      };
+      await page.route("**/prompt-queue/discard",discardBatch);
+      await page.locator("[data-discard-prompt-queue]").press("Enter");
+      await page.locator("[data-confirmation-accept]").waitFor();
+      assert((await page.locator("#confirmation-description").innerText()).includes("2 queued messages"));
+      await page.locator("[data-confirmation-accept]").click();
+      await page.waitForFunction(key=>!state.pendingPromptQueueActions.has(key),agentKey);
+      assert.equal(batchWrites,1);assert.equal(subsetWrites,0);
+      await page.unroute("**/prompt-queue/remove",denySubset);await page.unroute("**/prompt-queue/discard",discardBatch);
+      results.push({width,theme,scenario:"claimed-subset-requires-whole-batch-confirmation",writes:batchWrites,subsetWrites});
       await Promise.all(diagnosticReads);
       assert(diagnostics.length > 0);
       assert(!/token-secret|prompt-secret|private\/file|debug-.*sentinel|Prepare the summary/.test(diagnostics.join("\n")));

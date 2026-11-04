@@ -3760,7 +3760,7 @@ module HQ
       entry_ids = queue_action_entry_ids(attrs, "entry_ids")
       expected_entry_ids = queue_action_entry_ids(attrs, "expected_entry_ids", allow_empty: true)
       result = @agent_store.remove_prompt_queue_entries!(
-        key, entry_ids:, expected_entry_ids:, reason: attrs["reason"]
+        key, entry_ids:, expected_entry_ids:, reason: attrs["reason"], expected_batch_id: attrs["expected_batch_id"]
       )
       target = result.fetch("agent")
       @conversation_blocks_cache.delete(key)
