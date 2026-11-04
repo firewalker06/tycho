@@ -688,6 +688,12 @@ def run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser
     ["Interactive report", "report.html"], ["Download package", "package.bin"], ["Missing report", "missing.md"]
   ].map { |title, path| { "type" => "file", "title" => title, "path" => File.join(workspace, path), "created_at" => Time.now.iso8601 } }
   records << { "type" => "link", "title" => "External reference", "url" => "https://example.com/review", "created_at" => Time.now.iso8601 }
+  if ENV["TYCHO_REMOTE_UI_JSON_PREVIEW_ONLY"] == "1"
+    File.write(File.join(workspace, "schedule-resume.json"), '{  "name": "Schedule Resume",  "url": "https://example.test/",  "steps": [{"id": 1, "label": "open"}, {"id": 2, "label": "resume"}],  "enabled": true  }')
+    File.write(File.join(workspace, "events.jsonl"), %({"a":1}\n{"b":2}\n))
+    records << { "type" => "file", "title" => "Schedule JSON", "path" => File.join(workspace, "schedule-resume.json"), "created_at" => Time.now.iso8601 }
+    records << { "type" => "file", "title" => "Events JSONL", "path" => File.join(workspace, "events.jsonl"), "created_at" => Time.now.iso8601 }
+  end
   File.write(agent.fetch("log_path").sub(/\.raw\.log\z/, ".attachments.json"), JSON.pretty_generate("attachments" => records))
   File.write(File.join(workspace, "docs", "guide.md"), "# Release review\n\nThe release is ready for operator review.\n\n" + 80.times.map { |i| "## Check #{i + 1}\n\nThe attachment preview keeps this document beside the conversation and Summary." }.join("\n\n"))
   detail = JSON.parse(Net::HTTP.get(URI("#{base_url}/agents/#{agent_key}"))).fetch("agent")
@@ -702,7 +708,9 @@ def run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser
   node_dir = File.join(dir, "node")
   install_playwright!(node_dir)
   script = File.join(node_dir, "attachment-preview.js")
-  smoke_file = if ENV["TYCHO_REMOTE_UI_ATTACHMENT_LOAD_ONLY"] == "1"
+  smoke_file = if ENV["TYCHO_REMOTE_UI_JSON_PREVIEW_ONLY"] == "1"
+                 "json_preview_smoke.js"
+               elsif ENV["TYCHO_REMOTE_UI_ATTACHMENT_LOAD_ONLY"] == "1"
                  "attachment_load_smoke.js"
                elsif ENV["TYCHO_REMOTE_UI_ATTACHMENT_FILTER_ONLY"] == "1"
                  "attachment_filter_smoke.js"
@@ -10994,7 +11002,7 @@ if ENV["TYCHO_REMOTE_UI_CONVERSATION_ANIMATION_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "conversation_animation_smoke")
       exit 0
     end
-    if ENV["TYCHO_REMOTE_UI_ATTACHMENT_PREVIEW_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_FILTER_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_LOAD_ONLY"] == "1"
+    if ENV["TYCHO_REMOTE_UI_ATTACHMENT_PREVIEW_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_FILTER_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_LOAD_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_JSON_PREVIEW_ONLY"] == "1"
       run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser:)
       exit 0
     end
